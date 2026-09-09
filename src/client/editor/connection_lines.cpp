@@ -57,6 +57,14 @@ constexpr float STUB_DIRECTION_Y      = -0.67f;
   return try_project_to_screen(view, entry->entity->position);
 }
 
+[[nodiscard]] bool contains(Span<const shared::entity_uid_t> uids, shared::entity_uid_t uid)
+{
+  for (shared::entity_uid_t candidate : uids)
+    if (candidate == uid)
+      return true;
+  return false;
+}
+
 [[nodiscard]] bool selection_contains(Span<const shared::entity_uid_t> selection,
                                       shared::entity_uid_t             uid)
 {
@@ -117,6 +125,7 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
                            connection_line_mode_t                  mode,
                            Span<const shared::entity_uid_t>         selection,
                            Span<const shared::connection_refusal_t> refusals,
+                           Span<const shared::entity_uid_t>         hidden,
                            size_t                                   highlighted_row,
                            float                                    time_seconds)
 {
@@ -142,6 +151,12 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
         selection_contains(selection, row.target);
 
     const bool is_highlighted = index == highlighted_row;
+
+    // A wire to something you cannot see is a wire pointing at nothing.
+    if (contains(hidden, row.sender))
+      continue;
+    if (row.target_kind == shared::connection_target_t::Uid && contains(hidden, row.target))
+      continue;
 
     if (!is_highlighted && mode == connection_line_mode_t::Off)
       continue;

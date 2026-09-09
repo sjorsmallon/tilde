@@ -56,6 +56,7 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
                            connection_line_mode_t                  mode,
                            Span<const shared::entity_uid_t>         selection,
                            Span<const shared::connection_refusal_t> refusals,
+                           Span<const shared::entity_uid_t>         hidden,
                            size_t                                   highlighted_row,
                            float                                    time_seconds);
 

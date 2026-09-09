@@ -206,6 +206,7 @@ void update_game_rules(server_context_t &context,
 
   if (context.world.rules.objective_reached == true)
   {
+    
     context.world.rules.map_restart_requested = true;
   }
 
@@ -417,11 +418,6 @@ void check_win_condition(server_context_t &context,
   }
 }
 
-// All three forward to shared/round_phase_rules.hpp, which is where the rule
-// actually lives: the client predicts movement against the same predicate, and
-// two copies of "is this phase frozen" is exactly the drift this codebase keeps
-// paying for. What stays here is the context lookup, so server call sites still
-// ask about the world rather than about a phase they would have to fetch.
 bool is_round_live(const server_context_t &context)
 {
   return shared::is_round_live(context.world.rules.phase);

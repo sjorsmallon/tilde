@@ -3,6 +3,7 @@
 #include "../camera.hpp"
 #include "../editor/editor_bvh.hpp"
 #include "../editor/connection_lines.hpp"
+#include "../editor/entity_outliner.hpp"
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"
@@ -111,6 +112,11 @@ private:
 
 
   editor::grid_settings_t grid_settings;
+
+  // What the author hid in the Entities outliner. Editor state and never map
+  // data -- see entity_outliner.hpp. Cleared on every map load, which is the
+  // ONE sync point: a load resets the uid space.
+  entity_visibility_t entity_visibility;
 
   // The viewport's wiring view, driven by the Map Info panel's connection list.
   // Editor state, not a cvar: nothing outside the editor reads it and it has no

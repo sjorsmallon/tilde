@@ -69,3 +69,8 @@ Round_Phase_Changed :: Game_Event  "the match entered a new round phase"
     round_number:   u32
     phase_end_tick: u32   // 0 = no deadline; the phase ends on a win condition
 }
+
+Objective_Reached :: Game_Event  "the level's objective was completed"
+{
+    completed_by: u32   // activator uid, 0 = nobody
+}

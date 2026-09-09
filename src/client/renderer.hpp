@@ -240,6 +240,14 @@ struct material_t
 // is gamma-corrected twice.
 texture_handle_t register_texture(const assets::texture_asset_t &texture, bool srgb);
 
+// An asset as something ImGui can draw. Its Vulkan backend takes a
+// VkDescriptorSet as its ImTextureID, and the per-texture set register_texture
+// already mints -- one combined sampler at binding 0, fragment stage -- is
+// exactly the layout the backend builds its own with, so this hands out THAT
+// set rather than allocating a second one. Uploads on the first ask and caches
+// from then on; null is an upload that failed and has already said so.
+[[nodiscard]] void *imgui_texture_id(assets::asset_handle_t<assets::texture_asset_t> texture);
+
 material_handle_t register_material(const material_t &material);
 
 // Parameters only. A pipeline_state change is a new material -- register again.

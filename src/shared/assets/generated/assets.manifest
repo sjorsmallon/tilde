@@ -12,6 +12,10 @@ class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh
 
 class texture_asset texture_asset_t asset_types.hpp .png .tga
   Missing -
+  directional_light resources/icons/directional_light.png
+  game_rules resources/icons/game_rules.png
+  point_light resources/icons/point_light.png
+  spot_light resources/icons/spot_light.png
   glasses resources/models/textures/glasses.png
   glasses_material resources/models/textures/glasses_material.png
   leet_hands resources/models/textures/leet_hands.png
@@ -23,6 +27,8 @@ class texture_asset texture_asset_t asset_types.hpp .png .tga
 
 class sound_asset sound_asset_t asset_types.hpp .wav
   Missing -
+  a_new_record resources/sounds/a_new_record.wav
+  congratulations resources/sounds/congratulations.wav
   headshot1 resources/sounds/headshot1.wav
   headshot2 resources/sounds/headshot2.wav
   headshot3 resources/sounds/headshot3.wav
@@ -42,6 +48,8 @@ class sound_asset sound_asset_t asset_types.hpp .wav
   scout_clipin resources/sounds/scout_clipin.wav
   scout_clipout resources/sounds/scout_clipout.wav
   scout_fire_1 resources/sounds/scout_fire_1.wav
+  success resources/sounds/success.wav
+  wow_incredible resources/sounds/wow_incredible.wav
   zoom resources/sounds/zoom.wav
 
 class animation_asset animation_asset_t animation.hpp .animation

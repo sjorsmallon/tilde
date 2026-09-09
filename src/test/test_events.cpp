@@ -293,6 +293,10 @@ void test_game_event_stream_round_trip()
   phase_changed.phase_end_tick = 900;
   fire_round_phase_changed(stream, phase_changed);
 
+  Objective_Reached reached;
+  reached.completed_by = 88;
+  fire_objective_reached(stream, reached);
+
   assert(stream.count == GAME_EVENT_TYPE_COUNT);
   assert(!stream.empty());
 
@@ -340,6 +344,11 @@ void test_game_event_stream_round_trip()
   assert(read_phase->phase == Round_Phase::Round_End);
   assert(read_phase->round_number == 4);
   assert(read_phase->phase_end_tick == 900);
+
+  assert(reader.read_bits(16) == (uint32_t)game_event_type::Objective_Reached);
+  const std::optional<Objective_Reached> read_reached = try_read_objective_reached(reader);
+  assert(read_reached);
+  assert(read_reached->completed_by == 88);
 
   printf("  game event stream round trip (%u kinds): ok\n", GAME_EVENT_TYPE_COUNT);
 }

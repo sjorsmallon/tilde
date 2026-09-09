@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../shared/linalg.hpp"
+#include "../../shared/entity_uid.hpp"
 #include "../../shared/span.hpp"
 #include "editor_types.hpp"
 
-// Screen-space editor icons: a glyph drawn at an entity's projected position at
+// Screen-space editor icons: an image drawn at an entity's projected position at
 // a constant PIXEL size, the way every level editor marks a thing whose
 // interesting property is not its shape.
 //
@@ -16,50 +16,28 @@
 // be occluded by geometry. These deliberately are not: a light behind a wall is
 // a thing you still want to see.
 //
-// The glyphs are DATA, so this header knows nothing about ImGui and nothing
-// about a renderer: it is authored coordinates plus the one function that
-// strokes them.
+// An icon is a `texture_asset`, which means it is a PNG under resources/icons/
+// and nothing had to be taught about it: the one resource walk enumerates any
+// unclaimed file at any depth, and .png is a texture. The art is WHITE WITH AN
+// ALPHA CHANNEL because the pass tints it with the light's own colour, and a
+// coloured icon could only be multiplied by that. These replaced hand-authored
+// polylines; src/tools/icon_bake.py is where those points went.
 
 namespace shared { struct map_t; }
-namespace entities { struct Entity; }
 
 namespace client
 {
 
-// One stroke of a glyph. Two points is a line; `closed` joins the last point
-// back to the first.
-struct icon_polyline_t
-{
-  Span<const linalg::vec2> points;
-  bool                     closed = false;
-};
-
-// Coordinates are AUTHORED in a y-DOWN canvas, which is what a drawing program
-// hands you and what the glyphs below were drawn in. Normalizing once here beats
-// converting forty points by hand, and it means a glyph can be edited in the
-// space it was drawn in.
-//
-// `canvas_height` is the span that maps to the icon's pixel size, so a glyph
-// whose rays reach past its bulb stays inside its allotted square by having a
-// canvas_height that includes them.
-struct icon_shape_t
-{
-  Span<const icon_polyline_t> polylines;
-  linalg::vec2                canvas_center;
-  float                       canvas_height = 1.f;
-};
-
-extern const icon_shape_t POINT_LIGHT_ICON;
-extern const icon_shape_t SPOT_LIGHT_ICON;
-extern const icon_shape_t DIRECTIONAL_LIGHT_ICON;
-
-// Every icon in the map, projected through `view` and stroked into ImGui's
+// Every icon in the map, projected through `view` and drawn into ImGui's
 // background draw list -- background so wiring and icons pass UNDER the panels
 // rather than over the inspector you are reading.
 //
 // Takes the whole map rather than one entity because the pass is per FRAME and
 // the projection is the expensive half; a per-entity entry point would be a
 // second place that has to agree about culling.
-void draw_entity_icons(const shared::map_t& map, const viewport_state_t& view);
+// `hidden` is what the outliner hid; an icon for something you cannot see is a
+// glyph you cannot click.
+void draw_entity_icons(const shared::map_t& map, const viewport_state_t& view,
+                       Span<const shared::entity_uid_t> hidden);
 
 } // namespace client

@@ -4602,6 +4602,23 @@ static void emit_enum_traits(FILE* out, const program_t* program, const char* na
     fprintf(out, "};\n\n");
   }
 }
+
+// The DERIVED enums -- entity_type, component_type, enum_type, and entity I/O's
+// three -- are declared by no .def, so the loop above never sees them. They are
+// dense from 0 and carry a _COUNT like any declared enum, so an Enum_Array over
+// one is perfectly legal; without a specialization the Indexing_Enum constraint
+// simply fails and the caller reaches for a raw Array instead -- a table that
+// no longer resizes when the enum grows.
+//
+// `count` alone: a derived enum has no enum_type reflection tag, there being no
+// ENUM_INFOS row for it to name.
+static void emit_derived_enum_traits(FILE* out, const char* namespace_name,
+                                     const char* enum_name, const char* count_name)
+{
+  fprintf(out, "template <> struct enum_traits<%s::%s>\n{\n", namespace_name, enum_name);
+  fprintf(out, "  static constexpr uint32_t count = %s::%s;\n", namespace_name, count_name);
+  fprintf(out, "};\n\n");
+}
 
 // The entity family's CORE: the declared enums, the components, and the base
 // every entity derives from -- everything ONE entity's struct is built out
@@ -4790,6 +4807,9 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
     emit_enum_traits(out, program, "entities", enum_ids);
     free(enum_ids);
   }
+  emit_derived_enum_traits(out, "entities", "enum_type", "ENUM_TYPE_COUNT");
+  emit_derived_enum_traits(out, "entities", "entity_type", "ENTITY_TYPE_COUNT");
+  emit_derived_enum_traits(out, "entities", "component_type", "COMPONENT_TYPE_COUNT");
   fprintf(out, "namespace entities\n{\n\n");
 
   // --- components ---
@@ -8323,7 +8343,13 @@ static void emit_entity_io_core_header(FILE* out, const program_t* program,
   fprintf(out, "template <> std::optional<entity_signal> try_from_string<entity_signal>(std::string_view text);\n");
   fprintf(out, "template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text);\n\n");
 
-  fprintf(out, "} // namespace entities\n");
+  fprintf(out, "} // namespace entities\n\n");
+
+  // Global scope, like every other enum_traits specialization: the primary
+  // template lives in shared/array.hpp.
+  emit_derived_enum_traits(out, "entities", "entity_action", "ENTITY_ACTION_COUNT");
+  emit_derived_enum_traits(out, "entities", "entity_signal", "ENTITY_SIGNAL_COUNT");
+  emit_derived_enum_traits(out, "entities", "entity_trait", "ENTITY_TRAIT_COUNT");
 
   free(traits);
   free(actions);

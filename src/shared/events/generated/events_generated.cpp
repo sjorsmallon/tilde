@@ -161,6 +161,18 @@ constexpr field_info_t ROUND_PHASE_CHANGED_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t OBJECTIVE_REACHED_FIELDS[] = {
+  {.name = "completed_by",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Objective_Reached, completed_by),
+   .size_in_bytes = (uint32_t)sizeof(Objective_Reached::completed_by),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 } // namespace
 
 const char* to_string(Round_Phase value)
@@ -195,6 +207,7 @@ const char* to_string(game_event_type value)
     case game_event_type::Player_Died: return "Player_Died";
     case game_event_type::Player_Spawned: return "Player_Spawned";
     case game_event_type::Round_Phase_Changed: return "Round_Phase_Changed";
+    case game_event_type::Objective_Reached: return "Objective_Reached";
   }
   assert(false && "invalid game_event_type");
   return "";
@@ -300,6 +313,31 @@ std::string to_text(const Round_Phase_Changed& value)
   return std::string("Round_Phase_Changed") + fields_to_text({ROUND_PHASE_CHANGED_FIELDS, 3}, &value);
 }
 
+void fire_objective_reached(event_stream_t& stream, const Objective_Reached& payload)
+{
+  stream.writer.write_bits((uint32_t)game_event_type::Objective_Reached, 16);
+  for (const field_info_t& field : Span<const field_info_t>{OBJECTIVE_REACHED_FIELDS, 1})
+    network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
+  ++stream.count;
+
+  if (stream.log_fired)
+    log_terminal("[event fired] {}", to_text(payload));
+}
+
+std::optional<Objective_Reached> try_read_objective_reached(network::Bit_Reader& reader)
+{
+  Objective_Reached payload;
+  for (const field_info_t& field : Span<const field_info_t>{OBJECTIVE_REACHED_FIELDS, 1})
+    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
+      return std::nullopt;
+  return payload;
+}
+
+std::string to_text(const Objective_Reached& value)
+{
+  return std::string("Objective_Reached") + fields_to_text({OBJECTIVE_REACHED_FIELDS, 1}, &value);
+}
+
 std::string game_event_stream_to_text(const event_stream_t& stream)
 {
   if (stream.empty())
@@ -360,6 +398,17 @@ std::string game_event_stream_to_text(const event_stream_t& stream)
       case game_event_type::Round_Phase_Changed:
       {
         const std::optional<Round_Phase_Changed> payload = try_read_round_phase_changed(reader);
+        if (!payload)
+        {
+          text += "<undecodable payload; the rest is unreadable>";
+          return text;
+        }
+        text += to_text(*payload);
+        break;
+      }
+      case game_event_type::Objective_Reached:
+      {
+        const std::optional<Objective_Reached> payload = try_read_objective_reached(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";

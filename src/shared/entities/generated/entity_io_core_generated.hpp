@@ -84,3 +84,19 @@ template <> std::optional<entity_signal> try_from_string<entity_signal>(std::str
 template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text);
 
 } // namespace entities
+
+template <> struct enum_traits<entities::entity_action>
+{
+  static constexpr uint32_t count = entities::ENTITY_ACTION_COUNT;
+};
+
+template <> struct enum_traits<entities::entity_signal>
+{
+  static constexpr uint32_t count = entities::ENTITY_SIGNAL_COUNT;
+};
+
+template <> struct enum_traits<entities::entity_trait>
+{
+  static constexpr uint32_t count = entities::ENTITY_TRAIT_COUNT;
+};
+

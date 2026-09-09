@@ -9,6 +9,7 @@
 #include "../editor/entity_editor_traits.hpp"
 #include "../editor/connection_lines.hpp"
 #include "../editor/entity_icons.hpp"
+#include "../editor/entity_outliner.hpp"
 #include "../editor/geometry_editor.hpp"
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
@@ -211,6 +212,7 @@ void Tool_Editor_State::on_enter()
       else
       {
         map = std::move(*loaded);
+        entity_visibility.show_all();
         snapshot_on_load(line);
       }
     }
@@ -335,6 +337,8 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
+  entity_visibility.refresh(map);
+  context.hidden_objects = entity_visibility.hidden_this_frame;
   // context.time is NOT reset here -- it is seconds since the editor opened,
   // advanced in update(), and a tool switch is not a new clock. Resetting it
   // made every selection pulse restart mid-fade.
@@ -650,6 +654,12 @@ void Tool_Editor_State::update(float dt)
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
+
+  // Flattened out of the one pass that knows both the per-entity set and the
+  // per-type mask, the way objects_without_collision is.
+  entity_visibility.refresh(map);
+  context.hidden_objects = entity_visibility.hidden_this_frame;
+
   context.time += dt;
   viewport = transform_viewport_state();
 
@@ -1057,6 +1067,7 @@ void Tool_Editor_State::draw_imgui_panels()
       if (std::optional<shared::map_t> new_map = shared::try_load_map(full_path))
       {
         map = std::move(*new_map);
+        entity_visibility.show_all();
         transaction_system = Transaction_System{};
         geometry_updated_flag = true;
 
@@ -1134,6 +1145,7 @@ void Tool_Editor_State::draw_imgui_panels()
 
       // Reset to a new empty map with a default floor
       map = shared::map_t{};
+      entity_visibility.show_all();
       map.name = "new_map.source";
       add_default_floor(map);
 
@@ -1197,14 +1209,33 @@ void Tool_Editor_State::draw_imgui_panels()
 
   ImGui::End();
 
+  // Its own window rather than a Map Info section, unlike Connections: an
+  // outliner is exactly the thing you keep open while working. "Map" is not
+  // decoration -- a Player_Entity is @runtime_only and never sits in a map, so
+  // the word says which of the two kinds of entity this lists, and it reads as
+  // one family with Map Info and Map Cvars.
+  if (ImGui::Begin("Map Entities", nullptr, ImGuiWindowFlags_NoNav))
+  {
+    const std::optional<shared::entity_uid_t> clicked =
+        draw_entity_outliner(map, entity_visibility);
+
+    if (clicked)
+    {
+      switch_tool(editor_tool_t::selection);
+      context.requested_selection = clicked;
+    }
+  }
+  ImGui::End();
+
   // Icons before the tool's own overlay, and both under the panels: the tool is
   // drawing what the CURSOR is about to do, which has to sit on top of a layer
   // that is drawing where everything is.
   if (show_entity_icons && !hide_geometry)
-    draw_entity_icons(map, transform_viewport_state());
+    draw_entity_icons(map, transform_viewport_state(), entity_visibility.hidden_this_frame);
 
   draw_connection_lines(map, transform_viewport_state(), connection_lines, active_tool ? tools[*active_tool]->selected_objects() : Span<const shared::entity_uid_t>{},
-                        connection_refusals, hovered_connection, context.time);
+                        connection_refusals, entity_visibility.hidden_this_frame,
+                        hovered_connection, context.time);
 
   // Draw Tool UI (e.g. selection rectangle)
   if (active_tool)
@@ -1334,6 +1365,9 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     for (const auto &entry : map.entities)
     {
       if (!entry.entity)
+        continue;
+
+      if (!context.object_is_visible(entry.uid))
         continue;
 
       // The editor lays the frame's lights out exactly as the game does, which

@@ -21,6 +21,10 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
 
 constexpr asset_info_t texture_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"directional_light", "resources/icons/directional_light.png"},
+  {"game_rules", "resources/icons/game_rules.png"},
+  {"point_light", "resources/icons/point_light.png"},
+  {"spot_light", "resources/icons/spot_light.png"},
   {"glasses", "resources/models/textures/glasses.png"},
   {"glasses_material", "resources/models/textures/glasses_material.png"},
   {"leet_hands", "resources/models/textures/leet_hands.png"},
@@ -33,6 +37,8 @@ constexpr asset_info_t texture_asset_MANIFEST[] = {
 
 constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"a_new_record", "resources/sounds/a_new_record.wav"},
+  {"congratulations", "resources/sounds/congratulations.wav"},
   {"headshot1", "resources/sounds/headshot1.wav"},
   {"headshot2", "resources/sounds/headshot2.wav"},
   {"headshot3", "resources/sounds/headshot3.wav"},
@@ -52,6 +58,8 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"scout_clipin", "resources/sounds/scout_clipin.wav"},
   {"scout_clipout", "resources/sounds/scout_clipout.wav"},
   {"scout_fire_1", "resources/sounds/scout_fire_1.wav"},
+  {"success", "resources/sounds/success.wav"},
+  {"wow_incredible", "resources/sounds/wow_incredible.wav"},
   {"zoom", "resources/sounds/zoom.wav"},
 };
 

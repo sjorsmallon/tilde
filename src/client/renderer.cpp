@@ -3780,6 +3780,15 @@ static VkDescriptorSet resolve_ui_texture_set(texture_handle_t handle)
   return VK_NULL_HANDLE;
 }
 
+void *imgui_texture_id(assets::asset_handle_t<assets::texture_asset_t> texture)
+{
+  const texture_handle_t handle = register_texture_asset(texture, /*srgb*/ true);
+  if (!handle.valid() || handle.index >= g_textures.size())
+    return nullptr;
+
+  return (void *)g_textures[handle.index].ui_set;
+}
+
 // A map's texture, or the internal default that composes to no effect.
 static const gpu_texture_t *resolve_map_texture(texture_handle_t handle, texture_handle_t fallback)
 {

@@ -39,17 +39,21 @@ template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_vi
 enum class texture_asset : uint16_t
 {
   Missing = 0,
-  glasses = 1,
-  glasses_material = 2,
-  leet_hands = 3,
-  leet_hands_material = 4,
-  leet_skin = 5,
-  leet_skin_material = 6,
-  Smoke = 7,
-  dev_128x128 = 8,
+  directional_light = 1,
+  game_rules = 2,
+  point_light = 3,
+  spot_light = 4,
+  glasses = 5,
+  glasses_material = 6,
+  leet_hands = 7,
+  leet_hands_material = 8,
+  leet_skin = 9,
+  leet_skin_material = 10,
+  Smoke = 11,
+  dev_128x128 = 12,
 };
 
-constexpr uint32_t texture_asset_COUNT = 9;
+constexpr uint32_t texture_asset_COUNT = 13;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);
@@ -61,29 +65,33 @@ template <> std::optional<texture_asset> try_from_string<texture_asset>(std::str
 enum class sound_asset : uint16_t
 {
   Missing = 0,
-  headshot1 = 1,
-  headshot2 = 2,
-  headshot3 = 3,
-  knife_deploy1 = 4,
-  knife_hit1 = 5,
-  knife_hit2 = 6,
-  knife_hit3 = 7,
-  knife_hit4 = 8,
-  knife_hitwall1 = 9,
-  knife_slash1 = 10,
-  knife_slash2 = 11,
-  knife_stab = 12,
-  player_jump = 13,
-  player_land = 14,
-  rocket_explosion = 15,
-  scout_bolt = 16,
-  scout_clipin = 17,
-  scout_clipout = 18,
-  scout_fire_1 = 19,
-  zoom = 20,
+  a_new_record = 1,
+  congratulations = 2,
+  headshot1 = 3,
+  headshot2 = 4,
+  headshot3 = 5,
+  knife_deploy1 = 6,
+  knife_hit1 = 7,
+  knife_hit2 = 8,
+  knife_hit3 = 9,
+  knife_hit4 = 10,
+  knife_hitwall1 = 11,
+  knife_slash1 = 12,
+  knife_slash2 = 13,
+  knife_stab = 14,
+  player_jump = 15,
+  player_land = 16,
+  rocket_explosion = 17,
+  scout_bolt = 18,
+  scout_clipin = 19,
+  scout_clipout = 20,
+  scout_fire_1 = 21,
+  success = 22,
+  wow_incredible = 23,
+  zoom = 24,
 };
 
-constexpr uint32_t sound_asset_COUNT = 21;
+constexpr uint32_t sound_asset_COUNT = 25;
 
 const char* to_string(sound_asset value);
 template <> std::optional<sound_asset> try_from_string<sound_asset>(std::string_view text);

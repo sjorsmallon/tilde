@@ -1,7 +1,6 @@
 #include "../../shared/player_constants.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "entity_editor_traits.hpp"
-#include "entity_icons.hpp"
 #include "../../shared/asset.hpp"
 #include "../../shared/editor_grid.hpp"
 #include "../../shared/map.hpp"
@@ -90,28 +89,6 @@ void draw_trigger_volume_shape(pass_builder_t& draws,
   draws.debug.box(position, half_extents, color);
 }
 
-// -- Lights ------------------------------------------------------------
-//
-// Three types, three helpers, and that is the whole reason Light_Entity was
-// split: the shape a light throws is the thing an author is placing, and one
-// yellow cross showed none of it.
-//
-// Split in TWO, because those are two different questions asked at two
-// different moments. What is always on says "a light is here, pointing that
-// way"; the REACH is the volume the kind actually affects and is drawn only for
-// the SELECTED light and the one being placed. A reach diagram is enormous by
-// construction -- at range 512 one sphere is wider than the room -- so every
-// light in a level drawing one at once is a screen of overlapping wireframe
-// with the level somewhere behind it.
-//
-// The reach is drawn DIMMED on top of that, because it is a diagram rather than
-// an object with a surface.
-//
-// WHERE the light IS, is the screen-space icon's job (entity_icons.hpp) and no
-// longer a world-space marker's: a 3-axis cross at the same point said the same
-// thing a second time, and the two crossing inside the glyph is what made both
-// unreadable. What stays in the world is only what the flat icon CANNOT carry --
-// the emitter's size, and the aim.
 constexpr float LIGHT_DIRECTION_STUB    = 30.f;
 constexpr float DIRECTIONAL_RAY_LENGTH  = 128.f;
 constexpr float DIRECTIONAL_RAY_SPACING = 24.f;
@@ -130,9 +107,7 @@ bool draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
   return true;
 }
 
-// A direction the marker can carry at no cost: the cone and the ray grid say it
-// too, but both of those are reach and are gone the moment you deselect. Which
-// way a spot light points is not a question that should need a click.
+
 void draw_light_direction_stub(pass_builder_t& draws, const linalg::quatf& orientation,
                                const linalg::vec3& position, color_t color)
 {
@@ -140,12 +115,7 @@ void draw_light_direction_stub(pass_builder_t& draws, const linalg::quatf& orien
   draws.debug.arrow(position, position + basis.forward * LIGHT_DIRECTION_STUB, color);
 }
 
-// All of these take the concrete entity and a caller-chosen position, because
-// the ghost draws at the placement origin while the other two draw at the
-// entity's own -- the same split the player mesh gizmo already makes.
-// A punctual point light has NO world-space shape left, and says so: false
-// sends the selection ladder on to its AABB fallback, so a selected one still
-// pulses instead of relying on a diagram the pulse colour never reaches.
+
 bool draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_Entity* light,
                             const linalg::vec3& position, color_t color)
 {
@@ -291,9 +261,9 @@ struct entity_editor_traits_t
   // that it is bigger than the object -- a light's falloff -- always-on is the
   // same as never, because every one of them overlaps every other.
   draw_shape_function_t draw_reach       = nullptr;
-  // The screen-space glyph, drawn at a constant pixel size by the icon pass.
-  // Null for every type whose own shape is what you need to see.
-  const icon_shape_t* icon               = nullptr;
+  // The screen-space icon, drawn at a constant pixel size by the icon pass.
+  // Absent for every type whose own shape is what you need to see.
+  std::optional<assets::texture_asset> icon;
   bool shape_for_ghost     = true;
   bool shape_for_selection = true;
 };
@@ -479,9 +449,8 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
       return {.half_extents = static_cast<const entities::Damageable_Entity*>(e)
                                   ->hitbox_half_extents};
 
-    case entities::entity_type::Weapon_Entity:     // render component draws it
-    case entities::entity_type::Rocket_Entity:     // runtime only
-    case entities::entity_type::Game_Rules_Entity: // a point with no shape
+    case entities::entity_type::Weapon_Entity: // render component draws it
+    case entities::entity_type::Rocket_Entity: // runtime only
       return {.half_extents = point_pick};
 
     // Lights pick as a point-sized box whatever their reach -- sizing the pick
@@ -492,21 +461,26 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
               .color        = colors::yellow,
               .draw_shape   = &point_light_gizmo,
               .draw_reach   = &point_light_reach_gizmo,
-              .icon         = &POINT_LIGHT_ICON};
+              .icon         = assets::texture_asset::point_light};
 
     case entities::entity_type::Spot_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
               .draw_shape   = &spot_light_gizmo,
               .draw_reach   = &spot_light_reach_gizmo,
-              .icon         = &SPOT_LIGHT_ICON};
+              .icon         = assets::texture_asset::spot_light};
 
     case entities::entity_type::Directional_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
               .draw_shape   = &directional_light_gizmo,
               .draw_reach   = &directional_light_reach_gizmo,
-              .icon         = &DIRECTIONAL_LIGHT_ICON};
+              .icon         = assets::texture_asset::directional_light};
+      
+    case entities::entity_type::Game_Rules_Entity:
+      return {.half_extents = point_pick,
+              .color        = colors::white,
+              .icon         = assets::texture_asset::game_rules};
 
     case entities::entity_type::Invalid:
       break;
@@ -524,7 +498,7 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
 entity_icon_t get_entity_icon(const entities::Entity* e)
 {
   const entity_editor_traits_t traits = editor_traits_for(e);
-  return {.shape = traits.icon, .fallback_color = traits.color};
+  return {.texture = traits.icon, .fallback_color = traits.color};
 }
 
 linalg::vec3 get_placement_half_extents(const entities::Entity* e)

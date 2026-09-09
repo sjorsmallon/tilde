@@ -279,6 +279,21 @@ template <> struct enum_traits<entities::Damage_Type>
   static constexpr entities::enum_type type = entities::enum_type::Damage_Type;
 };
 
+template <> struct enum_traits<entities::enum_type>
+{
+  static constexpr uint32_t count = entities::ENUM_TYPE_COUNT;
+};
+
+template <> struct enum_traits<entities::entity_type>
+{
+  static constexpr uint32_t count = entities::ENTITY_TYPE_COUNT;
+};
+
+template <> struct enum_traits<entities::component_type>
+{
+  static constexpr uint32_t count = entities::COMPONENT_TYPE_COUNT;
+};
+
 namespace entities
 {
 

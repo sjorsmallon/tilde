@@ -106,6 +106,24 @@ struct editor_context_t
   // directly would be a second owner of it.
   std::optional<shared::entity_uid_t> requested_selection;
 
+  // What the author hid in the entity outliner, flattened per frame from the
+  // per-entity set and the per-type mask. Editor state and never map data: a
+  // `hidden` field in map_t would either push an undo entry or bypass the
+  // transaction system. See entity_outliner.hpp.
+  Span<const shared::entity_uid_t> hidden_objects;
+
+  // Hidden must also be UNPICKABLE -- clickable-but-invisible is worse than not
+  // hiding at all. Asked at the pick sites rather than filtered into
+  // build_editor_bvh, which rebuilds on GEOMETRY change and would not see a
+  // visibility one.
+  bool object_is_visible(shared::entity_uid_t uid) const
+  {
+    for (shared::entity_uid_t hidden : hidden_objects)
+      if (hidden == uid)
+        return false;
+    return true;
+  }
+
   bool object_collides(shared::entity_uid_t uid) const
   {
     for (shared::entity_uid_t without : objects_without_collision)

@@ -113,6 +113,11 @@ private:
   // snapshot/commit. Sharing the application path is what stops a typed offset
   // and a dragged one meaning different things.
   void apply_transform_as_one_edit(editor_context_t& ctx, const gizmo_drag_t &transform);
+
+  // Drop the whole selection onto whatever is under it (End, or the inspector
+  // button). One transform through apply_transform_as_one_edit, so a group
+  // keeps its arrangement and one Ctrl+Z takes it back.
+  void snap_selection_to_surface_below(editor_context_t& ctx);
   void draw_multi_selection_panel(editor_context_t& ctx);
 
   // What the panel's offset fields hold. Not applied until Apply is pressed:

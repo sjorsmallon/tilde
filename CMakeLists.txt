@@ -717,6 +717,7 @@ add_library(game_client SHARED
     src/client/game_events/player_died.cpp
     src/client/game_events/player_spawned.cpp
     src/client/game_events/round_phase_changed.cpp
+    src/client/game_events/objective_reached.cpp
     src/client/hud/kill_feed.cpp
     src/client/hud/crosshair.cpp
     src/client/hud/announcement.cpp
@@ -759,6 +760,7 @@ add_library(game_client SHARED
     src/client/editor/map_cvars_panel.cpp
     src/client/editor/connection_panel.cpp
     src/client/editor/connection_lines.cpp
+    src/client/editor/entity_outliner.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
     src/client/render_assets.cpp

@@ -4,6 +4,8 @@
 #include "../../shared/linalg.hpp"
 #include "editor_types.hpp"
 
+#include <optional>
+
 // this establishes some helpers to map from entities to some draw behavior.
 // I can't really encode this in a good way in the def file,
 // but I want to control how some things are rendered if they have no definitions.
@@ -12,10 +14,8 @@
 namespace client
 {
 
-struct icon_shape_t;
-
-// The type's screen-space icon, or a null `shape` for a type that has none.
-// It lives here rather than beside the glyphs because this file is where "how
+// The type's screen-space icon, or no `texture` for a type that has none.
+// It lives here rather than beside the icon pass because this file is where "how
 // does the editor treat this type" is answered -- a second per-type switch in
 // the icon pass is the drift this file exists to prevent.
 //
@@ -23,8 +23,8 @@ struct icon_shape_t;
 // say; a light's icon is tinted by its own colour instead.
 struct entity_icon_t
 {
-  const icon_shape_t* shape          = nullptr;
-  color_t             fallback_color = colors::white;
+  std::optional<assets::texture_asset> texture;
+  color_t                              fallback_color = colors::white;
 };
 
 entity_icon_t get_entity_icon(const entities::Entity* e);

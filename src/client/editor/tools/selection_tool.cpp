@@ -3,6 +3,7 @@
 #include "../../hud/announcement.hpp"
 #include "../../renderer.hpp"
 #include "../connection_panel.hpp"
+#include "../editor_bvh.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
 #include "../geometry_editor.hpp"
@@ -188,6 +189,35 @@ void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+}
+
+void Selection_Tool::snap_selection_to_surface_below(editor_context_t& ctx)
+{
+  if (selected_uids.empty() || !ctx.map || !ctx.bvh)
+    return;
+
+  const std::optional<shared::aabb_bounds_t> bounds = try_compute_selection_bounds(ctx);
+  if (!bounds)
+    return;
+
+  // Far enough to cross any level, short enough that an object over a hole
+  // stays where it is instead of leaving the map.
+  constexpr float MAX_SNAP_DROP = 100000.0f;
+
+  const std::optional<float> drop = try_drop_distance_to_surface_below(
+      *ctx.bvh, *bounds, selected_uids, MAX_SNAP_DROP);
+
+  if (!drop)
+  {
+    log_warning("selection tool: nothing under the selection to snap to");
+    return;
+  }
+
+  if (*drop <= 0.001f)
+    return;
+
+  apply_transform_as_one_edit(ctx, {.translation = {0.0f, -*drop, 0.0f},
+                                    .pivot = (bounds->min + bounds->max) * 0.5f});
 }
 
 void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
@@ -403,7 +433,7 @@ Selection_Tool::try_pick_entity_near_cursor(const editor_context_t &ctx,
 
   for (const shared::map_entity_t &candidate : ctx.map->entities)
   {
-    if (!candidate.entity)
+    if (!candidate.entity || !ctx.object_is_visible(candidate.uid))
       continue;
 
     const std::optional<linalg::vec2> screen =
@@ -479,6 +509,9 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
         ImGui::Text("%zu objects selected, first uid %u", selected_uids.size(), uid);
       else
         ImGui::Text("uid %u", uid);
+
+      if (ImGui::Button("Snap to surface below (End)"))
+        snap_selection_to_surface_below(ctx);
       ImGui::Separator();
 
       if (selected_uids.size() > 1)
@@ -777,6 +810,11 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     ctx.requested_selection.reset();
   }
 
+  // Hiding the selected thing drops it: a gizmo on something invisible is a
+  // handle to nothing, and its inspector describes a thing you cannot see.
+  std::erase_if(selected_uids, [&](shared::entity_uid_t uid)
+                { return !ctx.object_is_visible(uid); });
+
   // A pending paste owns the cursor: no hover, no gizmo, no box drag, because
   // every one of those wants the same LMB that commits the placement.
   if (paste_is_pending)
@@ -897,7 +935,7 @@ void Selection_Tool::on_update(editor_context_t& ctx,
         if (hit.id.type == Collision_Id::Type::Static_Geometry)
         {
           shared::entity_uid_t uid = hit.id.index;
-          if (ctx.map->has_object(uid))
+          if (ctx.map->has_object(uid) && ctx.object_is_visible(uid))
           {
             hovered_uid = uid;
             hit_bvh = true;
@@ -1125,6 +1163,9 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
 
       for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
       {
+        if (!ctx.object_is_visible(uid))
+          continue;
+
         // The object's own anchor, not the bound's middle: a spectate spot's
         // bound is its frustum, whose centre is 36 units out in front of it.
         linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
@@ -1215,6 +1256,12 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
   // Escape is the cancel, not a right click: only LMB reaches a tool at all, and
   // RMB is the camera's -- an RMB click is an orbit drag that happened not to
   // move, so cancelling on it would fire every time you stopped looking around.
+  if (e.key == input::key_t::End)
+  {
+    snap_selection_to_surface_below(ctx);
+    return;
+  }
+
   if (e.key == input::key_t::Escape)
   {
     connection_pick.armed = false;
