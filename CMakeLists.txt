@@ -754,8 +754,11 @@ add_library(game_client SHARED
     src/client/editor/tools/lightmap_tool.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
+    src/client/editor/entity_icons.cpp
     src/client/editor/geometry_editor.cpp
     src/client/editor/map_cvars_panel.cpp
+    src/client/editor/connection_panel.cpp
+    src/client/editor/connection_lines.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
     src/client/render_assets.cpp

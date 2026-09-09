@@ -2,6 +2,7 @@
 
 #include "../camera.hpp"
 #include "../editor/editor_bvh.hpp"
+#include "../editor/connection_lines.hpp"
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"
@@ -111,6 +112,12 @@ private:
 
   editor::grid_settings_t grid_settings;
 
+  // The viewport's wiring view, driven by the Map Info panel's connection list.
+  // Editor state, not a cvar: nothing outside the editor reads it and it has no
+  // reason to survive the process.
+  connection_line_mode_t connection_lines  = connection_line_mode_t::Selection;
+  size_t                 hovered_connection = SIZE_MAX;
+
   // When true, entities are rendered as solid filled AABBs with random colors
   // instead of wireframe outlines.
   bool draw_entities_solid = true;
@@ -120,6 +127,10 @@ private:
 
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
+  // The screen-space icon pass. A toggle rather than a constant because an icon
+  // is not depth-tested, so a room seen from outside shows every light in it --
+  // useful for finding one, in the way for looking at anything else.
+  bool show_entity_icons = true;
   float last_dt = 0.016f;
 
   // Axis-aligned view mode. Shift+Space cycles the first four; the keypad snaps

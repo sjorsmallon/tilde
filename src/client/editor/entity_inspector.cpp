@@ -13,13 +13,16 @@ namespace
 {
 
 // renders a leaf field. components are flattened inside an entity so you can just take offsets and walk the size.
-// there's some special casing for quaternions because editing those is easier in euler angles.
 void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id)
 {
-  const field_info_t& field = *leaf.info;
-  void* field_ptr = base + leaf.offset;
-  const char* label = leaf.name.c_str();
+  render_field_widget(base + leaf.offset, *leaf.info, leaf.name.c_str(), id);
+}
 
+} // namespace
+
+// there's some special casing for quaternions because editing those is easier in euler angles.
+void render_field_widget(void* field_ptr, const field_info_t& field, const char* label, int id)
+{
   ImGui::PushID(id);
 
   switch (field.type)
@@ -132,8 +135,6 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
 
   ImGui::PopID();
 }
-
-} // namespace
 
 bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
 {

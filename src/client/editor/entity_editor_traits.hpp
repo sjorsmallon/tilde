@@ -12,6 +12,23 @@
 namespace client
 {
 
+struct icon_shape_t;
+
+// The type's screen-space icon, or a null `shape` for a type that has none.
+// It lives here rather than beside the glyphs because this file is where "how
+// does the editor treat this type" is answered -- a second per-type switch in
+// the icon pass is the drift this file exists to prevent.
+//
+// The colour is the TYPE's, used only where the instance has nothing better to
+// say; a light's icon is tinted by its own colour instead.
+struct entity_icon_t
+{
+  const icon_shape_t* shape          = nullptr;
+  color_t             fallback_color = colors::white;
+};
+
+entity_icon_t get_entity_icon(const entities::Entity* e);
+
 linalg::vec3 get_placement_half_extents(const entities::Entity* e);
 
 // Placement preview at `origin` — the entity's position, NOT necessarily the

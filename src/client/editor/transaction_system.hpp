@@ -63,10 +63,20 @@ struct diff_map_cvars_t
   std::vector<std::string> after;
 };
 
+// The map's WIRING, whole-list before/after -- the cvar list's flavour, for the
+// cvar list's reason. A row has no uid of its own and no schema to diff field
+// by field, and a wiring edit routinely moves several rows at once (a target
+// picked, an action changed to match).
+struct diff_map_connections_t
+{
+  std::vector<shared::connection_t> before;
+  std::vector<shared::connection_t> after;
+};
+
 using edit_diff_t =
     std::variant<diff_entity_created_t, diff_entity_removed_t, diff_entity_modified_t,
                  diff_geometry_created_t, diff_geometry_removed_t,
-                 diff_geometry_modified_t, diff_map_cvars_t>;
+                 diff_geometry_modified_t, diff_map_cvars_t, diff_map_connections_t>;
 
 // --- Free helpers ---
 
@@ -185,6 +195,26 @@ struct transaction_t
       return;
     diffs.push_back(diff_map_cvars_t{std::move(before), std::move(after)});
   }
+
+  // --- the map's wiring ---
+
+  // Whole-list before/after. The comparison is connections_equal rather than
+  // ==: a row's payload is a union whose unused tail is whatever the last tag
+  // left behind, so a defaulted compare would report a change nobody made and
+  // push a transaction per idle frame.
+  void add_map_connections_modified(std::vector<shared::connection_t> before,
+                                    std::vector<shared::connection_t> after)
+  {
+    if (before.size() == after.size())
+    {
+      bool identical = true;
+      for (size_t index = 0; index < before.size() && identical; ++index)
+        identical = shared::connections_equal(before[index], after[index]);
+      if (identical)
+        return;
+    }
+    diffs.push_back(diff_map_connections_t{std::move(before), std::move(after)});
+  }
 };
 
 // --- Transaction_System ---
@@ -257,7 +287,9 @@ private:
             [&](const diff_geometry_modified_t &d)
             { set_geometry_value(map, d.uid, d.after); },
             [&](const diff_map_cvars_t &d)
-            { map.attached_cvars = d.after; }},
+            { map.attached_cvars = d.after; },
+            [&](const diff_map_connections_t &d)
+            { map.connections = d.after; }},
         diff);
   }
 
@@ -278,7 +310,9 @@ private:
             [&](const diff_geometry_modified_t &d)
             { set_geometry_value(map, d.uid, d.before); },
             [&](const diff_map_cvars_t &d)
-            { map.attached_cvars = d.before; }},
+            { map.attached_cvars = d.before; },
+            [&](const diff_map_connections_t &d)
+            { map.connections = d.before; }},
         diff);
   }
 

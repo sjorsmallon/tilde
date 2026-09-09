@@ -99,6 +99,13 @@ struct editor_context_t
 
   editor::grid_settings_t *grid = nullptr;
 
+  // A panel OUTSIDE the tools asking for an object to be selected -- the Map
+  // Info panel's connection list is the one caller, and clicking a row there has
+  // to open the sender's own Connections panel. Consumed and cleared by the
+  // Selection tool, which owns the selection; a panel writing selected_uids
+  // directly would be a second owner of it.
+  std::optional<shared::entity_uid_t> requested_selection;
+
   bool object_collides(shared::entity_uid_t uid) const
   {
     for (shared::entity_uid_t without : objects_without_collision)

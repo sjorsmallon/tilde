@@ -273,7 +273,7 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 
 ### Entity I/O — traits, connections, the queue
 
-`entity_io_def.md` is the design of record; §11 is the build order and steps 1, 2, 2b, 3, 4, 5 and 6 are landed, plus 6c's two console halves (6b is PARKED behind them). Read it before adding a trait, a verb, a target kind or anything that emits. **"An entity does something" is TWO things and the split IS the design**: per-TYPE behaviour is a system in `Tick()`'s ordered list (a rocket flies), per-INSTANCE wiring is map data (THIS button opens THAT door). There is deliberately no `think()`, no vtable and no function-pointer field.
+`entity_io_def.md` is the design of record; §11 is the build order and steps 1, 2, 2b, 3, 4, 5, 6 and 7 are landed, plus 6c's two console halves (6b is PARKED behind them; 6c's queue overlay is still open). Read it before adding a trait, a verb, a target kind or anything that emits. **"An entity does something" is TWO things and the split IS the design**: per-TYPE behaviour is a system in `Tick()`'s ordered list (a rocket flies), per-INSTANCE wiring is map data (THIS button opens THAT door). There is deliberately no `think()`, no vtable and no function-pointer field.
 
 **The TYPE layer is a `trait`** in `entities.def` — a named set of `accepts` ACTIONS and `emits` SIGNALS, opted into by an entity's `is` list. `requires C` writes the handlers ONCE against a component every opting-in type must carry; `by` names the types that can ACTIVATE a signal. The three enums (`entity_action` / `entity_signal` / `entity_trait`) are DERIVED from the declarations, one payload struct per verb, and `def_gen` emits per-trait and per-entity headers so reading what a light accepts is one file. A declared handler nobody wrote is a **link error naming the symbol**; a handler nobody declares is `-Werror=missing-prototypes`.
 
@@ -292,6 +292,29 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 - **`sv_io_debug` AND `ent_fire` come BEFORE the first wired level, not after.** `sv_io_debug` exists for one line in particular — an emit whose sender has NO connections. "I walked into the trigger and nothing happened" has three causes (the signal never fired; it fired and nothing was wired; it was wired and the action was refused) and they are one symptom in the viewport, so the four states get four DIFFERENT lines: no bucket, a bucket with no row for that signal, a spent `fire_once` row, and the queue/dispatch pair for a row that ran. It is read DIRECTLY rather than latched the way `sv_event_debug` is — that latch exists because the GENERATED fire helpers must stay free of the cvar family, and every site here is hand-written server code already holding the context. `entity_io_label` prints the author's label AND the uid, always: a uid is what a row stores, so a line naming only a label names something no connection can be edited by.
 - **`ent_fire <uid> <Action> [field=value ...]` is SYNCHRONOUS, and the caller's body is the ACTIVATOR** — everything from code is synchronous, the console is code, and there is no emitting system for it to reenter. The action is a `string` parameter because `entity_action` is in the ENTITY family and a cvar may not reference one; the fence is what forces the `try_from_string` resolve. **The parameter tail is split by the ACTION'S FIELD TABLE, never by whitespace**: a `v3` writes as `"1 0 0"`, so whitespace cuts one value into three. A `name=` is a boundary only when `name` is a field the action declares, so `velocity=0 0 400 keep_velocity=true` is two pairs and needs no quoting. That parser is `src/server/entity_io_console.{hpp,cpp}` rather than the handler because getting it wrong sends the field's DEFAULT rather than failing — the silent kind of wrong — so it has to be pinnable with no server. `ent_fire` is also what earned `def_gen` an OPTIONAL rest parameter, whose only legal default is the empty string: a rest is a view into the console line, so any other default is text with nowhere to live.
 - `Entity_System::try_find(uid)` is the untyped resolve the drain needs; `get<T>` is the typed one.
+- **THE WIRING IS EDITED IN THE EDITOR, and that gates the first real level.**
+  `client/editor/connection_panel.{hpp,cpp}` is a window of its own, drawn by
+  `Selection_Tool::on_draw_ui` for a SINGLE selected entity — the Map Cvars
+  panel's argument, for the Map Cvars panel's reason: a thing nothing in the
+  editor shows is a thing the next save can drop. Every dropdown is cut from the
+  generated masks, so the panel cannot offer a row the loader refuses:
+  `SIGNAL_EMITTED_MASKS` for the signal, `receiver_accepts` (which is
+  `validate_map_connections`'s own three rules) greying the action, `Activator`
+  offered only when the signal declares a `by`. **A target is picked by CLICK**,
+  through a `connection_pick_t` held on the TOOL — the armed click is intercepted
+  before every other branch and its release is swallowed, or the reselect would
+  destroy the panel being edited — and adding a row arms it, since a fresh row
+  has no target and is refused until it gets one. **The override goes through the
+  entity inspector's own widgets** (`render_field_widget`, the flat-record half
+  split out of `render_leaf_field`), a tag change ZEROES the payload, and a
+  signal/action pair whose parameters disagree turns the override ON rather than
+  leaving a red row with a checkbox to find. **One transaction per interaction**,
+  through a whole-list baseline retained across an ImGui drag —
+  `diff_map_connections_t`, whose no-op test is `connections_equal` rather than
+  `==` because the payload union's unused tail is whatever the last tag left
+  there. **The load check is surfaced in the panel** — a refused row red, its
+  reasons under it, the brush-with-no-collision rule — and a READ-ONLY inbound
+  list answers "why did nothing turn this lamp on".
 
 **A TRIGGER VOLUME SAYS WHEN, AND NOTHING ELSE.** `Trigger_Action`, `Fire_Mode`, the three `param_*` fields and `src/server/trigger_actions.{hpp,cpp}` are all deleted; `src/server/systems/trigger_system.cpp` is the overlap loop, out of `Tick()`, emitting `Touched` on the rising edge and `Left` on the falling one. `fire_trigger_action`'s exhaustive switch is gone with them, so CLAUDE.md's "handwritten exhaustive switch" list is one shorter.
 

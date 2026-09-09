@@ -282,6 +282,9 @@ bool     g_raw_input_focused       = false;
 // every frame.
 bool     g_pointer_is_captured     = false;
 
+// Where the pointer was when capture took it, so the release can put it back.
+linalg::vec2i g_pointer_position_before_capture{};
+
 input_frame_span_t g_frame_span{};
 
 uint64_t read_arrival_clock()
@@ -324,12 +327,23 @@ bool     g_motion_edges_are_live      = false;
 uint32_t g_motion_starved_frame_count = 0;
 bool     g_saw_raw_motion_this_frame  = false;
 
+// This frame's TRAVEL, which is not the same quantity as the POINTER's delta:
+// travel is how far the device moved, the pointer's delta is how far the cursor
+// got to move, and the two part company the moment the cursor cannot go any
+// further. Accumulated in push_motion_edge, which is the one funnel BOTH the
+// raw path and the starvation fallback already go through -- so this holds
+// whatever the live source is, with no branch anywhere.
+linalg::vec2i g_frame_motion_delta{};
+
 constexpr uint32_t MOTION_STARVED_FRAMES_BEFORE_FALLBACK = 60;
 
 void push_motion_edge(int32_t delta_x, int32_t delta_y, uint64_t arrival_qpc_ticks)
 {
   if (delta_x == 0 && delta_y == 0)
     return;
+
+  g_frame_motion_delta.x += delta_x;
+  g_frame_motion_delta.y += delta_y;
 
   input_edge_t edge{};
   edge.device            = input_device_t::Mouse_Motion;
@@ -550,6 +564,7 @@ void new_frame()
 
   // After the level snapshot above, which resync_held_from_levels reads.
   g_saw_raw_motion_this_frame = false;
+  g_frame_motion_delta        = {};
   if (g_raw_input_active)
     drain_raw_input();
 
@@ -698,8 +713,24 @@ linalg::vec2i mouse_position()
   return g_mouse_position;
 }
 
+// WHILE THE POINTER IS CAPTURED THERE IS NO POINTER, so this stops reporting
+// one. Captured means hidden and grabbed to the window, and SDL's relative state
+// is the POSITION's delta -- so the cursor pins against whichever edge you
+// turned into and the delta reads zero exactly while you are still turning. That
+// is the editor's right-drag camera stopping dead at the screen edge.
+//
+// Travel is the question a captured caller means, and the input thread already
+// has the answer. Only while captured, because a cursor-relative drag means the
+// POINTER: Windows applies its pointer ballistics to the cursor and not to raw
+// input, so a UI handle driven by device travel would slide off the cursor
+// dragging it.
+//
+// Without the raw thread, SDL owns relative mode (set_relative_mouse_mode says
+// why) and its delta IS travel already, which is what the second half tests.
 linalg::vec2i mouse_delta()
 {
+  if (g_pointer_is_captured && g_raw_input_active)
+    return g_frame_motion_delta;
   return {g_mouse_delta_x, g_mouse_delta_y};
 }
 
@@ -738,16 +769,27 @@ void set_relative_mouse_mode(bool enabled)
   if (window != nullptr)
     SDL_SetWindowMouseGrab(window, enabled ? SDL_TRUE : SDL_FALSE);
 
+  // On the CAPTURE EDGE, remember where the pointer was.
+  if (!g_pointer_is_captured && enabled)
+    g_pointer_position_before_capture = mouse_position();
+
   // On the RELEASE EDGE only: hidden and grabbed, the cursor pins against
   // whichever window edge you last turned into, and relative mode used to
-  // restore it for us. Every frame would peg it to the centre instead and make
+  // restore it for us -- to the position it TOOK OVER at, which is what this
+  // puts back. The window centre was standing in for that and moved the cursor
+  // on every release. Every frame would peg it to the centre instead and make
   // the menu unusable, which is the only reason the previous state is tracked.
   if (g_pointer_is_captured && !enabled && window != nullptr)
   {
     int window_width  = 0;
     int window_height = 0;
     SDL_GetWindowSize(window, &window_width, &window_height);
-    SDL_WarpMouseInWindow(window, window_width / 2, window_height / 2);
+
+    // Clamped, because the window can have been resized smaller while captured
+    // and a warp outside it is a cursor you cannot find.
+    const int x = std::clamp(g_pointer_position_before_capture.x, 0, std::max(window_width - 1, 0));
+    const int y = std::clamp(g_pointer_position_before_capture.y, 0, std::max(window_height - 1, 0));
+    SDL_WarpMouseInWindow(window, x, y);
   }
   g_pointer_is_captured = enabled;
 }

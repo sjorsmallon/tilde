@@ -2,10 +2,12 @@
 #include "selection_tool.hpp"
 #include "../../hud/announcement.hpp"
 #include "../../renderer.hpp"
+#include "../connection_panel.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
+#include "../../../shared/map_connection.hpp"
 #include "../../../shared/lighting.hpp"
 #include "../../../shared/lightmap.hpp"
 #include "../../../shared/lightmap_lights.hpp"
@@ -382,11 +384,53 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
+std::optional<shared::entity_uid_t>
+Selection_Tool::try_pick_entity_near_cursor(const editor_context_t &ctx,
+                                            linalg::vec2 cursor) const
+{
+  if (!ctx.map)
+    return std::nullopt;
+
+  // A ray that actually hit an ENTITY is not a guess, so it beats proximity
+  // outright. hovered_uid can name geometry, which find_by_uid answers null for.
+  if (hovered_uid != 0 && ctx.map->find_by_uid(hovered_uid) != nullptr)
+    return hovered_uid;
+
+  constexpr float pick_radius_in_pixels = 40.0f;
+
+  std::optional<shared::entity_uid_t> nearest;
+  float nearest_distance = pick_radius_in_pixels;
+
+  for (const shared::map_entity_t &candidate : ctx.map->entities)
+  {
+    if (!candidate.entity)
+      continue;
+
+    const std::optional<linalg::vec2> screen =
+        try_project_to_screen(cached_viewport, candidate.entity->position);
+    if (!screen)
+      continue;
+
+    const float dx       = screen->x - cursor.x;
+    const float dy       = screen->y - cursor.y;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    if (distance >= nearest_distance)
+      continue;
+
+    nearest_distance = distance;
+    nearest          = candidate.uid;
+  }
+
+  return nearest;
+}
+
 void Selection_Tool::on_enable(editor_context_t& ctx)
 {
   hovered_uid = 0;
   selected_uids.clear();
   editor_gizmo.clear_target();
+  connection_pick.armed    = false;
+  pick_consumed_this_click = false;
 }
 
 void Selection_Tool::on_disable(editor_context_t& ctx)
@@ -394,6 +438,8 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
   hovered_uid = 0;
   editor_gizmo.clear_target();
   cancel_paste();
+  connection_pick.armed    = false;
+  pick_consumed_this_click = false;
 }
 
 void Selection_Tool::on_draw_ui(editor_context_t& ctx)
@@ -468,6 +514,58 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
     }
     ImGui::End();
   }
+
+  // The wiring gets a window of its own rather than a header under the fields:
+  // a trigger's field list is long, and a panel you have to scroll past the
+  // fields to reach is a panel that is easy to forget exists. It follows the
+  // selection, and only a SINGLE entity has wiring -- a group is not a sender.
+  // What the click would actually take, drawn before it is taken. A generous
+  // radius without this is a different kind of finicky -- it hits SOMETHING every
+  // time and you find out which afterwards. The label is the same spelling the
+  // panel and the loader's refusals use.
+  if (connection_pick.armed && ctx.map)
+  {
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const std::optional<shared::entity_uid_t> candidate =
+        try_pick_entity_near_cursor(ctx, {mouse.x, mouse.y});
+
+    ImDrawList *overlay = ImGui::GetForegroundDrawList();
+    if (candidate)
+    {
+      const shared::map_entity_t *entry = ctx.map->find_by_uid(*candidate);
+      const std::optional<linalg::vec2> screen =
+          entry && entry->entity
+              ? try_project_to_screen(cached_viewport, entry->entity->position)
+              : std::nullopt;
+
+      if (screen)
+      {
+        const ImVec2 at{screen->x, screen->y};
+        overlay->AddCircle(at, 10.0f, IM_COL32(140, 220, 255, 255), 0, 2.0f);
+        overlay->AddLine(mouse, at, IM_COL32(140, 220, 255, 160), 1.5f);
+      }
+
+      const std::string label = shared::describe_map_entity(*ctx.map, *candidate);
+      overlay->AddText(ImVec2(mouse.x + 16.0f, mouse.y + 4.0f), IM_COL32(140, 220, 255, 255),
+                       label.c_str());
+    }
+    else
+    {
+      overlay->AddText(ImVec2(mouse.x + 16.0f, mouse.y + 4.0f), IM_COL32(255, 140, 140, 255),
+                       "no entity near the cursor");
+    }
+  }
+
+  if (ctx.map && selected_uids.size() == 1)
+  {
+    draw_connection_panel(*ctx.map, selected_uids[0], ctx.transaction_system,
+                          connection_pick);
+  }
+  else
+  {
+    connection_pick.armed = false;
+  }
+
 }
 
 // Whether the map's bake has anything for this light, said where the author is
@@ -669,6 +767,16 @@ void Selection_Tool::on_update(editor_context_t& ctx,
 {
   cached_viewport = view;
 
+  // Somebody outside the tools asked for a selection -- the Map Info connection
+  // list clicking a row. Consumed here because this tool owns the selection.
+  if (ctx.requested_selection)
+  {
+    selected_uids.clear();
+    if (ctx.map && ctx.map->has_object(*ctx.requested_selection))
+      selected_uids.push_back(*ctx.requested_selection);
+    ctx.requested_selection.reset();
+  }
+
   // A pending paste owns the cursor: no hover, no gizmo, no box drag, because
   // every one of those wants the same LMB that commits the placement.
   if (paste_is_pending)
@@ -829,6 +937,23 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
 {
   if (e.button == input::mouse_button_t::Left)
   {
+    // Before anything else, because every branch below either selects or drags,
+    // and a pick must do neither.
+    if (connection_pick.armed && ctx.map)
+    {
+      pick_consumed_this_click = true;
+      connection_pick.armed    = false;
+
+      const std::optional<shared::entity_uid_t> target = try_pick_entity_near_cursor(
+          ctx, {(float)e.position.x, (float)e.position.y});
+      if (target)
+        commit_picked_connection_target(*ctx.map, ctx.transaction_system,
+                                        connection_pick.row, *target);
+      else
+        hud::set_announcement("No entity near the cursor — the pick is cancelled.");
+      return;
+    }
+
     if (paste_is_pending)
     {
       commit_paste(ctx);
@@ -946,6 +1071,15 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
 {
   if (e.button == input::mouse_button_t::Left)
   {
+    // The press was a target pick, so the release is the other half of it and
+    // must not fall through to the selection branch below.
+    if (pick_consumed_this_click)
+    {
+      pick_consumed_this_click = false;
+      is_dragging_box          = false;
+      return;
+    }
+
     // Both drag styles end the same way, because both went through the same
     // snapshot: one transaction covering every object the drag touched.
     if (editor_gizmo.is_dragging())
@@ -1083,6 +1217,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
   // move, so cancelling on it would fire every time you stopped looking around.
   if (e.key == input::key_t::Escape)
   {
+    connection_pick.armed = false;
     cancel_paste();
     return;
   }

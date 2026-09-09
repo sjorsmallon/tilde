@@ -593,6 +593,111 @@ void test_map_cvars()
   std::cout << "Map Cvars Passed." << std::endl;
 }
 
+void test_map_connections()
+{
+  std::cout << "Testing Map Connections..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  const auto row_of = [](entities::entity_signal signal, entity_uid_t target,
+                         entities::entity_action action)
+  {
+    shared::connection_t row;
+    row.sender      = 1;
+    row.signal      = signal;
+    row.target_kind = shared::connection_target_t::Uid;
+    row.target      = target;
+    row.data.tag    = action;
+    return row;
+  };
+
+  const shared::connection_t touched_enable =
+      row_of(entities::entity_signal::Touched, 7, entities::entity_action::Enable);
+  const shared::connection_t touched_disable =
+      row_of(entities::entity_signal::Touched, 7, entities::entity_action::Disable);
+
+  {
+    transaction_t transaction;
+    transaction.add_map_connections_modified(map.connections, {touched_enable});
+    map.connections = {touched_enable};
+    ts.push(std::move(transaction));
+  }
+
+  {
+    transaction_t transaction;
+    transaction.add_map_connections_modified(map.connections, {touched_disable});
+    map.connections = {touched_disable};
+    ts.push(std::move(transaction));
+  }
+
+  assert(map.connections.size() == 1);
+  assert(map.connections[0].data.tag == entities::entity_action::Disable);
+
+  ts.undo(map);
+  assert(map.connections[0].data.tag == entities::entity_action::Enable);
+  ts.undo(map);
+  assert(map.connections.empty());
+
+  ts.redo(map);
+  assert(map.connections[0].data.tag == entities::entity_action::Enable);
+  ts.redo(map);
+  assert(map.connections[0].data.tag == entities::entity_action::Disable);
+
+  // Idle frames re-snapshot the list and diff it against itself, so a compare
+  // that reported a change nobody made would push one entry per frame.
+  {
+    transaction_t transaction;
+    transaction.add_map_connections_modified(map.connections, map.connections);
+    assert(transaction.diffs.empty());
+  }
+
+  // The payload is a union whose unused tail is whatever the last tag left
+  // there. Two rows carrying the same PARAMETER are the same row however the
+  // bytes past it got there, which is what connections_equal is for and what a
+  // memcmp of the whole struct would get wrong.
+  {
+    shared::connection_t left  = row_of(entities::entity_signal::Touched, 7,
+                                       entities::entity_action::Set_Health);
+    shared::connection_t right = left;
+    left.data.set_health.amount  = 25;
+    right.data.damage.amount     = 99;
+    right.data.tag               = entities::entity_action::Set_Health;
+    right.data.set_health.amount = 25;
+    assert(shared::connections_equal(left, right));
+
+    right.data.set_health.amount = 26;
+    assert(!shared::connections_equal(left, right));
+  }
+
+  // A parameter change alone is an edit: the tag and every other member agree,
+  // so only the payload compare can see it.
+  {
+    std::vector<shared::connection_t> before = map.connections;
+    std::vector<shared::connection_t> after  = before;
+    after[0].delay_seconds = 0.5f;
+
+    transaction_t transaction;
+    transaction.add_map_connections_modified(before, after);
+    assert(transaction.diffs.size() == 1);
+  }
+
+  // The wiring is independent of the object lists, exactly as the cvar list is.
+  {
+    const entity_uid_t box_uid = map.add_geometry(make_test_box(1.f));
+
+    transaction_t transaction;
+    transaction.add_map_connections_modified(map.connections, {});
+    map.connections = {};
+    ts.push(std::move(transaction));
+
+    ts.undo(map);
+    assert(map.connections.size() == 1);
+    assert(map.has_object(box_uid));
+  }
+
+  std::cout << "Map Connections Passed." << std::endl;
+}
+
 int main()
 {
   test_add_remove();
@@ -607,6 +712,7 @@ int main()
   test_geometry_face_grid();
   test_mixed_batch_delete();
   test_map_cvars();
+  test_map_connections();
   std::cout << "All Transaction Logic Tests Passed." << std::endl;
   return 0;
 }

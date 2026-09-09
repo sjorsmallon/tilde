@@ -10,21 +10,6 @@ cvars
   "pm_friction" "5"
   "pm_maxspeed" "500"
 }
-connections
-{
-  connection
-  {
-    "sender" "3"
-    "signal" "Touched"
-    "target_kind" "Activator"
-    "action" "Teleport"
-    override
-    {
-      "destination" "8"
-      "keep_velocity" "false"
-    }
-  }
-}
 brush
 {
   "_uid" "15"
@@ -383,7 +368,6 @@ entity
   "_uid" "7"
   "position" "-1152 2780 -640"
   "orientation" "-0.0061705923 -0.0061705923 -0.7070798 0.7070798"
-  "name" ""
 }
 entity
 {
@@ -391,7 +375,6 @@ entity
   "_uid" "8"
   "position" "-2304 128 -384"
   "orientation" "0 0 0 1"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Blu"
 }
@@ -401,7 +384,6 @@ entity
   "_uid" "9"
   "position" "-2304 128 384"
   "orientation" "0 0 0 1"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Blu"
 }
@@ -411,7 +393,6 @@ entity
   "_uid" "10"
   "position" "2176 128 384"
   "orientation" "5.7054814e-09 0.9914449 0.1305262 -4.3337433e-08"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Red"
 }
@@ -421,7 +402,6 @@ entity
   "_uid" "11"
   "position" "2176 128 -384"
   "orientation" "-0 1 -0 -4.371139e-08"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Red"
 }
@@ -431,8 +411,11 @@ entity
   "_uid" "3"
   "position" "-1675.9169 -1271.789 -958.0111"
   "orientation" "0 0 0 1"
-  "name" ""
-  "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "4637.054 298.0061 4846.442"
+  "action" "Warp_To_Spawn"
+  "fire_mode" "On_Enter"
+  "param_target_name" ""
+  "param_string" ""
+  "param_float" "0"
 }

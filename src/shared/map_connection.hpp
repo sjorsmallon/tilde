@@ -82,6 +82,18 @@ struct connection_refusal_t
 // that could not open a map with one bad row could not repair it either.
 [[nodiscard]] std::vector<connection_refusal_t> validate_map_connections(const map_t& map);
 
+// "front_door" (Trigger_Volume_Entity uid 42) when the author labelled it, the
+// classname and uid when they did not, "uid 42" when nothing resolves. The one
+// spelling of an endpoint, shared by the loader's refusals and the editor's
+// panel -- two of them would disagree about what an unlabelled entity is called.
+[[nodiscard]] std::string describe_map_entity(const map_t& map, entity_uid_t uid);
+
+// Whether two rows say the same thing. Not memcmp and not a defaulted ==: the
+// payload is a union whose unused tail is whatever the last tag left there, so
+// only the bytes the CURRENT tag names are compared -- exactly the range an
+// emit copies.
+[[nodiscard]] bool connections_equal(const connection_t& left, const connection_t& right);
+
 // Whether a signal's payload can be handed to an action untouched. True when
 // the two field tables agree name for name, type for type, offset for offset,
 // and the two payloads are the same size -- which is what makes the emit a

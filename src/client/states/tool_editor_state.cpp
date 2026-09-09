@@ -7,6 +7,8 @@
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_bvh.hpp"
 #include "../editor/entity_editor_traits.hpp"
+#include "../editor/connection_lines.hpp"
+#include "../editor/entity_icons.hpp"
 #include "../editor/geometry_editor.hpp"
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
@@ -906,6 +908,7 @@ void Tool_Editor_State::draw_imgui_panels()
 
   ImGui::Checkbox("Solid Entities", &draw_entities_solid);
   ImGui::Checkbox("Hide Geometry", &hide_geometry);
+  ImGui::Checkbox("Entity Icons", &show_entity_icons);
   ImGui::Checkbox("Show Grid", &show_grid);
   ImGui::SliderFloat("Camera Speed", &state_manager::get_client_context().cvars->editor_speed,
                      100.0f, 5000.0f, "%.0f");
@@ -963,10 +966,39 @@ void Tool_Editor_State::draw_imgui_panels()
   ImGui::Checkbox("Show Navmesh",
                   &state_manager::get_client_context().cvars->debug_show_navmesh);
 
-  ImGui::End();
+  // Collapsed by default: most maps carry no cvars at all, and the section is
+  // tall when they do. The header IS the checkbox -- a checkbox beside it would
+  // be a second control saying the same thing.
+  ImGui::Separator();
+  if (ImGui::CollapsingHeader("Map Cvars"))
+    draw_map_cvars_section(map, *state_manager::get_client_context().cvars,
+                           transaction_system);
 
-  draw_map_cvars_panel(map, *state_manager::get_client_context().cvars,
-                       transaction_system);
+  // Run ONCE per frame, shared by the list and the viewport lines: two runs are
+  // two answers free to disagree about which row is red.
+  const std::vector<shared::connection_refusal_t> connection_refusals =
+      shared::validate_map_connections(map);
+
+  // Collapsed by default, for Map Cvars' reason: the wiring is not what you are
+  // looking at most of the time, and the list is tall when a map has one.
+  ImGui::Separator();
+  hovered_connection = SIZE_MAX;
+  if (ImGui::CollapsingHeader("Connections"))
+  {
+    const std::optional<shared::entity_uid_t> clicked_sender =
+        draw_connection_overview(map, connection_refusals, connection_lines,
+                                 hovered_connection);
+
+    // The row's editable panel is the SENDER's, and that panel is the Selection
+    // tool's -- so a click has to land there whatever tool was active.
+    if (clicked_sender)
+    {
+      switch_tool(editor_tool_t::selection);
+      context.requested_selection = clicked_sender;
+    }
+  }
+
+  ImGui::End();
 
   if (should_open_popup)
   {
@@ -1164,6 +1196,15 @@ void Tool_Editor_State::draw_imgui_panels()
   }
 
   ImGui::End();
+
+  // Icons before the tool's own overlay, and both under the panels: the tool is
+  // drawing what the CURSOR is about to do, which has to sit on top of a layer
+  // that is drawing where everything is.
+  if (show_entity_icons && !hide_geometry)
+    draw_entity_icons(map, transform_viewport_state());
+
+  draw_connection_lines(map, transform_viewport_state(), connection_lines, active_tool ? tools[*active_tool]->selected_objects() : Span<const shared::entity_uid_t>{},
+                        connection_refusals, hovered_connection, context.time);
 
   // Draw Tool UI (e.g. selection rectangle)
   if (active_tool)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../states/editor_gizmo.hpp"
+#include "../connection_panel.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
 #include "../../../shared/brush.hpp"
@@ -34,6 +35,8 @@ public:
 
   void on_draw_ui(editor_context_t& ctx) override;
 
+  Span<const shared::entity_uid_t> selected_objects() const override { return selected_uids; }
+
 private:
   void draw_light_bake_status(const editor_context_t& ctx, shared::entity_uid_t uid,
                               const entities::Entity& entity);
@@ -46,6 +49,25 @@ private:
   std::vector<std::string> light_reach_lines;
   shared::entity_uid_t hovered_uid = 0;
   std::vector<shared::entity_uid_t> selected_uids;
+
+  // "Target by click": the Connections panel arms it, the next viewport click
+  // resolves the hovered uid into the row and is SWALLOWED -- letting it through
+  // would reselect, and the panel the author was editing would be gone before
+  // the target landed in it.
+  connection_pick_t connection_pick;
+  bool              pick_consumed_this_click = false;
+
+
+  // While a pick is armed the RAY is not the answer. A point light has no
+  // Render mesh, so compute_entity_bounds gives it a POINT, and a point is
+  // sub-pixel at any distance -- which is what made clicking one finicky. This
+  // is screen-space instead: the nearest entity ANCHOR within a radius of the
+  // cursor, with a real BVH hit winning outright because that one is
+  // unambiguous. Deliberately scoped to the pick and not to ordinary selection,
+  // where a generous radius would mean grabbing a light you were not aiming at
+  // while you were modelling something else.
+  [[nodiscard]] std::optional<shared::entity_uid_t>
+  try_pick_entity_near_cursor(const editor_context_t &ctx, linalg::vec2 cursor) const;
 
   // Drag box selection
   bool is_dragging_box = false;

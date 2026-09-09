@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../shared/entity_uid.hpp"
+#include "../../shared/span.hpp"
 #include "editor_types.hpp"
 
 #include <optional>
@@ -43,6 +45,11 @@ public:
 
   // UI (2D)
   virtual void on_draw_ui(editor_context_t& ctx) {}
+
+  // What this tool currently has selected, for panels OUTSIDE the tools that
+  // colour by it -- the Map Info connection lines are the one caller. Empty for
+  // every tool that has no selection, which is most of them.
+  virtual Span<const shared::entity_uid_t> selected_objects() const { return {}; }
 };
 
 } // namespace client

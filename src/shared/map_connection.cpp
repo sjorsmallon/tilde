@@ -2,6 +2,7 @@
 
 #include "map.hpp"
 
+#include <cstring>
 #include <format>
 
 namespace shared
@@ -53,13 +54,20 @@ bool signal_payload_passes_through(entities::entity_signal signal, entities::ent
   return true;
 }
 
-namespace
+bool connections_equal(const connection_t& left, const connection_t& right)
 {
+  if (left.sender != right.sender || left.signal != right.signal ||
+      left.target_kind != right.target_kind || left.target != right.target ||
+      left.has_override != right.has_override || left.delay_seconds != right.delay_seconds ||
+      left.fire_once != right.fire_once || left.data.tag != right.data.tag)
+    return false;
 
-// "front_door (uid 42)" when the author labelled it, "uid 42" when they did
-// not. What makes a load error readable is the label, which is the whole
-// reason `name` sits on the base Entity.
-std::string describe(const map_t& map, entity_uid_t uid)
+  const uint32_t payload_size = entities::action_payload_size(left.data.tag);
+  return std::memcmp(entities::action_payload_bytes(left.data),
+                     entities::action_payload_bytes(right.data), payload_size) == 0;
+}
+
+std::string describe_map_entity(const map_t& map, entity_uid_t uid)
 {
   const map_entity_t* entry = map.find_by_uid(uid);
   if (entry == nullptr || !entry->entity)
@@ -68,6 +76,14 @@ std::string describe(const map_t& map, entity_uid_t uid)
     return std::format("{} uid {}", entities::classname_of(entry->entity.get()), uid);
   return std::format("\"{}\" ({} uid {})", entry->entity->name.c_str(),
                      entities::classname_of(entry->entity.get()), uid);
+}
+
+namespace
+{
+
+std::string describe(const map_t& map, entity_uid_t uid)
+{
+  return describe_map_entity(map, uid);
 }
 
 const entities::Entity* entity_at(const map_t& map, entity_uid_t uid)

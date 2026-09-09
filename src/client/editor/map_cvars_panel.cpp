@@ -137,11 +137,9 @@ void draw_row_status(const shared::cvar_line_t &row,
 
 } // namespace
 
-void draw_map_cvars_panel(shared::map_t &map, const cvars::cvar_state_t &live_values,
-                          Transaction_System &transactions)
+void draw_map_cvars_section(shared::map_t &map, const cvars::cvar_state_t &live_values,
+                            Transaction_System &transactions)
 {
-  ImGui::Begin("Map Cvars");
-
   ImGui::TextWrapped("Run by the server when it loads this map, and saved with "
                      "the map, so they travel with it.");
   ImGui::Separator();
@@ -261,8 +259,6 @@ void draw_map_cvars_panel(shared::map_t &map, const cvars::cvar_state_t &live_va
       ImGui::TextDisabled("(no cvar matches)");
   }
   ImGui::EndChild();
-
-  ImGui::End();
 
   // One action per frame, each its own undo entry. Deferred to here because
   // every one of them replaces the vector the loop above is walking.

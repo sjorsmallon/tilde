@@ -1,6 +1,7 @@
 #include "../../shared/player_constants.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "entity_editor_traits.hpp"
+#include "entity_icons.hpp"
 #include "../../shared/asset.hpp"
 #include "../../shared/editor_grid.hpp"
 #include "../../shared/map.hpp"
@@ -21,80 +22,6 @@ constexpr float SPAWN_WEDGE_LENGTH       = 48.f;
 constexpr float SPAWN_WEDGE_HALF_WIDTH   = 14.f;
 constexpr float SPAWN_WEDGE_GROUND_LIFT  = 1.f;
 
-// this fucks with the interface definition so I parked it. I don't want to think about it.
-void draw_lightbulb_shape(pass_builder_t& draws, const linalg::vec3& position,
-                          const linalg::vec3& camera_position, color_t color,
-                          float size = 1.f)
-{
-  // Camera-facing basis.
-  linalg::vec3 to_camera = camera_position - position;
-  if (linalg::length(to_camera) < 1e-6f)
-    to_camera = linalg::vec3{0.f, 0.f, 1.f};
-  else
-    to_camera = linalg::normalize(to_camera);
-
-  linalg::vec3 up = linalg::vec3{0.f, 1.f, 0.f};
-  if (std::abs(linalg::dot(to_camera, up)) > 0.999f)   // looking straight up/down
-    up = linalg::vec3{0.f, 0.f, 1.f};
-
-  const linalg::vec3 right = linalg::normalize(linalg::cross(up, to_camera));
-  up = linalg::cross(to_camera, right);               // already unit length
-
-  // Canvas is 680x460, y-down, bulb centered near (340, 230).
-  // Map so the bulb's total height (~420 units) == `size` world units.
-  const float cx = 340.f, cy = 230.f;
-  const float scale = size / 420.f;
-  auto p = [&](float x, float y) {
-    return position + right * ((x - cx) * scale) + up * ((cy - y) * scale);
-  };
-  auto line = [&](float x1, float y1, float x2, float y2) {
-    draws.debug.line(p(x1, y1), p(x2, y2), color);
-  };
-
-  // Glass envelope (closed 16-point polygon)
-  static const float glass[][2] = {
-    {340, 60}, {392, 72}, {434, 104}, {458, 150}, {458, 206}, {434, 254},
-    {406, 290}, {390, 340}, {290, 340}, {274, 290}, {246, 254}, {222, 206},
-    {222, 150}, {246, 104}, {288, 72},
-  };
-  constexpr int n = sizeof(glass) / sizeof(glass[0]);
-  for (int i = 0; i < n; ++i) {
-    const float* a = glass[i];
-    const float* b = glass[(i + 1) % n];
-    line(a[0], a[1], b[0], b[1]);
-  }
-
-  // Screw base
-  line(290, 340, 390, 340);
-  line(296, 358, 384, 358);
-  line(300, 376, 380, 376);
-  line(306, 394, 374, 394);
-  line(314, 412, 366, 412);
-  line(322, 428, 358, 428);
-
-  // Filament supports
-  line(314, 340, 314, 214);
-  line(366, 340, 366, 214);
-
-  // Filament zigzag
-  line(314, 214, 324, 196);
-  line(324, 196, 334, 214);
-  line(334, 214, 344, 196);
-  line(344, 196, 354, 214);
-  line(354, 214, 366, 196);
-
-  // Rays
-  line(340, 24, 340, 8);
-  line(256, 46, 246, 32);
-  line(424, 46, 434, 32);
-  line(198, 108, 182, 100);
-  line(482, 108, 498, 100);
-  line(186, 184, 170, 184);
-  line(494, 184, 510, 184);
-}
-
-
-
 void draw_player_spawn_shape(pass_builder_t& draws, const linalg::vec3& position,
                              const linalg::quatf& orientation, color_t color)
 {
@@ -104,7 +31,7 @@ void draw_player_spawn_shape(pass_builder_t& draws, const linalg::vec3& position
   draws.debug.box(position + linalg::vec3{0, shared::player_half_height, 0},
                          hull, color);
 
-                         const linalg::vec3 eye = position + linalg::vec3{0, shared::player_eye_height, 0};
+  const linalg::vec3 eye = position + linalg::vec3{0, shared::player_eye_height, 0};
   const linalg::basis_t basis = linalg::basis_from(orientation);
   draws.debug.arrow(eye, eye + basis.forward * SPAWN_SIGHTLINE_LENGTH, color);
 
@@ -167,47 +94,67 @@ void draw_trigger_volume_shape(pass_builder_t& draws,
 //
 // Three types, three helpers, and that is the whole reason Light_Entity was
 // split: the shape a light throws is the thing an author is placing, and one
-// yellow cross showed none of it. Each of these draws the marker (so all three
-// read as "a light" at a glance) plus the volume that kind actually affects.
+// yellow cross showed none of it.
 //
-// The volume is drawn DIMMED, because it is a diagram of reach rather than an
-// object with a surface -- at range 512 an undimmed sphere buries the level it
-// is lighting.
-constexpr float LIGHT_MARKER_SIZE       = 15.f;
+// Split in TWO, because those are two different questions asked at two
+// different moments. What is always on says "a light is here, pointing that
+// way"; the REACH is the volume the kind actually affects and is drawn only for
+// the SELECTED light and the one being placed. A reach diagram is enormous by
+// construction -- at range 512 one sphere is wider than the room -- so every
+// light in a level drawing one at once is a screen of overlapping wireframe
+// with the level somewhere behind it.
+//
+// The reach is drawn DIMMED on top of that, because it is a diagram rather than
+// an object with a surface.
+//
+// WHERE the light IS, is the screen-space icon's job (entity_icons.hpp) and no
+// longer a world-space marker's: a 3-axis cross at the same point said the same
+// thing a second time, and the two crossing inside the glyph is what made both
+// unreadable. What stays in the world is only what the flat icon CANNOT carry --
+// the emitter's size, and the aim.
+constexpr float LIGHT_DIRECTION_STUB    = 30.f;
 constexpr float DIRECTIONAL_RAY_LENGTH  = 128.f;
 constexpr float DIRECTIONAL_RAY_SPACING = 24.f;
 constexpr uint8_t LIGHT_VOLUME_ALPHA    = 110;
-
-void draw_light_marker(pass_builder_t& draws, const linalg::vec3& position,
-                       color_t color)
-{
-  draws.debug.line(position - linalg::vec3{LIGHT_MARKER_SIZE, 0, 0},
-                     position + linalg::vec3{LIGHT_MARKER_SIZE, 0, 0}, color);
-  draws.debug.line(position - linalg::vec3{0, LIGHT_MARKER_SIZE, 0},
-                     position + linalg::vec3{0, LIGHT_MARKER_SIZE, 0}, color);
-  draws.debug.line(position - linalg::vec3{0, 0, LIGHT_MARKER_SIZE},
-                     position + linalg::vec3{0, 0, LIGHT_MARKER_SIZE}, color);
-}
 
 // The EMITTER, drawn at full alpha inside the dimmed falloff volume: it is the
 // thing casting the penumbra, and it is usually small enough beside `range` that a
 // dimmed one would not be visible at all. Nothing to draw at zero, which is a
 // punctual light and has no size to show.
-void draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
+bool draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
                         const linalg::vec3& position, color_t color)
 {
-  if (light.source_radius > 0.f)
-    draws.debug.wire_sphere(position, light.source_radius, color);
+  if (light.source_radius <= 0.f)
+    return false;
+  draws.debug.wire_sphere(position, light.source_radius, color);
+  return true;
 }
 
-// All three take the concrete entity and a caller-chosen position, because the
-// ghost draws at the placement origin while the other two draw at the entity's
-// own -- the same split the player mesh gizmo already makes.
-void draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_Entity* light,
+// A direction the marker can carry at no cost: the cone and the ray grid say it
+// too, but both of those are reach and are gone the moment you deselect. Which
+// way a spot light points is not a question that should need a click.
+void draw_light_direction_stub(pass_builder_t& draws, const linalg::quatf& orientation,
+                               const linalg::vec3& position, color_t color)
+{
+  const linalg::basis_t basis = linalg::basis_from(orientation);
+  draws.debug.arrow(position, position + basis.forward * LIGHT_DIRECTION_STUB, color);
+}
+
+// All of these take the concrete entity and a caller-chosen position, because
+// the ghost draws at the placement origin while the other two draw at the
+// entity's own -- the same split the player mesh gizmo already makes.
+// A punctual point light has NO world-space shape left, and says so: false
+// sends the selection ladder on to its AABB fallback, so a selected one still
+// pulses instead of relying on a diagram the pulse colour never reaches.
+bool draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_Entity* light,
                             const linalg::vec3& position, color_t color)
 {
-  draw_light_marker(draws, position, color);
-  draw_source_sphere(draws, light->light, position, color);
+  return draw_source_sphere(draws, light->light, position, color);
+}
+
+void draw_point_light_reach(pass_builder_t& draws, const entities::Point_Light_Entity* light,
+                            const linalg::vec3& position, color_t color)
+{
   if (light->range > 0.f)
     draws.debug.wire_sphere(position, light->range, with_alpha(color, LIGHT_VOLUME_ALPHA));
 }
@@ -215,8 +162,13 @@ void draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_E
 void draw_spot_light_shape(pass_builder_t& draws, const entities::Spot_Light_Entity* light,
                            const linalg::vec3& position, color_t color)
 {
-  draw_light_marker(draws, position, color);
   draw_source_sphere(draws, light->light, position, color);
+  draw_light_direction_stub(draws, light->orientation, position, color);
+}
+
+void draw_spot_light_reach(pass_builder_t& draws, const entities::Spot_Light_Entity* light,
+                           const linalg::vec3& position, color_t color)
+{
   if (light->range <= 0.f)
     return;
 
@@ -252,13 +204,19 @@ void draw_spot_light_shape(pass_builder_t& draws, const entities::Spot_Light_Ent
 
 // No falloff volume to draw -- a directional light has no position that shading
 // reads. So the gizmo says the one thing that IS true of it: parallel rays, all
-// the same length, pointing the way the rotate gizmo put them.
+// the same length, pointing the way the rotate gizmo put them. The middle ray
+// is always on, since direction is all a directional light HAS.
 void draw_directional_light_shape(pass_builder_t& draws,
                                   const entities::Directional_Light_Entity* light,
                                   const linalg::vec3& position, color_t color)
 {
-  draw_light_marker(draws, position, color);
+  draw_light_direction_stub(draws, light->orientation, position, color);
+}
 
+void draw_directional_light_reach(pass_builder_t& draws,
+                                  const entities::Directional_Light_Entity* light,
+                                  const linalg::vec3& position, color_t color)
+{
   const linalg::basis_t basis = linalg::basis_from(light->orientation);
   const color_t      dim   = with_alpha(color, LIGHT_VOLUME_ALPHA);
 
@@ -328,6 +286,14 @@ struct entity_editor_traits_t
   placement_origin_t origin              = placement_origin_t::centered;
   color_t            color               = colors::white; // gizmo colour (ghost + in-editor)
   draw_shape_function_t draw_shape       = nullptr;       // null: contexts use their defaults
+  // Drawn ONLY for the selected entity and the one being placed, on top of
+  // draw_shape rather than instead of it. For a diagram whose whole point is
+  // that it is bigger than the object -- a light's falloff -- always-on is the
+  // same as never, because every one of them overlaps every other.
+  draw_shape_function_t draw_reach       = nullptr;
+  // The screen-space glyph, drawn at a constant pixel size by the icon pass.
+  // Null for every type whose own shape is what you need to see.
+  const icon_shape_t* icon               = nullptr;
   bool shape_for_ghost     = true;
   bool shape_for_selection = true;
 };
@@ -378,9 +344,8 @@ bool reflection_volume_gizmo(const entities::Entity* e, pass_builder_t& draws,
 bool point_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
                        const linalg::vec3& position, color_t color)
 {
-  draw_point_light_shape(
+  return draw_point_light_shape(
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
-  return true;
 }
 
 bool spot_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
@@ -395,6 +360,30 @@ bool directional_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
                              const linalg::vec3& position, color_t color)
 {
   draw_directional_light_shape(
+      draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
+  return true;
+}
+
+bool point_light_reach_gizmo(const entities::Entity* e, pass_builder_t& draws,
+                             const linalg::vec3& position, color_t color)
+{
+  draw_point_light_reach(
+      draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
+  return true;
+}
+
+bool spot_light_reach_gizmo(const entities::Entity* e, pass_builder_t& draws,
+                            const linalg::vec3& position, color_t color)
+{
+  draw_spot_light_reach(
+      draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
+  return true;
+}
+
+bool directional_light_reach_gizmo(const entities::Entity* e, pass_builder_t& draws,
+                                   const linalg::vec3& position, color_t color)
+{
+  draw_directional_light_reach(
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
   return true;
 }
@@ -501,17 +490,23 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
     case entities::entity_type::Point_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
-              .draw_shape   = &point_light_gizmo};
+              .draw_shape   = &point_light_gizmo,
+              .draw_reach   = &point_light_reach_gizmo,
+              .icon         = &POINT_LIGHT_ICON};
 
     case entities::entity_type::Spot_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
-              .draw_shape   = &spot_light_gizmo};
+              .draw_shape   = &spot_light_gizmo,
+              .draw_reach   = &spot_light_reach_gizmo,
+              .icon         = &SPOT_LIGHT_ICON};
 
     case entities::entity_type::Directional_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
-              .draw_shape   = &directional_light_gizmo};
+              .draw_shape   = &directional_light_gizmo,
+              .draw_reach   = &directional_light_reach_gizmo,
+              .icon         = &DIRECTIONAL_LIGHT_ICON};
 
     case entities::entity_type::Invalid:
       break;
@@ -525,6 +520,12 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
 // ===================================================================
 // The drivers: each context's fallback ladder, written once
 // ===================================================================
+
+entity_icon_t get_entity_icon(const entities::Entity* e)
+{
+  const entity_editor_traits_t traits = editor_traits_for(e);
+  return {.shape = traits.icon, .fallback_color = traits.color};
+}
 
 linalg::vec3 get_placement_half_extents(const entities::Entity* e)
 {
@@ -541,6 +542,11 @@ bool draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
                        const linalg::vec3& origin)
 {
   const entity_editor_traits_t traits = editor_traits_for(e);
+  // Placing IS the moment the reach is the question -- a spot light is aimed by
+  // where its cone lands, and finding that out after the click is a placement
+  // you then have to undo.
+  if (traits.draw_reach)
+    traits.draw_reach(e, draws, origin, traits.color);
   if (!traits.draw_shape || !traits.shape_for_ghost)
     return false;
   return traits.draw_shape(e, draws, origin, traits.color);
@@ -622,6 +628,14 @@ void draw_selection_highlight(const entities::Entity* e,
   // restore, and one getting it wrong was invisible.
   constexpr float highlight_bias = -200.0f;
 
+  // 0. The reach diagram, ABOVE the ladder rather than as a rung of it: it is
+  // an addition to whatever draws the object, not one of the alternatives. This
+  // is the only context that shows it besides the placement ghost, which is the
+  // whole reason it is drawn here and not in draw_entity_in_editor.
+  const entity_editor_traits_t traits = editor_traits_for(e);
+  if (traits.draw_reach)
+    traits.draw_reach(e, draws, e->position, color);
+
   // 1. Try mesh wireframe from render component
   if (try_draw_mesh_selection_wireframe(e, draws, color))
     return;
@@ -631,7 +645,6 @@ void draw_selection_highlight(const entities::Entity* e,
   // information. It stopped being fair once the gizmo IS the facing: the AABB
   // fallback dropped the orientation at exactly the moment you had selected the
   // thing in order to rotate it.
-  const entity_editor_traits_t traits = editor_traits_for(e);
   if (traits.draw_shape && traits.shape_for_selection &&
       traits.draw_shape(e, draws, e->position, color))
     return;

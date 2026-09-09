@@ -3,21 +3,6 @@ entity
   "classname" "worldspawn"
   "name" "other.source"
 }
-connections
-{
-  connection
-  {
-    "sender" "3"
-    "signal" "Touched"
-    "target_kind" "Activator"
-    "action" "Teleport"
-    override
-    {
-      "destination" "2"
-      "keep_velocity" "false"
-    }
-  }
-}
 brush
 {
   "_uid" "1"
@@ -166,7 +151,6 @@ entity
   "_uid" "2"
   "position" "0 -384 0"
   "orientation" "0 0 0 1"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }
@@ -176,10 +160,13 @@ entity
   "_uid" "3"
   "position" "-502.74054 -800 -291.12976"
   "orientation" "0 0 0 1"
-  "name" ""
-  "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "1930.1438 64 2417.3303"
+  "action" "Warp_To_Spawn"
+  "fire_mode" "On_Enter"
+  "param_target_name" ""
+  "param_string" ""
+  "param_float" "0"
 }
 entity
 {
@@ -187,7 +174,6 @@ entity
   "_uid" "7"
   "position" "-1024 0 -1024"
   "orientation" "0 0 0 1"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }
@@ -197,7 +183,6 @@ entity
   "_uid" "8"
   "position" "-1024 0 -640"
   "orientation" "0 0 0 1"
-  "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }
