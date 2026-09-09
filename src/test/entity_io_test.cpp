@@ -28,6 +28,7 @@
 #include "server/server_context.hpp"
 
 #include "shared/game_session.hpp"
+#include "shared/lighting.hpp"
 #include "shared/map.hpp"
 
 #include <cstdio>
@@ -760,6 +761,53 @@ void test_a_damageable_emits_died_and_health_changed()
 
 } // namespace
 
+// --- 5. the switch is VISIBLE ----------------------------------------------
+//
+// The end of the seam, and the half a queue test cannot see: an Enable that
+// changes a bool nothing reads is a connection that does nothing. So this walks
+// the wiring all the way to the frame array the shader is handed, through the
+// one gather every draw path uses (entity_io_def.md ss11 step 6).
+
+void test_a_switched_light_leaves_the_frame()
+{
+  std::printf("connections: the switch reaches the frame\n");
+
+  wired_map_t wired = make_wired_map();
+  wired.map.connections.push_back(touched_enables_the_light(wired));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  // Analytic, or a Baked light is deliberately absent from the tail whatever
+  // its switch says and this would pass for the wrong reason.
+  entities::Point_Light_Entity* lamp =
+      context.world.session.entity_system.get<entities::Point_Light_Entity>(wired.light);
+  lamp->light.mode = entities::Light_Mode::Dynamic;
+
+  const shared::lightmap_t unbaked;
+
+  const auto tail_entries_for_the_lamp = [&]() -> size_t
+  {
+    shared::frame_lights_t frame;
+    shared::begin_frame_lights(frame, unbaked);
+    shared::add_frame_light(frame, unbaked, wired.light, *lamp);
+    return frame.entries.size();
+  };
+
+  check(!shared::light_is_switched_on(*lamp), "the light starts switched off");
+  check(shared::try_light_of(*lamp).has_value(),
+        "and is still a light -- try_light_of does not filter by the switch, so "
+        "the inspector can describe one that is off");
+  check(tail_entries_for_the_lamp() == 0, "a switched-off light is in no frame");
+
+  emit_touched_from(context, wired.trigger, 0);
+  drain_pending_actions(context);
+
+  check(shared::light_is_switched_on(*lamp), "the connection switched it on");
+  check(tail_entries_for_the_lamp() == 1, "and now it is in the frame");
+}
+
 int main()
 {
   std::printf("--- entity I/O: connections, the load check and the queue ---\n");
@@ -777,6 +825,7 @@ int main()
   test_the_toucher_is_the_activator();
   test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();
+  test_a_switched_light_leaves_the_frame();
 
   if (failure_count > 0)
   {

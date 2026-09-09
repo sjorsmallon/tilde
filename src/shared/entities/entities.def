@@ -158,7 +158,10 @@ Render :: component {
 
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 Light :: component {
-    color:     v3 = {1, 1, 1}       @Editable
+    // Networked because Colorable's Set_Color writes it at runtime, and a light
+    // is map-placed: the client holds one it loaded itself, so the wire is the
+    // only way the change reaches it (entity_io_def.md ss11 step 6).
+    color:     v3 = {1, 1, 1}       @Fully_Serializable
 
     // irradiance it delivers at one meter.
     intensity: f32 = 1.0            @Editable

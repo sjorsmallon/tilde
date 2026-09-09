@@ -657,6 +657,67 @@ int main()
     std::cout << "    -> Success!" << std::endl;
   }
 
+  {
+    std::cout << "  [Subtest] A switched light rides the wire..." << std::endl;
+
+    // Map-placed like a crate, and replicated for the same reason: Switchable
+    // and Colorable write two fields at runtime and the client holds a light it
+    // loaded itself, so the wire is the only route the change has.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Point_Light_Entity& lamp = server_frame.point_lights[80];
+    lamp.entity_id                     = 80;
+    lamp.position                      = {0.f, 128.f, 0.f};
+    lamp.switch_state.value            = true;
+    lamp.light.color                   = {1.f, 1.f, 1.f};
+    lamp.range                         = 512.f;
+
+    entities::Spot_Light_Entity& beam = server_frame.spot_lights[81];
+    beam.entity_id                    = 81;
+    beam.switch_state.value           = true;
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+    assert(client_frame.point_lights.at(80).switch_state.value);
+    assert(client_frame.spot_lights.at(81).switch_state.value);
+
+    // `range` is @Editable and NOT @Networked, so the wire says nothing about
+    // it -- the client's own map load is what carries it, and the decode is
+    // left holding the .def default. Compared against a default-constructed
+    // light rather than a literal, so tuning that default does not break this;
+    // what is pinned is that networking a light did not quietly turn into
+    // networking all of it.
+    assert(client_frame.point_lights.at(80).range == entities::Point_Light_Entity{}.range);
+    assert(lamp.range != entities::Point_Light_Entity{}.range &&
+           "the sender must differ from the default, or this asserts nothing");
+
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.tick                            = 2;
+    server_frame.point_lights[80].switch_state.value = false;
+    server_frame.point_lights[80].light.color        = {1.f, 0.f, 0.f};
+
+    network::snapshot_frame_t after_switch;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked, after_switch, &record_count);
+
+    assert(record_count == 1);
+    assert(!after_switch.point_lights.at(80).switch_state.value);
+    assert(after_switch.point_lights.at(80).light.color.x == 1.f);
+    assert(after_switch.point_lights.at(80).light.color.y == 0.f);
+    assert(after_switch.spot_lights.at(81).switch_state.value);
+
+    network::snapshot_frame_t acked_after_switch = after_switch;
+    server_frame.tick                            = 3;
+
+    network::snapshot_frame_t idle;
+    transmit_snapshot(server_frame, &acked_after_switch, idle, &record_count);
+    assert(record_count == 0);
+    assert(!idle.point_lights.at(80).switch_state.value);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
   std::cout << "[TEST] All Tests Passed." << std::endl;
   return 0;
 }

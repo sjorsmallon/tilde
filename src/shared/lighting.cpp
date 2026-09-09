@@ -66,6 +66,12 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
   return {};
 }
 
+bool light_is_switched_on(const entities::Entity &entity)
+{
+  const entities::Enabled* state = entities::get_component<entities::Enabled>(&entity);
+  return state == nullptr || state->value;
+}
+
 shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t resolution)
 {
   const float cos_outer  = std::clamp(light.cos_outer, std::cos(linalg::to_radians(85.f)),
@@ -346,6 +352,7 @@ void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
 {
   const std::optional<scene_light_t> gathered = try_light_of(entity);
   if (!gathered) return;
+  if (!light_is_switched_on(entity)) return;
 
   scene_light_t light = *gathered;
   light.uid           = uid;

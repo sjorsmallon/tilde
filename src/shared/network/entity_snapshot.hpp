@@ -101,6 +101,12 @@ struct snapshot_frame_t
   // component are @Networked, so after the spawn record an untouched crate
   // costs nothing -- the geometry the client draws it with came from the map.
   std::unordered_map<shared::entity_uid_t, entities::Damageable_Entity>    damageables;
+  // Map-placed too, and here for the same reason: Switchable and Colorable write
+  // `switch_state` and `light.color` at runtime, and those are the only two
+  // fields on either that are @Networked. A light nobody switches costs one
+  // spawn record and then nothing.
+  std::unordered_map<shared::entity_uid_t, entities::Point_Light_Entity>  point_lights;
+  std::unordered_map<shared::entity_uid_t, entities::Spot_Light_Entity>   spot_lights;
 
   void clear()
   {
@@ -110,6 +116,8 @@ struct snapshot_frame_t
     rockets.clear();
     physics_bodies.clear();
     damageables.clear();
+    point_lights.clear();
+    spot_lights.clear();
   }
 };
 

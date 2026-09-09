@@ -254,8 +254,17 @@ struct point_shadow_faces_t
                                                       uint32_t             resolution);
 
 // The ONE fold from the three authoring light types; empty means "not a light".
-// It does NOT filter by mode -- see scene_light_t::mode.
+// It does NOT filter by mode -- see scene_light_t::mode -- and it does NOT
+// filter by the switch either, because the editor's inspector wants to describe
+// a light that is currently off rather than say nothing about it.
 [[nodiscard]] std::optional<scene_light_t> try_light_of(const entities::Entity &entity);
+
+// Whether Switchable has this light on. A type with no Enabled component (a
+// directional light) is always on -- there is no switch to be off. The two
+// GATHERS honour it, the fold above does not: a light switched off contributes
+// nothing to a frame and nothing to a bake, which is the whole visible effect of
+// Disable (entity_io_def.md ss11 step 6).
+[[nodiscard]] bool light_is_switched_on(const entities::Entity &entity);
 
 // A frame's light array, LAID OUT the way scene.glsl reads it. Two regions, and
 // the split is who evaluates what:

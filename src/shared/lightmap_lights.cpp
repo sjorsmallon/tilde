@@ -38,6 +38,11 @@ std::vector<baked_light_t> collect_lights(const map_t &map)
     const std::optional<scene_light_t> light = try_light_of(*entry.entity);
     if (!light) continue;
 
+    // A light the author left switched off is off for the bake too: baking it
+    // and then having the runtime gather skip it would leave every chart naming
+    // a slot whose radiance is permanently zero.
+    if (!light_is_switched_on(*entry.entity)) continue;
+
     if (!light_is_baked(light->mode)) continue;
 
     lights.push_back({entry.uid, *light});

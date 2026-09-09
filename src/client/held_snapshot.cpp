@@ -139,6 +139,28 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
     local->render.visible = damageable.render.visible;
   }
 
+  // Lights are the same case for the same reason -- map-placed, holding two
+  // fields a connection can write -- so they take the same shape, including the
+  // loud report on a uid this client's map does not have.
+  const auto apply_light = [&context](const auto& replicated, const char* kind)
+  {
+    using Light_T = std::remove_cvref_t<decltype(replicated)>;
+    Light_T* local = context.world.session.entity_system.get<Light_T>(replicated.entity_id);
+    if (local == nullptr)
+    {
+      log_error("snapshot names {} light uid {}, which this client's map does not have -- the "
+                "two sides disagree about what is in the level",
+                kind, replicated.entity_id);
+      return;
+    }
+
+    local->switch_state.value = replicated.switch_state.value;
+    local->light.color        = replicated.light.color;
+  };
+
+  for (const auto& [uid, light] : decoded.frame.point_lights) apply_light(light, "point");
+  for (const auto& [uid, light] : decoded.frame.spot_lights) apply_light(light, "spot");
+
   // --- 2. Connection facts derived from step 1 ---
   //@NOTE(SJM): this is not a particularly elegant way to do spectating. should it be a different team?
   context.connection.spectating =

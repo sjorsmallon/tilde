@@ -485,6 +485,13 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
   const shared::lightmap_t& lightmap = ctx.map->lightmap;
   const ImVec4 warning_color{1.f, 0.55f, 0.2f, 1.f};
 
+  // Said out loud rather than by drawing nothing: a Disable through a connection
+  // takes this light out of every frame and out of the bake, and a panel that
+  // simply went blank would read as a broken light rather than a switched one.
+  if (!shared::light_is_switched_on(entity))
+    ImGui::TextColored(warning_color,
+                       "Switched OFF: contributes to no frame and to no bake until Enable.");
+
   // What the light DELIVERS, in the numbers every shader sums (radiance times
   // the arrival's attenuation), so an intensity is judged against what it does
   // and not against another light's knob: a point light's intensity is its

@@ -247,7 +247,7 @@ constexpr field_info_t Light_FIELDS[] = {
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Light, color),
    .size_in_bytes = (uint32_t)sizeof(Light::color),
-   .flags = 2u,
+   .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -2063,6 +2063,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x37af1bdau;
+const uint32_t SCHEMA_HASH = 0xc61f6e9fu;
 
 } // namespace entities

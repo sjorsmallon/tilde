@@ -128,7 +128,11 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
       count_records(current.physics_bodies,
                     baseline ? &baseline->physics_bodies : nullptr) +
       count_records(current.damageables,
-                    baseline ? &baseline->damageables : nullptr);
+                    baseline ? &baseline->damageables : nullptr) +
+      count_records(current.point_lights,
+                    baseline ? &baseline->point_lights : nullptr) +
+      count_records(current.spot_lights,
+                    baseline ? &baseline->spot_lights : nullptr);
 
   write_var_uint(writer, record_count);
 
@@ -139,6 +143,10 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
                 baseline ? &baseline->physics_bodies : nullptr);
   write_records(writer, current.damageables,
                 baseline ? &baseline->damageables : nullptr);
+  write_records(writer, current.point_lights,
+                baseline ? &baseline->point_lights : nullptr);
+  write_records(writer, current.spot_lights,
+                baseline ? &baseline->spot_lights : nullptr);
 }
 
 bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
@@ -153,6 +161,8 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.rockets        = baseline->rockets;
     out_frame.physics_bodies = baseline->physics_bodies;
     out_frame.damageables    = baseline->damageables;
+    out_frame.point_lights   = baseline->point_lights;
+    out_frame.spot_lights    = baseline->spot_lights;
   }
   else
   {
@@ -161,6 +171,8 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.rockets.clear();
     out_frame.physics_bodies.clear();
     out_frame.damageables.clear();
+    out_frame.point_lights.clear();
+    out_frame.spot_lights.clear();
   }
 
   const uint32_t record_count = read_var_uint(reader);
@@ -201,6 +213,16 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
           return false;
         continue;
 
+      case entities::entity_type::Point_Light_Entity:
+        if (!apply_record(reader, out_frame.point_lights, uid, removed))
+          return false;
+        continue;
+
+      case entities::entity_type::Spot_Light_Entity:
+        if (!apply_record(reader, out_frame.spot_lights, uid, removed))
+          return false;
+        continue;
+
       // Everything below is a real entity type that is simply never
       // replicated: map-placed entities the client already has from its own
       // map load. Listed rather than folded into `default` so that adding a
@@ -214,8 +236,6 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       case entities::entity_type::Trigger_Volume_Entity:
       case entities::entity_type::Reflection_Volume_Entity:
       case entities::entity_type::Game_Rules_Entity:
-      case entities::entity_type::Point_Light_Entity:
-      case entities::entity_type::Spot_Light_Entity:
       case entities::entity_type::Directional_Light_Entity:
         break;
     }

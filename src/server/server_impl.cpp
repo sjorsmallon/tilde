@@ -2099,6 +2099,17 @@ bool Tick()
        context.world.session.entity_system.entities_of<entities::Damageable_Entity>())
     frame.damageables[damageable.entity_id] = damageable;
 
+  // Same reason: Switchable and Colorable write these at runtime, and the client
+  // holds a light it loaded from the map, so the wire is the only route the
+  // change has (entity_io_def.md ss11 step 6).
+  for (const entities::Point_Light_Entity &light :
+       context.world.session.entity_system.entities_of<entities::Point_Light_Entity>())
+    frame.point_lights[light.entity_id] = light;
+
+  for (const entities::Spot_Light_Entity &light :
+       context.world.session.entity_system.entities_of<entities::Spot_Light_Entity>())
+    frame.spot_lights[light.entity_id] = light;
+
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_client_count; ++slot)
   {
