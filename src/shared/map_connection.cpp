@@ -103,10 +103,23 @@ std::vector<connection_refusal_t> validate_map_connections(const map_t& map)
       continue;
     }
 
-    // Whether every type that could be the receiver accepts the action. The
-    // three target kinds differ only in which set of types that is -- an
-    // Activator resolves to a different entity every time it fires, so the
-    // check is over EVERY type the signal's `by` list admits.
+    // Whether the receiver accepts the action. A Uid and a Self name ONE type,
+    // so those two are exact. An Activator does not: it resolves to a different
+    // entity every time it fires, and the `by` list is every type that could be
+    // it.
+    //
+    // SOME of them must accept, not all of them, and that asymmetry is the
+    // decision. All-accept sounds stronger and is unusable: `Touchable` is
+    // truthfully activated by a player OR a physics body, a crate is not
+    // Mortal and never will be, so "kill whoever touched this" -- the most
+    // ordinary trigger in any level -- could not be spelled. Worse, it made a
+    // `by` list unwidenable: adding a type would refuse every !activator row in
+    // every map already on disk.
+    //
+    // What some-accept gives up is that a row is no longer proof that every
+    // activation does something. The drain absorbs the rest -- an activator
+    // that does not accept is a logged miss, not a fatal -- which is why the
+    // queue record remembers that it came from an Activator row.
     const char* action_name = entities::to_string(connection.data.tag);
 
     switch (connection.target_kind)
@@ -146,22 +159,23 @@ std::vector<connection_refusal_t> validate_map_connections(const map_t& map)
         continue;
       }
 
-      bool every_activator_accepts = true;
+      bool any_activator_accepts = false;
       for (uint32_t type = 0; type < entities::ENTITY_TYPE_COUNT; ++type)
       {
         if ((activators & (1ull << type)) == 0)
           continue;
-        if (entities::type_accepts_action((entities::entity_type)type, connection.data.tag))
-          continue;
-
-        refuse(std::format("{} can be activated by {}, which does not accept {}",
-                           entities::to_string(connection.signal),
-                           entities::entity_info((entities::entity_type)type).classname,
-                           action_name));
-        every_activator_accepts = false;
+        any_activator_accepts =
+            any_activator_accepts ||
+            entities::type_accepts_action((entities::entity_type)type, connection.data.tag);
       }
-      if (!every_activator_accepts)
+
+      if (!any_activator_accepts)
+      {
+        refuse(std::format("nothing that can activate {} accepts {}, so this row could never do "
+                           "anything",
+                           entities::to_string(connection.signal), action_name));
         continue;
+      }
       break;
     }
     }

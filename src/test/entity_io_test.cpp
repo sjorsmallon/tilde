@@ -21,7 +21,9 @@
 //      map's, and a target destroyed during the delay is dropped rather than
 //      fatal.
 
+#include "server/damage.hpp"
 #include "server/entity_io_queue.hpp"
+#include "server/systems/trigger_system.hpp"
 #include "server/server_api.hpp"
 #include "server/server_context.hpp"
 
@@ -222,10 +224,9 @@ void test_the_load_check_refuses_what_cannot_run()
   }
 
   {
-    // THE ONE WORTH THE MOST. Touched is declared `by Player_Entity,
-    // Physics_Body_Entity`, and neither is Colorable -- so this is refused
-    // before anything can walk into the trigger, which is the whole point of
-    // declaring `by` at all.
+    // NOTHING that can touch is Colorable, so this row could never do anything
+    // whoever walks in -- which is the one activator case the load check can
+    // still settle, and the whole point of declaring `by` at all.
     wired_map_t wired = make_wired_map();
     shared::connection_t row = touched_enables_the_light(wired);
     row.target_kind          = shared::connection_target_t::Activator;
@@ -233,7 +234,23 @@ void test_the_load_check_refuses_what_cannot_run()
     row.has_override         = true;
     wired.map.connections.push_back(row);
     check(refused(wired.map, 0),
-          "an activator target is refused when a type in the `by` set does not accept the action");
+          "an activator target is refused when NO type in the `by` set accepts the action");
+  }
+
+  {
+    // SOME, not every, and this is the row all-accept could not spell. Touched
+    // is truthfully activated by a player or a physics body; a player is Mortal
+    // and a crate is not, and "kill whoever touched this" is the most ordinary
+    // trigger in any level. Under all-accept the crate refused the row for the
+    // player; the miss is the drain's business now.
+    wired_map_t wired = make_wired_map();
+    shared::connection_t row = touched_enables_the_light(wired);
+    row.target_kind          = shared::connection_target_t::Activator;
+    row.data.tag             = entities::entity_action::Kill;
+    row.has_override         = true;
+    wired.map.connections.push_back(row);
+    check(!refused(wired.map, 0),
+          "an activator target is accepted when SOME type in the `by` set accepts the action");
   }
 
   {
@@ -469,6 +486,278 @@ void test_a_target_that_dies_during_the_delay_is_dropped()
   check(context.world.pending_actions.empty(), "the record is gone rather than retried forever");
 }
 
+
+// --- 5. the trigger system: where a Touched comes from ----------------------
+//
+// The pin for ss11 step 4. What this replaced dispatched a Trigger_Action enum
+// straight at the toucher; the volume now says only WHEN, and the two things
+// worth pinning are that WHEN is an EDGE and that a disabled volume has no
+// overlaps rather than merely no new ones.
+
+shared::entity_uid_t place_player_in(server_context_t& context, const vec3f& position)
+{
+  const shared::entity_uid_t uid =
+      context.world.session.entity_system.spawn<entities::Player_Entity>();
+  context.world.session.entity_system.get<entities::Player_Entity>(uid)->position = position;
+  return uid;
+}
+
+void move_player(server_context_t& context, shared::entity_uid_t uid, const vec3f& position)
+{
+  context.world.session.entity_system.get<entities::Player_Entity>(uid)->position = position;
+}
+
+void test_the_trigger_system_emits_edges()
+{
+  std::printf("connections: a trigger emits Touched on entry and Left on exit\n");
+
+  wired_map_t wired = make_wired_map();
+
+  shared::connection_t on = touched_enables_the_light(wired);
+  wired.map.connections.push_back(on);
+
+  shared::connection_t off = touched_enables_the_light(wired);
+  off.signal   = entities::entity_signal::Left;
+  off.data.tag = entities::entity_action::Disable;
+  wired.map.connections.push_back(off);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  // The trigger is at the origin with the default 64-unit half extents, so a
+  // player standing there overlaps and one 500 units away does not.
+  const shared::entity_uid_t player = place_player_in(context, {0.f, 0.f, 0.f});
+
+  update_triggers(context);
+  check(context.world.pending_actions.size() == 1, "walking in emits exactly one Touched");
+  drain_pending_actions(context);
+  check(light_in(context, wired.light)->switch_state.value, "...which turned the light on");
+
+  // The EDGE, which is the whole reason fire_mode is gone: standing still
+  // inside a volume is not a second touch.
+  ++context.tick_number;
+  update_triggers(context);
+  check(context.world.pending_actions.empty(), "standing still emits nothing");
+
+  ++context.tick_number;
+  move_player(context, player, {500.f, 0.f, 0.f});
+  update_triggers(context);
+  check(context.world.pending_actions.size() == 1, "walking out emits exactly one Left");
+  drain_pending_actions(context);
+  check(!light_in(context, wired.light)->switch_state.value, "...which turned it off again");
+
+  ++context.tick_number;
+  update_triggers(context);
+  check(context.world.pending_actions.empty(), "and staying out emits nothing");
+}
+
+void test_a_disabled_trigger_releases_whoever_is_inside()
+{
+  std::printf("connections: switching a trigger off is a Left, not a freeze\n");
+
+  wired_map_t wired = make_wired_map();
+  shared::connection_t off = touched_enables_the_light(wired);
+  off.signal   = entities::entity_signal::Left;
+  off.data.tag = entities::entity_action::Disable;
+  wired.map.connections.push_back(off);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  place_player_in(context, {0.f, 0.f, 0.f});
+  update_triggers(context);
+  context.world.pending_actions.clear();
+
+  // A Touched with no Left is a door that never closes, which is worse than
+  // one that closes early -- so the volume going dark releases the toucher.
+  ++context.tick_number;
+  context.world.session.entity_system.get<entities::Trigger_Volume_Entity>(wired.trigger)
+      ->switch_state.value = false;
+  update_triggers(context);
+  check(context.world.pending_actions.size() == 1,
+        "disabling a volume somebody stands in emits their Left");
+}
+
+// The activator is resolved at EMIT time, and for a trigger that is whoever
+// walked in -- which is what makes every converted Trigger_Action row work.
+// The other half of some-accept: the check let the row through because a PLAYER
+// accepts Kill, and a crate is what actually rolled in. That has to be a logged
+// miss rather than the fatal_error a Uid target's null dispatch cell earns --
+// under all-accept this row could not exist, so nothing ever reached here.
+void test_an_activator_that_does_not_accept_is_a_logged_miss()
+{
+  std::printf("connections: an activator that does not accept the action is dropped, not fatal\n");
+
+  wired_map_t wired = make_wired_map();
+  shared::connection_t row = touched_enables_the_light(wired);
+  row.target_kind          = shared::connection_target_t::Activator;
+  row.data.tag             = entities::entity_action::Kill;
+  row.has_override         = true;
+  wired.map.connections.push_back(row);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  const shared::entity_uid_t crate =
+      context.world.session.entity_system.spawn<entities::Physics_Body_Entity>();
+  context.world.session.entity_system.get<entities::Physics_Body_Entity>(crate)->position = {
+      0.f, 0.f, 0.f};
+
+  update_triggers(context);
+  check(context.world.pending_actions.size() == 1 &&
+            context.world.pending_actions[0].target == crate,
+        "a physics body touching a volume emits, and the record names the crate");
+  check(context.world.pending_actions[0].target_resolved_from_activator,
+        "the record remembers it came from an Activator row");
+
+  // Reaching this without a fatal_error IS the assertion.
+  drain_pending_actions(context);
+  check(context.world.pending_actions.empty(),
+        "the drain consumed it and did not die on a crate that cannot be killed");
+}
+
+void test_the_toucher_is_the_activator()
+{
+  std::printf("connections: the toucher is the activator\n");
+
+  wired_map_t wired = make_wired_map();
+  shared::connection_t row = touched_enables_the_light(wired);
+  row.target_kind          = shared::connection_target_t::Activator;
+  row.data.tag             = entities::entity_action::Set_Respawn_Point;
+  row.has_override         = true;
+  row.data.set_respawn_point.location = wired.trigger;
+  wired.map.connections.push_back(row);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  const shared::entity_uid_t player = place_player_in(context, {0.f, 0.f, 0.f});
+
+  update_triggers(context);
+  check(context.world.pending_actions.size() == 1 &&
+            context.world.pending_actions[0].target == player,
+        "the queued record names the player who walked in");
+
+  drain_pending_actions(context);
+  check(context.world.session.entity_system.get<entities::Player_Entity>(player)->checkpoint_uid ==
+            wired.trigger,
+        "and the handler wrote the volume the row named");
+}
+
+// --- 5. Died and Health_Changed, out of the damage choke point ---------------
+
+// A crate wired to a lamp, which is step 5's whole point: the second sender,
+// and the first that is not a volume.
+struct wired_damageable_t
+{
+  shared::map_t        map;
+  shared::entity_uid_t crate = 0;
+  shared::entity_uid_t light = 0;
+};
+
+wired_damageable_t make_wired_damageable()
+{
+  wired_damageable_t wired;
+
+  auto crate = std::make_shared<entities::Damageable_Entity>();
+  crate->name.set("target_dummy");
+  wired.crate = wired.map.add_entity(crate);
+
+  auto light = std::make_shared<entities::Point_Light_Entity>();
+  light->name.set("hall_lamp");
+  light->switch_state.value = false;
+  wired.light = wired.map.add_entity(light);
+
+  return wired;
+}
+
+shared::connection_t signal_to_the_light(const wired_damageable_t& wired,
+                                         entities::entity_signal signal,
+                                         entities::entity_action action)
+{
+  shared::connection_t connection;
+  connection.sender       = wired.crate;
+  connection.signal       = signal;
+  connection.target_kind  = shared::connection_target_t::Uid;
+  connection.target       = wired.light;
+  connection.data.tag     = action;
+  connection.has_override = true;
+  return connection;
+}
+
+pending_hit_t hit_on(shared::entity_uid_t victim, shared::entity_uid_t attacker, float amount)
+{
+  pending_hit_t hit;
+  hit.info.victim_uid   = victim;
+  hit.info.attacker_uid = attacker;
+  hit.info.amount       = amount;
+  return hit;
+}
+
+void test_a_damageable_emits_died_and_health_changed()
+{
+  std::printf("connections: a damageable announces its health and its death\n");
+
+  wired_damageable_t wired = make_wired_damageable();
+  wired.map.connections.push_back(signal_to_the_light(
+      wired, entities::entity_signal::Health_Changed, entities::entity_action::Toggle_Enabled));
+  wired.map.connections.push_back(signal_to_the_light(
+      wired, entities::entity_signal::Died, entities::entity_action::Enable));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+  context.world.rules.phase = shared::Round_Phase::Live;
+
+  const shared::entity_uid_t grazer =
+      context.world.session.entity_system.spawn<entities::Player_Entity>();
+  const shared::entity_uid_t finisher =
+      context.world.session.entity_system.spawn<entities::Player_Entity>();
+
+  const pending_hit_t graze = hit_on(wired.crate, grazer, 10.f);
+  inflict_damage_batch(context, Span<const pending_hit_t>{&graze, 1});
+
+  check(context.world.pending_actions.size() == 1 &&
+            context.world.pending_actions[0].data.tag == entities::entity_action::Toggle_Enabled,
+        "a survivable hit announces the new health and nothing else");
+  check(context.world.pending_actions.empty() ||
+            context.world.pending_actions[0].activator == grazer,
+        "and the activator is whoever landed it");
+  context.world.pending_actions.clear();
+
+  // Two hits, one tick, neither lethal alone. The sum kills, so Died fires
+  // ONCE and its killer is the larger contributor -- the same rule the player
+  // path credits a frag by.
+  const pending_hit_t lethal[2] = {hit_on(wired.crate, grazer, 30.f),
+                                   hit_on(wired.crate, finisher, 70.f)};
+  inflict_damage_batch(context, Span<const pending_hit_t>{lethal, 2});
+
+  uint32_t died_records = 0;
+  shared::entity_uid_t killer = shared::null_entity_uid;
+  for (const pending_action_t& record : context.world.pending_actions)
+    if (record.data.tag == entities::entity_action::Enable)
+    {
+      ++died_records;
+      killer = record.activator;
+    }
+
+  check(died_records == 1, "the crossing emits Died exactly once for the whole tick");
+  check(killer == finisher, "and names the largest single contributor as the killer");
+
+  const entities::Damageable_Entity* crate =
+      context.world.session.entity_system.get<entities::Damageable_Entity>(wired.crate);
+  check(crate != nullptr && crate->health.current_health <= 0 && !crate->render.visible,
+        "the crate is destroyed and hidden, as it was before it had wiring");
+
+  drain_pending_actions(context);
+  const entities::Point_Light_Entity* lamp = light_in(context, wired.light);
+  check(lamp != nullptr && lamp->switch_state.value, "and the lamp it was wired to came on");
+}
+
 } // namespace
 
 int main()
@@ -483,6 +772,11 @@ int main()
   test_emit_order_breaks_a_tie_within_one_tick();
   test_fire_once_spends_the_sessions_copy();
   test_a_target_that_dies_during_the_delay_is_dropped();
+  test_the_trigger_system_emits_edges();
+  test_a_disabled_trigger_releases_whoever_is_inside();
+  test_the_toucher_is_the_activator();
+  test_an_activator_that_does_not_accept_is_a_logged_miss();
+  test_a_damageable_emits_died_and_health_changed();
 
   if (failure_count > 0)
   {

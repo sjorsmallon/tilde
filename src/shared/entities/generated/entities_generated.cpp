@@ -56,23 +56,6 @@ constexpr const char* Shape_Kind_VALUE_NAMES[] = {
   "Box",
 };
 
-constexpr const char* Trigger_Action_VALUE_NAMES[] = {
-  "Kill",
-  "Set_Health",
-  "Print_Message",
-  "Warp_To_Spawn",
-  "Complete_Level",
-  "Checkpoint",
-  "Grant_Weapon",
-  "Set_Velocity",
-  "Give_Impulse",
-};
-
-constexpr const char* Fire_Mode_VALUE_NAMES[] = {
-  "On_Enter",
-  "Every_Tick",
-};
-
 constexpr const char* Aim_Pose_VALUE_NAMES[] = {
   "Forward",
   "Upward",
@@ -101,8 +84,6 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 2}},
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 2}},
-  {"Trigger_Action", {Trigger_Action_VALUE_NAMES, 9}},
-  {"Fire_Mode", {Fire_Mode_VALUE_NAMES, 2}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
@@ -288,7 +269,7 @@ constexpr field_info_t Light_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[10]},
+   .enum_info = &ENUM_INFOS[8]},
   {.name = "source_radius",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Light, source_radius),
@@ -876,7 +857,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[11]},
+   .enum_info = &ENUM_INFOS[9]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Weapon_Entity, render),
@@ -1218,6 +1199,45 @@ constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Game_Rules_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Game_Rules_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Game_Rules_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Game_Rules_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Game_Rules_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Game_Rules_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Game_Rules_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Game_Rules_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Game_Rules_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Damageable_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_U32,
@@ -1281,7 +1301,7 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[11]},
+   .enum_info = &ENUM_INFOS[9]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Damageable_Entity, render),
@@ -1345,51 +1365,6 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::volume),
    .flags = 0u,
    .component_id = 0,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "action",
-   .type = FIELD_TYPE_ENUM,
-   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, action),
-   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::action),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[7]},
-  {.name = "fire_mode",
-   .type = FIELD_TYPE_ENUM,
-   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, fire_mode),
-   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::fire_mode),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[8]},
-  {.name = "param_target_name",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, param_target_name),
-   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::param_target_name),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 64,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "param_string",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, param_string),
-   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::param_string),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 128,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "param_float",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, param_float),
-   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::param_float),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -1704,6 +1679,7 @@ Entity* construct_Player_Entity(void* memory) { return new (memory) Player_Entit
 Entity* construct_Weapon_Entity(void* memory) { return new (memory) Weapon_Entity(); }
 Entity* construct_Rocket_Entity(void* memory) { return new (memory) Rocket_Entity(); }
 Entity* construct_Particle_Emitter_Entity(void* memory) { return new (memory) Particle_Emitter_Entity(); }
+Entity* construct_Game_Rules_Entity(void* memory) { return new (memory) Game_Rules_Entity(); }
 Entity* construct_Damageable_Entity(void* memory) { return new (memory) Damageable_Entity(); }
 Entity* construct_Trigger_Volume_Entity(void* memory) { return new (memory) Trigger_Volume_Entity(); }
 Entity* construct_Point_Light_Entity(void* memory) { return new (memory) Point_Light_Entity(); }
@@ -1718,6 +1694,7 @@ Entity* as_base_Player_Entity(void* memory) { return static_cast<Entity*>((Playe
 Entity* as_base_Weapon_Entity(void* memory) { return static_cast<Entity*>((Weapon_Entity*)memory); }
 Entity* as_base_Rocket_Entity(void* memory) { return static_cast<Entity*>((Rocket_Entity*)memory); }
 Entity* as_base_Particle_Emitter_Entity(void* memory) { return static_cast<Entity*>((Particle_Emitter_Entity*)memory); }
+Entity* as_base_Game_Rules_Entity(void* memory) { return static_cast<Entity*>((Game_Rules_Entity*)memory); }
 Entity* as_base_Damageable_Entity(void* memory) { return static_cast<Entity*>((Damageable_Entity*)memory); }
 Entity* as_base_Trigger_Volume_Entity(void* memory) { return static_cast<Entity*>((Trigger_Volume_Entity*)memory); }
 Entity* as_base_Point_Light_Entity(void* memory) { return static_cast<Entity*>((Point_Light_Entity*)memory); }
@@ -1734,8 +1711,9 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 10}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 16u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 12}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 16u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 24}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
+  {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 4}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 0u, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 20u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
-  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 11}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
+  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 34u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 9}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 34u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
   {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 32u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
@@ -1751,6 +1729,7 @@ constexpr int32_t COMPONENT_OFFSETS[][8] = {
   {-1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1}, // Weapon_Entity
   {-1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1}, // Rocket_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1}, // Game_Rules_Entity
   {-1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
   {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
   {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
@@ -1759,13 +1738,14 @@ constexpr int32_t COMPONENT_OFFSETS[][8] = {
   {-1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 11;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 12;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Reflection_Volume_Entity,
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
   entity_type::Weapon_Entity,
   entity_type::Particle_Emitter_Entity,
+  entity_type::Game_Rules_Entity,
   entity_type::Damageable_Entity,
   entity_type::Trigger_Volume_Entity,
   entity_type::Point_Light_Entity,
@@ -1916,56 +1896,6 @@ template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_vi
   return std::nullopt;
 }
 
-const char* to_string(Trigger_Action value)
-{
-  switch (value)
-  {
-    case Trigger_Action::Kill: return "Kill";
-    case Trigger_Action::Set_Health: return "Set_Health";
-    case Trigger_Action::Print_Message: return "Print_Message";
-    case Trigger_Action::Warp_To_Spawn: return "Warp_To_Spawn";
-    case Trigger_Action::Complete_Level: return "Complete_Level";
-    case Trigger_Action::Checkpoint: return "Checkpoint";
-    case Trigger_Action::Grant_Weapon: return "Grant_Weapon";
-    case Trigger_Action::Set_Velocity: return "Set_Velocity";
-    case Trigger_Action::Give_Impulse: return "Give_Impulse";
-  }
-  assert(false && "invalid Trigger_Action");
-  return "";
-}
-
-template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::string_view text)
-{
-  if (text == "Kill") return Trigger_Action::Kill;
-  if (text == "Set_Health") return Trigger_Action::Set_Health;
-  if (text == "Print_Message") return Trigger_Action::Print_Message;
-  if (text == "Warp_To_Spawn") return Trigger_Action::Warp_To_Spawn;
-  if (text == "Complete_Level") return Trigger_Action::Complete_Level;
-  if (text == "Checkpoint") return Trigger_Action::Checkpoint;
-  if (text == "Grant_Weapon") return Trigger_Action::Grant_Weapon;
-  if (text == "Set_Velocity") return Trigger_Action::Set_Velocity;
-  if (text == "Give_Impulse") return Trigger_Action::Give_Impulse;
-  return std::nullopt;
-}
-
-const char* to_string(Fire_Mode value)
-{
-  switch (value)
-  {
-    case Fire_Mode::On_Enter: return "On_Enter";
-    case Fire_Mode::Every_Tick: return "Every_Tick";
-  }
-  assert(false && "invalid Fire_Mode");
-  return "";
-}
-
-template <> std::optional<Fire_Mode> try_from_string<Fire_Mode>(std::string_view text)
-{
-  if (text == "On_Enter") return Fire_Mode::On_Enter;
-  if (text == "Every_Tick") return Fire_Mode::Every_Tick;
-  return std::nullopt;
-}
-
 const char* to_string(Aim_Pose value)
 {
   switch (value)
@@ -2082,6 +2012,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Weapon_Entity: return new Weapon_Entity();
     case entity_type::Rocket_Entity: return new Rocket_Entity();
     case entity_type::Particle_Emitter_Entity: return new Particle_Emitter_Entity();
+    case entity_type::Game_Rules_Entity: return new Game_Rules_Entity();
     case entity_type::Damageable_Entity: return new Damageable_Entity();
     case entity_type::Trigger_Volume_Entity: return new Trigger_Volume_Entity();
     case entity_type::Point_Light_Entity: return new Point_Light_Entity();
@@ -2116,6 +2047,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Weapon_Entity: delete static_cast<Weapon_Entity*>(entity); return;
     case entity_type::Rocket_Entity: delete static_cast<Rocket_Entity*>(entity); return;
     case entity_type::Particle_Emitter_Entity: delete static_cast<Particle_Emitter_Entity*>(entity); return;
+    case entity_type::Game_Rules_Entity: delete static_cast<Game_Rules_Entity*>(entity); return;
     case entity_type::Damageable_Entity: delete static_cast<Damageable_Entity*>(entity); return;
     case entity_type::Trigger_Volume_Entity: delete static_cast<Trigger_Volume_Entity*>(entity); return;
     case entity_type::Point_Light_Entity: delete static_cast<Point_Light_Entity*>(entity); return;
@@ -2131,6 +2063,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x6e01bb9du;
+const uint32_t SCHEMA_HASH = 0x37af1bdau;
 
 } // namespace entities

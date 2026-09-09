@@ -349,7 +349,7 @@ int main()
     const shared::entity_uid_t displaced_uid = owner->inventory.weapons[slot];
 
     const shared::entity_uid_t granted_uid =
-        server::try_grant_weapon(context, *owner, entities::Weapon::Scout);
+        server::try_grant_weapon(context, *owner, owner->inventory, entities::Weapon::Scout);
 
     owner = context.world.session.entity_system.get<entities::Player_Entity>(owner_uid);
     check(granted_uid != shared::null_entity_uid && granted_uid != displaced_uid,

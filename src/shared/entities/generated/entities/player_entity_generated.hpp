@@ -7,6 +7,10 @@
 #pragma once
 
 #include "../entities_core_generated.hpp"
+#include "../traits/mortal_generated.hpp"
+#include "../traits/mobile_generated.hpp"
+#include "../traits/armable_generated.hpp"
+#include "../traits/respawnable_generated.hpp"
 
 namespace entities
 {
@@ -53,5 +57,28 @@ static_assert(std::is_trivially_destructible_v<Player_Entity>,
 static_assert(std::is_base_of_v<Entity, Player_Entity>,
               "Player_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
+
+// --- what a Player_Entity accepts ---
+//
+// Its `is` list is: Mortal, Mobile, Armable, Respawnable.
+// No handler for a verb this type does not accept EXISTS, so calling one
+// is "no matching function" rather than a runtime refusal; a declared
+// handler nobody defined is a LINK error naming the symbol.
+void kill(Entity&, Health&, const Kill_Data&, input_context_t&);   // Mortal, shared by every opting-in type: src/server/traits/mortal.cpp
+void set_health(Entity&, Health&, const Set_Health_Data&, input_context_t&);   // Mortal, shared by every opting-in type: src/server/traits/mortal.cpp
+void damage(Entity&, Health&, const Damage_Data&, input_context_t&);   // Mortal, shared by every opting-in type: src/server/traits/mortal.cpp
+void teleport(Player_Entity&, const Teleport_Data&, input_context_t&);   // Mobile, this type's own: src/server/entities/player_entity.cpp
+void set_velocity(Player_Entity&, const Set_Velocity_Data&, input_context_t&);   // Mobile, this type's own: src/server/entities/player_entity.cpp
+void add_velocity(Player_Entity&, const Add_Velocity_Data&, input_context_t&);   // Mobile, this type's own: src/server/entities/player_entity.cpp
+void grant_weapon(Entity&, Inventory&, const Grant_Weapon_Data&, input_context_t&);   // Armable, shared by every opting-in type: src/server/traits/armable.cpp
+void set_respawn_point(Player_Entity&, const Set_Respawn_Point_Data&, input_context_t&);   // Respawnable, this type's own: src/server/entities/player_entity.cpp
+
+// --- what a Player_Entity announces ---
+//
+// Declared in the trait headers above and defined once in the
+// binder; repeated here so this file answers both halves. The
+// SYSTEM that writes the state change is what calls one.
+void emit_died(const Entity& sender, const Died_Data& payload, input_context_t& context);   // Mortal
+void emit_health_changed(const Entity& sender, const Health_Changed_Data& payload, input_context_t& context);   // Mortal
 
 } // namespace entities

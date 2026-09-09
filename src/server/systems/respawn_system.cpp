@@ -75,18 +75,13 @@ void place_player_at_spawn(shared::game_session_t &session, entities::Player_Ent
   place_player_at(session, player, marker.position, marker.orientation);
 }
 
-const entities::Trigger_Volume_Entity *
+const entities::Entity *
 try_find_checkpoint(shared::game_session_t &session, const entities::Player_Entity &player)
 {
   if (player.checkpoint_uid == shared::null_entity_uid)
     return nullptr;
 
-  const entities::Trigger_Volume_Entity *checkpoint =
-      session.entity_system.get<entities::Trigger_Volume_Entity>(player.checkpoint_uid);
-  if (checkpoint == nullptr || checkpoint->action != entities::Trigger_Action::Checkpoint)
-    return nullptr;
-
-  return checkpoint;
+  return session.entity_system.try_find(player.checkpoint_uid);
 }
 
 void schedule_respawn(server_context_t &context,
@@ -251,8 +246,7 @@ void update_respawns(server_context_t &context,
       continue;
     }
 
-    const entities::Trigger_Volume_Entity *checkpoint =
-        try_find_checkpoint(context.world.session, *player);
+    const entities::Entity *checkpoint = try_find_checkpoint(context.world.session, *player);
     if (checkpoint != nullptr)
     {
       place_player_at(context.world.session, *player, checkpoint->position,

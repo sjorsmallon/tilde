@@ -36,7 +36,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   context.world.next_bot_slot         = BOT_SLOT_BASE + 3;
   context.world.bots.push_back(Bot_State{});
   context.world.bots.push_back(Bot_State{});
-  context.world.previous_tick_overlapping_trigger_player_pairs.insert({7, 9});
+  context.world.previous_tick_trigger_overlaps.insert({7, 9});
   context.world.death_tick_by_player_uid[42] = 100;
   // Entity I/O. Both are keyed to the map: a record names a map uid, and the
   // sequence counter only orders records within one map's lifetime.
@@ -129,7 +129,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.world.map_content_hash == 0);
   assert(context.world.bots.empty());
   assert(context.world.next_bot_slot == BOT_SLOT_BASE);
-  assert(context.world.previous_tick_overlapping_trigger_player_pairs.empty());
+  assert(context.world.previous_tick_trigger_overlaps.empty());
   assert(context.world.death_tick_by_player_uid.empty());
   assert(context.world.pending_actions.empty());
   assert(context.world.next_action_sequence == 0);

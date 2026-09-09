@@ -49,6 +49,84 @@ constexpr field_info_t DAMAGE_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t TELEPORT_FIELDS[] = {
+  {.name = "destination",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Teleport_Data, destination),
+   .size_in_bytes = (uint32_t)sizeof(Teleport_Data::destination),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "keep_velocity",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Teleport_Data, keep_velocity),
+   .size_in_bytes = (uint32_t)sizeof(Teleport_Data::keep_velocity),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t SET_VELOCITY_FIELDS[] = {
+  {.name = "velocity",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Set_Velocity_Data, velocity),
+   .size_in_bytes = (uint32_t)sizeof(Set_Velocity_Data::velocity),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t ADD_VELOCITY_FIELDS[] = {
+  {.name = "velocity",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Add_Velocity_Data, velocity),
+   .size_in_bytes = (uint32_t)sizeof(Add_Velocity_Data::velocity),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
+  {.name = "weapon",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Grant_Weapon_Data, weapon),
+   .size_in_bytes = (uint32_t)sizeof(Grant_Weapon_Data::weapon),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[2]},
+  {.name = "damage_type",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Grant_Weapon_Data, damage_type),
+   .size_in_bytes = (uint32_t)sizeof(Grant_Weapon_Data::damage_type),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[9]},
+};
+
+constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
+  {.name = "location",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Set_Respawn_Point_Data, location),
+   .size_in_bytes = (uint32_t)sizeof(Set_Respawn_Point_Data::location),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t COLOR_CHANGED_FIELDS[] = {
   {.name = "color",
    .type = FIELD_TYPE_V3,
@@ -94,6 +172,12 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Kill
   {SET_HEALTH_FIELDS, 1},
   {DAMAGE_FIELDS, 1},
+  {TELEPORT_FIELDS, 2},
+  {SET_VELOCITY_FIELDS, 1},
+  {ADD_VELOCITY_FIELDS, 1},
+  {GRANT_WEAPON_FIELDS, 2},
+  {SET_RESPAWN_POINT_FIELDS, 1},
+  {},   // Complete_Level
 };
 
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
@@ -118,6 +202,12 @@ const char* to_string(entity_action value)
     case entity_action::Kill: return "Kill";
     case entity_action::Set_Health: return "Set_Health";
     case entity_action::Damage: return "Damage";
+    case entity_action::Teleport: return "Teleport";
+    case entity_action::Set_Velocity: return "Set_Velocity";
+    case entity_action::Add_Velocity: return "Add_Velocity";
+    case entity_action::Grant_Weapon: return "Grant_Weapon";
+    case entity_action::Set_Respawn_Point: return "Set_Respawn_Point";
+    case entity_action::Complete_Level: return "Complete_Level";
   }
   return "<unknown>";
 }
@@ -132,6 +222,12 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Kill") return entity_action::Kill;
   if (text == "Set_Health") return entity_action::Set_Health;
   if (text == "Damage") return entity_action::Damage;
+  if (text == "Teleport") return entity_action::Teleport;
+  if (text == "Set_Velocity") return entity_action::Set_Velocity;
+  if (text == "Add_Velocity") return entity_action::Add_Velocity;
+  if (text == "Grant_Weapon") return entity_action::Grant_Weapon;
+  if (text == "Set_Respawn_Point") return entity_action::Set_Respawn_Point;
+  if (text == "Complete_Level") return entity_action::Complete_Level;
   return std::nullopt;
 }
 
@@ -167,6 +263,10 @@ const char* to_string(entity_trait value)
     case entity_trait::Colorable: return "Colorable";
     case entity_trait::Touchable: return "Touchable";
     case entity_trait::Mortal: return "Mortal";
+    case entity_trait::Mobile: return "Mobile";
+    case entity_trait::Armable: return "Armable";
+    case entity_trait::Respawnable: return "Respawnable";
+    case entity_trait::Objective: return "Objective";
   }
   return "<unknown>";
 }
@@ -178,6 +278,10 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Colorable") return entity_trait::Colorable;
   if (text == "Touchable") return entity_trait::Touchable;
   if (text == "Mortal") return entity_trait::Mortal;
+  if (text == "Mobile") return entity_trait::Mobile;
+  if (text == "Armable") return entity_trait::Armable;
+  if (text == "Respawnable") return entity_trait::Respawnable;
+  if (text == "Objective") return entity_trait::Objective;
   return std::nullopt;
 }
 
@@ -205,6 +309,12 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Kill: return (uint32_t)sizeof(Kill_Data);
     case entity_action::Set_Health: return (uint32_t)sizeof(Set_Health_Data);
     case entity_action::Damage: return (uint32_t)sizeof(Damage_Data);
+    case entity_action::Teleport: return (uint32_t)sizeof(Teleport_Data);
+    case entity_action::Set_Velocity: return (uint32_t)sizeof(Set_Velocity_Data);
+    case entity_action::Add_Velocity: return (uint32_t)sizeof(Add_Velocity_Data);
+    case entity_action::Grant_Weapon: return (uint32_t)sizeof(Grant_Weapon_Data);
+    case entity_action::Set_Respawn_Point: return (uint32_t)sizeof(Set_Respawn_Point_Data);
+    case entity_action::Complete_Level: return (uint32_t)sizeof(Complete_Level_Data);
   }
   return 0;
 }
@@ -283,6 +393,54 @@ action_data_t erase(const Damage_Data& payload)
   action_data_t data;
   data.tag = entity_action::Damage;
   data.damage = payload;
+  return data;
+}
+
+action_data_t erase(const Teleport_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Teleport;
+  data.teleport = payload;
+  return data;
+}
+
+action_data_t erase(const Set_Velocity_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Set_Velocity;
+  data.set_velocity = payload;
+  return data;
+}
+
+action_data_t erase(const Add_Velocity_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Add_Velocity;
+  data.add_velocity = payload;
+  return data;
+}
+
+action_data_t erase(const Grant_Weapon_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Grant_Weapon;
+  data.grant_weapon = payload;
+  return data;
+}
+
+action_data_t erase(const Set_Respawn_Point_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Set_Respawn_Point;
+  data.set_respawn_point = payload;
+  return data;
+}
+
+action_data_t erase(const Complete_Level_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Complete_Level;
+  data.complete_level = payload;
   return data;
 }
 

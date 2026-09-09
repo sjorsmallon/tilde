@@ -1,7 +1,10 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "damage.hpp"
 
+#include "../shared/entities/generated/entities/damageable_entity_generated.hpp"
+#include "../shared/entities/generated/entities/player_entity_generated.hpp"
 #include "../shared/log.hpp"
+#include "entity_io_context.hpp"
 #include "server_api.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/respawn_system.hpp"
@@ -69,6 +72,12 @@ static void apply_player_damage_total(server_context_t &context,
   const int32_t health_before = player.health.current_health;
   player.health.current_health-= static_cast<int32_t>(total_damage);
 
+  // Wiring hears about the write here, at the tick it becomes true.
+  input_context_t emit_context{context, credited.attacker_uid, context.tick_number};
+  if (player.health.current_health != health_before)
+    entities::emit_health_changed(
+        player, entities::Health_Changed_Data{player.health.current_health}, emit_context);
+
   if (health_before > 0 && player.health.current_health<= 0)
   {
     // Latched here rather than in the respawn scheduler because THIS is the
@@ -119,6 +128,9 @@ static void apply_player_damage_total(server_context_t &context,
     // with corpses until the match starts.
     if (current_mode(context).respawn_during_round || !is_round_live(context))
       schedule_respawn(context, victim_uid, get_tick_number());
+
+    // The wiring's half of Player_Died: same crossing, same credited killer.
+    entities::emit_died(player, entities::Died_Data{credited.attacker_uid}, emit_context);
   }
 }
 
@@ -176,9 +188,12 @@ static float damage_scale_against(const entities::Damageable_Entity &damageable,
 // Takes a TOTAL rather than one hit, for the reason the player path above does:
 // the single-hit and batched paths must not disagree about what being destroyed
 // involves. The colour scale is already in that total -- see the batch.
+// `killer` is NOT kill credit -- a crate is still not a frag. It is Died's
+// payload, which is what makes `!activator` name whoever broke the thing.
 static void apply_damageable_damage_total(server_context_t &context,
                                           entities::Damageable_Entity &damageable,
-                                          float total_damage)
+                                          float total_damage,
+                                          shared::entity_uid_t killer)
 {
   if (damageable.health.current_health <= 0)
     return; // already destroyed; same corpse gate the player path has
@@ -189,8 +204,17 @@ static void apply_damageable_damage_total(server_context_t &context,
   const int32_t health_before = damageable.health.current_health;
   damageable.health.current_health -= static_cast<int32_t>(total_damage);
 
+  input_context_t emit_context{context, killer, context.tick_number};
+  if (damageable.health.current_health != health_before)
+    entities::emit_health_changed(
+        damageable, entities::Health_Changed_Data{damageable.health.current_health},
+        emit_context);
+
   if (health_before > 0 && damageable.health.current_health <= 0)
+  {
     damageable.render.visible = false;
+    entities::emit_died(damageable, entities::Died_Data{killer}, emit_context);
+  }
 }
 
 static void apply_damage_to_damageable(server_context_t &context,
@@ -198,7 +222,8 @@ static void apply_damage_to_damageable(server_context_t &context,
                                        entities::Damageable_Entity &damageable)
 {
   apply_damageable_damage_total(context, damageable,
-                                info.amount * damage_scale_against(damageable, info.type));
+                                info.amount * damage_scale_against(damageable, info.type),
+                                info.attacker_uid);
 }
 
 void inflict_damage(server_context_t &context, const damage_info_t &info)
@@ -282,13 +307,34 @@ void inflict_damage_batch(server_context_t &context, Span<const pending_hit_t> h
         // or riding on a right-colour one. This is also why the total goes
         // straight to the apply rather than back through inflict_damage, which
         // would scale it a second time.
-        float total_damage = 0.f;
+        // Died's killer is picked by the same rule the player path credits by --
+        // largest single contribution, ties to the lower attacker uid -- so the
+        // two senders cannot disagree about what "who did this" means. A
+        // wrong-colour hit contributes nothing and so can never win it.
+        float                total_damage          = 0.f;
+        float                largest_contribution  = 0.f;
+        shared::entity_uid_t killer                = shared::null_entity_uid;
         for (uint32_t j = i; j < hits.size(); ++j)
-          if (hits[j].info.victim_uid == victim_uid)
-            total_damage +=
-                hits[j].info.amount * damage_scale_against(*damageable, hits[j].info.type);
+        {
+          if (hits[j].info.victim_uid != victim_uid)
+            continue;
 
-        apply_damageable_damage_total(context, *damageable, total_damage);
+          const float contribution =
+              hits[j].info.amount * damage_scale_against(*damageable, hits[j].info.type);
+          total_damage += contribution;
+
+          const bool outranks_killer =
+              contribution > 0.f &&
+              (contribution > largest_contribution ||
+               (contribution == largest_contribution && hits[j].info.attacker_uid < killer));
+          if (outranks_killer)
+          {
+            largest_contribution = contribution;
+            killer               = hits[j].info.attacker_uid;
+          }
+        }
+
+        apply_damageable_damage_total(context, *damageable, total_damage, killer);
         continue;
       }
 

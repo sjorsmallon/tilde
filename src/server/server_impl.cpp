@@ -10,7 +10,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "entity_lifecycle.hpp"
 #include "server_api.hpp"
-#include "trigger_actions.hpp"
+#include "systems/trigger_system.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/physics_body_system.hpp"
@@ -2007,68 +2007,9 @@ bool Tick()
   step_physics(*context.world.physics, tick_dt);
   update_physics_bodies(context.world.session, *context.world.physics);
 
-  // --- Check trigger volumes against players ---
-  //
-  // Linear scan O(triggers x players). This is intentional for now; the
-  // canonical replacement is Jolt sensor bodies in the broadphase. See the
-  // "Spatial query strategy" section in src/client/editor/readme.md for the
-  // migration trigger.
-  //
-  // For each overlap, we dispatch trigger.action through fire_trigger_action.
-  // Two fire modes are supported:
-  //   - On_Enter:   fire only on the rising edge (previous tick: no overlap).
-  //   - Every_Tick: fire whenever overlap is active.
-  // Per-(trigger, player) overlap state is kept on context across ticks.
-  //
-  // Both pools are fetched HERE rather than reused from earlier in the tick:
-  // this is a walk over every player, not a lookup of one, so it wants the pool
-  // — but a pool pointer grabbed hundreds of lines ago would have survived every
-  // spawn and destroy in between.
-  Span<entities::Player_Entity> player_pool =
-      context.world.session.entity_system.entities_of<entities::Player_Entity>();
-  Span<entities::Trigger_Volume_Entity> trigger_pool =
-      context.world.session.entity_system.entities_of<entities::Trigger_Volume_Entity>();
-  std::set<std::pair<std::uint64_t, std::uint64_t>> current_tick_overlaps;
-  for (entities::Player_Entity &player : player_pool)
-  {
-    vec3f player_min = {
-      player.position.x - shared::player_half_width,
-      player.position.y,
-      player.position.z - shared::player_half_width
-    };
-    vec3f player_max = {
-      player.position.x + shared::player_half_width,
-      player.position.y + shared::player_half_height * 2.f,
-      player.position.z + shared::player_half_width
-    };
-
-    for (entities::Trigger_Volume_Entity &trigger : trigger_pool)
-    {
-      const vec3f trigger_center = trigger.position + trigger.volume.position;
-      vec3f trigger_min = trigger_center - trigger.volume.half_extents;
-      vec3f trigger_max = trigger_center + trigger.volume.half_extents;
-      if (!linalg::intersect_aabb_aabb(player_min, player_max,
-                                       trigger_min, trigger_max))
-        continue;
-
-      std::pair<std::uint64_t, std::uint64_t> pair_key{trigger.entity_id,
-                                                        player.entity_id};
-      bool was_overlapping =
-          context.world.previous_tick_overlapping_trigger_player_pairs.count(
-              pair_key) > 0;
-      current_tick_overlaps.insert(pair_key);
-
-      const bool should_fire = trigger.fire_mode == entities::Fire_Mode::On_Enter
-                                   ? !was_overlapping
-                                   : true;
-      if (!should_fire)
-        continue;
-
-      server::fire_trigger_action(context, trigger, player);
-    }
-  }
-  context.world.previous_tick_overlapping_trigger_player_pairs =
-      std::move(current_tick_overlaps);
+  // Overlap -> Touched / Left. What a touch DOES is a connection now, so this
+  // is the whole of the trigger code that lives in the tick.
+  update_triggers(context);
 
   // --- Broadcast bot debug state to all connected clients ---
   if (!context.world.bots.empty())

@@ -21,11 +21,6 @@ struct Trigger_Volume_Entity : Entity
 
   Enabled switch_state = {};
   Box_Volume volume = {.half_extents = {64.0f, 64.0f, 64.0f}};
-  Trigger_Action action = Trigger_Action::Kill;
-  Fire_Mode fire_mode = Fire_Mode::On_Enter;
-  network::pascal_string_t<64> param_target_name = {};
-  network::pascal_string_t<128> param_string = {};
-  float param_float = 0.0f;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

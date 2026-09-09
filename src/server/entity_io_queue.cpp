@@ -54,7 +54,10 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
     {
     case shared::connection_target_t::Uid: record.target = connection.row.target; break;
     case shared::connection_target_t::Self: record.target = sender.entity_id; break;
-    case shared::connection_target_t::Activator: record.target = context.activator; break;
+    case shared::connection_target_t::Activator:
+      record.target                          = context.activator;
+      record.target_resolved_from_activator  = true;
+      break;
     }
 
     // The payload, from the override or from the signal. The load check has
@@ -127,10 +130,24 @@ void drain_pending_actions(server_context_t& context)
 
     input_context_t handler_context{context, record.activator, context.tick_number};
 
-    // send_action, not try_send_action: reaching a type that does not accept
-    // this action means the loader let through a connection whose dispatch
-    // cell is null, which is a generator or loader bug rather than the map's.
-    entities::send_action(*target, record.data, handler_context);
+    // A Uid or Self target was checked against ONE type at load, so a null
+    // dispatch cell there is a generator or loader bug and send_action's
+    // fatal_error is right. An Activator was checked against a `by` list that
+    // only had to contain SOME accepting type, so the entity that turned up may
+    // legitimately not accept -- a crate rolling into a volume wired to kill
+    // whoever touched it. That is a logged miss, and the log line is the only
+    // way an author ever learns why nothing happened.
+    if (!record.target_resolved_from_activator)
+    {
+      entities::send_action(*target, record.data, handler_context);
+      continue;
+    }
+
+    if (!entities::try_send_action(*target, record.data, handler_context))
+      log_warning("entity I/O: {} reached {} (uid {}), which does not accept it — the row targets "
+                  "its activator and this one is not a receiver",
+                  entities::to_string(record.data.tag),
+                  entities::entity_info(target->type).classname, record.target);
   }
 }
 

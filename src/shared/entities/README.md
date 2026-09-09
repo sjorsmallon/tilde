@@ -66,7 +66,7 @@ were paying the blittable/fixed-size/memcmp constraints for nothing.
 1. Declare it in `entities.def`.
 2. Build. The generator emits the struct, the enum value and the tables.
 3. Fix the compile errors. Every exhaustive `switch` over `entity_type` —
-   `create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the
+   `create_map_entity`, `compute_entity_bounds`, the
    editor's `ENTITY_DISPATCH` — fails to compile until it handles the new case.
    That is the design: the compiler is the checklist.
 

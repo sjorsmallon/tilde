@@ -115,6 +115,21 @@ struct client_slot_t
   uint32_t last_move_throttle_warning_tick = 0;
 };
 
+// One overlap the trigger system is tracking across ticks. Touchers are no
+// longer players only -- Touchable's `by` list names Physics_Body_Entity too.
+struct trigger_overlap_t
+{
+  shared::entity_uid_t trigger = shared::null_entity_uid;
+  shared::entity_uid_t toucher = shared::null_entity_uid;
+
+  bool operator<(const trigger_overlap_t& other) const
+  {
+    if (trigger != other.trigger)
+      return trigger < other.trigger;
+    return toucher < other.toucher;
+  }
+};
+
 // The map currently running, and everything keyed to it. Cleared whole by
 // reset_state_in_preparation_for_new_map_load.
 struct world_t
@@ -128,8 +143,10 @@ struct world_t
   std::vector<Bot_State> bots;
   int32_t next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
 
-  std::set<std::pair<std::uint64_t, std::uint64_t>>
-      previous_tick_overlapping_trigger_player_pairs;
+  // Which (volume, toucher) pairs overlapped at the end of last tick, so this
+  // tick can tell a Touched from a Left. A named struct rather than a pair
+  // because both members are uids and nothing in a pair says which is which.
+  std::set<trigger_overlap_t> previous_tick_trigger_overlaps;
 
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
   game_rules_state_t rules;

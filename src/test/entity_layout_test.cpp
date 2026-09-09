@@ -104,10 +104,10 @@ int main()
   check(entity_type_from_classname("no_such_entity") == entity_type::Invalid,
         "an unknown classname resolves to Invalid rather than a wrong type");
 
-  check(strcmp(to_string(Fire_Mode::Every_Tick), "Every_Tick") == 0, "enum to_string");
-  check(try_from_string<Fire_Mode>("Every_Tick") == Fire_Mode::Every_Tick,
+  check(strcmp(to_string(Shape_Kind::Sphere), "Sphere") == 0, "enum to_string");
+  check(try_from_string<Shape_Kind>("Sphere") == Shape_Kind::Sphere,
         "enum try_from_string round trip");
-  check(!try_from_string<Fire_Mode>("Sometimes"),
+  check(!try_from_string<Shape_Kind>("Dodecahedron"),
         "enum try_from_string rejects an unknown name");
 
   // --- construction ---

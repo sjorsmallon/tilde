@@ -112,35 +112,6 @@ constexpr uint32_t Shape_Kind_COUNT = 2;
 const char* to_string(Shape_Kind value);
 template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text);
 
-enum class Trigger_Action : uint8_t
-{
-  Kill = 0,
-  Set_Health = 1,
-  Print_Message = 2,
-  Warp_To_Spawn = 3,
-  Complete_Level = 4,
-  Checkpoint = 5,
-  Grant_Weapon = 6,
-  Set_Velocity = 7,
-  Give_Impulse = 8,
-};
-
-constexpr uint32_t Trigger_Action_COUNT = 9;
-
-const char* to_string(Trigger_Action value);
-template <> std::optional<Trigger_Action> try_from_string<Trigger_Action>(std::string_view text);
-
-enum class Fire_Mode : uint8_t
-{
-  On_Enter = 0,
-  Every_Tick = 1,
-};
-
-constexpr uint32_t Fire_Mode_COUNT = 2;
-
-const char* to_string(Fire_Mode value);
-template <> std::optional<Fire_Mode> try_from_string<Fire_Mode>(std::string_view text);
-
 enum class Aim_Pose : uint8_t
 {
   Forward = 0,
@@ -188,14 +159,12 @@ enum class enum_type : uint16_t
   Inventory_Slot = 4,
   Shader_Type = 5,
   Shape_Kind = 6,
-  Trigger_Action = 7,
-  Fire_Mode = 8,
-  Aim_Pose = 9,
-  Light_Mode = 10,
-  Damage_Type = 11,
+  Aim_Pose = 7,
+  Light_Mode = 8,
+  Damage_Type = 9,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 12;
+constexpr uint32_t ENUM_TYPE_COUNT = 10;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -212,17 +181,18 @@ enum class entity_type : uint16_t
   Weapon_Entity = 5,
   Rocket_Entity = 6,
   Particle_Emitter_Entity = 7,
-  Damageable_Entity = 8,
-  Trigger_Volume_Entity = 9,
-  Point_Light_Entity = 10,
-  Spot_Light_Entity = 11,
-  Directional_Light_Entity = 12,
-  Physics_Body_Entity = 13,
+  Game_Rules_Entity = 8,
+  Damageable_Entity = 9,
+  Trigger_Volume_Entity = 10,
+  Point_Light_Entity = 11,
+  Spot_Light_Entity = 12,
+  Directional_Light_Entity = 13,
+  Physics_Body_Entity = 14,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 14;
+constexpr uint32_t ENTITY_TYPE_COUNT = 15;
 
 enum class component_type : uint16_t
 {
@@ -289,18 +259,6 @@ template <> struct enum_traits<entities::Shape_Kind>
 {
   static constexpr uint32_t count = entities::Shape_Kind_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Shape_Kind;
-};
-
-template <> struct enum_traits<entities::Trigger_Action>
-{
-  static constexpr uint32_t count = entities::Trigger_Action_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Trigger_Action;
-};
-
-template <> struct enum_traits<entities::Fire_Mode>
-{
-  static constexpr uint32_t count = entities::Fire_Mode_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Fire_Mode;
 };
 
 template <> struct enum_traits<entities::Aim_Pose>

@@ -82,10 +82,22 @@ void shim_spot_light_entity_set_color(Entity& entity, const action_data_t& data,
   set_color(self, data.as_set_color(), context);
 }
 
+void shim_player_entity_kill(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  kill(self, self.health, data.as_kill(), context);
+}
+
 void shim_damageable_entity_kill(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Damageable_Entity& self = *entity_as<Damageable_Entity>(&entity);
   kill(self, self.health, data.as_kill(), context);
+}
+
+void shim_player_entity_set_health(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  set_health(self, self.health, data.as_set_health(), context);
 }
 
 void shim_damageable_entity_set_health(Entity& entity, const action_data_t& data, input_context_t& context)
@@ -94,10 +106,52 @@ void shim_damageable_entity_set_health(Entity& entity, const action_data_t& data
   set_health(self, self.health, data.as_set_health(), context);
 }
 
+void shim_player_entity_damage(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  damage(self, self.health, data.as_damage(), context);
+}
+
 void shim_damageable_entity_damage(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Damageable_Entity& self = *entity_as<Damageable_Entity>(&entity);
   damage(self, self.health, data.as_damage(), context);
+}
+
+void shim_player_entity_teleport(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  teleport(self, data.as_teleport(), context);
+}
+
+void shim_player_entity_set_velocity(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  set_velocity(self, data.as_set_velocity(), context);
+}
+
+void shim_player_entity_add_velocity(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  add_velocity(self, data.as_add_velocity(), context);
+}
+
+void shim_player_entity_grant_weapon(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  grant_weapon(self, self.inventory, data.as_grant_weapon(), context);
+}
+
+void shim_player_entity_set_respawn_point(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  set_respawn_point(self, data.as_set_respawn_point(), context);
+}
+
+void shim_game_rules_entity_complete_level(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Game_Rules_Entity& self = *entity_as<Game_Rules_Entity>(&entity);
+  complete_level(self, data.as_complete_level(), context);
 }
 
 using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&);
@@ -109,10 +163,41 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   {},   // Reflection_Volume_Entity
   {},   // Player_Spawn_Entity
   {},   // Player_Spectate_Entity
-  {},   // Player_Entity
+  {   // Player_Entity
+    nullptr,   // Use
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Set_Color
+    shim_player_entity_kill,
+    shim_player_entity_set_health,
+    shim_player_entity_damage,
+    shim_player_entity_teleport,
+    shim_player_entity_set_velocity,
+    shim_player_entity_add_velocity,
+    shim_player_entity_grant_weapon,
+    shim_player_entity_set_respawn_point,
+    nullptr,   // Complete_Level
+  },
   {},   // Weapon_Entity
   {},   // Rocket_Entity
   {},   // Particle_Emitter_Entity
+  {   // Game_Rules_Entity
+    nullptr,   // Use
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Set_Color
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    shim_game_rules_entity_complete_level,
+  },
   {   // Damageable_Entity
     nullptr,   // Use
     nullptr,   // Enable
@@ -122,6 +207,12 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_damageable_entity_kill,
     shim_damageable_entity_set_health,
     shim_damageable_entity_damage,
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
   },
   {   // Trigger_Volume_Entity
     nullptr,   // Use
@@ -132,6 +223,12 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
   },
   {   // Point_Light_Entity
     nullptr,   // Use
@@ -142,6 +239,12 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
   },
   {   // Spot_Light_Entity
     nullptr,   // Use
@@ -152,6 +255,12 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
   },
   {},   // Directional_Light_Entity
   {},   // Physics_Body_Entity
@@ -313,6 +422,108 @@ void damage(Entity& entity, const Damage_Data& payload, input_context_t& context
 {
   if (!try_damage(entity, payload, context))
     fatal_error("{} does not accept Damage", entity_info(entity.type).classname);
+}
+
+bool try_teleport(Entity& entity, const Teleport_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Teleport];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void teleport(Entity& entity, const Teleport_Data& payload, input_context_t& context)
+{
+  if (!try_teleport(entity, payload, context))
+    fatal_error("{} does not accept Teleport", entity_info(entity.type).classname);
+}
+
+bool try_set_velocity(Entity& entity, const Set_Velocity_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Set_Velocity];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void set_velocity(Entity& entity, const Set_Velocity_Data& payload, input_context_t& context)
+{
+  if (!try_set_velocity(entity, payload, context))
+    fatal_error("{} does not accept Set_Velocity", entity_info(entity.type).classname);
+}
+
+bool try_add_velocity(Entity& entity, const Add_Velocity_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Add_Velocity];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void add_velocity(Entity& entity, const Add_Velocity_Data& payload, input_context_t& context)
+{
+  if (!try_add_velocity(entity, payload, context))
+    fatal_error("{} does not accept Add_Velocity", entity_info(entity.type).classname);
+}
+
+bool try_grant_weapon(Entity& entity, const Grant_Weapon_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Grant_Weapon];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void grant_weapon(Entity& entity, const Grant_Weapon_Data& payload, input_context_t& context)
+{
+  if (!try_grant_weapon(entity, payload, context))
+    fatal_error("{} does not accept Grant_Weapon", entity_info(entity.type).classname);
+}
+
+bool try_set_respawn_point(Entity& entity, const Set_Respawn_Point_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Set_Respawn_Point];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void set_respawn_point(Entity& entity, const Set_Respawn_Point_Data& payload, input_context_t& context)
+{
+  if (!try_set_respawn_point(entity, payload, context))
+    fatal_error("{} does not accept Set_Respawn_Point", entity_info(entity.type).classname);
+}
+
+bool try_complete_level(Entity& entity, const Complete_Level_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Complete_Level];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void complete_level(Entity& entity, const Complete_Level_Data& payload, input_context_t& context)
+{
+  if (!try_complete_level(entity, payload, context))
+    fatal_error("{} does not accept Complete_Level", entity_info(entity.type).classname);
 }
 
 bool try_send_action(Entity& target, const action_data_t& data, input_context_t& context)

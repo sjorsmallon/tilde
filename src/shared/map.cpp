@@ -785,6 +785,7 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
     case entities::entity_type::Weapon_Entity:
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Particle_Emitter_Entity:
+    case entities::entity_type::Game_Rules_Entity:
     case entities::entity_type::Point_Light_Entity:
     case entities::entity_type::Spot_Light_Entity:
     case entities::entity_type::Directional_Light_Entity:
@@ -1272,12 +1273,208 @@ std::optional<connection_t> parse_connection(const map_block_t &block)
   return connection;
 }
 
+
+// -------------------------------------------------------------------------
+// The Trigger_Action exit -- entity_io_def.md ss11 step 4, and the same shape
+// as `box` becoming `brush`: read ONCE, converted here, never written again.
+//
+// A trigger's `action` and its three param_* slots are gone; what a touch does
+// is a connection. Each legacy value becomes exactly one row, and all but one
+// of them target the ACTIVATOR, which is what "all nine act on the toucher"
+// meant. The exception is Complete_Level, whose receiver is the entity that
+// owns the rules -- a legacy map has none, so the conversion MINTS one.
+// -------------------------------------------------------------------------
+
+struct legacy_trigger_t
+{
+  entity_uid_t  uid = null_entity_uid;
+  std::string   action;
+  std::string   param_target_name;
+  std::string   param_string;
+  float         param_float = 0.f;
+  linalg::quatf orientation;
+};
+
+// The keys the trigger schema no longer has. Taken out of the block before
+// read_entity_fields sees it, so a converted map produces no unknown-key
+// warnings for values this function is deliberately consuming.
+constexpr const char *LEGACY_TRIGGER_KEYS[] = {"action", "fire_mode", "param_target_name",
+                                               "param_string", "param_float"};
+
+connection_t make_activator_row(entity_uid_t sender, entities::entity_action action)
+{
+  connection_t row;
+  row.sender      = sender;
+  row.signal      = entities::entity_signal::Touched;
+  row.target_kind = connection_target_t::Activator;
+  row.data.tag    = action;
+  return row;
+}
+
+// The uid a Warp_To_Spawn lands on: the spawn whose stringified uid the author
+// typed, or the first one. That string match is exactly what the old handler
+// did, and it is the reason the field is being deleted -- but the conversion
+// has to reproduce the map that ran, not the map that should have been.
+entity_uid_t find_legacy_warp_destination(const map_t &map, const std::string &requested)
+{
+  entity_uid_t first = null_entity_uid;
+  for (const map_entity_t &entry : map.entities)
+  {
+    if (!entry.entity || entry.entity->type != entities::entity_type::Player_Spawn_Entity)
+      continue;
+    if (first == null_entity_uid)
+      first = entry.uid;
+    if (!requested.empty() && std::to_string(entry.uid) == requested)
+      return entry.uid;
+  }
+  return first;
+}
+
+void convert_legacy_trigger_actions(map_t &map, const std::vector<legacy_trigger_t> &legacy)
+{
+  if (legacy.empty())
+    return;
+
+  entity_uid_t rules_uid = null_entity_uid;
+  for (const map_entity_t &entry : map.entities)
+    if (entry.entity && entry.entity->type == entities::entity_type::Game_Rules_Entity)
+      rules_uid = entry.uid;
+
+  for (const legacy_trigger_t &trigger : legacy)
+  {
+    if (trigger.action == "Kill")
+    {
+      map.connections.push_back(make_activator_row(trigger.uid, entities::entity_action::Kill));
+    }
+    else if (trigger.action == "Set_Health")
+    {
+      connection_t row = make_activator_row(trigger.uid, entities::entity_action::Set_Health);
+      row.data.set_health.amount = (int32_t)trigger.param_float;
+      row.has_override           = true;
+      map.connections.push_back(row);
+    }
+    else if (trigger.action == "Warp_To_Spawn")
+    {
+      const entity_uid_t destination =
+          find_legacy_warp_destination(map, trigger.param_target_name);
+      if (destination == null_entity_uid)
+      {
+        log_error("map convert: trigger {} warped to a spawn and this map has none -- no "
+                  "connection written",
+                  trigger.uid);
+        continue;
+      }
+      connection_t row = make_activator_row(trigger.uid, entities::entity_action::Teleport);
+      row.data.teleport.destination   = destination;
+      row.data.teleport.keep_velocity = false;
+      row.has_override                = true;
+      map.connections.push_back(row);
+    }
+    else if (trigger.action == "Checkpoint")
+    {
+      connection_t row =
+          make_activator_row(trigger.uid, entities::entity_action::Set_Respawn_Point);
+      row.data.set_respawn_point.location = trigger.uid;
+      row.has_override                    = true;
+      map.connections.push_back(row);
+    }
+    else if (trigger.action == "Grant_Weapon")
+    {
+      // The handler this replaces had its weapon lookup commented out and a
+      // literal "Scout" in its place, with param_string carrying the DAMAGE
+      // TYPE instead. Converting to what the code did rather than to what the
+      // field names suggest is the only way the converted map plays the same.
+      connection_t row = make_activator_row(trigger.uid, entities::entity_action::Grant_Weapon);
+      row.data.grant_weapon.weapon = entities::Weapon::Scout;
+      if (!trigger.param_string.empty())
+      {
+        const std::optional<entities::Damage_Type> damage_type =
+            entities::try_from_string<entities::Damage_Type>(trigger.param_string.c_str());
+        if (damage_type)
+          row.data.grant_weapon.damage_type = *damage_type;
+        else
+          log_error("map convert: trigger {} granted a weapon with damage type '{}', which is "
+                    "not a Damage_Type -- converted as Normal",
+                    trigger.uid, trigger.param_string);
+      }
+      row.has_override = true;
+      map.connections.push_back(row);
+      log_warning("map convert: trigger {} granted a hardcoded Scout, which is what the deleted "
+                  "handler did -- the connection now says so and can be edited",
+                  trigger.uid);
+    }
+    else if (trigger.action == "Set_Velocity")
+    {
+      connection_t row = make_activator_row(trigger.uid, entities::entity_action::Set_Velocity);
+      row.data.set_velocity.velocity = linalg::forward(trigger.orientation) * trigger.param_float;
+      row.has_override               = true;
+      map.connections.push_back(row);
+    }
+    else if (trigger.action == "Give_Impulse")
+    {
+      // The old handler ASSIGNED velocity.y and left x/z alone, which no verb
+      // spells. Add_Velocity is what a launch pad meant; a converted map is
+      // one pad-shaped behaviour change, said out loud rather than silently.
+      connection_t row = make_activator_row(trigger.uid, entities::entity_action::Add_Velocity);
+      row.data.add_velocity.velocity = {0.f, trigger.param_float, 0.f};
+      row.has_override               = true;
+      map.connections.push_back(row);
+      log_warning("map convert: trigger {} set velocity.y directly; it is an Add_Velocity of {} "
+                  "now, which adds rather than replaces",
+                  trigger.uid, trigger.param_float);
+    }
+    else if (trigger.action == "Complete_Level")
+    {
+      if (rules_uid == null_entity_uid)
+      {
+        std::shared_ptr<entities::Entity> rules = create_map_entity("game_rules_entity");
+        if (!rules)
+        {
+          log_error("map convert: trigger {} completed the level and no Game_Rules_Entity could "
+                    "be created -- no connection written",
+                    trigger.uid);
+          continue;
+        }
+        rules_uid = map.add_entity(rules);
+        log_warning("map convert: minted Game_Rules_Entity {} for the level's goal triggers -- it "
+                    "is the receiver Complete_Level needs and legacy maps had none",
+                    rules_uid);
+      }
+
+      connection_t row;
+      row.sender      = trigger.uid;
+      row.signal      = entities::entity_signal::Touched;
+      row.target_kind = connection_target_t::Uid;
+      row.target      = rules_uid;
+      row.data.tag    = entities::entity_action::Complete_Level;
+      map.connections.push_back(row);
+    }
+    else if (trigger.action == "Print_Message")
+    {
+      log_warning("map convert: trigger {} printed '{}' and that action is deleted -- sv_io_debug "
+                  "logs every action fired, which is strictly more",
+                  trigger.uid, trigger.param_string);
+    }
+    else
+    {
+      log_error("map convert: trigger {} carries action '{}', which was never a Trigger_Action "
+                "value -- no connection written",
+                trigger.uid, trigger.action);
+    }
+  }
+}
+
 } // namespace
 
 map_t parse_map_from_string(const std::string &content)
 {
   const std::vector<map_block_t> blocks = parse_map_content(content);
   map_t out_map;
+
+  // Collected during the walk and converted after it: a Warp_To_Spawn names a
+  // spawn that may be declared further down the file, and a Complete_Level may
+  // have to mint a rules entity, which needs next_uid to be settled.
+  std::vector<legacy_trigger_t> legacy_triggers;
 
   // "_uid" is written by both regimes; absent (a hand-authored map) means
   // auto-assign. Returns 0 for "not present".
@@ -1423,13 +1620,51 @@ map_t parse_map_from_string(const std::string &content)
       continue;
     }
 
-    read_entity_fields(*new_entity, classname, block.properties);
+    // The pre-connections trigger form. Its five keys are read out and removed
+    // here, so read_entity_fields does not then report every one of them as an
+    // unknown key -- they are known, and they are being converted.
+    std::map<std::string, std::string> properties = block.properties;
+    if (classname == "trigger_volume_entity" && properties.count("action") > 0)
+    {
+      legacy_trigger_t legacy;
+      legacy.action            = properties["action"];
+      legacy.param_target_name = properties.count("param_target_name") > 0
+                                     ? properties["param_target_name"]
+                                     : std::string();
+      legacy.param_string =
+          properties.count("param_string") > 0 ? properties["param_string"] : std::string();
+      legacy.param_float = properties.count("param_float") > 0
+                               ? std::strtof(properties["param_float"].c_str(), nullptr)
+                               : 0.f;
+
+      for (const char *key : LEGACY_TRIGGER_KEYS)
+        properties.erase(key);
+
+      read_entity_fields(*new_entity, classname, properties);
+      legacy.orientation = new_entity->orientation;
+      if (uid != 0)
+      {
+        out_map.add_entity_with_uid(uid, new_entity);
+        legacy.uid = uid;
+      }
+      else
+      {
+        legacy.uid = out_map.add_entity(new_entity);
+      }
+
+      legacy_triggers.push_back(legacy);
+      continue;
+    }
+
+    read_entity_fields(*new_entity, classname, properties);
 
     if (uid != 0)
       out_map.add_entity_with_uid(uid, new_entity);
     else
       out_map.add_entity(new_entity);
   }
+
+  convert_legacy_trigger_actions(out_map, legacy_triggers);
 
   return out_map;
 }

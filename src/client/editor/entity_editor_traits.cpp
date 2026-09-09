@@ -490,8 +490,9 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
       return {.half_extents = static_cast<const entities::Damageable_Entity*>(e)
                                   ->hitbox_half_extents};
 
-    case entities::entity_type::Weapon_Entity: // render component draws it
-    case entities::entity_type::Rocket_Entity: // runtime only
+    case entities::entity_type::Weapon_Entity:     // render component draws it
+    case entities::entity_type::Rocket_Entity:     // runtime only
+    case entities::entity_type::Game_Rules_Entity: // a point with no shape
       return {.half_extents = point_pick};
 
     // Lights pick as a point-sized box whatever their reach -- sizing the pick

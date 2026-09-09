@@ -13,6 +13,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "log.hpp"
 #include "map.hpp"
+#include "map_connection.hpp"
 #include "network/map_transfer.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -276,11 +277,7 @@ int main()
     if (!trig) return fail("trigger: factory returned wrong type");
     trig->position = {7.f, 8.f, 9.f};
     trig->volume.half_extents = {11.f, 12.f, 13.f};
-    trig->action = entities::Trigger_Action::Warp_To_Spawn;
-    trig->fire_mode = entities::Fire_Mode::Every_Tick;
-    trig->param_target_name.set("spawn_a");
-    trig->param_string.set("hello");
-    trig->param_float = 42.5f;
+    trig->switch_state.value = false;
     trig_map.add_entity(t);
 
     const std::string trig_path = "maps/trig_roundtrip.source";
@@ -305,16 +302,107 @@ int main()
     if (rt->volume.half_extents.x != 11.f || rt->volume.half_extents.y != 12.f ||
         rt->volume.half_extents.z != 13.f)
       return fail("trigger: volume drift");
-    if (rt->action != entities::Trigger_Action::Warp_To_Spawn)
-      return fail("trigger: action drift");
-    if (rt->fire_mode != entities::Fire_Mode::Every_Tick)
-      return fail("trigger: fire_mode drift");
-    if (std::string(rt->param_target_name.c_str()) != "spawn_a")
-      return fail("trigger: param_target_name drift");
-    if (std::string(rt->param_string.c_str()) != "hello")
-      return fail("trigger: param_string drift");
-    if (rt->param_float != 42.5f)
-      return fail("trigger: param_float drift");
+    if (rt->switch_state.value)
+      return fail("trigger: switch_state drift");
+  }
+
+  // --- 5a. The Trigger_Action exit ---------------------------------------
+  // A trigger's `action` and its three param_* slots are gone: what a touch
+  // does is a connection. Reading the legacy form must produce the wiring the
+  // deleted handler would have run, ONCE, the way `box` became `brush` -- so
+  // what this pins is the CONVERSION, not the fields.
+  //
+  // Three of the nine, chosen because they are the three shapes: one that
+  // needs no parameter, one that has to resolve another entity in the same
+  // file, and one whose receiver is not the toucher and does not exist yet.
+  {
+    const std::string legacy =
+        "entity\n{\n"
+        "  \"classname\" \"player_spawn_entity\"\n"
+        "  \"_uid\" \"4\"\n"
+        "  \"position\" \"1 2 3\"\n"
+        "}\n"
+        "entity\n{\n"
+        "  \"classname\" \"trigger_volume_entity\"\n"
+        "  \"_uid\" \"5\"\n"
+        "  \"action\" \"Kill\"\n"
+        "  \"fire_mode\" \"On_Enter\"\n"
+        "  \"param_target_name\" \"\"\n"
+        "  \"param_string\" \"\"\n"
+        "  \"param_float\" \"0\"\n"
+        "}\n"
+        "entity\n{\n"
+        "  \"classname\" \"trigger_volume_entity\"\n"
+        "  \"_uid\" \"6\"\n"
+        "  \"action\" \"Warp_To_Spawn\"\n"
+        "  \"param_target_name\" \"\"\n"
+        "  \"param_string\" \"\"\n"
+        "  \"param_float\" \"0\"\n"
+        "}\n"
+        "entity\n{\n"
+        "  \"classname\" \"trigger_volume_entity\"\n"
+        "  \"_uid\" \"7\"\n"
+        "  \"action\" \"Complete_Level\"\n"
+        "  \"param_target_name\" \"\"\n"
+        "  \"param_string\" \"\"\n"
+        "  \"param_float\" \"0\"\n"
+        "}\n";
+
+    const map_t converted = parse_map_from_string(legacy);
+    if (converted.connections.size() != 3)
+      return fail("trigger exit: three legacy actions did not become three connections");
+
+    const auto row_from = [&converted](entity_uid_t sender) -> const connection_t *
+    {
+      for (const connection_t &row : converted.connections)
+        if (row.sender == sender)
+          return &row;
+      return nullptr;
+    };
+
+    const connection_t *kill = row_from(5);
+    if (!kill || kill->signal != entities::entity_signal::Touched ||
+        kill->target_kind != connection_target_t::Activator ||
+        kill->data.tag != entities::entity_action::Kill)
+      return fail("trigger exit: Kill did not become Touched -> !activator Kill");
+
+    // The one that has to look at the rest of the file: the old handler warped
+    // to the first Player_Spawn_Entity, and the connection has to name it.
+    const connection_t *warp = row_from(6);
+    if (!warp || warp->data.tag != entities::entity_action::Teleport ||
+        warp->target_kind != connection_target_t::Activator)
+      return fail("trigger exit: Warp_To_Spawn did not become a Teleport at the activator");
+    if (!warp->has_override || warp->data.teleport.destination != 4)
+      return fail("trigger exit: the converted Teleport does not name the map's spawn");
+
+    // The one whose receiver is not the toucher. A legacy map has no rules
+    // entity, so the conversion mints one and the row targets it by uid.
+    const connection_t *goal = row_from(7);
+    if (!goal || goal->data.tag != entities::entity_action::Complete_Level ||
+        goal->target_kind != connection_target_t::Uid)
+      return fail("trigger exit: Complete_Level did not target a uid");
+
+    const entities::Entity *rules = nullptr;
+    for (const map_entity_t &entry : converted.entities)
+      if (entry.uid == goal->target)
+        rules = entry.entity.get();
+    if (!rules || rules->type != entities::entity_type::Game_Rules_Entity)
+      return fail("trigger exit: Complete_Level's target is not a minted Game_Rules_Entity");
+
+    // Converted ONCE. The next save writes connections and no `action` key, so
+    // a second read of the saved text must add no second copy of the wiring.
+    const map_t resaved = parse_map_from_string(serialize_map_to_string(converted));
+    if (resaved.connections.size() != 3)
+      return fail("trigger exit: saving and reloading a converted map re-converted it");
+
+    // And it has to be wiring the LOAD CHECK accepts, which is a stronger claim
+    // than "it parsed": the server refuses a whole map over one refused row.
+    // Every converted row targets the activator, so this is what would catch a
+    // conversion emitting an action nothing that can touch accepts.
+    const std::vector<connection_refusal_t> refusals = validate_map_connections(resaved);
+    if (!refusals.empty())
+      return fail(("trigger exit: the converted wiring is refused -- " + refusals[0].reason)
+                      .c_str());
   }
 
   // --- 5b. Spot light round-trip (the three-types-not-one-enum split) -----

@@ -73,59 +73,37 @@ The wedge dispatch sites in the gizmo and BVH go through `shared::entity_as<Wedg
 
 ## Trigger Actions
 
-Trigger volumes (`Trigger_Volume_Entity`) are AABB zones that fire a named action when a player overlaps them. The named action is looked up at runtime from a server-side registry in `src/server/trigger_action_registry.hpp`. There is intentionally no scripting language — actions are plain C++ functions that self-register at static-init time, the same pattern used by `cvar::Console_Command`.
+**The registry this section described is gone, twice over.** It was a
+string-keyed, self-registering table (`trigger_action_registry.hpp`, the
+`TRIGGER_ACTION_LIST` X-macro, a `string_choices_provider` callback, three typed
+`param_*` slots and a `fire_mode` field on the trigger); that became a closed
+`Trigger_Action` enum, and that is gone too. A trigger volume now says only
+WHEN — it emits `Touched` on the rising overlap edge and `Left` on the falling
+one — and what a touch DOES is a `connection` row in the map, aimed at any
+entity rather than only at the toucher. See "Entity I/O" in CLAUDE.md and
+`entity_io_def.md`.
 
-### How to add a new action
+Two of the old arguments are worth keeping, because entity I/O reached the same
+answers by another route:
 
-1. Add one line to the `TRIGGER_ACTION_LIST` X-macro in `src/shared/trigger_action_list.hpp`. The macro is a names-only list — no function pointers, no behaviors — so both client and server can read it without dragging server-only types into shared code.
-2. In `src/server/trigger_actions.cpp`, write a function with the signature `void action_<name>(server::server_context_t&, Trigger_Volume_Entity&, Player_Entity&)`.
-3. The X-macro at the bottom of that file already expands into self-registering statics — just adding the line in step 1 plus the function definition is enough, no manual `Trigger_Action_Registration` line.
+- **"Why string names, not integer IDs"** — prepending an action must not
+  silently rebind every saved trigger. A connection names its signal and its
+  action by NAME in the file, and `SCHEMA_HASH` covers the declarations, so a
+  reorder is a refused handshake rather than a silent remap.
+- **"Per-action parameter schema"**, listed as the ideal and dismissed as
+  needing discriminated-union support the codebase did not have, is exactly what
+  `action_data_t` and the per-verb payload structs are now. `def_gen` builds the
+  union and the field tables, so each action carries its own typed parameters
+  and the editor gets a proper widget per field — the three fixed `param_*`
+  slots were the compromise that bought.
 
-### Why the server context is the first argument
-
-Most non-trivial actions need world access — `warp_to_spawn` has to look up a `Player_Spawn_Entity`, `kill` has to route through the central `inflict_damage` helper to fire `PLAYER_DIED` and schedule a respawn. `server::server_context_t` bundles the game session, physics state, and event queue together, so any action that needs any of those gets them through one parameter. Lives in `src/server/` because all of these resources are server-only by design.
-
-### Why the names list is shared but the dispatch is server-side
-
-The editor inspector (which runs in the client DLL) needs to render a dropdown of valid action names. The server is the one that actually owns the function pointers. Splitting "names" from "behaviors" into two files lets the editor read the X-macro at compile time without needing to know what server-side machinery any given action calls into. The server's static-init registrations validate at startup that every name in the macro maps to a real function — a missing or misnamed entry log_errors instead of failing silently.
-
-### Why string names, not integer IDs
-
-If actions were keyed by integer (their order in some enum), prepending a new action would silently rebind every existing trigger in every saved `.map` file — `kill` (ID 0) would suddenly mean whatever you put at the top. Strings are stable: the name *is* the identity. Cost is ~12 bytes of `pascal_string` per trigger, which is negligible, and it makes the `.map` text format readable (`"action_name" "print_message"` versus `"action" "3"`).
-
-### Parameter slots
-
-Each action reads from a small fixed set of typed slots on the trigger entity:
-
-- `param_target_name: pascal_string` — for actions targeting another named entity.
-- `param_string: pascal_string` — generic string payload (message text, classname, etc.).
-- `param_float: float32` — generic numeric payload (health amount, delay, etc.).
-
-Three slots is a pragmatic compromise. The two canonical alternatives are:
-
-- **Per-action parameter schema** (Unity UnityEvent, Unreal Blueprint): each action gets its own struct of typed args, serialized per instance. Requires discriminated-union schema support that this codebase doesn't have. Building it is a real undertaking and would dwarf the trigger feature itself.
-- **Single stringly-typed parameter** (Source Engine I/O): one string field that each action parses. Maximum flexibility, minimum editor help.
-
-Fixed typed slots split the difference: each slot gets a proper inspector widget, the schema system is unchanged, actions that don't use a slot just ignore it. Revisit if a future action genuinely needs a richer per-instance config.
-
-### Fire modes
-
-`fire_mode` is a `pascal_string` storing either `"on_enter"` or `"every_tick"`:
-
-- **`on_enter`** fires once on the rising overlap edge — used for actions like `print_message` or `spawn_entity` that would otherwise spam at 60 Hz while the player stands inside.
-- **`every_tick`** fires whenever the overlap is active. Used for idempotent actions like `kill` (firing every tick is harmless once health is 0) or continuous effects.
-
-The choice is per-trigger, not per-action, so a designer reading the inspector sees exactly what will happen. Implementation cost is a `std::set<pair<trigger_id, player_id>>` on `server_context_t` that tracks last-tick overlaps so the server can detect the rising edge.
-
-`fire_mode` is a `pascal_string` (not `int32`) on purpose: it reuses the same `Field_Prop::string_choices_provider` mechanism as `action_name`, which means the inspector renders a dropdown the same way for both fields and there is no special-case code path. The original plan stored `fire_mode` as `int32` with a hardcoded combo case in the inspector; we collapsed it to a string field because adding a one-off special-case for two values is worse than reusing the general mechanism we already had to build for `action_name`.
-
-### Why `string_choices_provider` is a callback, not a fixed list
-
-The provider is `std::function<std::vector<std::string>()>`, evaluated at inspector render time — not at schema registration time. This matters because static-init order between translation units is undefined: actions registered in `trigger_actions.cpp` may register *after* `Trigger_Volume_Entity::register_schema()` runs in another TU. A fixed-list provider captured at registration would be empty in that case. Calling the provider at render time guarantees correct results regardless of init order.
+The `fire_mode` field went with them: `Touched` is the rising edge and `Left` the
+falling one, which is what `on_enter` meant, and a per-tick effect is now a
+`Touched` that enables plus a `Left` that disables rather than a re-fire at 60Hz.
 
 ### Spatial query strategy: linear scan now, sensors later
 
-Trigger overlap is evaluated as an O(triggers × players) linear scan in `server_impl.cpp`'s `Tick()`. The canonical alternative is **physics sensors** (Jolt: `BodyCreationSettings::mIsSensor`; Unity: `Collider.isTrigger`; Unreal: overlap-only collision; Source: `SOLID_TRIGGER`) — the broadphase prunes pair tests and "is X inside Y?" reuses the same overlap pipeline as everything else.
+Trigger overlap is evaluated as an O(triggers × players) linear scan in `src/server/systems/trigger_system.cpp`, called once from `Tick()`. The canonical alternative is **physics sensors** (Jolt: `BodyCreationSettings::mIsSensor`; Unity: `Collider.isTrigger`; Unreal: overlap-only collision; Source: `SOLID_TRIGGER`) — the broadphase prunes pair tests and "is X inside Y?" reuses the same overlap pipeline as everything else.
 
 We deliberately kept the linear scan for three reasons:
 

@@ -233,8 +233,11 @@ file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 set(ENTITY_IO_HANDLERS
     src/server/traits/switchable.cpp
     src/server/traits/mortal.cpp
+    src/server/traits/armable.cpp
     src/server/entities/point_light_entity.cpp
     src/server/entities/spot_light_entity.cpp
+    src/server/entities/player_entity.cpp
+    src/server/entities/game_rules_entity.cpp
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${ENTITY_IO_HANDLERS} PROPERTIES
@@ -808,8 +811,6 @@ add_library(game_server SHARED
     src/server/damage.cpp
     src/server/entity_lifecycle.hpp
     src/server/entity_lifecycle.cpp
-    src/server/trigger_actions.hpp
-    src/server/trigger_actions.cpp
     # Entity I/O. The generated binder is what references the handlers beside
     # it, so a declared-but-undefined one is a link error naming the symbol.
     #
@@ -826,6 +827,7 @@ add_library(game_server SHARED
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/systems/rocket_system.cpp
+    src/server/systems/trigger_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/physics_body_system.cpp
@@ -1140,6 +1142,7 @@ target_link_libraries(game_rules_test PRIVATE game_shared)
 # references every one of them, which is the seam being tested.
 add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/entity_io_queue.cpp
+    src/server/systems/trigger_system.cpp
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/damage.cpp

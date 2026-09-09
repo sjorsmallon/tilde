@@ -62,8 +62,6 @@ Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 Shader_Type :: enum { Lit, Unlit }
 Shape_Kind :: enum { Sphere, Box }
 
-Trigger_Action :: enum { Kill, Set_Health, Print_Message, Warp_To_Spawn, Complete_Level, Checkpoint, Grant_Weapon, Set_Velocity, Give_Impulse}
-Fire_Mode :: enum { On_Enter, Every_Tick }
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
 Reflection_Volume_Entity :: entity {
@@ -109,6 +107,11 @@ Colorable :: trait {
     emits   Color_Changed(color: v3)
 }
 
+// `by` names everything that can TRULY set this off, which is what makes the
+// list widenable: the load check admits a row SOME `by` type accepts, so
+// adding a type here refuses no wiring that already loads. A crate is not
+// Mortal, and a volume wired to kill whoever touched it simply logs a miss
+// when one rolls in. entity_io_def.md ss6.
 Touchable :: trait {
     emits Touched(), Left()
     by    Player_Entity, Physics_Body_Entity
@@ -117,6 +120,24 @@ Touchable :: trait {
 Mortal :: trait requires Health {
     accepts Kill(), Set_Health(amount: i32), Damage(amount: i32)
     emits   Died(killer: entity), Health_Changed(health: i32)
+}
+
+Mobile :: trait {
+    accepts Teleport(destination: entity, keep_velocity: bool),
+            Set_Velocity(velocity: v3),
+            Add_Velocity(velocity: v3)
+}
+
+Armable :: trait requires Inventory {
+    accepts Grant_Weapon(weapon: Weapon, damage_type: Damage_Type)
+}
+
+Respawnable :: trait {
+    accepts Set_Respawn_Point(location: entity)
+}
+
+Objective :: trait {
+    accepts Complete_Level()
 }
 
 Material :: component {
@@ -162,21 +183,16 @@ Inventory :: component {
     deploy_complete_time: u64
 }
 
-
-// Placed in the editor; the server consumes it at load and removes it.
-// Nothing about a spawn point survives into a snapshot, so nothing is
-// @Networked -- the client never sees one.
 Player_Spawn_Entity :: entity {
     spawn_type: Spawn_Type = .Human     @Editable
     team_allegiance: Team_Allegiance = .Free_For_All @Editable 
 }
 
-// this does not need anything, really.
 Player_Spectate_Entity:: entity {
 }
 
 
-Player_Entity :: entity @runtime_only {
+Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
@@ -202,7 +218,7 @@ Player_Entity :: entity @runtime_only {
     // above: a log cadence is not something a client has any use for.
     last_empty_fire_warning_tick: u32
 
-    // uid of the Trigger_Action::Checkpoint volume last touched; 0 for none.
+    // Where a death respawn puts you, from Set_Respawn_Point; 0 for none.
     checkpoint_uid: u32
 
     last_hit_tick:         u32          @Networked
@@ -288,6 +304,18 @@ Particle_Emitter_Entity :: entity {
     parent_entity_id:   u32 = 0
 }
 
+// The map's rules, as an entity, so the one verb that writes them has a
+// receiver that owns them. It carries no fields: what a mode DOES is
+// GAME_MODES' row of values (game_modes_def.md), and this is only the handle
+// a connection can name. The emitting half -- round phases and deaths as
+// signals -- is entity_io_def.md ss11 step 6b.
+//
+// A map whose objective is reachable must PLACE one. That is the cost of the
+// honest receiver, and it is Source's shape: game_end and logic_auto are
+// placed too.
+Game_Rules_Entity :: entity is Objective {
+}
+
 Damageable_Entity :: entity is Mortal {
     health: Health                         
     hitbox_half_extents: v3 = {16, 32, 16}      @Editable
@@ -295,14 +323,16 @@ Damageable_Entity :: entity is Mortal {
     render:            Render
 }
 
+// A volume that says WHEN, and nothing about what. `action` and the three
+// param_* slots are gone: what a touch does is a connection now, so the one
+// generic volume covers every case the nine Trigger_Action values did and the
+// author is not restricted to acting on the toucher. `fire_mode` went with
+// them -- Touched is the rising edge and Left the falling one, which is what
+// Source's OnStartTouch / OnEndTouch are, and a per-tick effect is a Touched
+// that enables plus a Left that disables.
 Trigger_Volume_Entity :: entity is Switchable, Touchable {
     switch_state:      Enabled
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
-    action:            Trigger_Action = .Kill   @Editable
-    fire_mode:         Fire_Mode = .On_Enter    @Editable
-    param_target_name: string<64>               @Editable
-    param_string:      string<128>              @Editable
-    param_float:       f32 = 0.0                @Editable
 }
 
 // THREE TYPES, NOT ONE WITH A KIND ENUM. This was `Light_Entity` plus a

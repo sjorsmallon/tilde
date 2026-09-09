@@ -1,6 +1,3 @@
-// Spot_Light_Entity's own handlers. Its Switchable half is written once
-// against Enabled in src/server/traits/switchable.cpp; what is here is what
-// only this type can answer.
 #include "../../shared/entities/generated/entities/spot_light_entity_generated.hpp"
 #include "../entity_io_context.hpp"
 

@@ -88,10 +88,13 @@ void place_player_at_spawn(shared::game_session_t &session, entities::Player_Ent
 void place_player_at(shared::game_session_t &session, entities::Player_Entity &player,
                      const vec3f& position, const linalg::quatf& orientation);
 
-// The Trigger_Action::Checkpoint volume this player last touched, or null when
-// there is none, it no longer exists, or it is no longer a checkpoint.
+// Where Set_Respawn_Point last put this player, or null when nothing has or
+// what it named no longer exists. ANY entity, not a volume: the action's
+// `location` is a uid, so a spawn marker or a destination entity is as valid a
+// respawn point as the trigger that set it -- and the type test that used to
+// stand here could only ever ask about the one kind that happened to exist.
 [[nodiscard]]
-const entities::Trigger_Volume_Entity *
+const entities::Entity *
 try_find_checkpoint(shared::game_session_t &session, const entities::Player_Entity &player);
 
 void fire_player_spawned_event(server_context_t &context,

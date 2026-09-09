@@ -17,6 +17,7 @@
 #include "entities/weapon_entity_generated.hpp"
 #include "entities/rocket_entity_generated.hpp"
 #include "entities/particle_emitter_entity_generated.hpp"
+#include "entities/game_rules_entity_generated.hpp"
 #include "entities/damageable_entity_generated.hpp"
 #include "entities/trigger_volume_entity_generated.hpp"
 #include "entities/point_light_entity_generated.hpp"

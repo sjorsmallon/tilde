@@ -19,6 +19,10 @@
 #include "traits/colorable_generated.hpp"
 #include "traits/touchable_generated.hpp"
 #include "traits/mortal_generated.hpp"
+#include "traits/mobile_generated.hpp"
+#include "traits/armable_generated.hpp"
+#include "traits/respawnable_generated.hpp"
+#include "traits/objective_generated.hpp"
 #include <cassert>
 #include <cstdint>
 #include <type_traits>
@@ -53,6 +57,12 @@ struct action_data_t
     Kill_Data kill;
     Set_Health_Data set_health;
     Damage_Data damage;
+    Teleport_Data teleport;
+    Set_Velocity_Data set_velocity;
+    Add_Velocity_Data add_velocity;
+    Grant_Weapon_Data grant_weapon;
+    Set_Respawn_Point_Data set_respawn_point;
+    Complete_Level_Data complete_level;
   };
 
   const Use_Data& as_use() const { assert(tag == entity_action::Use); return use; }
@@ -63,6 +73,12 @@ struct action_data_t
   const Kill_Data& as_kill() const { assert(tag == entity_action::Kill); return kill; }
   const Set_Health_Data& as_set_health() const { assert(tag == entity_action::Set_Health); return set_health; }
   const Damage_Data& as_damage() const { assert(tag == entity_action::Damage); return damage; }
+  const Teleport_Data& as_teleport() const { assert(tag == entity_action::Teleport); return teleport; }
+  const Set_Velocity_Data& as_set_velocity() const { assert(tag == entity_action::Set_Velocity); return set_velocity; }
+  const Add_Velocity_Data& as_add_velocity() const { assert(tag == entity_action::Add_Velocity); return add_velocity; }
+  const Grant_Weapon_Data& as_grant_weapon() const { assert(tag == entity_action::Grant_Weapon); return grant_weapon; }
+  const Set_Respawn_Point_Data& as_set_respawn_point() const { assert(tag == entity_action::Set_Respawn_Point); return set_respawn_point; }
+  const Complete_Level_Data& as_complete_level() const { assert(tag == entity_action::Complete_Level); return complete_level; }
 };
 static_assert(std::is_trivially_copyable_v<action_data_t>,
               "a connection row and a queued record hold one by value");
@@ -75,6 +91,12 @@ action_data_t erase(const Set_Color_Data& payload);
 action_data_t erase(const Kill_Data& payload);
 action_data_t erase(const Set_Health_Data& payload);
 action_data_t erase(const Damage_Data& payload);
+action_data_t erase(const Teleport_Data& payload);
+action_data_t erase(const Set_Velocity_Data& payload);
+action_data_t erase(const Add_Velocity_Data& payload);
+action_data_t erase(const Grant_Weapon_Data& payload);
+action_data_t erase(const Set_Respawn_Point_Data& payload);
+action_data_t erase(const Complete_Level_Data& payload);
 
 // --- the trait table --------------------------------------------------
 //
@@ -92,10 +114,11 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
-  0u,   // Player_Entity
+  trait_bit(entity_trait::Mortal) | trait_bit(entity_trait::Mobile) | trait_bit(entity_trait::Armable) | trait_bit(entity_trait::Respawnable),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Particle_Emitter_Entity
+  trait_bit(entity_trait::Objective),   // Game_Rules_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Trigger_Volume_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Point_Light_Entity
@@ -134,10 +157,11 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
-  0u,   // Player_Entity
+  action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Particle_Emitter_Entity
+  action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Trigger_Volume_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Point_Light_Entity
@@ -168,10 +192,11 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
-  0u,   // Player_Entity
+  signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Particle_Emitter_Entity
+  0u,   // Game_Rules_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Trigger_Volume_Entity
   signal_bit(entity_signal::Color_Changed),   // Point_Light_Entity

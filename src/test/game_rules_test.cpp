@@ -498,8 +498,9 @@ void test_objective_reached()
   start_match(world.context, world.context.tick_number, tickrate);
   check_phase(world.context, shared::Round_Phase::Live, "a speedrun starts running");
 
-  // The flag is what Trigger_Action::Complete_Level writes, and it is the only
-  // thing this condition reads: no volume, no player, no proximity.
+  // The flag is what a Game_Rules_Entity's Complete_Level handler writes, and
+  // it is the only thing this condition reads: no volume, no player, no
+  // proximity.
   check_win_condition(world.context, world.context.tick_number, tickrate);
   check_phase(world.context, shared::Round_Phase::Live,
               "an unreached objective leaves the run going");
@@ -512,14 +513,12 @@ void test_objective_reached()
 
 // --- 6. Checkpoints ---------------------------------------------------------
 
-shared::entity_uid_t spawn_checkpoint(server_context_t& context, const vec3f& position,
-                                      entities::Trigger_Action action)
+shared::entity_uid_t spawn_checkpoint(server_context_t& context, const vec3f& position)
 {
   const shared::entity_uid_t uid =
       context.world.session.entity_system.spawn<entities::Trigger_Volume_Entity>();
   entities::Trigger_Volume_Entity* volume =
       context.world.session.entity_system.get<entities::Trigger_Volume_Entity>(uid);
-  volume->action   = action;
   volume->position = position;
   return uid;
 }
@@ -535,18 +534,17 @@ void test_checkpoint_respawn()
   const shared::entity_uid_t player_uid =
       spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
   const vec3f checkpoint_position{500.f, 0.f, 250.f};
-  const shared::entity_uid_t checkpoint_uid = spawn_checkpoint(
-      world.context, checkpoint_position, entities::Trigger_Action::Checkpoint);
+  const shared::entity_uid_t checkpoint_uid =
+      spawn_checkpoint(world.context, checkpoint_position);
 
-  // A uid naming a volume that is not a checkpoint resolves to nothing, so the
-  // respawn falls through to a marker. The action is what makes it one.
-  const shared::entity_uid_t killer_uid =
-      spawn_checkpoint(world.context, {900.f, 0.f, 0.f}, entities::Trigger_Action::Kill);
-  player_of(world.context, player_uid).checkpoint_uid = killer_uid;
+  // A uid naming nothing is the one way a checkpoint fails now, and it is not
+  // the author's fault: Set_Respawn_Point takes any entity, so what used to be
+  // "that volume is not a checkpoint" is now only "that entity is gone".
+  player_of(world.context, player_uid).checkpoint_uid = 9999;
   world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
   update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
   check(player_of(world.context, player_uid).position.x == 0.f,
-        "a uid naming a non-checkpoint volume respawns you at the start line");
+        "a uid naming nothing respawns you at the start line");
 
   player_of(world.context, player_uid).checkpoint_uid = checkpoint_uid;
   world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;

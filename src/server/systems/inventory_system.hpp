@@ -38,13 +38,17 @@ void grant_default_inventory(shared::game_session_t& session, shared::entity_uid
 // means -- and the displaced entity is destroyed rather than leaked.
 //
 // The damage type is a property of the granted WEAPON, so it is decided here by
-// whoever hands it out -- a trigger's param, a card -- and written at the spawn
-// rather than poked onto the entity afterwards.
+// whoever hands it out -- a connection's override, a card -- and written at the
+// spawn rather than poked onto the entity afterwards.
+//
+// The receiver is an Entity plus its Inventory rather than a Player_Entity,
+// which is what lets Armable's one handler serve every type that carries one.
 [[nodiscard]] shared::entity_uid_t
-try_grant_weapon(server_context_t&         context,
-                 entities::Player_Entity& player,
-                 entities::Weapon         weapon,
-                 entities::Damage_Type    damage_type = entities::Damage_Type::Normal);
+try_grant_weapon(server_context_t&     context,
+                 entities::Entity&     owner,
+                 entities::Inventory&  inventory,
+                 entities::Weapon      weapon,
+                 entities::Damage_Type damage_type = entities::Damage_Type::Normal);
 
 // Destroy every weapon the player carries and clear the list. Same tick rule as
 // above, in reverse: a weapon outliving its owner is a leak no one holds a

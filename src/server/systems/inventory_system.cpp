@@ -15,8 +15,14 @@ namespace server
 // Fallible because the spawn is: a full pool is a real outcome and the caller
 // gets no uid to record. Displacing whatever the slot held is NOT a failure and
 // is not reported -- it is what taking a second rifle means.
+//
+// Takes the OWNER and its Inventory rather than a Player_Entity: Armable is
+// declared `requires Inventory`, so its handler is written once against the
+// component and gets exactly these two. Nothing in here ever wanted the rest
+// of a player -- the uid is for owner_uid and the component is the slots.
 [[nodiscard]] static shared::entity_uid_t spawn_weapon_into_slot(shared::game_session_t& session,
-                                                                entities::Player_Entity& player,
+                                                                entities::Entity& owner,
+                                                                entities::Inventory& inventory,
                                                                 entities::Weapon weapon,
                                                                 entities::Damage_Type damage_type)
 {
@@ -28,17 +34,17 @@ namespace server
       session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
   if (weapon_entity == nullptr)
   {
-    log_error("spawn_weapon_into_slot: spawned {} for player {} and could not resolve it",
-              to_string(weapon), player.entity_id);
+    log_error("spawn_weapon_into_slot: spawned {} for {} and could not resolve it",
+              to_string(weapon), owner.entity_id);
     return shared::null_entity_uid;
   }
 
   weapon_entity->weapon_id   = weapon;
   weapon_entity->ammo        = definition.magazine_size;
-  weapon_entity->owner_uid   = player.entity_id;
+  weapon_entity->owner_uid   = owner.entity_id;
   weapon_entity->damage_type = damage_type;
 
-  player.inventory.weapons[definition.slot] = weapon_uid;
+  inventory.weapons[definition.slot] = weapon_uid;
   return weapon_uid;
 }
 
@@ -66,7 +72,7 @@ void grant_default_inventory(shared::game_session_t& session, shared::entity_uid
   // anything about placement. Two weapons naming one slot would leave the later
   // one holding it, which is a loadout statement rather than a bug.
   for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
-    (void)spawn_weapon_into_slot(session, *player, (entities::Weapon)index,
+    (void)spawn_weapon_into_slot(session, *player, player->inventory, (entities::Weapon)index,
                                  entities::Damage_Type::Normal);
 
   // The hand a player comes up in. Named rather than left at the field default
@@ -74,16 +80,17 @@ void grant_default_inventory(shared::game_session_t& session, shared::entity_uid
   player->inventory.active_slot = entities::Inventory_Slot::Melee;
 }
 
-shared::entity_uid_t try_grant_weapon(server_context_t&        context,
-                                     entities::Player_Entity& player,
-                                     entities::Weapon         weapon,
-                                     entities::Damage_Type    damage_type)
+shared::entity_uid_t try_grant_weapon(server_context_t&     context,
+                                     entities::Entity&     owner,
+                                     entities::Inventory&  inventory,
+                                     entities::Weapon      weapon,
+                                     entities::Damage_Type damage_type)
 {
   const entities::Inventory_Slot slot      = shared::get_weapon_definition(weapon).slot;
-  const shared::entity_uid_t     displaced = player.inventory.weapons[slot];
+  const shared::entity_uid_t     displaced = inventory.weapons[slot];
 
   const shared::entity_uid_t granted =
-      spawn_weapon_into_slot(context.world.session, player, weapon, damage_type);
+      spawn_weapon_into_slot(context.world.session, owner, inventory, weapon, damage_type);
   if (granted == shared::null_entity_uid)
     return shared::null_entity_uid;
 

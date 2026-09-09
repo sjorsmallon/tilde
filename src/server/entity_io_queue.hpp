@@ -39,6 +39,14 @@ struct pending_action_t
   // so the handler still gets the answer -- which may by then name nobody, and
   // handlers tolerate that.
   shared::entity_uid_t activator = shared::null_entity_uid;
+
+  // Whether `target` came from an Activator row, which is the ONE case the load
+  // check could not settle exactly: it admits a row that SOME `by` type
+  // accepts, so the entity that actually showed up may not. The drain dispatches
+  // those through try_send_action and logs a miss; a Uid or Self target was
+  // checked against one type and stays a fatal_error, because a null dispatch
+  // cell there is a generator or loader bug.
+  bool target_resolved_from_activator = false;
 };
 
 // The ONE walk behind every generated emit_<signal>: find the sender's

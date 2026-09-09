@@ -267,26 +267,37 @@ Entities are **plain structs with no virtuals** (hence blittable, hence memcmp-d
 - `entity_as<T>(entity)` replaces `dynamic_cast` (exact type match — the hierarchy is closed and one level deep).
 - `entities::get_box_volume` / `get_render` are component-table lookups, not virtuals.
 - `destroy_entity()`, not `delete` through a base pointer — there is no virtual destructor to dispatch through.
-- Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `fire_trigger_action`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
+- Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
 
-Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entity`, `Player_Spectate_Entity`, `Player_Entity`, `Weapon_Entity`, `Rocket_Entity`, `Particle_Emitter_Entity`, `Trigger_Volume_Entity`, `Point_Light_Entity`, `Spot_Light_Entity`, `Directional_Light_Entity`, `Physics_Body_Entity`, `Damageable_Entity`.
+Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entity`, `Player_Spectate_Entity`, `Player_Entity`, `Weapon_Entity`, `Rocket_Entity`, `Particle_Emitter_Entity`, `Trigger_Volume_Entity`, `Point_Light_Entity`, `Spot_Light_Entity`, `Directional_Light_Entity`, `Physics_Body_Entity`, `Damageable_Entity`, `Game_Rules_Entity`.
 
 ### Entity I/O — traits, connections, the queue
 
-`entity_io_def.md` is the design of record; §11 is the build order and steps 1, 2, 2b and 3 are landed. Read it before adding a trait, a verb, a target kind or anything that emits. **"An entity does something" is TWO things and the split IS the design**: per-TYPE behaviour is a system in `Tick()`'s ordered list (a rocket flies), per-INSTANCE wiring is map data (THIS button opens THAT door). There is deliberately no `think()`, no vtable and no function-pointer field.
+`entity_io_def.md` is the design of record; §11 is the build order and steps 1, 2, 2b, 3, 4 and 5 are landed. Read it before adding a trait, a verb, a target kind or anything that emits. **"An entity does something" is TWO things and the split IS the design**: per-TYPE behaviour is a system in `Tick()`'s ordered list (a rocket flies), per-INSTANCE wiring is map data (THIS button opens THAT door). There is deliberately no `think()`, no vtable and no function-pointer field.
 
 **The TYPE layer is a `trait`** in `entities.def` — a named set of `accepts` ACTIONS and `emits` SIGNALS, opted into by an entity's `is` list. `requires C` writes the handlers ONCE against a component every opting-in type must carry; `by` names the types that can ACTIVATE a signal. The three enums (`entity_action` / `entity_signal` / `entity_trait`) are DERIVED from the declarations, one payload struct per verb, and `def_gen` emits per-trait and per-entity headers so reading what a light accepts is one file. A declared handler nobody wrote is a **link error naming the symbol**; a handler nobody declares is `-Werror=missing-prototypes`.
 
 **The INSTANCE layer is `map_t::connections`**, and targets are **UIDS, never names** — uids are stable in the file, so `Entity::name` is a display LABEL nothing resolves and renaming breaks no wiring. A row is `{sender, signal, target_kind, target, data, has_override, delay_seconds, fire_once}`; `target_kind` is `{Uid, Activator, Self}`. **`data.tag` IS the action** — there is no separate `action` member, because two spellings of one fact can disagree.
 
 - **The load check is ONE function, TWO policies** (`validate_map_connections`, `shared/map_connection.hpp`). It returns a refusal per bad ROW with the row's index, not a sentence to parse back. `build_session` logs each and DROPS those rows, which is what keeps the drain's `fatal_error` on a null dispatch cell unreachable; the server's `load_map` runs the same check and refuses the whole map, keeping the one it is running. An editor that could not open a map with one bad row could not repair it either.
-- **`by` is load-bearing, not documentation.** An `Activator` target is checked against EVERY type the signal's `by` list admits, so `Touched -> !activator Set_Color` is refused because a `Physics_Body_Entity` can touch a trigger and is not `Colorable`. A signal with no `by` refuses the target kind outright — there is no type to check against, so it could only be checked at fire time.
+- **`by` is load-bearing, not documentation**, and an `Activator` target is checked against the types it admits — but the rule is SOME, not every, and that asymmetry is a decision. A `Uid` and a `Self` name ONE type, so those two are exact. An `Activator` does not: `Touchable` is truthfully activated by a player OR a physics body, so requiring every one of them to accept made `Touched -> !activator Kill` — the most ordinary trigger in any level — unspellable, since a crate is not `Mortal` and never will be. Worse, all-accept made a `by` list **unwidenable**: adding a type would refuse every `!activator` row in every map already on disk, which is the opposite of what a declaration should cost. So the check refuses only a row that NOTHING admitted by `by` accepts — one that could never do anything. A signal with no `by` refuses the target kind outright, there being no type to check against at all.
+- **What some-accept gives up, the DRAIN absorbs.** A row is no longer proof that every activation does something, so `pending_action_t::target_resolved_from_activator` records which case a queued action came from: a `Uid` or `Self` target keeps `send_action` and its `fatal_error`, because a null dispatch cell there is a generator or loader bug, while an `Activator` goes through `try_send_action` and a miss is one `log_warning` naming the type. A crate rolling into a volume wired to kill whoever touched it is that line and nothing else. It is the only way an author learns why nothing happened, which is why `sv_io_debug` (step 6c) matters more now.
 - **Pass-through is a MEMCPY checked at load.** A row with no override needs the signal's and the action's payload field tables to agree name for name, type for type, offset for offset, and the payloads to be the same size. The field NAMES are what separate `Died(killer: entity)` from `Set_Health(amount: i32)`, which are otherwise the same four bytes.
 - **EVERYTHING FROM A CONNECTION IS QUEUED, delay zero included; everything from code is SYNCHRONOUS.** That is the reentrancy guard: an action reached through a connection can spawn or destroy, and must not do so under the system that emitted the signal. `world_t::pending_actions` is the ONE queue, drained at the TOP of `Tick()` in `(fire_tick, sequence)` order (`server/entity_io_queue.{hpp,cpp}`); the due records are moved OUT before any runs, so a handler that emits feeds the NEXT tick.
 - **Emitting happens in a SYSTEM, at the tick the state change becomes true, in the same statement that writes the state** — never in an action handler (it only requests) and never in the drain. `emit_<signal>` is generated per signal into the binder TU and calls one hand-written walk, `queue_signal_connections`.
 - **The activator is resolved at EMIT time**, not at drain time: `!activator` names whoever caused THIS signal, and a delayed record outlives that moment. A handler must tolerate it naming nobody by then.
 - **`fire_once` spends the SESSION's copy** (`session_connection_t::spent`), never the map's — a map is what the editor is editing and what the next round reloads from. A target destroyed during a delay is DROPPED with a line, which is the only way a queued action can fail.
+- **`Died` and `Health_Changed` are emitted from the DAMAGE CHOKE POINT** (`server/damage.cpp`'s two `*_damage_total` functions), by both `Player_Entity` and `Damageable_Entity` — the health write and the `>0 -> <=0` crossing are already there, which is what "emit in the same statement that writes the state" means here. `set_health` in `traits/mortal.cpp` deliberately emits nothing: a handler only requests. `Died` carries a KILLER, so the damageable path picks one by the same rule the player path credits a frag by (largest single contribution, ties to the lower attacker uid, a wrong-colour hit contributing zero and so never winning) — that is Died's payload, not kill credit, and it is what makes `!activator` name whoever broke the thing. A tick's hits are already summed per victim, so `Died` fires ONCE however many shooters landed one.
 - `Entity_System::try_find(uid)` is the untyped resolve the drain needs; `get<T>` is the typed one.
+
+**A TRIGGER VOLUME SAYS WHEN, AND NOTHING ELSE.** `Trigger_Action`, `Fire_Mode`, the three `param_*` fields and `src/server/trigger_actions.{hpp,cpp}` are all deleted; `src/server/systems/trigger_system.cpp` is the overlap loop, out of `Tick()`, emitting `Touched` on the rising edge and `Left` on the falling one. `fire_trigger_action`'s exhaustive switch is gone with them, so CLAUDE.md's "handwritten exhaustive switch" list is one shorter.
+
+- **The nine actions became traits carved by CAPABILITY**: `Mortal` (`Kill`, `Set_Health`), `Mobile` (`Teleport`, `Set_Velocity`, `Add_Velocity`), `Armable requires Inventory` (`Grant_Weapon`), `Respawnable` (`Set_Respawn_Point`), `Objective` (`Complete_Level`). A `Racing` trait over the last two was rejected on that test: a game RULE is not a capability of the entity that trips it. Which is also why `Objective` sits on a new fieldless `Game_Rules_Entity` rather than on the player — `Complete_Level` writes `world.rules`, and aimed at a player it makes the player a handle for a global.
+- **`Armable requires Inventory` is the answer to "why not a component and a system".** The state IS the component and the handler is written once against it; what a system cannot supply is the wiring, since granting runs on no clock and is not per-type behaviour. `try_grant_weapon` therefore takes `(Entity&, Inventory&)`, not a `Player_Entity&` — it never wanted the rest of a player.
+- **`Set_Respawn_Point(location: entity)` carries its target rather than reading the sender**, which is why Source's `!caller` is NOT on `input_context_t`: nothing needs it. `try_find_checkpoint` widened to `Entity*` with it — any entity is a legal respawn point, and the type test it used to do could only ask about the one kind that happened to exist.
+- **A DISABLED volume has no overlaps rather than merely no new ones**, so switching one off emits `Left` for whoever is inside. A `Touched` with no `Left` is a door that never closes, which is worse than one that closes early.
+- **`collect_touchers` walks exactly what `by` names**, players and physics bodies, and keeping those two in step is what makes `by` mean anything — a type that can touch and is not listed passes a check nothing then honours. A crate could never fire anything under the loop this replaced, which is one of the three defects `entity_io_def.md` §2 names. Both bounds are what the thing physically IS, never `compute_entity_bounds`, which answers with the drawn mesh: the player's movement hull, and a body's own `size` half-extents. That also keeps the asset system out of a function with no other reason to need it.
+- **The legacy arm reproduces the map that RAN, not the map the field names describe.** `Grant_Weapon`'s handler had its lookup commented out and a literal `"Scout"` in its place with `param_string` holding the DAMAGE TYPE; the converted row says so out loud and is editable. `Give_Impulse` assigned `velocity.y`, which no verb spells, so it converts to `Add_Velocity` with a line. `Print_Message` is deleted — `sv_io_debug` (step 6c) logs every action fired, which is strictly more. `Complete_Level` MINTS a `Game_Rules_Entity`, because no map on disk has ever had a receiver for it. Converted once, the `box`-to-`brush` way; `maps/{new_map,other,transfer}.source` are done and `maps/test` is deliberately untouched.
 
 ### Generalizing toward two games
 
@@ -325,8 +336,11 @@ a row field now (`leaves_bullet_impact`); flavour that earns nothing is gone. Th
 set is `{Hitscan, Projectile, Self_Impulse}`; `Consume_For_Ability` waits for an
 ability set to consume into, and `None` is unrepresentable because an empty slot
 already is a legal hand. Not named `Fire_Effect` (`effects.def` owns "effect"),
-`Fire_Mode` (taken by trigger volumes, and means semi/burst/auto everywhere
-else) or `Fire_Action` (`Trigger_Action`, `fire_trigger_action`).
+`Fire_Mode` (then taken by trigger volumes, and means semi/burst/auto everywhere
+else) or `Fire_Action` (then `Trigger_Action`, `fire_trigger_action`). Both of
+those clashes went away with entity I/O's step 4, which is a reason to leave the
+name alone rather than to revisit it: the case for `Fire_Resolution` was never
+that the others were taken.
 
 A weapon row is **union-shaped** with the resolution as its discriminant, which
 is the one place the lights rule above is deliberately not followed: a variant
@@ -462,7 +476,7 @@ Ordering is the wire id, and the declarations are mixed into `SCHEMA_HASH`, so a
 
 `src/shared/EVENTS.md` is the "how to add one" guide; `events_def.md` is the design; `events_test` guards the round trip for every declared member of both channels, the per-record layout, and the `S2C_EffectBatch` wrapper (a protobuf `bytes` field is a `std::string` full of embedded NULs, so the client's `.data()`/`.size()` decode expression is what it exercises). `sv_event_debug` / `cl_event_debug` log each event fired and dispatched, latched onto both streams once per tick in `clear_outgoing` so the fire helpers stay free of the cvar family.
 
-`fire_trigger_action`'s switch is deliberately **not** generated: `-Werror=switch` already makes a missing case a compile error, and generating the switch would trade that for a link error — later, less local, strictly worse.
+The remaining hand-written per-type switches are deliberately **not** generated: `-Werror=switch` already makes a missing case a compile error, and generating one would trade that for a link error — later, less local, strictly worse. (`fire_trigger_action` used to be the worked example here and is deleted; entity I/O replaced it.)
 
 ### Editor
 
@@ -1039,22 +1053,26 @@ mode enum, which is what lets a third mode recombine existing behaviors with no
 new code. They are the only two switches in the system.
 
 **`speedrun` is that third mode, and it is a row.** It recombines
-`Win_Condition::Objective_Reached` (a `Trigger_Action::Complete_Level` volume was
-touched — one `game_rules_state_t::objective_reached` flag, not a per-player set,
-because a PARTY finishes a level) with `Spawn_Policy::Single_Fixed_Start` (the
+`Win_Condition::Objective_Reached` (a goal volume was touched and its connection
+delivered `Complete_Level` to the map's `Game_Rules_Entity` — one
+`game_rules_state_t::objective_reached` flag, not a per-player set, because a
+PARTY finishes a level) with `Spawn_Policy::Single_Fixed_Start` (the
 first `Spawn_Type::Human` marker for everyone, ignoring the team and the rotation:
 a level has one start line) over a one-element `{Live}` cycle. Nothing switches on
 `Game_Mode` for it; the only new code is the two arms the two new enum values earn
 in `check_win_condition` and `try_pick_human_spawn`.
 
 The four Neon-White trigger actions landed with it — `Complete_Level`,
-`Checkpoint`, `Grant_Weapon`, `Set_Velocity`. A checkpoint is a **uid**
-(`Player_Entity::checkpoint_uid`, server-only) naming the volume last touched,
-resolved at the respawn rather than copied, so nothing can disagree with the
-volume the author moved; only the DEATH respawn honours it, and
-`respawn_all_players` clears it, because a round boundary is the start line.
-`Set_Velocity` is aimed with the trigger's own `orientation` and needs nothing
-from `Movement` — `player_move`'s `grounded` is `has_ground && old_velocity.y <=
+`Checkpoint`, `Grant_Weapon`, `Set_Velocity` — and are **entity I/O actions
+now**, not `Trigger_Action` values (see "Entity I/O" above). A checkpoint is a
+**uid** (`Player_Entity::checkpoint_uid`, server-only), written by
+`Set_Respawn_Point` and resolved at the respawn rather than copied, so nothing
+can disagree with the entity the author moved; only the DEATH respawn honours
+it, and `respawn_all_players` clears it, because a round boundary is the start
+line. `Set_Velocity` carries its vector in the connection's override — the
+trigger's `orientation` aimed it before, and the legacy arm bakes
+`forward(orientation) * param_float` once — and it needs nothing from
+`Movement`, since `player_move`'s `grounded` is `has_ground && old_velocity.y <=
 0`, so a positive Y survives the next step by construction. `Grant_Weapon` is what
 made `try_grant_weapon` public, and it had to start destroying the weapon it
 displaces: writing the slot in place was a leak per pickup.

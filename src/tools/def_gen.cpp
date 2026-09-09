@@ -4731,7 +4731,7 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
   //
   //   Invalid = 0 appears only where "none/unknown" is a real domain state:
   //   the two tag enums, where zeroed memory must not read as a valid tag.
-  //   Domain enums (Light_Type, Fire_Mode, ...) do not get one -- an
+  //   Domain enums (Shape_Kind, Damage_Type, ...) do not get one -- an
   //   Light_Type::Invalid would be a state every consumer has to answer for and
   //   no light can ever be in.
   fprintf(out, "// Invalid is 0 so that zeroed memory never looks like a valid entity.\n");
