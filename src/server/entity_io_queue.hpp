@@ -5,6 +5,7 @@
 #include "entity_io_context.hpp"
 
 #include <cstdint>
+#include <string>
 
 // ============================================================================
 // The queue every connection's action goes through, and the seam the generated
@@ -67,5 +68,15 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
 // Runs at the TOP of a tick: a queue drained mid-tick would let one system see
 // a world another system's signal had already changed underneath it.
 void drain_pending_actions(server_context_t& context);
+
+// How sv_io_debug and ent_fire name one end of a connection: the author's label
+// when the entity has one, its classname otherwise, and the uid always -- the
+// uid is the identity a row actually stores, so a line that printed only a
+// label would name something no connection can be edited by.
+//
+// A uid nothing resolves is not an error here; it is the ordinary case for an
+// activator who has left, so it prints as such rather than refusing.
+[[nodiscard]] std::string entity_io_label(const server_context_t& context,
+                                          shared::entity_uid_t uid);
 
 } // namespace server

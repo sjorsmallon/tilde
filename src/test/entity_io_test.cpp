@@ -22,6 +22,7 @@
 //      fatal.
 
 #include "server/damage.hpp"
+#include "server/entity_io_console.hpp"
 #include "server/entity_io_queue.hpp"
 #include "server/systems/trigger_system.hpp"
 #include "server/server_api.hpp"
@@ -808,6 +809,86 @@ void test_a_switched_light_leaves_the_frame()
   check(tail_entries_for_the_lamp() == 1, "and now it is in the frame");
 }
 
+// --- 6. ent_fire's parameter grammar ---------------------------------------
+//
+// The console's `field=value` tail is split by the ACTION'S FIELD TABLE, not by
+// whitespace -- a v3 writes as "1 0 0", so whitespace would cut one value into
+// three. Pinned here because getting it wrong sends the field's DEFAULT rather
+// than failing, which is the silent kind of wrong (entity_io_def.md ss11 6c).
+
+void test_the_console_parses_a_parameter_tail()
+{
+  std::printf("ent_fire: the field=value grammar\n");
+
+  {
+    entities::action_data_t data;
+    data.tag = entities::entity_action::Set_Velocity;
+
+    // The whole point: three numbers, two spaces, ONE value.
+    const std::vector<std::string> refusals =
+        server::parse_action_parameters(data, "velocity=0 0 400");
+    check(refusals.empty(), "a v3 whose value contains spaces is one pair");
+    check(data.set_velocity.velocity.x == 0.f && data.set_velocity.velocity.y == 0.f &&
+              data.set_velocity.velocity.z == 400.f,
+          "and all three components arrive");
+  }
+
+  {
+    entities::action_data_t data;
+    data.tag = entities::entity_action::Teleport;
+
+    // A space-containing value FOLLOWED by another pair: the value has to end
+    // at the next field name rather than at the next space.
+    const std::vector<std::string> refusals =
+        server::parse_action_parameters(data, "destination=7 keep_velocity=true");
+    check(refusals.empty(), "two pairs on one line");
+    check(data.teleport.destination == 7, "the first keeps its value");
+    check(data.teleport.keep_velocity, "and the second is not swallowed by it");
+  }
+
+  {
+    entities::action_data_t data;
+    data.tag                     = entities::entity_action::Set_Health;
+    data.set_health.amount       = 55;
+
+    const std::vector<std::string> refusals = server::parse_action_parameters(data, "");
+    check(refusals.empty(), "an empty tail refuses nothing");
+    check(data.set_health.amount == 55, "and writes nothing -- an unnamed field keeps what it had");
+  }
+
+  {
+    entities::action_data_t data;
+    data.tag = entities::entity_action::Set_Health;
+
+    // Not silently ignored: it is text the author typed that nothing reads.
+    const std::vector<std::string> refusals =
+        server::parse_action_parameters(data, "100 amount=25");
+    check(refusals.size() == 1, "a bare token before the first pair is reported");
+    check(data.set_health.amount == 25, "and the pair after it still lands");
+  }
+
+  {
+    entities::action_data_t data;
+    data.tag = entities::entity_action::Set_Health;
+
+    const std::vector<std::string> refusals =
+        server::parse_action_parameters(data, "amount=not_a_number");
+    check(refusals.size() == 1, "a value the field's own parser refuses is reported");
+    check(data.set_health.amount == entities::Set_Health_Data{}.amount,
+          "and the field keeps its default rather than half a value");
+  }
+
+  {
+    entities::action_data_t data;
+    data.tag = entities::entity_action::Set_Health;
+
+    // `health` is not one of Set_Health's fields (the field is `amount`), so
+    // this is not a pair boundary at all -- the whole thing is stray text.
+    const std::vector<std::string> refusals = server::parse_action_parameters(data, "health=10");
+    check(refusals.size() == 1, "an identifier the action does not declare is not a boundary");
+  }
+}
+
 int main()
 {
   std::printf("--- entity I/O: connections, the load check and the queue ---\n");
@@ -826,6 +907,7 @@ int main()
   test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();
   test_a_switched_light_leaves_the_frame();
+  test_the_console_parses_a_parameter_tail();
 
   if (failure_count > 0)
   {

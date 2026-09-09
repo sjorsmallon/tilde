@@ -842,6 +842,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::sv_reliable_debug),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "sv_io_debug",
+     .description = "Log every entity I/O emit, queued record and dispatch",
+     .flags = CVAR_FLAG_SERVER,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, sv_io_debug),
+     .size = sizeof(cvar_state_t::sv_io_debug),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
 };
 
 const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
@@ -884,6 +892,10 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
     {.name = "sv_hitch_report",
      .description = "What the worst tick allocated, by call site",
      .usage = "sv_hitch_report [top]",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "ent_fire",
+     .description = "Send an action to one entity, as field=value pairs",
+     .usage = "ent_fire <target> <action> [parameters...]",
      .flags = CVAR_FLAG_SERVER},
     {.name = "bind",
      .description = "Bind a key (a-z) to a command line",

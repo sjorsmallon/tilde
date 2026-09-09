@@ -824,6 +824,11 @@ add_library(game_server SHARED
     # rather than once per signal.
     src/server/entity_io_queue.hpp
     src/server/entity_io_queue.cpp
+    # ent_fire's `field=value` parser. Split out of the handler so it can be
+    # pinned with no server: a value can contain spaces (a v3 is "1 0 0"), and
+    # getting the split wrong sends the field's DEFAULT rather than failing.
+    src/server/entity_io_console.hpp
+    src/server/entity_io_console.cpp
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/systems/rocket_system.cpp
@@ -1142,6 +1147,7 @@ target_link_libraries(game_rules_test PRIVATE game_shared)
 # references every one of them, which is the seam being tested.
 add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/entity_io_queue.cpp
+    src/server/entity_io_console.cpp
     src/server/systems/trigger_system.cpp
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}

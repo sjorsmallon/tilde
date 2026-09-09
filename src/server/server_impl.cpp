@@ -17,6 +17,8 @@
 #include "systems/inventory_system.hpp"
 #include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
+#include "entity_io_console.hpp"
+#include "entity_io_queue.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/weapons.hpp"
 #include "../shared/array.hpp"
@@ -2528,6 +2530,64 @@ void sv_hitch_report(int32_t top, const command_context_t &)
 {
   frame_timing::report_worst_frame_zones();
   memory_audit::report_captured_frame(top <= 0 ? 15u : static_cast<uint32_t>(top));
+}
+
+// ent_fire <uid> <Action> [field=value ...] -- entity_io_def.md ss11 step 6c.
+// The parameter grammar and its one hard case live in entity_io_console.hpp.
+void ent_fire(uint32_t target, std::string_view action_name, std::string_view parameters,
+              const command_context_t &command_context)
+{
+  using namespace server;
+
+  server_context_t &context = g_server_context;
+
+  entities::Entity *target_entity = context.world.session.entity_system.try_find(target);
+  if (target_entity == nullptr)
+  {
+    log_error("ent_fire: no entity with uid {}", target);
+    return;
+  }
+
+  const std::optional<entities::entity_action> action =
+      entities::try_from_string<entities::entity_action>(action_name);
+  if (!action)
+  {
+    log_error("ent_fire: '{}' is not an action", action_name);
+    return;
+  }
+
+  entities::action_data_t data;
+  data.tag = *action;
+
+  // Reported and then CONTINUED: a refused parameter leaves its field at the
+  // default, which is exactly what a map row with a bad override does, and the
+  // author asked for the action to be sent.
+  for (const std::string &refusal : parse_action_parameters(data, parameters))
+    log_error("ent_fire: {}", refusal);
+
+  // The caller's own body is the activator, which is what lets ent_fire stand
+  // in for a trigger the author would otherwise have to walk into. A line typed
+  // at a dedicated server's own console has no body and names nobody, which
+  // handlers already tolerate.
+  shared::entity_uid_t activator = shared::null_entity_uid;
+  if (command_context.caller_slot >= 0 &&
+      command_context.caller_slot < (int)network::sv_max_client_count)
+    activator = context.clients[command_context.caller_slot].player_uid;
+
+  input_context_t handler_context{context, activator, context.tick_number};
+
+  // SYNCHRONOUS: everything from code is, and the console is code. A connection
+  // queues because the action it delivers must not run under the system that
+  // emitted the signal; there is no such system here.
+  if (!entities::try_send_action(*target_entity, data, handler_context))
+  {
+    log_error("ent_fire: {} does not accept {}", entity_io_label(context, target),
+              entities::to_string(data.tag));
+    return;
+  }
+
+  log_terminal("ent_fire: sent {} to {}", entities::to_string(data.tag),
+               entity_io_label(context, target));
 }
 
 } // namespace cvars::commands

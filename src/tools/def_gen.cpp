@@ -3553,11 +3553,20 @@ static void check_command_parameters(program_t* program)
                          "whole rest of the line, so nothing can follow it",
                          parameter->name.length, parameter->name.data);
           }
-          if (parameter->default_value.kind != DEFAULT_NONE)
+          // An optional rest earned its mechanism with ent_fire, whose
+          // parameters are `field=value` pairs an action may take none of. The
+          // ONLY default it can have is the empty one: a rest parameter is a
+          // view into the console line, so any other default is text the binder
+          // would have to invent storage for and then hand out as a dangling
+          // view.
+          if (parameter->default_value.kind != DEFAULT_NONE &&
+              !(parameter->default_value.kind == DEFAULT_STRING &&
+                parameter->default_value.text.length == 0))
           {
             report_error(program, parameter->offset, parameter->line,
-                         "rest parameter '%.*s' may not have a default; it is required -- an "
-                         "optional rest earns its mechanism with its first user",
+                         "rest parameter '%.*s' may only default to the empty string: it is a "
+                         "view into the console line, so any other default is text with "
+                         "nowhere to live",
                          parameter->name.length, parameter->name.data);
           }
         }
@@ -6213,8 +6222,9 @@ static bool command_has_rest_parameter(const program_t* program, const field_t* 
          program->parameters[command->first_parameter + command->parameter_count - 1].is_rest;
 }
 
-// The fewest tokens the line must carry: one per required parameter. The rest
-// parameter counts -- it is required and takes at least one.
+// The fewest tokens the line must carry: one per required parameter. A rest
+// parameter counts only when it has no default -- an optional one may take zero
+// tokens, which is what `ent_fire <uid> Enable` needs.
 static int32_t command_minimum_arguments(const program_t* program, const field_t* command)
 {
   int32_t minimum = 0;
@@ -6901,7 +6911,10 @@ static void emit_argument_binder(FILE* out, const program_t* program, const fiel
       fprintf(out, "  // in args points into ONE contiguous line buffer (see command_binder_t),\n");
       fprintf(out, "  // so the span from this parameter's first token to the end of the last\n");
       fprintf(out, "  // token is the original text, interior whitespace intact.\n");
-      fprintf(out, "  std::string_view %.*s(args[%d].data(),\n", name_length, name, which);
+      fprintf(out, "  std::string_view %.*s;\n", name_length, name);
+      if (optional)
+        fprintf(out, "  if (args.size() > %du)\n  ", which);
+      fprintf(out, "  %.*s = std::string_view(args[%d].data(),\n", name_length, name, which);
       fprintf(out, "      (size_t)(args[args.size() - 1].data() + args[args.size() - 1].size() -\n");
       fprintf(out, "               args[%d].data()));\n\n", which);
       continue;

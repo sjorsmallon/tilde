@@ -540,6 +540,16 @@ Debugging :: cvars {
     // self-describing, which is why there is no {type, offset, length} index
     // beside it to print instead -- see network/reliable_stream.hpp.
     sv_reliable_debug:      bool = false    @Server     "Log the records pending in each client's reliable stream"
+
+    // The entity I/O counterpart, and it exists for one line in particular: an
+    // emit whose sender has NO connections. "I walked into the trigger and
+    // nothing happened" has three causes -- the signal never fired, it fired
+    // and nothing was wired to it, or it was wired and the action was refused
+    // -- and they are indistinguishable from the viewport. Read directly rather
+    // than latched the way sv_event_debug is: that latch exists because the
+    // GENERATED fire helpers must stay free of the cvar family, and every site
+    // here is hand-written server code already holding the context.
+    sv_io_debug:            bool = false    @Server     "Log every entity I/O emit, queued record and dispatch"
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +624,18 @@ Server_Commands :: commands {
     // accumulator, so what is measured here is how long a tick took to run.
     sv_frame_report()                  @Server  "Print the tick time distribution and the worst ticks so far"
     sv_hitch_report(top: i32 = 15)     @Server  "What the worst tick allocated, by call site"
+
+    // Source's ent_fire, and the reason it is here BEFORE any level is wired:
+    // a wiring system you cannot poke from the console is one you debug by
+    // walking into triggers. The action name is a `string` rather than an enum
+    // parameter because entity_action lives in the ENTITY family and a cvar may
+    // not reference one -- the fence is what forces the handler to resolve it
+    // through try_from_string, which is also where the "it accepts these"
+    // error comes from.
+    //
+    // SYNCHRONOUS, unlike a connection: everything from code is, and the
+    // console is code. See entity_io_def.md ss7.
+    ent_fire(target: u32, action: string, parameters: string... = "")  @Server  "Send an action to one entity, as field=value pairs"
 }
 
 Client_Commands :: commands {

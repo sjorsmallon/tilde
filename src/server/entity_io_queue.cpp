@@ -1,10 +1,12 @@
 #include "entity_io_queue.hpp"
 
 #include "../shared/log.hpp"
+#include "../shared/reflection.hpp"
 #include "server_context.hpp"
 
 #include <algorithm>
 #include <cstring>
+#include <format>
 
 namespace server
 {
@@ -24,22 +26,90 @@ uint32_t ticks_for_delay(const server_context_t& context, float delay_seconds)
   return (uint32_t)std::ceil(delay_seconds * tickrate);
 }
 
+bool io_debug_is_on(const server_context_t& context)
+{
+  return context.cvars != nullptr && context.cvars->sv_io_debug;
+}
+
+// What a row's parameters actually are once the override rule has been applied,
+// rendered through the action's own field table -- the same field_to_text the
+// map writer uses, so a logged value and a saved one read identically.
+std::string describe_action_payload(const entities::action_data_t& data)
+{
+  std::string text;
+  for (const field_info_t& field : entities::action_payload_fields(data.tag))
+  {
+    std::string value;
+    if (!field_to_text(entities::action_payload_bytes(data) + field.offset, field, value))
+      value = "?";
+
+    if (!text.empty())
+      text += ", ";
+    text += std::format("{}={}", field.name, value);
+  }
+  return text;
+}
+
 } // namespace
+
+std::string entity_io_label(const server_context_t& context, shared::entity_uid_t uid)
+{
+  if (uid == shared::null_entity_uid)
+    return "nobody";
+
+  const entities::Entity* entity =
+      const_cast<server_context_t&>(context).world.session.entity_system.try_find(uid);
+  if (entity == nullptr)
+    return std::format("uid {} (gone)", uid);
+
+  const std::string_view label(entity->name.data, entity->name.length);
+  if (label.empty())
+    return std::format("{} uid {}", entities::entity_info(entity->type).classname, uid);
+
+  return std::format("\"{}\" ({} uid {})", label, entities::entity_info(entity->type).classname,
+                     uid);
+}
 
 void queue_signal_connections(input_context_t& context, const entities::Entity& sender,
                               entities::entity_signal signal, const void* payload_bytes,
                               uint32_t payload_size)
 {
   shared::game_session_t& session = context.server.world.session;
+  const bool              debug   = io_debug_is_on(context.server);
 
   auto bucket = session.connections_by_sender.find(sender.entity_id);
   if (bucket == session.connections_by_sender.end())
+  {
+    // THE line this cvar exists for. "I walked into the trigger and nothing
+    // happened" has three causes and they are indistinguishable from the
+    // viewport; this one separates "the signal never fired" from "it fired and
+    // nothing was wired to it".
+    if (debug)
+      log_terminal("[io] {} emitted {} — no connections from this sender",
+                   entity_io_label(context.server, sender.entity_id),
+                   entities::to_string(signal));
     return;
+  }
+
+  uint32_t matched_count = 0;
 
   for (shared::session_connection_t& connection : bucket->second)
   {
-    if (connection.row.signal != signal || connection.spent)
+    if (connection.row.signal != signal)
       continue;
+
+    ++matched_count;
+
+    if (connection.spent)
+    {
+      // Distinguishable from "no row matched", because it is a different fix:
+      // the wiring is right and has already had its one turn.
+      if (debug)
+        log_terminal("[io] {} emitted {} — a matching row is spent (fire_once)",
+                     entity_io_label(context.server, sender.entity_id),
+                     entities::to_string(signal));
+      continue;
+    }
 
     pending_action_t record;
     record.data      = connection.row.data;
@@ -77,9 +147,30 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
 
     context.server.world.pending_actions.push_back(record);
 
+    if (debug)
+    {
+      const std::string parameters = describe_action_payload(record.data);
+      log_terminal("[io] {} {} -> {} {}{}{}{}", entity_io_label(context.server, sender.entity_id),
+                   entities::to_string(signal), entity_io_label(context.server, record.target),
+                   entities::to_string(record.data.tag),
+                   parameters.empty() ? "" : std::format("({})", parameters),
+                   record.fire_tick == context.tick
+                       ? std::string(" [this tick]")
+                       : std::format(" [tick {}, +{}]", record.fire_tick,
+                                     record.fire_tick - context.tick),
+                   connection.row.fire_once ? " [fire_once, now spent]" : "");
+    }
+
     if (connection.row.fire_once)
       connection.spent = true;
   }
+
+  // Separated from the no-bucket case above: this sender HAS wiring, just none
+  // for this signal. The fix is a different one -- the row names the wrong
+  // signal rather than being absent.
+  if (debug && matched_count == 0)
+    log_terminal("[io] {} emitted {} — this sender has connections, but none for that signal",
+                 entity_io_label(context.server, sender.entity_id), entities::to_string(signal));
 }
 
 void drain_pending_actions(server_context_t& context)
@@ -129,6 +220,17 @@ void drain_pending_actions(server_context_t& context)
     }
 
     input_context_t handler_context{context, record.activator, context.tick_number};
+
+    if (io_debug_is_on(context))
+    {
+      const std::string parameters = describe_action_payload(record.data);
+      log_terminal("[io] dispatch {} {}{} to {}, activator {}",
+                   entities::to_string(record.data.tag),
+                   parameters.empty() ? "" : std::format("({}) ", parameters),
+                   record.target_resolved_from_activator ? "[from !activator]" : "",
+                   entity_io_label(context, record.target),
+                   entity_io_label(context, record.activator));
+    }
 
     // A Uid or Self target was checked against ONE type at load, so a null
     // dispatch cell there is a generator or loader bug and send_action's

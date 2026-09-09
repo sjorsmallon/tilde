@@ -189,6 +189,7 @@ struct cvar_state_t
   bool sv_event_debug = false;
   bool cl_event_debug = false;
   bool sv_reliable_debug = false;
+  bool sv_io_debug = false;
 };
 
 // Load-bearing for mirroring: change detection is a member compare
@@ -300,11 +301,12 @@ enum class cvar_id : uint16_t
   sv_event_debug = 96,
   cl_event_debug = 97,
   sv_reliable_debug = 98,
+  sv_io_debug = 99,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 99;
+constexpr uint32_t CVAR_COUNT = 100;
 
 enum class command_id : uint16_t
 {
@@ -318,18 +320,19 @@ enum class command_id : uint16_t
   sv_mem_report = 7,
   sv_frame_report = 8,
   sv_hitch_report = 9,
-  bind = 10,
-  connect = 11,
-  announce = 12,
-  mem_report = 13,
-  mem_frame = 14,
-  mem_stacks = 15,
-  frame_report = 16,
-  frame_reset = 17,
-  hitch_report = 18,
+  ent_fire = 10,
+  bind = 11,
+  connect = 12,
+  announce = 13,
+  mem_report = 14,
+  mem_frame = 15,
+  mem_stacks = 16,
+  frame_report = 17,
+  frame_reset = 18,
+  hitch_report = 19,
 };
 
-constexpr uint32_t COMMAND_COUNT = 19;
+constexpr uint32_t COMMAND_COUNT = 20;
 
 enum cvar_type : uint8_t
 {
@@ -442,6 +445,9 @@ void sv_frame_report(const command_context_t& context);
 // @Server  What the worst tick allocated, by call site
 // usage: sv_hitch_report [top]
 void sv_hitch_report(int32_t top, const command_context_t& context);
+// @Server  Send an action to one entity, as field=value pairs
+// usage: ent_fire <target> <action> [parameters...]
+void ent_fire(uint32_t target, std::string_view action, std::string_view parameters, const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);

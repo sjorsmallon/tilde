@@ -79,7 +79,8 @@ bool invoke_bind(Span<std::string_view> args, const command_context_t& context,
   // in args points into ONE contiguous line buffer (see command_binder_t),
   // so the span from this parameter's first token to the end of the last
   // token is the original text, interior whitespace intact.
-  std::string_view command(args[1].data(),
+  std::string_view command;
+  command = std::string_view(args[1].data(),
       (size_t)(args[args.size() - 1].data() + args[args.size() - 1].size() -
                args[1].data()));
 
@@ -117,7 +118,8 @@ bool invoke_announce(Span<std::string_view> args, const command_context_t& conte
   // in args points into ONE contiguous line buffer (see command_binder_t),
   // so the span from this parameter's first token to the end of the last
   // token is the original text, interior whitespace intact.
-  std::string_view text(args[0].data(),
+  std::string_view text;
+  text = std::string_view(args[0].data(),
       (size_t)(args[args.size() - 1].data() + args[args.size() - 1].size() -
                args[0].data()));
 

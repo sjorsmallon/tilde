@@ -253,6 +253,41 @@ bool invoke_sv_hitch_report(Span<std::string_view> args, const command_context_t
   return true;
 }
 
+// ent_fire <target> <action> [parameters...]
+bool invoke_ent_fire(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() < 2u)
+  {
+    usage_error(out_reply, command_id::ent_fire, args.size());
+    return false;
+  }
+
+  uint32_t target = {};
+  const std::optional<uint32_t> parsed_target = try_parse_whole<uint32_t>(args[0]);
+  if (!parsed_target)
+  {
+    bad_argument(out_reply, command_id::ent_fire, "target", args[0]);
+    return false;
+  }
+  target = *parsed_target;
+
+  std::string_view action = args[1];
+
+  // 'parameters' is 'string...': the untokenized rest of the line. Every view
+  // in args points into ONE contiguous line buffer (see command_binder_t),
+  // so the span from this parameter's first token to the end of the last
+  // token is the original text, interior whitespace intact.
+  std::string_view parameters;
+  if (args.size() > 2u)
+    parameters = std::string_view(args[2].data(),
+      (size_t)(args[args.size() - 1].data() + args[args.size() - 1].size() -
+               args[2].data()));
+
+  commands::ent_fire(target, action, parameters, context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -267,6 +302,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::sv_mem_report] = &invoke_sv_mem_report;
   table.binders[(uint32_t)command_id::sv_frame_report] = &invoke_sv_frame_report;
   table.binders[(uint32_t)command_id::sv_hitch_report] = &invoke_sv_hitch_report;
+  table.binders[(uint32_t)command_id::ent_fire] = &invoke_ent_fire;
 }
 
 } // namespace cvars
