@@ -174,6 +174,7 @@ struct cvar_state_t
   float map_respawn_delay_seconds = 3.0f;
   int32_t map_kill_limit = 25;
   float map_round_time_limit_seconds = 6000.0f;
+  network::pascal_string_t<128> next_map = "";
   bool pin_main_thread = true;
   Debug_Channel r_debug_channel = Debug_Channel::off;
   float r_exposure = 1.4f;
@@ -286,27 +287,28 @@ enum class cvar_id : uint16_t
   map_respawn_delay_seconds = 81,
   map_kill_limit = 82,
   map_round_time_limit_seconds = 83,
-  pin_main_thread = 84,
-  r_debug_channel = 85,
-  r_exposure = 86,
-  debug_show_collisions = 87,
-  debug_show_hitboxes = 88,
-  debug_show_navmesh = 89,
-  debug_show_box_volumes = 90,
-  debug_hide_geometry = 91,
-  cl_shot_debug_seconds = 92,
-  debug_show_entity_counts = 93,
-  debug_show_physics_bodies = 94,
-  net_snapshot_debug = 95,
-  sv_event_debug = 96,
-  cl_event_debug = 97,
-  sv_reliable_debug = 98,
-  sv_io_debug = 99,
+  next_map = 84,
+  pin_main_thread = 85,
+  r_debug_channel = 86,
+  r_exposure = 87,
+  debug_show_collisions = 88,
+  debug_show_hitboxes = 89,
+  debug_show_navmesh = 90,
+  debug_show_box_volumes = 91,
+  debug_hide_geometry = 92,
+  cl_shot_debug_seconds = 93,
+  debug_show_entity_counts = 94,
+  debug_show_physics_bodies = 95,
+  net_snapshot_debug = 96,
+  sv_event_debug = 97,
+  cl_event_debug = 98,
+  sv_reliable_debug = 99,
+  sv_io_debug = 100,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 100;
+constexpr uint32_t CVAR_COUNT = 101;
 
 enum class command_id : uint16_t
 {

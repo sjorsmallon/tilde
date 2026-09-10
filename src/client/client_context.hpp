@@ -417,6 +417,7 @@ struct round_state_t
   // so a round timer counts down against the tick the client already tracks,
   // rather than costing per-tick traffic.
   uint32_t phase_end_tick = 0;
+  uint32_t phase_start_tick = 0;
   uint32_t round_number   = 0;
 
   // Whether a snapshot has ever arrived. Until one has, the client must NOT gate
@@ -493,6 +494,10 @@ struct replication_t
   // have a stamp does not ding on the first snapshot.
   uint32_t last_seen_hit_tick = 0;
   bool hit_tick_seeded = false;
+
+  // False until one snapshot's damageable health has been applied, so a target
+  // already broken when we join or load does not play its break on arrival.
+  bool damageable_health_seeded = false;
 
   // Replaced wholesale by each S2C_BotDebug packet.
   std::vector<bot_debug_entry_t> bot_debug_entries;

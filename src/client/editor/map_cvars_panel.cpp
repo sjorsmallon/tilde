@@ -70,6 +70,57 @@ std::string value_hint_for(const cvars::cvar_info_t &info)
   return "";
 }
 
+// The row's text as a bool, through the CONSOLE'S OWN round trip -- parse with
+// try_cvar_from_text, read back with try_cvar_to_text. "on", "yes" and "true"
+// are all legal in a map file, and the four spellings of each side are written
+// down once, in the generated table; a second copy here would be a second
+// answer free to disagree with the server that runs the line.
+//
+// Empty means the text is not a bool at all, and the caller falls back to the
+// text box: a checkbox cannot show "tru", and showing it UNCHECKED would read
+// as a legitimate "off" -- the silent correction this panel exists to prevent.
+std::optional<bool> try_bool_value_of(cvars::cvar_id id, const std::string &text)
+{
+  static cvars::cvar_state_t scratch{};
+  if (!cvars::try_cvar_from_text(scratch, id, text))
+    return std::nullopt;
+
+  const std::optional<std::string> canonical = cvars::try_cvar_to_text(scratch, id);
+  if (!canonical)
+    return std::nullopt;
+
+  return *canonical == "1";
+}
+
+// An enum's value set is CLOSED, short, and already in the generated table, so
+// the panel OFFERS it rather than asking the author to spell one -- the same
+// rule that makes the cvar NAME a pick and not a text box, applied to the half
+// of the row that could still be wrong. Returns the picked value, if any.
+//
+// The preview is whatever the row currently holds, NOT the nearest legal value:
+// a file that names a value this build dropped must keep reading as the "bad
+// value" the status column calls it, rather than being silently corrected to
+// something the author never wrote.
+std::optional<std::string> draw_enum_value_combo(const cvars::cvar_info_t &info,
+                                                 const std::string &current)
+{
+  std::optional<std::string> chosen;
+
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (!ImGui::BeginCombo("##value", current.c_str()))
+    return chosen;
+
+  for (uint32_t value = 0; value < info.enum_info->value_names.size(); ++value)
+  {
+    const char *name = info.enum_info->value_names[value];
+    if (ImGui::Selectable(name, current == name))
+      chosen = name;
+  }
+
+  ImGui::EndCombo();
+  return chosen;
+}
+
 std::string lowercased(std::string text)
 {
   std::transform(text.begin(), text.end(), text.begin(),
@@ -190,18 +241,49 @@ void draw_map_cvars_section(shared::map_t &map, const cvars::cvar_state_t &live_
                           cvars::describe_cvar_flags(cvars::cvar_info(*id).flags).c_str(),
                           cvars::cvar_info(*id).description);
 
-      // The buffer is refilled from the map every frame and read back only when
-      // the box is deactivated after an edit, so typing a value produces ONE
-      // undo entry rather than one per keystroke.
       ImGui::TableNextColumn();
-      char value_buffer[96];
-      std::snprintf(value_buffer, sizeof(value_buffer), "%s", row.value.c_str());
-      ImGui::SetNextItemWidth(-FLT_MIN);
-      ImGui::InputText("##value", value_buffer, sizeof(value_buffer));
-      if (ImGui::IsItemDeactivatedAfterEdit())
+      const cvars::cvar_info_t *info = id ? &cvars::cvar_info(*id) : nullptr;
+
+      // A bool row is a checkbox, and it writes "1" / "0" -- what
+      // try_cvar_to_text emits, so a row toggled here is spelled exactly like
+      // the one the "add a cvar" button seeds from the live value.
+      std::optional<bool> boolean_value;
+      if (info != nullptr && info->type == cvars::CVAR_TYPE_BOOL)
+        boolean_value = try_bool_value_of(*id, row.value);
+
+      if (boolean_value)
       {
-        row_to_rewrite  = index;
-        rewritten_value = value_buffer;
+        bool checked = *boolean_value;
+        if (ImGui::Checkbox("##value", &checked))
+        {
+          row_to_rewrite  = index;
+          rewritten_value = checked ? "1" : "0";
+        }
+      }
+      else if (info != nullptr && info->type == cvars::CVAR_TYPE_ENUM)
+      {
+        // One pick, one undo entry -- a combo has no half-typed state to wait
+        // for, so there is nothing to defer to IsItemDeactivatedAfterEdit.
+        if (const std::optional<std::string> chosen = draw_enum_value_combo(*info, row.value))
+        {
+          row_to_rewrite  = index;
+          rewritten_value = *chosen;
+        }
+      }
+      else
+      {
+        // The buffer is refilled from the map every frame and read back only
+        // when the box is deactivated after an edit, so typing a value produces
+        // ONE undo entry rather than one per keystroke.
+        char value_buffer[96];
+        std::snprintf(value_buffer, sizeof(value_buffer), "%s", row.value.c_str());
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##value", value_buffer, sizeof(value_buffer));
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+          row_to_rewrite  = index;
+          rewritten_value = value_buffer;
+        }
       }
 
       ImGui::TableNextColumn();

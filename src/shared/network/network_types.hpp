@@ -78,6 +78,10 @@ template <uint8 N = 250> struct pascal_string_t
     // buffer has a spare byte so that holds even at full capacity.
     return data;
   }
+  bool empty() 
+  {
+    return (length == 0);
+  }
 
   uint8 max_length() const { return N; }
 };

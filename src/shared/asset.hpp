@@ -89,6 +89,9 @@ asset_handle_t<mesh_asset_t> register_dynamic_mesh(std::string_view path, mesh_a
 [[nodiscard]] asset_handle_t<texture_asset_t> find_texture_in_cache(std::string_view path);
 asset_handle_t<texture_asset_t> register_dynamic_texture(std::string_view path, texture_asset_t &&texture);
 
+// Encoded image bytes of any format stb_image reads, forced to RGBA8.
+[[nodiscard]] texture_asset_t decode_image(Span<const uint8_t> bytes, const char* key);
+
 // Get a mutable pointer to a mesh asset (for updating dynamic meshes).
 [[nodiscard]] mesh_asset_t *get_mutable(asset_handle_t<mesh_asset_t> handle);
 

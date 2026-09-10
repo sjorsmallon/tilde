@@ -3,7 +3,9 @@
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entity_uid.hpp"
 #include "../shared/log.hpp"
+#include "audio/audio_system.hpp"
 #include "client_context.hpp"
+#include "entity_type_audio.hpp"
 #include "hit_confirm_audio.hpp"
 #include "remote_interpolation.hpp"
 #include "weapon_fire_audio.hpp"
@@ -135,9 +137,16 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       continue;
     }
 
-    local->health.current_health        = damageable.health.current_health;
-    local->render.visible = damageable.render.visible;
+    const bool was_standing = local->health.current_health > 0;
+    local->health.current_health = damageable.health.current_health;
+    local->render.visible        = damageable.render.visible;
+
+    // A state edge, not an effect: a lost batch would be a target that broke silently.
+    const bool just_broke = was_standing && local->health.current_health <= 0;
+    if (just_broke && context.replication.damageable_health_seeded && context.audio)
+      context.audio->play_3d(break_sound_for(local->type), local->position);
   }
+  context.replication.damageable_health_seeded = true;
 
   // Lights are the same case for the same reason -- map-placed, holding two
   // fields a connection can write -- so they take the same shape, including the

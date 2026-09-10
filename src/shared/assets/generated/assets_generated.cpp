@@ -11,6 +11,9 @@ namespace
 
 constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"Duck", "resources/glb/Duck.glb"},
+  {"damaged_helmet", "resources/glb/damaged_helmet.glb"},
+  {"target", "resources/glb/target.glb"},
   {"Box", "resources/models/Box.mesh"},
   {"Leet_Full", "resources/models/Leet_Full.mesh"},
   {"Sphere", "resources/models/Sphere.mesh"},
@@ -59,6 +62,7 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"scout_clipout", "resources/sounds/scout_clipout.wav"},
   {"scout_fire_1", "resources/sounds/scout_fire_1.wav"},
   {"success", "resources/sounds/success.wav"},
+  {"target_break", "resources/sounds/target_break.wav"},
   {"wow_incredible", "resources/sounds/wow_incredible.wav"},
   {"zoom", "resources/sounds/zoom.wav"},
 };

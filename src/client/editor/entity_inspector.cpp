@@ -40,6 +40,7 @@ void render_field_widget(void* field_ptr, const field_info_t& field, const char*
       ImGui::InputScalar(label, ImGuiDataType_U16, field_ptr);
       break;
     case FIELD_TYPE_U32:
+    case FIELD_TYPE_ENTITY_UID:
       ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
       break;
     case FIELD_TYPE_U64:

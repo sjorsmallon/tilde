@@ -36,53 +36,68 @@ constexpr uint32_t max_fire_stamp_age_ticks = 12;
 // The name in the row is what makes that a build error instead of a wrong
 // noise.
 //
-// When a second per-weapon client asset shows up — view model, deploy or
-// reload sound (knife_deploy1.wav and scout_clipin/clipout/bolt.wav are
-// already on disk with no code path) — this row grows a field rather than the
-// file growing a second parallel array.
-struct weapon_fire_sound_t
+// Every per-weapon client sound is a field on this row rather than a second
+// parallel array -- the deploy and reload sounds (knife_deploy1.wav and
+// scout_clipin/clipout/bolt.wav are already on disk with no code path) join it
+// the same way.
+struct weapon_sounds_t
 {
   entities::Weapon     weapon;
-  assets::sound_asset  sound;
+  assets::sound_asset  fire;
+  // A Shot_Impact on static geometry. Scout has no bullet-on-wall file on disk.
+  assets::sound_asset  world_impact;
 };
 
-constexpr Enum_Array<entities::Weapon, weapon_fire_sound_t> WEAPON_FIRE_SOUNDS = {{
-    {entities::Weapon::Knife, assets::sound_asset::knife_slash1},
-    {entities::Weapon::Scout, assets::sound_asset::scout_fire_1},
+constexpr Enum_Array<entities::Weapon, weapon_sounds_t> WEAPON_SOUNDS = {{
+    {entities::Weapon::Knife, assets::sound_asset::knife_slash1, assets::sound_asset::knife_hitwall1},
+    {entities::Weapon::Scout, assets::sound_asset::scout_fire_1, assets::sound_asset::Missing},
     // No launch sound on disk — rocket_explosion.wav is the detonation, not
     // the firing. Missing is how that content gap is written down now that a
     // sound is an id: there is no path left to misspell, so the row says
     // "nothing yet" rather than naming a file nobody will ever add.
-    {entities::Weapon::Rocket_Launcher, assets::sound_asset::Missing},
+    {entities::Weapon::Rocket_Launcher, assets::sound_asset::Missing, assets::sound_asset::Missing},
     // Same gap, different reason: a dash is a movement ability held in a slot
     // (generalization_def.md §4), so what it wants is a whoosh rather than a
     // gunshot, and there is no file for one. The row exists because the table
     // is keyed by Weapon and every weapon has to answer.
-    {entities::Weapon::Dash, assets::sound_asset::Missing},
+    {entities::Weapon::Dash, assets::sound_asset::Missing, assets::sound_asset::Missing},
 }};
 
-static_assert(rows_in_enum_order<&weapon_fire_sound_t::weapon>(WEAPON_FIRE_SOUNDS),
-              "WEAPON_FIRE_SOUNDS rows are not in Weapon enum order — the lookup indexes "
+static_assert(rows_in_enum_order<&weapon_sounds_t::weapon>(WEAPON_SOUNDS),
+              "WEAPON_SOUNDS rows are not in Weapon enum order — the lookup indexes "
               "by enum value, so a row out of place plays the wrong weapon's sound.");
+
+// try_get rather than operator[], and this is the part the switch was quietly
+// doing for us. Enum fields are deserialized with no range validation at all
+// -- entity_serialization.cpp's FIELD_TYPE_ENUM memcpys the varint straight
+// into the field -- so last_fire_weapon holds whatever arrived on the wire, and
+// Shot_Impact::weapon is a raw u16. Indexing on either unchecked is an
+// out-of-bounds read driven by a packet.
+const weapon_sounds_t* try_find_weapon_sounds(entities::Weapon weapon)
+{
+  const weapon_sounds_t* row = WEAPON_SOUNDS.try_get(weapon);
+  if (row == nullptr)
+    log_error("weapon id {} is outside the Weapon enum (count {}) -- corrupt or hostile packet",
+              (uint32_t)weapon, WEAPON_SOUNDS.size());
+  return row;
+}
 
 } // namespace
 
 std::optional<assets::sound_asset> try_fire_sound_for(entities::Weapon weapon)
 {
-  // try_get rather than operator[], and this is the part the switch was quietly
-  // doing for us. Enum fields are deserialized with no range validation at all
-  // -- entity_serialization.cpp's FIELD_TYPE_ENUM memcpys the varint straight
-  // into the field -- so last_fire_weapon holds whatever arrived on the wire.
-  // Indexing on that unchecked is an out-of-bounds read driven by a packet.
-  const weapon_fire_sound_t* row = WEAPON_FIRE_SOUNDS.try_get(weapon);
+  const weapon_sounds_t* row = try_find_weapon_sounds(weapon);
   if (row == nullptr)
-  {
-    log_error("try_fire_sound_for: weapon id {} is outside the Weapon enum "
-              "(count {}) -- corrupt or hostile snapshot",
-              (uint32_t)weapon, WEAPON_FIRE_SOUNDS.size());
     return std::nullopt;
-  }
-  return row->sound;
+  return row->fire;
+}
+
+std::optional<assets::sound_asset> try_world_impact_sound_for(entities::Weapon weapon)
+{
+  const weapon_sounds_t* row = try_find_weapon_sounds(weapon);
+  if (row == nullptr)
+    return std::nullopt;
+  return row->world_impact;
 }
 
 void update_weapon_fire_audio(client_context_t &context)

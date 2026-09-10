@@ -26,6 +26,10 @@ enum field_type_t : uint8_t
   FIELD_TYPE_U8, FIELD_TYPE_U16, FIELD_TYPE_U32, FIELD_TYPE_U64,
   FIELD_TYPE_I8, FIELD_TYPE_I16, FIELD_TYPE_I32, FIELD_TYPE_I64,
   FIELD_TYPE_BOOL,
+  // A u32 that NAMES AN ENTITY. It reads, writes and encodes exactly as
+  // FIELD_TYPE_U32 does -- what it buys is that a walker can FIND it, which is
+  // what a uid remap (a prefab stamp, a CSG bake) is made of.
+  FIELD_TYPE_ENTITY_UID,
   FIELD_TYPE_V3, FIELD_TYPE_V4, FIELD_TYPE_V4I, FIELD_TYPE_QUAT,
   FIELD_TYPE_STRING, FIELD_TYPE_ASSET, FIELD_TYPE_ENUM, FIELD_TYPE_COMPONENT,
 };

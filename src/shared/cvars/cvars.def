@@ -8,32 +8,6 @@
 //   server_command_bindings_generated.cpp  fills the @Server slots -- into game_server
 //   client_command_bindings_generated.cpp  the @Client slots -- into game_client
 //
-// A binder references cvars::commands::<name> directly, so a missing, misspelled
-// or wrongly typed handler is a LINK error naming it. Those are hand-written,
-// each on the side its flag names.
-//
-// Transcribed 2026-07-29 from the CVar<T> / Console_Command declarations
-// scattered across player_move.cpp, debug_collision.cpp, game_cvars.cpp,
-// audio_system_t.cpp, play_state.cpp, server_impl.cpp, console.cpp and the three
-// launchers. See cvar_def.md at the repo root for the design, todo.md for the
-// step order. Read entities.def first -- this is its sibling and every
-// principle there carries over.
-//
-// ---------------------------------------------------------------------------
-// BLOCK NAMES MEAN NOTHING
-// ---------------------------------------------------------------------------
-// `Player_Movement ::` is a foldable section comment and nothing else. It is
-// never emitted, never queryable, read by no consumer. It records which .cpp
-// the declaration used to live in, which is the only thing the old layout
-// actually encoded. Any design where a group MEANS something forces an
-// impossible single-membership choice (net_snapshot_debug is network AND debug
-// AND client). The real taxonomy is the NAME PREFIX -- pm_, r_, sv_, cl_,
-// sound_, debug_, net_ -- which composes, and which is what console
-// autocomplete filters on.
-//
-// Declaration order IS the struct layout order and the config-file save order.
-// Diffable, same rule as entities.
-//
 // ---------------------------------------------------------------------------
 // WHAT THE THREE FLAGS MEAN
 // ---------------------------------------------------------------------------
@@ -51,13 +25,6 @@
 //               @Networked: the client must READ the value AND be required to
 //               agree with the server about it. Today that means exactly one
 //               thing -- movement prediction.
-//
-// The old flag set also had Cheat and Admin. Grep says NO declaration ever used
-// either, and nothing enforces Cheat anywhere (there is no sv_cheats). They are
-// dropped rather than transcribed: decorative flags are precisely what the
-// entity migration purged. They come back the day their enforcement point
-// exists, not before.
-//
 // ---------------------------------------------------------------------------
 // TYPES
 // ---------------------------------------------------------------------------
@@ -76,15 +43,6 @@
 // something the generator already knows, which is exactly what sv_gamemode was
 // until 2026-08-26.
 
-// ---------------------------------------------------------------------------
-// Player movement -- was player_move.cpp
-// ---------------------------------------------------------------------------
-//
-// The whole block is @Mirrored. These are the constants the client's movement
-// prediction feeds into the same player_move() the server runs; if the two
-// sides disagree about pm_maxspeed the client mispredicts every frame. Formerly
-// cvar::flags::Replicated, which meant the same thing.
-
 Player_Movement :: cvars {
     pm_maxspeed:            f32 = 320.0       @Mirrored  "Maximum player speed"
     pm_stopspeed:           f32 = 100.0       @Mirrored  "Deceleration threshold"
@@ -98,14 +56,8 @@ Player_Movement :: cvars {
     pm_step_height:         f32 = 18.0        @Mirrored  "Maximum step height the player can glide up"
     pm_minimum_land_impact_speed: f32 = 150.0 @Mirrored  "Threshold for speed to cause audio to play when landing"
 
-    // The first ability built on Movement (generalization_def.md §2), and it
-    // ships OFF. A seam with no user is a seam nobody has checked, so the
-    // plumbing is proven by turning this on -- while zero keeps CS movement and
-    // every existing test exactly as they were.
-    //
-    // @Mirrored like the rest of pm_: the client predicts air jumps, so the two
-    // sides disagreeing about the budget is a mispredict every time a charge
-    // runs out on one side and not the other.
+    
+    // speedrun specific stuff
     pm_air_jump_count:      i32 = 0          @Mirrored  "Air jumps allowed before touching ground again (0 = none)"
     pm_air_jump_speed:      f32 = 270.0      @Mirrored  "Upward velocity an air jump sets"
 }
@@ -117,31 +69,10 @@ Gameplay :: cvars {
 // ---------------------------------------------------------------------------
 // Match rules -- game_modes_def.md
 // ---------------------------------------------------------------------------
-//
-// @Server, every one of them: a client neither simulates the clock nor judges
-// the win condition, and it learns the phase from Round_Phase_Changed rather
-// than by reading a cvar. Nothing here is @Mirrored for that reason.
-//
-// These are the "how long and how many" half of a mode. The "which behaviors"
-// half is the GAME_MODES table in server/game_mode.hpp, and the split is
-// deliberate: a number that could be any value is a cvar, a choice between
-// named behaviors is a row in the table. A map tunes the numbers and picks the
-// mode in its attached_cvars block.
 
-// The mode names, and the one place they are written down. Lowercase because
-// these are console tokens -- `sv_gamemode deathmatch` -- the same reason
-// Bot_Mode's values are.
-//
-// This enum is the KEY of the GAME_MODES table in server/game_mode.hpp, which
-// is where a mode's behavior lives; declaring it here rather than there is what
-// lets sv_gamemode be typed by it. The two halves cannot drift: a value added
-// here with no row breaks the rows_in_enum_order static_assert on that table.
 Game_Mode :: enum { deathmatch, rounds, speedrun }
 
 Match :: cvars {
-    // Which GAME_MODES row is running. Latched into game_rules_state_t::mode at
-    // map load by apply_game_mode_cvar, so a change takes effect on the next map
-    // load -- a mode is not something to swap mid-round.
     sv_gamemode:            Game_Mode = .deathmatch  @Server  "Which game mode to run on the next map load"
 
     // A phase whose duration is 0 has no deadline and ends only on a win
@@ -476,13 +407,9 @@ Map :: cvars {
     map_respawn_delay_seconds: f32 = 3.0      @Mirrored    "Time between respawns."
     map_kill_limit: i32 = 25                  @Mirrored    "Maximum amount of kills for a round."
     map_round_time_limit_seconds: f32 = 6000  @Mirrored    "Maximum round duration limit."
+    next_map: string<128> = ""                @Server      "Next map to load. not immediate, but after this map is done (whatever that means)."
 }
 
-
-
-// ---------------------------------------------------------------------------
-// Debugging -- was debug_collision.cpp and play_state.cpp
-// ---------------------------------------------------------------------------
 Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture }
 
 

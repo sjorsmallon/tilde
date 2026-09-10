@@ -205,4 +205,56 @@ std::vector<connection_refusal_t> validate_map_connections(const map_t& map)
   return refusals;
 }
 
+connection_remap_result_t remap_connection_uids(connection_t& connection, const uid_remap_t& remap)
+{
+  const auto follow = [&remap](entity_uid_t uid, entity_uid_t& out) -> bool
+  {
+    auto it = remap.find(uid);
+    if (it == remap.end())
+      return false;
+    out = it->second;
+    return true;
+  };
+
+  // Written into a copy and committed only once every end has mapped, so a
+  // refused row is left exactly as it was and the caller has nothing to undo.
+  connection_t rewritten = connection;
+
+  if (!follow(connection.sender, rewritten.sender))
+    return {false, "sender", connection.sender};
+
+  if (connection.target_kind == connection_target_t::Uid &&
+      !follow(connection.target, rewritten.target))
+    return {false, "target", connection.target};
+
+  if (connection.has_override)
+  {
+    uint8_t* payload = entities::action_payload_bytes(rewritten.data);
+
+    for (const field_info_t& field : entities::action_payload_fields(rewritten.data.tag))
+    {
+      if (field.type != FIELD_TYPE_ENTITY_UID)
+        continue;
+
+      entity_uid_t named = null_entity_uid;
+      std::memcpy(&named, payload + field.offset, sizeof(named));
+
+      // A payload uid may legitimately name NOBODY -- Died.killer on a fall, a
+      // Teleport with no destination yet. That is a value, not an end that
+      // failed to survive, so it passes through rather than dropping the row.
+      if (named == null_entity_uid)
+        continue;
+
+      entity_uid_t moved = null_entity_uid;
+      if (!follow(named, moved))
+        return {false, field.name, named};
+
+      std::memcpy(payload + field.offset, &moved, sizeof(moved));
+    }
+  }
+
+  connection = rewritten;
+  return {};
+}
+
 } // namespace shared

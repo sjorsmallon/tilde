@@ -25,6 +25,8 @@ asset_handle_t<mesh_asset_t> load_mesh(const char* path)
     return state.mesh_asset_pool.add(key.c_str(), decode_obj(bytes, key.c_str()));
   else if (path_has_extension(key.c_str(), ".mesh"))
     return state.mesh_asset_pool.add(key.c_str(), decode_mesh(bytes, key.c_str()));
+  else if (path_has_extension(key.c_str(), ".glb"))
+    return state.mesh_asset_pool.add(key.c_str(), decode_glb(bytes, key.c_str()));
 
   fatal_error("assets: '{}' has no extension the mesh_asset class decodes", key.c_str());
 }

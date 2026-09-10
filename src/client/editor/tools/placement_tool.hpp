@@ -28,6 +28,13 @@ public:
                        pass_builder_t &draws) override;
   void on_draw_ui(editor_context_t& ctx) override;
 
+  // Prefab files on disk, refreshed on demand rather than per frame: a
+  // directory listing is a syscall per entry, and prefabs appear when the
+  // author saves one, not while a list is being drawn.
+  std::vector<std::string> prefab_names;
+  bool                     prefab_names_have_been_scanned = false;
+  void                     rescan_prefabs();
+
 private:
   static constexpr int INVALID_PLACEABLE_IDX = -1;
   void select_placeable(int index);

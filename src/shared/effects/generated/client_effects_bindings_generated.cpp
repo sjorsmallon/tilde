@@ -17,11 +17,10 @@ namespace client
 namespace effects
 {
 void on_rocket_explosion(client_context_t& context, const shared::Rocket_Explosion& value);
-void on_bullet_impact(client_context_t& context, const shared::Bullet_Impact& value);
 void on_footstep(client_context_t& context, const shared::Footstep& value);
 void on_jump(client_context_t& context, const shared::Jump& value);
 void on_land(client_context_t& context, const shared::Land& value);
-void on_flesh_impact(client_context_t& context, const shared::Flesh_Impact& value);
+void on_shot_impact(client_context_t& context, const shared::Shot_Impact& value);
 } // namespace effects
 
 // The switch lives here rather than beside the codec because it is what
@@ -60,22 +59,6 @@ void dispatch_received_effects(client_context_t& context, network::Bit_Reader& r
         if (log_received)
           log_terminal("[event received] {}", shared::to_text(*payload));
         effects::on_rocket_explosion(context, *payload);
-        break;
-      }
-      case shared::effect_type::Bullet_Impact:
-      {
-        const std::optional<shared::Bullet_Impact> payload = shared::try_read_bullet_impact(reader);
-        if (!payload)
-        {
-          // A field the tables cannot represent leaves the reader
-          // mid-record, so the rest of the batch is gone with it.
-          log_error("dispatch_received_effects: record {} of {} did not "
-                    "decode; dropping the rest of the batch", index, count);
-          return;
-        }
-        if (log_received)
-          log_terminal("[event received] {}", shared::to_text(*payload));
-        effects::on_bullet_impact(context, *payload);
         break;
       }
       case shared::effect_type::Footstep:
@@ -126,9 +109,9 @@ void dispatch_received_effects(client_context_t& context, network::Bit_Reader& r
         effects::on_land(context, *payload);
         break;
       }
-      case shared::effect_type::Flesh_Impact:
+      case shared::effect_type::Shot_Impact:
       {
-        const std::optional<shared::Flesh_Impact> payload = shared::try_read_flesh_impact(reader);
+        const std::optional<shared::Shot_Impact> payload = shared::try_read_shot_impact(reader);
         if (!payload)
         {
           // A field the tables cannot represent leaves the reader
@@ -139,7 +122,7 @@ void dispatch_received_effects(client_context_t& context, network::Bit_Reader& r
         }
         if (log_received)
           log_terminal("[event received] {}", shared::to_text(*payload));
-        effects::on_flesh_impact(context, *payload);
+        effects::on_shot_impact(context, *payload);
         break;
       }
     }

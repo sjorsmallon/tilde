@@ -132,23 +132,37 @@ private:
   // repeatedly. The clipboard outlives the paste and the tool switch; the
   // pending paste does not.
   //
-  // An entry holds one regime or the other, plus where it sat relative to the
-  // clipboard's anchor. Only the ANCHOR meets the grid at paste time -- snapping
-  // each member on its own would deform the arrangement that was copied, which
-  // is usually the reason it was copied.
-  struct clipboard_entry_t
-  {
-    std::optional<shared::geometry_value_t> geometry;
-    entity_snapshot_t                       entity;
-    linalg::vec3                            offset_from_anchor{0, 0, 0};
+  // THE CLIPBOARD IS A MAP -- a fragment whose anchor is its own origin, which
+  // is exactly what a prefab file holds (prefab_def.md). Copy is
+  // extract_map_subset and paste is stamp_map, so Ctrl+C carries the
+  // CONNECTIONS between the copied objects, which the per-object clipboard this
+  // replaced silently dropped. Only the ANCHOR meets the grid at paste time --
+  // snapping each member on its own would deform the arrangement that was
+  // copied, which is usually the reason it was copied.
+  std::optional<shared::map_t> clipboard;
 
-    // A brush's ghost is its hull, and building one is O(n^4) in the point
-    // count. A clipboard entry never changes, so the hull is built once here at
-    // copy time rather than per brush per frame for the whole life of a paste.
-    std::optional<shared::brush_polyhedron_t> brush_hull;
-  };
+  // A brush's ghost is its hull, and building one is O(n^4) in the point count.
+  // The clipboard never changes, so the hulls are built once at copy time
+  // rather than per brush per frame for the whole life of a paste. Parallel to
+  // clipboard->geometry; the entry is empty for anything that is not a brush.
+  std::vector<std::optional<shared::brush_polyhedron_t>> clipboard_brush_hulls;
 
-  std::vector<clipboard_entry_t> clipboard;
+  // Rows the copy could not take, because one of their ends was not selected.
+  // Reported once at Ctrl+C: the same loss "Save as prefab" warns about, and
+  // the same walk decides both.
+  size_t clipboard_crossing_count = 0;
+
+  // --- Save as prefab ----------------------------------------------------------
+  //
+  // A name the author types and nothing else: a prefab's identity IS its
+  // filename (prefab_def.md), so there is no name field inside the file to keep
+  // in step with it.
+  Array<char, 96> prefab_name;
+  bool            prefab_overwrite = false;
+  // What the last write said, kept so the answer survives the popup closing.
+  std::string prefab_status;
+
+  void draw_prefab_save_popup(editor_context_t& ctx);
 
   // The copied group's low corner, relative to its anchor. Paste puts THAT
   // corner on a grid line, which is the rule compute_geometry_placement_center
@@ -162,10 +176,21 @@ private:
   // what you see and what gets stored cannot disagree.
   linalg::vec3 paste_anchor{0, 0, 0};
 
+  // The one way the clipboard is filled, whatever produced the fragment: a
+  // copied selection or a prefab off disk. Builds the ghost hulls and the low
+  // corner the paste snaps by, so those cannot be forgotten at a second site.
+  void adopt_clipboard(shared::map_t fragment, size_t crossing_count);
   void copy_selection_to_clipboard(editor_context_t& ctx);
   void begin_paste();
   void cancel_paste();
   void commit_paste(editor_context_t& ctx);
+
+  // The nearest visible entity whose ICON is within `radius` pixels of the
+  // cursor, if any. Pure proximity -- no ray, no BVH -- because an entity icon
+  // is a few pixels wide and a ray that misses it is not evidence the author
+  // meant something else.
+  [[nodiscard]] std::optional<shared::entity_uid_t>
+  try_pick_entity_within(const editor_context_t& ctx, linalg::vec2 cursor, float radius) const;
 
   [[nodiscard]] gizmo_view_t make_gizmo_view() const;
 

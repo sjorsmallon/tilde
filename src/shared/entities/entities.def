@@ -194,7 +194,6 @@ Player_Spawn_Entity :: entity {
 Player_Spectate_Entity:: entity {
 }
 
-
 Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
@@ -307,67 +306,29 @@ Particle_Emitter_Entity :: entity {
     parent_entity_id:   u32 = 0
 }
 
-// The map's rules, as an entity, so the one verb that writes them has a
-// receiver that owns them. It carries no fields: what a mode DOES is
-// GAME_MODES' row of values (game_modes_def.md), and this is only the handle
-// a connection can name. The emitting half -- round phases and deaths as
-// signals -- is entity_io_def.md ss11 step 6b.
-//
-// A map whose objective is reachable must PLACE one. That is the cost of the
-// honest receiver, and it is Source's shape: game_end and logic_auto are
-// placed too.
+
 Game_Rules_Entity :: entity is Objective {
 }
 
 Damageable_Entity :: entity is Mortal {
     health: Health                         
-    hitbox_half_extents: v3 = {16, 32, 16}      @Editable
-    weakness: Damage_Type = .Orange              @Editable
+    hitbox_half_extents: v3 = {16, 32, 16}   @Editable
+    weakness: Damage_Type = .Orange          @Editable
     render:            Render
 }
 
-// A volume that says WHEN, and nothing about what. `action` and the three
-// param_* slots are gone: what a touch does is a connection now, so the one
-// generic volume covers every case the nine Trigger_Action values did and the
-// author is not restricted to acting on the toucher. `fire_mode` went with
-// them -- Touched is the rising edge and Left the falling one, which is what
-// Source's OnStartTouch / OnEndTouch are, and a per-tick effect is a Touched
-// that enables plus a Left that disables.
 Trigger_Volume_Entity :: entity is Switchable, Touchable {
     switch_state:      Enabled
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
 }
 
-// THREE TYPES, NOT ONE WITH A KIND ENUM. This was `Light_Entity` plus a
-// Light_Type of {Point, Spot, Directional}, and of its seven fields only color
-// and intensity were meaningful for all three: `range` is dead for
-// directional, `direction` for point, and both cone angles for everything but
-// spot. An enum that selects WHICH FIELDS ARE LIVE is a type; an enum that
-// selects a behavior over fields that are all live is an enum, which is what
-// Shape_Kind above still correctly is.
-//
-// The split is authoring-side ONLY. A GPU light array is homogeneous, so the
-// shader keeps one struct with a type tag in it (pbr.frag reads that tag out of
-// spot_params.w) and a gather pass turns all three of these into it. Plural at
-// authoring time, singular at the GPU, and conflating the two is what makes the
-// enum look mandatory when it is not.
-//
-// What it buys, and the reason it was worth doing: the editor's five per-type
-// switches each draw the RIGHT helper -- the falloff sphere, the cone, the
-// direction arrow -- instead of one yellow cross plus an inner switch on `kind`
-// at every one of them.
-//
-// `direction` is gone with the enum, and not because it was per-kind: base
-// Entity already carries `orientation`, so it was a second copy of the same
-// fact. Spot and directional read their facing off that, which is what makes
-// the rotate gizmo work on a light. Point lights have no facing to be wrong
-// about, which is precisely the ambiguity that kept the duplicate alive.
-//
-// None of these is @Networked, and that is not an oversight: a light is placed
-// in the editor and read back out of the MAP, and the client loads the same
-// map, so replicating it is bandwidth spent telling the client what it already
-// knows. When dynamic lights (muzzle flash, explosion) arrive they are
-// runtime-spawned, and THAT is the change that earns @Networked back.
+Sound_Emitter_Entity :: entity is Switchable {
+    switch_state: Enabled
+    sound: sound_asset  @Editable
+    volume: f32 = 1.0   @Editable
+    loop: bool = true   @Editable
+    range: f32 = 128.0  @Editable
+}
 
 Point_Light_Entity :: entity is Colorable, Switchable {
     switch_state:      Enabled

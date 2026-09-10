@@ -8,6 +8,9 @@
 // ============================================================================
 // The .source file's block grammar, and nothing above it.
 //
+// map_format_def.md is the design of record for the whole file format; the
+// grammar half of it is this comment, and the two must agree.
+//
 //   map_file  := block*
 //   block     := keyword '{' member* '}'
 //   member    := property | block

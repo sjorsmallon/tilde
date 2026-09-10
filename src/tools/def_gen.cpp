@@ -4305,10 +4305,12 @@ static const char* field_type_enum_name(type_kind_t kind)
     case TYPE_QUAT:      return "FIELD_TYPE_QUAT";
     case TYPE_STRING:    return "FIELD_TYPE_STRING";
     case TYPE_ASSET:     return "FIELD_TYPE_ASSET";
-    // A uid IS a u32, and reflection gains nothing from knowing which u32s name
-    // entities: the text conversion, the wire codec and the change masks would
-    // all take the same arm. The distinction is a C++ TYPE, not a field type.
-    case TYPE_ENTITY:    return "FIELD_TYPE_U32";
+    // A uid IS a u32 and every walker takes the u32 arm for it -- the text
+    // conversion, the wire codec and the change masks are identical. What earns
+    // it a field type of its own is being FINDABLE: a prefab stamp and a CSG
+    // bake remap uids, and a payload uid hiding among ordinary u32s is a target
+    // the remap cannot follow.
+    case TYPE_ENTITY:    return "FIELD_TYPE_ENTITY_UID";
     case TYPE_ENUM:      return "FIELD_TYPE_ENUM";
     case TYPE_COMPONENT: return "FIELD_TYPE_COMPONENT";
     case TYPE_VOID:      break; // cvar family only; never reaches an entity table
@@ -4602,7 +4604,8 @@ static void emit_enum_traits(FILE* out, const program_t* program, const char* na
     fprintf(out, "};\n\n");
   }
 }
-
+
+
 // The DERIVED enums -- entity_type, component_type, enum_type, and entity I/O's
 // three -- are declared by no .def, so the loop above never sees them. They are
 // dense from 0 and carry a _COUNT like any declared enum, so an Enum_Array over

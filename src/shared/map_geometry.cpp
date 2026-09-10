@@ -136,6 +136,25 @@ void set_position(geometry_value_t &geometry, const linalg::vec3 &position)
   log_error("set_position: unhandled geometry kind {}", (int)get_kind(geometry));
 }
 
+void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta)
+{
+  switch (get_kind(geometry))
+  {
+  case geometry_kind_t::Static_Mesh:
+    {
+      static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
+      static_mesh.position                = static_mesh.position + delta;
+    }
+    return;
+
+  case geometry_kind_t::Brush:
+    translate_brush(std::get<brush_geometry_t>(geometry), delta);
+    return;
+  }
+
+  log_error("translate_geometry: unhandled geometry kind {}", (int)get_kind(geometry));
+}
+
 assets::asset_handle_t<assets::mesh_asset_t>
 resolve_surface_mesh(const geometry_surface_t &surface)
 {

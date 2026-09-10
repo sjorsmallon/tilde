@@ -75,6 +75,7 @@ static void enter_phase(server_context_t &context,
       phase_duration_seconds(phase, round_timing_from_cvars(*context.cvars));
 
   context.world.rules.phase = phase;
+  context.world.rules.phase_start_tick = current_tick;
   context.world.rules.phase_end_tick =
       duration > 0.f
           ? current_tick +

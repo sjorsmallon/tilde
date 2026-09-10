@@ -1370,6 +1370,90 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Sound_Emitter_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "sound",
+   .type = FIELD_TYPE_ASSET,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, sound),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::sound),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = 2,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "volume",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, volume),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::volume),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "loop",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, loop),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::loop),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "range",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Sound_Emitter_Entity, range),
+   .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::range),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Point_Light_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_U32,
@@ -1682,6 +1766,7 @@ Entity* construct_Particle_Emitter_Entity(void* memory) { return new (memory) Pa
 Entity* construct_Game_Rules_Entity(void* memory) { return new (memory) Game_Rules_Entity(); }
 Entity* construct_Damageable_Entity(void* memory) { return new (memory) Damageable_Entity(); }
 Entity* construct_Trigger_Volume_Entity(void* memory) { return new (memory) Trigger_Volume_Entity(); }
+Entity* construct_Sound_Emitter_Entity(void* memory) { return new (memory) Sound_Emitter_Entity(); }
 Entity* construct_Point_Light_Entity(void* memory) { return new (memory) Point_Light_Entity(); }
 Entity* construct_Spot_Light_Entity(void* memory) { return new (memory) Spot_Light_Entity(); }
 Entity* construct_Directional_Light_Entity(void* memory) { return new (memory) Directional_Light_Entity(); }
@@ -1697,6 +1782,7 @@ Entity* as_base_Particle_Emitter_Entity(void* memory) { return static_cast<Entit
 Entity* as_base_Game_Rules_Entity(void* memory) { return static_cast<Entity*>((Game_Rules_Entity*)memory); }
 Entity* as_base_Damageable_Entity(void* memory) { return static_cast<Entity*>((Damageable_Entity*)memory); }
 Entity* as_base_Trigger_Volume_Entity(void* memory) { return static_cast<Entity*>((Trigger_Volume_Entity*)memory); }
+Entity* as_base_Sound_Emitter_Entity(void* memory) { return static_cast<Entity*>((Sound_Emitter_Entity*)memory); }
 Entity* as_base_Point_Light_Entity(void* memory) { return static_cast<Entity*>((Point_Light_Entity*)memory); }
 Entity* as_base_Spot_Light_Entity(void* memory) { return static_cast<Entity*>((Spot_Light_Entity*)memory); }
 Entity* as_base_Directional_Light_Entity(void* memory) { return static_cast<Entity*>((Directional_Light_Entity*)memory); }
@@ -1714,6 +1800,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 4}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 0u, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 20u, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
+  {"sound_emitter_entity", "Sound Emitter", {Sound_Emitter_Entity_FIELDS, 9}, (uint32_t)sizeof(Sound_Emitter_Entity), (uint32_t)alignof(Sound_Emitter_Entity), 2u, false, construct_Sound_Emitter_Entity, as_base_Sound_Emitter_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 34u, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 9}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 34u, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
   {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 32u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
@@ -1732,13 +1819,14 @@ constexpr int32_t COMPONENT_OFFSETS[][8] = {
   {-1, -1, -1, -1, -1, -1, -1, -1}, // Game_Rules_Entity
   {-1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
   {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
+  {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
   {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
   {-1, (int32_t)offsetof(Spot_Light_Entity, switch_state), -1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1}, // Spot_Light_Entity
   {-1, -1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1}, // Directional_Light_Entity
   {-1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 12;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 13;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Reflection_Volume_Entity,
   entity_type::Player_Spawn_Entity,
@@ -1748,6 +1836,7 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Game_Rules_Entity,
   entity_type::Damageable_Entity,
   entity_type::Trigger_Volume_Entity,
+  entity_type::Sound_Emitter_Entity,
   entity_type::Point_Light_Entity,
   entity_type::Spot_Light_Entity,
   entity_type::Directional_Light_Entity,
@@ -2015,6 +2104,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Game_Rules_Entity: return new Game_Rules_Entity();
     case entity_type::Damageable_Entity: return new Damageable_Entity();
     case entity_type::Trigger_Volume_Entity: return new Trigger_Volume_Entity();
+    case entity_type::Sound_Emitter_Entity: return new Sound_Emitter_Entity();
     case entity_type::Point_Light_Entity: return new Point_Light_Entity();
     case entity_type::Spot_Light_Entity: return new Spot_Light_Entity();
     case entity_type::Directional_Light_Entity: return new Directional_Light_Entity();
@@ -2050,6 +2140,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Game_Rules_Entity: delete static_cast<Game_Rules_Entity*>(entity); return;
     case entity_type::Damageable_Entity: delete static_cast<Damageable_Entity*>(entity); return;
     case entity_type::Trigger_Volume_Entity: delete static_cast<Trigger_Volume_Entity*>(entity); return;
+    case entity_type::Sound_Emitter_Entity: delete static_cast<Sound_Emitter_Entity*>(entity); return;
     case entity_type::Point_Light_Entity: delete static_cast<Point_Light_Entity*>(entity); return;
     case entity_type::Spot_Light_Entity: delete static_cast<Spot_Light_Entity*>(entity); return;
     case entity_type::Directional_Light_Entity: delete static_cast<Directional_Light_Entity*>(entity); return;
@@ -2063,6 +2154,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x87b8806fu;
+const uint32_t SCHEMA_HASH = 0x6ec4f1d7u;
 
 } // namespace entities

@@ -51,7 +51,7 @@ constexpr field_info_t DAMAGE_FIELDS[] = {
 
 constexpr field_info_t TELEPORT_FIELDS[] = {
   {.name = "destination",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Teleport_Data, destination),
    .size_in_bytes = (uint32_t)sizeof(Teleport_Data::destination),
    .flags = 0u,
@@ -117,7 +117,7 @@ constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
 
 constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
   {.name = "location",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Set_Respawn_Point_Data, location),
    .size_in_bytes = (uint32_t)sizeof(Set_Respawn_Point_Data::location),
    .flags = 0u,
@@ -141,7 +141,7 @@ constexpr field_info_t COLOR_CHANGED_FIELDS[] = {
 
 constexpr field_info_t DIED_FIELDS[] = {
   {.name = "killer",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Died_Data, killer),
    .size_in_bytes = (uint32_t)sizeof(Died_Data::killer),
    .flags = 0u,

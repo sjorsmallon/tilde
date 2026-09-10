@@ -20,6 +20,7 @@
 #include "entities/game_rules_entity_generated.hpp"
 #include "entities/damageable_entity_generated.hpp"
 #include "entities/trigger_volume_entity_generated.hpp"
+#include "entities/sound_emitter_entity_generated.hpp"
 #include "entities/point_light_entity_generated.hpp"
 #include "entities/spot_light_entity_generated.hpp"
 #include "entities/directional_light_entity_generated.hpp"

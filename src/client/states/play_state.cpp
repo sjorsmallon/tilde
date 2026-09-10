@@ -7,6 +7,7 @@
 #include "../hud/announcement.hpp"
 #include "../hud/crosshair.hpp"
 #include "../hud/deploy_timer.hpp"
+#include "../hud/run_timer.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../hit_confirm_audio.hpp"
 #include "../held_snapshot.hpp"
@@ -101,6 +102,7 @@ static void apply_round_state(client_context_t &ctx,
 
   ctx.replication.round.phase          = static_cast<shared::Round_Phase>(phase);
   ctx.replication.round.phase_end_tick = package.phase_end_tick();
+  ctx.replication.round.phase_start_tick = package.phase_start_tick();
   ctx.replication.round.round_number   = package.round_number();
   ctx.replication.round.received       = true;
 }
@@ -2226,13 +2228,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 {
   auto &ctx = state_manager::get_client_context();
 
-  // Ahead of the world bail below: a client that is still downloading the map
-  // has no session to draw and can still open the menu, and "Disconnect" is the
-  // only way out of a stalled download. It draws under any ImGui window either
-  // way -- an open console covers it, which is the intended precedence.
   if (connection_ui.show_pause_menu)
   {
-    if (const ui::ui_font_t *font = ctx.font)
+    if (const ui::ui_font_t* font = ctx.font)
       ui::draw_screen(ui, pause_menu.screen, *font);
     else
       log_error("[menu] no UI font registered; the pause menu cannot draw");
@@ -2267,11 +2265,6 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                     ctx.world.session.lightmap);
   }
 
-  // Every light the map holds, laid out the way scene.glsl reads it: the bake's
-  // slots first, the analytic tail after. A Baked light is in that array now --
-  // it is shaded analytically against its baked visibility rather than summed
-  // flat into the atlas, which is what makes a normal map do something on a
-  // brush face (lighting_def.md ss14 step 6).
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
   {
@@ -2695,9 +2688,6 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
   }
 
-  // Particle emitters. Filled ONCE now: the renderer sequences the compute
-  // dispatch before the render pass itself, because that ordering is a Vulkan
-  // fact rather than something a caller should have to remember.
   for (const entities::Particle_Emitter_Entity &emitter :
        entity_system.entities_of<entities::Particle_Emitter_Entity>())
     scene.particles.push_back(emitter_parameters(emitter, delta_seconds));
@@ -2745,13 +2735,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     hud::draw_crosshair(ui, renderer::screen_size(), renderer::display_scale(), crosshair);
   }
 
-  // POLLED off the predicted clock every frame, not pushed at the keypress:
-  // there is no second copy of "how long is left" to go stale, and an
-  // unconditional read cannot be forgotten on the frame the switch ends.
-  //
-  // Hidden behind the pause menu, like every other HUD element, but NOT gated on
-  // mouse capture the way the crosshair above is -- that gate is about the
-  // cursor being the aiming device, which has nothing to do with a countdown.
+  
   if (ctx.cvars->cl_show_deploy_timer && !connection_ui.show_pause_menu)
   {
     if (const ui::ui_font_t *font = ctx.font)
@@ -2761,17 +2745,25 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
   }
 
-  // POLLED like the deploy timer above, and for the same reason: "is Tab held"
-  // is a continuous read of a key, so there is no press to latch and nothing to
-  // release on. is_key_down answers at the one instant input::new_frame sampled,
-  // which is what makes it comparable with everything else this frame.
-  //
-  // Not gated on mouse capture -- looking at the board is exactly when the
-  // cursor is not the aiming device -- but hidden behind the pause menu like
-  // every other HUD element.
+  if (ctx.replication.round.phase == shared::Round_Phase::Live && !connection_ui.show_pause_menu)
+  {
+    if (const ui::ui_font_t* font = ctx.font)
+    {
+      const float tick_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
+      const int64_t ticks_elapsed = static_cast<int64_t>(ctx.replication.latest_processed_tick) -
+                                    static_cast<int64_t>(ctx.replication.round.phase_start_tick);
+      hud::draw_run_timer(ui, *font, renderer::screen_size(), renderer::display_scale(),
+                          static_cast<float>(ticks_elapsed) * tick_dt);
+    }
+    else
+    {
+      log_error("[hud] no UI font registered; the run timer cannot draw");
+    }
+  }
+
   if (input::is_key_down(input::key_t::Tab) && !connection_ui.show_pause_menu)
   {
-    if (const ui::ui_font_t *font = ctx.font)
+    if (const ui::ui_font_t* font = ctx.font)
     {
       const Span<hud::scoreboard_row_t> rows = hud::collect_scoreboard_rows(
           ctx.replication.latest_player_entities, ctx.connection.my_slot, scoreboard_rows);

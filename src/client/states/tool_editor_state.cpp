@@ -108,7 +108,7 @@ static std::vector<std::string> list_map_files()
   for (const auto &entry :
        std::filesystem::directory_iterator(get_maps_dir(), ec))
   {
-    if (entry.is_regular_file())
+    if (entry.is_regular_file() && entry.path().extension() == ".source")
       files.push_back(entry.path().filename().string());
   }
   std::sort(files.begin(), files.end());
@@ -674,6 +674,12 @@ void Tool_Editor_State::update(float dt)
     viewport.mouse_ray.direction = {0, 1.0f, 0};
   }
 
+  // A prefab picked in the Placement tool is a PASTE, and the Selection tool
+  // owns that gesture -- the same hand-off the entity outliner makes when it
+  // asks for a selection.
+  if (context.requested_paste && active_tool != editor_tool_t::selection)
+    switch_tool(editor_tool_t::selection);
+
   if (active_tool)
   {
     tools[*active_tool]->on_update(context, viewport, dt);
@@ -766,36 +772,26 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   // to be remapped through what the copy actually did, and a row whose sender or
   // target did not survive the bake is dropped rather than left pointing at
   // whatever now holds that number.
-  std::unordered_map<shared::entity_uid_t, shared::entity_uid_t> uid_after_bake;
+  shared::uid_remap_t uid_after_bake;
   for (const auto &entry : src.entities)
   {
     if (entry.entity)
       uid_after_bake[entry.uid] = result.add_entity(entry.entity);
   }
 
+  // One walk of a row's uids, shared with the prefab stamp. Doing it by hand
+  // here reached the sender and the target and not the override PAYLOAD, so a
+  // baked Set_Respawn_Point went on naming a uid from the map it came from.
   for (const shared::connection_t &connection : src.connections)
   {
-    auto sender = uid_after_bake.find(connection.sender);
-    if (sender == uid_after_bake.end())
+    shared::connection_t                    baked_connection = connection;
+    const shared::connection_remap_result_t remapped =
+        shared::remap_connection_uids(baked_connection, uid_after_bake);
+    if (!remapped.ok)
     {
-      log_error("bake CSG: connection from uid {} dropped — its sender did not survive the bake",
-                connection.sender);
+      log_error("bake CSG: a {} row was dropped — its {} (uid {}) did not survive the bake",
+                entities::to_string(connection.signal), remapped.end, remapped.unmapped);
       continue;
-    }
-
-    shared::connection_t baked_connection = connection;
-    baked_connection.sender               = sender->second;
-
-    if (connection.target_kind == shared::connection_target_t::Uid)
-    {
-      auto target = uid_after_bake.find(connection.target);
-      if (target == uid_after_bake.end())
-      {
-        log_error("bake CSG: connection to uid {} dropped — its target did not survive the bake",
-                  connection.target);
-        continue;
-      }
-      baked_connection.target = target->second;
     }
 
     result.connections.push_back(baked_connection);
@@ -1044,7 +1040,7 @@ void Tool_Editor_State::draw_imgui_panels()
     {
       if (map_files.empty())
       {
-        ImGui::TextDisabled("(no files in maps/)");
+        ImGui::TextDisabled("(no .source files in maps/)");
       }
       else
       {

@@ -184,15 +184,16 @@ enum class entity_type : uint16_t
   Game_Rules_Entity = 8,
   Damageable_Entity = 9,
   Trigger_Volume_Entity = 10,
-  Point_Light_Entity = 11,
-  Spot_Light_Entity = 12,
-  Directional_Light_Entity = 13,
-  Physics_Body_Entity = 14,
+  Sound_Emitter_Entity = 11,
+  Point_Light_Entity = 12,
+  Spot_Light_Entity = 13,
+  Directional_Light_Entity = 14,
+  Physics_Body_Entity = 15,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 15;
+constexpr uint32_t ENTITY_TYPE_COUNT = 16;
 
 enum class component_type : uint16_t
 {

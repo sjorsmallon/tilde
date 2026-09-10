@@ -811,9 +811,6 @@ mesh_asset_t decode_obj(Span<const uint8_t> bytes, const char *key)
   return mesh;
 }
 
-namespace
-{
-
 // stb_image sniffs the format out of the bytes rather than off the name, so the
 // two decoders below are one function. They are still TWO SYMBOLS, because the
 // extension set is what the generated loader dispatches on and what a new
@@ -840,8 +837,6 @@ texture_asset_t decode_image(Span<const uint8_t> bytes, const char *key)
   printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", key, w, h, ch);
   return tex;
 }
-
-} // namespace
 
 texture_asset_t decode_png(Span<const uint8_t> bytes, const char *key)
 {

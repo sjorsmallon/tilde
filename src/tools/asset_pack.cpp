@@ -120,6 +120,7 @@ struct class_row_t
 constexpr class_row_t CLASS_TABLE[] = {
     {".obj", "mesh_asset", "mesh_asset_t", "asset_types.hpp"},
     {".mesh", "mesh_asset", "mesh_asset_t", "asset_types.hpp"},
+    {".glb", "mesh_asset", "mesh_asset_t", "asset_types.hpp"},
     {".png", "texture_asset", "texture_asset_t", "asset_types.hpp"},
     {".tga", "texture_asset", "texture_asset_t", "asset_types.hpp"},
     {".wav", "sound_asset", "sound_asset_t", "asset_types.hpp"},

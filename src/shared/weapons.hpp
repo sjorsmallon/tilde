@@ -67,9 +67,9 @@ struct weapon_definition_t
   // this and nothing else.
   entities::Fire_Resolution fire_resolution;
 
-  // Whether a shot that reaches static geometry and hits nobody sprays a
-  // Bullet_Impact there. False for the knife: a swing that reaches a wall
-  // should not leave a bullet decal on it.
+  // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
+  // the client -- the effect itself always fires, so the knife still sounds.
+  // False for the knife: a swing that reaches a wall should not leave one.
   //
   // A BOOL rather than the `kind != Melee` test it replaces, because "is this
   // melee" was never the question -- it was a proxy for one, asked outside the

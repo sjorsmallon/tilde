@@ -39,12 +39,16 @@ Effect :: channel
     color:            v3
     scale:            f32
     attached_entity:  u32   // an entity uid; 0 = world-space
-    surface_material: u16   // 0 = unknown
+    surface_material: u16   // the map's material index on a world hit; 0 = unknown
 }
 
 Rocket_Explosion :: Effect  "splash particles + surface decal"
-Bullet_Impact    :: Effect  "world-surface hit"
 Footstep         :: Effect  "one foot planting"
 Jump             :: Effect  "leaving the ground"
 Land             :: Effect  "arriving back on it"
-Flesh_Impact     :: Effect  "a shot that landed on a player; surface_material carries the hit_region_t, attached_entity the victim"
+Shot_Impact      :: Effect  "a shot landed; attached_entity is what it hit, 0 for the world"
+{
+    region: u16   // hit_region_t, read only when the thing hit is a player
+    weapon: u16   // entities::Weapon as a raw id; an effect may not name an entity enum
+}
+

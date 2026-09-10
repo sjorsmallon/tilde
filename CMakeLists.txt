@@ -370,6 +370,7 @@ add_custom_command(
 # Contains logging, cvars, protos, common math
 # Vendored verbatim, so its warnings are not ours to fix.
 set_source_files_properties(src/shared/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
+set_source_files_properties(src/shared/tinygltf/tiny_gltf_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
 
 add_library(game_shared STATIC
     src/shared/file_watcher.hpp
@@ -431,6 +432,10 @@ add_library(game_shared STATIC
     # drops a bad row, the server's map load refuses the whole map.
     src/shared/map_connection.hpp
     src/shared/map_connection.cpp
+    # Cutting a piece out of a map and stamping one back in -- the clipboard and
+    # prefabs are the same two functions (prefab_def.md).
+    src/shared/map_fragment.hpp
+    src/shared/map_fragment.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
@@ -459,6 +464,12 @@ add_library(game_shared STATIC
     src/shared/game_session.cpp
     src/shared/asset.hpp
     src/shared/asset.cpp
+    src/shared/asset_gltf.cpp
+    src/shared/world_units.hpp
+    # tinygltf v2.9.6, verbatim (MIT): the .glb decoder's parser.
+    src/shared/tinygltf/tiny_gltf.h
+    src/shared/tinygltf/tiny_gltf_configured.hpp
+    src/shared/tinygltf/tiny_gltf_implementation.cpp
     # The container pkg and embed both read, and the one place its layout is
     # spelled. asset_pack compiles the same TU, which is what keeps the writer
     # and the reader from being two descriptions of one format.
@@ -700,9 +711,9 @@ add_library(game_client SHARED
     src/client/effects/footstep.cpp
     src/client/effects/jump.cpp
     src/client/effects/land.cpp
-    src/client/effects/bullet_impact.cpp
-    src/client/effects/flesh_impact.cpp
+    src/client/effects/shot_impact.cpp
     src/client/weapon_fire_audio.cpp
+    src/client/entity_type_audio.cpp
     src/client/hit_confirm_audio.cpp
     src/client/shot_debug.cpp
     src/client/shadow_debug_draw.cpp
@@ -722,6 +733,7 @@ add_library(game_client SHARED
     src/client/hud/crosshair.cpp
     src/client/hud/announcement.cpp
     src/client/hud/deploy_timer.cpp
+    src/client/hud/run_timer.cpp
     src/client/hud/scoreboard.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
     # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
@@ -1016,6 +1028,12 @@ add_executable(convex_decomposition_test src/test/convex_decomposition_test.cpp)
 target_include_directories(convex_decomposition_test PRIVATE src)
 target_link_libraries(convex_decomposition_test PRIVATE game_shared)
 
+# 20d. Prefab Test (extract a subset, stamp it back, remap every uid the
+# wiring names -- including one inside an override payload)
+add_executable(prefab_test src/test/prefab_test.cpp)
+target_include_directories(prefab_test PRIVATE src src/shared)
+target_link_libraries(prefab_test PRIVATE game_shared)
+
 # 20. Navmesh Simplification Test
 add_executable(navmesh_test src/test/test_navmesh.cpp)
 target_include_directories(navmesh_test PRIVATE src)
@@ -1279,6 +1297,7 @@ set(GAME_TESTS
     asset_test
     entity_layout_test
     map_migration_test
+    prefab_test
     navmesh_test
     lightmap_bake_test
     shadow_test

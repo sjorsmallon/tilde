@@ -4085,6 +4085,11 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
                                       source.diffuse_color.z, 1.0f};
     material.parameters.maps = register_material_maps(source.maps, source.texture_path);
 
+    // The same rule geometry_renderer.cpp applies to a brush face.
+    if (material.parameters.maps.normal.valid() || material.parameters.maps.orm.valid() ||
+        material.parameters.maps.height.valid())
+      material.pipeline_state.shader = shader_t::pbr;
+
     // The layers above the base, through the same ladder, and the shader that
     // reads them. A generated brush mesh is the only thing that fills these
     // today -- blending is authored per FACE.

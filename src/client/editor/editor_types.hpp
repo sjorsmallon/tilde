@@ -106,6 +106,13 @@ struct editor_context_t
   // directly would be a second owner of it.
   std::optional<shared::entity_uid_t> requested_selection;
 
+  // A fragment somebody outside the tools wants stamped -- the Placement tool's
+  // prefab list is the one caller. Consumed and cleared by the Selection tool,
+  // which owns the clipboard and the paste gesture: placing a prefab IS a
+  // paste (prefab_def.md), so it needs no ghost, no snap rule and no commit
+  // path of its own, and a second one would be free to disagree with this one.
+  std::optional<shared::map_t> requested_paste;
+
   // What the author hid in the entity outliner, flattened per frame from the
   // per-entity set and the per-type mask. Editor state and never map data: a
   // `hidden` field in map_t would either push an undo entry or bypass the

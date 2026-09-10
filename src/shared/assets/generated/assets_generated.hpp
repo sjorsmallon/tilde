@@ -19,15 +19,18 @@ template <typename T> std::optional<T> try_from_string(std::string_view text);
 enum class mesh_asset : uint16_t
 {
   Missing = 0,
-  Box = 1,
-  Leet_Full = 2,
-  Sphere = 3,
-  Error = 4,
-  Isosphere = 5,
-  Pyramid = 6,
+  Duck = 1,
+  damaged_helmet = 2,
+  target = 3,
+  Box = 4,
+  Leet_Full = 5,
+  Sphere = 6,
+  Error = 7,
+  Isosphere = 8,
+  Pyramid = 9,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 7;
+constexpr uint32_t mesh_asset_COUNT = 10;
 
 const char* to_string(mesh_asset value);
 template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);
@@ -87,11 +90,12 @@ enum class sound_asset : uint16_t
   scout_clipout = 20,
   scout_fire_1 = 21,
   success = 22,
-  wow_incredible = 23,
-  zoom = 24,
+  target_break = 23,
+  wow_incredible = 24,
+  zoom = 25,
 };
 
-constexpr uint32_t sound_asset_COUNT = 25;
+constexpr uint32_t sound_asset_COUNT = 26;
 
 const char* to_string(sound_asset value);
 template <> std::optional<sound_asset> try_from_string<sound_asset>(std::string_view text);

@@ -1,5 +1,6 @@
 #include "asset.hpp"
 #include "asset_package.hpp"
+#include "world_units.hpp"
 #include <cmath>
 #include <cassert>
 #include <cstdio>
@@ -501,6 +502,116 @@ static int test_an_obj_without_normals_derives_them()
   return 0;
 }
 
+static std::vector<uint8_t> make_glb(std::string json, std::vector<uint8_t> binary)
+{
+  while (json.size() % 4 != 0)
+    json.push_back(' ');
+  while (binary.size() % 4 != 0)
+    binary.push_back(0);
+
+  std::vector<uint8_t> glb;
+  auto append_u32 = [&](uint32_t value)
+  {
+    const uint8_t* at = (const uint8_t*)&value;
+    glb.insert(glb.end(), at, at + 4);
+  };
+  append_u32(0x46546C67);
+  append_u32(2);
+  append_u32((uint32_t)(12 + 8 + json.size() + 8 + binary.size()));
+  append_u32((uint32_t)json.size());
+  append_u32(0x4E4F534A);
+  glb.insert(glb.end(), json.begin(), json.end());
+  append_u32((uint32_t)binary.size());
+  append_u32(0x004E4942);
+  glb.insert(glb.end(), binary.begin(), binary.end());
+  return glb;
+}
+
+// One triangle facing glTF +Z under a node mirrored in X, with no NORMAL: the
+// winding must be flipped back, the flat normal must face outward, and glTF +Z
+// must arrive as engine +X in inches.
+static int test_a_mirrored_glb_node_arrives_outward_in_engine_units()
+{
+  const float    positions[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  const uint16_t indices[3]   = {0, 1, 2};
+  std::vector<uint8_t> binary(sizeof(positions) + sizeof(indices));
+  memcpy(binary.data(), positions, sizeof(positions));
+  memcpy(binary.data() + sizeof(positions), indices, sizeof(indices));
+
+  const std::string json =
+      R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],)"
+      R"("nodes":[{"mesh":0,"scale":[-1,1,1]}],)"
+      R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],)"
+      R"("buffers":[{"byteLength":42}],)"
+      R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],)"
+      R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},)"
+      R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+
+  const std::vector<uint8_t>  glb  = make_glb(json, binary);
+  const assets::mesh_asset_t mesh = assets::decode_glb(
+      Span<const uint8_t>(glb.data(), (uint32_t)glb.size()), "mirrored.glb");
+
+  assert(mesh.vertices.size() == 3);
+  assert(mesh.indices.size() == 3);
+  assert(mesh.submeshes.size() == 1);
+  assert(mesh.materials.size() == 1);
+
+  const linalg::vec3f a       = mesh.vertices[mesh.indices[0]].position;
+  const linalg::vec3f b       = mesh.vertices[mesh.indices[1]].position;
+  const linalg::vec3f c       = mesh.vertices[mesh.indices[2]].position;
+  const linalg::vec3f winding = linalg::cross(b - a, c - a);
+
+  const float metre         = shared::WORLD_UNITS_PER_METRE;
+  bool        reached_up    = false;
+  bool        reached_back  = false;
+  for (const vertex_xnu& vertex : mesh.vertices)
+  {
+    assert(std::fabs(vertex.normal.x - 1.0f) < 1e-5f);
+    assert(linalg::dot(winding, vertex.normal) > 0.0f);
+    if (std::fabs(vertex.position.y - metre) < 1e-3f)
+      reached_up = true;
+    if (std::fabs(vertex.position.z - metre) < 1e-3f)
+      reached_back = true;
+  }
+  assert(reached_up);
+  assert(reached_back);
+
+  printf("  PASS: test_a_mirrored_glb_node_arrives_outward_in_engine_units\n");
+  return 0;
+}
+
+// The Khronos duck through the manifest: its root node scales centimetres to
+// metres, and its accessor bounds say where every axis must land.
+static int test_the_duck_glb_arrives_through_the_manifest()
+{
+  const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(assets::mesh_asset::Duck));
+  assert(mesh != nullptr);
+  assert(mesh->indices.size() == 12636);
+  assert(mesh->submeshes.size() == 1);
+  assert(mesh->materials.size() == 1);
+
+  const assets::material_t& material = mesh->materials[0];
+  assert(material.maps.albedo.valid());
+  assert(assets::find_texture_in_cache("resources/glb/Duck.glb#image0").index == material.maps.albedo.index);
+  assert(!material.maps.normal.valid());
+  assert(!material.maps.orm.valid());
+  assert(!material.maps.emissive.valid());
+  assert(!material.maps.height.valid());
+
+  const float                 centimetre = 0.01f * shared::WORLD_UNITS_PER_METRE;
+  const shared::aabb_bounds_t bounds     = assets::compute_mesh_bounds(mesh);
+  const float                 tolerance  = 0.01f;
+  assert(std::fabs(bounds.min.x - centimetre * -61.3282f) < tolerance);
+  assert(std::fabs(bounds.max.x - centimetre * 53.9252f) < tolerance);
+  assert(std::fabs(bounds.min.y - centimetre * 9.92937f) < tolerance);
+  assert(std::fabs(bounds.max.y - centimetre * 163.97f) < tolerance);
+  assert(std::fabs(bounds.min.z - centimetre * -96.1799f) < tolerance);
+  assert(std::fabs(bounds.max.z - centimetre * 69.2985f) < tolerance);
+
+  printf("  PASS: test_the_duck_glb_arrives_through_the_manifest\n");
+  return 0;
+}
+
 int main()
 {
   printf("=== Asset System Tests ===\n");
@@ -530,6 +641,8 @@ int main()
   test_one_cache_key_per_file();
   test_asset_package_round_trip();
   test_an_obj_without_normals_derives_them();
+  test_a_mirrored_glb_node_arrives_outward_in_engine_units();
+  test_the_duck_glb_arrives_through_the_manifest();
   printf("All tests passed.\n");
   return 0;
 }

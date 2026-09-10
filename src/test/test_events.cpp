@@ -58,6 +58,13 @@ void fill_effect(Effect& effect, uint32_t seed)
   effect.surface_material = (uint16_t)(300 + seed);
 }
 
+void fill_shot_impact(Shot_Impact& impact, uint32_t seed)
+{
+  fill_effect(impact, seed);
+  impact.region = (uint16_t)(2 + seed);
+  impact.weapon = (uint16_t)(40 + seed);
+}
+
 // Field by field, not memcmp: Effect has tail padding (46 bytes of members,
 // 48 of struct) and padding bytes are indeterminate in both operands. A memcmp
 // here passed locally and would have failed on someone else's build.
@@ -77,18 +84,16 @@ bool effects_match(const Effect& left, const Effect& right)
 void fire_every_effect(event_stream_t& stream)
 {
   Rocket_Explosion rocket_explosion; fill_effect(rocket_explosion, 0);
-  Bullet_Impact    bullet_impact;    fill_effect(bullet_impact, 1);
-  Footstep         footstep;         fill_effect(footstep, 2);
-  Jump             jump;             fill_effect(jump, 3);
-  Land             land;             fill_effect(land, 4);
-  Flesh_Impact     flesh_impact;     fill_effect(flesh_impact, 5);
+  Footstep         footstep;         fill_effect(footstep, 1);
+  Jump             jump;             fill_effect(jump, 2);
+  Land             land;             fill_effect(land, 3);
+  Shot_Impact      shot_impact;      fill_shot_impact(shot_impact, 4);
 
   fire_rocket_explosion(stream, rocket_explosion);
-  fire_bullet_impact(stream, bullet_impact);
   fire_footstep(stream, footstep);
   fire_jump(stream, jump);
   fire_land(stream, land);
-  fire_flesh_impact(stream, flesh_impact);
+  fire_shot_impact(stream, shot_impact);
 }
 
 // Reads back what fire_every_effect wrote, asserting kind and payload per
@@ -110,12 +115,6 @@ void expect_every_effect(network::Bit_Reader& reader)
         assert(value && effects_match(*value, expected));
         break;
       }
-      case effect_type::Bullet_Impact:
-      {
-        const std::optional<Bullet_Impact> value = try_read_bullet_impact(reader);
-        assert(value && effects_match(*value, expected));
-        break;
-      }
       case effect_type::Footstep:
       {
         const std::optional<Footstep> value = try_read_footstep(reader);
@@ -134,10 +133,13 @@ void expect_every_effect(network::Bit_Reader& reader)
         assert(value && effects_match(*value, expected));
         break;
       }
-      case effect_type::Flesh_Impact:
+      case effect_type::Shot_Impact:
       {
-        const std::optional<Flesh_Impact> value = try_read_flesh_impact(reader);
-        assert(value && effects_match(*value, expected));
+        Shot_Impact expected_impact;
+        fill_shot_impact(expected_impact, index);
+        const std::optional<Shot_Impact> value = try_read_shot_impact(reader);
+        assert(value && effects_match(*value, expected_impact));
+        assert(value->region == expected_impact.region && value->weapon == expected_impact.weapon);
         break;
       }
     }
@@ -164,11 +166,11 @@ void test_effect_round_trip()
 
 void test_record_layout()
 {
-  Flesh_Impact payload;
-  fill_effect(payload, 3);
+  Shot_Impact payload;
+  fill_shot_impact(payload, 3);
 
   event_stream_t stream;
-  fire_flesh_impact(stream, payload);
+  fire_shot_impact(stream, payload);
 
   // The same fields through the same codec, but driven by a table spelled out
   // here rather than by the generated one. What this pins is the ORDER -- the
@@ -178,29 +180,35 @@ void test_record_layout()
   // Offsets come off the struct, so this stays a statement about the WIRE and
   // not about the layout the compiler chose.
   const field_info_t reference_fields[] = {
-      {"origin", FIELD_TYPE_V3, (uint32_t)offsetof(Flesh_Impact, origin),
+      {"origin", FIELD_TYPE_V3, (uint32_t)offsetof(Shot_Impact, origin),
        (uint32_t)sizeof(payload.origin), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
        NOT_AN_ENUM},
-      {"normal", FIELD_TYPE_V3, (uint32_t)offsetof(Flesh_Impact, normal),
+      {"normal", FIELD_TYPE_V3, (uint32_t)offsetof(Shot_Impact, normal),
        (uint32_t)sizeof(payload.normal), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
        NOT_AN_ENUM},
-      {"color", FIELD_TYPE_V3, (uint32_t)offsetof(Flesh_Impact, color),
+      {"color", FIELD_TYPE_V3, (uint32_t)offsetof(Shot_Impact, color),
        (uint32_t)sizeof(payload.color), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
        NOT_AN_ENUM},
-      {"scale", FIELD_TYPE_F32, (uint32_t)offsetof(Flesh_Impact, scale),
+      {"scale", FIELD_TYPE_F32, (uint32_t)offsetof(Shot_Impact, scale),
        (uint32_t)sizeof(payload.scale), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
        NOT_AN_ENUM},
-      {"attached_entity", FIELD_TYPE_U32, (uint32_t)offsetof(Flesh_Impact, attached_entity),
+      {"attached_entity", FIELD_TYPE_U32, (uint32_t)offsetof(Shot_Impact, attached_entity),
        (uint32_t)sizeof(payload.attached_entity), 0u, NOT_A_COMPONENT, NOT_A_STRING,
        NOT_AN_ASSET_CLASS, NOT_AN_ENUM},
-      {"surface_material", FIELD_TYPE_U16, (uint32_t)offsetof(Flesh_Impact, surface_material),
+      {"surface_material", FIELD_TYPE_U16, (uint32_t)offsetof(Shot_Impact, surface_material),
        (uint32_t)sizeof(payload.surface_material), 0u, NOT_A_COMPONENT, NOT_A_STRING,
        NOT_AN_ASSET_CLASS, NOT_AN_ENUM},
+      {"region", FIELD_TYPE_U16, (uint32_t)offsetof(Shot_Impact, region),
+       (uint32_t)sizeof(payload.region), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
+       NOT_AN_ENUM},
+      {"weapon", FIELD_TYPE_U16, (uint32_t)offsetof(Shot_Impact, weapon),
+       (uint32_t)sizeof(payload.weapon), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
+       NOT_AN_ENUM},
   };
 
   network::Bit_Writer reference;
   reference.write_bits(0, 16); // the stream's count slot
-  reference.write_bits((uint32_t)effect_type::Flesh_Impact, 16);
+  reference.write_bits((uint32_t)effect_type::Shot_Impact, 16);
   for (const field_info_t& field : reference_fields)
     network::write_field(reference, reinterpret_cast<const uint8_t*>(&payload), field,
                          field.offset);
@@ -390,10 +398,10 @@ void test_stream_reset()
 
 void test_formatter()
 {
-  Bullet_Impact impact;
-  fill_effect(impact, 0);
+  Shot_Impact impact;
+  fill_shot_impact(impact, 0);
   const std::string impact_text = to_text(impact);
-  assert(impact_text.find("Bullet_Impact") == 0);
+  assert(impact_text.find("Shot_Impact") == 0);
   assert(impact_text.find("attached_entity=7") != std::string::npos);
 
   event_stream_t stream;

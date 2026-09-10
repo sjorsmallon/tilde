@@ -114,7 +114,7 @@ bool field_type_is_signed_integer(field_type_t type)
 bool field_type_is_unsigned_integer(field_type_t type)
 {
   return type == FIELD_TYPE_U8 || type == FIELD_TYPE_U16 || type == FIELD_TYPE_U32 ||
-         type == FIELD_TYPE_U64;
+         type == FIELD_TYPE_U64 || type == FIELD_TYPE_ENTITY_UID;
 }
 
 // Parses `count` whitespace-separated floats. Partial input is a failure, not a
@@ -201,6 +201,7 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
     case FIELD_TYPE_U16:
     case FIELD_TYPE_U32:
     case FIELD_TYPE_U64:
+    case FIELD_TYPE_ENTITY_UID:
       out_text = std::format("{}", (uint64_t)load_integer(field_bytes, field.size_in_bytes, false));
       return true;
 

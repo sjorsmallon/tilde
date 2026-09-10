@@ -249,6 +249,7 @@ message S2C_EntityPackage {
     optional uint32 round_phase    = 8;
     optional uint32 phase_end_tick = 9;  // server tick; 0 = ends on a win condition
     optional uint32 round_number   = 10; // 1-based; 0 before the first round
+    optional uint32 phase_start_tick = 11; // server tick the current phase was entered on
 }
 
 // --------------------------------------------- things that are uncertain

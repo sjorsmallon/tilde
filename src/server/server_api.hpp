@@ -48,9 +48,11 @@ GAME_SERVER_API uint32_t get_tick_number();
 // snapshot/interpolation pipeline. Returns nullptr if init() has not run.
 GAME_SERVER_API const shared::game_session_t *get_session_for_integrated_client();
 
-// Reload the server with a different map. Wipes the current session, physics
-// world, bots, and per-client baselines, then loads `map_path` and respawns
-// map-defined bots. Any currently-connected players are disconnected; they
-// will reconnect on their next Connect packet. Returns true on successful load.
-GAME_SERVER_API bool change_map_to(const std::string &map_path);
+// Reload the server with a different map. `map_name` is a path, a maps-relative
+// filename or a bare name (tried as given, then `maps/<name>`, then
+// `maps/<name>.source`); one that resolves to no file is refused BEFORE the
+// running world is torn down. Wipes the current session, physics world, bots
+// and per-client baselines, loads the map, keeps connected players connected
+// and broadcasts CmdChangeMap. Returns true on successful load.
+GAME_SERVER_API bool change_map_to(const std::string &map_name);
 } // namespace server

@@ -10,7 +10,7 @@ namespace client
 
 struct client_context_t;
 
-// The one weapon -> gunshot sound table. Shared with Play_State's predicted
+// The one weapon -> sound table. Shared with Play_State's predicted
 // local shot deliberately: two tables would let your own gun and everyone
 // else's drift apart, which is the same class of bug last_fire_weapon exists
 // to prevent.
@@ -19,6 +19,9 @@ struct client_context_t;
 // wire with no range check, so a weapon id outside the enum is a hostile or
 // corrupt snapshot rather than a missing asset. Empty optional, log_error'd.
 [[nodiscard]] std::optional<assets::sound_asset> try_fire_sound_for(entities::Weapon weapon);
+
+// What a shot from `weapon` sounds like on static geometry; fallible for the same reason.
+[[nodiscard]] std::optional<assets::sound_asset> try_world_impact_sound_for(entities::Weapon weapon);
 
 // Plays a gunshot for every player whose Player_Entity::last_fire_tick advanced
 // since the last call. Call once per received snapshot, right after

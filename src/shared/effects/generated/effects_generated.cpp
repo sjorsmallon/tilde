@@ -77,63 +77,6 @@ constexpr field_info_t ROCKET_EXPLOSION_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
-constexpr field_info_t BULLET_IMPACT_FIELDS[] = {
-  {.name = "origin",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Bullet_Impact, origin),
-   .size_in_bytes = (uint32_t)sizeof(Bullet_Impact::origin),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "normal",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Bullet_Impact, normal),
-   .size_in_bytes = (uint32_t)sizeof(Bullet_Impact::normal),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "color",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Bullet_Impact, color),
-   .size_in_bytes = (uint32_t)sizeof(Bullet_Impact::color),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "scale",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Bullet_Impact, scale),
-   .size_in_bytes = (uint32_t)sizeof(Bullet_Impact::scale),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "attached_entity",
-   .type = FIELD_TYPE_U32,
-   .offset = (uint32_t)offsetof(Bullet_Impact, attached_entity),
-   .size_in_bytes = (uint32_t)sizeof(Bullet_Impact::attached_entity),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "surface_material",
-   .type = FIELD_TYPE_U16,
-   .offset = (uint32_t)offsetof(Bullet_Impact, surface_material),
-   .size_in_bytes = (uint32_t)sizeof(Bullet_Impact::surface_material),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-};
-
 constexpr field_info_t FOOTSTEP_FIELDS[] = {
   {.name = "origin",
    .type = FIELD_TYPE_V3,
@@ -305,11 +248,11 @@ constexpr field_info_t LAND_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
-constexpr field_info_t FLESH_IMPACT_FIELDS[] = {
+constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
   {.name = "origin",
    .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Flesh_Impact, origin),
-   .size_in_bytes = (uint32_t)sizeof(Flesh_Impact::origin),
+   .offset = (uint32_t)offsetof(Shot_Impact, origin),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::origin),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -317,8 +260,8 @@ constexpr field_info_t FLESH_IMPACT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "normal",
    .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Flesh_Impact, normal),
-   .size_in_bytes = (uint32_t)sizeof(Flesh_Impact::normal),
+   .offset = (uint32_t)offsetof(Shot_Impact, normal),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::normal),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -326,8 +269,8 @@ constexpr field_info_t FLESH_IMPACT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "color",
    .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Flesh_Impact, color),
-   .size_in_bytes = (uint32_t)sizeof(Flesh_Impact::color),
+   .offset = (uint32_t)offsetof(Shot_Impact, color),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::color),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -335,8 +278,8 @@ constexpr field_info_t FLESH_IMPACT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "scale",
    .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Flesh_Impact, scale),
-   .size_in_bytes = (uint32_t)sizeof(Flesh_Impact::scale),
+   .offset = (uint32_t)offsetof(Shot_Impact, scale),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::scale),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -344,8 +287,8 @@ constexpr field_info_t FLESH_IMPACT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "attached_entity",
    .type = FIELD_TYPE_U32,
-   .offset = (uint32_t)offsetof(Flesh_Impact, attached_entity),
-   .size_in_bytes = (uint32_t)sizeof(Flesh_Impact::attached_entity),
+   .offset = (uint32_t)offsetof(Shot_Impact, attached_entity),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::attached_entity),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -353,8 +296,26 @@ constexpr field_info_t FLESH_IMPACT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "surface_material",
    .type = FIELD_TYPE_U16,
-   .offset = (uint32_t)offsetof(Flesh_Impact, surface_material),
-   .size_in_bytes = (uint32_t)sizeof(Flesh_Impact::surface_material),
+   .offset = (uint32_t)offsetof(Shot_Impact, surface_material),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::surface_material),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "region",
+   .type = FIELD_TYPE_U16,
+   .offset = (uint32_t)offsetof(Shot_Impact, region),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::region),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "weapon",
+   .type = FIELD_TYPE_U16,
+   .offset = (uint32_t)offsetof(Shot_Impact, weapon),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::weapon),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -369,11 +330,10 @@ const char* to_string(effect_type value)
   switch (value)
   {
     case effect_type::Rocket_Explosion: return "Rocket_Explosion";
-    case effect_type::Bullet_Impact: return "Bullet_Impact";
     case effect_type::Footstep: return "Footstep";
     case effect_type::Jump: return "Jump";
     case effect_type::Land: return "Land";
-    case effect_type::Flesh_Impact: return "Flesh_Impact";
+    case effect_type::Shot_Impact: return "Shot_Impact";
   }
   assert(false && "invalid effect_type");
   return "";
@@ -402,31 +362,6 @@ std::optional<Rocket_Explosion> try_read_rocket_explosion(network::Bit_Reader& r
 std::string to_text(const Rocket_Explosion& value)
 {
   return std::string("Rocket_Explosion") + fields_to_text({ROCKET_EXPLOSION_FIELDS, 6}, &value);
-}
-
-void fire_bullet_impact(event_stream_t& stream, const Bullet_Impact& payload)
-{
-  stream.writer.write_bits((uint32_t)effect_type::Bullet_Impact, 16);
-  for (const field_info_t& field : Span<const field_info_t>{BULLET_IMPACT_FIELDS, 6})
-    network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
-  ++stream.count;
-
-  if (stream.log_fired)
-    log_terminal("[event fired] {}", to_text(payload));
-}
-
-std::optional<Bullet_Impact> try_read_bullet_impact(network::Bit_Reader& reader)
-{
-  Bullet_Impact payload;
-  for (const field_info_t& field : Span<const field_info_t>{BULLET_IMPACT_FIELDS, 6})
-    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
-      return std::nullopt;
-  return payload;
-}
-
-std::string to_text(const Bullet_Impact& value)
-{
-  return std::string("Bullet_Impact") + fields_to_text({BULLET_IMPACT_FIELDS, 6}, &value);
 }
 
 void fire_footstep(event_stream_t& stream, const Footstep& payload)
@@ -504,10 +439,10 @@ std::string to_text(const Land& value)
   return std::string("Land") + fields_to_text({LAND_FIELDS, 6}, &value);
 }
 
-void fire_flesh_impact(event_stream_t& stream, const Flesh_Impact& payload)
+void fire_shot_impact(event_stream_t& stream, const Shot_Impact& payload)
 {
-  stream.writer.write_bits((uint32_t)effect_type::Flesh_Impact, 16);
-  for (const field_info_t& field : Span<const field_info_t>{FLESH_IMPACT_FIELDS, 6})
+  stream.writer.write_bits((uint32_t)effect_type::Shot_Impact, 16);
+  for (const field_info_t& field : Span<const field_info_t>{SHOT_IMPACT_FIELDS, 8})
     network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
   ++stream.count;
 
@@ -515,18 +450,18 @@ void fire_flesh_impact(event_stream_t& stream, const Flesh_Impact& payload)
     log_terminal("[event fired] {}", to_text(payload));
 }
 
-std::optional<Flesh_Impact> try_read_flesh_impact(network::Bit_Reader& reader)
+std::optional<Shot_Impact> try_read_shot_impact(network::Bit_Reader& reader)
 {
-  Flesh_Impact payload;
-  for (const field_info_t& field : Span<const field_info_t>{FLESH_IMPACT_FIELDS, 6})
+  Shot_Impact payload;
+  for (const field_info_t& field : Span<const field_info_t>{SHOT_IMPACT_FIELDS, 8})
     if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
       return std::nullopt;
   return payload;
 }
 
-std::string to_text(const Flesh_Impact& value)
+std::string to_text(const Shot_Impact& value)
 {
-  return std::string("Flesh_Impact") + fields_to_text({FLESH_IMPACT_FIELDS, 6}, &value);
+  return std::string("Shot_Impact") + fields_to_text({SHOT_IMPACT_FIELDS, 8}, &value);
 }
 
 std::string effect_stream_to_text(const event_stream_t& stream)
@@ -556,17 +491,6 @@ std::string effect_stream_to_text(const event_stream_t& stream)
       case effect_type::Rocket_Explosion:
       {
         const std::optional<Rocket_Explosion> payload = try_read_rocket_explosion(reader);
-        if (!payload)
-        {
-          text += "<undecodable payload; the rest is unreadable>";
-          return text;
-        }
-        text += to_text(*payload);
-        break;
-      }
-      case effect_type::Bullet_Impact:
-      {
-        const std::optional<Bullet_Impact> payload = try_read_bullet_impact(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";
@@ -608,9 +532,9 @@ std::string effect_stream_to_text(const event_stream_t& stream)
         text += to_text(*payload);
         break;
       }
-      case effect_type::Flesh_Impact:
+      case effect_type::Shot_Impact:
       {
-        const std::optional<Flesh_Impact> payload = try_read_flesh_impact(reader);
+        const std::optional<Shot_Impact> payload = try_read_shot_impact(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";

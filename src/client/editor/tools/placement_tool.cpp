@@ -11,9 +11,13 @@
 
 #define ENTITIES_WANT_INCLUDES
 #undef ENTITIES_WANT_INCLUDES
+#include "../../../shared/map_fragment.hpp"
 #include "imgui.h"
 #include "log.hpp"
 #include "renderer.hpp"
+
+#include <algorithm>
+#include <filesystem>
 
 
 
@@ -220,8 +224,63 @@ void Placement_Tool::on_draw_ui(editor_context_t& ctx)
       if (ImGui::Selectable(entry.label, idx == selected_type_index))
         select_placeable(idx);
     }
+
+    // Prefabs are files, not a kind: picking one hands the fragment to the
+    // Selection tool and the PASTE gesture places it (prefab_def.md step 5).
+    // That is why they are listed apart from the placeables above rather than
+    // appended to that table.
+    ImGui::Separator();
+    if (!prefab_names_have_been_scanned)
+      rescan_prefabs();
+
+    ImGui::TextUnformatted("Prefabs");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Refresh"))
+      rescan_prefabs();
+
+    if (prefab_names.empty())
+    {
+      ImGui::TextDisabled("none in %s/", shared::PREFAB_DIRECTORY);
+    }
+    for (const std::string &prefab : prefab_names)
+    {
+      if (!ImGui::Selectable(prefab.c_str()))
+        continue;
+
+      const std::string path =
+          std::string(shared::PREFAB_DIRECTORY) + "/" + prefab + shared::PREFAB_EXTENSION;
+      std::optional<shared::map_t> fragment = shared::try_load_map(path);
+      if (!fragment)
+      {
+        log_error("placement tool: prefab \"{}\" could not be read", path);
+        continue;
+      }
+
+      ctx.requested_paste = std::move(*fragment);
+    }
   }
   ImGui::End();
+}
+
+void Placement_Tool::rescan_prefabs()
+{
+  prefab_names.clear();
+  prefab_names_have_been_scanned = true;
+
+  std::error_code            error;
+  const std::filesystem::path directory{shared::PREFAB_DIRECTORY};
+  if (!std::filesystem::exists(directory, error))
+    return;
+
+  for (const std::filesystem::directory_entry &entry :
+       std::filesystem::directory_iterator(directory, error))
+  {
+    if (!entry.is_regular_file() || entry.path().extension() != shared::PREFAB_EXTENSION)
+      continue;
+    prefab_names.push_back(entry.path().stem().string());
+  }
+
+  std::sort(prefab_names.begin(), prefab_names.end());
 }
 
 void Placement_Tool::on_draw_overlay(editor_context_t& ctx,

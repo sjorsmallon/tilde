@@ -44,6 +44,7 @@ void write_field(Bit_Writer& writer, const uint8_t* base, const field_info_t& fi
     case FIELD_TYPE_U8:
     case FIELD_TYPE_U16:
     case FIELD_TYPE_U32:
+    case FIELD_TYPE_ENTITY_UID:
     case FIELD_TYPE_ASSET:
     case FIELD_TYPE_ENUM:
     {
@@ -170,6 +171,7 @@ bool read_field(Bit_Reader& reader, uint8_t* base, const field_info_t& field, ui
     case FIELD_TYPE_U8:
     case FIELD_TYPE_U16:
     case FIELD_TYPE_U32:
+    case FIELD_TYPE_ENTITY_UID:
     {
       uint32_t value = read_var_uint(reader);
       std::memcpy(bytes, &value, field.size_in_bytes);

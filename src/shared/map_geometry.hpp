@@ -330,6 +330,12 @@ geometry_value_t make_default_geometry(geometry_kind_t kind);
 linalg::vec3 get_position(const geometry_value_t &geometry);
 void set_position(geometry_value_t &geometry, const linalg::vec3 &position);
 
+// Moves an object by a delta rather than to a place. set_position would do it
+// as (target - current) around a derived centre, which costs a float of drift
+// per hop -- and a fragment is rebased twice, once at extraction and once at
+// every stamp. Texture lock rides along, since translate_brush carries it.
+void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta);
+
 // Half-extents of the object's own shape. For static meshes this is derived
 // from the (scaled) mesh bounds, falling back to a default box if the mesh
 // hasn't loaded.

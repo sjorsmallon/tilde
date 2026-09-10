@@ -98,7 +98,7 @@ Graphics pipeline: no vertex input, triangle list, depth test ON but depth write
 
 ## Entity (particle_emitter_entity.hpp)
 
-All parameters are schema fields with `Editable | Saveable` flags, so they show up in the editor inspector and get saved to map files. Key fields:
+All parameters are schema fields with the `Editable` flag, so they show up in the editor inspector and get saved to map files. Key fields:
 
 | Field | Default | Purpose |
 |-------|---------|---------|

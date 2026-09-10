@@ -1,0 +1,38 @@
+#include "run_timer.hpp"
+
+#include "../ui/layout.hpp"
+
+#include <cmath>
+#include <cstdint>
+#include <format>
+
+namespace client::hud
+{
+
+void draw_run_timer(renderer::ui_draw_list_t& list, const ui::ui_font_t& font,
+                    linalg::vec2 screen, float display_scale, float seconds_elapsed)
+{
+  if (seconds_elapsed < 0.0f)
+    return;
+
+  const uint64_t total_centiseconds = static_cast<uint64_t>(std::floor(seconds_elapsed * 100.0f));
+  const uint64_t minutes            = total_centiseconds / 6000;
+  const uint64_t seconds            = (total_centiseconds / 100) % 60;
+  const uint64_t centiseconds       = total_centiseconds % 100;
+
+  const std::string text = std::format("{:02}:{:02}.{:02}", minutes, seconds, centiseconds);
+
+  const ui::font_size_t size      = ui::font_size_t::medium;
+  const linalg::vec2    text_size = ui::measure_text(font, size, text);
+
+  const ui::ui_rect_t box =
+      ui::anchored(screen, ui::anchor_t::top_center,
+                   {.margin = {0.0f, screen.y * 0.04f}, .size = text_size});
+
+  const float shadow_offset = std::floor(2.0f * display_scale);
+  ui::draw_text(list, font, size, {box.min.x + shadow_offset, box.min.y + shadow_offset}, text,
+                color_t{0, 0, 0, 85});
+  ui::draw_text(list, font, size, box.min, text, colors::white);
+}
+
+} // namespace client::hud

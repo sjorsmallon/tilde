@@ -43,6 +43,7 @@ struct grid_settings_t
 
 inline float snap(float v, float interval)
 {
+  if (interval <= 0.0f) return v;
   return std::round(v / interval) * interval;
 }
 

@@ -9,6 +9,7 @@
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
 #include "../../../shared/map_connection.hpp"
+#include "../../../shared/map_fragment.hpp"
 #include "../../../shared/lighting.hpp"
 #include "../../../shared/lightmap.hpp"
 #include "../../../shared/lightmap_lights.hpp"
@@ -19,6 +20,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <format>
 #include <limits>
 #include <string>
@@ -28,6 +30,50 @@ namespace client
 
 namespace
 {
+
+// TWO radii, and the difference between them is the whole rule. An entity icon
+// is a few pixels wide and usually stands in front of a wall, so a ray that hit
+// the wall is not evidence the author meant the wall -- an entity CLOSE to the
+// cursor therefore wins over a geometry hit. A merely NEARBY one wins only when
+// the ray hit nothing at all: applying the generous radius over geometry would
+// make a blockout floor unclickable wherever a lamp is parked on it.
+constexpr float ENTITY_PICK_RADIUS_OVER_GEOMETRY   = 14.0f;
+constexpr float ENTITY_PICK_RADIUS_IN_EMPTY_SPACE  = 40.0f;
+
+// A press that never moved this far in pixels is a CLICK, whatever gesture it
+// started. Squared, so no square root is taken to answer a yes/no.
+constexpr int CLICK_MOVEMENT_THRESHOLD_SQUARED = 25;
+
+// What the click would take, drawn before it is taken: a ring on the target, a
+// leader line to it, and its label at the cursor. Built for the connection pick
+// and shared with the ordinary hover, because a pick radius that is generous
+// enough to be useful hits SOMETHING every time and the alternative is finding
+// out which one afterwards.
+void draw_cursor_target_marker(ImDrawList *overlay, ImVec2 mouse,
+                               const std::optional<linalg::vec2> &target, const char *label,
+                               ImU32 color)
+{
+  if (target)
+  {
+    const ImVec2 at{target->x, target->y};
+    overlay->AddCircle(at, 10.0f, color, 0, 2.0f);
+    overlay->AddLine(mouse, at, (color & 0x00FFFFFFu) | 0xA0000000u, 1.5f);
+  }
+
+  overlay->AddText(ImVec2(mouse.x + 16.0f, mouse.y + 4.0f), color, label);
+}
+
+// What the hover marker calls the thing under the cursor. Entities go through
+// shared::describe_map_entity, which is the ONE spelling of an endpoint and is
+// shared with the loader's refusals; geometry is never an endpoint, so naming a
+// brush is this tool's own business and belongs here rather than in there.
+std::string describe_hovered_object(const shared::map_t &map, shared::entity_uid_t uid)
+{
+  if (const shared::map_geometry_t *geometry = map.find_geometry_by_uid(uid))
+    return std::format("{} uid {}", shared::get_kind_name(shared::get_kind(geometry->value)), uid);
+
+  return shared::describe_map_entity(map, uid);
+}
 
 } // namespace
 
@@ -288,6 +334,134 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
+
+  ImGui::Separator();
+  if (ImGui::Button("Save as prefab..."))
+  {
+    prefab_overwrite = false;
+    prefab_status.clear();
+    ImGui::OpenPopup("Save as prefab");
+  }
+  if (!prefab_status.empty())
+    ImGui::TextUnformatted(prefab_status.c_str());
+
+  draw_prefab_save_popup(ctx);
+}
+
+// The one thing this popup is FOR: a row that crosses the boundary of the
+// selection is a row the prefab silently loses, in either direction. The same
+// walk decides what the file keeps, so the warning and the file cannot
+// disagree -- and Ctrl+C shows the same count, because the clipboard drops them
+// for the same reason.
+void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
+{
+  if (!ImGui::BeginPopupModal("Save as prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    return;
+
+  if (!ctx.map || selected_uids.empty())
+  {
+    ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+    return;
+  }
+
+  ImGui::Text("%zu objects", selected_uids.size());
+  ImGui::InputText("Name", prefab_name.data, prefab_name.size());
+
+  const std::string name = prefab_name.data;
+  const std::string path =
+      std::string(shared::PREFAB_DIRECTORY) + "/" + name + shared::PREFAB_EXTENSION;
+
+  const bool name_is_usable = !name.empty() &&
+                              name.find('/') == std::string::npos &&
+                              name.find('\\') == std::string::npos &&
+                              name.find(':') == std::string::npos;
+
+  if (!name.empty() && !name_is_usable)
+    ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f),
+                       "A prefab name is a filename, not a path.");
+
+  const bool already_exists =
+      name_is_usable && std::filesystem::exists(std::filesystem::path(path));
+  if (already_exists)
+  {
+    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "%s already exists.", path.c_str());
+    ImGui::Checkbox("Overwrite it", &prefab_overwrite);
+  }
+
+  const std::vector<shared::crossing_connection_t> crossings =
+      shared::find_crossing_connections(*ctx.map, selected_uids);
+
+  if (!crossings.empty())
+  {
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f),
+                       "%zu connection(s) leave this selection and will NOT be saved:",
+                       crossings.size());
+
+    for (const shared::crossing_connection_t &crossing : crossings)
+    {
+      if (crossing.index >= ctx.map->connections.size())
+        continue;
+      const shared::connection_t &row = ctx.map->connections[crossing.index];
+
+      const std::string sender = shared::describe_map_entity(*ctx.map, row.sender);
+      const std::string target = row.target_kind == shared::connection_target_t::Uid
+                                     ? shared::describe_map_entity(*ctx.map, row.target)
+                                     : std::string(shared::to_string(row.target_kind));
+
+      ImGui::TextColored(ImVec4(1.f, 0.6f, 0.6f, 1.f), "  %s --%s--> %s", sender.c_str(),
+                         entities::to_string(row.signal), target.c_str());
+    }
+
+    // Repeat until the list is empty and the group is wiring-complete. One
+    // press adds one ring of neighbours, which is what makes it predictable.
+    if (ImGui::Button("Add the connected objects to the selection"))
+    {
+      for (const shared::crossing_connection_t &crossing : crossings)
+      {
+        if (crossing.outside_uid == shared::null_entity_uid ||
+            !ctx.map->has_object(crossing.outside_uid))
+          continue;
+        if (std::find(selected_uids.begin(), selected_uids.end(), crossing.outside_uid) ==
+            selected_uids.end())
+          selected_uids.push_back(crossing.outside_uid);
+      }
+    }
+  }
+
+  ImGui::Separator();
+
+  const bool can_write = name_is_usable && (!already_exists || prefab_overwrite);
+  ImGui::BeginDisabled(!can_write);
+  if (ImGui::Button(crossings.empty() ? "Save" : "Save anyway"))
+  {
+    shared::map_t fragment = shared::extract_map_subset(*ctx.map, selected_uids);
+    fragment.name          = name + shared::PREFAB_EXTENSION;
+
+    std::error_code directory_error;
+    std::filesystem::create_directories(shared::PREFAB_DIRECTORY, directory_error);
+
+    if (shared::save_map(path, fragment))
+    {
+      prefab_status = std::format("saved {} ({} objects, {} connections)", path,
+                                  fragment.object_count(), fragment.connections.size());
+      hud::set_announcement(prefab_status);
+      ImGui::CloseCurrentPopup();
+    }
+    else
+    {
+      prefab_status = std::format("FAILED to write {}", path);
+      log_error("selection_tool: could not write prefab \"{}\"", path);
+    }
+  }
+  ImGui::EndDisabled();
+
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel"))
+    ImGui::CloseCurrentPopup();
+
+  ImGui::EndPopup();
 }
 
 // --- Clipboard and paste -----------------------------------------------------
@@ -297,55 +471,69 @@ void Selection_Tool::copy_selection_to_clipboard(editor_context_t& ctx)
   if (!ctx.map || selected_uids.empty())
     return;
 
-  const std::optional<shared::aabb_bounds_t> bounds = try_compute_selection_bounds(ctx);
-  if (!bounds)
-    return;
-
-  // Bottom-centre of the whole selection. The cursor drives THAT, so a pasted
-  // group sits on the surface under it the way one placed object does.
-  const linalg::vec3 anchor{(bounds->min.x + bounds->max.x) * 0.5f, bounds->min.y,
-                            (bounds->min.z + bounds->max.z) * 0.5f};
-
-  clipboard.clear();
-  clipboard_low_corner_offset = bounds->min - anchor;
-
-  for (shared::entity_uid_t uid : selected_uids)
+  // The whole copy, wiring included. extract_map_subset rebases the members so
+  // the group's anchor -- bottom-centre of its bounds -- is the fragment's
+  // origin, which is what the cursor then drives at paste time.
+  shared::map_t fragment = shared::extract_map_subset(*ctx.map, selected_uids);
+  if (fragment.object_count() == 0)
   {
-    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
-    {
-      clipboard_entry_t entry;
-      entry.geometry           = geometry->value;
-      entry.offset_from_anchor = shared::get_position(geometry->value) - anchor;
-
-      if (const shared::brush_geometry_t *brush =
-              std::get_if<shared::brush_geometry_t>(&geometry->value))
-        entry.brush_hull = shared::try_build_brush_polyhedron(brush->hull_points);
-
-      clipboard.push_back(std::move(entry));
-      continue;
-    }
-
-    const shared::map_entity_t *in_map = ctx.map->find_by_uid(uid);
-    if (!in_map || !in_map->entity)
-      continue;
-
-    clipboard_entry_t entry;
-    entry.entity = snapshot_entity(in_map->entity.get());
-    if (!entry.entity)
-    {
-      log_error("selection_tool: uid {} would not clone and was not copied", uid);
-      continue;
-    }
-    entry.offset_from_anchor = in_map->entity->position - anchor;
-    clipboard.push_back(std::move(entry));
+    log_warning("selection_tool: nothing in the selection could be copied");
+    return;
   }
 
-  hud::set_announcement(std::format("copied {} object(s)", clipboard.size()));
+  const size_t copied      = fragment.object_count();
+  const size_t connections = fragment.connections.size();
+
+  adopt_clipboard(std::move(fragment),
+                  shared::find_crossing_connections(*ctx.map, selected_uids).size());
+
+  if (clipboard_crossing_count > 0)
+    hud::set_announcement(std::format("copied {} object(s), {} connection(s) -- {} more cross "
+                                      "the selection and were NOT copied",
+                                      copied, connections, clipboard_crossing_count));
+  else
+    hud::set_announcement(
+        std::format("copied {} object(s), {} connection(s)", copied, connections));
+}
+
+void Selection_Tool::adopt_clipboard(shared::map_t fragment, size_t crossing_count)
+{
+  clipboard_crossing_count = crossing_count;
+
+  clipboard_brush_hulls.clear();
+  clipboard_brush_hulls.reserve(fragment.geometry.size());
+  for (const shared::map_geometry_t &entry : fragment.geometry)
+  {
+    const shared::brush_geometry_t *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
+    clipboard_brush_hulls.push_back(brush ? shared::try_build_brush_polyhedron(brush->hull_points)
+                                          : std::nullopt);
+  }
+
+  // The fragment's own low corner, which is already relative to its anchor.
+  // Paste puts THAT corner on a grid line, the rule
+  // compute_geometry_placement_center already follows for a single object.
+  bool                  any = false;
+  shared::aabb_bounds_t bounds{{0, 0, 0}, {0, 0, 0}};
+  for (const shared::map_entity_t &entry : fragment.entities)
+  {
+    const shared::aabb_bounds_t object = shared::compute_object_bounds(fragment, entry.uid);
+    bounds                             = any ? shared::union_aabb(bounds, object) : object;
+    any                                = true;
+  }
+  for (const shared::map_geometry_t &entry : fragment.geometry)
+  {
+    const shared::aabb_bounds_t object = shared::compute_object_bounds(fragment, entry.uid);
+    bounds                             = any ? shared::union_aabb(bounds, object) : object;
+    any                                = true;
+  }
+  clipboard_low_corner_offset = bounds.min;
+
+  clipboard = std::move(fragment);
 }
 
 void Selection_Tool::begin_paste()
 {
-  if (clipboard.empty())
+  if (!clipboard || clipboard->object_count() == 0)
   {
     log_warning("selection_tool: nothing on the clipboard to paste");
     return;
@@ -366,47 +554,44 @@ void Selection_Tool::cancel_paste()
 
 void Selection_Tool::commit_paste(editor_context_t& ctx)
 {
-  if (!paste_is_pending || !paste_anchor_valid || clipboard.empty() || !ctx.map)
+  if (!paste_is_pending || !paste_anchor_valid || !clipboard || !ctx.map)
     return;
 
-  transaction_t                     transaction;
-  std::vector<shared::entity_uid_t> pasted_uids;
+  // Captured BEFORE the stamp: the wiring is a whole-list diff, so the baseline
+  // has to be what the map held a moment ago rather than what it holds now.
+  std::vector<shared::connection_t> connections_before = ctx.map->connections;
 
-  for (const clipboard_entry_t &entry : clipboard)
+  const shared::stamp_result_t stamped = shared::stamp_map(*ctx.map, *clipboard, paste_anchor);
+  if (stamped.uids.empty())
   {
-    const linalg::vec3 position = paste_anchor + entry.offset_from_anchor;
-
-    if (entry.geometry)
-    {
-      shared::geometry_value_t value = *entry.geometry;
-      shared::set_position(value, position);
-
-      const shared::entity_uid_t uid = ctx.map->add_geometry(value);
-      transaction.add_geometry_created(uid, std::move(value));
-      pasted_uids.push_back(uid);
-      continue;
-    }
-
-    std::shared_ptr<entities::Entity> copy = restore_entity(entry.entity);
-    if (!copy)
-    {
-      log_error("selection_tool: a clipboard entry would not clone and was not pasted");
-      continue;
-    }
-    copy->position = position;
-
-    const shared::entity_uid_t uid = ctx.map->add_entity(copy);
-    transaction.add_created(uid, snapshot_entity(copy.get()));
-    pasted_uids.push_back(uid);
+    log_error("selection_tool: the clipboard would not paste");
+    cancel_paste();
+    return;
   }
 
+  transaction_t transaction;
+  for (shared::entity_uid_t uid : stamped.uids)
+  {
+    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+    {
+      transaction.add_geometry_created(uid, geometry->value);
+      continue;
+    }
+
+    const shared::map_entity_t *entry = ctx.map->find_by_uid(uid);
+    if (entry && entry->entity)
+      transaction.add_created(uid, snapshot_entity(entry->entity.get()));
+  }
+  transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
+
   // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
-  // -- the same rule the multi-object delete follows.
+  // -- the objects AND the wiring between them -- the same rule the
+  // multi-object delete follows.
   ctx.transaction_system.push(std::move(transaction));
 
   // The copies become the selection: what you just placed is what the gizmo and
   // the arrow keys should be aimed at.
-  selected_uids = std::move(pasted_uids);
+  selected_uids = stamped.uids;
   hovered_uid   = 0;
   cancel_paste();
 
@@ -422,14 +607,24 @@ Selection_Tool::try_pick_entity_near_cursor(const editor_context_t &ctx,
     return std::nullopt;
 
   // A ray that actually hit an ENTITY is not a guess, so it beats proximity
-  // outright. hovered_uid can name geometry, which find_by_uid answers null for.
+  // outright. hovered_uid can name geometry, which find_by_uid answers null for
+  // -- and a connection endpoint is always an entity, so geometry under the
+  // cursor is not a competing answer here the way it is for a selection.
   if (hovered_uid != 0 && ctx.map->find_by_uid(hovered_uid) != nullptr)
     return hovered_uid;
 
-  constexpr float pick_radius_in_pixels = 40.0f;
+  return try_pick_entity_within(ctx, cursor, ENTITY_PICK_RADIUS_IN_EMPTY_SPACE);
+}
+
+std::optional<shared::entity_uid_t>
+Selection_Tool::try_pick_entity_within(const editor_context_t &ctx, linalg::vec2 cursor,
+                                       float radius) const
+{
+  if (!ctx.map)
+    return std::nullopt;
 
   std::optional<shared::entity_uid_t> nearest;
-  float nearest_distance = pick_radius_in_pixels;
+  float                               nearest_distance = radius;
 
   for (const shared::map_entity_t &candidate : ctx.map->entities)
   {
@@ -571,22 +766,33 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
               ? try_project_to_screen(cached_viewport, entry->entity->position)
               : std::nullopt;
 
-      if (screen)
-      {
-        const ImVec2 at{screen->x, screen->y};
-        overlay->AddCircle(at, 10.0f, IM_COL32(140, 220, 255, 255), 0, 2.0f);
-        overlay->AddLine(mouse, at, IM_COL32(140, 220, 255, 160), 1.5f);
-      }
-
       const std::string label = shared::describe_map_entity(*ctx.map, *candidate);
-      overlay->AddText(ImVec2(mouse.x + 16.0f, mouse.y + 4.0f), IM_COL32(140, 220, 255, 255),
-                       label.c_str());
+      draw_cursor_target_marker(overlay, mouse, screen, label.c_str(),
+                                IM_COL32(140, 220, 255, 255));
     }
     else
     {
-      overlay->AddText(ImVec2(mouse.x + 16.0f, mouse.y + 4.0f), IM_COL32(255, 140, 140, 255),
-                       "no entity near the cursor");
+      draw_cursor_target_marker(overlay, mouse, std::nullopt, "no entity near the cursor",
+                                IM_COL32(255, 140, 140, 255));
     }
+  }
+
+  // The same marker for an ordinary hover. It is what makes the two pick radii
+  // above legible: the ring says WHICH object the click resolved to, so a
+  // proximity hit on a light in front of a wall is visibly a choice rather than
+  // a surprise. Not drawn while another gesture owns the cursor -- a paste
+  // preview, a drag or an armed pick each already say what the click will do.
+  if (ctx.map && hovered_uid != 0 && !connection_pick.armed && !paste_is_pending &&
+      !is_dragging_box && !is_dragging_object && !editor_gizmo.is_dragging())
+  {
+    const std::optional<linalg::vec3> anchor =
+        shared::try_get_object_position(*ctx.map, hovered_uid);
+    const std::optional<linalg::vec2> screen =
+        anchor ? try_project_to_screen(cached_viewport, *anchor) : std::nullopt;
+
+    const std::string label = describe_hovered_object(*ctx.map, hovered_uid);
+    draw_cursor_target_marker(ImGui::GetForegroundDrawList(), ImGui::GetMousePos(), screen,
+                              label.c_str(), IM_COL32(255, 226, 120, 255));
   }
 
   if (ctx.map && selected_uids.size() == 1)
@@ -810,6 +1016,16 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     ctx.requested_selection.reset();
   }
 
+  // A prefab picked in the Placement tool. It arrives as a fragment already
+  // anchored at its origin -- which is what the clipboard holds -- so placing
+  // one is the paste gesture and nothing else.
+  if (ctx.requested_paste)
+  {
+    adopt_clipboard(std::move(*ctx.requested_paste), 0);
+    ctx.requested_paste.reset();
+    begin_paste();
+  }
+
   // Hiding the selected thing drops it: a gizmo on something invisible is a
   // handle to nothing, and its inspector describes a thing you cannot see.
   std::erase_if(selected_uids, [&](shared::entity_uid_t uid)
@@ -844,8 +1060,8 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     return;
   }
 
-  if (ctx.grid)
-    editor_gizmo.snap_step = ctx.grid->step();
+  const float grid_step  = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+  editor_gizmo.snap_step = input::current_modifiers().alt ? 0.0f : grid_step;
 
   const gizmo_view_t gizmo_view = make_gizmo_view();
 
@@ -944,6 +1160,24 @@ void Selection_Tool::on_update(editor_context_t& ctx,
       }
     }
 
+    // An entity near the cursor outranks the ray's answer -- see the two radii
+    // above. Asked here, once, so the yellow highlight, the marker and the
+    // click all resolve to the same object rather than to three guesses.
+    if (!input::imgui_wants_mouse() && ctx.map &&
+        (hovered_uid == 0 || ctx.map->find_by_uid(hovered_uid) == nullptr))
+    {
+      const linalg::vec2i pixel = input::mouse_position();
+      const float         radius =
+          hovered_uid == 0 ? ENTITY_PICK_RADIUS_IN_EMPTY_SPACE : ENTITY_PICK_RADIUS_OVER_GEOMETRY;
+
+      if (const std::optional<shared::entity_uid_t> nearby =
+              try_pick_entity_within(ctx, {(float)pixel.x, (float)pixel.y}, radius))
+      {
+        hovered_uid = *nearby;
+        hit_bvh     = true;
+      }
+    }
+
     if (!hit_bvh)
     {
       linalg::vec3 plane_point = {0, -2.0f, 0};
@@ -1004,9 +1238,13 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
       return;
     }
 
-    // Ctrl+LMB: move selected objects in the camera's view plane
+    // Ctrl+LMB: move selected objects in the camera's view plane. Recorded
+    // here as well because on_mouse_up measures against it to tell this gesture
+    // from a ctrl+CLICK, which adds to the selection instead.
     if (e.mods.ctrl && !selected_uids.empty() && ctx.map)
     {
+      drag_start_position   = e.position;
+      drag_current_position = e.position;
       capture_drag_snapshots(ctx);
 
       if (!drag_origins.empty())
@@ -1070,7 +1308,8 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
                                  cached_viewport.mouse_ray.direction * t;
       linalg::vec3 delta = current_hit - drag_plane_hit_start;
 
-      const float snap_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+      const float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+      const float snap_step = e.mods.alt ? 0.0f : grid_step;
 
       // The SAME rule the gizmo snaps by (Editor_Gizmo::set_target): one object
       // lands ITSELF on the grid, a group snaps its movement so every member
@@ -1135,14 +1374,22 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       commit_drag_snapshots(ctx);
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
-      return;
+
+      // Ctrl+DRAG moves the selection in the view plane; ctrl+CLICK adds to it.
+      // The two are one gesture until the mouse moves, so a press that never
+      // did falls through to the selection branch below -- the commit above is
+      // a no-op when nothing moved, so nothing lands on the undo stack.
+      const int drag_dx = e.position.x - drag_start_position.x;
+      const int drag_dy = e.position.y - drag_start_position.y;
+      if (drag_dx * drag_dx + drag_dy * drag_dy > CLICK_MOVEMENT_THRESHOLD_SQUARED)
+        return;
     }
 
     is_dragging_box = false;
 
     int dx = e.position.x - drag_start_position.x;
     int dy = e.position.y - drag_start_position.y;
-    bool moved_significantly = (dx * dx + dy * dy) > 25;
+    bool moved_significantly = (dx * dx + dy * dy) > CLICK_MOVEMENT_THRESHOLD_SQUARED;
 
     if (moved_significantly)
     {
@@ -1154,7 +1401,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       int y_min = std::min(drag_start_position.y, drag_current_position.y);
       int y_max = std::max(drag_start_position.y, drag_current_position.y);
 
-      if (!e.mods.shift)
+      if (!e.mods.shift && !e.mods.ctrl)
       {
         selected_uids.clear();
       }
@@ -1208,7 +1455,10 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
           }
         }
 
-        if (e.mods.shift)
+        // Ctrl and shift both mean ADD, and mean it identically: two spellings
+        // of one gesture, because every other editor binds one or the other and
+        // nobody should have to find out which this one chose.
+        if (e.mods.shift || e.mods.ctrl)
         {
           if (already_selected)
           {
@@ -1230,7 +1480,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       }
       else
       {
-        if (!e.mods.shift)
+        if (!e.mods.shift && !e.mods.ctrl)
         {
           selected_uids.clear();
         }
@@ -1312,28 +1562,34 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   // pulsating outline below already means "selected".
   if (paste_is_pending && paste_anchor_valid)
   {
-    for (const clipboard_entry_t &entry : clipboard)
+    // The fragment's members are already anchored at its origin, so the whole
+    // preview is one translation by the cursor's anchor.
+    for (size_t index = 0; clipboard && index < clipboard->geometry.size(); ++index)
     {
-      const linalg::vec3 position = paste_anchor + entry.offset_from_anchor;
+      const shared::map_geometry_t &entry = clipboard->geometry[index];
 
-      if (entry.brush_hull)
+      if (index < clipboard_brush_hulls.size() && clipboard_brush_hulls[index])
       {
-        // Traced from the hull captured at copy time, carried to where the
-        // brush would land. draw_geometry_ghost would rebuild it every frame.
-        draw_brush_hull_wireframe(draws, *entry.brush_hull,
-                                  position - shared::get_position(*entry.geometry),
+        // Traced from the hull captured at copy time. draw_geometry_ghost
+        // would rebuild it every frame.
+        draw_brush_hull_wireframe(draws, *clipboard_brush_hulls[index], paste_anchor,
                                   colors::yellow, 0.0f);
         continue;
       }
 
-      if (entry.geometry)
-      {
-        draw_geometry_ghost(*entry.geometry, draws, position);
-        continue;
-      }
+      draw_geometry_ghost(entry.value, draws, paste_anchor + shared::get_position(entry.value));
+    }
 
-      if (entry.entity && !draw_entity_ghost(entry.entity.get(), draws, position))
-        draw_default_ghost(entry.entity.get(), draws, position);
+    if (clipboard)
+    {
+      for (const shared::map_entity_t &entry : clipboard->entities)
+      {
+        if (!entry.entity)
+          continue;
+        const linalg::vec3 position = paste_anchor + entry.entity->position;
+        if (!draw_entity_ghost(entry.entity.get(), draws, position))
+          draw_default_ghost(entry.entity.get(), draws, position);
+      }
     }
   }
 

@@ -11,6 +11,7 @@ namespace server
 struct game_rules_state_t
 {
   shared::Round_Phase phase = shared::Round_Phase::Warmup;
+  uint32_t phase_start_tick = 0;
   uint32_t phase_end_tick = 0;
   uint32_t round_number = 0;
   Game_Mode mode = Game_Mode::deathmatch;

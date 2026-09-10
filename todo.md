@@ -1036,6 +1036,106 @@ did not fix.
       owned state (an attempt clock, a bomb timer) deliberately NOT built — it
       arrives with the second mode that needs it. See `generalization_def.md` §5.
 
+- [ ] **The rules system reads as a band-aid across modes, and the round
+      banner is where it shows** (noted 2026-09-09). A speedrun finishing a level
+      runs through the deathmatch's shape: `end_round` -> Game_Over -> a 10 s
+      `mp_game_over_seconds` scoreboard hold -> map restart, and the client
+      announces it as "GAME OVER" (`round_phase_changed.cpp`'s `announcement_for`
+      switches on the PHASE, so an objective reached and a frag limit hit are one
+      banner). What a speedrun wants is "LEVEL COMPLETE", a time, and a restart
+      on the player's say-so; what rounds want is "ROUND OVER" plus who took it.
+      The wording is per MODE and per REASON, not per phase -- the phase FSM is
+      the mechanism and the banner is naming the mechanism. Two things fell out
+      of the same session: the objective only wins under `sv_gamemode speedrun`,
+      which the map's cvars block did not set (default deathmatch, so
+      `check_win_condition` never looked at `objective_reached` and nothing
+      happened after "objective reached, by 24"), and a stray
+      `objective_reached -> map_restart_requested` block in `update_game_rules`
+      sits behind the `phase_end_tick == 0` early return and is dead on the
+      speedrun path -- delete it. Smallest honest fix: a reason on
+      `Round_Phase_Changed` (Timeout / Elimination / Frag_Limit / Objective) so
+      the client words the round end by why it ended. The real fix is the
+      escalation `game_modes_def.md` names under "The escalation trigger": the
+      day a mode needs state and a flow no other mode has is the day the value
+      table stops being enough, and a speedrun's attempt clock and self-paced
+      restart are that state. `Objective_Reached` (the event, with
+      `completed_by`) is right and stays; `on_objective_reached` plays the
+      sound and should not also set a banner until the overwrite is solved,
+      because Game_Over's banner lands in the same reliable block and replaces
+      it before a frame draws.
+
+- [x] **Map SEQUENCE: a `next_map` cvar before any sidecar or campaign file**
+      (noted 2026-09-10, DONE 2026-09-10 -- declared in cvars.def, read by
+      `service_pending_map_restart` before the map-load reset). Today the only thing after Game_Over is
+      `service_pending_map_restart` reloading `current_map_path`. Smallest
+      thing that gives level-to-level flow: `next_map` (`@Server`, string, default
+      empty) and that one function reading it -- non-empty means
+      `change_map_to(next_map)`, empty means restart, which is exactly today.
+      A map names its successor in its OWN `cvars` block (`next_map
+      level_02.source`), and the machinery already does the rest: the map's
+      cvars are reverted to defaults on unload (`cvars_applied_by_map`), so a
+      map naming no successor restarts rather than inheriting the previous
+      map's; the wire map id is maps-relative, so a client lacking the next
+      level streams it like any other. The operator's config writing the same
+      cvar IS the deathmatch rotation, for free. Read the cvar BEFORE the
+      map-load reset runs, since that reset is what clears it. A sidecar /
+      campaign list is the escalation and is not needed for sequencing.
+
+- [ ] **Quick reset: entities only, not a map reload** (noted 2026-09-10). Yes,
+      needed -- a speedrun restart on a key press cannot be `change_map_to`,
+      which is parse + `build_session` + BVH + lightmap on the server and a
+      `Loading` edge plus an excluded frame on every client. The server still
+      HOLDS the `map_t` (`world.current_map`) and map uids are stable, so a
+      reset is "rebuild the session's ENTITY half from the retained map, keep
+      the geometry, the BVH, the materials and the lightmap" -- the snapshot
+      delta then sees field changes on the same uids, not a despawn and respawn
+      of everything. Which means `build_session` splits into the static half
+      and the entity half. It is also a reset-SCOPE question and belongs in
+      `server_context.cpp` as a fifth function beside the four: the entity
+      pool, `pending_actions`, `previous_tick_trigger_overlaps`, the session
+      connections' `spent` flags, `rules` (by call), player checkpoints. Write
+      down what survives (clients, tick_number, the reliable streams,
+      `cvars_applied_by_map`) and pin both halves in `server_context_test`
+      like the others. Measure the BVH rebuild first: if it is cheap, keeping
+      it is one fewer thing to get wrong.
+
+- [ ] **A speedrun timer that is actually accurate** (noted 2026-09-10). The
+      run ends on `Touched` from `trigger_system`, which tests overlaps ONCE per
+      tick after every sub-step has run -- so the finish is tick-granular,
+      16.7 ms at 60 Hz, while the movement that reached the volume was resolved
+      to 0.26 ms. Neon White times to the millisecond; a 16.7 ms quantum is the
+      whole problem. Both ends of the clock want a `subtick_time_t`: the start
+      is the first movement edge of the attempt and the finish is the sub-step
+      in which the player entered the goal, which means the overlap test (or
+      just the goal's) runs inside the step loop at `step.start_slot`, and
+      `input_context_t` / the `Touched` emit carry a slot beside the tick.
+      Integer ticks*64+slot on the server, never float seconds; the client
+      draws a predicted running clock and snaps to the authoritative final.
+      Movement is step-invariant so the moment is reproducible. Where the
+      clock LIVES is the mode-owned state variant `game_modes_def.md` names as
+      the escalation and the rules-system item above defers -- the attempt
+      clock is that state, so this is the item that forces it.
+
+- [ ] **Formalise the replay system; the current one is a remnant** (noted
+      2026-09-10, undecided -- think first). `src/shared/replay_system.hpp` is
+      two inline functions over the protobuf `Replay { GameTick ticks, seed }`
+      with ZERO callers, beside an `EntityState` naming position and velocity
+      only. It predates sub-tick input, the generated entities and the reliable
+      stream, and it rides protobuf, which P8 deletes -- delete it there
+      regardless. The decision is what a replay IS, and there are two honest
+      answers that serve different things: an INPUT replay (record every
+      `C2S_ClientInput` as the wire already encodes it, plus the map hash, the
+      cvar set and the rng seed, and re-simulate -- tiny, exact because
+      `player_move` is step-invariant and the server re-simulates anyway,
+      doubles as a determinism test and as the speedrun GHOST, breaks on any
+      simulation change and needs `shared/rng.hpp`'s global state captured) or
+      a SNAPSHOT replay (record the S2C stream -- snapshot frames, event
+      batches -- and play it through the client's interpolation: what a Source
+      demo is, robust to sim changes, bigger, a viewing tool not a
+      verification, gives spectating and a killcam). The speedrun wants the
+      first, spectating wants the second, and both start by writing wire bytes
+      to disk, which is why the format is the wire format and not a proto.
+
 # Networking
 
 - [ ] **`poll_client_network` busy-spins for a full millisecond, every frame.**

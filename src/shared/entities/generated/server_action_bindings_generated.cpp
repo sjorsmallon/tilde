@@ -22,6 +22,12 @@ void shim_trigger_volume_entity_enable(Entity& entity, const action_data_t& data
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
+void shim_sound_emitter_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
+}
+
 void shim_point_light_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
@@ -40,6 +46,12 @@ void shim_trigger_volume_entity_disable(Entity& entity, const action_data_t& dat
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
+void shim_sound_emitter_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
+}
+
 void shim_point_light_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
@@ -55,6 +67,12 @@ void shim_spot_light_entity_disable(Entity& entity, const action_data_t& data, i
 void shim_trigger_volume_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
+}
+
+void shim_sound_emitter_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
@@ -219,6 +237,22 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_trigger_volume_entity_enable,
     shim_trigger_volume_entity_disable,
     shim_trigger_volume_entity_toggle_enabled,
+    nullptr,   // Set_Color
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+  },
+  {   // Sound_Emitter_Entity
+    nullptr,   // Use
+    shim_sound_emitter_entity_enable,
+    shim_sound_emitter_entity_disable,
+    shim_sound_emitter_entity_toggle_enabled,
     nullptr,   // Set_Color
     nullptr,   // Kill
     nullptr,   // Set_Health

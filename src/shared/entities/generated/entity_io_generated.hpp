@@ -121,6 +121,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Objective),   // Game_Rules_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Trigger_Volume_Entity
+  trait_bit(entity_trait::Switchable),   // Sound_Emitter_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Point_Light_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
@@ -164,6 +165,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Trigger_Volume_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Sound_Emitter_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Point_Light_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
@@ -199,6 +201,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Game_Rules_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Trigger_Volume_Entity
+  0u,   // Sound_Emitter_Entity
   signal_bit(entity_signal::Color_Changed),   // Point_Light_Entity
   signal_bit(entity_signal::Color_Changed),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity

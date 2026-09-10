@@ -451,6 +451,7 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
 
     case entities::entity_type::Weapon_Entity: // render component draws it
     case entities::entity_type::Rocket_Entity: // runtime only
+    case entities::entity_type::Sound_Emitter_Entity: // no gizmo yet
       return {.half_extents = point_pick};
 
     // Lights pick as a point-sized box whatever their reach -- sizing the pick

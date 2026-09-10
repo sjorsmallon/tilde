@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 // ============================================================================
@@ -61,6 +62,37 @@ struct connection_t
   float delay_seconds = 0.0f;
   bool  fire_once     = false;
 };
+
+// Old uid -> new uid, for anything that rebuilds a map out of another one: a
+// prefab stamp, a paste, a CSG bake. A uid absent from the map is one that did
+// not survive the copy.
+using uid_remap_t = std::unordered_map<entity_uid_t, entity_uid_t>;
+
+// What a remap did to one row. `ok` false means an end did not survive and the
+// row must be DROPPED -- `end` and `unmapped` name which one, so the caller can
+// say it in its own words rather than each caller inventing a sentence.
+//
+// A row is rewritten only when EVERY end maps, so a refused row is left exactly
+// as it was; there is no half-remapped state to unwind.
+struct connection_remap_result_t
+{
+  bool ok = true;
+  // "sender", "target", or the name of the override field that named the uid.
+  // A string literal out of the generated tables, so it outlives any caller.
+  const char*  end      = nullptr;
+  entity_uid_t unmapped = null_entity_uid;
+};
+
+// Rewrites every uid this row names: `sender`, `target` when the kind is `Uid`,
+// and every FIELD_TYPE_ENTITY_UID member of the override payload when there is
+// one. A payload uid of null_entity_uid names nobody and passes through
+// untouched -- it is a legitimate value, not a missing entity.
+//
+// This is the ONE walk of a row's uids. bake_map_csg used to remap two of the
+// three by hand and silently carried an override payload pointing at a uid from
+// the map it came from.
+[[nodiscard]] connection_remap_result_t remap_connection_uids(connection_t&      connection,
+                                                              const uid_remap_t& remap);
 
 // One reason one row cannot be run. The index is into map_t::connections, so
 // a caller can act on the ROW rather than parse the sentence back apart -- the

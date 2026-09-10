@@ -75,6 +75,49 @@ src/
 └── launcher/         main_integrated.cpp, main_dedicated.cpp
 ```
 
+### Prefabs, the clipboard, and the `.source` format
+
+`map_format_def.md` is the design of record for the FILE — the block grammar,
+every field's text spelling, the read-only legacy arms, the uid rules — and
+`prefab_def.md` for prefabs. Both landed 2026-09-10; nothing has been looked at
+in the editor yet.
+
+**A PREFAB IS A MAP.** Same grammar, same reader, same writer
+(`prefabs/<name>.prefab`, `try_load_map` / `save_map`), positions relative to
+the fragment's anchor so its origin is where the cursor lands, uids local,
+`attached_cvars` empty. That one decision makes four operations out of the two
+functions in `shared/map_fragment.{hpp,cpp}`: `extract_map_subset` is copy AND
+save, `stamp_map` is paste AND place. **The editor's clipboard IS a `map_t`**,
+so Ctrl+C carries the CONNECTIONS between the copied objects, which the
+per-object clipboard silently dropped.
+
+- **A placed prefab is a STAMP**, not a linked instance: its members become
+  ordinary map objects with no link back to the file. No `prefab_instance`
+  block, no re-expansion at load.
+- **`remap_connection_uids` is the ONE walk of a row's uids** (`map_connection`)
+  — sender, target when the kind is `Uid`, and every `FIELD_TYPE_ENTITY_UID`
+  member of an override payload. `bake_map_csg` does it through this now; doing
+  two of the three by hand is exactly how a baked `Set_Respawn_Point` went on
+  naming a uid from the map it came from. A payload uid of `null_entity_uid`
+  names NOBODY and passes through rather than dropping the row.
+- **`FIELD_TYPE_ENTITY_UID` exists to be FINDABLE.** It reads, writes and
+  encodes exactly as `FIELD_TYPE_U32` — same text, same var-int, same mask bit
+  — and `def_gen` emits it for `TYPE_ENTITY`. What a plain u32 could not do is
+  be recognised by a remap. `SCHEMA_HASH` is over the parsed `.def`, so the
+  handshake did not move and no map converts.
+- **`find_crossing_connections` is the ONE walk that decides what is LOST**, in
+  both directions (a selected sender aimed outside, an outside sender aimed
+  in), and both the "Save as prefab" warning and the extraction itself go
+  through it — so the popup and the file cannot disagree. `Activator` and
+  `Self` targets never cross, naming no uid to cross with.
+- **Index 0 of `materials` is the map DEFAULT and is not remapped**; every
+  other index is matched by PATH through `material_index_for`, so two stamps of
+  one prefab append one entry.
+- **Placing a prefab IS the paste gesture.** The Placement tool's Prefabs list
+  loads the file and writes `editor_context_t::requested_paste`; the Selection
+  tool consumes it, exactly as it consumes `requested_selection` — a second
+  ghost, snap rule and commit path would be free to disagree with the first.
+
 ### Map vs Session
 
 `map_t` is the static serialized data (VMF-style text format). `game_session_t` is the runtime world. Pipeline: `load_map()` → `build_session()`, which returns a fresh `game_session_t` rather than refilling one. The editor works directly on `map_t`.
@@ -1031,6 +1074,15 @@ for.
 
 Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to think about the id space at all.
 
+**A `.glb` is a mesh, and its decoder bakes the whole scene into ONE `mesh_asset_t`.** `decode_glb` (`shared/asset_gltf.cpp`, over tinygltf v2.9.6 vendored in `shared/tinygltf/`) flattens the node tree by baking each node's world transform into its vertices, one submesh per primitive.
+
+- **Units are decided ONCE.** `shared::WORLD_UNITS_PER_METRE` (`shared/world_units.hpp`, 39.37: one unit is one inch) is the number `blender_export.py` already multiplied by, and glTF's front (+Z) arrives as the engine's yaw 0 (+X) — the `.mesh` axis convention, so a prop exported both ways faces the same way. UVs pass through untouched: glTF's top-left origin is the one the exporter's `1 - v` converts to.
+- **A mirrored node flips its winding back**, and a primitive with no `NORMAL` gets FLAT normals, because the glTF spec says so (OBJ derives smooth ones).
+- **An embedded image is `<glb path>#image<N>`**, registered through `register_dynamic_texture` — no id and no manifest entry, exactly as a material folder's maps have none.
+- **`metallicRoughness` IS `orm.png`'s channel order** and is used as-is when occlusion shares its image and every factor is 1. Anything else — a separate occlusion image, a factor, a factor with no texture — is composed once into `#material<N>.orm`; a non-unit emissive factor becomes `#material<N>.emissive`, multiplied in linear space. Height has no glTF equivalent and stays invalid.
+- **`extensionsRequired` is refused by name.** Skins, animations, morph targets, alpha modes, `TEXCOORD_1` and every used extension are named in ONE warning line per file.
+- **A static mesh whose material carries a normal or ORM map draws through `shader_t::pbr`**, the rule a brush face already had — before glTF nothing could hand a mesh one.
+
 **A PATH HAS ONE SPELLING, AND THE LOADERS CANNOT FAIL.** Both halves of that are the same decision, and `asset_pipeline_def.md` is the design.
 
 A path is relative to the project root with forward slashes (`resources/obj/Pyramid.obj`). There is no candidate list — `resolve_mesh_path`, which tried four spellings and reported through `printf`, is gone, and putting anything like it back reintroduces at runtime the question the manifest exists to answer at build time. One `asset_cache_key` normalisation (`lexically_normal().generic_string()`, no filesystem access) serves **every pool**; it used to be three different rules, so one file could sit in a pool twice — and two copies of a skeleton means bone 7 is no longer one bone. `render_assets.cpp` keys its GPU textures by the asset handle for the same reason, not by a second string.
@@ -1057,7 +1109,7 @@ The byte layer has **no `try_` prefix** for the same reason the loaders above it
 
 Because the refusals are fatal, they are not testable in-process — `test_model_format` checks the *disagreement* each one keys on (parsed hash vs. sibling skeleton's) rather than the refusal. `asset_test` covers the manifest half, the byte layer and the package format: `init()`, every id of every class resolving, the two real placeholders having real content, the baked primitives being unit-sized, out-of-range → `Missing`, `read_asset_bytes` returning the file with two spellings sharing one blob, and a package round trip (sort order, an empty asset, data alignment, a prefix that must not match, three refusals). Its two fixtures must actually be written, so they live in `cmake_build/asset_test_fixtures/` — under the mount, because an absolute `%TEMP%` path would still open and that is precisely the rule the test exists to check. The five fixture-backed tests are `#if`'d out of the packaged modes: "write a file and then load it" is a loose-mode question by construction.
 
-**Sounds are ids, and `sound_asset::Missing` is how a content gap is written down.** `play_3d` / `play_2d` take a `sound_asset` and there is no path-taking overload left; `audio_system_t::init` walks the closed enum once and hands miniaudio every blob, so registration is eager and the old `asset_exists` probe is gone (an id cannot name a file the manifest did not see). `footstep.wav` and `rocket_fire.wav` never existed, so `on_footstep` and the rocket launcher's row in `WEAPON_FIRE_SOUNDS` hold `Missing` — a declared absence at the site that has it, logged once per id rather than silently dropped. `try_fire_sound_for` keeps the prefix because `last_fire_weapon` comes off the wire unchecked.
+**Sounds are ids, and `sound_asset::Missing` is how a content gap is written down.** `play_3d` / `play_2d` take a `sound_asset` and there is no path-taking overload left; `audio_system_t::init` walks the closed enum once and hands miniaudio every blob, so registration is eager and the old `asset_exists` probe is gone (an id cannot name a file the manifest did not see). `footstep.wav` and `rocket_fire.wav` never existed, so `on_footstep` and the rocket launcher's row in `WEAPON_SOUNDS` hold `Missing` — a declared absence at the site that has it, logged once per id rather than silently dropped. `try_fire_sound_for` keeps the prefix because `last_fire_weapon` comes off the wire unchecked.
 
 **THREE MODES, TWO IMPLEMENTATIONS, chosen at BUILD TIME** (`-DTILDE_ASSET_SOURCE=loose|pkg|embed`, default loose). `loose` reads files under the project root; `pkg` reads one `assets.pkg`; `embed` reads the same package out of `.rodata` via `#embed` (clang 19+). **`pkg` and `embed` are ONE implementation** — a package is a contiguous byte range and they differ only in where that range comes from, which is why `#embed` is not a third code path and why `embedded_package.cpp` is nine lines. Not a runtime switch: a shipped exe has exactly one answer, and a flag would be one more way to launch a build that cannot find its assets.
 

@@ -30,16 +30,15 @@ template <typename T> std::optional<T> try_from_string(std::string_view text);
 enum class effect_type : uint16_t
 {
   Rocket_Explosion = 0, // splash particles + surface decal
-  Bullet_Impact = 1, // world-surface hit
-  Footstep = 2, // one foot planting
-  Jump = 3, // leaving the ground
-  Land = 4, // arriving back on it
-  Flesh_Impact = 5, // a shot that landed on a player; surface_material carries the hit_region_t, attached_entity the victim
+  Footstep = 1, // one foot planting
+  Jump = 2, // leaving the ground
+  Land = 3, // arriving back on it
+  Shot_Impact = 4, // a shot landed; attached_entity is what it hit, 0 for the world
 };
 
 // Not a member of the enum above, so `switch` over a effect_type
 // still warns on an unhandled case.
-constexpr uint32_t EFFECT_TYPE_COUNT = 6;
+constexpr uint32_t EFFECT_TYPE_COUNT = 5;
 
 const char* to_string(effect_type value);
 
@@ -70,13 +69,6 @@ static_assert(std::is_trivially_copyable_v<Rocket_Explosion>,
               "Rocket_Explosion must stay trivially copyable: the codec addresses its fields "
               "through byte offsets");
 
-struct Bullet_Impact : Effect
-{
-};
-static_assert(std::is_trivially_copyable_v<Bullet_Impact>,
-              "Bullet_Impact must stay trivially copyable: the codec addresses its fields "
-              "through byte offsets");
-
 struct Footstep : Effect
 {
 };
@@ -98,22 +90,23 @@ static_assert(std::is_trivially_copyable_v<Land>,
               "Land must stay trivially copyable: the codec addresses its fields "
               "through byte offsets");
 
-struct Flesh_Impact : Effect
+struct Shot_Impact : Effect
 {
+  uint16_t region = {};
+  uint16_t weapon = {};
 };
-static_assert(std::is_trivially_copyable_v<Flesh_Impact>,
-              "Flesh_Impact must stay trivially copyable: the codec addresses its fields "
+static_assert(std::is_trivially_copyable_v<Shot_Impact>,
+              "Shot_Impact must stay trivially copyable: the codec addresses its fields "
               "through byte offsets");
 
 // Fire helpers. Each writes the kind, then the channel's fields, then its
 // own -- straight into the stream. Nothing is queued, so no value survives
 // the call and a kind can never disagree with its payload.
 void fire_rocket_explosion(event_stream_t& stream, const Rocket_Explosion& payload);
-void fire_bullet_impact(event_stream_t& stream, const Bullet_Impact& payload);
 void fire_footstep(event_stream_t& stream, const Footstep& payload);
 void fire_jump(event_stream_t& stream, const Jump& payload);
 void fire_land(event_stream_t& stream, const Land& payload);
-void fire_flesh_impact(event_stream_t& stream, const Flesh_Impact& payload);
+void fire_shot_impact(event_stream_t& stream, const Shot_Impact& payload);
 
 // The read half, one per member. Empty when a field's value is outside
 // this build's tables -- an enum id no declared value holds. That leaves
@@ -123,20 +116,18 @@ void fire_flesh_impact(event_stream_t& stream, const Flesh_Impact& payload);
 // The receiving side's dispatch switch is generated beside its handlers
 // (client_*_bindings_generated.cpp), because it is what references them.
 [[nodiscard]] std::optional<Rocket_Explosion> try_read_rocket_explosion(network::Bit_Reader& reader);
-[[nodiscard]] std::optional<Bullet_Impact> try_read_bullet_impact(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Footstep> try_read_footstep(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Jump> try_read_jump(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Land> try_read_land(network::Bit_Reader& reader);
-[[nodiscard]] std::optional<Flesh_Impact> try_read_flesh_impact(network::Bit_Reader& reader);
+[[nodiscard]] std::optional<Shot_Impact> try_read_shot_impact(network::Bit_Reader& reader);
 
 // The ONE place a payload becomes characters. One overload per member, so
 // a caller holding a payload has a formatter for it.
 std::string to_text(const Rocket_Explosion& value);
-std::string to_text(const Bullet_Impact& value);
 std::string to_text(const Footstep& value);
 std::string to_text(const Jump& value);
 std::string to_text(const Land& value);
-std::string to_text(const Flesh_Impact& value);
+std::string to_text(const Shot_Impact& value);
 
 // Every event PENDING in the stream, decoded back out of the bytes that
 // will actually be sent. A debugger view of a queue shows what someone

@@ -577,16 +577,47 @@ static void service_reliable_streams(server_context_t &context)
   }
 }
 
-bool change_map_to(const std::string &map_path)
+// A map is named by a path, a maps-relative filename or a bare name: the
+// `map` command, the `next_map` cvar, last_map.txt and the editor bridge all
+// spell it differently. Tried in order, first hit wins; empty means nothing
+// on disk answers to it.
+static std::optional<std::string> try_resolve_map_path(const std::string &name)
+{
+  const std::string candidates[] = {
+      name,
+      "maps/" + name,
+      "maps/" + name + ".source",
+  };
+  for (const std::string &candidate : candidates)
+  {
+    if (std::filesystem::is_regular_file(candidate))
+      return candidate;
+  }
+  return std::nullopt;
+}
+
+bool change_map_to(const std::string &map_name)
 {
   server_context_t &context = g_server_context;
 
-  log_terminal("--- Changing server map: '{}' ---", map_path);
+  // Resolved and checked BEFORE the teardown: load_map_file_into_context wipes
+  // the current world before it validates the load, so a typo would otherwise
+  // drop everyone into an empty session.
+  const std::optional<std::string> map_path = try_resolve_map_path(map_name);
+  if (!map_path)
+  {
+    log_error("change_map_to: '{}' not found (also tried 'maps/{}' and "
+              "'maps/{}.source'). Not switching.",
+              map_name, map_name, map_name);
+    return false;
+  }
+
+  log_terminal("--- Changing server map: '{}' ---", *map_path);
 
   // Load the new map. This wipes the session, physics world, bots, and every
   // client's delta baseline, so the first snapshot after the switch is a full
   // (non-delta) update.
-  if (!load_map_file_into_context(context, map_path))
+  if (!load_map_file_into_context(context, *map_path))
     return false;
 
   // Keep connected players connected across the switch
@@ -1204,14 +1235,13 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
         context.outgoing.pending_hits.push_back(
             {info, hit.impact_point, hit.impact_normal, hit.region});
       }
-      else if (shot_collided_with_static_geometry && weapon.leaves_bullet_impact)
+      else if (shot_collided_with_static_geometry && world_hit.t <= weapon.range)
       {
-        // Asked of the ROW rather than of the resolution: a knife swing that
-        // reaches a wall should not spray a bullet decal, and "is this melee"
-        // was only ever a proxy for that.
-        shared::Bullet_Impact fx{};
+        shared::Shot_Impact fx{};
         fx.origin = eye + direction * world_hit.t;
-        shared::fire_bullet_impact(context.outgoing.effects, fx);
+        fx.normal = world_hit.normal;
+        fx.weapon = static_cast<uint16_t>(active_weapon->weapon_id);
+        shared::fire_shot_impact(context.outgoing.effects, fx);
       }
       break;
     }
@@ -1244,18 +1274,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   }
 }
 
-// Reload the current map if the match asked for it. Game_Over's deadline sets
-// the request (update_game_rules) and this is where it is paid, at the TOP of a
-// tick with nothing else live: change_map_to destroys the session, the physics
-// world and every bot in it, so servicing the request where it was raised would
-// pull all of that out from under the tick that raised it.
-//
-// A reload rather than a bespoke "reset the match": it already resets the rules,
-// the scores (the players are respawned as fresh entities), the map's cvars and
-// every client's delta baseline, and it is the same path a map vote or a
-// rotation would eventually call. There is nothing a match reset would do that
-// this does not.
-static void service_pending_map_restart(server_context_t &context)
+static void check_if_there_is_a_pending_map_change(server_context_t &context)
 {
   if (!context.world.rules.map_restart_requested)
     return;
@@ -1264,18 +1283,32 @@ static void service_pending_map_restart(server_context_t &context)
   // string it is reading from is one of the things the reload overwrites.
   const std::string map_path = context.world.current_map_path;
 
+  // this should not happen, I think.
   if (map_path.empty())
   {
-    // Nothing to reload into, and leaving the request standing would retry it
-    // every tick forever. A server with no map cannot have finished a match, so
-    // this is a bug rather than a configuration.
-    log_error("service_pending_map_restart: the match ended but no map path is "
-              "recorded — staying on the final scoreboard");
+    log_error("the match ended but no map path is recorded. The match will not restart.");
     context.world.rules.map_restart_requested = false;
     return;
   }
 
-  log_terminal("--- Match over: restarting '{}' ---", map_path);
+  // A next_map that does not resolve falls through to the restart: change_map_to
+  // refuses it before the teardown, so the world is still the one to restart.
+  // Restarting keeps the flag from being serviced again every tick.
+  if (!context.cvars->next_map.empty())
+  {
+    const std::string next_map = context.cvars->next_map.c_str();
+    log_terminal("--- Match over: changing to next map '{}' ---", next_map);
+    if (change_map_to(next_map))
+      return;
+    log_error("next_map '{}' did not load, "
+              "restarting '{}' instead.",
+              next_map, map_path);
+  }
+  else
+  {
+    log_terminal("--- Match over: restarting '{}' ---", map_path);
+  }
+
   change_map_to(map_path);
 }
 
@@ -1287,7 +1320,7 @@ bool Tick()
 
   // Before the inbox is even drained: this can replace the world, and every
   // pass below it holds spans into the one it replaces.
-  service_pending_map_restart(context);
+  check_if_there_is_a_pending_map_change(context);
 
   // Entity I/O, at the top of the tick and after the restart above, which
   // would otherwise leave records naming entities in a world that is gone.
@@ -1891,17 +1924,18 @@ bool Tick()
   // damage and knockback entirely; see inflict_damage_batch.
   for (const pending_hit_t &pending : context.outgoing.pending_hits)
   {
-    // The wet thud, for everyone, at the VICTIM. Dispatched here rather than
+    // The impact, for everyone, at the VICTIM. Dispatched here rather than
     // inside inflict_damage because the hit is the only thing that knows where
     // the shot landed -- damage_info_t carries the shooter's eye, not the impact
     // point -- and because one rocket is N damage calls but should still be one
     // noise.
-    shared::Flesh_Impact impact_fx{};
-    impact_fx.origin           = pending.impact_point;
-    impact_fx.normal           = pending.impact_normal;
-    impact_fx.attached_entity  = pending.info.victim_uid;
-    impact_fx.surface_material = static_cast<uint16_t>(pending.region);
-    shared::fire_flesh_impact(context.outgoing.effects, impact_fx);
+    shared::Shot_Impact impact_fx{};
+    impact_fx.origin          = pending.impact_point;
+    impact_fx.normal          = pending.impact_normal;
+    impact_fx.attached_entity = pending.info.victim_uid;
+    impact_fx.region          = static_cast<uint16_t>(pending.region);
+    impact_fx.weapon          = pending.info.weapon_id;
+    shared::fire_shot_impact(context.outgoing.effects, impact_fx);
 
     // The hitmarker, for the shooter only, as replicated state. Their own client
     // plays it off this stamp advancing -- see Player_Entity::last_hit_tick in
@@ -1910,7 +1944,7 @@ bool Tick()
     //
     // Gated on the same query the health write is: a hitmarker is a claim that
     // damage landed, so outside the round it would be feedback for a hit that
-    // did nothing. The Flesh_Impact above is NOT gated -- it says where the
+    // did nothing. The Shot_Impact above is NOT gated -- it says where the
     // bullet went, which is true either way.
     entities::Player_Entity *attacker =
         can_take_damage(context)
@@ -2151,6 +2185,7 @@ bool Tick()
     // received the tick that changed them.
     package.set_round_phase(static_cast<uint32_t>(context.world.rules.phase));
     package.set_phase_end_tick(context.world.rules.phase_end_tick);
+    package.set_phase_start_tick(context.world.rules.phase_start_tick);
     package.set_round_number(context.world.rules.round_number);
     package.set_entity_data(writer.buffer.data(), writer.buffer.size());
 
@@ -2487,27 +2522,13 @@ void spawn_sphere(const command_context_t &command_context)
 // Was a CVar<std::string> with an on-change callback -- a verb wearing a
 // variable costume, and the only user of the callback mechanism, which is why
 // v1 has no callback mechanism at all.
-void map(std::string_view requested_path, const command_context_t &)
+void map(std::string_view requested_name, const command_context_t &)
 {
   using namespace server;
 
-  // Resolve a bare name against maps/ as a convenience. Check existence BEFORE
-  // change_map_to -- change_map_to tears down the current world before it validates
-  // the load, so a typo would otherwise wipe everyone into an empty session.
-  std::string path(requested_path);
-  if (!std::filesystem::exists(path) && std::filesystem::exists("maps/" + path))
-    path = "maps/" + path;
-
-  if (!std::filesystem::exists(path))
-  {
-    log_error("map: '{}' not found (also tried 'maps/{}'). Not switching.",
-              std::string(requested_path), std::string(requested_path));
-    return;
-  }
-
-  log_terminal("map: switching to '{}'", path);
-  if (!change_map_to(path))
-    log_error("map: failed to load '{}'", path);
+  // change_map_to resolves the name and refuses an unknown one before touching
+  // the running world, and it has already logged why by the time it returns.
+  (void)change_map_to(std::string(requested_name));
 }
 
 

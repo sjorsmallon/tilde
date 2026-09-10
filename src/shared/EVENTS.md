@@ -18,7 +18,7 @@ Effect :: channel
     ...
 }
 
-Bullet_Impact :: Effect  "world-surface hit"        // no body: only the channel's fields
+Footstep      :: Effect  "one foot planting"        // no body: only the channel's fields
 Round_Started :: Game_Event  "..." { round: u32 }   // a body adds its own
 ```
 
@@ -92,13 +92,13 @@ its payload.
 ### 3. Write the handler
 
 One file per member, named after it —
-[`src/client/effects/bullet_impact.cpp`](../client/effects/bullet_impact.cpp),
+[`src/client/effects/footstep.cpp`](../client/effects/footstep.cpp),
 [`src/client/game_events/round_started.cpp`](../client/game_events/) — defining
-`client::effects::on_bullet_impact(client_context_t&, const shared::Bullet_Impact&)`
+`client::effects::on_footstep(client_context_t&, const shared::Footstep&)`
 or `client::game_events::on_round_started(client_context_t&, const shared::Round_Started&)`.
 
 The parameter is always the **member's own type**, even when it adds no fields:
-`const shared::Bullet_Impact&`, not `const shared::Effect&`.
+`const shared::Footstep&`, not `const shared::Effect&`.
 
 `def_gen --scaffold` writes the empty file for you if it does not exist. It
 never overwrites, never merges, and prints every file it wrote — the moment a

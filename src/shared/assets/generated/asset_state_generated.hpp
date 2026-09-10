@@ -61,6 +61,7 @@ asset_state_t& state_for(const char* who);
 
 [[nodiscard]] mesh_asset_t decode_obj(Span<const uint8_t> bytes, const char* path);
 [[nodiscard]] mesh_asset_t decode_mesh(Span<const uint8_t> bytes, const char* path);
+[[nodiscard]] mesh_asset_t decode_glb(Span<const uint8_t> bytes, const char* path);
 [[nodiscard]] texture_asset_t decode_png(Span<const uint8_t> bytes, const char* path);
 [[nodiscard]] texture_asset_t decode_tga(Span<const uint8_t> bytes, const char* path);
 [[nodiscard]] sound_asset_t decode_wav(Span<const uint8_t> bytes, const char* path);
