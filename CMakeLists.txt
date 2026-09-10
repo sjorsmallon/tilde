@@ -76,10 +76,14 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
-target_include_directories(imgui PUBLIC
+# SYSTEM: imgui.h's inline memsets trip -Wnontrivial-memcall in every TU that includes it.
+target_include_directories(imgui SYSTEM PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(imgui PRIVATE -Wno-nontrivial-memcall)
+endif()
 target_link_libraries(imgui PUBLIC
     SDL2::SDL2-static
     Vulkan::Vulkan
@@ -238,6 +242,7 @@ set(ENTITY_IO_HANDLERS
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
     src/server/entities/game_rules_entity.cpp
+    src/server/entities/logic_counter_entity.cpp
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${ENTITY_IO_HANDLERS} PROPERTIES

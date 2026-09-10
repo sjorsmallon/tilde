@@ -15,6 +15,7 @@ class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh .glb
 
 class texture_asset texture_asset_t asset_types.hpp .png .tga
   Missing -
+  counter resources/icons/counter.png
   directional_light resources/icons/directional_light.png
   game_rules resources/icons/game_rules.png
   point_light resources/icons/point_light.png

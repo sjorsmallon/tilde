@@ -44,6 +44,7 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     case entities::entity_type::Spot_Light_Entity:
     case entities::entity_type::Directional_Light_Entity:
     case entities::entity_type::Physics_Body_Entity:
+    case entities::entity_type::Logic_Counter_Entity:
     case entities::entity_type::Invalid:
       return false;
   }

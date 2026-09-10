@@ -17,6 +17,7 @@
 #include "traits/usable_generated.hpp"
 #include "traits/switchable_generated.hpp"
 #include "traits/colorable_generated.hpp"
+#include "traits/counting_generated.hpp"
 #include "traits/touchable_generated.hpp"
 #include "traits/mortal_generated.hpp"
 #include "traits/mobile_generated.hpp"
@@ -54,6 +55,8 @@ struct action_data_t
     Disable_Data disable;
     Toggle_Enabled_Data toggle_enabled;
     Set_Color_Data set_color;
+    Add_Data add;
+    Reset_Data reset;
     Kill_Data kill;
     Set_Health_Data set_health;
     Damage_Data damage;
@@ -70,6 +73,8 @@ struct action_data_t
   const Disable_Data& as_disable() const { assert(tag == entity_action::Disable); return disable; }
   const Toggle_Enabled_Data& as_toggle_enabled() const { assert(tag == entity_action::Toggle_Enabled); return toggle_enabled; }
   const Set_Color_Data& as_set_color() const { assert(tag == entity_action::Set_Color); return set_color; }
+  const Add_Data& as_add() const { assert(tag == entity_action::Add); return add; }
+  const Reset_Data& as_reset() const { assert(tag == entity_action::Reset); return reset; }
   const Kill_Data& as_kill() const { assert(tag == entity_action::Kill); return kill; }
   const Set_Health_Data& as_set_health() const { assert(tag == entity_action::Set_Health); return set_health; }
   const Damage_Data& as_damage() const { assert(tag == entity_action::Damage); return damage; }
@@ -88,6 +93,8 @@ action_data_t erase(const Enable_Data& payload);
 action_data_t erase(const Disable_Data& payload);
 action_data_t erase(const Toggle_Enabled_Data& payload);
 action_data_t erase(const Set_Color_Data& payload);
+action_data_t erase(const Add_Data& payload);
+action_data_t erase(const Reset_Data& payload);
 action_data_t erase(const Kill_Data& payload);
 action_data_t erase(const Set_Health_Data& payload);
 action_data_t erase(const Damage_Data& payload);
@@ -126,6 +133,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
   0u,   // Physics_Body_Entity
+  trait_bit(entity_trait::Counting),   // Logic_Counter_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -170,6 +178,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
   0u,   // Physics_Body_Entity
+  action_bit(entity_action::Add) | action_bit(entity_action::Reset),   // Logic_Counter_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -206,6 +215,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   signal_bit(entity_signal::Color_Changed),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
   0u,   // Physics_Body_Entity
+  signal_bit(entity_signal::Limit_Reached),   // Logic_Counter_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)
@@ -231,6 +241,7 @@ constexpr uint64_t entity_type_bit(entity_type type) { return 1ull << (uint32_t)
 
 inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
   0u,   // Color_Changed
+  0u,   // Limit_Reached
   entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Touched
   entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Left
   0u,   // Died

@@ -1,10 +1,11 @@
 entity
 {
   "classname" "worldspawn"
-  "name" "new_map.source"
+  "name" "third.source"
 }
 cvars
 {
+  "next_map" "first"
   "sv_gamemode" "speedrun"
 }
 connections
@@ -298,7 +299,7 @@ entity
   "_uid" "13"
   "position" "-512 64 -512"
   "orientation" "0 0 0 1"
-  "name" ""
+  "name" "The Rules"
 }
 entity
 {
@@ -306,7 +307,18 @@ entity
   "_uid" "11"
   "position" "-512 640 512"
   "orientation" "0 0 0.9914448 0.13052624"
-  "name" ""
+  "name" "Target Counter"
   "counter.value" "0"
   "counter.limit" "3"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "14"
+  "position" "-292.2749 -197.80704 907.8633"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "1525.711 63.1904 2520.1497"
 }

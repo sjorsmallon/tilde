@@ -96,6 +96,12 @@ Health:: component
     max_health: i32 = 100       @Editable
 }
 
+Counter:: component
+{
+    value:  u32 = 0                  @Editable
+    limit: u32 = 0                  @Editable
+}
+
 Usable :: trait { accepts Use() }
 
 Switchable :: trait requires Enabled {
@@ -106,6 +112,12 @@ Colorable :: trait {
     accepts Set_Color(color: v3)
     emits   Color_Changed(color: v3)
 }
+
+Counting:: trait requires Counter {
+    accepts Add(amount:u32), Reset()
+    emits Limit_Reached()
+}
+
 
 // `by` names everything that can TRULY set this off, which is what makes the
 // list widenable: the load check admits a row SOME `by` type accepts, so
@@ -389,4 +401,8 @@ Physics_Body_Entity :: entity {
     velocity: v3                        @Networked
     mass:     f32 = 10.0                @Editable
     render:   Render
+}
+
+Logic_Counter_Entity :: entity is Counting {
+    counter: Counter 
 }

@@ -791,6 +791,7 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
     case entities::entity_type::Spot_Light_Entity:
     case entities::entity_type::Directional_Light_Entity:
     case entities::entity_type::Physics_Body_Entity:
+    case entities::entity_type::Logic_Counter_Entity:
       return mesh_or_point_bounds(entity);
 
     case entities::entity_type::Invalid:

@@ -103,6 +103,29 @@ std::string summarize(const shared::map_t &map, const shared::connection_t &row)
   return line;
 }
 
+std::string describe_row_as_sentence(const shared::map_t& map, const shared::connection_t& row)
+{
+  std::string target;
+  switch (row.target_kind)
+  {
+  case shared::connection_target_t::Activator: target = "whoever caused it"; break;
+  case shared::connection_target_t::Self:      target = shared::describe_map_entity(map, row.sender) + " itself"; break;
+  case shared::connection_target_t::Uid:
+    target = row.target == shared::null_entity_uid ? std::string("nobody yet") : shared::describe_map_entity(map, row.target);
+    break;
+  }
+
+  std::string sentence = std::format("When {} emits {}, the server tells {} to {}",
+                                     shared::describe_map_entity(map, row.sender), entities::to_string(row.signal),
+                                     target, entities::to_string(row.data.tag));
+  if (row.delay_seconds > 0.0f)
+    sentence += std::format(", {:.2f} seconds later", row.delay_seconds);
+  sentence += ".";
+  if (row.fire_once)
+    sentence += " Only the first time.";
+  return sentence;
+}
+
 // The union's bytes belong to whichever tag last wrote them, so a tag change
 // has to clear the ones the NEW tag names -- otherwise a Set_Health amount is
 // read back as a Damage amount nobody typed. Zero rather than the payload's
@@ -529,6 +552,8 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
       shared::connection_t &row = map.connections[s_selected_row];
 
       ImGui::SeparatorText("Selected row");
+      ImGui::TextWrapped("%s", describe_row_as_sentence(map, row).c_str());
+      ImGui::Spacing();
       ImGui::PushID((int)s_selected_row);
 
       draw_signal_combo(row, sender);

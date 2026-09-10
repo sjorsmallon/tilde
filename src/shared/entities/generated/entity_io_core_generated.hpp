@@ -37,44 +37,48 @@ enum class entity_action : uint16_t
   Disable = 2,   // Switchable
   Toggle_Enabled = 3,   // Switchable
   Set_Color = 4,   // Colorable
-  Kill = 5,   // Mortal
-  Set_Health = 6,   // Mortal
-  Damage = 7,   // Mortal
-  Teleport = 8,   // Mobile
-  Set_Velocity = 9,   // Mobile
-  Add_Velocity = 10,   // Mobile
-  Grant_Weapon = 11,   // Armable
-  Set_Respawn_Point = 12,   // Respawnable
-  Complete_Level = 13,   // Objective
+  Add = 5,   // Counting
+  Reset = 6,   // Counting
+  Kill = 7,   // Mortal
+  Set_Health = 8,   // Mortal
+  Damage = 9,   // Mortal
+  Teleport = 10,   // Mobile
+  Set_Velocity = 11,   // Mobile
+  Add_Velocity = 12,   // Mobile
+  Grant_Weapon = 13,   // Armable
+  Set_Respawn_Point = 14,   // Respawnable
+  Complete_Level = 15,   // Objective
 };
 
-constexpr uint32_t ENTITY_ACTION_COUNT = 14;
+constexpr uint32_t ENTITY_ACTION_COUNT = 16;
 
 enum class entity_signal : uint16_t
 {
   Color_Changed = 0,   // Colorable
-  Touched = 1,   // Touchable
-  Left = 2,   // Touchable
-  Died = 3,   // Mortal
-  Health_Changed = 4,   // Mortal
+  Limit_Reached = 1,   // Counting
+  Touched = 2,   // Touchable
+  Left = 3,   // Touchable
+  Died = 4,   // Mortal
+  Health_Changed = 5,   // Mortal
 };
 
-constexpr uint32_t ENTITY_SIGNAL_COUNT = 5;
+constexpr uint32_t ENTITY_SIGNAL_COUNT = 6;
 
 enum class entity_trait : uint16_t
 {
   Usable = 0,
   Switchable = 1,
   Colorable = 2,
-  Touchable = 3,
-  Mortal = 4,
-  Mobile = 5,
-  Armable = 6,
-  Respawnable = 7,
-  Objective = 8,
+  Counting = 3,
+  Touchable = 4,
+  Mortal = 5,
+  Mobile = 6,
+  Armable = 7,
+  Respawnable = 8,
+  Objective = 9,
 };
 
-constexpr uint32_t ENTITY_TRAIT_COUNT = 9;
+constexpr uint32_t ENTITY_TRAIT_COUNT = 10;
 
 const char* to_string(entity_action value);
 const char* to_string(entity_signal value);

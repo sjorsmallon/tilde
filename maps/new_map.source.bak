@@ -3,34 +3,91 @@ entity
   "classname" "worldspawn"
   "name" "new_map.source"
 }
+cvars
+{
+  "sv_gamemode" "speedrun"
+}
 connections
 {
   connection
   {
-    "sender" "4"
-    "signal" "Touched"
+    "sender" "9"
+    "signal" "Died"
     "target_kind" "Uid"
-    "target" "5"
-    "action" "Enable"
+    "target" "11"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
   }
   connection
   {
-    "sender" "4"
-    "signal" "Left"
+    "sender" "8"
+    "signal" "Died"
     "target_kind" "Uid"
-    "target" "5"
-    "action" "Disable"
+    "target" "11"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "10"
+    "signal" "Died"
+    "target_kind" "Uid"
+    "target" "11"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "12"
+    "signal" "Died"
+    "target_kind" "Uid"
+    "target" "11"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
   }
   connection
   {
     "sender" "7"
     "signal" "Died"
     "target_kind" "Uid"
-    "target" "6"
-    "action" "Complete_Level"
+    "target" "11"
+    "action" "Add"
     override
     {
+      "amount" "1"
     }
+  }
+  connection
+  {
+    "sender" "4"
+    "signal" "Died"
+    "target_kind" "Uid"
+    "target" "11"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "11"
+    "signal" "Limit_Reached"
+    "target_kind" "Uid"
+    "target" "13"
+    "action" "Complete_Level"
   }
 }
 brush
@@ -48,60 +105,24 @@ entity
 {
   "classname" "player_spawn_entity"
   "_uid" "2"
-  "position" "512 0 -128"
-  "orientation" "0 1 0 -4.371139e-08"
+  "position" "512 0 256"
+  "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Free_For_All"
 }
 entity
 {
-  "classname" "trigger_volume_entity"
-  "_uid" "4"
-  "position" "-160 64 -96"
-  "orientation" "-0.1305262 0 0 0.9914449"
-  "name" ""
-  "switch_state.value" "true"
-  "volume.position" "0 0 0"
-  "volume.half_extents" "352 64 160"
-}
-entity
-{
-  "classname" "spot_light_entity"
-  "_uid" "5"
-  "position" "-288 320 32"
-  "orientation" "0 0 -0.5 0.8660254"
-  "name" ""
-  "switch_state.value" "true"
-  "light.color" "1 1 1"
-  "light.intensity" "1024"
-  "light.mode" "Dynamic"
-  "light.source_radius" "0"
-  "light.casts_shadows" "true"
-  "range" "512"
-  "inner_degrees" "20"
-  "outer_degrees" "35"
-}
-entity
-{
-  "classname" "game_rules_entity"
-  "_uid" "6"
-  "position" "512 64 384"
-  "orientation" "0 0 0 1"
-  "name" ""
-}
-entity
-{
   "classname" "damageable_entity"
-  "_uid" "7"
-  "position" "-256 32 256"
+  "_uid" "3"
+  "position" "-256 32 -0"
   "orientation" "0 0 0 1"
   "name" ""
-  "health.current_health" "20"
-  "health.max_health" "20"
+  "health.current_health" "100"
+  "health.max_health" "100"
   "hitbox_half_extents" "16 32 16"
   "weakness" "Orange"
-  "render.mesh" "Isosphere"
+  "render.mesh" "target"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
@@ -110,4 +131,182 @@ entity
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
   "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "damageable_entity"
+  "_uid" "4"
+  "position" "-256 32 -256"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "health.current_health" "100"
+  "health.max_health" "100"
+  "hitbox_half_extents" "16 32 16"
+  "weakness" "Orange"
+  "render.mesh" "target"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+  "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "5"
+  "position" "128 64 -128"
+  "orientation" "0 1 0 -4.371139e-08"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "256"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "512"
+  "inner_degrees" "31.1"
+  "outer_degrees" "42.3"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "6"
+  "position" "-1152 64 -512"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "1"
+  "light.mode" "Baked"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "512"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
+}
+entity
+{
+  "classname" "damageable_entity"
+  "_uid" "7"
+  "position" "-368 32 -112"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "health.current_health" "100"
+  "health.max_health" "100"
+  "hitbox_half_extents" "16 32 16"
+  "weakness" "Orange"
+  "render.mesh" "target"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+  "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "damageable_entity"
+  "_uid" "8"
+  "position" "-128 32 16"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "health.current_health" "100"
+  "health.max_health" "100"
+  "hitbox_half_extents" "16 32 16"
+  "weakness" "Orange"
+  "render.mesh" "target"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+  "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "damageable_entity"
+  "_uid" "9"
+  "position" "-128 32 -512"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "health.current_health" "100"
+  "health.max_health" "100"
+  "hitbox_half_extents" "16 32 16"
+  "weakness" "Orange"
+  "render.mesh" "target"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+  "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "damageable_entity"
+  "_uid" "10"
+  "position" "-240 32 -96"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "health.current_health" "100"
+  "health.max_health" "100"
+  "hitbox_half_extents" "16 32 16"
+  "weakness" "Orange"
+  "render.mesh" "target"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+  "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "damageable_entity"
+  "_uid" "12"
+  "position" "-368 32 144"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "health.current_health" "100"
+  "health.max_health" "100"
+  "hitbox_half_extents" "16 32 16"
+  "weakness" "Orange"
+  "render.mesh" "target"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+  "render.material.roughness" "0.5"
+}
+entity
+{
+  "classname" "game_rules_entity"
+  "_uid" "13"
+  "position" "-512 64 -512"
+  "orientation" "0 0 0 1"
+  "name" ""
+}
+entity
+{
+  "classname" "logic_counter_entity"
+  "_uid" "11"
+  "position" "-512 640 512"
+  "orientation" "0 0 0.9914448 0.13052624"
+  "name" ""
+  "counter.value" "0"
+  "counter.limit" "3"
 }

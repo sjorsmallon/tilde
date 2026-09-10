@@ -100,6 +100,18 @@ void shim_spot_light_entity_set_color(Entity& entity, const action_data_t& data,
   set_color(self, data.as_set_color(), context);
 }
 
+void shim_logic_counter_entity_add(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Counter_Entity& self = *entity_as<Logic_Counter_Entity>(&entity);
+  add(self, self.counter, data.as_add(), context);
+}
+
+void shim_logic_counter_entity_reset(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Counter_Entity& self = *entity_as<Logic_Counter_Entity>(&entity);
+  reset(self, self.counter, data.as_reset(), context);
+}
+
 void shim_player_entity_kill(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Player_Entity& self = *entity_as<Player_Entity>(&entity);
@@ -187,6 +199,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
     shim_player_entity_kill,
     shim_player_entity_set_health,
     shim_player_entity_damage,
@@ -206,6 +220,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -222,6 +238,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
     shim_damageable_entity_kill,
     shim_damageable_entity_set_health,
     shim_damageable_entity_damage,
@@ -238,6 +256,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_trigger_volume_entity_disable,
     shim_trigger_volume_entity_toggle_enabled,
     nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -254,6 +274,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_sound_emitter_entity_disable,
     shim_sound_emitter_entity_toggle_enabled,
     nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -270,6 +292,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_point_light_entity_disable,
     shim_point_light_entity_toggle_enabled,
     shim_point_light_entity_set_color,
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -286,6 +310,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_spot_light_entity_disable,
     shim_spot_light_entity_toggle_enabled,
     shim_spot_light_entity_set_color,
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -298,6 +324,24 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   },
   {},   // Directional_Light_Entity
   {},   // Physics_Body_Entity
+  {   // Logic_Counter_Entity
+    nullptr,   // Use
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Set_Color
+    shim_logic_counter_entity_add,
+    shim_logic_counter_entity_reset,
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+  },
 };
 
 // The shared ACCEPTANCE mask and this table are two artifacts of one
@@ -405,6 +449,40 @@ void set_color(Entity& entity, const Set_Color_Data& payload, input_context_t& c
 {
   if (!try_set_color(entity, payload, context))
     fatal_error("{} does not accept Set_Color", entity_info(entity.type).classname);
+}
+
+bool try_add(Entity& entity, const Add_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Add];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void add(Entity& entity, const Add_Data& payload, input_context_t& context)
+{
+  if (!try_add(entity, payload, context))
+    fatal_error("{} does not accept Add", entity_info(entity.type).classname);
+}
+
+bool try_reset(Entity& entity, const Reset_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Reset];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void reset(Entity& entity, const Reset_Data& payload, input_context_t& context)
+{
+  if (!try_reset(entity, payload, context))
+    fatal_error("{} does not accept Reset", entity_info(entity.type).classname);
 }
 
 bool try_kill(Entity& entity, const Kill_Data& payload, input_context_t& context)
@@ -592,6 +670,14 @@ void emit_color_changed(const Entity& sender, const Color_Changed_Data& payload,
   if (!type_emits_signal(sender.type, entity_signal::Color_Changed))
     fatal_error("{} does not emit Color_Changed", entity_info(sender.type).classname);
   server::queue_signal_connections(context, sender, entity_signal::Color_Changed,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_limit_reached(const Entity& sender, const Limit_Reached_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Limit_Reached))
+    fatal_error("{} does not emit Limit_Reached", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Limit_Reached,
                                    &payload, (uint32_t)sizeof(payload));
 }
 

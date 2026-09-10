@@ -25,6 +25,18 @@ constexpr field_info_t SET_COLOR_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t ADD_FIELDS[] = {
+  {.name = "amount",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Add_Data, amount),
+   .size_in_bytes = (uint32_t)sizeof(Add_Data::amount),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t SET_HEALTH_FIELDS[] = {
   {.name = "amount",
    .type = FIELD_TYPE_I32,
@@ -169,6 +181,8 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Disable
   {},   // Toggle_Enabled
   {SET_COLOR_FIELDS, 1},
+  {ADD_FIELDS, 1},
+  {},   // Reset
   {},   // Kill
   {SET_HEALTH_FIELDS, 1},
   {DAMAGE_FIELDS, 1},
@@ -182,6 +196,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
 
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
   {COLOR_CHANGED_FIELDS, 1},
+  {},   // Limit_Reached
   {},   // Touched
   {},   // Left
   {DIED_FIELDS, 1},
@@ -199,6 +214,8 @@ const char* to_string(entity_action value)
     case entity_action::Disable: return "Disable";
     case entity_action::Toggle_Enabled: return "Toggle_Enabled";
     case entity_action::Set_Color: return "Set_Color";
+    case entity_action::Add: return "Add";
+    case entity_action::Reset: return "Reset";
     case entity_action::Kill: return "Kill";
     case entity_action::Set_Health: return "Set_Health";
     case entity_action::Damage: return "Damage";
@@ -219,6 +236,8 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Disable") return entity_action::Disable;
   if (text == "Toggle_Enabled") return entity_action::Toggle_Enabled;
   if (text == "Set_Color") return entity_action::Set_Color;
+  if (text == "Add") return entity_action::Add;
+  if (text == "Reset") return entity_action::Reset;
   if (text == "Kill") return entity_action::Kill;
   if (text == "Set_Health") return entity_action::Set_Health;
   if (text == "Damage") return entity_action::Damage;
@@ -236,6 +255,7 @@ const char* to_string(entity_signal value)
   switch (value)
   {
     case entity_signal::Color_Changed: return "Color_Changed";
+    case entity_signal::Limit_Reached: return "Limit_Reached";
     case entity_signal::Touched: return "Touched";
     case entity_signal::Left: return "Left";
     case entity_signal::Died: return "Died";
@@ -247,6 +267,7 @@ const char* to_string(entity_signal value)
 template <> std::optional<entity_signal> try_from_string<entity_signal>(std::string_view text)
 {
   if (text == "Color_Changed") return entity_signal::Color_Changed;
+  if (text == "Limit_Reached") return entity_signal::Limit_Reached;
   if (text == "Touched") return entity_signal::Touched;
   if (text == "Left") return entity_signal::Left;
   if (text == "Died") return entity_signal::Died;
@@ -261,6 +282,7 @@ const char* to_string(entity_trait value)
     case entity_trait::Usable: return "Usable";
     case entity_trait::Switchable: return "Switchable";
     case entity_trait::Colorable: return "Colorable";
+    case entity_trait::Counting: return "Counting";
     case entity_trait::Touchable: return "Touchable";
     case entity_trait::Mortal: return "Mortal";
     case entity_trait::Mobile: return "Mobile";
@@ -276,6 +298,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Usable") return entity_trait::Usable;
   if (text == "Switchable") return entity_trait::Switchable;
   if (text == "Colorable") return entity_trait::Colorable;
+  if (text == "Counting") return entity_trait::Counting;
   if (text == "Touchable") return entity_trait::Touchable;
   if (text == "Mortal") return entity_trait::Mortal;
   if (text == "Mobile") return entity_trait::Mobile;
@@ -306,6 +329,8 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Disable: return (uint32_t)sizeof(Disable_Data);
     case entity_action::Toggle_Enabled: return (uint32_t)sizeof(Toggle_Enabled_Data);
     case entity_action::Set_Color: return (uint32_t)sizeof(Set_Color_Data);
+    case entity_action::Add: return (uint32_t)sizeof(Add_Data);
+    case entity_action::Reset: return (uint32_t)sizeof(Reset_Data);
     case entity_action::Kill: return (uint32_t)sizeof(Kill_Data);
     case entity_action::Set_Health: return (uint32_t)sizeof(Set_Health_Data);
     case entity_action::Damage: return (uint32_t)sizeof(Damage_Data);
@@ -324,6 +349,7 @@ uint32_t signal_payload_size(entity_signal signal)
   switch (signal)
   {
     case entity_signal::Color_Changed: return (uint32_t)sizeof(Color_Changed_Data);
+    case entity_signal::Limit_Reached: return (uint32_t)sizeof(Limit_Reached_Data);
     case entity_signal::Touched: return (uint32_t)sizeof(Touched_Data);
     case entity_signal::Left: return (uint32_t)sizeof(Left_Data);
     case entity_signal::Died: return (uint32_t)sizeof(Died_Data);
@@ -369,6 +395,22 @@ action_data_t erase(const Set_Color_Data& payload)
   action_data_t data;
   data.tag = entity_action::Set_Color;
   data.set_color = payload;
+  return data;
+}
+
+action_data_t erase(const Add_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Add;
+  data.add = payload;
+  return data;
+}
+
+action_data_t erase(const Reset_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Reset;
+  data.reset = payload;
   return data;
 }
 

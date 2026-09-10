@@ -238,6 +238,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       case entities::entity_type::Reflection_Volume_Entity:
       case entities::entity_type::Game_Rules_Entity:
       case entities::entity_type::Directional_Light_Entity:
+      case entities::entity_type::Logic_Counter_Entity:
         break;
     }
 

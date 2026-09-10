@@ -1924,11 +1924,6 @@ bool Tick()
   // damage and knockback entirely; see inflict_damage_batch.
   for (const pending_hit_t &pending : context.outgoing.pending_hits)
   {
-    // The impact, for everyone, at the VICTIM. Dispatched here rather than
-    // inside inflict_damage because the hit is the only thing that knows where
-    // the shot landed -- damage_info_t carries the shooter's eye, not the impact
-    // point -- and because one rocket is N damage calls but should still be one
-    // noise.
     shared::Shot_Impact impact_fx{};
     impact_fx.origin          = pending.impact_point;
     impact_fx.normal          = pending.impact_normal;
@@ -1961,18 +1956,6 @@ bool Tick()
   inflict_damage_batch(context, context.outgoing.pending_hits);
   context.outgoing.pending_hits.clear();
 
-  // --- Land the reloads that finished inside this tick ---
-  //
-  // The AUTHORITATIVE answer is already exact: the fire path completes a due
-  // reload itself, at the slot the trigger went down in, so no shot this tick
-  // was judged against stale ammo. This sweep exists for the REPLICATED copy --
-  // Weapon_Entity::ammo is @Networked, and without it a player who reloads and
-  // does not immediately fire keeps broadcasting the old magazine until they do.
-  //
-  // A deadline anywhere inside this tick has passed by the time the tick ends,
-  // which is the moment this snapshot describes, so completing it here is
-  // exact rather than early -- and a reload landing at slot 30 was already
-  // handled at slot 30 for anything that could observe it sooner.
   const shared::subtick_time_t end_of_tick =
       shared::subtick_time(context.tick_number + 1, 0);
   for (entities::Player_Entity &player :

@@ -49,6 +49,7 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     {entities::entity_type::Spot_Light_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Directional_Light_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Physics_Body_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
+    {entities::entity_type::Logic_Counter_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&entity_type_sounds_t::type>(ENTITY_TYPE_SOUNDS),

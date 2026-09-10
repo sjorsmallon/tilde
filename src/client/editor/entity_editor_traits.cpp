@@ -482,6 +482,10 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
       return {.half_extents = point_pick,
               .color        = colors::white,
               .icon         = assets::texture_asset::game_rules};
+    case entities::entity_type::Logic_Counter_Entity:
+     return {.half_extents = point_pick,
+              .color        = colors::white,
+              .icon         = assets::texture_asset::counter};
 
     case entities::entity_type::Invalid:
       break;

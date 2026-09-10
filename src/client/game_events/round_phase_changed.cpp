@@ -22,7 +22,7 @@ namespace
   case shared::Round_Phase::Round_End:
     return "ROUND OVER";
   case shared::Round_Phase::Game_Over:
-    return "GAME OVER";
+    return "WIN";
   }
   return {};
 }

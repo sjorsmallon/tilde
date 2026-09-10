@@ -42,21 +42,22 @@ template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_vi
 enum class texture_asset : uint16_t
 {
   Missing = 0,
-  directional_light = 1,
-  game_rules = 2,
-  point_light = 3,
-  spot_light = 4,
-  glasses = 5,
-  glasses_material = 6,
-  leet_hands = 7,
-  leet_hands_material = 8,
-  leet_skin = 9,
-  leet_skin_material = 10,
-  Smoke = 11,
-  dev_128x128 = 12,
+  counter = 1,
+  directional_light = 2,
+  game_rules = 3,
+  point_light = 4,
+  spot_light = 5,
+  glasses = 6,
+  glasses_material = 7,
+  leet_hands = 8,
+  leet_hands_material = 9,
+  leet_skin = 10,
+  leet_skin_material = 11,
+  Smoke = 12,
+  dev_128x128 = 13,
 };
 
-constexpr uint32_t texture_asset_COUNT = 13;
+constexpr uint32_t texture_asset_COUNT = 14;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);

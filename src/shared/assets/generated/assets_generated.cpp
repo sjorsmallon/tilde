@@ -24,6 +24,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
 
 constexpr asset_info_t texture_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"counter", "resources/icons/counter.png"},
   {"directional_light", "resources/icons/directional_light.png"},
   {"game_rules", "resources/icons/game_rules.png"},
   {"point_light", "resources/icons/point_light.png"},

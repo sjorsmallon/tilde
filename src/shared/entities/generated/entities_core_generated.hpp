@@ -189,25 +189,27 @@ enum class entity_type : uint16_t
   Spot_Light_Entity = 13,
   Directional_Light_Entity = 14,
   Physics_Body_Entity = 15,
+  Logic_Counter_Entity = 16,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 16;
+constexpr uint32_t ENTITY_TYPE_COUNT = 17;
 
 enum class component_type : uint16_t
 {
   Box_Volume = 0,
   Enabled = 1,
   Health = 2,
-  Material = 3,
-  Render = 4,
-  Light = 5,
-  Movement = 6,
-  Inventory = 7,
+  Counter = 3,
+  Material = 4,
+  Render = 5,
+  Light = 6,
+  Movement = 7,
+  Inventory = 8,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 8;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 9;
 
 } // namespace entities
 
@@ -319,6 +321,14 @@ struct Health
 
   int32_t current_health = 100;
   int32_t max_health = 100;
+};
+
+struct Counter
+{
+  static constexpr component_type static_component = component_type::Counter;
+
+  uint32_t value = 0;
+  uint32_t limit = 0;
 };
 
 struct Material
