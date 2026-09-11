@@ -94,8 +94,8 @@ void clear_incoming(server_context_t& context)
 {
   context.incoming.inputs.clear();
   context.incoming.potential_joins.clear();
-  context.incoming.net_commands.clear();
-  context.incoming.commands.clear();
+  context.incoming.connection_messages.clear();
+  context.incoming.developer_console_entries.clear();
   context.incoming.map_data_requests.clear();
 }
 

@@ -376,7 +376,7 @@ void test_a_connection_is_queued_and_then_delivered()
   check(!light_in(context, wired.light)->switch_state.value,
         "and delivered nothing -- delay zero still waits for the drain");
 
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(context.world.pending_actions.empty(), "the drain empties the queue");
   check(light_in(context, wired.light)->switch_state.value, "the handler ran and enabled the light");
 }
@@ -401,13 +401,13 @@ void test_a_delay_is_counted_in_ticks()
 
   for (uint32_t tick = 0; tick < 30; ++tick)
   {
-    drain_pending_actions(context);
+    drain_pending_entity_actions(context);
     check(!light_in(context, wired.light)->switch_state.value,
           "the light stays off for every tick before its own");
     ++context.tick_number;
   }
 
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(light_in(context, wired.light)->switch_state.value, "and turns on when it does");
 }
 
@@ -433,7 +433,7 @@ void test_emit_order_breaks_a_tie_within_one_tick()
   check(context.world.pending_actions[0].sequence < context.world.pending_actions[1].sequence,
         "the sequence counter separates them");
 
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(light_in(context, wired.light)->switch_state.value,
         "the second row ran second, so the light ends enabled");
 }
@@ -453,7 +453,7 @@ void test_fire_once_spends_the_sessions_copy()
 
   emit_touched_from(context, wired.trigger, 0);
   check(context.world.pending_actions.size() == 1, "the first touch queues");
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
 
   emit_touched_from(context, wired.trigger, 0);
   check(context.world.pending_actions.empty(), "the second touch queues nothing");
@@ -484,7 +484,7 @@ void test_a_target_that_dies_during_the_delay_is_dropped()
   check(context.world.session.entity_system.destroy(wired.light), "the light is destroyed");
 
   context.tick_number += 60;
-  drain_pending_actions(context);   // logs and drops; a fatal here is the failure
+  drain_pending_entity_actions(context);   // logs and drops; a fatal here is the failure
   check(context.world.pending_actions.empty(), "the record is gone rather than retried forever");
 }
 
@@ -533,7 +533,7 @@ void test_the_trigger_system_emits_edges()
 
   update_triggers(context);
   check(context.world.pending_actions.size() == 1, "walking in emits exactly one Touched");
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(light_in(context, wired.light)->switch_state.value, "...which turned the light on");
 
   // The EDGE, which is the whole reason fire_mode is gone: standing still
@@ -546,7 +546,7 @@ void test_the_trigger_system_emits_edges()
   move_player(context, player, {500.f, 0.f, 0.f});
   update_triggers(context);
   check(context.world.pending_actions.size() == 1, "walking out emits exactly one Left");
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(!light_in(context, wired.light)->switch_state.value, "...which turned it off again");
 
   ++context.tick_number;
@@ -616,7 +616,7 @@ void test_an_activator_that_does_not_accept_is_a_logged_miss()
         "the record remembers it came from an Activator row");
 
   // Reaching this without a fatal_error IS the assertion.
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(context.world.pending_actions.empty(),
         "the drain consumed it and did not die on a crate that cannot be killed");
 }
@@ -644,7 +644,7 @@ void test_the_toucher_is_the_activator()
             context.world.pending_actions[0].target == player,
         "the queued record names the player who walked in");
 
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   check(context.world.session.entity_system.get<entities::Player_Entity>(player)->checkpoint_uid ==
             wired.trigger,
         "and the handler wrote the volume the row named");
@@ -755,7 +755,7 @@ void test_a_damageable_emits_died_and_health_changed()
   check(crate != nullptr && crate->health.current_health <= 0 && !crate->render.visible,
         "the crate is destroyed and hidden, as it was before it had wiring");
 
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
   const entities::Point_Light_Entity* lamp = light_in(context, wired.light);
   check(lamp != nullptr && lamp->switch_state.value, "and the lamp it was wired to came on");
 }
@@ -803,7 +803,7 @@ void test_a_switched_light_leaves_the_frame()
   check(tail_entries_for_the_lamp() == 0, "a switched-off light is in no frame");
 
   emit_touched_from(context, wired.trigger, 0);
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
 
   check(shared::light_is_switched_on(*lamp), "the connection switched it on");
   check(tail_entries_for_the_lamp() == 1, "and now it is in the frame");

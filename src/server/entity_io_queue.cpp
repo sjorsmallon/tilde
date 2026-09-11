@@ -173,7 +173,7 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
                  entity_io_label(context.server, sender.entity_id), entities::to_string(signal));
 }
 
-void drain_pending_actions(server_context_t& context)
+void drain_pending_entity_actions(server_context_t& context)
 {
   std::vector<pending_action_t>& queue = context.world.pending_actions;
   if (queue.empty())

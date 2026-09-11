@@ -1,0 +1,52 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "light_trigger.prefab"
+}
+connections
+{
+  connection
+  {
+    "sender" "21"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "23"
+    "action" "Enable"
+  }
+  connection
+  {
+    "sender" "21"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "23"
+    "action" "Disable"
+  }
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "21"
+  "position" "0 64 0"
+  "orientation" "-0.1305262 0 0 0.9914449"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "352 64 160"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "23"
+  "position" "-128 320 128"
+  "orientation" "0 0 -0.5 0.8660254"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "512"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
+}

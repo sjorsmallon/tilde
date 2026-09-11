@@ -86,11 +86,6 @@ static void send_text_message_to_a_specific_client(server_context_t &context,
     return;
   }
 
-  // A dropped console line is a line nobody ever sees, and unlike a snapshot
-  // there is no next one to correct it -- so it rides the reliable stream. The
-  // send-failure log this replaced could only report the LOCAL sendto refusing;
-  // it never said whether the line arrived, which was the ambiguity that made
-  // this path hard to diagnose in the first place.
   game::S2C_ServerMessage msg;
   msg.set_message(std::string(text));
   std::vector<network::uint8> buffer(msg.ByteSizeLong());
@@ -118,7 +113,7 @@ static void broadcast_server_text_message(server_context_t &context,
   log_terminal("[BROADCAST -> {} client(s)] {}", recipient_count, text);
 }
 
-static void send_reject(server_context_t &context,
+static void send_message_to_reject_incoming_connection(server_context_t &context,
                         const network::Address &sender, std::string_view reason,
                         uint32_t server_schema_hash)
 {
@@ -162,17 +157,7 @@ get_position_in_front_of(server_context_t &context, int32_t caller_slot)
   return player->position + vec3f{0, eye_height, 0} + forward * forward_offset;
 }
 
-// Destroy the PLAYER half of a peer and leave the CLIENT half connected -- which
-// is precisely what a spectator is, since a client whose player_uid is null has
-// no body (see "Client vs Player" in CLAUDE.md). Nothing is remembered: there is
-// no spectator flag to set, because the absence of a uid already says it.
-//
-// Shared by `spectate` and by drop_client below, so the order of the two
-// destroys -- inventory first, since the list of what to destroy lives on the
-// player -- is written once instead of in two places that can disagree.
-// destroy_entity handles the Jolt body and the pending-respawn entry.
-//
-// No-op for a client that is already spectating.
+
 static void return_client_to_spectate(server_context_t &context, int32_t slot)
 {
   const shared::entity_uid_t player_uid = context.clients[slot].player_uid;
@@ -184,11 +169,8 @@ static void return_client_to_spectate(server_context_t &context, int32_t slot)
   context.clients[slot].player_uid = shared::null_entity_uid;
 }
 
-// Tears down BOTH halves of the peer: the player (its body in the world) and the
-// client (its slot, address and reassembly buffers). `reason` is a past-tense
-// verb phrase -- "left", "timed out" -- and reads as the subject of both the
-// broadcast and the log line.
-void drop_client(server_context_t &context, int32_t slot,
+
+void disconnect_client(server_context_t &context, int32_t slot,
                  std::string_view reason)
 {
   const network::Address address = context.transport_layer.addresses[slot];
@@ -203,7 +185,7 @@ void drop_client(server_context_t &context, int32_t slot,
   log_terminal("Player {} slot {}: {}", reason, slot, address.to_string());
 }
 
-void handle_player_leave(server_context_t &context,
+void process_client_leave_message(server_context_t &context,
                          const network::Address &sender)
 {
   const std::optional<int32_t> sender_slot =
@@ -215,7 +197,7 @@ void handle_player_leave(server_context_t &context,
     return;
   }
 
-  drop_client(context, *sender_slot, "Left.");
+  disconnect_client(context, *sender_slot, "Left.");
 }
 
 
@@ -242,7 +224,7 @@ static void drop_timed_out_clients(server_context_t &context)
                 slot, context.transport_layer.addresses[slot].to_string(),
                 static_cast<float>(silent_ticks) / context.cvars->sv_tickrate,
                 timeout_seconds);
-    drop_client(context, slot, "timed out.");
+    disconnect_client(context, slot, "timed out.");
   }
 }
 
@@ -558,7 +540,7 @@ static void service_reliable_streams(server_context_t &context)
                 "has stopped acking while we kept queueing",
                 slot, network::reliable_pending_bytes(stream),
                 network::RELIABLE_OUTBOUND_CAP_IN_BYTES);
-      drop_client(context, slot, "overflowed its reliable stream.");
+      disconnect_client(context, slot, "overflowed its reliable stream.");
       continue;
     }
 
@@ -1318,15 +1300,9 @@ bool Tick()
 
   server_context_t &context = g_server_context;
 
-  // Before the inbox is even drained: this can replace the world, and every
-  // pass below it holds spans into the one it replaces.
+  // if there is a pending map change, that's leading. set everything up.
   check_if_there_is_a_pending_map_change(context);
-
-  // Entity I/O, at the top of the tick and after the restart above, which
-  // would otherwise leave records naming entities in a world that is gone.
-  // Everything a connection requested last tick lands before any system reads
-  // the state it changed, which is the point of a queue rather than a call.
-  drain_pending_actions(context);
+  drain_pending_entity_actions(context);
 
   // The inbox is retained on the context so its vectors keep their capacity;
   // poll_network only push_backs, so it has to be emptied here.
@@ -1337,12 +1313,11 @@ bool Tick()
                         network::server_receive_drain_cap_in_datagrams,
                         context.tick_number, inbox);
 
-  // Ahead of everything that reads a slot, so this tick's work never runs for a
-  // peer that is already gone.
+  // if we lost someone, no use processing that.
   drop_timed_out_clients(context);
 
-  // Handle Net Commands (Handshake)
-  for (const auto &[sender, cmd] : inbox.net_commands)
+  // Handle connection messages (connect / disconnect)
+  for (const auto &[sender, cmd] : inbox.connection_messages)
   {
     if (cmd.has_connect())
     {
@@ -1361,7 +1336,7 @@ bool Tick()
                   "built from the same entities.def and asset set.",
                   cmd.connect().player_name(), client_schema_hash,
                   entities::SCHEMA_HASH);
-        send_reject(context, sender,
+        send_message_to_reject_incoming_connection(context, sender,
                     std::format("Schema mismatch: client {:#010x}, server "
                                 "{:#010x} -- rebuild against the same "
                                 "entities.def",
@@ -1382,26 +1357,19 @@ bool Tick()
 
       if (slot != invalid_slot_idx)
       {
-        // Accept
+
         network::occupy_client_slot(context.transport_layer, slot, sender,
                                     context.tick_number);
 
         reset_client_slot(context, slot);
 
-        // After the reset, which clears the whole entry.
         context.clients[slot].player_name =
             sanitized_player_name(cmd.connect().player_name(), slot);
 
         log_terminal("Player {} joined at slot {} (spectating)",
                      context.clients[slot].player_name.c_str(), slot);
 
-        // map_ready is DERIVED, not asserted here: the first input this
-        // client sends carries the hash of the map it holds, and the tick loop
-        // compares it. Optimistically claiming it at accept meant a client that
-        // turned out to need a download was sent snapshots for a world it did
-        // not have.
-
-        // Send Accept
+        // actually handshake back to the client.
         {
           game::NetCommand reply;
           auto *accept = reply.mutable_accept();
@@ -1435,17 +1403,17 @@ bool Tick()
       }
       else
       {
-        send_reject(context, sender, "Server is Full. please try again later.", 0);
+        send_message_to_reject_incoming_connection(context, sender, "Server is Full. please try again later.", 0);
       }
     }
     else if (cmd.has_disconnect())
     {
-      handle_player_leave(context, sender);
+      process_client_leave_message(context, sender);
     }
   }
 
-  // Dispatch console commands from clients.
-  for (const auto &[client_slot, line] : inbox.commands)
+  // Dispatch developer console entries from clients.
+  for (const auto &[client_slot, line] : inbox.developer_console_entries)
   {
     log_terminal("Command from slot {}: {}", client_slot, line);
     const auto &client_address = context.transport_layer.addresses[client_slot];
@@ -1484,9 +1452,7 @@ bool Tick()
 
     network::Bit_Writer writer;
     shared::serialize_map_data(writer, msg);
-    // QUEUED, not sent: service_paced_transfers below feeds it to the socket a
-    // few fragments per tick. Sending it here in one loop is what overran the
-    // client's receive queue and made a download retry forever.
+
     network::begin_paced_transfer(
         context.transport_layer, client_slot, writer.buffer,
         static_cast<network::uint8>(network::Message_Type::S2C_MapData));
@@ -1498,15 +1464,14 @@ bool Tick()
                  msg.package_hash, client_slot, request.map_name);
   }
 
-  // Hand every in-flight bulk transfer its next few fragments. UDP has no flow
-  // control, so this rate limit is the only thing between a map package and the
-  // receiver's kernel queue -- see sv_map_transfer_fragments_per_tick.
+  //@FIXME(SJM) this is still kind of a bandaid fix. maybe just a separate thread that joins when it's done? 
   network::service_paced_transfers(
       context.transport_layer, context.socket,
       static_cast<size_t>(std::max(1, context.cvars->sv_map_transfer_fragments_per_tick)));
 
+
   // this used to sort by timestamp which was broken regardless.
-  // noew  ordered monotonically by command number so that commands in the same tick
+  // now  ordered monotonically by command number so that commands in the same tick
   // will at least be processed later. :~)
   std::sort(inbox.inputs.begin(), inbox.inputs.end(),
             [](const auto &a, const auto &b)
@@ -1516,7 +1481,7 @@ bool Tick()
               return a.second.input_number() < b.second.input_number();
             });
 
-  // Update (on the server''s internal data structure)
+  // update (on the server''s internal data structure)
   // each client's held snapshot, based on the held_snapshot tick from the move,
   // which (in theory?) should be the latest snapshot.
   //

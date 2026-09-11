@@ -33,10 +33,10 @@ struct ServerInbox
   // client does write; see the sort in server_impl.cpp's Tick().
   std::vector<std::pair<int, game::C2S_ClientInput>> inputs;
   std::vector<Address> potential_joins;
-  // Handshake commands from clients (or would-be clients)
-  std::vector<std::pair<Address, game::NetCommand>> net_commands;
-  // console commands: client slot + raw command line
-  std::vector<std::pair<int, std::string>> commands;
+  // Connect / disconnect messages from clients (or would-be clients)
+  std::vector<std::pair<Address, game::NetCommand>> connection_messages;
+  // developer console lines: client slot + raw line
+  std::vector<std::pair<int, std::string>> developer_console_entries;
   // Bitstream-native C2S_RequestMapData: client slot + raw reassembled payload,
   // decoded in server_impl via shared::deserialize_request_map_data(). The
   // server responds by streaming the compiled package as S2C_MapData.
@@ -416,7 +416,7 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
       return;
     }
 
-    out_inbox.commands.push_back({client_slot, command.line()});
+    out_inbox.developer_console_entries.push_back({client_slot, command.line()});
     return;
   }
 
@@ -489,7 +489,7 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
         game::NetCommand cmd;
         if (cmd.ParseFromArray(packet.buffer, packet.header.payload_size))
         {
-          out_inbox.net_commands.push_back({sender, cmd});
+          out_inbox.connection_messages.push_back({sender, cmd});
         }
       }
     }

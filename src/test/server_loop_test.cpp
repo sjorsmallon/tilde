@@ -252,11 +252,11 @@ void test_reliable_stream_round_trip_c2s()
   poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
                301, inbox);
 
-  assert(inbox.commands.size() == 1 &&
+  assert(inbox.developer_console_entries.size() == 1 &&
          "the console line came out of the block and into the inbox the "
          "unreliable path files into");
-  assert(inbox.commands[0].first == 0);
-  assert(inbox.commands[0].second == "changelevel new_map");
+  assert(inbox.developer_console_entries[0].first == 0);
+  assert(inbox.developer_console_entries[0].second == "changelevel new_map");
   assert(inbox.map_data_requests.size() == 1 &&
          "and so did the bitstream-native map request, still raw");
   assert(inbox.map_data_requests[0].second == request_payload);

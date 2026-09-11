@@ -67,7 +67,7 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
 // Deliver every record whose tick has come, in (fire_tick, sequence) order.
 // Runs at the TOP of a tick: a queue drained mid-tick would let one system see
 // a world another system's signal had already changed underneath it.
-void drain_pending_actions(server_context_t& context);
+void drain_pending_entity_actions(server_context_t& context);
 
 // How sv_io_debug and ent_fire name one end of a connection: the author's label
 // when the entity has one, its classname otherwise, and the uid always -- the

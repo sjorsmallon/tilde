@@ -48,7 +48,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
 
   context.replication.snapshot_history.slot_for(900).tick = 900;
 
-  context.incoming.commands.push_back({0, "noclip 1"});
+  context.incoming.developer_console_entries.push_back({0, "noclip 1"});
   context.incoming.map_data_requests.push_back({1, {1, 2, 3}});
   // Both channels hold encoded bytes rather than values, so "dirty" is a fired
   // event rather than a pushed one.
@@ -156,7 +156,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   // undo.
   assert(cvar_state.sv_tickrate == 30.f);
 
-  assert(context.incoming.commands.empty());
+  assert(context.incoming.developer_console_entries.empty());
   assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
 
@@ -299,8 +299,8 @@ void test_clear_tick_groups()
 
   assert(context.incoming.inputs.empty());
   assert(context.incoming.potential_joins.empty());
-  assert(context.incoming.net_commands.empty());
-  assert(context.incoming.commands.empty());
+  assert(context.incoming.connection_messages.empty());
+  assert(context.incoming.developer_console_entries.empty());
   assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
   assert(context.outgoing.events.empty());
@@ -309,7 +309,7 @@ void test_clear_tick_groups()
   // The reason these are functions and not `= {}` on the group: they run at the
   // tickrate, so the capacity has to survive. An `= {}` "simplification" fails
   // here rather than silently reintroducing a per-tick realloc.
-  assert(context.incoming.commands.capacity() > 0);
+  assert(context.incoming.developer_console_entries.capacity() > 0);
   assert(context.incoming.map_data_requests.capacity() > 0);
   assert(context.outgoing.pending_hits.capacity() > 0);
   // Same intent, different member: a stream keeps its buffer's allocation.

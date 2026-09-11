@@ -732,7 +732,7 @@ void Play_State::update(float dt)
   // this iterates over fully constructed messages. that's why the apply_map_package
   // is just a single call. I confused myself with thinking that the map probably wouldnt'fit
   // in one packet.
-  for (const auto &cmd : inbox.net_commands)
+  for (const auto &cmd : inbox.connection_messages)
   {
     if (cmd.has_accept())
     {
