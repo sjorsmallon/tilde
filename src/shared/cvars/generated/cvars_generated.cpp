@@ -16,6 +16,12 @@ namespace cvars
 namespace
 {
 
+constexpr const char* Bunnyhop_Mode_VALUE_NAMES[] = {
+  "none",
+  "hl2",
+  "cs",
+};
+
 constexpr const char* Game_Mode_VALUE_NAMES[] = {
   "deathmatch",
   "rounds",
@@ -44,6 +50,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 };
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
+  {"Bunnyhop_Mode", {Bunnyhop_Mode_VALUE_NAMES, 3}},
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 12}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
@@ -51,7 +58,7 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
 
 const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
     {.name = "pm_maxspeed",
-     .description = "Maximum player speed",
+     .description = "Run speed: the most your own acceleration pushes you to",
      .flags = CVAR_FLAG_MIRRORED,
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, pm_maxspeed),
@@ -154,6 +161,38 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::pm_air_jump_speed),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "pm_bunnyhop",
+     .description = "Where hop speed comes from: none (hops only keep speed), hl2 (ground jumps add pm_jump_boost), cs (air strafing up to pm_air_speed_cap)",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_ENUM,
+     .offset = offsetof(cvar_state_t, pm_bunnyhop),
+     .size = sizeof(cvar_state_t::pm_bunnyhop),
+     .string_capacity = 0,
+     .enum_info = &ENUM_INFOS[0]},
+    {.name = "pm_jump_boost",
+     .description = "pm_bunnyhop hl2: speed a ground jump adds along the held direction",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_jump_boost),
+     .size = sizeof(cvar_state_t::pm_jump_boost),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_jump_boost_max_speed",
+     .description = "pm_bunnyhop hl2: horizontal speed a jump boost stops at",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_jump_boost_max_speed),
+     .size = sizeof(cvar_state_t::pm_jump_boost_max_speed),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_air_speed_cap",
+     .description = "pm_bunnyhop cs: speed an air push stops adding at, along its own direction",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_air_speed_cap),
+     .size = sizeof(cvar_state_t::pm_air_speed_cap),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "game_rocket_speed",
      .description = "Rocket velocity",
      .flags = CVAR_FLAG_MIRRORED,
@@ -169,7 +208,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, sv_gamemode),
      .size = sizeof(cvar_state_t::sv_gamemode),
      .string_capacity = 0,
-     .enum_info = &ENUM_INFOS[0]},
+     .enum_info = &ENUM_INFOS[1]},
     {.name = "mp_warmup_seconds",
      .description = "Warmup length before the match auto-starts (0 = wait for players)",
      .flags = CVAR_FLAG_SERVER,
@@ -745,7 +784,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, r_debug_channel),
      .size = sizeof(cvar_state_t::r_debug_channel),
      .string_capacity = 0,
-     .enum_info = &ENUM_INFOS[1]},
+     .enum_info = &ENUM_INFOS[2]},
     {.name = "r_exposure",
      .description = "Exposure multiplier applied before the tonemap curve",
      .flags = CVAR_FLAG_CLIENT,
@@ -943,7 +982,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[20] = {
+const cvar_id MIRRORED_CVAR_TABLE[24] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -957,6 +996,10 @@ const cvar_id MIRRORED_CVAR_TABLE[20] = {
     cvar_id::pm_minimum_land_impact_speed,
     cvar_id::pm_air_jump_count,
     cvar_id::pm_air_jump_speed,
+    cvar_id::pm_bunnyhop,
+    cvar_id::pm_jump_boost,
+    cvar_id::pm_jump_boost_max_speed,
+    cvar_id::pm_air_speed_cap,
     cvar_id::game_rocket_speed,
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
@@ -1025,7 +1068,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 20};
+  return {MIRRORED_CVAR_TABLE, 24};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)
@@ -1200,6 +1243,26 @@ bool try_cvar_from_text(cvar_state_t& state, cvar_id id, std::string_view text)
 
   fatal_error("try_cvar_from_text: cvar '{}' carries an invalid type tag {}",
               info.name, (int)info.type);
+}
+
+const char* to_string(Bunnyhop_Mode value)
+{
+  switch (value)
+  {
+    case Bunnyhop_Mode::none: return "none";
+    case Bunnyhop_Mode::hl2: return "hl2";
+    case Bunnyhop_Mode::cs: return "cs";
+  }
+  assert(false && "invalid Bunnyhop_Mode");
+  return "";
+}
+
+template <> std::optional<Bunnyhop_Mode> try_from_string<Bunnyhop_Mode>(std::string_view text)
+{
+  if (text == "none") return Bunnyhop_Mode::none;
+  if (text == "hl2") return Bunnyhop_Mode::hl2;
+  if (text == "cs") return Bunnyhop_Mode::cs;
+  return std::nullopt;
 }
 
 const char* to_string(Game_Mode value)

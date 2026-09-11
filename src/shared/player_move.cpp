@@ -1,8 +1,10 @@
 #include "player_move.hpp"
 #include "network/network_types.hpp"
 #include "debug_collision.hpp"
+#include "log.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <print>
 #include "timed_function.hpp"
 
@@ -19,10 +21,10 @@ constexpr float pm_input_axial_extreme = 127.f;
 // wish_direction is normalized, new_velocity is not.
 [[nodiscard]]
 auto accelerate(vec3 new_velocity, vec3 wish_direction, float wish_speed,
-                float acceleration, float dt) -> vec3
+                float target_speed, float acceleration, float dt) -> vec3
 {
   float current_speed_in_wish_direction = dot(new_velocity, wish_direction);
-  float add_speed = wish_speed - current_speed_in_wish_direction;
+  float add_speed = target_speed - current_speed_in_wish_direction;
 
   if (add_speed < 0.0f)
     return new_velocity;
@@ -38,25 +40,58 @@ auto accelerate(vec3 new_velocity, vec3 wish_direction, float wish_speed,
 }
 
 [[nodiscard]]
-auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
-                   vec3 &new_velocity, const float dt)
+vec3 clip_horizontal_speed(const vec3& velocity, const float speed_limit)
+{
+  const float speed = sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+  if (speed <= speed_limit)
+    return velocity;
+
+  const float scale = speed_limit / speed;
+  return vec3{velocity.x * scale, velocity.y, velocity.z * scale};
+}
+
+[[nodiscard]]
+vec3 rotate_about_y(const vec3& vector, const float radians)
+{
+  const float cosine = std::cos(radians);
+  const float sine   = std::sin(radians);
+  return vec3{vector.x * cosine - vector.z * sine, vector.y, vector.x * sine + vector.z * cosine};
+}
+
+struct bunnyhop_rules_t
+{
+  bool  clip_air_speed       = true;
+  float air_target_speed     = std::numeric_limits<float>::infinity();
+  float jump_boost_speed     = 0.f;
+  float jump_boost_max_speed = 0.f;
+};
+
+[[nodiscard]]
+bunnyhop_rules_t bunnyhop_rules_for(const cvar_state_t& cvars)
+{
+  bunnyhop_rules_t rules;
+  switch (cvars.pm_bunnyhop)
+  {
+    case cvars::Bunnyhop_Mode::none:
+      break;
+    case cvars::Bunnyhop_Mode::hl2:
+      rules.jump_boost_speed     = cvars.pm_jump_boost;
+      rules.jump_boost_max_speed = cvars.pm_jump_boost_max_speed;
+      break;
+    case cvars::Bunnyhop_Mode::cs:
+      rules.clip_air_speed   = false;
+      rules.air_target_speed = cvars.pm_air_speed_cap;
+      break;
+  }
+  return rules;
+}
+
+[[nodiscard]]
+auto step_air_move(const vec3& old_position, vec3& new_velocity,
+                   const float speed_limit, const float dt)
     -> std::tuple<vec3, vec3>
 {
-  const float maxspeed = cvars.pm_maxspeed;
-
-  // clip the speed in the horizontal plane to maxspeed.
-  float speed =
-      sqrt(new_velocity.x * new_velocity.x + new_velocity.z * new_velocity.z);
-  if (speed > maxspeed)
-  {
-    speed = maxspeed;
-    float y = new_velocity.y;
-
-    auto new_vector = vec3{new_velocity.x, 0.0f, new_velocity.z};
-    new_vector = normalize(new_vector);
-    new_vector = new_vector * speed;
-    new_velocity = vec3{new_vector.x, y, new_vector.z};
-  }
+  new_velocity = clip_horizontal_speed(new_velocity, speed_limit);
 
   vec3 position = old_position + (new_velocity * dt);
 
@@ -67,27 +102,13 @@ auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
   return std::make_tuple(position, new_velocity);
 }
 
-[[nodiscard]] std::tuple<vec3, vec3> step_slide_move(const cvar_state_t &cvars,
-                                                     const vec3 &old_position,
-                                                     vec3 &new_velocity,
+[[nodiscard]] std::tuple<vec3, vec3> step_slide_move(const vec3& old_position,
+                                                     vec3& new_velocity,
+                                                     const float speed_limit,
                                                      bool ground_collided,
                                                      const float dt)
 {
-  const float maxspeed = cvars.pm_maxspeed;
-
-  // clip the speed in the horizontal plane to maxspeed.
-  float speed =
-      sqrt(new_velocity.x * new_velocity.x + new_velocity.z * new_velocity.z);
-  if (speed > maxspeed)
-  {
-    speed = maxspeed;
-    float y = new_velocity.y;
-
-    auto new_vector = vec3{new_velocity.x, 0.0f, new_velocity.z};
-    new_vector = normalize(new_vector);
-    new_vector = new_vector * speed;
-    new_velocity = vec3{new_vector.x, y, new_vector.z};
-  }
+  new_velocity = clip_horizontal_speed(new_velocity, speed_limit);
 
   // NOTE: integrate position BEFORE snapping Y velocity. This order matters!
   // On slopes, the ground clip gives velocity a Y component so the player
@@ -100,8 +121,6 @@ auto step_air_move(const cvar_state_t &cvars, const vec3 &old_position,
   // clip_vector can produce tiny positive Y on slopes too. Even a small
   // positive Y fails the grounded check (vel_y <= 0) next frame, kicking
   // the player into air mode where gravity builds up negative Y.
-  // The jump is injected by the caller AFTER this function returns, so
-  // it is not affected by this snap.
   vec3 position = old_position + (new_velocity * dt);
 
   if (ground_collided)
@@ -173,30 +192,6 @@ auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt)
 
 // since input can be provided -127 -> +127, scale the movement vector based on
 // the input delivered.
-[[nodiscard]] float calculate_input_scale(const float forward_move,
-                                          const float right_move,
-                                          const float up_move,
-                                          const float max_speed,
-                                          const float input_axial_extreme)
-{
-
-  int max = abs(static_cast<int>(forward_move));
-  if (abs(static_cast<int>(right_move)) > max)
-    max = abs(static_cast<int>(right_move));
-
-  if (abs(static_cast<int>(up_move)) > max)
-    max = abs(static_cast<int>(up_move));
-
-  if (!max)
-    return 0.f;
-
-  float total = sqrt(forward_move * forward_move + right_move * right_move +
-                     up_move * up_move);
-  float scale =
-      max_speed * static_cast<float>(max) / (input_axial_extreme * total);
-  return scale;
-}
-
 //@FIXME: this should be better.
 [[nodiscard]] float calculate_input_scale(const float forward_move,
                                           const float right_move,
@@ -216,8 +211,6 @@ auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt)
       max_speed * static_cast<float>(max) / (input_axial_extreme * total);
   return scale;
 }
-
-bool check_jump(const Move_Input &input) { return input.jump_pressed; }
 
 vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
 {
@@ -252,29 +245,18 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
 {
   const float maxspeed = cvars.pm_maxspeed;
   const float overbounce = cvars.pm_overbounce;
-  const float jumpspeed = cvars.pm_jumpspeed;
 
-  // we know we were walking when we got here.
-  bool jump_pressed_this_frame = check_jump(input);
-
-  // do not apply friction if we are intending to jump.
-  vec3  old_velocity_with_friction_applied = old_velocity;
-  float acceleration_duration              = dt;
-  if (!jump_pressed_this_frame)
-  {
-    // apply friction. this does not fully 'nullify' the velocity (or does it?).
-    const friction_step_t friction = apply_friction(
-        cvars, old_velocity, dt); // at this point, y velocity is already gone.
-    old_velocity_with_friction_applied = friction.velocity;
-    acceleration_duration              = friction.acceleration_duration;
-  }
+  // apply friction. this does not fully 'nullify' the velocity (or does it?).
+  const friction_step_t friction = apply_friction(
+      cvars, old_velocity, dt); // at this point, y velocity is already gone.
+  const vec3  old_velocity_with_friction_applied = friction.velocity;
+  const float acceleration_duration              = friction.acceleration_duration;
 
   // what inputs did we provide?
   float forward_input = pm_input_axial_extreme * input.forward_pressed -
                         pm_input_axial_extreme * input.backward_pressed;
   float right_input = pm_input_axial_extreme * input.right_pressed -
                       pm_input_axial_extreme * input.left_pressed;
-  float up_input = pm_input_axial_extreme * (jump_pressed_this_frame);
 
   // get rid of the y component: only look at the xz plane. the y-component is
   // handled by "a different subroutine". where are we looking?
@@ -310,9 +292,8 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
       front_clipped * forward_input + right_clipped * right_input;
   vec3 normalized_wish_direction = normalize(wish_direction);
 
-  float input_scale =
-      calculate_input_scale(forward_input, right_input, up_input, maxspeed,
-                            pm_input_axial_extreme);
+  float input_scale = calculate_input_scale(
+      forward_input, right_input, maxspeed, pm_input_axial_extreme);
   float wish_speed =
       0.0f; // we set this because I think some float weirdness happens when
             // taking the length of wish_direction when it is 0.
@@ -332,7 +313,7 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
   {
     float acceleration = cvars.pm_ground_acceleration;
     new_velocity = accelerate(old_velocity_with_friction_applied,
-                              normalized_wish_direction, wish_speed,
+                              normalized_wish_direction, wish_speed, wish_speed,
                               acceleration, acceleration_duration);
   }
 
@@ -379,20 +360,13 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
     }
   }
 
-  // Set jump velocity before step_slide_move so it's integrated into position
-  // immediately (no one-frame delay). When jumping, pass ground_collided=false
-  // so step_slide_move's Y snap doesn't kill the jump velocity — we're
-  // leaving the ground, not staying on it.
-  if (jump_pressed_this_frame)
-  {
-    new_velocity.y = jumpspeed;
-  }
-
-  return step_slide_move(cvars, old_position, new_velocity,
-                         has_ground && !jump_pressed_this_frame, dt);
+  const float speed_limit =
+      std::max(length(old_velocity_with_friction_applied), maxspeed);
+  return step_slide_move(old_position, new_velocity, speed_limit, has_ground, dt);
 }
 
 auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
+                 const bunnyhop_rules_t& rules, const aim_sweep_t& aim_sweep,
                  bool has_ground, const vec3 &ground_normal,
                  bool has_ceiling, const vec3 &ceiling_normal,
                  Collider_Planes &collider_planes, const vec3 &old_position,
@@ -467,8 +441,18 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
   {
     // if we are in the air, you have less control.
     float acceleration = cvars.pm_air_acceleration;
-    new_velocity = accelerate(old_velocity_without_y, normalized_wish_direction,
-                              wish_speed, acceleration, dt);
+    const float target_speed   = std::min(wish_speed, rules.air_target_speed);
+    const float pushes_in_step = static_cast<float>(aim_sweep.push_count);
+    const float turn_radians   = linalg::to_radians(aim_sweep.yaw_change_degrees);
+    new_velocity = old_velocity_without_y;
+    for (uint32_t push = 0; push < aim_sweep.push_count; ++push)
+    {
+      const vec3 push_direction = rotate_about_y(
+          normalized_wish_direction,
+          turn_radians * (static_cast<float>(push) + 0.5f) / pushes_in_step);
+      new_velocity = accelerate(new_velocity, push_direction, wish_speed, target_speed,
+                                acceleration, dt / pushes_in_step);
+    }
   }
 
   float new_speed = length(new_velocity);
@@ -533,8 +517,11 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
 
   new_velocity.y = new_y_velocity - half_gravity_step;
 
+  const float speed_limit = rules.clip_air_speed
+                                ? std::max(length(old_velocity_without_y), maxspeed)
+                                : std::numeric_limits<float>::infinity();
   auto [position, velocity] =
-      step_air_move(cvars, old_position, new_velocity, dt);
+      step_air_move(old_position, new_velocity, speed_limit, dt);
   velocity.y -= half_gravity_step;
   return std::make_tuple(position, velocity);
 }
@@ -667,11 +654,15 @@ std::tuple<vec3, vec3> player_move(
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, const float half_width, const float half_height,
-    const float dt, Move_Events *out_events,
+    const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
+    const float half_height, const float dt, Move_Events *out_events,
     debug_collision::Face_Bucket *debug_faces)
 {
   timed_function();
+
+  if (aim_sweep.push_count == 0)
+    fatal_error("player_move: aim_sweep.push_count is {}, which divides the step by zero",
+                aim_sweep.push_count);
 
   // Resolved once for the whole tick: every resolve_collisions call below must
   // agree about whether it is recording, or a mid-tick console toggle would
@@ -696,6 +687,8 @@ std::tuple<vec3, vec3> player_move(
   // - y velocity is going down. (at least not going up.)
   bool grounded = has_ground && (old_velocity.y <= 0.0f);
 
+  const bunnyhop_rules_t rules = bunnyhop_rules_for(cvars);
+
   // --- ABILITIES: the only place per-player movement state is read ---
   //
   // A GROUND jump reads the LEVEL, unchanged: holding space to bunnyhop is the
@@ -711,17 +704,18 @@ std::tuple<vec3, vec3> player_move(
   // has to avoid.
   const bool jump_edge = input.jump_pressed && !movement.jump_was_held;
 
+  const bool ground_jump_fired = grounded && input.jump_pressed;
+
   const bool air_jump_fired =
       !grounded && jump_edge &&
       (int32_t)movement.air_jumps_used < cvars.pm_air_jump_count;
 
-  // Applied to the velocity ENTERING the move, not after it, for the same
-  // reason my_walk_move sets the ground jump before step_slide_move: the
-  // impulse is integrated into this step's position rather than showing up one
-  // step late. A step boundary is 0.26ms, so "one step late" is invisible --
-  // but it would also be step-count-dependent, which is what
-  // player_move_step_invariance_test exists to refuse.
+  // Both jumps fly their whole step, so gravity starts at the impulse whatever the step's length.
   vec3 velocity_entering_move = old_velocity;
+  if (ground_jump_fired)
+  {
+    velocity_entering_move.y = cvars.pm_jumpspeed;
+  }
   if (air_jump_fired)
   {
     velocity_entering_move.y = cvars.pm_air_jump_speed;
@@ -744,12 +738,22 @@ std::tuple<vec3, vec3> player_move(
   if (has_wish)
     wish_dir_xz = normalize(wish_dir_xz);
 
+  if (ground_jump_fired && has_wish && rules.jump_boost_speed > 0.f)
+  {
+    const vec3 horizontal_velocity{old_velocity.x, 0.f, old_velocity.z};
+    const vec3 boosted_velocity = clip_horizontal_speed(
+        horizontal_velocity + wish_dir_xz * rules.jump_boost_speed,
+        std::max(length(horizontal_velocity), rules.jump_boost_max_speed));
+    velocity_entering_move.x = boosted_velocity.x;
+    velocity_entering_move.z = boosted_velocity.z;
+  }
+
   // Stair-step glide: if grounded and pressing into a wall, try raising the
   // player by pm_step_height and re-testing. If no wall at the raised height
   // blocks our wish direction, the obstacle is short enough to step over.
   // Walk from the raised position, then drop back down onto the surface.
   bool used_step = false;
-  if (grounded && has_wish && !collider_planes.wall_planes.empty())
+  if (grounded && !ground_jump_fired && has_wish && !collider_planes.wall_planes.empty())
   {
     // Only proceed if we're actually pressing toward at least one wall.
     bool pressing_into_wall = false;
@@ -847,11 +851,11 @@ std::tuple<vec3, vec3> player_move(
         }
       }
     } // if (pressing_into_wall)
-  }   // if (grounded && has_wish && ...)
+  }   // if (grounded && !ground_jump_fired && has_wish && ...)
 
   if (!used_step)
   {
-    if (grounded)
+    if (grounded && !ground_jump_fired)
     {
       //@FIXME: currently, we set the y_velocity to 0 here already. because
       // my_walk_move assumes that we are grounded.
@@ -863,20 +867,18 @@ std::tuple<vec3, vec3> player_move(
     }
     else
     {
-      // velocity_entering_move, not old_velocity: an air jump replaced the Y
+      // velocity_entering_move, not old_velocity: a jump replaced the Y
       // component above and this is the path that integrates it. They are the
-      // same vector on every step where no air jump fired.
-      std::tie(new_pos, new_vel) =
-          my_air_move(cvars, input, has_ground, ground_normal, has_ceiling,
-                      ceiling_normal, collider_planes, player_pos,
-                      velocity_entering_move, front, right, dt);
+      // same vector on every step where no jump fired.
+      std::tie(new_pos, new_vel) = my_air_move(
+          cvars, input, rules, aim_sweep, has_ground && !ground_jump_fired,
+          ground_jump_fired ? vec3{0.f, 1.f, 0.f} : ground_normal, has_ceiling,
+          ceiling_normal, collider_planes, player_pos, velocity_entering_move,
+          front, right, dt);
     }
   }
 
-  // A jump impulse is applied exactly when we ran the grounded walk path (not
-  // the step-glide path) with jump held — that's where my_walk_move sets
-  // new_velocity.y = jumpspeed. The step path discards any jump, so exclude it.
-  bool jumped = (grounded && input.jump_pressed && !used_step) || air_jump_fired;
+  const bool jumped = ground_jump_fired || air_jump_fired;
 
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.

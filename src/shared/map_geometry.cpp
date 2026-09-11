@@ -161,11 +161,9 @@ resolve_surface_mesh(const geometry_surface_t &surface)
   if (surface.mesh_path.empty())
     return {};
 
-  // A surface's mesh_path is deliberately FREE-FORM -- a level author adding a
-  // prop should not have to touch a .def -- so it is one of the two places a
-  // path is a caller parameter and therefore probed rather than assumed. An
-  // invalid handle here means "no mesh", which this function already returns
-  // for the empty path; load_mesh itself stays infallible.
+  // Picked from the manifest in the editor but stored as a PATH, so a map naming a
+  // mesh this build lacks still loads -- which is why it is probed rather than
+  // assumed. An invalid handle means "no mesh", as for the empty path.
   if (!assets::asset_exists(surface.mesh_path.c_str()))
   {
     log_error("geometry surface names mesh '{}', which is not there", surface.mesh_path);

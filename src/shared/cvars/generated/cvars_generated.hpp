@@ -33,6 +33,18 @@ enum cvar_flags : uint32_t
 // number of declared names and one past the largest value -- which is
 // what makes it safe as an array size.
 
+enum class Bunnyhop_Mode : uint8_t
+{
+  none = 0,
+  hl2 = 1,
+  cs = 2,
+};
+
+constexpr uint32_t Bunnyhop_Mode_COUNT = 3;
+
+const char* to_string(Bunnyhop_Mode value);
+template <> std::optional<Bunnyhop_Mode> try_from_string<Bunnyhop_Mode>(std::string_view text);
+
 enum class Game_Mode : uint8_t
 {
   deathmatch = 0,
@@ -103,6 +115,10 @@ struct cvar_state_t
   float pm_minimum_land_impact_speed = 150.0f;
   int32_t pm_air_jump_count = 0;
   float pm_air_jump_speed = 270.0f;
+  Bunnyhop_Mode pm_bunnyhop = Bunnyhop_Mode::none;
+  float pm_jump_boost = 32.0f;
+  float pm_jump_boost_max_speed = 480.0f;
+  float pm_air_speed_cap = 30.0f;
   float game_rocket_speed = 600.0f;
   Game_Mode sv_gamemode = Game_Mode::deathmatch;
   float mp_warmup_seconds = 0.0f;
@@ -216,99 +232,103 @@ enum class cvar_id : uint16_t
   pm_minimum_land_impact_speed = 10,
   pm_air_jump_count = 11,
   pm_air_jump_speed = 12,
-  game_rocket_speed = 13,
-  sv_gamemode = 14,
-  mp_warmup_seconds = 15,
-  mp_countdown_seconds = 16,
-  mp_round_seconds = 17,
-  mp_round_end_seconds = 18,
-  mp_game_over_seconds = 19,
-  mp_players_to_start = 20,
-  mp_frag_limit = 21,
-  sv_aim_max_pitch = 22,
-  sv_aim_max_yaw = 23,
-  sv_aim_body_turn_rate = 24,
-  sv_lag_compensation = 25,
-  sv_max_rewind_ticks = 26,
-  sv_lag_compensation_debug = 27,
-  sv_shot_debug = 28,
-  sv_tickrate = 29,
-  sv_timeout = 30,
-  sv_max_move_backlog = 31,
-  sv_map_transfer_fragments_per_tick = 32,
-  name = 33,
-  cl_max_unacked_inputs = 34,
-  r_fov = 35,
-  r_zoom_fov = 36,
-  r_zoom_easing_time_between_fovs = 37,
-  r_shadow_map_size = 38,
-  r_shadow_layer_count = 39,
-  r_shadow_light_offset = 40,
-  r_shadow_bias_slope = 41,
-  r_shadow_normal_offset = 42,
-  r_shadow_pcf_radius = 43,
-  r_shadow_pcss = 44,
-  r_shadow_pcss_max_radius = 45,
-  r_shadow_debug_light = 46,
-  r_lightmap_gpu = 47,
-  r_shadow_cascade_count = 48,
-  r_shadow_cascade_lambda = 49,
-  r_shadow_cascade_distance = 50,
-  r_shadow_cascade_blend = 51,
-  r_shadow_cascade_caster_extent = 52,
-  r_shadow_freeze = 53,
-  m_sensitivity = 54,
-  m_zoom_sensitivity_ratio = 55,
-  cl_maxfps = 56,
-  cl_interpolation_delay_ticks = 57,
-  cl_interpolation_debug = 58,
-  cl_display_latency_ms = 59,
-  cl_draw_player_hull = 60,
-  cl_spectate_slot = 61,
-  cl_player_unlit = 62,
-  cl_aim_debug = 63,
-  cl_aim_debug_pitch = 64,
-  cl_aim_debug_yaw = 65,
-  cl_show_deploy_timer = 66,
-  cl_crosshair = 67,
-  cl_crosshair_dot = 68,
-  cl_crosshair_size = 69,
-  cl_crosshair_gap = 70,
-  cl_crosshair_thickness = 71,
-  cl_crosshair_r = 72,
-  cl_crosshair_g = 73,
-  cl_crosshair_b = 74,
-  cl_crosshair_a = 75,
-  editor_speed = 76,
-  cl_timescale = 77,
-  sound_reference_distance = 78,
-  sound_max_distance_cutoff = 79,
-  sound_rolloff_factor = 80,
-  map_respawn_delay_seconds = 81,
-  map_kill_limit = 82,
-  map_round_time_limit_seconds = 83,
-  next_map = 84,
-  pin_main_thread = 85,
-  r_debug_channel = 86,
-  r_exposure = 87,
-  debug_show_collisions = 88,
-  debug_show_hitboxes = 89,
-  debug_show_navmesh = 90,
-  debug_show_box_volumes = 91,
-  debug_hide_geometry = 92,
-  cl_shot_debug_seconds = 93,
-  debug_show_entity_counts = 94,
-  debug_show_physics_bodies = 95,
-  net_snapshot_debug = 96,
-  sv_event_debug = 97,
-  cl_event_debug = 98,
-  sv_reliable_debug = 99,
-  sv_io_debug = 100,
+  pm_bunnyhop = 13,
+  pm_jump_boost = 14,
+  pm_jump_boost_max_speed = 15,
+  pm_air_speed_cap = 16,
+  game_rocket_speed = 17,
+  sv_gamemode = 18,
+  mp_warmup_seconds = 19,
+  mp_countdown_seconds = 20,
+  mp_round_seconds = 21,
+  mp_round_end_seconds = 22,
+  mp_game_over_seconds = 23,
+  mp_players_to_start = 24,
+  mp_frag_limit = 25,
+  sv_aim_max_pitch = 26,
+  sv_aim_max_yaw = 27,
+  sv_aim_body_turn_rate = 28,
+  sv_lag_compensation = 29,
+  sv_max_rewind_ticks = 30,
+  sv_lag_compensation_debug = 31,
+  sv_shot_debug = 32,
+  sv_tickrate = 33,
+  sv_timeout = 34,
+  sv_max_move_backlog = 35,
+  sv_map_transfer_fragments_per_tick = 36,
+  name = 37,
+  cl_max_unacked_inputs = 38,
+  r_fov = 39,
+  r_zoom_fov = 40,
+  r_zoom_easing_time_between_fovs = 41,
+  r_shadow_map_size = 42,
+  r_shadow_layer_count = 43,
+  r_shadow_light_offset = 44,
+  r_shadow_bias_slope = 45,
+  r_shadow_normal_offset = 46,
+  r_shadow_pcf_radius = 47,
+  r_shadow_pcss = 48,
+  r_shadow_pcss_max_radius = 49,
+  r_shadow_debug_light = 50,
+  r_lightmap_gpu = 51,
+  r_shadow_cascade_count = 52,
+  r_shadow_cascade_lambda = 53,
+  r_shadow_cascade_distance = 54,
+  r_shadow_cascade_blend = 55,
+  r_shadow_cascade_caster_extent = 56,
+  r_shadow_freeze = 57,
+  m_sensitivity = 58,
+  m_zoom_sensitivity_ratio = 59,
+  cl_maxfps = 60,
+  cl_interpolation_delay_ticks = 61,
+  cl_interpolation_debug = 62,
+  cl_display_latency_ms = 63,
+  cl_draw_player_hull = 64,
+  cl_spectate_slot = 65,
+  cl_player_unlit = 66,
+  cl_aim_debug = 67,
+  cl_aim_debug_pitch = 68,
+  cl_aim_debug_yaw = 69,
+  cl_show_deploy_timer = 70,
+  cl_crosshair = 71,
+  cl_crosshair_dot = 72,
+  cl_crosshair_size = 73,
+  cl_crosshair_gap = 74,
+  cl_crosshair_thickness = 75,
+  cl_crosshair_r = 76,
+  cl_crosshair_g = 77,
+  cl_crosshair_b = 78,
+  cl_crosshair_a = 79,
+  editor_speed = 80,
+  cl_timescale = 81,
+  sound_reference_distance = 82,
+  sound_max_distance_cutoff = 83,
+  sound_rolloff_factor = 84,
+  map_respawn_delay_seconds = 85,
+  map_kill_limit = 86,
+  map_round_time_limit_seconds = 87,
+  next_map = 88,
+  pin_main_thread = 89,
+  r_debug_channel = 90,
+  r_exposure = 91,
+  debug_show_collisions = 92,
+  debug_show_hitboxes = 93,
+  debug_show_navmesh = 94,
+  debug_show_box_volumes = 95,
+  debug_hide_geometry = 96,
+  cl_shot_debug_seconds = 97,
+  debug_show_entity_counts = 98,
+  debug_show_physics_bodies = 99,
+  net_snapshot_debug = 100,
+  sv_event_debug = 101,
+  cl_event_debug = 102,
+  sv_reliable_debug = 103,
+  sv_io_debug = 104,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 101;
+constexpr uint32_t CVAR_COUNT = 105;
 
 enum class command_id : uint16_t
 {
@@ -513,6 +533,11 @@ void bind_client_commands(command_table_t& table);
 // Enum_Array<cvars::Foo, T>, so adding a value to the .def resizes
 // every table over that enum. It does not fill the new row -- see
 // rows_in_enum_order in array.hpp for the check that catches that.
+
+template <> struct enum_traits<cvars::Bunnyhop_Mode>
+{
+  static constexpr uint32_t count = cvars::Bunnyhop_Mode_COUNT;
+};
 
 template <> struct enum_traits<cvars::Game_Mode>
 {

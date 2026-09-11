@@ -86,7 +86,7 @@ void test_receive_and_reassembly()
                inbox);
 
   // Verify
-  if (inbox.inputs.empty())
+  if (inbox.client_inputs.empty())
   {
     std::cerr << "Failed to receive/reassemble moves!" << std::endl;
     // Debug
@@ -98,7 +98,7 @@ void test_receive_and_reassembly()
   // Both inputs of the batch, as separate inbox entries and in the order they
   // were packed: the receive side unpacks, it does not deduplicate or reorder.
   std::vector<const game::C2S_ClientInput *> inputs_for_player_0;
-  for (const auto &[pidx, input] : inbox.inputs)
+  for (const auto &[pidx, input] : inbox.client_inputs)
   {
     if (pidx == 0)
       inputs_for_player_0.push_back(&input);

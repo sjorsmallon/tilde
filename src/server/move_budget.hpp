@@ -5,7 +5,7 @@
 // How much movement a client is allowed to execute, and why it is a budget over
 // TIME rather than a cap per tick.
 //
-// The exploit: every input in `incoming.inputs` runs a full tick_dt of movement --
+// The exploit: every input in `incoming.client_inputs` runs a full tick_dt of movement --
 // as one `player_move` step, or as the several a command's sub-tick edges split
 // it into (shared/subtick.hpp), which sum to the same tick_dt -- so a client
 // that sends more inputs than the server ticks moves further per second

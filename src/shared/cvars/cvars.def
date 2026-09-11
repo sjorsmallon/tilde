@@ -43,8 +43,10 @@
 // something the generator already knows, which is exactly what sv_gamemode was
 // until 2026-08-26.
 
+Bunnyhop_Mode :: enum { none, hl2, cs }
+
 Player_Movement :: cvars {
-    pm_maxspeed:            f32 = 320.0       @Mirrored  "Maximum player speed"
+    pm_maxspeed:            f32 = 320.0       @Mirrored  "Run speed: the most your own acceleration pushes you to"
     pm_stopspeed:           f32 = 100.0       @Mirrored  "Deceleration threshold"
     pm_friction:            f32 = 6.0         @Mirrored  "Ground friction"
     pm_ground_acceleration: f32 = 10.0        @Mirrored  "Ground acceleration"
@@ -60,6 +62,11 @@ Player_Movement :: cvars {
     // speedrun specific stuff
     pm_air_jump_count:      i32 = 0          @Mirrored  "Air jumps allowed before touching ground again (0 = none)"
     pm_air_jump_speed:      f32 = 270.0      @Mirrored  "Upward velocity an air jump sets"
+
+    pm_bunnyhop:            Bunnyhop_Mode = .none  @Mirrored  "Where hop speed comes from: none (hops only keep speed), hl2 (ground jumps add pm_jump_boost), cs (air strafing up to pm_air_speed_cap)"
+    pm_jump_boost:          f32 = 32.0       @Mirrored  "pm_bunnyhop hl2: speed a ground jump adds along the held direction"
+    pm_jump_boost_max_speed: f32 = 480.0     @Mirrored  "pm_bunnyhop hl2: horizontal speed a jump boost stops at"
+    pm_air_speed_cap:       f32 = 30.0       @Mirrored  "pm_bunnyhop cs: speed an air push stops adding at, along its own direction"
 }
 
 Gameplay :: cvars {

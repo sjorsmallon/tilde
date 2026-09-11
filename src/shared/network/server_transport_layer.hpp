@@ -31,10 +31,10 @@ struct ServerInbox
   // carrying packet.header.timestamp, which NOTHING ever wrote -- the server
   // sorted by it anyway. Ordering is now (slot, input_number), which the
   // client does write; see the sort in server_impl.cpp's Tick().
-  std::vector<std::pair<int, game::C2S_ClientInput>> inputs;
+  std::vector<std::pair<int, game::C2S_ClientInput>> client_inputs;
   std::vector<Address> potential_joins;
   // Connect / disconnect messages from clients (or would-be clients)
-  std::vector<std::pair<Address, game::NetCommand>> connection_messages;
+  std::vector<std::pair<Address, game::C2S_Connection>> connection_messages;
   // developer console lines: client slot + raw line
   std::vector<std::pair<int, std::string>> developer_console_entries;
   // Bitstream-native C2S_RequestMapData: client slot + raw reassembled payload,
@@ -359,7 +359,7 @@ inline void send_reliable_block(Server_Transport_Layer &state,
 //
 // A SWITCH with no `default:`, so -Werror=switch makes a new Message_Type a
 // compile error here -- the S2C arms are listed out one by one for exactly that
-// reason, and the deliberate no-op case (NetCommand) stays a case rather than
+// reason, and the deliberate no-op case (C2S_Connection) stays a case rather than
 // becoming a null table slot indistinguishable from a forgotten one.
 inline void deliver_client_message(int32_t client_slot, uint8 message_type,
                                    std::vector<uint8> &&payload,
@@ -378,7 +378,7 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
 
   switch (static_cast<Message_Type>(message_type))
   {
-  case Message_Type::NetCommand:
+  case Message_Type::C2S_Connection:
     // Already filed, above the slot lookup in poll_network -- it has to be seen
     // there because a CmdConnect arrives from a sender with no slot yet. A
     // connected peer's CmdDisconnect then reaches here, so this is a deliberate
@@ -401,7 +401,7 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
     }
 
     for (const game::C2S_ClientInput &input : batch.inputs())
-      out_inbox.inputs.push_back({client_slot, input});
+      out_inbox.client_inputs.push_back({client_slot, input});
     return;
   }
 
@@ -446,6 +446,7 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
   case Message_Type::CmdChangeMap:
   case Message_Type::S2C_MapData:
   case Message_Type::S2C_CvarValues:
+  case Message_Type::S2C_Connection:
   case Message_Type::Count:
     break;
   }
@@ -479,14 +480,14 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
       break; // the kernel queue is empty -- nothing more has arrived yet
 
     if (packet.header.message_type ==
-        static_cast<uint8>(Message_Type::NetCommand))
+        static_cast<uint8>(Message_Type::C2S_Connection))
     {
-      // For now, assume NetCommands are single-packet for simplicity
+      // For now, assume connection messages are single-packet for simplicity
       // regarding unknown senders. Or use a temporary buffer. Since Connect
       // is small, strict single-packet check.
       if (packet.header.fragment_count == 1)
       {
-        game::NetCommand cmd;
+        game::C2S_Connection cmd;
         if (cmd.ParseFromArray(packet.buffer, packet.header.payload_size))
         {
           out_inbox.connection_messages.push_back({sender, cmd});

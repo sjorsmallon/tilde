@@ -31,6 +31,7 @@
 #include "../shared/map_geometry.hpp"
 #include "../shared/player_move.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <tuple>
@@ -154,7 +155,7 @@ static move_result_t run_split(const cvar_state_t& cvars,
   {
     std::tie(position, velocity) =
         player_move(cvars, input, state, bvh, position, velocity, look_front,
-                    look_right, half_width, half_height, step_dt);
+                    look_right, aim_sweep_t{}, half_width, half_height, step_dt);
   }
   return {position, velocity};
 }
@@ -499,11 +500,10 @@ static void test_ground_saturation_is_step_invariant(const cvar_state_t& cvars)
 // the clamp is a TARGET, so every subdivision saturates at the same wish_speed.
 //
 // What actually re-projects the velocity between sub-steps is the maxspeed clip
-// in step_air_move: above pm_maxspeed it normalizes the horizontal vector and
-// rescales, so the DIRECTION going into the next accelerate depends on when the
-// clip fired. Split finer and the lateral gain is preserved rather than being
-// renormalized away in one lump -- which is bunnyhopping, arriving through the
-// clip rather than through the clamp.
+// in step_air_move: above max(incoming speed, pm_maxspeed) it rescales the
+// horizontal vector, so the DIRECTION going into the next accelerate depends on
+// when the clip fired. Split finer and the lateral gain is preserved rather than
+// being renormalized away in one lump.
 //
 // So there is one structural mechanism here, not two, and it lives in the clip.
 // Asserted to still diverge: making it dt-exact deletes air control, and it
@@ -528,8 +528,8 @@ static void test_maxspeed_clip_diverges(const cvar_state_t& cvars)
                                            start_velocity, tick_dt, sub_steps);
     printf("    N=%-2d  vz = %.6f  |v_xz| = %.6f\n", sub_steps,
            result.velocity.z, horizontal_speed(result.velocity));
-    check_near(horizontal_speed(result.velocity), cvars.pm_maxspeed, 1e-2f,
-               "the clip pins horizontal speed to pm_maxspeed either way");
+    check_near(horizontal_speed(result.velocity), horizontal_speed(start_velocity), 1e-2f,
+               "the clip pins horizontal speed to the speed it came in with");
     if (previous_lateral > 0.f)
       check(result.velocity.z > previous_lateral,
             "a finer split keeps strictly more lateral gain -- do NOT 'fix' this");
@@ -704,6 +704,224 @@ static void test_impulse_cooldown_composes(const cvar_state_t& cvars)
         "a cooldown that expires mid-tick clamps to exactly zero");
 }
 
+// --- 11. a ground jump flies its whole step: the arc starts at the impulse ---
+static void test_ground_jump_arc_composes(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] ground jump: the parabola starts at the impulse\n");
+
+  const Bounding_Volume_Hierarchy bvh = floor_world();
+  Move_Input holding_jump;
+  holding_jump.jump_pressed = true;
+
+  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_velocity{0.f, 0.f, 0.f};
+
+  const float resting_height = half_height - 0.01f;
+  const float expected_height = resting_height + cvars.pm_jumpspeed * tick_dt -
+                                0.5f * cvars.g_gravity * tick_dt * tick_dt;
+  const float expected_vertical_velocity = cvars.pm_jumpspeed - cvars.g_gravity * tick_dt;
+
+  for (int sub_steps : {1, 2, 4, 16, 64})
+  {
+    const move_result_t result = run_split(cvars, bvh, holding_jump, start_position,
+                                           start_velocity, tick_dt, sub_steps);
+    printf("    N=%-2d  y = %.6f  vy = %.6f\n", sub_steps, result.position.y,
+           result.velocity.y);
+    check_near(result.position.y, expected_height, 2e-3f,
+               "the jump tick ends on the exact parabola however it was split");
+    check_near(result.velocity.y, expected_vertical_velocity, 2e-3f,
+               "gravity runs from the impulse, not from the step after it");
+  }
+}
+
+// --- 12. the clip is relative: carried speed survives flight, slide and hop -
+static void test_carried_speed_survives_the_clip(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] carried speed: the clip never cuts what a step came in with\n");
+
+  const Bounding_Volume_Hierarchy empty_bvh = empty_world();
+  const Bounding_Volume_Hierarchy floor_bvh = floor_world();
+  const Move_Input no_input;
+  Move_Input holding_jump;
+  holding_jump.jump_pressed = true;
+
+  const vec3 airborne_position{0.f, 1000.f, 0.f};
+  const vec3 grounded_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 carried_velocity{900.f, 0.f, 0.f};
+
+  const float carried_speed = horizontal_speed(carried_velocity);
+  const float slid_speed = carried_speed * std::exp(-cvars.pm_friction * tick_dt);
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    const move_result_t flying = run_split(cvars, empty_bvh, no_input, airborne_position,
+                                           carried_velocity, tick_dt, sub_steps);
+    const move_result_t sliding = run_split(cvars, floor_bvh, no_input, grounded_position,
+                                            carried_velocity, tick_dt, sub_steps);
+    const move_result_t hopping = run_split(cvars, floor_bvh, holding_jump, grounded_position,
+                                            carried_velocity, tick_dt, sub_steps);
+
+    printf("    N=%-2d  flying %.6f  sliding %.6f  hopping %.6f\n", sub_steps,
+           horizontal_speed(flying.velocity), horizontal_speed(sliding.velocity),
+           horizontal_speed(hopping.velocity));
+    check_near(horizontal_speed(flying.velocity), carried_speed, 1e-2f,
+               "free flight keeps speed above pm_maxspeed");
+    check_near(horizontal_speed(sliding.velocity), slid_speed, 1e-2f,
+               "on the ground only friction takes it");
+    check_near(horizontal_speed(hopping.velocity), carried_speed, 1e-2f,
+               "a hop keeps all of it");
+  }
+}
+
+// --- 13. pm_bunnyhop cs: a sideways air push adds speed, and a fixed aim composes
+static void test_bunnyhop_cs_strafe_gains(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_bunnyhop cs: an air push adds speed where none only turns\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  Move_Input input;
+  input.right_pressed = true;
+
+  const vec3 start_position{0.f, 1000.f, 0.f};
+  const vec3 start_velocity{cvars.pm_maxspeed, 0.f, 0.f};
+
+  cvar_state_t strafing = cvars;
+  strafing.pm_bunnyhop = cvars::Bunnyhop_Mode::cs;
+
+  const float push = std::min(strafing.pm_air_acceleration * strafing.pm_maxspeed * tick_dt,
+                              strafing.pm_air_speed_cap);
+  const float expected_speed =
+      std::sqrt(strafing.pm_maxspeed * strafing.pm_maxspeed + push * push);
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    const move_result_t gained = run_split(strafing, bvh, input, start_position,
+                                           start_velocity, tick_dt, sub_steps);
+    const move_result_t turned = run_split(cvars, bvh, input, start_position,
+                                           start_velocity, tick_dt, sub_steps);
+    printf("    N=%-2d  cs %.6f  none %.6f\n", sub_steps,
+           horizontal_speed(gained.velocity), horizontal_speed(turned.velocity));
+    check_near(horizontal_speed(gained.velocity), expected_speed, 1e-2f,
+               "cs: the push lengthens the velocity by the same amount under any split");
+    check_near(horizontal_speed(turned.velocity), cvars.pm_maxspeed, 1e-2f,
+               "none: the same push only turns you");
+  }
+}
+
+// --- 14. pm_bunnyhop hl2: a ground jump adds its boost once, up to the ceiling --
+static void test_bunnyhop_hl2_jump_boost(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_bunnyhop hl2: a ground jump adds pm_jump_boost once\n");
+
+  const Bounding_Volume_Hierarchy bvh = floor_world();
+  Move_Input input;
+  input.forward_pressed = true;
+  input.jump_pressed    = true;
+
+  const vec3 grounded_position{0.f, half_height - 0.02f, 0.f};
+
+  cvar_state_t boosting = cvars;
+  boosting.pm_bunnyhop = cvars::Bunnyhop_Mode::hl2;
+
+  const vec3 running_velocity{boosting.pm_maxspeed, 0.f, 0.f};
+  const vec3 near_ceiling_velocity{
+      boosting.pm_jump_boost_max_speed - 0.5f * boosting.pm_jump_boost, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    const move_result_t boosted = run_split(boosting, bvh, input, grounded_position,
+                                            running_velocity, tick_dt, sub_steps);
+    const move_result_t capped = run_split(boosting, bvh, input, grounded_position,
+                                           near_ceiling_velocity, tick_dt, sub_steps);
+    const move_result_t plain = run_split(cvars, bvh, input, grounded_position,
+                                          running_velocity, tick_dt, sub_steps);
+    printf("    N=%-2d  hl2 %.6f  near the ceiling %.6f  none %.6f\n", sub_steps,
+           horizontal_speed(boosted.velocity), horizontal_speed(capped.velocity),
+           horizontal_speed(plain.velocity));
+    check_near(horizontal_speed(boosted.velocity),
+               boosting.pm_maxspeed + boosting.pm_jump_boost, 1e-2f,
+               "hl2: a running jump adds pm_jump_boost exactly once");
+    check_near(horizontal_speed(capped.velocity), boosting.pm_jump_boost_max_speed, 1e-2f,
+               "hl2: the boost stops at pm_jump_boost_max_speed");
+    check_near(horizontal_speed(plain.velocity), cvars.pm_maxspeed, 1e-2f,
+               "none: the same jump adds nothing");
+  }
+}
+
+// --- 15. the air push sweeps the aim: an edge on a steady turn adds nothing ---
+static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
+                                          const Bounding_Volume_Hierarchy& bvh,
+                                          const Move_Input& input, float start_yaw,
+                                          float yaw_turn, uint32_t edge_slot,
+                                          bool sweep_the_aim)
+{
+  entities::Movement movement{};
+  vec3 position{0.f, 1000.f, 0.f};
+  vec3 velocity{cvars.pm_maxspeed, 0.f, 0.f};
+
+  const std::vector<uint32_t> step_ends =
+      edge_slot == 0 ? std::vector<uint32_t>{shared::SUBTICK_SLOT_COUNT}
+                     : std::vector<uint32_t>{edge_slot, shared::SUBTICK_SLOT_COUNT};
+  const float slot_fraction = 1.f / static_cast<float>(shared::SUBTICK_SLOT_COUNT);
+
+  uint32_t step_start = 0;
+  for (uint32_t step_end : step_ends)
+  {
+    const uint32_t slot_count   = step_end - step_start;
+    const float    yaw_at_start = start_yaw + yaw_turn * static_cast<float>(step_start) * slot_fraction;
+    const float    yaw_at_end   = start_yaw + yaw_turn * static_cast<float>(step_end) * slot_fraction;
+    const float    yaw_radians  = linalg::to_radians(yaw_at_start);
+    const vec3     front{std::cos(yaw_radians), 0.f, std::sin(yaw_radians)};
+    const vec3     right{-std::sin(yaw_radians), 0.f, std::cos(yaw_radians)};
+    const aim_sweep_t sweep =
+        sweep_the_aim ? aim_sweep_t{.yaw_change_degrees = yaw_at_end - yaw_at_start,
+                                    .push_count         = slot_count}
+                      : aim_sweep_t{};
+    const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
+
+    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, position, velocity,
+                                               front, right, sweep, half_width, half_height,
+                                               step_dt);
+    step_start = step_end;
+  }
+  return velocity;
+}
+
+static void test_air_push_ignores_edges_on_a_steady_turn(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] air push: an extra edge on a steady mouse turn adds nothing\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  Move_Input input;
+  input.right_pressed = true;
+
+  cvar_state_t strafing = cvars;
+  strafing.pm_bunnyhop = cvars::Bunnyhop_Mode::cs;
+
+  const float    start_yaw = -6.f;
+  const float    yaw_turn  = 3.f;
+  const uint32_t edge_slot = 24;
+
+  const vec3 swept_whole =
+      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, 0, true);
+  const vec3 swept_split =
+      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, edge_slot, true);
+  const vec3 stepped_whole =
+      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, 0, false);
+  const vec3 stepped_split =
+      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, edge_slot, false);
+
+  printf("    swept aim:         whole tick %.6f  with an edge %.6f\n",
+         horizontal_speed(swept_whole), horizontal_speed(swept_split));
+  printf("    one aim per step:  whole tick %.6f  with an edge %.6f\n",
+         horizontal_speed(stepped_whole), horizontal_speed(stepped_split));
+
+  check_near(swept_split.x, swept_whole.x, 1e-3f, "swept aim: the edge leaves x alone");
+  check_near(swept_split.z, swept_whole.z, 1e-3f, "swept aim: the edge leaves z alone");
+  check(horizontal_speed(stepped_split) > horizontal_speed(stepped_whole) + 0.1f,
+        "one aim per step: the same edge buys speed, which is what the sweep removes");
+}
+
 int main()
 {
   printf("player_move_step_invariance_test\n");
@@ -728,6 +946,11 @@ int main()
   test_air_jump_fires_once_per_press(cvars);
   test_time_since_grounded_composes(cvars);
   test_impulse_cooldown_composes(cvars);
+  test_ground_jump_arc_composes(cvars);
+  test_carried_speed_survives_the_clip(cvars);
+  test_bunnyhop_cs_strafe_gains(cvars);
+  test_bunnyhop_hl2_jump_boost(cvars);
+  test_air_push_ignores_edges_on_a_steady_turn(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

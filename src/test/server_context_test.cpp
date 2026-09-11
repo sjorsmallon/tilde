@@ -297,7 +297,7 @@ void test_clear_tick_groups()
   clear_incoming(context);
   clear_outgoing(context);
 
-  assert(context.incoming.inputs.empty());
+  assert(context.incoming.client_inputs.empty());
   assert(context.incoming.potential_joins.empty());
   assert(context.incoming.connection_messages.empty());
   assert(context.incoming.developer_console_entries.empty());

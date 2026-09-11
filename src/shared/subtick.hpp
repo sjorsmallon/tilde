@@ -178,10 +178,12 @@ struct subtick_input_t
 // whole tick.
 struct subtick_step_t
 {
-  uint64_t       buttons    = 0;
-  subtick_view_t view       = {};
-  float          dt         = 0.f;
-  uint32_t       start_slot = 0;
+  uint64_t       buttons     = 0;
+  subtick_view_t view        = {};
+  float          dt          = 0.f;
+  uint32_t       start_slot  = 0;
+  subtick_view_t view_at_end = {};
+  uint32_t       slot_count  = 0;
 };
 
 struct subtick_steps_t

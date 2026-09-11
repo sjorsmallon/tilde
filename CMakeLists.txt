@@ -383,7 +383,6 @@ add_library(game_shared STATIC
     src/shared/log.hpp
     src/shared/timed_function.hpp
     src/shared/detached_console.hpp
-    src/shared/replay_system.hpp
     src/shared/task_system.hpp
     src/shared/task_system.cpp
     # The audit tables and the report. The operator new REPLACEMENT is not here

@@ -326,15 +326,46 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
 
   ImGui::PushID("surface");
 
-  // ImGui needs a fixed buffer for text input; 256 comfortably covers a path.
-  char mesh_path_buffer[256];
-  std::snprintf(mesh_path_buffer, sizeof(mesh_path_buffer), "%s",
-                surface.mesh_path.c_str());
-  if (ImGui::InputText("mesh_path", mesh_path_buffer, sizeof(mesh_path_buffer)))
+  const Span<const assets::asset_info_t> meshes = assets::mesh_asset_manifest();
+
+  const char* preview = surface.mesh_path.empty() ? "(none)" : surface.mesh_path.c_str();
+  bool mesh_is_in_build = surface.mesh_path.empty();
+  for (const assets::asset_info_t& mesh : meshes)
   {
-    surface.mesh_path = mesh_path_buffer;
-    changed = true;
+    if (mesh.path != nullptr && surface.mesh_path == mesh.path)
+    {
+      preview = mesh.name;
+      mesh_is_in_build = true;
+    }
   }
+
+  if (ImGui::BeginCombo("mesh", preview))
+  {
+    if (ImGui::Selectable("(none)", surface.mesh_path.empty()) && !surface.mesh_path.empty())
+    {
+      surface.mesh_path.clear();
+      changed = true;
+    }
+
+    for (const assets::asset_info_t& mesh : meshes)
+    {
+      if (mesh.path == nullptr)
+        continue;
+
+      const bool selected = surface.mesh_path == mesh.path;
+      if (ImGui::Selectable(mesh.name, selected) && !selected)
+      {
+        surface.mesh_path = mesh.path;
+        changed = true;
+      }
+      if (selected)
+        ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+
+  if (!mesh_is_in_build)
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "mesh not in this build");
 
   const char *shader_names[] = {"lit", "unlit"};
   int shader_index = (surface.shader_type == "unlit") ? 1 : 0;

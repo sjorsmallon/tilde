@@ -26,20 +26,24 @@ subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& i
   for (uint32_t edge_index = 0; edge_index < input.edge_count; ++edge_index)
   {
     const subtick_edge_t& edge = input.edges[edge_index];
-    result.steps[result.step_count++] = {.buttons    = buttons,
-                                         .view       = view,
-                                         .dt         = duration_of_slots(tick_dt, slot, edge.slot),
-                                         .start_slot = slot};
+    result.steps[result.step_count++] = {.buttons     = buttons,
+                                         .view        = view,
+                                         .dt          = duration_of_slots(tick_dt, slot, edge.slot),
+                                         .start_slot  = slot,
+                                         .view_at_end = edge.view_after,
+                                         .slot_count  = edge.slot - slot};
     buttons = edge.buttons_after;
     view    = edge.view_after;
     slot    = edge.slot;
   }
 
   result.steps[result.step_count++] = {
-      .buttons    = buttons,
-      .view       = view,
-      .dt         = duration_of_slots(tick_dt, slot, SUBTICK_SLOT_COUNT),
-      .start_slot = slot};
+      .buttons     = buttons,
+      .view        = view,
+      .dt          = duration_of_slots(tick_dt, slot, SUBTICK_SLOT_COUNT),
+      .start_slot  = slot,
+      .view_at_end = input.view_at_end,
+      .slot_count  = SUBTICK_SLOT_COUNT - slot};
 
   return result;
 }

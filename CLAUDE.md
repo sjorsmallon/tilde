@@ -909,6 +909,29 @@ however many sub-steps the tick had, and the coyote clock accumulates to the
 same total. Crouch is the next obvious ability and is nearly free — `half_width`
 / `half_height` are already parameters.
 
+**The horizontal speed clip is RELATIVE, and it is the air control.**
+`clip_horizontal_speed` caps a step at `max(speed before accelerate,
+pm_maxspeed)` (post-friction on the ground), so a push can turn you but never
+take you past what you came in with: A/D steers at constant speed, an ordinary
+jump cannot gain, and speed from outside `player_move` (the Dash, knockback,
+`Set_Velocity`) survives until friction takes it. Not `pm_maxspeed` alone, which
+cut the Dash's 900 back to 320 on the next step.
+
+**Where HOP speed comes from is `pm_bunnyhop`**, resolved once per step by
+`bunnyhop_rules_for`: `none` (the default) hops only keep speed; `hl2` makes a
+ground jump add `pm_jump_boost` along the held direction, never past
+`pm_jump_boost_max_speed`; `cs` turns the air clip off and stops an air push's
+room test at `pm_air_speed_cap` (Source's 30), so strafing gains and A/D alone
+barely steers. **The air push is cut into one piece per sub-tick slot along the
+aim turning from the step's open to its close** (`aim_sweep_of`,
+`subtick_step_t::view_at_end`), so an extra edge changes where the mouse is known
+to have been, never how many pushes the tick got: with one aim per step, `cs`
+gained ~40% more in any tick with one extra edge. Shots and every other use of
+the aim still take the step's opening aim. **A ground jump flies its step through
+`my_air_move`** exactly as an air jump does, so gravity starts at the impulse:
+through `my_walk_move` it started a step late, and jump height depended on where
+in the tick the press landed. Invariance tests 8 and 11 to 15 guard all of it.
+
 ### Player hit volumes
 
 A player is hit-tested against the **posed skeletal volumes**, not a static box table. Three files, in order of who calls whom:
@@ -1072,7 +1095,7 @@ too. It formats into a caller-owned `Span<char>` and returns a `string_view`
 now — the out-param-is-about-STORAGE case the failure convention keeps a Span
 for.
 
-Geometry (`static_mesh_geometry_t`) deliberately keeps **free-form `mesh_path` strings** rather than manifest ids: a level author adding a prop should not have to think about the id space at all.
+Geometry (`static_mesh_geometry_t`, and a brush's override) **stores `mesh_path` as a PATH but picks it from `mesh_asset_manifest()`** in the editor's Surface panel — the `pbr_material` rule: the id is for discovery, storage stays a path, so a map naming a mesh this build lacks still loads (and the panel says so). There is no text box: a path the manifest does not have is not something an author can type in.
 
 **A `.glb` is a mesh, and its decoder bakes the whole scene into ONE `mesh_asset_t`.** `decode_glb` (`shared/asset_gltf.cpp`, over tinygltf v2.9.6 vendored in `shared/tinygltf/`) flattens the node tree by baking each node's world transform into its vertices, one submesh per primitive.
 
@@ -1097,7 +1120,7 @@ So `load_mesh` / `load_texture` / `load_sound` / `load_animation` / `load_hitbox
 
 **The id is for DISCOVERY; storage stays a path.** A `pbr_material` id is never serialized — not on a face, not in `map_t::materials`, not on the wire — so `geometry_def.md` §4's argument against ids on faces still holds unchanged: a map naming a material this build lacks stays loadable and draws magenta. Two names for one thing is only dangerous when both get **stored**. The editor's material combo lists the map's table and then the manifest, and it is deliberately the manifest rather than a scan of `resources/textures/`: a directory listing is a second walk of the tree, and in `pkg`/`embed` there is no directory to list.
 
-`asset_exists(path)` is the one probe, and it takes no prefix because the `bool` **is** the answer. Exactly two callers have a path that is genuinely a caller parameter and must use it: the shader editor's text box, and a geometry surface's free-form `mesh_path`. A PBR folder's four maps are optional the same way. Everywhere else, presence is not a caller parameter.
+`asset_exists(path)` is the one probe, and it takes no prefix because the `bool` **is** the answer. Exactly two callers have a path that is genuinely a caller parameter and must use it: the shader editor's text box, and a geometry surface's stored `mesh_path` (a map can name a mesh this build lacks). A PBR folder's four maps are optional the same way. Everywhere else, presence is not a caller parameter.
 
 **NOTHING BUT THE BYTE LAYER OPENS A FILE.** `mount_asset_source()` / `read_asset_bytes(path)` / `asset_exists(path)` sit under everything else (all three in `src/shared/asset_types.hpp`), and every decoder in the engine — `load_obj`, `load_mtl`, `models::parse_skeleton` / `parse_mesh` / `parse_animation` / `try_parse_hitbox_rig`, `stbi_load_from_memory`, `try_bake_font` — takes `Span<const uint8_t>` plus a `debug_name` that is only what the error messages say. That is what makes `pkg` and `embed` a different way to fill the blob map rather than a second path through the decoders, and it is why a malformed fixture in a test is now a string literal instead of a temp file.
 

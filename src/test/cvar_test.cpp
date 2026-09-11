@@ -402,7 +402,7 @@ void test_console_cvars()
         "the read reply quotes the value");
   check(reply.find("[MIRRORED]") != std::string::npos,
         "the read reply quotes the ownership flags");
-  check(reply.find("Maximum player speed") != std::string::npos,
+  check(reply.find("Run speed: the most your own acceleration pushes you to") != std::string::npos,
         "the read reply quotes the description");
 
   check(run(state, table, "cl_timescale 0.5", &reply) ==

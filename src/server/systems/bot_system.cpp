@@ -109,8 +109,8 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   // entity rather than in a per-client side table.
   auto [new_pos, new_vel] =
       player_move(*context.cvars, input, bot_ent.movement, session.bvh, bot_ent.position,
-                  bot_ent.velocity, front, right, half_width, shared::player_half_height, dt,
-                  &move_events);
+                  bot_ent.velocity, front, right, aim_sweep_t{}, half_width,
+                  shared::player_half_height, dt, &move_events);
 
   bot_ent.position = new_pos;
   bot_ent.velocity = new_vel;

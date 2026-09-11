@@ -23,7 +23,7 @@ enum class Message_Type : uint8
 {
   C2S_ClientInputBatch, // C2S: the client's unacked input tail, oldest first
   S2C_EntityPackage,
-  NetCommand,
+  C2S_Connection,
   S2C_ServerMessage,
   C2S_Command,
   S2C_BotDebug,
@@ -43,6 +43,7 @@ enum class Message_Type : uint8
   // one make_reliable_packet stamps.
   Reliable,
   C2S_TransferReceipt, // C2S: which fragments of a bulk message we hold
+  S2C_Connection,      // S2C: the server's answer to a connect
 
 
   // Not a wire value: one past the last type, so a table indexed by
@@ -50,10 +51,8 @@ enum class Message_Type : uint8
   Count,
 };
 
-// Which end is allowed to SEND a message of this type. `Both` is the small set
-// that genuinely travels each way: NetCommand carries the handshake in both
-// directions, and Reliable is a transport parcel whose direction is said by who
-// sent it.
+// Which end is allowed to SEND a message of this type. `Both` is Reliable alone:
+// a transport parcel whose direction is said by who sent it.
 //
 // This exists so "a null slot in the client's handler table means C2S" stops
 // being a comment and becomes a checkable claim -- see the static_assert beside
@@ -77,6 +76,7 @@ constexpr message_direction_t message_direction(Message_Type type)
   case Message_Type::C2S_Command:
   case Message_Type::C2S_RequestMapData:
   case Message_Type::C2S_TransferReceipt:
+  case Message_Type::C2S_Connection:
     return message_direction_t::C2S;
 
   case Message_Type::S2C_EntityPackage:
@@ -88,9 +88,9 @@ constexpr message_direction_t message_direction(Message_Type type)
   case Message_Type::CmdChangeMap:
   case Message_Type::S2C_MapData:
   case Message_Type::S2C_CvarValues:
+  case Message_Type::S2C_Connection:
     return message_direction_t::S2C;
 
-  case Message_Type::NetCommand:
   case Message_Type::Reliable:
     return message_direction_t::Both;
 
@@ -133,9 +133,14 @@ template <typename T> struct Packet_Traits
 // Inside the struct, we define `type`, effectively attaching metadata (the enum
 // value) to the C++ type itself.
 
-template <> struct Packet_Traits<game::NetCommand>
+template <> struct Packet_Traits<game::C2S_Connection>
 {
-  static constexpr Message_Type type = Message_Type::NetCommand;
+  static constexpr Message_Type type = Message_Type::C2S_Connection;
+};
+
+template <> struct Packet_Traits<game::S2C_Connection>
+{
+  static constexpr Message_Type type = Message_Type::S2C_Connection;
 };
 
 template <> struct Packet_Traits<game::S2C_EntityPackage>

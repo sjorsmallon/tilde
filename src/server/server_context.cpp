@@ -92,7 +92,7 @@ void reset_client_slot(server_context_t& context, int32_t slot)
 
 void clear_incoming(server_context_t& context)
 {
-  context.incoming.inputs.clear();
+  context.incoming.client_inputs.clear();
   context.incoming.potential_joins.clear();
   context.incoming.connection_messages.clear();
   context.incoming.developer_console_entries.clear();

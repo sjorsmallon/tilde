@@ -4,6 +4,7 @@
 #include "debug_collision.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "plane.hpp"
+#include "subtick.hpp"
 #include <tuple>
 #include <vector>
 
@@ -100,6 +101,19 @@ inline uint64_t buttons_from_move_input(const Move_Input &input)
   return b;
 }
 
+// How far the aim turns across a step, and how many pieces the air push is cut into along that turn.
+struct aim_sweep_t
+{
+  float    yaw_change_degrees = 0.f;
+  uint32_t push_count         = 1;
+};
+
+inline aim_sweep_t aim_sweep_of(const shared::subtick_step_t& step)
+{
+  return {.yaw_change_degrees = linalg::wrap_degrees(step.view_at_end.yaw - step.view.yaw),
+          .push_count         = step.slot_count};
+}
+
 // Movement-driven cosmetic events produced by a single player_move() tick.
 // This is an optional side-channel: callers that don't care (e.g. client
 // reconciliation replays, bots) pass nullptr. The simulation only reports raw
@@ -162,6 +176,6 @@ std::tuple<vec3, vec3> player_move(
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, const float half_width, const float half_height,
-    const float dt, Move_Events *out_events = nullptr,
+    const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
+    const float half_height, const float dt, Move_Events *out_events = nullptr,
     debug_collision::Face_Bucket *debug_faces = nullptr);

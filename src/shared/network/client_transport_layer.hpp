@@ -52,7 +52,7 @@ struct Client_Transport_Layer
 
 struct Client_Inbox
 {
-  std::vector<game::NetCommand> connection_messages;
+  std::vector<game::S2C_Connection> connection_messages;
   std::vector<game::S2C_EntityPackage> entity_updates;
   std::vector<game::S2C_ServerMessage> server_text_messages;
   std::vector<game::S2C_BotDebug> bot_debug_updates;
@@ -275,8 +275,8 @@ constexpr client_message_handler_table_t make_client_message_handlers()
   handlers[static_cast<size_t>(Message_Type::S2C_EntityPackage)] =
       &deliver_protobuf_message<game::S2C_EntityPackage,
                                 &Client_Inbox::entity_updates>;
-  handlers[static_cast<size_t>(Message_Type::NetCommand)] =
-      &deliver_protobuf_message<game::NetCommand,
+  handlers[static_cast<size_t>(Message_Type::S2C_Connection)] =
+      &deliver_protobuf_message<game::S2C_Connection,
                                 &Client_Inbox::connection_messages>;
   handlers[static_cast<size_t>(Message_Type::S2C_ServerMessage)] =
       &deliver_protobuf_message<game::S2C_ServerMessage,

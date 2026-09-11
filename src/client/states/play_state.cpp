@@ -580,13 +580,13 @@ void Play_State::on_enter()
   transport.server_address = ctx.requested_server_address;
   log_terminal("Connecting to {}", transport.server_address.to_string());
 
-  game::NetCommand net_command;
-  auto* connect_cmd = net_command.mutable_connect();
+  game::C2S_Connection connect_message;
+  auto* connect_cmd = connect_message.mutable_connect();
   connect_cmd->set_protocol_version(1);
   connect_cmd->set_player_name(ctx.cvars->name.c_str());
   connect_cmd->set_schema_hash(entities::SCHEMA_HASH);
 
-  network::send_protobuf_message(transport, net_command);
+  network::send_protobuf_message(transport, connect_message);
   ctx.connection.phase = Connection_Phase::Connecting;
 
   hud::set_announcement("Play State");
@@ -599,7 +599,7 @@ void Play_State::on_exit()
 
   if (ctx.connection.phase != Connection_Phase::Disconnected)
   {
-    game::NetCommand disconnect_cmd;
+    game::C2S_Connection disconnect_cmd;
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
     network::send_protobuf_message(transport, disconnect_cmd);
     ctx.connection.phase = Connection_Phase::Disconnected;
@@ -1093,7 +1093,8 @@ void Play_State::update(float dt)
             *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
             ctx.world.session.bvh,
             reconciled_position, reconciled_velocity, step_basis.forward,
-            step_basis.right, player_half_width, player_half_height, step.dt, nullptr,
+            step_basis.right, aim_sweep_of(step), player_half_width, player_half_height,
+            step.dt, nullptr,
             &ctx.visuals.debug_collision_faces);
 
         // AFTER the move, exactly where the server applies it: the impulse
@@ -1790,8 +1791,8 @@ void Play_State::update(float dt)
                 *ctx.cvars, move_input_from_buttons(step.buttons),
                 ctx.prediction.player_movement, ctx.world.session.bvh,
                 ctx.prediction.player_position, ctx.prediction.player_velocity,
-                step_basis.forward, step_basis.right, player_half_width, player_half_height,
-                step.dt, &step_events, &ctx.visuals.debug_collision_faces);
+                step_basis.forward, step_basis.right, aim_sweep_of(step), player_half_width,
+                player_half_height, step.dt, &step_events, &ctx.visuals.debug_collision_faces);
 
             ctx.prediction.player_position = new_position;
             ctx.prediction.player_velocity = new_velocity;
@@ -2027,6 +2028,7 @@ void Play_State::draw_imgui_panels()
                 ctx.prediction.player_position.z);
     ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.prediction.player_velocity.x, ctx.prediction.player_velocity.y,
                 ctx.prediction.player_velocity.z);
+    ImGui::Text("speed: %.1f ", length(ctx.prediction.player_velocity));
 
     float avg_dt = 0.f;
     for (int i = 0; i < dt_history_count; i++)

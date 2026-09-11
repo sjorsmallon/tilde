@@ -117,7 +117,7 @@ static void send_message_to_reject_incoming_connection(server_context_t &context
                         const network::Address &sender, std::string_view reason,
                         uint32_t server_schema_hash)
 {
-  game::NetCommand reply;
+  game::S2C_Connection reply;
   auto *reject = reply.mutable_reject();
   reject->set_reason(std::string(reason));
   reject->set_server_schema_hash(server_schema_hash);
@@ -125,7 +125,7 @@ static void send_message_to_reject_incoming_connection(server_context_t &context
   std::vector<network::uint8> buffer(reply.ByteSizeLong());
   reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   auto packets = network::convert_to_packets(
-      buffer, static_cast<network::uint8>(network::Message_Type::NetCommand),
+      buffer, static_cast<network::uint8>(network::Message_Type::S2C_Connection),
       context.transport_layer.next_message_id);
   // Straight to the socket rather than through send_packet_to_client: the
   // recipient is being refused a slot, so there is no stream of theirs to ack
@@ -1007,7 +1007,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   // runs this same move before the frame is drawn, so the camera sits at the
   // post-move position (play_state.cpp, prediction.player_position), while
   // remote players are drawn interpolated in the PAST. Sampling the shooter
-  // pre-move would reconstruct a view nobody ever aimed from.
+  // pre-move would reconstruct a view nobody saw.
 
   const vec3f direction = linalg::direction_from_angles(yaw, pitch);
   const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
@@ -1328,6 +1328,7 @@ bool Tick()
         continue;
       }
 
+      // are we talking the same version of the game?
       const uint32_t client_schema_hash = cmd.connect().schema_hash();
       if (client_schema_hash != entities::SCHEMA_HASH)
       {
@@ -1345,6 +1346,8 @@ bool Tick()
         continue;
       }
 
+      // find a free slot. if there's a free slot, connect them.
+      
       int32_t slot = invalid_slot_idx;
       for (int32_t candidate = 0; candidate < network::sv_max_client_count; ++candidate)
       {
@@ -1371,7 +1374,7 @@ bool Tick()
 
         // actually handshake back to the client.
         {
-          game::NetCommand reply;
+          game::S2C_Connection reply;
           auto *accept = reply.mutable_accept();
           accept->set_client_slot(slot);
           accept->set_map_name(context.world.session.map_name.empty()
@@ -1386,7 +1389,7 @@ bool Tick()
           reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
           auto packets = network::convert_to_packets(
               buffer,
-              static_cast<network::uint8>(network::Message_Type::NetCommand),
+              static_cast<network::uint8>(network::Message_Type::S2C_Connection),
               context.transport_layer.next_message_id);
           for (const auto &p : packets)
             network::send_packet_to_client(context.transport_layer,
@@ -1473,7 +1476,7 @@ bool Tick()
   // this used to sort by timestamp which was broken regardless.
   // now  ordered monotonically by command number so that commands in the same tick
   // will at least be processed later. :~)
-  std::sort(inbox.inputs.begin(), inbox.inputs.end(),
+  std::sort(inbox.client_inputs.begin(), inbox.client_inputs.end(),
             [](const auto &a, const auto &b)
             {
               if (a.first != b.first)
@@ -1490,9 +1493,9 @@ bool Tick()
   // the rewind bracket check sound against UDP reordering: by the time any shot
   // is judged, held_snapshot_tick already includes every move that arrived this
   // tick, however late.
-  for (size_t index = 0; index < inbox.inputs.size(); ++index)
+  for (size_t index = 0; index < inbox.client_inputs.size(); ++index)
   {
-    const auto &[client_slot, input] = inbox.inputs[index];
+    const auto &[client_slot, input] = inbox.client_inputs[index];
     if (!is_valid_client_slot(client_slot))
       continue; // the input loop below logs it; one complaint per input is enough
 
@@ -1514,8 +1517,8 @@ bool Tick()
     // straddles one. Reading every entry would flip the answer twice per tick
     // for as long as a pre-switch input was still unacked.
     const bool this_is_the_slots_newest_input =
-        index + 1 == inbox.inputs.size() ||
-        inbox.inputs[index + 1].first != client_slot;
+        index + 1 == inbox.client_inputs.size() ||
+        inbox.client_inputs[index + 1].first != client_slot;
     if (!this_is_the_slots_newest_input)
       continue;
 
@@ -1548,7 +1551,7 @@ bool Tick()
   pose_all_targets(context);
 
   // actually move players.
-  for (const auto &[client_slot, input] : inbox.inputs)
+  for (const auto &[client_slot, input] : inbox.client_inputs)
   {
     if (!is_valid_client_slot(client_slot))
     {
@@ -1814,7 +1817,7 @@ bool Tick()
             allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
             player->movement,
             context.world.session.bvh, player->position, player->velocity, front, right,
-            16.f, 36.f, step.dt, &step_events);
+            aim_sweep_of(step), 16.f, 36.f, step.dt, &step_events);
 
         player->position = new_pos;
         player->velocity = new_vel;
