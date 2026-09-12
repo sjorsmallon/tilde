@@ -78,7 +78,7 @@ call_record_t g_spawn_bot;
 call_record_t g_spawn_cube;
 call_record_t g_spawn_sphere;
 call_record_t g_map;
-call_record_t g_noclip;
+call_record_t g_mem_stacks;
 call_record_t g_join_game;
 call_record_t g_spectate;
 call_record_t g_bind;
@@ -88,7 +88,7 @@ call_record_t g_announce;
 void reset_records()
 {
   g_spawn_bot = g_spawn_cube = g_spawn_sphere = {};
-  g_map = g_noclip = g_join_game = g_spectate = g_bind = g_connect = g_announce = {};
+  g_map = g_mem_stacks = g_join_game = g_spectate = g_bind = g_connect = g_announce = {};
 }
 
 // The line buffer a console command's argument views point into must outlive
@@ -155,11 +155,11 @@ void map(std::string_view path, const command_context_t& context)
   g_map.caller_slot  = context.caller_slot;
 }
 
-void noclip(bool enabled, const command_context_t& context)
+void mem_stacks(bool capture, const command_context_t& context)
 {
-  ++g_noclip.count;
-  g_noclip.flag        = enabled;
-  g_noclip.caller_slot = context.caller_slot;
+  ++g_mem_stacks.count;
+  g_mem_stacks.flag        = capture;
+  g_mem_stacks.caller_slot = context.caller_slot;
 }
 
 void bind(std::string_view key, std::string_view command,
@@ -191,7 +191,8 @@ void announce(std::string_view text, const command_context_t& context)
 // by name, which is exactly the property that makes a missing one a link error.
 void mem_report(int32_t, const command_context_t&) {}
 void mem_frame(const command_context_t&) {}
-void mem_stacks(bool, const command_context_t&) {}
+void noclip(const command_context_t&) {}
+void setpos(float, float, float, const command_context_t&) {}
 void sv_mem_report(int32_t, const command_context_t&) {}
 void frame_report(const command_context_t&) {}
 void frame_reset(const command_context_t&) {}
@@ -630,17 +631,17 @@ void test_command_binders()
 
   // Bool parameters use the same closed set as a bool cvar write.
   reset_records();
-  check(run(state, table, "noclip", &reply) == cvars::console_result_t::ok,
-        "noclip with no argument takes its default");
-  check(g_noclip.flag == false, "the default is false");
-  check(run(state, table, "noclip on", &reply) == cvars::console_result_t::ok,
-        "noclip on succeeds");
-  check(g_noclip.flag == true, "'on' bound as true");
+  check(run(state, table, "mem_stacks", &reply) == cvars::console_result_t::ok,
+        "mem_stacks with no argument takes its default");
+  check(g_mem_stacks.flag == true, "the default is true");
+  check(run(state, table, "mem_stacks off", &reply) == cvars::console_result_t::ok,
+        "mem_stacks off succeeds");
+  check(g_mem_stacks.flag == false, "'off' bound as false");
   reset_records();
-  check(run(state, table, "noclip tru", &reply) ==
+  check(run(state, table, "mem_stacks tru", &reply) ==
             cvars::console_result_t::bad_arguments,
-        "an unrecognised bool argument is rejected, not read as false");
-  check(g_noclip.count == 0, "the rejected bool ran nothing");
+        "an unrecognised bool argument is rejected, not read as true");
+  check(g_mem_stacks.count == 0, "the rejected bool ran nothing");
 
   // `string...` takes the line's untokenized tail, interior spacing intact --
   // this is the whole reason the arg views point into one contiguous buffer.

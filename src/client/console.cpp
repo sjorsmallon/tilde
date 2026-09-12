@@ -5,6 +5,7 @@
 #include "input.hpp"
 #include "log.hpp"
 #include "state_manager.hpp"
+#include "hud/announcement.hpp"
 #include "../shared/network/network_types.hpp"
 #include "../shared/network/udp_socket.hpp"
 #include <algorithm>
@@ -403,6 +404,16 @@ void connect(std::string_view address, const command_context_t &)
   client::console::get().print("connecting to %s...",
                                server_address.to_string().c_str());
   client::state_manager::switch_to(client::game_state::play);
+}
+
+// `noclip()` @Client: flips cl_noclip. Play_State reads the cvar every frame and
+// owns the camera it flies; the banner is here so a bound key says which way it
+// went.
+void noclip(const command_context_t &)
+{
+  cvars::cvar_state_t& cvars = *client::state_manager::get_client_context().cvars;
+  cvars.cl_noclip = !cvars.cl_noclip;
+  client::hud::set_announcement(cvars.cl_noclip ? "Noclip ON" : "Noclip OFF");
 }
 
 void mem_report(int32_t top, const command_context_t &)

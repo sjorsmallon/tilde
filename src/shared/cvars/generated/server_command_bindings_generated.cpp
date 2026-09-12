@@ -52,17 +52,6 @@ template <typename T> std::optional<T> try_parse_whole(std::string_view text)
   return value;
 }
 
-// The same closed set as a bool cvar write: unrecognised text is a
-// rejection, never false.
-std::optional<bool> try_parse_bool_token(std::string_view text)
-{
-  if (text == "1" || text == "true" || text == "yes" || text == "on")
-    return true;
-  if (text == "0" || text == "false" || text == "no" || text == "off")
-    return false;
-  return std::nullopt;
-}
-
 // spawn_bot [mode: idle|chase|regular]
 bool invoke_spawn_bot(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -133,29 +122,44 @@ bool invoke_map(Span<std::string_view> args, const command_context_t& context,
   return true;
 }
 
-// noclip [enabled]
-bool invoke_noclip(Span<std::string_view> args, const command_context_t& context,
+// setpos <x> <y> <z>
+bool invoke_setpos(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
 {
-  if (args.size() > 1u)
+  if (args.size() != 3u)
   {
-    usage_error(out_reply, command_id::noclip, args.size());
+    usage_error(out_reply, command_id::setpos, args.size());
     return false;
   }
 
-  bool enabled = false;
-  if (args.size() > 0u)
+  float x = {};
+  const std::optional<float> parsed_x = try_parse_whole<float>(args[0]);
+  if (!parsed_x)
   {
-    const std::optional<bool> parsed_enabled = try_parse_bool_token(args[0]);
-    if (!parsed_enabled)
-    {
-      bad_argument(out_reply, command_id::noclip, "enabled", args[0]);
-      return false;
-    }
-    enabled = *parsed_enabled;
+    bad_argument(out_reply, command_id::setpos, "x", args[0]);
+    return false;
   }
+  x = *parsed_x;
 
-  commands::noclip(enabled, context);
+  float y = {};
+  const std::optional<float> parsed_y = try_parse_whole<float>(args[1]);
+  if (!parsed_y)
+  {
+    bad_argument(out_reply, command_id::setpos, "y", args[1]);
+    return false;
+  }
+  y = *parsed_y;
+
+  float z = {};
+  const std::optional<float> parsed_z = try_parse_whole<float>(args[2]);
+  if (!parsed_z)
+  {
+    bad_argument(out_reply, command_id::setpos, "z", args[2]);
+    return false;
+  }
+  z = *parsed_z;
+
+  commands::setpos(x, y, z, context);
   return true;
 }
 
@@ -296,7 +300,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::spawn_cube] = &invoke_spawn_cube;
   table.binders[(uint32_t)command_id::spawn_sphere] = &invoke_spawn_sphere;
   table.binders[(uint32_t)command_id::map] = &invoke_map;
-  table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;
+  table.binders[(uint32_t)command_id::setpos] = &invoke_setpos;
   table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;
   table.binders[(uint32_t)command_id::spectate] = &invoke_spectate;
   table.binders[(uint32_t)command_id::sv_mem_report] = &invoke_sv_mem_report;

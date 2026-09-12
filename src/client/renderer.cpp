@@ -6490,7 +6490,8 @@ view_matrices_t view_matrices(const render_view_t &view)
     const float height = view.camera.ortho_height;
     const float width  = height * aspect;
     matrices.projection = linalg::orthographic(-width * 0.5f, width * 0.5f, -height * 0.5f,
-                                               height * 0.5f, -100000.0f, 100000.0f);
+                                               height * 0.5f, -client::ORTHOGRAPHIC_DEPTH_HALF_RANGE,
+                                               client::ORTHOGRAPHIC_DEPTH_HALF_RANGE);
   }
   else
   {

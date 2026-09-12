@@ -53,6 +53,13 @@ private:
   void enter_connected_phase();
 
   camera_t camera;
+
+  // The free camera cl_noclip flies. Seeded from `camera` on the rising edge
+  // and copied into it by the resolve, so the ONE-writer rule on `camera`
+  // holds; the body underneath keeps its own aim.
+  camera_t noclip_camera;
+  bool     noclip_was_active = false;
+
   pass_builder_t scene;
 
   // Resolves sv_skybox's text once per change. The value arrives over the cvar

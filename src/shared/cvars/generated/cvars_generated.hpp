@@ -168,6 +168,7 @@ struct cvar_state_t
   float cl_display_latency_ms = 0.0f;
   bool cl_draw_player_hull = false;
   int32_t cl_spectate_slot = -1;
+  bool cl_noclip = false;
   bool cl_player_unlit = false;
   bool cl_aim_debug = false;
   float cl_aim_debug_pitch = 0.0f;
@@ -286,51 +287,52 @@ enum class cvar_id : uint16_t
   cl_display_latency_ms = 63,
   cl_draw_player_hull = 64,
   cl_spectate_slot = 65,
-  cl_player_unlit = 66,
-  cl_aim_debug = 67,
-  cl_aim_debug_pitch = 68,
-  cl_aim_debug_yaw = 69,
-  cl_show_deploy_timer = 70,
-  cl_crosshair = 71,
-  cl_crosshair_dot = 72,
-  cl_crosshair_size = 73,
-  cl_crosshair_gap = 74,
-  cl_crosshair_thickness = 75,
-  cl_crosshair_r = 76,
-  cl_crosshair_g = 77,
-  cl_crosshair_b = 78,
-  cl_crosshair_a = 79,
-  editor_speed = 80,
-  cl_timescale = 81,
-  sound_reference_distance = 82,
-  sound_max_distance_cutoff = 83,
-  sound_rolloff_factor = 84,
-  map_respawn_delay_seconds = 85,
-  map_kill_limit = 86,
-  map_round_time_limit_seconds = 87,
-  next_map = 88,
-  pin_main_thread = 89,
-  r_debug_channel = 90,
-  r_exposure = 91,
-  sv_skybox = 92,
-  debug_show_collisions = 93,
-  debug_show_hitboxes = 94,
-  debug_show_navmesh = 95,
-  debug_show_box_volumes = 96,
-  debug_hide_geometry = 97,
-  cl_shot_debug_seconds = 98,
-  debug_show_entity_counts = 99,
-  debug_show_physics_bodies = 100,
-  net_snapshot_debug = 101,
-  sv_event_debug = 102,
-  cl_event_debug = 103,
-  sv_reliable_debug = 104,
-  sv_io_debug = 105,
+  cl_noclip = 66,
+  cl_player_unlit = 67,
+  cl_aim_debug = 68,
+  cl_aim_debug_pitch = 69,
+  cl_aim_debug_yaw = 70,
+  cl_show_deploy_timer = 71,
+  cl_crosshair = 72,
+  cl_crosshair_dot = 73,
+  cl_crosshair_size = 74,
+  cl_crosshair_gap = 75,
+  cl_crosshair_thickness = 76,
+  cl_crosshair_r = 77,
+  cl_crosshair_g = 78,
+  cl_crosshair_b = 79,
+  cl_crosshair_a = 80,
+  editor_speed = 81,
+  cl_timescale = 82,
+  sound_reference_distance = 83,
+  sound_max_distance_cutoff = 84,
+  sound_rolloff_factor = 85,
+  map_respawn_delay_seconds = 86,
+  map_kill_limit = 87,
+  map_round_time_limit_seconds = 88,
+  next_map = 89,
+  pin_main_thread = 90,
+  r_debug_channel = 91,
+  r_exposure = 92,
+  sv_skybox = 93,
+  debug_show_collisions = 94,
+  debug_show_hitboxes = 95,
+  debug_show_navmesh = 96,
+  debug_show_box_volumes = 97,
+  debug_hide_geometry = 98,
+  cl_shot_debug_seconds = 99,
+  debug_show_entity_counts = 100,
+  debug_show_physics_bodies = 101,
+  net_snapshot_debug = 102,
+  sv_event_debug = 103,
+  cl_event_debug = 104,
+  sv_reliable_debug = 105,
+  sv_io_debug = 106,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 106;
+constexpr uint32_t CVAR_COUNT = 107;
 
 enum class command_id : uint16_t
 {
@@ -338,7 +340,7 @@ enum class command_id : uint16_t
   spawn_cube = 1,
   spawn_sphere = 2,
   map = 3,
-  noclip = 4,
+  setpos = 4,
   join_game = 5,
   spectate = 6,
   sv_mem_report = 7,
@@ -348,15 +350,16 @@ enum class command_id : uint16_t
   bind = 11,
   connect = 12,
   announce = 13,
-  mem_report = 14,
-  mem_frame = 15,
-  mem_stacks = 16,
-  frame_report = 17,
-  frame_reset = 18,
-  hitch_report = 19,
+  noclip = 14,
+  mem_report = 15,
+  mem_frame = 16,
+  mem_stacks = 17,
+  frame_report = 18,
+  frame_reset = 19,
+  hitch_report = 20,
 };
 
-constexpr uint32_t COMMAND_COUNT = 20;
+constexpr uint32_t COMMAND_COUNT = 21;
 
 enum cvar_type : uint8_t
 {
@@ -451,9 +454,9 @@ void spawn_sphere(const command_context_t& context);
 // @Server  Switch the server to a new map
 // usage: map <path>
 void map(std::string_view path, const command_context_t& context);
-// @Server  Disable movement Vector Clipping
-// usage: noclip [enabled]
-void noclip(bool enabled, const command_context_t& context);
+// @Server  Move the calling player's body to a position
+// usage: setpos <x> <y> <z>
+void setpos(float x, float y, float z, const command_context_t& context);
 // @Server  Leave spectate and spawn into the match
 // usage: join_game
 void join_game(const command_context_t& context);
@@ -481,6 +484,9 @@ void connect(std::string_view address, const command_context_t& context);
 // @Client  Show a banner on screen for a few seconds
 // usage: announce <text...>
 void announce(std::string_view text, const command_context_t& context);
+// @Client  Toggle the free camera (cl_noclip)
+// usage: noclip
+void noclip(const command_context_t& context);
 // @Client  Print the top allocation sites by live bytes
 // usage: mem_report [top]
 void mem_report(int32_t top, const command_context_t& context);

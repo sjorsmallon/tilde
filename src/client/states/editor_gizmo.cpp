@@ -54,13 +54,24 @@ float face_sign(int face) { return (face % 2 == 0) ? 1.f : -1.f; }
 
 vec3 face_normal(int face) { return axis_direction(face_axis(face)) * face_sign(face); }
 
+// The direction `point` is seen along. Orthographic: the camera's forward, for
+// every point -- eye-to-point there reverses for a point behind the camera,
+// which an ortho view still draws.
+vec3 view_direction_to(const gizmo_view_t &view, const vec3 &point)
+{
+  if (view.orthographic)
+    return view.forward;
+
+  const vec3 to_point = point - view.camera_position;
+  return length(to_point) > 1e-4f ? normalize(to_point) : view.forward;
+}
+
 // The plane containing `axis` that most faces the camera. Dragging against it
 // keeps the pointer's motion mapped to the axis at every viewing angle except
 // straight down it, where the intersection test itself rejects.
-vec3 camera_facing_plane_normal(const vec3 &axis, const vec3 &point, const vec3 &camera_position)
+vec3 camera_facing_plane_normal(const vec3 &axis, const vec3 &view_direction)
 {
-  const vec3 to_camera = point - camera_position;
-  return cross(cross(axis, to_camera), axis);
+  return cross(cross(axis, view_direction), axis);
 }
 
 // The two in-plane basis vectors for a ring about `axis`, ordered so a positive
@@ -160,13 +171,8 @@ void Editor_Gizmo::set_target(const shared::aabb_bounds_t &bounds,
 
   arm_length = std::max(arm_length, 1e-2f);
 
-  // Derived from the eye rather than from the camera's forward vector: for a
-  // perspective view that is the direction the gizmo is actually seen along,
-  // which is what decides whether a quad reads as a sliver. An ortho editor
-  // camera looks down an axis from far back, so the two agree there anyway.
-  const vec3 to_gizmo = box.center - view.camera_position;
-  const vec3 view_direction =
-      length(to_gizmo) > 1e-4f ? normalize(to_gizmo) : vec3{0, 0, 1};
+  // The direction the gizmo is seen along decides whether a quad reads as a sliver.
+  const vec3 view_direction = view_direction_to(view, box.center);
   for (int normal_axis = 0; normal_axis < 3; ++normal_axis)
     plane_handle_usable[normal_axis] =
         std::abs(view_direction[normal_axis]) >= PLANE_QUAD_MIN_FACING;
@@ -280,8 +286,6 @@ bool Editor_Gizmo::try_begin_drag(const linalg::ray_t &ray, const gizmo_view_t &
   previous_angle    = 0.f;
   total_angle       = 0.f;
 
-  const vec3 &camera_position = view.camera_position;
-
   switch (dragged.kind)
   {
   case gizmo_handle_t::kind_t::Translate:
@@ -295,7 +299,7 @@ bool Editor_Gizmo::try_begin_drag(const linalg::ray_t &ray, const gizmo_view_t &
 
     float distance_along_ray = 0.f;
     if (!intersect_ray_plane(ray.origin, ray.direction, anchor,
-                             camera_facing_plane_normal(axis, anchor, camera_position),
+                             camera_facing_plane_normal(axis, view_direction_to(view, anchor)),
                              distance_along_ray))
     {
       dragged = {};
@@ -353,8 +357,6 @@ std::optional<gizmo_drag_t> Editor_Gizmo::try_update_drag(const linalg::ray_t &r
   if (!dragged)
     return std::nullopt;
 
-  const vec3 &camera_position = view.camera_position;
-
   switch (dragged.kind)
   {
   case gizmo_handle_t::kind_t::Translate:
@@ -365,7 +367,7 @@ std::optional<gizmo_drag_t> Editor_Gizmo::try_update_drag(const linalg::ray_t &r
     float distance_along_ray = 0.f;
     if (!intersect_ray_plane(
             ray.origin, ray.direction, start_box.center,
-            camera_facing_plane_normal(direction, start_box.center, camera_position),
+            camera_facing_plane_normal(direction, view_direction_to(view, start_box.center)),
             distance_along_ray))
       return std::nullopt;
 
@@ -442,7 +444,7 @@ std::optional<gizmo_drag_t> Editor_Gizmo::try_update_drag(const linalg::ray_t &r
 
     float distance_along_ray = 0.f;
     if (!intersect_ray_plane(ray.origin, ray.direction, anchor,
-                             camera_facing_plane_normal(normal, anchor, camera_position),
+                             camera_facing_plane_normal(normal, view_direction_to(view, anchor)),
                              distance_along_ray))
       return std::nullopt;
 

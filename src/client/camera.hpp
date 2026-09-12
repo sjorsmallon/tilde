@@ -8,6 +8,9 @@
 namespace client
 {
 
+// An orthographic view draws this far in front of AND behind the camera, so the pick ray starts at the near end.
+constexpr float ORTHOGRAPHIC_DEPTH_HALF_RANGE = 100000.0f;
+
 struct camera_t
 {
   linalg::vec3f position = {0.0f, 0.0f, 0.0f};
@@ -183,9 +186,7 @@ inline linalg::ray_t get_pick_ray(const camera_t &cam, float ndc_x, float ndc_y,
     float ox = ndc_x * (w * 0.5f);
     float oy = ndc_y * (h * 0.5f);
     vec3 origin = {cam.position.x, cam.position.y, cam.position.z};
-    
-    // In editor, we usually start ray far back for orthographic picking
-    origin = origin - F * 1000.0f;
+    origin = origin - F * ORTHOGRAPHIC_DEPTH_HALF_RANGE;
     origin = origin + R * ox + U * oy;
     return {origin, F};
   }

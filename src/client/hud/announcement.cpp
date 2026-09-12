@@ -3,6 +3,7 @@
 #include "../../shared/cvars/generated/cvars_generated.hpp"
 #include "../ui/layout.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -26,7 +27,59 @@ announcement_t &current_announcement()
 void set_announcement(std::string_view text)
 {
   g_announcement.text.assign(text);
-  g_announcement.remaining_seconds = ANNOUNCEMENT_DURATION_SECONDS;
+  g_announcement.remaining_seconds = announcement_duration_for(text);
+}
+
+float announcement_duration_for(std::string_view text)
+{
+  size_t words   = 0;
+  bool   in_word = false;
+  for (const char character : text)
+  {
+    const bool is_space = character == ' ' || character == '\n' || character == '\t';
+    if (!is_space && !in_word)
+      ++words;
+    in_word = !is_space;
+  }
+  return std::max(ANNOUNCEMENT_MINIMUM_SECONDS, 1.0f + (float)words * ANNOUNCEMENT_SECONDS_PER_WORD);
+}
+
+std::vector<std::string> announcement_lines(const ui::ui_font_t &font, ui::font_size_t size,
+                                            std::string_view text, float max_width)
+{
+  std::vector<std::string> lines;
+
+  size_t line_start = 0;
+  while (line_start <= text.size())
+  {
+    const size_t           line_end = std::min(text.find('\n', line_start), text.size());
+    const std::string_view paragraph = text.substr(line_start, line_end - line_start);
+    line_start                       = line_end + 1;
+
+    // Greedy: take words while the line still fits, and never cut a word.
+    std::string line;
+    size_t      word_start = 0;
+    while (word_start < paragraph.size())
+    {
+      const size_t           word_end = std::min(paragraph.find(' ', word_start), paragraph.size());
+      const std::string_view word     = paragraph.substr(word_start, word_end - word_start);
+      word_start                      = word_end + 1;
+      if (word.empty())
+        continue;
+
+      const std::string candidate = line.empty() ? std::string(word) : line + " " + std::string(word);
+      if (!line.empty() && ui::measure_text(font, size, candidate).x > max_width)
+      {
+        lines.push_back(std::move(line));
+        line = std::string(word);
+        continue;
+      }
+      line = candidate;
+    }
+    lines.push_back(std::move(line));
+  }
+
+  return lines;
 }
 
 void advance_announcement(announcement_t &announcement, float delta_seconds)
@@ -49,15 +102,25 @@ void draw_announcement(renderer::ui_draw_list_t &list, const ui::ui_font_t &font
   if (announcement.remaining_seconds <= 0.0f || announcement.text.empty())
     return;
 
-  const ui::font_size_t size      = ui::font_size_t::large;
-  const linalg::vec2    text_size = ui::measure_text(font, size, announcement.text);
+  const ui::font_size_t size = ui::font_size_t::large;
+  const std::vector<std::string> lines =
+      announcement_lines(font, size, announcement.text, screen.x * ANNOUNCEMENT_MAX_WIDTH_FRACTION);
+
+  // Each line is centred on its own; the block is placed by its widest line.
+  linalg::vec2 block_size{0.0f, 0.0f};
+  for (const std::string &line : lines)
+  {
+    const linalg::vec2 measured = ui::measure_text(font, size, line);
+    block_size.x = std::max(block_size.x, measured.x);
+    block_size.y += measured.y;
+  }
 
   // Centered horizontally, a quarter of the way down: clear of the crosshair,
   // which is the same placement the ImGui version worked out by halving the
   // viewport centre.
   const ui::ui_rect_t box =
       ui::anchored(screen, ui::anchor_t::top_center,
-                   {.margin = {0.0f, screen.y * 0.25f}, .size = text_size});
+                   {.margin = {0.0f, screen.y * 0.25f}, .size = block_size});
 
   // Fade over the last half second rather than vanishing on a frame boundary.
   // The ImGui version could not do this without fighting the window's own alpha.
@@ -68,9 +131,17 @@ void draw_announcement(renderer::ui_draw_list_t &list, const ui::ui_font_t &font
   // an outline pass would be a shader for one caller. One offset copy in black
   // at a third the alpha is enough and costs six vertices per glyph.
   const float shadow_offset = std::floor(2.0f * display_scale);
-  ui::draw_text(list, font, size, {box.min.x + shadow_offset, box.min.y + shadow_offset},
-                announcement.text, color_t{0, 0, 0, (uint8_t)(alpha / 3)});
-  ui::draw_text(list, font, size, box.min, announcement.text, with_alpha(colors::white, alpha));
+
+  float y = box.min.y;
+  for (const std::string &line : lines)
+  {
+    const linalg::vec2 measured = ui::measure_text(font, size, line);
+    const float        x        = box.min.x + (block_size.x - measured.x) * 0.5f;
+    ui::draw_text(list, font, size, {x + shadow_offset, y + shadow_offset}, line,
+                  color_t{0, 0, 0, (uint8_t)(alpha / 3)});
+    ui::draw_text(list, font, size, {x, y}, line, with_alpha(colors::white, alpha));
+    y += measured.y;
+  }
 }
 
 } // namespace client::hud

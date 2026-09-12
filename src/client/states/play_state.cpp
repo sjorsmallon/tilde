@@ -42,6 +42,7 @@
 #include "../entity_hitbox_overlay.hpp"
 #include "../hitbox_debug_draw.hpp"
 #include "../shadow_debug_draw.hpp"
+#include "../fly_camera.hpp"
 #include "../input.hpp"
 #include "../../shared/player_animator.hpp"
 #include "../../shared/player_rig.hpp"
@@ -710,6 +711,52 @@ void Play_State::update(float dt)
   const bool gameplay_input_allowed =
       !console_open && !connection_ui.show_pause_menu;
 
+  // Noclip takes the keyboard and the mouse the way the console does, and the
+  // body idles under it: no buttons, no aim, no zoom. What it does NOT take is
+  // the pointer -- that stays captured on gameplay_input_allowed below. The
+  // camera it flies is seeded from last frame's resolved view and read back by
+  // the resolve at the bottom.
+  const bool noclip_active = ctx.cvars->cl_noclip;
+  if (noclip_active && !noclip_was_active)
+    noclip_camera = camera;
+  if (!noclip_active && noclip_was_active)
+  {
+    // The body catches up with the camera: the aim is ours to write, the
+    // position is the server's, so that one goes as a `setpos` line through
+    // the forwarder. The predicted body moves now so the view does not pop
+    // back for the round trip; the server's answer is what reconciliation
+    // then adopts.
+    const vec3f feet = noclip_camera.position - vec3f{0.f, shared::player_eye_height, 0.f};
+    ctx.prediction.player_yaw           = noclip_camera.yaw;
+    ctx.prediction.player_pitch         = noclip_camera.pitch;
+    ctx.prediction.player_position      = feet;
+    ctx.prediction.player_velocity      = {};
+    ctx.prediction.visual_error_offset  = {};
+    const std::string setpos_line = std::format("setpos {} {} {}", feet.x, feet.y, feet.z);
+    console::get().execute_command(setpos_line.c_str());
+  }
+  noclip_was_active = noclip_active;
+
+  const bool body_input_allowed = gameplay_input_allowed && !noclip_active;
+
+  if (noclip_active && gameplay_input_allowed)
+  {
+    fly_camera_input_t fly_input = read_fly_camera_keys();
+    if (connection_ui.mouse_captured)
+    {
+      for (const input::input_edge_t& edge : input::frame_input_edges())
+      {
+        if (edge.device != input::input_device_t::Mouse_Motion)
+          continue;
+        fly_input.look_delta.x += edge.motion.x;
+        fly_input.look_delta.y += edge.motion.y;
+      }
+    }
+    fly_camera_settings_t fly_settings;
+    fly_settings.units_per_second = ctx.cvars->editor_speed;
+    fly_camera(noclip_camera, fly_input, fly_settings, dt);
+  }
+
   if (connection_ui.console_was_open && !console_open)
     connection_ui.mouse_captured = true;
   connection_ui.console_was_open = console_open;
@@ -1157,7 +1204,7 @@ void Play_State::update(float dt)
 
   // now our position is subtick-accurate: based on the latest baseline provded
   // by the server with our "local" moves recalculated on top of it.
-  const bool zoom_input_allowed = connection_ui.mouse_captured && gameplay_input_allowed;
+  const bool zoom_input_allowed = connection_ui.mouse_captured && body_input_allowed;
 
   // if zoom is not allowed, just cancel the effect.
   // most of this zoom FOV / stepping looks confusing but we are just interpolating between the zoom FOV and the normal FOV based on the zoom easing time.
@@ -1193,7 +1240,7 @@ void Play_State::update(float dt)
   const float fov_degrees = shared::lerp_clamped(
       ctx.cvars->r_fov, ctx.cvars->r_zoom_fov, connection_ui.zoom_fraction);
 
-  const bool mouse_look_allowed = connection_ui.mouse_captured && gameplay_input_allowed;
+  const bool mouse_look_allowed = connection_ui.mouse_captured && body_input_allowed;
 
   // Scale by tan(fov/2) so a given hand movement sweeps the same distance
   // across the screen at any FOV — otherwise zooming multiplies your aim
@@ -1227,7 +1274,7 @@ void Play_State::update(float dt)
   // this _evaluates_ the input that was already gathered. it's not a live call.
   // although it reflects the most up-to-date stuff, I guess.
   uint64_t buttons = 0;
-  if (gameplay_input_allowed)
+  if (body_input_allowed)
   {
     if (input::is_key_down(input::key_t::W))     buttons |= Button::Forward;
     if (input::is_key_down(input::key_t::S))     buttons |= Button::Backward;
@@ -1368,7 +1415,7 @@ void Play_State::update(float dt)
       ctx.prediction.view_at_tick_start   = current_view();
       ctx.prediction.input_edges_are_live = false;
     }
-    else if (!gameplay_input_allowed)
+    else if (!body_input_allowed)
     {
       // Something else taking the keyboard releases everything, and that is an
       // edge like any other: the keys stop being movement at the moment it
@@ -1975,7 +2022,14 @@ void Play_State::update(float dt)
                     ctx.prediction.visual_error_offset +
                     vec3f{0.f, shared::player_eye_height, 0.f};
 
-  if (ctx.cvars->cl_spectate_slot >= 0)
+  if (noclip_active)
+  {
+    // The free camera outranks every other arm: it is the one you asked for.
+    camera.position = noclip_camera.position;
+    camera.yaw      = noclip_camera.yaw;
+    camera.pitch    = noclip_camera.pitch;
+  }
+  else if (ctx.cvars->cl_spectate_slot >= 0)
   {
     // Ride a remote player's eye.
     auto spectated_it = ctx.replication.remote_players.find(ctx.cvars->cl_spectate_slot);

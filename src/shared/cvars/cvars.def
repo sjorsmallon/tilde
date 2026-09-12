@@ -329,6 +329,13 @@ Client :: cvars {
     // judder. Bots occupy slots from sv_max_client_count (32) up.
     cl_spectate_slot:       i32 = -1         @Client    "Spectate a player slot through its eyes (-1 = off; bots start at 32)"
 
+    // A free camera flown with the editor's controls, and NOTHING moves the
+    // body: it stays where it stood, still simulated and still shootable, and
+    // the view returns to its own aim when this goes off. A cvar rather than a
+    // bare command because it has a current value; `noclip` is the toggle over
+    // it.
+    cl_noclip:              bool = false     @Client    "Detach the camera from the body and fly it with the editor's controls"
+
     // The aim pose EXTENTS moved to the @Mirrored `Aim` block above when the
     // server started posing hit volumes with them. What is left here is the
     // scrub rig, which is presentation only.
@@ -552,7 +559,11 @@ Server_Commands :: commands {
     // The "current map" question is answered by the server's own state and the
     // CmdChangeMap broadcast, not by a settable string.
     map(path: string)                  @Server  "Switch the server to a new map"
-    noclip(enabled: bool = false)      @Server  "Disable movement Vector Clipping"
+
+    // Source's setpos: moves the CALLER's body, feet at the point, velocity
+    // zeroed. The client fires it when cl_noclip goes off so the body catches
+    // up with the camera; three floats because a command parameter has no v3.
+    setpos(x: f32, y: f32, z: f32)     @Server  "Move the calling player's body to a position"
 
     // A client connects as a SPECTATOR -- it holds a slot with no player
     // entity -- and this is what gives it a body. @Server because spawning is
@@ -606,6 +617,9 @@ Client_Commands :: commands {
     // shows both words with the spacing intact rather than the first token
     // alone.
     announce(text: string...)              @Client  "Show a banner on screen for a few seconds"
+
+    // The toggle over cl_noclip, so one bound key does both directions.
+    noclip()                               @Client  "Toggle the free camera (cl_noclip)"
 
     // Allocation attribution (vector_def.md, Track A). COMMANDS rather than
     // cvars for the same reason `map` is one: each is a verb that prints

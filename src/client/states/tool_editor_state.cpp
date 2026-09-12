@@ -24,6 +24,7 @@
 #include "../entity_hitbox_overlay.hpp"
 #include "../shadow_debug_draw.hpp"
 #include "../hud/announcement.hpp"
+#include "../fly_camera.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
@@ -453,15 +454,6 @@ void Tool_Editor_State::update(float dt)
   {
     input::modifiers_t mods = input::current_modifiers();
 
-    float speed = state_manager::get_client_context().cvars->editor_speed * dt;
-    if (mods.shift)
-      speed *= 2.0f;
-
-    auto vectors = client::get_orientation_vectors(camera);
-    linalg::vec3 forward = vectors.forward;
-    linalg::vec3 right = vectors.right;
-    linalg::vec3 up = vectors.up;
-
     if (input::is_key_pressed(input::key_t::Z))
     {
       if (mods.ctrl)
@@ -596,78 +588,12 @@ void Tool_Editor_State::update(float dt)
       hud::set_announcement(buffer);
     }
 
-    if (input::is_key_down(input::key_t::W))
-    {
-      if (camera.orthographic)
-      {
-        camera.position.x += up.x * speed;
-        camera.position.y += up.y * speed;
-        camera.position.z += up.z * speed;
-      }
-      else
-      {
-        camera.position.x += forward.x * speed;
-        camera.position.y += forward.y * speed;
-        camera.position.z += forward.z * speed;
-      }
-    }
-    if (input::is_key_down(input::key_t::S))
-    {
-      if (camera.orthographic)
-      {
-        camera.position.x -= up.x * speed;
-        camera.position.y -= up.y * speed;
-        camera.position.z -= up.z * speed;
-      }
-      else
-      {
-        camera.position.x -= forward.x * speed;
-        camera.position.y -= forward.y * speed;
-        camera.position.z -= forward.z * speed;
-      }
-    }
-    if (input::is_key_down(input::key_t::D))
-    {
-      camera.position.x += right.x * speed;
-      camera.position.z += right.z * speed;
-    }
-    if (input::is_key_down(input::key_t::A))
-    {
-      camera.position.x -= right.x * speed;
-      camera.position.z -= right.z * speed;
-    }
-    if (input::is_key_down(input::key_t::Space) && !mods.shift)
-    {
-      if (camera.orthographic)
-        camera.ortho_height += speed;
-      else
-        camera.position.y += speed;
-    }
-    if (input::is_key_down(input::key_t::C))
-    {
-      if (camera.orthographic)
-      {
-        camera.ortho_height -= speed;
-        if (camera.ortho_height < 1.0f)
-          camera.ortho_height = 1.0f;
-      }
-      else
-      {
-        camera.position.y -= speed;
-      }
-    }
-    bool tool_captures_kb = active_tool && tools[*active_tool]->capture_keyboard();
-    if (!tool_captures_kb && input::is_key_down(input::key_t::Q))
-    {
-      if (!camera.orthographic)
-        camera.position.y -= speed;
-    }
-
     const bool console_open = console::get().is_open();
     const bool middle_down  = input::is_mouse_down(input::mouse_button_t::Middle) && !console_open;
     if (!middle_down)
       orbiting = false;
 
+    linalg::vec2i look_delta = {0, 0};
     if (middle_down)
     {
       if (!orbiting)
@@ -683,14 +609,54 @@ void Tool_Editor_State::update(float dt)
     else if (input::is_mouse_down(input::mouse_button_t::Right) && view_mode == ViewMode::FreeCam && !console_open)
     {
       input::set_relative_mouse_mode(true);
-      linalg::vec2i delta = input::mouse_delta();
-      camera.yaw += delta.x * 0.1f;
-      camera.pitch -= delta.y * 0.1f;
-      shared::clamp_this(camera.pitch, -89.0f, 89.0f);
+      look_delta = input::mouse_delta();
     }
     else
     {
       input::set_relative_mouse_mode(false);
+    }
+
+    const bool tool_captures_kb = active_tool && tools[*active_tool]->capture_keyboard();
+    fly_camera_input_t fly_input = read_fly_camera_keys();
+    // Shift+Space cycles the axis views above; it is not "up".
+    if (mods.shift)
+      fly_input.up = false;
+    if (!tool_captures_kb && input::is_key_down(input::key_t::Q))
+      fly_input.down = true;
+
+    fly_camera_settings_t fly_settings;
+    fly_settings.units_per_second = state_manager::get_client_context().cvars->editor_speed;
+
+    if (!camera.orthographic)
+    {
+      fly_input.look_delta = look_delta;
+      fly_camera(camera, fly_input, fly_settings, dt);
+    }
+    else
+    {
+      float speed = fly_settings.units_per_second * dt;
+      if (fly_input.fast)
+        speed *= fly_settings.fast_multiplier;
+      const camera_basis_t basis = get_orientation_vectors(camera);
+
+      if (fly_input.forward)
+        camera.position = camera.position + basis.up * speed;
+      if (fly_input.backward)
+        camera.position = camera.position - basis.up * speed;
+      if (fly_input.right)
+      {
+        camera.position.x += basis.right.x * speed;
+        camera.position.z += basis.right.z * speed;
+      }
+      if (fly_input.left)
+      {
+        camera.position.x -= basis.right.x * speed;
+        camera.position.z -= basis.right.z * speed;
+      }
+      if (fly_input.up)
+        camera.ortho_height += speed;
+      if (input::is_key_down(input::key_t::C))
+        camera.ortho_height = std::max(camera.ortho_height - speed, 1.0f);
     }
   }
 

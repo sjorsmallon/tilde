@@ -46,6 +46,7 @@ struct gizmo_capabilities_t
 struct gizmo_view_t
 {
   linalg::vec3 camera_position = {0, 0, 0};
+  linalg::vec3 forward         = {0, 0, 1};
   bool         orthographic    = false;
   float        ortho_height    = 1024.f;
   float        fov_degrees     = 90.f;

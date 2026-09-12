@@ -2483,6 +2483,25 @@ void spawn_cube(const command_context_t &command_context)
                  drop_position->z);
 }
 
+void setpos(float x, float y, float z, const command_context_t &command_context)
+{
+  using namespace server;
+  server_context_t &server_context = g_server_context;
+
+  entities::Player_Entity *player = nullptr;
+  if (is_valid_client_slot(command_context.caller_slot))
+    player = server_context.world.session.entity_system.get<entities::Player_Entity>(
+        server_context.clients[command_context.caller_slot].player_uid);
+  if (!player)
+  {
+    log_error("setpos: no Player_Entity for caller_slot {}", command_context.caller_slot);
+    return;
+  }
+
+  player->position = {x, y, z};
+  player->velocity = {};
+}
+
 void spawn_sphere(const command_context_t &command_context)
 {
   using namespace server;
@@ -2529,11 +2548,6 @@ void map(std::string_view requested_name, const command_context_t &)
   (void)change_map_to(std::string(requested_name));
 }
 
-
- void noclip(bool enabled, struct cvars::command_context_t const &)
- {
-   log_terminal("noclip: {}abled", enabled ? "en" : "dis");
- }
 
 void sv_mem_report(int32_t top, const command_context_t &)
 {

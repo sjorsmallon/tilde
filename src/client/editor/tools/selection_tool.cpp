@@ -60,7 +60,15 @@ void draw_cursor_target_marker(ImDrawList *overlay, ImVec2 mouse,
     overlay->AddLine(mouse, at, (color & 0x00FFFFFFu) | 0xA0000000u, 1.5f);
   }
 
-  overlay->AddText(ImVec2(mouse.x + 16.0f, mouse.y + 4.0f), color, label);
+  // A filled plate under the label: the viewport behind the cursor is whatever
+  // the map is, and a coloured line over a lit wall is not readable.
+  const ImVec2 text_at{mouse.x + 16.0f, mouse.y + 4.0f};
+  const ImVec2 text_size = ImGui::CalcTextSize(label);
+  const float  pad       = 4.0f;
+  overlay->AddRectFilled(ImVec2(text_at.x - pad, text_at.y - pad),
+                         ImVec2(text_at.x + text_size.x + pad, text_at.y + text_size.y + pad),
+                         IM_COL32(0, 0, 0, 200), 3.0f);
+  overlay->AddText(text_at, color, label);
 }
 
 // What the hover marker calls the thing under the cursor. Entities go through
@@ -153,7 +161,8 @@ Selection_Tool::try_compute_selection_bounds(editor_context_t& ctx) const
 gizmo_view_t Selection_Tool::make_gizmo_view() const
 {
   const client::camera_t &camera = cached_viewport.camera;
-  return {camera.position, camera.orthographic, camera.ortho_height, camera.fov_degrees};
+  return {camera.position, client::get_orientation_vectors(camera).forward, camera.orthographic,
+          camera.ortho_height, camera.fov_degrees};
 }
 
 // Apply what the gizmo reported to everything the drag started on. The gizmo
@@ -682,10 +691,11 @@ void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
 
   const size_t fills = 1 + connection_pick.also_rows.size();
   hud::set_announcement(std::format(
-      "Pick a target for {} {} -> {}{} ({} more unbound after this). Esc leaves them red.",
+      "Click the target for the placed prefab's connection:\n{} --{}--> ? : {}{}\n{} more to "
+      "pick after this one. Esc leaves them unbound (red in the Connections panel).",
       shared::describe_map_entity(*ctx.map, row.sender), entities::to_string(row.signal),
       entities::to_string(row.data.tag),
-      fills > 1 ? std::format(" and {} more row(s) aimed at the same thing", fills - 1)
+      fills > 1 ? std::format(" (and {} more row(s) aimed at the same thing)", fills - 1)
                 : std::string(),
       connection_pick.queued_rows.size()));
 }
@@ -1535,19 +1545,12 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
         linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
                              .value_or((bounds.min + bounds.max) * 0.5f);
 
-        linalg::vec3 view_pos = linalg::world_to_view(
-            p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,
-            view.camera.pitch);
-
-        if (view_pos.z >= -0.1f)
+        const std::optional<linalg::vec2> screen_pos = try_project_to_screen(view, p);
+        if (!screen_pos)
           continue;
 
-        linalg::vec2 screen_pos = linalg::view_to_screen(
-            view_pos, view.display_size, view.camera.orthographic,
-            view.camera.ortho_height, view.camera.fov_degrees);
-
-        if (screen_pos.x >= x_min && screen_pos.x <= x_max &&
-            screen_pos.y >= y_min && screen_pos.y <= y_max)
+        if (screen_pos->x >= x_min && screen_pos->x <= x_max &&
+            screen_pos->y >= y_min && screen_pos->y <= y_max)
         {
           bool already_selected = false;
           for (auto selected : selected_uids)
@@ -1632,8 +1635,9 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
   if (e.key == input::key_t::Escape)
   {
     if (!connection_pick.queued_rows.empty())
-      hud::set_announcement(std::format("{} unbound connection(s) left red; the panel's Pick "
-                                        "button reaches them",
+      hud::set_announcement(std::format("{} connection(s) left unbound.\nThey are red in the "
+                                        "Connections panel, where the Pick button still "
+                                        "reaches them.",
                                         connection_pick.queued_rows.size() +
                                             (connection_pick.armed ? 1u : 0u)));
     connection_pick.disarm();
@@ -1765,19 +1769,12 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
       linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
                            .value_or((bounds.min + bounds.max) * 0.5f);
 
-      linalg::vec3 view_pos = linalg::world_to_view(
-          p, {view.camera.position.x, view.camera.position.y, view.camera.position.z}, view.camera.yaw,
-          view.camera.pitch);
-
-      if (view_pos.z >= -0.1f)
+      const std::optional<linalg::vec2> screen_pos = try_project_to_screen(view, p);
+      if (!screen_pos)
         continue;
 
-      linalg::vec2 screen_pos = linalg::view_to_screen(
-          view_pos, view.display_size, view.camera.orthographic,
-          view.camera.ortho_height, view.camera.fov_degrees);
-
-      if (screen_pos.x >= x_min && screen_pos.x <= x_max &&
-          screen_pos.y >= y_min && screen_pos.y <= y_max)
+      if (screen_pos->x >= x_min && screen_pos->x <= x_max &&
+          screen_pos->y >= y_min && screen_pos->y <= y_max)
       {
         bool already_selected = false;
         for (auto selected : selected_uids)

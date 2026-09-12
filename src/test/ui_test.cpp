@@ -14,6 +14,7 @@
 // `main` unless told not to. This test owns its own entry point.
 #define SDL_MAIN_HANDLED
 
+#include "client/hud/announcement.hpp"
 #include "client/ui/font.hpp"
 #include "client/ui/layout.hpp"
 #include "client/ui/list_menu.hpp"
@@ -892,11 +893,65 @@ void test_list_menu_rows_layout_and_activate()
   std::cout << "test_list_menu_rows_layout_and_activate passed" << std::endl;
 }
 
+// A banner stays as long as it takes to READ, and a long one wraps rather than
+// running off the screen. Both regressed together the first time a sentence was
+// put on one: gone in three seconds, and one line wide.
+void test_announcement_duration_and_lines()
+{
+  using client::hud::announcement_duration_for;
+  using client::hud::announcement_lines;
+
+  assert(std::fabs(announcement_duration_for("Saved!") - client::hud::ANNOUNCEMENT_MINIMUM_SECONDS) < 0.001f);
+  {
+    std::string thirty_words;
+    for (int index = 0; index < 30; ++index)
+      thirty_words += index == 0 ? "word" : " word";
+    const float expected = 1.0f + 30.0f * client::hud::ANNOUNCEMENT_SECONDS_PER_WORD;
+    assert(std::fabs(announcement_duration_for(thirty_words) - expected) < 0.001f);
+    // Newlines and tabs separate words as a space does.
+    assert(std::fabs(announcement_duration_for("a\nb\tc d") - client::hud::ANNOUNCEMENT_MINIMUM_SECONDS) < 0.001f);
+  }
+
+  const baked_font_t &baked = shipped();
+  const font_size_t   size  = font_size_t::large;
+
+  // An explicit newline is a line, and nothing else cuts at a generous width.
+  {
+    const std::vector<std::string> lines = announcement_lines(baked.font, size, "one\ntwo three", 10000.0f);
+    assert(lines.size() == 2);
+    assert(lines[0] == "one" && lines[1] == "two three");
+  }
+
+  // Wrapping: every line fits, no word is cut, and every word survives.
+  {
+    const std::string text = "the quick brown fox jumps over the lazy dog again and again";
+    const float       limit = client::ui::measure_text(baked.font, size, "the quick brown fox").x + 1.0f;
+    const std::vector<std::string> lines = announcement_lines(baked.font, size, text, limit);
+    assert(lines.size() > 1);
+    std::string rejoined;
+    for (const std::string &line : lines)
+    {
+      assert(client::ui::measure_text(baked.font, size, line).x <= limit);
+      rejoined += rejoined.empty() ? line : " " + line;
+    }
+    assert(rejoined == text);
+  }
+
+  // A word wider than the limit is a line of its own, never cut.
+  {
+    const std::vector<std::string> lines = announcement_lines(baked.font, size, "a supercalifragilistic b", 1.0f);
+    assert(lines.size() == 3);
+    assert(lines[1] == "supercalifragilistic");
+  }
+
+  std::cout << "test_announcement_duration_and_lines passed" << std::endl;
+}
 
 } // namespace
 
 int main()
 {
+  test_announcement_duration_and_lines();
   test_bake_produces_sane_metrics();
   test_space_advances_but_has_no_ink();
   test_measure_text();

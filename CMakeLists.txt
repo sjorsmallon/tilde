@@ -722,6 +722,7 @@ add_library(game_client SHARED
     src/client/entity_type_audio.cpp
     src/client/hit_confirm_audio.cpp
     src/client/shot_debug.cpp
+    src/client/fly_camera.cpp
     src/client/shadow_debug_draw.cpp
     src/client/skybox_selection.cpp
     src/client/lightmap_gpu_vulkan.cpp
@@ -979,6 +980,7 @@ target_link_libraries(debug_draw_list_test PRIVATE game_shared Vulkan::Vulkan SD
 add_executable(ui_test
     src/test/ui_test.cpp
     src/client/ui_draw_list.cpp
+    src/client/hud/announcement.cpp
     src/client/ui/font.cpp
     src/client/ui/screen.cpp
     src/client/ui/navigation.cpp
