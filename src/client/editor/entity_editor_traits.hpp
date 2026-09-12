@@ -31,16 +31,17 @@ entity_icon_t get_entity_icon(const entities::Entity* e);
 
 linalg::vec3 get_placement_half_extents(const entities::Entity* e);
 
-// Placement preview at `origin` — the entity's position, NOT necessarily the
-// center of the drawn shape. Returns false to fall back to the default path
-// (render component mesh wireframe, then wire box).
-bool draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
+// Every context draws the same three layers: ART (the render component, else
+// the type's stand-in, else a wire box), the type's DIAGRAM on top of it, and
+// the REACH on top of that for the selected and the placed entity only. A
+// diagram never substitutes for art: a pad that grows a mesh keeps its arrow.
+
+// Placement preview at `origin` -- the entity's position, NOT necessarily the
+// center of the drawn shape.
+void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
                        const linalg::vec3& origin);
 
-// tries render component first (which is not obvious?).
-bool draw_entity_in_editor(const entities::Entity* e,
-                           pass_builder_t& draws, uint32_t uid,
-                           bool solid);
+void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws);
 
 // How far above a surface the entity's ORIGIN sits when placed on it. Half the
 // entity's height for the usual centered origin, ZERO for the player-shaped
@@ -53,18 +54,11 @@ float get_placement_origin_height(const entities::Entity* e);
 linalg::vec3 compute_placement_origin(const entities::Entity* e,
                                       const linalg::vec3& ghost_position);
 
-// Default ghost drawing: tries render component mesh wireframe, then wire box.
-void draw_default_ghost(const entities::Entity* e, pass_builder_t& draws,
-                        const linalg::vec3& origin);
-
 // The selection highlight's pink <-> white pulse at time `time`. Shared so the
 // geometry highlight pulses in lockstep with the entity one.
 color_t compute_selection_pulse_color(float time);
 
-// Draw a pulsating selection highlight wireframe for an entity.
-// Uses the entity's mesh wireframe if available, else a per-type shape,
-// else AABB bounds. Color pulsates between pink and white based on time.
-// grid_step: current editor grid step (used for AABB face grid overlay).
+// The three layers in the pulse colour.
 void draw_selection_highlight(const entities::Entity* e,
                               pass_builder_t& draws, float time,
                               float grid_step);

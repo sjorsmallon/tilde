@@ -323,6 +323,63 @@ constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t JUMP_PAD_LAUNCH_FIELDS[] = {
+  {.name = "origin",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Jump_Pad_Launch, origin),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Launch::origin),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "normal",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Jump_Pad_Launch, normal),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Launch::normal),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "color",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Jump_Pad_Launch, color),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Launch::color),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "scale",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Jump_Pad_Launch, scale),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Launch::scale),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "attached_entity",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Jump_Pad_Launch, attached_entity),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Launch::attached_entity),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "surface_material",
+   .type = FIELD_TYPE_U16,
+   .offset = (uint32_t)offsetof(Jump_Pad_Launch, surface_material),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Launch::surface_material),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 } // namespace
 
 const char* to_string(effect_type value)
@@ -334,6 +391,7 @@ const char* to_string(effect_type value)
     case effect_type::Jump: return "Jump";
     case effect_type::Land: return "Land";
     case effect_type::Shot_Impact: return "Shot_Impact";
+    case effect_type::Jump_Pad_Launch: return "Jump_Pad_Launch";
   }
   assert(false && "invalid effect_type");
   return "";
@@ -464,6 +522,31 @@ std::string to_text(const Shot_Impact& value)
   return std::string("Shot_Impact") + fields_to_text({SHOT_IMPACT_FIELDS, 8}, &value);
 }
 
+void fire_jump_pad_launch(event_stream_t& stream, const Jump_Pad_Launch& payload)
+{
+  stream.writer.write_bits((uint32_t)effect_type::Jump_Pad_Launch, 16);
+  for (const field_info_t& field : Span<const field_info_t>{JUMP_PAD_LAUNCH_FIELDS, 6})
+    network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
+  ++stream.count;
+
+  if (stream.log_fired)
+    log_terminal("[event fired] {}", to_text(payload));
+}
+
+std::optional<Jump_Pad_Launch> try_read_jump_pad_launch(network::Bit_Reader& reader)
+{
+  Jump_Pad_Launch payload;
+  for (const field_info_t& field : Span<const field_info_t>{JUMP_PAD_LAUNCH_FIELDS, 6})
+    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
+      return std::nullopt;
+  return payload;
+}
+
+std::string to_text(const Jump_Pad_Launch& value)
+{
+  return std::string("Jump_Pad_Launch") + fields_to_text({JUMP_PAD_LAUNCH_FIELDS, 6}, &value);
+}
+
 std::string effect_stream_to_text(const event_stream_t& stream)
 {
   if (stream.empty())
@@ -535,6 +618,17 @@ std::string effect_stream_to_text(const event_stream_t& stream)
       case effect_type::Shot_Impact:
       {
         const std::optional<Shot_Impact> payload = try_read_shot_impact(reader);
+        if (!payload)
+        {
+          text += "<undecodable payload; the rest is unreadable>";
+          return text;
+        }
+        text += to_text(*payload);
+        break;
+      }
+      case effect_type::Jump_Pad_Launch:
+      {
+        const std::optional<Jump_Pad_Launch> payload = try_read_jump_pad_launch(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";

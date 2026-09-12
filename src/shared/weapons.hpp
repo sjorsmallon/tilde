@@ -196,14 +196,6 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .fire_resolution       = entities::Fire_Resolution::Projectile,
      .leaves_bullet_impact  = false,
      .slot                  = entities::Inventory_Slot::Secondary},
-    // The Self_Impulse demonstrator, and the reason it is a granted weapon
-    // rather than a cvar defaulted to off the way pm_air_jump_count is: an
-    // impulse has no meaning without a hand to hold it, so the seam is only
-    // checked by being reachable. Everything CS-shaped is untouched -- this
-    // sits in Utility_1, on Key4, and does nothing until pressed.
-    //
-    // Every weapon-side clock is zero, and that is the static_assert below
-    // rather than a coincidence.
     {.weapon                        = entities::Weapon::Dash,
      .display_name                  = "Dash",
      .damage                        = 0.f,
@@ -379,7 +371,7 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
   // through.
   if (movement.seconds_until_impulse_ready > 0.f)
     return false;
-
+  
   switch (impulse->mode)
   {
   case impulse_mode_t::Add:

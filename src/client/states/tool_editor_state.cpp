@@ -1463,12 +1463,9 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       // is what makes a bake previewed here the bake that ships.
       shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
 
-      draw_entity_in_editor(entry.entity.get(), scene, entry.uid,
-                            draw_entities_solid);
-      // ALONGSIDE the model, never instead of it. draw_entity_in_editor used to
-      // return the moment the render component drew, so a crate's hit volume was
-      // visible for exactly as long as its mesh failed to resolve -- the two are
-      // not alternatives, one lives inside the other.
+      draw_entity_in_editor(entry.entity.get(), scene);
+      // ALONGSIDE the model, never instead of it: a hit volume lives inside the
+      // model it belongs to.
       if (show_hitboxes)
         draw_entity_hitbox_overlay(entry.entity.get(), scene);
     }

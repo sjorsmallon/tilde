@@ -180,6 +180,24 @@ constexpr field_info_t OBJECTIVE_REACHED_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "attempt_ticks",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Objective_Reached, attempt_ticks),
+   .size_in_bytes = (uint32_t)sizeof(Objective_Reached::attempt_ticks),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "best_ticks",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Objective_Reached, best_ticks),
+   .size_in_bytes = (uint32_t)sizeof(Objective_Reached::best_ticks),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 } // namespace
@@ -325,7 +343,7 @@ std::string to_text(const Round_Phase_Changed& value)
 void fire_objective_reached(event_stream_t& stream, const Objective_Reached& payload)
 {
   stream.writer.write_bits((uint32_t)game_event_type::Objective_Reached, 16);
-  for (const field_info_t& field : Span<const field_info_t>{OBJECTIVE_REACHED_FIELDS, 1})
+  for (const field_info_t& field : Span<const field_info_t>{OBJECTIVE_REACHED_FIELDS, 3})
     network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
   ++stream.count;
 
@@ -336,7 +354,7 @@ void fire_objective_reached(event_stream_t& stream, const Objective_Reached& pay
 std::optional<Objective_Reached> try_read_objective_reached(network::Bit_Reader& reader)
 {
   Objective_Reached payload;
-  for (const field_info_t& field : Span<const field_info_t>{OBJECTIVE_REACHED_FIELDS, 1})
+  for (const field_info_t& field : Span<const field_info_t>{OBJECTIVE_REACHED_FIELDS, 3})
     if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
       return std::nullopt;
   return payload;
@@ -344,7 +362,7 @@ std::optional<Objective_Reached> try_read_objective_reached(network::Bit_Reader&
 
 std::string to_text(const Objective_Reached& value)
 {
-  return std::string("Objective_Reached") + fields_to_text({OBJECTIVE_REACHED_FIELDS, 1}, &value);
+  return std::string("Objective_Reached") + fields_to_text({OBJECTIVE_REACHED_FIELDS, 3}, &value);
 }
 
 std::string game_event_stream_to_text(const event_stream_t& stream)

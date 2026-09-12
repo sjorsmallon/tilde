@@ -34,6 +34,7 @@ class sound_asset sound_asset_t asset_types.hpp .wav
   Missing -
   a_new_record resources/sounds/a_new_record.wav
   congratulations resources/sounds/congratulations.wav
+  gust_of_wind resources/sounds/gust_of_wind.wav
   headshot1 resources/sounds/headshot1.wav
   headshot2 resources/sounds/headshot2.wav
   headshot3 resources/sounds/headshot3.wav
@@ -56,6 +57,7 @@ class sound_asset sound_asset_t asset_types.hpp .wav
   scout_fire_1 resources/sounds/scout_fire_1.wav
   success resources/sounds/success.wav
   target_break resources/sounds/target_break.wav
+  twang resources/sounds/twang.wav
   wow_incredible resources/sounds/wow_incredible.wav
   zoom resources/sounds/zoom.wav
 

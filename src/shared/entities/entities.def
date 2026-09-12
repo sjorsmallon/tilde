@@ -386,3 +386,10 @@ Physics_Body_Entity :: entity {
 Logic_Counter_Entity :: entity is Counting {
     counter: Counter 
 }
+
+Jump_Pad_Entity :: entity is Switchable, Touchable {
+    switch_state:  Enabled
+    volume:        Box_Volume = { half_extents = {32, 8, 32} }
+    launch_speed:  f32 = 900   @Editable
+    render: Render = {mesh = .Duck}
+}

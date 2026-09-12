@@ -21,6 +21,7 @@ void on_footstep(client_context_t& context, const shared::Footstep& value);
 void on_jump(client_context_t& context, const shared::Jump& value);
 void on_land(client_context_t& context, const shared::Land& value);
 void on_shot_impact(client_context_t& context, const shared::Shot_Impact& value);
+void on_jump_pad_launch(client_context_t& context, const shared::Jump_Pad_Launch& value);
 } // namespace effects
 
 // The switch lives here rather than beside the codec because it is what
@@ -123,6 +124,22 @@ void dispatch_received_effects(client_context_t& context, network::Bit_Reader& r
         if (log_received)
           log_terminal("[event received] {}", shared::to_text(*payload));
         effects::on_shot_impact(context, *payload);
+        break;
+      }
+      case shared::effect_type::Jump_Pad_Launch:
+      {
+        const std::optional<shared::Jump_Pad_Launch> payload = shared::try_read_jump_pad_launch(reader);
+        if (!payload)
+        {
+          // A field the tables cannot represent leaves the reader
+          // mid-record, so the rest of the batch is gone with it.
+          log_error("dispatch_received_effects: record {} of {} did not "
+                    "decode; dropping the rest of the batch", index, count);
+          return;
+        }
+        if (log_received)
+          log_terminal("[event received] {}", shared::to_text(*payload));
+        effects::on_jump_pad_launch(context, *payload);
         break;
       }
     }

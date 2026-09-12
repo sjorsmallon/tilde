@@ -16,6 +16,7 @@ namespace
 // no business threading a context through to say "Saved!", and from a generated
 // command binder that has no context to thread.
 announcement_t g_announcement;
+std::string    g_run_result;
 
 } // namespace
 
@@ -28,6 +29,21 @@ void set_announcement(std::string_view text)
 {
   g_announcement.text.assign(text);
   g_announcement.remaining_seconds = announcement_duration_for(text);
+}
+
+void set_run_result(std::string_view text)
+{
+  g_run_result.assign(text);
+}
+
+void clear_run_result()
+{
+  g_run_result.clear();
+}
+
+std::string_view run_result()
+{
+  return g_run_result;
 }
 
 float announcement_duration_for(std::string_view text)

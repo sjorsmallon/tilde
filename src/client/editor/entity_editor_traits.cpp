@@ -7,6 +7,7 @@
 #include "../../shared/shapes.hpp"
 #include "render_assets.hpp"
 #include "renderer.hpp"
+#include "state_manager.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -89,6 +90,42 @@ void draw_trigger_volume_shape(pass_builder_t& draws,
   draws.debug.box(position, half_extents, color);
 }
 
+constexpr float JUMP_PAD_ARROW_SECONDS = 0.1f;
+constexpr float JUMP_PAD_ARC_SECONDS   = 3.f;
+constexpr int   JUMP_PAD_ARC_SEGMENTS  = 48;
+
+// The launch as an arrow whose length is the speed over a tenth of a second: a
+// pad is aimed with the rotate gizmo, so the arrow is the thing being edited.
+void draw_jump_pad_shape(pass_builder_t& draws, const entities::Jump_Pad_Entity* pad,
+                         const linalg::vec3& position, color_t color)
+{
+  draws.debug.box(position + pad->volume.position, pad->volume.half_extents, color);
+  const linalg::vec3 launch = linalg::forward(pad->orientation) * pad->launch_speed;
+  draws.debug.arrow(position, position + launch * JUMP_PAD_ARROW_SECONDS, color);
+}
+
+// Where a launched player lands: the ballistic arc under the live g_gravity,
+// cut where it drops below the pad.
+void draw_jump_pad_arc(pass_builder_t& draws, const entities::Jump_Pad_Entity* pad,
+                       const linalg::vec3& position, color_t color)
+{
+  const float        gravity  = state_manager::get_client_context().cvars->g_gravity;
+  const linalg::vec3 velocity = linalg::forward(pad->orientation) * pad->launch_speed;
+  const float        floor_y  = position.y - pad->volume.half_extents.y;
+
+  linalg::vec3 previous = position;
+  for (int i = 1; i <= JUMP_PAD_ARC_SEGMENTS; ++i)
+  {
+    const float t = JUMP_PAD_ARC_SECONDS * static_cast<float>(i) / JUMP_PAD_ARC_SEGMENTS;
+    const linalg::vec3 point =
+        position + velocity * t - linalg::vec3{0.f, 0.5f * gravity * t * t, 0.f};
+    draws.debug.line(previous, point, color);
+    previous = point;
+    if (point.y < floor_y)
+      break;
+  }
+}
+
 constexpr float LIGHT_DIRECTION_STUB    = 30.f;
 constexpr float DIRECTIONAL_RAY_LENGTH  = 128.f;
 constexpr float DIRECTIONAL_RAY_SPACING = 24.f;
@@ -98,13 +135,11 @@ constexpr uint8_t LIGHT_VOLUME_ALPHA    = 110;
 // thing casting the penumbra, and it is usually small enough beside `range` that a
 // dimmed one would not be visible at all. Nothing to draw at zero, which is a
 // punctual light and has no size to show.
-bool draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
+void draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
                         const linalg::vec3& position, color_t color)
 {
-  if (light.source_radius <= 0.f)
-    return false;
-  draws.debug.wire_sphere(position, light.source_radius, color);
-  return true;
+  if (light.source_radius > 0.f)
+    draws.debug.wire_sphere(position, light.source_radius, color);
 }
 
 
@@ -116,10 +151,10 @@ void draw_light_direction_stub(pass_builder_t& draws, const linalg::quatf& orien
 }
 
 
-bool draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_Entity* light,
+void draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_Entity* light,
                             const linalg::vec3& position, color_t color)
 {
-  return draw_source_sphere(draws, light->light, position, color);
+  draw_source_sphere(draws, light->light, position, color);
 }
 
 void draw_point_light_reach(pass_builder_t& draws, const entities::Point_Light_Entity* light,
@@ -227,7 +262,7 @@ bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_
   return true;
 }
 
-using draw_shape_function_t = bool (*)(const entities::Entity*, pass_builder_t&,
+using draw_function_t = void (*)(const entities::Entity*, pass_builder_t&,
                                  const linalg::vec3&, color_t);
 
 // Where `position` sits when placed on a surface: centered lifts by half the
@@ -247,118 +282,126 @@ struct entity_editor_traits_t
   // every click in the room it lights.
   linalg::vec3       half_extents        = {};
   placement_origin_t origin              = placement_origin_t::centered;
-  color_t            color               = colors::white; // gizmo colour (ghost + in-editor)
-  draw_shape_function_t draw_shape       = nullptr;       // null: contexts use their defaults
-  // Drawn ONLY for the selected entity and the one being placed, on top of
-  // draw_shape rather than instead of it. For a diagram whose whole point is
-  // that it is bigger than the object -- a light's falloff -- always-on is the
-  // same as never, because every one of them overlaps every other.
-  draw_shape_function_t draw_reach       = nullptr;
+  color_t            color               = colors::white; // stand-in and diagram colour
+  // ART for a type with no mesh: the rung of the art ladder between the render
+  // component and the wire box. Drawn INSTEAD of the mesh, never beside it.
+  draw_function_t    draw_stand_in       = nullptr;
+  // What the thing DOES -- a volume, a launch, an emitter. Drawn on top of
+  // whatever drew the art, in every context, never instead of it. A type that
+  // one day gets a mesh keeps its diagram; that is the whole point of the split.
+  draw_function_t    draw_diagram        = nullptr;
+  // The diagram that is bigger than the object -- a light's falloff -- drawn
+  // ONLY for the selected entity and the one being placed. Always-on would be
+  // the same as never, because every one of them overlaps every other.
+  draw_function_t    draw_reach          = nullptr;
   // The screen-space icon, drawn at a constant pixel size by the icon pass.
   // Absent for every type whose own shape is what you need to see.
   std::optional<assets::texture_asset> icon;
-  bool shape_for_ghost     = true;
-  bool shape_for_selection = true;
 };
 
-// -- Gizmo adapters: the shapes above under the uniform signature -------
+// -- Adapters: the shapes above under the uniform signature --------------
+//
+// Two kinds, and the traits table says which each is. A STAND-IN is art for a
+// type that has no mesh; a DIAGRAM is what the thing does, drawn on top of the
+// art in every context.
 
-bool player_spawn_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                        const linalg::vec3& position, color_t color)
-{
-  draw_player_spawn_shape(draws, position, e->orientation, color);
-  return true;
-}
-
-bool spectate_camera_gizmo(const entities::Entity* e, pass_builder_t& draws,
+void player_spawn_stand_in(const entities::Entity* e, pass_builder_t& draws,
                            const linalg::vec3& position, color_t color)
 {
-  draw_spectate_camera_shape(draws, position, e->orientation, color);
-  return true;
+  draw_player_spawn_shape(draws, position, e->orientation, color);
 }
 
-bool particle_emitter_gizmo(const entities::Entity*, pass_builder_t& draws,
-                            const linalg::vec3& position, color_t color)
+void spectate_camera_stand_in(const entities::Entity* e, pass_builder_t& draws,
+                              const linalg::vec3& position, color_t color)
+{
+  draw_spectate_camera_shape(draws, position, e->orientation, color);
+}
+
+void particle_emitter_stand_in(const entities::Entity*, pass_builder_t& draws,
+                               const linalg::vec3& position, color_t color)
 {
   draw_particle_emitter_shape(draws, position, color);
-  return true;
 }
 
-bool trigger_volume_gizmo(const entities::Entity* e, pass_builder_t& draws,
+// Player_Entity has no placeable representation of its own (runtime-spawned);
+// its stand-in is its actual mesh drawn in wireframe.
+void player_mesh_stand_in(const entities::Entity* e, pass_builder_t& draws,
                           const linalg::vec3& position, color_t color)
+{
+  push_mesh(draws, assets::load_mesh("resources/obj/Pyramid.obj"), position,
+            e->orientation, {1, 1, 1}, color, renderer::fill_mode_t::wireframe);
+}
+
+void trigger_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
+                            const linalg::vec3& position, color_t color)
 {
   draw_trigger_volume_shape(
       draws, position,
       static_cast<const entities::Trigger_Volume_Entity*>(e)->volume.half_extents,
       color);
-  return true;
 }
 
-bool reflection_volume_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                             const linalg::vec3& position, color_t color)
+void reflection_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
+                               const linalg::vec3& position, color_t color)
 {
   draw_trigger_volume_shape(
       draws, position,
       static_cast<const entities::Reflection_Volume_Entity*>(e)->volume.half_extents,
       color);
-  return true;
 }
 
-bool point_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                       const linalg::vec3& position, color_t color)
+void jump_pad_diagram(const entities::Entity* e, pass_builder_t& draws,
+                      const linalg::vec3& position, color_t color)
 {
-  return draw_point_light_shape(
+  draw_jump_pad_shape(draws, static_cast<const entities::Jump_Pad_Entity*>(e), position, color);
+}
+
+void jump_pad_reach(const entities::Entity* e, pass_builder_t& draws,
+                    const linalg::vec3& position, color_t color)
+{
+  draw_jump_pad_arc(draws, static_cast<const entities::Jump_Pad_Entity*>(e), position, color);
+}
+
+void point_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+                         const linalg::vec3& position, color_t color)
+{
+  draw_point_light_shape(
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
 }
 
-bool spot_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                      const linalg::vec3& position, color_t color)
+void spot_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+                        const linalg::vec3& position, color_t color)
 {
   draw_spot_light_shape(
       draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
-  return true;
 }
 
-bool directional_light_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                             const linalg::vec3& position, color_t color)
+void directional_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+                               const linalg::vec3& position, color_t color)
 {
   draw_directional_light_shape(
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
-  return true;
 }
 
-bool point_light_reach_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                             const linalg::vec3& position, color_t color)
+void point_light_reach(const entities::Entity* e, pass_builder_t& draws,
+                       const linalg::vec3& position, color_t color)
 {
   draw_point_light_reach(
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
-  return true;
 }
 
-bool spot_light_reach_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                            const linalg::vec3& position, color_t color)
+void spot_light_reach(const entities::Entity* e, pass_builder_t& draws,
+                      const linalg::vec3& position, color_t color)
 {
   draw_spot_light_reach(
       draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
-  return true;
 }
 
-bool directional_light_reach_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                                   const linalg::vec3& position, color_t color)
+void directional_light_reach(const entities::Entity* e, pass_builder_t& draws,
+                             const linalg::vec3& position, color_t color)
 {
   draw_directional_light_reach(
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
-  return true;
-}
-
-// Player_Entity has no placeable representation of its own (runtime-spawned);
-// its "gizmo" is its actual mesh drawn in wireframe.
-bool player_mesh_gizmo(const entities::Entity* e, pass_builder_t& draws,
-                       const linalg::vec3& position, color_t color)
-{
-  return push_mesh(draws, assets::load_mesh("resources/obj/Pyramid.obj"), position,
-                   e->orientation, {1, 1, 1}, color,
-                   renderer::fill_mode_t::wireframe);
 }
 
 entity_editor_traits_t default_entity_traits(const entities::Entity* e)
@@ -394,41 +437,42 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
       return {.half_extents = player_hull,
               .origin       = placement_origin_t::feet,
               .color        = colors::pink,
-              .draw_shape   = &player_spawn_gizmo};
+              .draw_stand_in = &player_spawn_stand_in};
 
     case entities::entity_type::Player_Spectate_Entity:
       return {.half_extents = player_hull,
               .origin       = placement_origin_t::feet,
               .color        = colors::green,
-              .draw_shape   = &spectate_camera_gizmo};
+              .draw_stand_in = &spectate_camera_stand_in};
 
-    // Ghost declines: runtime-spawned, so the default box is the honest
-    // placement preview; the mesh wireframe serves in-editor and selection.
     case entities::entity_type::Player_Entity:
       return {.half_extents    = player_hull,
               .origin          = placement_origin_t::feet,
-              .draw_shape      = &player_mesh_gizmo,
-              .shape_for_ghost = false};
+              .draw_stand_in   = &player_mesh_stand_in};
 
-    // Point entity. Selection declines on purpose: the gizmo reads worse at
-    // selection scale than the AABB fallback does.
     case entities::entity_type::Particle_Emitter_Entity:
       return {.half_extents        = {0, 0, 0},
               .color               = colors::gold,
-              .draw_shape          = &particle_emitter_gizmo,
-              .shape_for_selection = false};
+              .draw_stand_in       = &particle_emitter_stand_in};
 
     case entities::entity_type::Trigger_Volume_Entity:
       return {.half_extents = static_cast<const entities::Trigger_Volume_Entity*>(e)
                                   ->volume.half_extents,
               .color        = colors::red,
-              .draw_shape   = &trigger_volume_gizmo};
+              .draw_diagram = &trigger_volume_diagram};
 
     case entities::entity_type::Reflection_Volume_Entity:
       return {.half_extents = static_cast<const entities::Reflection_Volume_Entity*>(e)
                                   ->volume.half_extents,
               .color        = colors::cyan,
-              .draw_shape   = &reflection_volume_gizmo};
+              .draw_diagram = &reflection_volume_diagram};
+
+    case entities::entity_type::Jump_Pad_Entity:
+      return {.half_extents = static_cast<const entities::Jump_Pad_Entity*>(e)
+                                  ->volume.half_extents,
+              .color        = colors::orange,
+              .draw_diagram = &jump_pad_diagram,
+              .draw_reach   = &jump_pad_reach};
 
     case entities::entity_type::Physics_Body_Entity:
       return {.half_extents =
@@ -455,22 +499,22 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
     case entities::entity_type::Point_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
-              .draw_shape   = &point_light_gizmo,
-              .draw_reach   = &point_light_reach_gizmo,
+              .draw_diagram = &point_light_diagram,
+              .draw_reach   = &point_light_reach,
               .icon         = assets::texture_asset::point_light};
 
     case entities::entity_type::Spot_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
-              .draw_shape   = &spot_light_gizmo,
-              .draw_reach   = &spot_light_reach_gizmo,
+              .draw_diagram = &spot_light_diagram,
+              .draw_reach   = &spot_light_reach,
               .icon         = assets::texture_asset::spot_light};
 
     case entities::entity_type::Directional_Light_Entity:
       return {.half_extents = point_pick,
               .color        = colors::yellow,
-              .draw_shape   = &directional_light_gizmo,
-              .draw_reach   = &directional_light_reach_gizmo,
+              .draw_diagram = &directional_light_diagram,
+              .draw_reach   = &directional_light_reach,
               .icon         = assets::texture_asset::directional_light};
       
     case entities::entity_type::Game_Rules_Entity:
@@ -492,8 +536,58 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
 } // namespace
 
 // ===================================================================
-// The drivers: each context's fallback ladder, written once
+// The drivers. Every context draws the same three layers:
+//   art      the render component, else the type's stand-in, else a wire box
+//   diagram  always, on top of the art
+//   reach    on top of that, selected and placing only
 // ===================================================================
+
+namespace
+{
+
+bool try_draw_render_component(const entities::Entity* e, pass_builder_t& draws,
+                               const linalg::vec3& position, color_t color,
+                               renderer::fill_mode_t fill)
+{
+  const entities::Render* rc = entities::get_render(e);
+  if (!rc || !rc->visible)
+    return false;
+
+  if (fill == renderer::fill_mode_t::solid && rc->is_wireframe)
+    fill = renderer::fill_mode_t::wireframe;
+
+  const color_t tint = fill == renderer::fill_mode_t::solid ? color_from_vec3(rc->material.color)
+                                                            : color;
+  return push_mesh(draws, assets::get_mesh(rc->mesh), position,
+                   linalg::compose_model_rotation(e->orientation, rc->rotation), rc->scale, tint,
+                   fill, &rc->material);
+}
+
+// debug.box takes a CENTER, which is the origin only for centered-origin types
+// -- a feet-origin one sits half a hull lower.
+void draw_wire_box(const entity_editor_traits_t& traits, pass_builder_t& draws,
+                   const linalg::vec3& origin, color_t color, float depth_bias)
+{
+  const float lift = traits.origin == placement_origin_t::feet ? traits.half_extents.y : 0.f;
+  draws.debug.box(origin + linalg::vec3{0, lift, 0}, traits.half_extents, color,
+                  renderer::fill_mode_t::wireframe, depth_bias);
+}
+
+// The art ladder. `box_when_bare` is false for the in-editor pass, where a
+// point type with nothing to draw is what the icon pass exists for.
+void draw_art(const entities::Entity* e, const entity_editor_traits_t& traits,
+              pass_builder_t& draws, const linalg::vec3& origin, color_t color,
+              renderer::fill_mode_t fill, bool box_when_bare, float depth_bias = 0.f)
+{
+  if (try_draw_render_component(e, draws, origin, color, fill))
+    return;
+  if (traits.draw_stand_in)
+    traits.draw_stand_in(e, draws, origin, color);
+  else if (box_when_bare)
+    draw_wire_box(traits, draws, origin, color, depth_bias);
+}
+
+} // namespace
 
 entity_icon_t get_entity_icon(const entities::Entity* e)
 {
@@ -512,49 +606,26 @@ float get_placement_origin_height(const entities::Entity* e)
   return traits.origin == placement_origin_t::feet ? 0.f : traits.half_extents.y;
 }
 
-bool draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
+void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
                        const linalg::vec3& origin)
 {
   const entity_editor_traits_t traits = editor_traits_for(e);
+  draw_art(e, traits, draws, origin, traits.color, renderer::fill_mode_t::wireframe, true);
+  if (traits.draw_diagram)
+    traits.draw_diagram(e, draws, origin, traits.color);
   // Placing IS the moment the reach is the question -- a spot light is aimed by
   // where its cone lands, and finding that out after the click is a placement
   // you then have to undo.
   if (traits.draw_reach)
     traits.draw_reach(e, draws, origin, traits.color);
-  if (!traits.draw_shape || !traits.shape_for_ghost)
-    return false;
-  return traits.draw_shape(e, draws, origin, traits.color);
 }
 
-static bool try_draw_render_component(const entities::Entity* e, pass_builder_t& draws)
+void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws)
 {
-  const entities::Render* rc = entities::get_render(e);
-  if (!rc || !rc->visible)
-    return false;
-
-  if (rc->is_wireframe)
-    return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
-                     linalg::compose_model_rotation(e->orientation, rc->rotation), rc->scale, colors::white,
-                     renderer::fill_mode_t::wireframe);
-
-  return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
-                   linalg::compose_model_rotation(e->orientation, rc->rotation), rc->scale,
-                   color_from_vec3(rc->material.color), renderer::fill_mode_t::solid,
-                   &rc->material);
-}
-
-bool draw_entity_in_editor(const entities::Entity* e,
-                           pass_builder_t& draws, uint32_t, bool)
-{
-  // First: try the render component (common to all entity types).
-  if (try_draw_render_component(e, draws))
-    return true;
-
-  // Second: per-type gizmo.
   const entity_editor_traits_t traits = editor_traits_for(e);
-  if (traits.draw_shape)
-    return traits.draw_shape(e, draws, e->position, traits.color);
-  return false;
+  draw_art(e, traits, draws, e->position, traits.color, renderer::fill_mode_t::solid, false);
+  if (traits.draw_diagram)
+    traits.draw_diagram(e, draws, e->position, traits.color);
 }
 
 // ===================================================================
@@ -577,78 +648,22 @@ color_t compute_selection_pulse_color(float time)
                  lerp_byte(from.b, to.b, t), 255};
 }
 
-// Try to draw a mesh wireframe from the entity's render component.
-static bool try_draw_mesh_selection_wireframe(const entities::Entity* e, pass_builder_t& draws,
-                                              color_t color)
-{
-  const entities::Render* rc = entities::get_render(e);
-  if (!rc || !rc->visible)
-    return false;
-
-  return push_mesh(draws, assets::get_mesh(rc->mesh), e->position,
-                   linalg::compose_model_rotation(e->orientation, rc->rotation), rc->scale, color,
-                   renderer::fill_mode_t::wireframe);
-}
-
 void draw_selection_highlight(const entities::Entity* e,
                               pass_builder_t& draws, float time,
                               float)
 {
-  color_t color = compute_selection_pulse_color(time);
+  const color_t color = compute_selection_pulse_color(time);
 
-  // A very strong bias so the outline renders in FRONT of the surface it
-  // traces. It rides the lines that need it instead of being set and restored
-  // around three early-return paths -- each of which had to remember the
-  // restore, and one getting it wrong was invisible.
+  // A very strong bias so the box renders in FRONT of the surface it traces.
   constexpr float highlight_bias = -200.0f;
 
-  // 0. The reach diagram, ABOVE the ladder rather than as a rung of it: it is
-  // an addition to whatever draws the object, not one of the alternatives. This
-  // is the only context that shows it besides the placement ghost, which is the
-  // whole reason it is drawn here and not in draw_entity_in_editor.
   const entity_editor_traits_t traits = editor_traits_for(e);
+  draw_art(e, traits, draws, e->position, color, renderer::fill_mode_t::wireframe, true,
+           highlight_bias);
+  if (traits.draw_diagram)
+    traits.draw_diagram(e, draws, e->position, color);
   if (traits.draw_reach)
     traits.draw_reach(e, draws, e->position, color);
-
-  // 1. Try mesh wireframe from render component
-  if (try_draw_mesh_selection_wireframe(e, draws, color))
-    return;
-
-  // 2. Per-type gizmo in the pulse colour. The two spawn types used to decline
-  // here too, which was fair while their gizmo was a vertical spike carrying no
-  // information. It stopped being fair once the gizmo IS the facing: the AABB
-  // fallback dropped the orientation at exactly the moment you had selected the
-  // thing in order to rotate it.
-  if (traits.draw_shape && traits.shape_for_selection &&
-      traits.draw_shape(e, draws, e->position, color))
-    return;
-
-  // 3. Fallback: AABB bounds wireframe
-  const shared::aabb_bounds_t bounds = shared::compute_entity_bounds(e);
-  draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f, color,
-                  renderer::fill_mode_t::wireframe, highlight_bias);
-}
-
-// ===================================================================
-// Default ghost drawing (render component -> wire box fallback)
-// ===================================================================
-
-void draw_default_ghost(const entities::Entity* e, pass_builder_t& draws,
-                        const linalg::vec3& origin)
-{
-  if (const entities::Render* rc = entities::get_render(e))
-  {
-    if (push_mesh(draws, assets::get_mesh(rc->mesh), origin, {0, 0, 0}, {1, 1, 1},
-                  colors::yellow, renderer::fill_mode_t::wireframe))
-      return;
-  }
-
-  // Fallback: wire box. debug.box takes a CENTER, which is the origin only for
-  // centered-origin types -- a feet-origin one sits half a hull lower.
-  const linalg::vec3 half_extents = get_placement_half_extents(e);
-  const float lift = half_extents.y - get_placement_origin_height(e);
-  draws.debug.box(origin + linalg::vec3{0, lift, 0}, half_extents,
-                         colors::yellow);
 }
 
 // ===================================================================

@@ -441,6 +441,9 @@ add_library(game_shared STATIC
     # prefabs are the same two functions (prefab_def.md).
     src/shared/map_fragment.hpp
     src/shared/map_fragment.cpp
+    # A map's completed runs, one appended line each (run_times.hpp).
+    src/shared/run_times.hpp
+    src/shared/run_times.cpp
     src/shared/map_group.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
@@ -720,6 +723,7 @@ add_library(game_client SHARED
     src/client/effects/jump.cpp
     src/client/effects/land.cpp
     src/client/effects/shot_impact.cpp
+    src/client/effects/jump_pad_launch.cpp
     src/client/weapon_fire_audio.cpp
     src/client/entity_type_audio.cpp
     src/client/hit_confirm_audio.cpp
@@ -834,6 +838,7 @@ add_library(game_server SHARED
     # occupant, and at each end of a tick. server_context_test guards them.
     src/server/server_context.hpp
     src/server/server_context.cpp
+    src/server/server_messages.cpp
     src/server/bot_state.hpp
     src/server/damage.hpp
     src/server/damage.cpp
@@ -1085,6 +1090,11 @@ add_executable(cvar_test src/test/cvar_test.cpp
 target_include_directories(cvar_test PRIVATE src src/shared)
 target_link_libraries(cvar_test PRIVATE game_shared)
 
+# The .times file beside a map: line grammar, sort, append-then-read.
+add_executable(run_times_test src/test/run_times_test.cpp)
+target_include_directories(run_times_test PRIVATE src src/shared)
+target_link_libraries(run_times_test PRIVATE game_shared)
+
 # 23. Model format test — the .skeleton / .mesh readers against the REAL
 # exporter output in resources/models, plus malformed fixtures. This is where
 # blender_export.py's promises (parent-before-child, name hash, normalized
@@ -1188,6 +1198,7 @@ target_link_libraries(game_rules_test PRIVATE game_shared)
 # references every one of them, which is the seam being tested.
 add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/entity_io_queue.cpp
+    src/server/server_messages.cpp
     src/server/entity_io_console.cpp
     src/server/systems/trigger_system.cpp
     ${ENTITY_IO_GEN_BINDINGS}
@@ -1332,6 +1343,7 @@ set(GAME_TESTS
     frame_timing_test
     server_context_test
     game_rules_test
+    run_times_test
     entity_io_test
     inventory_test
     events_test

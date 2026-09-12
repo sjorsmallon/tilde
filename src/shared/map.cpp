@@ -763,6 +763,7 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
 
     case entities::entity_type::Trigger_Volume_Entity:
     case entities::entity_type::Reflection_Volume_Entity:
+    case entities::entity_type::Jump_Pad_Entity:
     {
       const entities::Box_Volume *volume = entities::get_box_volume(entity);
       assert(volume != nullptr && "volume entity lost its Box_Volume component");

@@ -1854,6 +1854,81 @@ constexpr field_info_t Logic_Counter_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Jump_Pad_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "volume",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, volume),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::volume),
+   .flags = 0u,
+   .component_id = 0,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "launch_speed",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, launch_speed),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::launch_speed),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Jump_Pad_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::render),
+   .flags = 0u,
+   .component_id = 6,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -1883,6 +1958,7 @@ Entity* construct_Spot_Light_Entity(void* memory) { return new (memory) Spot_Lig
 Entity* construct_Directional_Light_Entity(void* memory) { return new (memory) Directional_Light_Entity(); }
 Entity* construct_Physics_Body_Entity(void* memory) { return new (memory) Physics_Body_Entity(); }
 Entity* construct_Logic_Counter_Entity(void* memory) { return new (memory) Logic_Counter_Entity(); }
+Entity* construct_Jump_Pad_Entity(void* memory) { return new (memory) Jump_Pad_Entity(); }
 
 Entity* as_base_Reflection_Volume_Entity(void* memory) { return static_cast<Entity*>((Reflection_Volume_Entity*)memory); }
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
@@ -1900,6 +1976,7 @@ Entity* as_base_Spot_Light_Entity(void* memory) { return static_cast<Entity*>((S
 Entity* as_base_Directional_Light_Entity(void* memory) { return static_cast<Entity*>((Directional_Light_Entity*)memory); }
 Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>((Physics_Body_Entity*)memory); }
 Entity* as_base_Logic_Counter_Entity(void* memory) { return static_cast<Entity*>((Logic_Counter_Entity*)memory); }
+Entity* as_base_Jump_Pad_Entity(void* memory) { return static_cast<Entity*>((Jump_Pad_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid
@@ -1919,6 +1996,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 128u, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 64u, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 16u, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
+  {"jump_pad_entity", "Jump Pad", {Jump_Pad_Entity_FIELDS, 8}, (uint32_t)sizeof(Jump_Pad_Entity), (uint32_t)alignof(Jump_Pad_Entity), 67u, false, construct_Jump_Pad_Entity, as_base_Jump_Pad_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][10] = {
@@ -1939,9 +2017,10 @@ constexpr int32_t COMPONENT_OFFSETS[][10] = {
   {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1}, // Directional_Light_Entity
   {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
   {-1, -1, -1, -1, (int32_t)offsetof(Logic_Counter_Entity, counter), -1, -1, -1, -1, -1}, // Logic_Counter_Entity
+  {(int32_t)offsetof(Jump_Pad_Entity, volume), (int32_t)offsetof(Jump_Pad_Entity, switch_state), -1, -1, -1, -1, (int32_t)offsetof(Jump_Pad_Entity, render), -1, -1, -1}, // Jump_Pad_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 14;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 15;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Reflection_Volume_Entity,
   entity_type::Player_Spawn_Entity,
@@ -1957,6 +2036,7 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Directional_Light_Entity,
   entity_type::Physics_Body_Entity,
   entity_type::Logic_Counter_Entity,
+  entity_type::Jump_Pad_Entity,
 };
 
 } // namespace
@@ -2228,6 +2308,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Directional_Light_Entity: return new Directional_Light_Entity();
     case entity_type::Physics_Body_Entity: return new Physics_Body_Entity();
     case entity_type::Logic_Counter_Entity: return new Logic_Counter_Entity();
+    case entity_type::Jump_Pad_Entity: return new Jump_Pad_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -2265,6 +2346,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Directional_Light_Entity: delete static_cast<Directional_Light_Entity*>(entity); return;
     case entity_type::Physics_Body_Entity: delete static_cast<Physics_Body_Entity*>(entity); return;
     case entity_type::Logic_Counter_Entity: delete static_cast<Logic_Counter_Entity*>(entity); return;
+    case entity_type::Jump_Pad_Entity: delete static_cast<Jump_Pad_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -2274,6 +2356,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x79cd5359u;
+const uint32_t SCHEMA_HASH = 0xcc4e1d00u;
 
 } // namespace entities

@@ -1908,8 +1908,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
         if (!entry.entity)
           continue;
         const linalg::vec3 position = paste_anchor + entry.entity->position;
-        if (!draw_entity_ghost(entry.entity.get(), draws, position))
-          draw_default_ghost(entry.entity.get(), draws, position);
+        draw_entity_ghost(entry.entity.get(), draws, position);
       }
     }
   }

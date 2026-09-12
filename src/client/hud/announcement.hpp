@@ -31,6 +31,13 @@ announcement_t &current_announcement();
 // are wrapped at word boundaries when drawn.
 void set_announcement(std::string_view text);
 
+// The last completed run's banner, kept until the next round starts: the
+// Game_Over banner shows it instead of "WIN", whichever of the two events
+// lands last in the block that carries both.
+void set_run_result(std::string_view text);
+void clear_run_result();
+[[nodiscard]] std::string_view run_result();
+
 [[nodiscard]] float announcement_duration_for(std::string_view text);
 
 // The text cut into lines for `max_width` pixels: first at every '\n', then

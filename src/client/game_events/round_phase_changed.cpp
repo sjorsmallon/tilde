@@ -14,15 +14,18 @@ namespace
   switch (value.phase)
   {
   case shared::Round_Phase::Warmup:
+    hud::clear_run_result();
     return {};
   case shared::Round_Phase::Countdown:
+    hud::clear_run_result();
     return std::format("ROUND {}", value.round_number);
   case shared::Round_Phase::Live:
+    hud::clear_run_result();
     return "FIGHT";
   case shared::Round_Phase::Round_End:
     return "ROUND OVER";
   case shared::Round_Phase::Game_Over:
-    return "WIN";
+    return hud::run_result().empty() ? "WIN" : std::string(hud::run_result());
   }
   return {};
 }

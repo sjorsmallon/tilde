@@ -306,8 +306,7 @@ void Placement_Tool::on_draw_overlay(editor_context_t& ctx,
     const linalg::vec3 origin =
         compute_placement_origin(entity_to_place.get(), ghost_position);
 
-    if (!draw_entity_ghost(entity_to_place.get(), draws, origin))
-      draw_default_ghost(entity_to_place.get(), draws, origin);
+    draw_entity_ghost(entity_to_place.get(), draws, origin);
   }
 }
 

@@ -26,6 +26,7 @@
 #include "entities/directional_light_entity_generated.hpp"
 #include "entities/physics_body_entity_generated.hpp"
 #include "entities/logic_counter_entity_generated.hpp"
+#include "entities/jump_pad_entity_generated.hpp"
 
 namespace entities
 {

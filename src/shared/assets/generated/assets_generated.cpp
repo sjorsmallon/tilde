@@ -44,6 +44,7 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"Missing", nullptr},
   {"a_new_record", "resources/sounds/a_new_record.wav"},
   {"congratulations", "resources/sounds/congratulations.wav"},
+  {"gust_of_wind", "resources/sounds/gust_of_wind.wav"},
   {"headshot1", "resources/sounds/headshot1.wav"},
   {"headshot2", "resources/sounds/headshot2.wav"},
   {"headshot3", "resources/sounds/headshot3.wav"},
@@ -66,6 +67,7 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"scout_fire_1", "resources/sounds/scout_fire_1.wav"},
   {"success", "resources/sounds/success.wav"},
   {"target_break", "resources/sounds/target_break.wav"},
+  {"twang", "resources/sounds/twang.wav"},
   {"wow_incredible", "resources/sounds/wow_incredible.wav"},
   {"zoom", "resources/sounds/zoom.wav"},
 };

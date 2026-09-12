@@ -74,4 +74,6 @@ Round_Phase_Changed :: Game_Event  "the match entered a new round phase"
 Objective_Reached :: Game_Event  "the level's objective was completed"
 {
     completed_by: u32   // activator uid, 0 = nobody
+    attempt_ticks: u32  // ticks since Live began; 0 = not a timed run
+    best_ticks:    u32  // the map's best on file BEFORE this run; 0 = none
 }

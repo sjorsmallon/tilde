@@ -52,3 +52,4 @@ Shot_Impact      :: Effect  "a shot landed; attached_entity is what it hit, 0 fo
     weapon: u16   // entities::Weapon as a raw id; an effect may not name an entity enum
 }
 
+Jump_Pad_Launch  :: Effect  "a pad threw somebody; normal is the launch direction, attached_entity who"

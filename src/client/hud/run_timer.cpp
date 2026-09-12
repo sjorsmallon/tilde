@@ -1,10 +1,9 @@
 #include "run_timer.hpp"
 
+#include "../../shared/run_times.hpp"
 #include "../ui/layout.hpp"
 
 #include <cmath>
-#include <cstdint>
-#include <format>
 
 namespace client::hud
 {
@@ -15,12 +14,7 @@ void draw_run_timer(renderer::ui_draw_list_t& list, const ui::ui_font_t& font,
   if (seconds_elapsed < 0.0f)
     return;
 
-  const uint64_t total_centiseconds = static_cast<uint64_t>(std::floor(seconds_elapsed * 100.0f));
-  const uint64_t minutes            = total_centiseconds / 6000;
-  const uint64_t seconds            = (total_centiseconds / 100) % 60;
-  const uint64_t centiseconds       = total_centiseconds % 100;
-
-  const std::string text = std::format("{:02}:{:02}.{:02}", minutes, seconds, centiseconds);
+  const std::string text = shared::format_run_time(seconds_elapsed);
 
   const ui::font_size_t size      = ui::font_size_t::medium;
   const linalg::vec2    text_size = ui::measure_text(font, size, text);

@@ -22,7 +22,7 @@ cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in
 # OFF by default and never shipped -- it costs 100-500ns per allocation.
 cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
 
-# Run the whole test suite (~2s, all 42)
+# Run the whole test suite (~30s, all 45)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -1201,6 +1201,22 @@ displaces: writing the slot in place was a leak per pickup.
 
 What is deliberately NOT built is the mode-owned state variant (an attempt clock,
 a bomb timer) — see the closing comment below and `generalization_def.md` §5.
+
+**A speedrun's time is ONE subtraction and ONE appended line.** `complete_level`
+(`server/entities/game_rules_entity.cpp`) takes the current tick minus
+`phase_start_tick` -- in ticks, exact, only while the phase is `Live` -- appends
+`<ticks> <tickrate_hz> <date> <name>` to `maps/<map>.times` beside the map
+(`shared/run_times.{hpp,cpp}`, grammar in the header, `run_times_test` the
+guard), reads the file straight back and broadcasts the top five as
+`S2C_ServerMessage` lines through `server_messages.hpp`. Append only, never
+rewritten: sorting is the reader's job, by SECONDS so a line from another
+tickrate ranks honestly. `Objective_Reached` carries `attempt_ticks` and the
+map's `best_ticks` from BEFORE the run, so the client's banner says the time and
+"NEW BEST" without a second file read; `shared::format_run_time` is the one
+"mm:ss.cc" and the HUD run timer draws through it too. `timer_def.md` is the
+plan for the rest: the finish as a SLOT, the start as the first movement edge,
+and the +1 tick every run pays today because the drain hands a handler
+`tick_number` rather than the record's `fire_tick`.
 
 **The key enum lives in `cvars.def`**, because `sv_gamemode` is typed by it —
 enum cvars convert by value name in both directions, so an undeclared mode is

@@ -115,6 +115,8 @@ static_assert(std::is_trivially_copyable_v<Round_Phase_Changed>,
 struct Objective_Reached : Game_Event
 {
   uint32_t completed_by = {};
+  uint32_t attempt_ticks = {};
+  uint32_t best_ticks = {};
 };
 static_assert(std::is_trivially_copyable_v<Objective_Reached>,
               "Objective_Reached must stay trivially copyable: the codec addresses its fields "

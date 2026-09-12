@@ -51,16 +51,8 @@ struct weapon_sounds_t
 constexpr Enum_Array<entities::Weapon, weapon_sounds_t> WEAPON_SOUNDS = {{
     {entities::Weapon::Knife, assets::sound_asset::knife_slash1, assets::sound_asset::knife_hitwall1},
     {entities::Weapon::Scout, assets::sound_asset::scout_fire_1, assets::sound_asset::Missing},
-    // No launch sound on disk — rocket_explosion.wav is the detonation, not
-    // the firing. Missing is how that content gap is written down now that a
-    // sound is an id: there is no path left to misspell, so the row says
-    // "nothing yet" rather than naming a file nobody will ever add.
     {entities::Weapon::Rocket_Launcher, assets::sound_asset::Missing, assets::sound_asset::Missing},
-    // Same gap, different reason: a dash is a movement ability held in a slot
-    // (generalization_def.md §4), so what it wants is a whoosh rather than a
-    // gunshot, and there is no file for one. The row exists because the table
-    // is keyed by Weapon and every weapon has to answer.
-    {entities::Weapon::Dash, assets::sound_asset::Missing, assets::sound_asset::Missing},
+    {entities::Weapon::Dash, assets::sound_asset::gust_of_wind, assets::sound_asset::Missing},
     {entities::Weapon::Swapper, assets::sound_asset::Missing, assets::sound_asset::Missing},
 }};
 

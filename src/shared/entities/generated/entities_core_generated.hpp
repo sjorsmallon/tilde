@@ -191,11 +191,12 @@ enum class entity_type : uint16_t
   Directional_Light_Entity = 14,
   Physics_Body_Entity = 15,
   Logic_Counter_Entity = 16,
+  Jump_Pad_Entity = 17,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 17;
+constexpr uint32_t ENTITY_TYPE_COUNT = 18;
 
 enum class component_type : uint16_t
 {
