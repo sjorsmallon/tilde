@@ -117,6 +117,7 @@ void clear_outgoing(server_context_t& context)
   // clear(), not `= {}`, for the same capacity reason as the inbox vectors: this
   // is refilled from scratch at the tickrate.
   context.outgoing.pending_hits.clear();
+  context.outgoing.pending_swaps.clear();
 
   // sv_event_debug, latched once per tick rather than read per fire. This is
   // the one place guaranteed to run exactly once before anything can fire, and

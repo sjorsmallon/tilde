@@ -194,6 +194,7 @@ struct cvar_state_t
   bool pin_main_thread = true;
   Debug_Channel r_debug_channel = Debug_Channel::off;
   float r_exposure = 1.4f;
+  network::pascal_string_t<64> sv_skybox = "";
   bool debug_show_collisions = false;
   bool debug_show_hitboxes = true;
   bool debug_show_navmesh = false;
@@ -311,24 +312,25 @@ enum class cvar_id : uint16_t
   pin_main_thread = 89,
   r_debug_channel = 90,
   r_exposure = 91,
-  debug_show_collisions = 92,
-  debug_show_hitboxes = 93,
-  debug_show_navmesh = 94,
-  debug_show_box_volumes = 95,
-  debug_hide_geometry = 96,
-  cl_shot_debug_seconds = 97,
-  debug_show_entity_counts = 98,
-  debug_show_physics_bodies = 99,
-  net_snapshot_debug = 100,
-  sv_event_debug = 101,
-  cl_event_debug = 102,
-  sv_reliable_debug = 103,
-  sv_io_debug = 104,
+  sv_skybox = 92,
+  debug_show_collisions = 93,
+  debug_show_hitboxes = 94,
+  debug_show_navmesh = 95,
+  debug_show_box_volumes = 96,
+  debug_hide_geometry = 97,
+  cl_shot_debug_seconds = 98,
+  debug_show_entity_counts = 99,
+  debug_show_physics_bodies = 100,
+  net_snapshot_debug = 101,
+  sv_event_debug = 102,
+  cl_event_debug = 103,
+  sv_reliable_debug = 104,
+  sv_io_debug = 105,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 105;
+constexpr uint32_t CVAR_COUNT = 106;
 
 enum class command_id : uint16_t
 {

@@ -36,4 +36,18 @@ void reset_state_in_preparation_for_new_map_load(client_context_t& context)
   context.visuals     = {};
 }
 
+void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientation)
+{
+  const linalg::view_angles_t facing =
+      linalg::view_angles_from_direction(linalg::forward(orientation));
+  const shared::subtick_view_t view = {facing.yaw_degrees,
+                                       linalg::clamp(facing.pitch_degrees, -89.0f, 89.0f)};
+
+  prediction.player_yaw         = view.yaw;
+  prediction.player_pitch       = view.pitch;
+  prediction.view_at_tick_start = view;
+  for (prediction_t::pending_input_edge_t& edge : prediction.pending_input_edges)
+    edge.view_after = view;
+}
+
 } // namespace client

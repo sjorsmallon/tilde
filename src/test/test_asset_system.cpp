@@ -227,6 +227,8 @@ static int test_every_class_registers()
     assert(assets::get_font((assets::font_asset)index).valid());
   for (uint32_t index = 0; index < assets::pbr_material_COUNT; ++index)
     assert(assets::get_pbr_material((assets::pbr_material)index).valid());
+  for (uint32_t index = 0; index < assets::cubemap_asset_COUNT; ++index)
+    assert(assets::get_cubemap((assets::cubemap_asset)index).valid());
 
   // Id 0 is the compiled-in placeholder in every class -- no file behind it, so
   // it cannot be the thing that is missing. The mesh one has real geometry (a
@@ -292,6 +294,58 @@ static int test_a_material_is_a_directory_and_claims_its_maps()
   assert(found_nested);
 
   printf("  PASS: test_a_material_is_a_directory_and_claims_its_maps\n");
+  return 0;
+}
+
+// The SECOND directory class, and the one that proves the rule generalised: a
+// cubemap folder is one id and its six faces are claimed.
+//
+// The claim is what this is really about. Face basenames are up/down/left/
+// right/front/back, so every cubemap in the tree carries the same six -- a
+// second sky would collide on the first one minted, exactly as two albedos
+// would. That collision is the reason the folder has to be the unit.
+static int test_a_cubemap_is_a_directory_and_claims_its_faces()
+{
+  const assets::cubemap_asset_t *sky =
+      assets::get(assets::get_cubemap(assets::cubemap_asset::night_sky));
+  assert(sky != nullptr);
+
+  // All six, and all one SQUARE size: the uploader makes them six layers of ONE
+  // image, so a face that disagrees is not representable rather than merely
+  // wrong.
+  const assets::texture_asset_t *first = assets::get(sky->faces[0]);
+  assert(first != nullptr && first->width > 0 && first->width == first->height);
+  for (int face = 0; face < assets::CUBEMAP_FACE_COUNT; ++face)
+  {
+    const assets::texture_asset_t *pixels = assets::get(sky->faces[face]);
+    assert(pixels != nullptr && !pixels->pixels.empty());
+    assert(pixels->width == first->width && pixels->height == first->height);
+  }
+
+  const Span<const assets::asset_info_t> cubemaps = assets::cubemap_asset_manifest();
+  assert(cubemaps.size() == assets::cubemap_asset_COUNT);
+  assert(cubemaps[(uint32_t)assets::cubemap_asset::night_sky].path != nullptr);
+  assert(std::string_view(cubemaps[(uint32_t)assets::cubemap_asset::night_sky].path) ==
+         "resources/cubemaps/night_sky");
+
+  // Claimed: not one face is its own texture id.
+  for (const assets::asset_info_t &texture : assets::texture_asset_manifest())
+  {
+    if (texture.path == nullptr)
+      continue;
+    assert(std::string_view(texture.path).find("/cubemaps/") == std::string_view::npos);
+  }
+
+  // Six invalid handles, like make_missing_pbr_material: the renderer resolves
+  // an invalid face to the magenta checker, so a map naming a sky this build
+  // does not have draws something visibly wrong rather than a black night.
+  const assets::cubemap_asset_t *missing =
+      assets::get(assets::get_cubemap(assets::cubemap_asset::Missing));
+  assert(missing != nullptr);
+  for (int face = 0; face < assets::CUBEMAP_FACE_COUNT; ++face)
+    assert(!missing->faces[face].valid());
+
+  printf("  PASS: test_a_cubemap_is_a_directory_and_claims_its_faces\n");
   return 0;
 }
 
@@ -634,6 +688,7 @@ int main()
   test_manifest_registers_every_id();
   test_every_class_registers();
   test_a_material_is_a_directory_and_claims_its_maps();
+  test_a_cubemap_is_a_directory_and_claims_its_faces();
   test_baked_primitives_are_unit_sized();
   test_baked_primitives_are_wound_outward();
   test_manifest_ids_are_distinct();

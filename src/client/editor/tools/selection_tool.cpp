@@ -334,18 +334,6 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
-
-  ImGui::Separator();
-  if (ImGui::Button("Save as prefab..."))
-  {
-    prefab_overwrite = false;
-    prefab_status.clear();
-    ImGui::OpenPopup("Save as prefab");
-  }
-  if (!prefab_status.empty())
-    ImGui::TextUnformatted(prefab_status.c_str());
-
-  draw_prefab_save_popup(ctx);
 }
 
 // The one thing this popup is FOR: a row that crosses the boundary of the
@@ -365,7 +353,7 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
     return;
   }
 
-  ImGui::Text("%zu objects", selected_uids.size());
+  ImGui::Text("%zu object%s", selected_uids.size(), selected_uids.size() == 1 ? "" : "s");
   ImGui::InputText("Name", prefab_name.data, prefab_name.size());
 
   const std::string name = prefab_name.data;
@@ -394,9 +382,14 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
 
   if (!crossings.empty())
   {
+    size_t kept = 0;
+    for (const shared::crossing_connection_t &crossing : crossings)
+      kept += crossing.kept_as_unbound ? 1 : 0;
+    const size_t lost = crossings.size() - kept;
+
     ImGui::Separator();
-    ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f),
-                       "%zu connection(s) leave this selection and will NOT be saved:",
+    ImGui::TextWrapped("The selected entities have %zu connection(s) to entities you did not "
+                       "select:",
                        crossings.size());
 
     for (const shared::crossing_connection_t &crossing : crossings)
@@ -410,13 +403,30 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
                                      ? shared::describe_map_entity(*ctx.map, row.target)
                                      : std::string(shared::to_string(row.target_kind));
 
-      ImGui::TextColored(ImVec4(1.f, 0.6f, 0.6f, 1.f), "  %s --%s--> %s", sender.c_str(),
+      const ImVec4 colour = crossing.kept_as_unbound ? ImVec4(1.f, 0.85f, 0.5f, 1.f)
+                                                     : ImVec4(1.f, 0.6f, 0.6f, 1.f);
+      ImGui::TextColored(colour, "  %s --%s--> %s", sender.c_str(),
                          entities::to_string(row.signal), target.c_str());
     }
 
+    ImGui::Spacing();
+    ImGui::TextUnformatted("You have two options:");
+    if (kept > 0)
+      ImGui::TextWrapped("1) Continue as is. The %zu connection(s) FROM a selected entity are "
+                         "stored with an \"Unbound\" target, which you are expected to resolve "
+                         "when placing the prefab: after each placement the editor asks you to "
+                         "click the target.",
+                         kept);
+    if (lost > 0)
+      ImGui::TextWrapped("%s Continue as is. The %zu connection(s) INTO a selected entity are "
+                         "NOT saved: the prefab has no sender to keep them on.",
+                         kept > 0 ? "  " : "1)", lost);
+    ImGui::TextWrapped("2) Include the entities you did not select into your selection, so the "
+                       "prefab carries them and their connections stay complete.");
+
     // Repeat until the list is empty and the group is wiring-complete. One
     // press adds one ring of neighbours, which is what makes it predictable.
-    if (ImGui::Button("Add the connected objects to the selection"))
+    if (ImGui::Button("Include those entities in the selection"))
     {
       for (const shared::crossing_connection_t &crossing : crossings)
       {
@@ -434,7 +444,7 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
 
   const bool can_write = name_is_usable && (!already_exists || prefab_overwrite);
   ImGui::BeginDisabled(!can_write);
-  if (ImGui::Button(crossings.empty() ? "Save" : "Save anyway"))
+  if (ImGui::Button(crossings.empty() ? "Save" : "Continue as is and save"))
   {
     shared::map_t fragment = shared::extract_map_subset(*ctx.map, selected_uids);
     fragment.name          = name + shared::PREFAB_EXTENSION;
@@ -484,8 +494,12 @@ void Selection_Tool::copy_selection_to_clipboard(editor_context_t& ctx)
   const size_t copied      = fragment.object_count();
   const size_t connections = fragment.connections.size();
 
-  adopt_clipboard(std::move(fragment),
-                  shared::find_crossing_connections(*ctx.map, selected_uids).size());
+  size_t lost = 0;
+  for (const shared::crossing_connection_t &crossing :
+       shared::find_crossing_connections(*ctx.map, selected_uids))
+    lost += crossing.kept_as_unbound ? 0 : 1;
+
+  adopt_clipboard(std::move(fragment), lost);
 
   if (clipboard_crossing_count > 0)
     hud::set_announcement(std::format("copied {} object(s), {} connection(s) -- {} more cross "
@@ -597,6 +611,83 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+
+  // A prefab's slots. Every unbound row this stamp placed is queued, in map
+  // order, and the first group is armed right away: placing a prefab is stamp,
+  // click the target.
+  connection_pick.disarm();
+  for (size_t index = 0; index < ctx.map->connections.size(); ++index)
+  {
+    const shared::connection_t &row = ctx.map->connections[index];
+    if (row.target_kind != shared::connection_target_t::Unbound)
+      continue;
+    if (std::find(stamped.uids.begin(), stamped.uids.end(), row.sender) == stamped.uids.end())
+      continue;
+    connection_pick.queued_rows.push_back(index);
+  }
+  arm_next_unbound_pick(ctx);
+}
+
+void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
+{
+  if (!ctx.map)
+  {
+    connection_pick.disarm();
+    return;
+  }
+
+  // The first queued row that is STILL unbound leads the group; a row the
+  // author already filled through the panel, or undid away, is skipped.
+  std::optional<size_t> lead;
+  while (!connection_pick.queued_rows.empty())
+  {
+    const size_t index = connection_pick.queued_rows.front();
+    connection_pick.queued_rows.erase(connection_pick.queued_rows.begin());
+    if (index < ctx.map->connections.size() &&
+        ctx.map->connections[index].target_kind == shared::connection_target_t::Unbound)
+    {
+      lead = index;
+      break;
+    }
+  }
+  if (!lead)
+  {
+    connection_pick.disarm();
+    return;
+  }
+
+  const shared::connection_t &row = ctx.map->connections[*lead];
+
+  // The key is the uid the prefab's rows named in the map they were saved from,
+  // so rows sharing it aimed at ONE entity and take one click.
+  connection_pick.also_rows.clear();
+  std::vector<size_t> still_queued;
+  for (size_t index : connection_pick.queued_rows)
+  {
+    const shared::connection_t &other = ctx.map->connections[index];
+    if (other.target_kind == shared::connection_target_t::Unbound && other.target == row.target)
+      connection_pick.also_rows.push_back(index);
+    else
+      still_queued.push_back(index);
+  }
+  connection_pick.queued_rows = std::move(still_queued);
+
+  connection_pick.armed = true;
+  connection_pick.row   = *lead;
+
+  // The panel is drawn for ONE selected entity and disarms the pick otherwise,
+  // so the group's sender has to be the selection.
+  selected_uids = {row.sender};
+  editor_gizmo.clear_target();
+
+  const size_t fills = 1 + connection_pick.also_rows.size();
+  hud::set_announcement(std::format(
+      "Pick a target for {} {} -> {}{} ({} more unbound after this). Esc leaves them red.",
+      shared::describe_map_entity(*ctx.map, row.sender), entities::to_string(row.signal),
+      entities::to_string(row.data.tag),
+      fills > 1 ? std::format(" and {} more row(s) aimed at the same thing", fills - 1)
+                : std::string(),
+      connection_pick.queued_rows.size()));
 }
 
 std::optional<shared::entity_uid_t>
@@ -654,8 +745,8 @@ void Selection_Tool::on_enable(editor_context_t& ctx)
   hovered_uid = 0;
   selected_uids.clear();
   editor_gizmo.clear_target();
-  connection_pick.armed    = false;
-  pick_consumed_this_click = false;
+  connection_pick.disarm();
+  click_consumed_by_gesture = false;
 }
 
 void Selection_Tool::on_disable(editor_context_t& ctx)
@@ -663,8 +754,8 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
   hovered_uid = 0;
   editor_gizmo.clear_target();
   cancel_paste();
-  connection_pick.armed    = false;
-  pick_consumed_this_click = false;
+  connection_pick.disarm();
+  click_consumed_by_gesture = false;
 }
 
 void Selection_Tool::on_draw_ui(editor_context_t& ctx)
@@ -739,6 +830,18 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
         draw_reflection_volume_status(ctx, *entry->entity);
         render_entity_fields_in_an_imgui_window(entry->entity.get());
       }
+
+      ImGui::Separator();
+      if (ImGui::Button("Save as prefab..."))
+      {
+        prefab_overwrite = false;
+        prefab_status.clear();
+        ImGui::OpenPopup("Save as prefab");
+      }
+      if (!prefab_status.empty())
+        ImGui::TextUnformatted(prefab_status.c_str());
+
+      draw_prefab_save_popup(ctx);
     }
     ImGui::End();
   }
@@ -802,7 +905,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   }
   else
   {
-    connection_pick.armed = false;
+    connection_pick.disarm();
   }
 
 }
@@ -1213,21 +1316,34 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
     // and a pick must do neither.
     if (connection_pick.armed && ctx.map)
     {
-      pick_consumed_this_click = true;
+      click_consumed_by_gesture = true;
       connection_pick.armed    = false;
 
       const std::optional<shared::entity_uid_t> target = try_pick_entity_near_cursor(
           ctx, {(float)e.position.x, (float)e.position.y});
       if (target)
-        commit_picked_connection_target(*ctx.map, ctx.transaction_system,
-                                        connection_pick.row, *target);
+      {
+        std::vector<size_t> rows;
+        rows.push_back(connection_pick.row);
+        rows.insert(rows.end(), connection_pick.also_rows.begin(),
+                    connection_pick.also_rows.end());
+        commit_picked_connection_target(*ctx.map, ctx.transaction_system, rows, *target);
+        connection_pick.also_rows.clear();
+        arm_next_unbound_pick(ctx);
+      }
       else
+      {
         hud::set_announcement("No entity near the cursor — the pick is cancelled.");
+        connection_pick.disarm();
+      }
       return;
     }
 
     if (paste_is_pending)
     {
+      // Swallowed like the connection pick: commit_paste selects what it
+      // stamped, and this click's release would land on nothing and clear it.
+      click_consumed_by_gesture = true;
       commit_paste(ctx);
       return;
     }
@@ -1348,11 +1464,12 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
 {
   if (e.button == input::mouse_button_t::Left)
   {
-    // The press was a target pick, so the release is the other half of it and
-    // must not fall through to the selection branch below.
-    if (pick_consumed_this_click)
+    // The press was a gesture -- a target pick or a paste commit -- so the
+    // release is the other half of it and must not fall through to the
+    // selection branch below.
+    if (click_consumed_by_gesture)
     {
-      pick_consumed_this_click = false;
+      click_consumed_by_gesture = false;
       is_dragging_box          = false;
       return;
     }
@@ -1514,7 +1631,12 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 
   if (e.key == input::key_t::Escape)
   {
-    connection_pick.armed = false;
+    if (!connection_pick.queued_rows.empty())
+      hud::set_announcement(std::format("{} unbound connection(s) left red; the panel's Pick "
+                                        "button reaches them",
+                                        connection_pick.queued_rows.size() +
+                                            (connection_pick.armed ? 1u : 0u)));
+    connection_pick.disarm();
     cancel_paste();
     return;
   }

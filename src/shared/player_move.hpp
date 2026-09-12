@@ -38,6 +38,7 @@ constexpr uint64_t Fire     = 1 << 15;
 constexpr uint64_t Zoom     = 1 << 16;
 constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
 constexpr uint64_t Reload   = 1 << 18;
+constexpr uint64_t Throw    = 1 << 19;
 
 // The buttons whose EDGE is worth a sub-tick slot, and therefore an extra
 // movement step (shared/subtick.hpp).
@@ -58,7 +59,7 @@ constexpr uint64_t Reload   = 1 << 18;
 constexpr uint64_t Subtick_Tracked =
     Forward | Backward | Left | Right | Jump | Fire |
     Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8 | Key9 |
-    Reload;
+    Reload | Throw;
 } // namespace Button
 
 // Initializers are load-bearing, not decoration. `Move_Input input;` at block
@@ -126,7 +127,8 @@ struct Move_Events
   float land_impact_speed = 0.f; // downward speed (units/s) arrested on landing
 };
 
-// new_player_position, new_player_velocity. `out_events`, if non-null, receives
+// new_player_position, new_player_velocity. Positions in and out are at the FEET,
+// like every other player position. `out_events`, if non-null, receives
 // the movement cosmetics produced this tick (jump/land).
 //
 // `debug_faces`, if non-null AND debug_show_collisions is set, receives the

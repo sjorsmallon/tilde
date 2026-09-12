@@ -12,6 +12,12 @@
 namespace shared
 {
 
+enum class hit_effect_t : uint8_t
+{
+  Damage,
+  Swap,
+};
+
 // IDENTITY lives in entities.def (`Weapon`, `Fire_Resolution`); STATS live here.
 //
 // The split is deliberate. `Weapon` is what rides the wire -- it is the type of
@@ -76,6 +82,9 @@ struct weapon_definition_t
   // switch, and a silenced pistol or a fist would each have wanted the same
   // answer for an unrelated reason.
   bool                  leaves_bullet_impact;
+
+  // Hitscan only. Swap exchanges position and velocity with a player target instead of damaging it.
+  hit_effect_t          hit_effect;
 
   // --- Fire_Resolution::Self_Impulse only; zero on every other row ---
   //
@@ -170,6 +179,19 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .self_impulse_upward_speed     = 150.f,
      .self_impulse_cooldown_seconds = 1.5f,
      .slot                          = entities::Inventory_Slot::Utility_1},
+    {.weapon                        = entities::Weapon::Swapper,
+     .display_name                  = "Swapper",
+     .damage                        = 0.f,
+     .headshot_multiplier           = 1.0f,
+     .fire_interval_seconds         = 2.f,
+     .range                         = 10000.f,
+     .magazine_size                 = 0,
+     .reload_duration_seconds       = 0.f,
+     .deploy_duration_seconds       = 0.f,
+     .fire_resolution               = entities::Fire_Resolution::Hitscan,
+     .leaves_bullet_impact          = false,
+     .hit_effect                    = hit_effect_t::Swap,
+     .slot                          = entities::Inventory_Slot::Utility_2},
 }};
 
 // The one check, and it has to carry both failures.
@@ -227,6 +249,19 @@ static_assert(self_impulse_rows_are_gated_only_by_movement(),
               "self_impulse_cooldown_seconds: its only gate is "
               "Movement::seconds_until_impulse_ready, which is the only one the client can "
               "replay. A weapon-side clock beside it is a second gate the client cannot see.");
+
+constexpr bool swap_rows_are_hitscan()
+{
+  for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
+    if (definition.hit_effect == hit_effect_t::Swap &&
+        definition.fire_resolution != entities::Fire_Resolution::Hitscan)
+      return false;
+  return true;
+}
+
+static_assert(swap_rows_are_hitscan(),
+              "hit_effect_t::Swap is read only by the Hitscan arm of resolve_player_shot; "
+              "on any other resolution it would silently do nothing.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {

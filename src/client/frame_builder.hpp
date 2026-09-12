@@ -1,17 +1,5 @@
 #pragma once
 
-// The mutable counterpart of renderer::view_pass_t.
-//
-// A pass is a VALUE the renderer reads: spans of draws and emitters, and a
-// pointer to a debug list. Somebody has to own that storage and keep it alive
-// across the render_frame call, and it should be the same somebody every frame
-// so vector capacity stays warm. That owner is this.
-//
-// States hold one per camera; editor tools and shared draw helpers take a
-// `pass_builder_t&`, which is the slot the deleted overlay_renderer_t used to
-// occupy -- minus the virtuals, and minus the get_command_buffer() hole that
-// leaked the very type the interface existed to hide.
-
 #include "renderer.hpp"
 
 #include <vector>
@@ -34,6 +22,10 @@ struct pass_builder_t
   // map is loaded and left alone by begin_frame -- it belongs to the world, not
   // to the frame, which is why it is not one of the lists cleared above.
   renderer::lightmap_handle_t lightmap;
+
+  // The sky, for the atlas's reason and with the atlas's lifetime: it belongs
+  // to the world rather than to the frame, so begin_frame leaves it alone.
+  renderer::skybox_handle_t sky;
 
   cvars::Debug_Channel debug_channel = cvars::Debug_Channel::off;
 
@@ -64,6 +56,7 @@ struct pass_builder_t
     pass.particles = particles;
     pass.custom    = custom;
     pass.lightmap  = lightmap;
+    pass.sky       = sky;
     return pass;
   }
 };

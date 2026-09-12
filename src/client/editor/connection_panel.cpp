@@ -1,6 +1,7 @@
 #include "connection_panel.hpp"
 
 #include "../../shared/entities/generated/entity_io_generated.hpp"
+#include "../../shared/log.hpp"
 #include "../../shared/map_connection.hpp"
 #include "entity_inspector.hpp"
 #include "imgui.h"
@@ -60,6 +61,9 @@ bool receiver_accepts(const shared::map_t &map, const shared::connection_t &row,
   case shared::connection_target_t::Self:
     return entities::type_accepts_action(sender.type, action);
 
+  case shared::connection_target_t::Unbound:
+    return false;
+
   case shared::connection_target_t::Uid:
   {
     const shared::map_entity_t *entry = map.find_by_uid(row.target);
@@ -110,6 +114,7 @@ std::string describe_row_as_sentence(const shared::map_t& map, const shared::con
   {
   case shared::connection_target_t::Activator: target = "whoever caused it"; break;
   case shared::connection_target_t::Self:      target = shared::describe_map_entity(map, row.sender) + " itself"; break;
+  case shared::connection_target_t::Unbound:   target = "a target not picked yet (unbound)"; break;
   case shared::connection_target_t::Uid:
     target = row.target == shared::null_entity_uid ? std::string("nobody yet") : shared::describe_map_entity(map, row.target);
     break;
@@ -154,6 +159,8 @@ void force_override_when_payloads_disagree(shared::connection_t &row)
 // which is different from a receiver that refuses, and has to read differently.
 bool row_has_a_receiver(const shared::map_t &map, const shared::connection_t &row)
 {
+  if (row.target_kind == shared::connection_target_t::Unbound)
+    return false;
   if (row.target_kind != shared::connection_target_t::Uid)
     return true;
   const shared::map_entity_t *entry = map.find_by_uid(row.target);
@@ -171,7 +178,10 @@ bool row_has_a_receiver(const shared::map_t &map, const shared::connection_t &ro
 void retarget_row(const shared::map_t &map, shared::connection_t &row,
                   shared::entity_uid_t target)
 {
-  const bool was_unaimed = !row_has_a_receiver(map, row);
+  // An Unbound row has no receiver but DOES carry the author's verb -- it is a
+  // prefab's row waiting for its target -- so it keeps it.
+  const bool was_unaimed =
+      row.target_kind != shared::connection_target_t::Unbound && !row_has_a_receiver(map, row);
 
   row.target_kind = shared::connection_target_t::Uid;
   row.target      = target;
@@ -219,7 +229,8 @@ void draw_target_kind_combo(shared::connection_t &row)
 {
   const shared::connection_target_t kinds[] = {shared::connection_target_t::Uid,
                                                shared::connection_target_t::Activator,
-                                               shared::connection_target_t::Self};
+                                               shared::connection_target_t::Self,
+                                               shared::connection_target_t::Unbound};
 
   if (!ImGui::BeginCombo("target kind", shared::to_string(row.target_kind)))
     return;
@@ -242,6 +253,10 @@ void draw_target_kind_combo(shared::connection_t &row)
     if (unavailable && ImGui::IsItemHovered())
       ImGui::SetTooltip("%s declares no `by` types, so nothing can target its activator.",
                         entities::to_string(row.signal));
+    else if (kind == shared::connection_target_t::Unbound && ImGui::IsItemHovered())
+      ImGui::SetTooltip("A slot: the target is picked where this is placed. Saving a prefab "
+                        "writes one for every row aimed outside it; the loader refuses the "
+                        "row until it is picked.");
   }
   ImGui::EndCombo();
 }
@@ -249,42 +264,26 @@ void draw_target_kind_combo(shared::connection_t &row)
 void draw_target_entity_combo(const shared::map_t &map, shared::connection_t &row,
                              size_t row_index, connection_pick_t &pick)
 {
-  static char filter_buffer[64] = {};
+  // Every entity is offered, and one that does not accept the current verb
+  // says so rather than disappearing: picking the target first and the verb
+  // second is the order an author works in, and a target that vanished
+  // would look like a missing entity.
+  const char* pick_label = "Pick a target in the viewport";
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float pick_button_width =
+      ImGui::CalcTextSize(pick_label).x + style.FramePadding.x * 2.0f + style.ItemSpacing.x;
 
-  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 60.0f);
-  if (ImGui::BeginCombo("##target_entity", describe_connection_target(map, row).c_str()))
-  {
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##target_filter", "filter", filter_buffer,
-                             sizeof(filter_buffer));
-
-    for (const shared::map_entity_t &candidate : map.entities)
-    {
-      if (!candidate.entity)
-        continue;
-
-      const std::string label = shared::describe_map_entity(map, candidate.uid);
-      if (filter_buffer[0] != 0 && label.find(filter_buffer) == std::string::npos)
-        continue;
-
-      // Every entity is offered, and one that does not accept the current verb
-      // says so rather than disappearing: picking the target first and the verb
-      // second is the order an author works in, and a target that vanished
-      // would look like a missing entity.
-      const bool accepts = entities::type_accepts_action(candidate.entity->type, row.data.tag);
-      const std::string annotated =
-          accepts ? label
-                  : std::format("{}  -- does not accept {}", label,
-                                entities::to_string(row.data.tag));
-
-      if (ImGui::Selectable(annotated.c_str(), candidate.uid == row.target))
-        retarget_row(map, row, candidate.uid);
-    }
-    ImGui::EndCombo();
-  }
+  // An Unbound row's `target` is a key from another map, and a uid that happens
+  // to exist here is a coincidence the combo must not show as a choice made.
+  shared::entity_uid_t picked = row.target_kind == shared::connection_target_t::Unbound
+                                    ? shared::null_entity_uid
+                                    : row.target;
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - pick_button_width);
+  if (draw_entity_uid_combo(map, "##target_entity", picked, row.data.tag))
+    retarget_row(map, row, picked);
 
   ImGui::SameLine();
-  if (ImGui::Button("Pick"))
+  if (ImGui::Button(pick_label))
   {
     pick.armed = true;
     pick.row   = row_index;
@@ -360,7 +359,7 @@ void draw_action_combo(const shared::map_t &map, shared::connection_t &row,
 // ("override the parameters") it read as overriding a DEFAULT, and there is no
 // default; the disabled-and-ticked state a payload mismatch forces then looked
 // like a bug rather than like the only legal answer.
-void draw_payload_editor(shared::connection_t &row)
+void draw_payload_editor(const shared::map_t& map, shared::connection_t &row)
 {
   const Span<const field_info_t> fields = entities::action_payload_fields(row.data.tag);
 
@@ -404,7 +403,7 @@ void draw_payload_editor(shared::connection_t &row)
   for (uint32_t index = 0; index < fields.size(); ++index)
   {
     const field_info_t &field = fields[index];
-    render_field_widget(payload + field.offset, field, field.name, (int)index);
+    render_field_widget(payload + field.offset, field, field.name, (int)index, &map);
   }
   ImGui::Unindent();
 }
@@ -438,6 +437,7 @@ std::string describe_connection_target(const shared::map_t &map, const shared::c
   {
   case shared::connection_target_t::Activator: return "!activator";
   case shared::connection_target_t::Self:      return "!self";
+  case shared::connection_target_t::Unbound:   return "<unbound>";
   case shared::connection_target_t::Uid:
     return row.target == shared::null_entity_uid
                ? std::string("<no target>")
@@ -447,13 +447,24 @@ std::string describe_connection_target(const shared::map_t &map, const shared::c
 }
 
 void commit_picked_connection_target(shared::map_t &map, Transaction_System &transactions,
-                                     size_t row, shared::entity_uid_t target)
+                                     Span<const size_t> rows, shared::entity_uid_t target)
 {
-  if (row >= map.connections.size())
-    return;
-
   std::vector<shared::connection_t> before = map.connections;
-  retarget_row(map, map.connections[row], target);
+
+  size_t written = 0;
+  for (size_t row : rows)
+  {
+    if (row >= map.connections.size())
+    {
+      log_error("connection_panel: a pick named row {} of {}; skipped", row,
+                map.connections.size());
+      continue;
+    }
+    retarget_row(map, map.connections[row], target);
+    ++written;
+  }
+  if (written == 0)
+    return;
 
   transaction_t transaction;
   transaction.add_map_connections_modified(std::move(before), map.connections);
@@ -466,7 +477,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
   const shared::map_entity_t *entry = map.find_by_uid(selected_uid);
   if (entry == nullptr || !entry->entity)
   {
-    pick.armed = false;
+    pick.disarm();
     s_edit_baseline.reset();
     return;
   }
@@ -507,7 +518,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
 
     const std::vector<entities::entity_signal> emitted = signals_emitted_by(sender.type);
     if (emitted.empty())
-      ImGui::TextDisabled("%s announces nothing, so it can be a target but never a sender.",
+      ImGui::TextDisabled("%s announces nothing: just a target. Not a Sender.",
                           entities::entity_info(sender.type).classname);
 
     if (pick.armed)
@@ -558,10 +569,11 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
 
       draw_signal_combo(row, sender);
       draw_target_kind_combo(row);
-      if (row.target_kind == shared::connection_target_t::Uid)
+      if (row.target_kind == shared::connection_target_t::Uid ||
+          row.target_kind == shared::connection_target_t::Unbound)
         draw_target_entity_combo(map, row, s_selected_row, pick);
       draw_action_combo(map, row, sender);
-      draw_payload_editor(row);
+      draw_payload_editor(map, row);
 
       ImGui::DragFloat("delay (s)", &row.delay_seconds, 0.01f, 0.0f, 600.0f, "%.2f");
       ImGui::Checkbox("fire once", &row.fire_once);

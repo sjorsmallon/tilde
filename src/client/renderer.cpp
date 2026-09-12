@@ -123,6 +123,14 @@ const uint32_t tonemap_frag_spv[] =
 #include "tonemap.frag.spv.h"
     ;
 
+const uint32_t skybox_vert_spv[] =
+#include "skybox.vert.spv.h"
+    ;
+
+const uint32_t skybox_frag_spv[] =
+#include "skybox.frag.spv.h"
+    ;
+
 #include "stb_image.h"
 
 namespace client
@@ -2875,10 +2883,14 @@ static bool try_check_sampled_format(VkFormat format, const char *what, bool &ou
 // One tightly packed byte range to one sampled image, whatever its shape: a 2D
 // array of `layers` square pages, or a single 3D volume. Clamp-to-edge on every
 // axis and no mips, which is what both the atlas and the probe volume want.
+// `create_flags` is VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT for a cube and 0 for
+// everything else: it is the one thing a cube needs that a plain layered image
+// does not, since six layers already copy, view and sample as one region here.
 static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_count,
                                      VkFormat format, bool filter_linear,
                                      VkImageType image_type, VkImageViewType view_type,
-                                     VkExtent3D extent, uint32_t layers, gpu_texture_t &out)
+                                     VkImageCreateFlags create_flags, VkExtent3D extent,
+                                     uint32_t layers, gpu_texture_t &out)
 {
   VkBuffer       staging_buffer = VK_NULL_HANDLE;
   VkDeviceMemory staging_memory = VK_NULL_HANDLE;
@@ -2896,6 +2908,7 @@ static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_cou
   };
 
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.flags         = create_flags;
   image_info.imageType     = image_type;
   image_info.format        = format;
   image_info.extent        = extent;
@@ -2984,7 +2997,7 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
     return false;
 
   return try_upload_sampled_image(pages.bytes.data(), (VkDeviceSize)pages.bytes.size(), format,
-                                  filter_linear, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                                  filter_linear, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0,
                                   {(uint32_t)pages.size_in_texels, (uint32_t)pages.size_in_texels, 1},
                                   (uint32_t)pages.page_count, out);
 }
@@ -3001,7 +3014,7 @@ static bool try_upload_probe_image(const uint8_t *bytes, size_t byte_count,
     return false;
 
   return try_upload_sampled_image(bytes, (VkDeviceSize)byte_count, format, filter_linear,
-                                  VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D,
+                                  VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D, 0,
                                   {(uint32_t)count.x, (uint32_t)count.y, (uint32_t)count.z}, 1,
                                   out);
 }
@@ -3321,10 +3334,366 @@ static void create_environment_brdf_texture()
   if (!try_upload_sampled_image(reinterpret_cast<const uint8_t *>(lut.scale_bias.data()),
                                 (VkDeviceSize)(lut.scale_bias.size() * sizeof(uint16_t)),
                                 VK_FORMAT_R16G16_UNORM, filter_linear, VK_IMAGE_TYPE_2D,
-                                VK_IMAGE_VIEW_TYPE_2D, {(uint32_t)lut.size, (uint32_t)lut.size, 1},
-                                1, g_environment_brdf))
+                                VK_IMAGE_VIEW_TYPE_2D, 0,
+                                {(uint32_t)lut.size, (uint32_t)lut.size, 1}, 1,
+                                g_environment_brdf))
     fatal_error("[renderer] could not upload the {}x{} environment BRDF table", lut.size,
                 lut.size);
+}
+
+// ---------------------------------------------------------------------------
+// The sky
+// ---------------------------------------------------------------------------
+//
+// A self-contained pipeline with a descriptor set of its own rather than a
+// binding on the pass set. Set 3 is full at 0..14 behind a static_assert, and
+// joining it means touching the layout, the pool, the writer and the GLSL
+// literals in step; the sky borrows nothing from any of them. It also needs a
+// depth compare the mesh pipeline factory cannot express -- that one hardcodes
+// LESS, and a covering triangle at the far plane needs LESS_OR_EQUAL.
+
+// A sky is a cube of four-channel bytes, so its faces upload exactly as a
+// texture does. SRGB because they are COLOUR: the sampler decodes and the
+// fragment shader hands the linear HDR target linear light.
+constexpr VkFormat SKYBOX_FACE_FORMAT = VK_FORMAT_R8G8B8A8_SRGB;
+
+// One set per resident sky. Nothing is ever unregistered, and a map names one
+// sky, so this is a bound on how many distinct skies a session visits.
+constexpr uint32_t MAX_SKYBOXES = 8;
+
+// The camera's basis, pre-scaled so the vertex shader is one add and two
+// multiply-adds. No matrix, and deliberately no camera POSITION: see skybox.vert
+// for why an inverse view-projection is the wrong tool here.
+struct skybox_push_constants_t
+{
+  float right[4];   // xyz scaled by aspect * tan(fov/2)
+  float up[4];      // xyz scaled by tan(fov/2)
+  float forward[4];
+};
+
+struct gpu_skybox_t
+{
+  assets::cubemap_asset id      = assets::cubemap_asset::Missing;
+  gpu_texture_t         texture = {};
+  VkDescriptorSet       set     = VK_NULL_HANDLE;
+};
+
+static std::vector<gpu_skybox_t> g_skyboxes;
+static VkDescriptorSetLayout     g_skybox_ds_layout      = VK_NULL_HANDLE;
+static VkDescriptorPool          g_skybox_pool           = VK_NULL_HANDLE;
+static VkPipelineLayout          g_skybox_pipeline_layout = VK_NULL_HANDLE;
+static VkPipeline                g_skybox_pipeline       = VK_NULL_HANDLE;
+
+static VkPipeline create_skybox_pipeline()
+{
+  VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  vert_info.codeSize = sizeof(skybox_vert_spv);
+  vert_info.pCode    = skybox_vert_spv;
+  VkShaderModule vert_module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &vert_info, nullptr, &vert_module) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the skybox vertex shader module");
+
+  VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  frag_info.codeSize = sizeof(skybox_frag_spv);
+  frag_info.pCode    = skybox_frag_spv;
+  VkShaderModule frag_module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the skybox fragment shader module");
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+       vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth   = 1.0f;
+  rasterizer.cullMode    = VK_CULL_MODE_NONE;
+  rasterizer.frontFace   = HOUSE_FRONT_FACE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  // NO depth at all -- neither test nor write -- and the sky is drawn FIRST,
+  // before any geometry, so everything overdraws it.
+  //
+  // The zero-overdraw version of this (draw last, LESS_OR_EQUAL against the 1.0
+  // clear) is what this replaced, and it FLICKERED. Two reasons, and the fix
+  // removes both at once rather than picking between them. The sky would be the
+  // only draw in the engine whose visibility depends on READING depth values it
+  // did not write, and there is exactly ONE g_depth_image shared across
+  // MAX_FRAMES_IN_FLIGHT frames -- a hazard every other draw is blind to because
+  // each frame rewrites the same geometry to the same depths. And a covering
+  // triangle at z == w sits exactly ON the far clip plane, where the x/y clip of
+  // an oversized triangle recomputes z/w and can round a vertex just outside.
+  //
+  // What it costs is one fullscreen texture fetch of overdraw. That is not worth
+  // a class of bug that only shows up in motion.
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depth_stencil.depthTestEnable  = VK_FALSE;
+  depth_stencil.depthWriteEnable = VK_FALSE;
+
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments    = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 2;
+  pipeline_info.pStages             = stages;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_skybox_pipeline_layout;
+  pipeline_info.renderPass          = g_scene_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the skybox pipeline");
+  }
+
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
+static void create_skybox_resources()
+{
+  VkDescriptorSetLayoutBinding binding{};
+  binding.binding         = 0;
+  binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  binding.descriptorCount = 1;
+  binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_skybox_ds_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the skybox descriptor set layout");
+  }
+
+  VkDescriptorPoolSize       pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_SKYBOXES};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = MAX_SKYBOXES;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_skybox_pool) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the skybox descriptor pool");
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(skybox_push_constants_t);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 1;
+  layout_info.pSetLayouts            = &g_skybox_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_skybox_pipeline_layout) !=
+      VK_SUCCESS)
+  {
+    fatal_error("[renderer] could not create the skybox pipeline layout");
+  }
+
+  g_skybox_pipeline = create_skybox_pipeline();
+}
+
+static void destroy_skybox_resources()
+{
+  for (gpu_skybox_t &sky : g_skyboxes)
+    destroy_texture(sky.texture);
+  g_skyboxes.clear();
+
+  if (g_skybox_pipeline)
+    vkDestroyPipeline(g_device, g_skybox_pipeline, nullptr);
+  if (g_skybox_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_skybox_pipeline_layout, nullptr);
+  if (g_skybox_pool)
+    vkDestroyDescriptorPool(g_device, g_skybox_pool, nullptr);
+  if (g_skybox_ds_layout)
+    vkDestroyDescriptorSetLayout(g_device, g_skybox_ds_layout, nullptr);
+}
+
+skybox_handle_t register_skybox(assets::cubemap_asset id)
+{
+  for (uint32_t which = 0; which < g_skyboxes.size(); ++which)
+  {
+    if (g_skyboxes[which].id == id)
+      return {which};
+  }
+
+  const assets::cubemap_asset_t *cubemap = assets::get(assets::get_cubemap(id));
+  if (!cubemap)
+  {
+    log_error("[renderer] register_skybox: cubemap id {} resolved to nothing", (int)id);
+    return {};
+  }
+
+  // One image, so one extent: six faces that disagree cannot be six layers of
+  // it. Loud rather than stretched, because a resized face is a seam an author
+  // would spend the afternoon hunting in the viewport.
+  const assets::texture_asset_t *faces[assets::CUBEMAP_FACE_COUNT] = {};
+  for (int face = 0; face < assets::CUBEMAP_FACE_COUNT; ++face)
+  {
+    faces[face] = assets::get(cubemap->faces[face]);
+    if (!faces[face] || faces[face]->pixels.empty())
+    {
+      log_error("[renderer] register_skybox: face {} of cubemap {} has no pixels", face,
+                assets::to_string(id));
+      return {};
+    }
+    if (faces[face]->width != faces[0]->width || faces[face]->height != faces[0]->height)
+    {
+      log_error("[renderer] register_skybox: cubemap {} face {} is {}x{} but face 0 is {}x{} -- "
+                "every face of a cube is one size",
+                assets::to_string(id), face, faces[face]->width, faces[face]->height,
+                faces[0]->width, faces[0]->height);
+      return {};
+    }
+  }
+
+  if (faces[0]->width != faces[0]->height)
+  {
+    log_error("[renderer] register_skybox: cubemap {} is {}x{}; a cube face is square",
+              assets::to_string(id), faces[0]->width, faces[0]->height);
+    return {};
+  }
+
+  if (g_skyboxes.size() >= MAX_SKYBOXES)
+  {
+    log_error("[renderer] register_skybox: {} skies are already resident, which is the pool size",
+              MAX_SKYBOXES);
+    return {};
+  }
+
+  // Layer-major and tightly packed, which is the one layout
+  // try_upload_sampled_image's single region describes.
+  const size_t        face_bytes = faces[0]->pixels.size();
+  std::vector<uint8_t> bytes;
+  bytes.reserve(face_bytes * assets::CUBEMAP_FACE_COUNT);
+  for (const assets::texture_asset_t *face : faces)
+    bytes.insert(bytes.end(), face->pixels.begin(), face->pixels.end());
+
+  bool filter_linear = false;
+  if (!try_check_sampled_format(SKYBOX_FACE_FORMAT, "skybox", filter_linear))
+    return {};
+
+  gpu_skybox_t sky;
+  sky.id = id;
+  if (!try_upload_sampled_image(bytes.data(), (VkDeviceSize)bytes.size(), SKYBOX_FACE_FORMAT,
+                                filter_linear, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_CUBE,
+                                VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                                {(uint32_t)faces[0]->width, (uint32_t)faces[0]->height, 1},
+                                (uint32_t)assets::CUBEMAP_FACE_COUNT, sky.texture))
+  {
+    log_error("[renderer] register_skybox: could not upload cubemap {}", assets::to_string(id));
+    return {};
+  }
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_skybox_pool;
+  allocation.descriptorSetCount = 1;
+  allocation.pSetLayouts        = &g_skybox_ds_layout;
+  if (vkAllocateDescriptorSets(g_device, &allocation, &sky.set) != VK_SUCCESS)
+  {
+    log_error("[renderer] register_skybox: could not allocate a descriptor set for cubemap {}",
+              assets::to_string(id));
+    destroy_texture(sky.texture);
+    return {};
+  }
+
+  VkDescriptorImageInfo image_info{};
+  image_info.sampler     = sky.texture.sampler;
+  image_info.imageView   = sky.texture.view;
+  image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  write.dstSet          = sky.set;
+  write.dstBinding      = 0;
+  write.descriptorCount = 1;
+  write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo      = &image_info;
+  vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+
+  g_skyboxes.push_back(sky);
+  return {(uint32_t)(g_skyboxes.size() - 1)};
+}
+
+static void record_skybox_draw(VkCommandBuffer cmd, const view_pass_t &pass)
+{
+  if (!pass.sky.valid() || pass.sky.index >= g_skyboxes.size())
+    return;
+
+  const camera_basis_t basis = get_orientation_vectors(pass.view.camera);
+
+  // The half-extents of the near rectangle, read back OUT of the projection the
+  // renderer actually used rather than recomputed from fov and the viewport:
+  // perspective() sets [0].x to 1/(aspect*tan) and [1].y to -1/tan, so these two
+  // reciprocals cannot drift from the matrix the geometry was drawn with. An
+  // orthographic view has no such rectangle -- every ray is the forward one --
+  // and zero is exactly that.
+  float horizontal = 0.0f;
+  float vertical   = 0.0f;
+  if (!pass.view.camera.orthographic)
+  {
+    const linalg::mat4f projection = view_matrices(pass.view).projection;
+    horizontal                     = 1.0f / projection[0].x;
+    vertical                       = -1.0f / projection[1].y;
+  }
+
+  const linalg::vec3f right   = basis.right * horizontal;
+  const linalg::vec3f up      = basis.up * vertical;
+  const linalg::vec3f forward = basis.forward;
+
+  skybox_push_constants_t push{};
+  push.right[0]   = right.x;   push.right[1]   = right.y;   push.right[2]   = right.z;
+  push.up[0]      = up.x;      push.up[1]      = up.y;      push.up[2]      = up.z;
+  push.forward[0] = forward.x; push.forward[1] = forward.y; push.forward[2] = forward.z;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_skybox_pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_skybox_pipeline_layout, 0, 1,
+                          &g_skyboxes[pass.sky.index].set, 0, nullptr);
+  vkCmdPushConstants(cmd, g_skybox_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                     &push);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
 // Every capture's mip chain into ONE cube array image: capture c is layers
@@ -6959,6 +7328,7 @@ bool init(SDL_Window *window)
   create_mesh_resources();
   create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
   create_tonemap_resources();
+  create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
   create_default_resources();
   init_particle_system();
@@ -7096,6 +7466,7 @@ void shutdown()
   destroy_debug_resources();
   destroy_ui_resources();
   destroy_tonemap_resources();
+  destroy_skybox_resources();
   destroy_shadow_resources();
   cleanup_registered_resources();
 
@@ -7302,6 +7673,9 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     const Span<const frame_uniform_allocation_t> skinning(
         g_draw_skinning.data() + prepared.skinning_base, pass.draws.size());
 
+    // Before the geometry: the sky writes no depth and tests none, so it is the
+    // background every later draw covers.
+    record_skybox_draw(cmd, pass);
     record_mesh_draws(cmd, pass.draws, pass.lightmap, prepared.scene_block_offset, skinning);
 
     if (!pass.particles.empty())

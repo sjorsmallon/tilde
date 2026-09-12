@@ -95,6 +95,17 @@ struct lightmap_handle_t
   bool     operator==(const lightmap_handle_t &) const = default;
 };
 
+// A sky, resident as one six-layer CUBE image. Its own handle for
+// lightmap_handle_t's reason: a samplerCube is a different view type and a
+// different descriptor layout, and handing one to register_material would build
+// a sampler2D set over a cube view -- which nothing catches until the draw.
+struct skybox_handle_t
+{
+  uint32_t index = UINT32_MAX;
+  bool     valid() const { return index != UINT32_MAX; }
+  bool     operator==(const skybox_handle_t &) const = default;
+};
+
 // --- Materials ---
 
 enum class shader_t : uint8_t
@@ -290,6 +301,16 @@ lightmap_handle_t register_lightmap(const shared::lightmap_t &lightmap);
 // nothing in the renderer is ever unregistered, so re-registering would leak a
 // whole atlas per bake.
 void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightmap);
+
+// The six faces of a sky as one cube image, cached by the cubemap's own asset
+// id so a map switch back and forth re-uploads nothing. Upload happens HERE and
+// never at draw time -- it ends in a full queue wait.
+//
+// An invalid returned handle means the faces could not be uploaded (they
+// disagreed on size, or the device refused the format); the pass draws no sky
+// and the scene clear shows through, which is what a pass naming no sky does
+// anyway.
+[[nodiscard]] skybox_handle_t register_skybox(assets::cubemap_asset id);
 
 // The mesh's own material table, in slot order. A caller that wants the same
 // textures under a DIFFERENT pipeline_state -- an unlit view of a model, a
@@ -567,6 +588,10 @@ struct view_pass_t
   // pass is a value, so this stays inside the no-sticky-state rule. Invalid
   // falls back to an internal white page, which multiplies out.
   lightmap_handle_t                         lightmap  = {};
+  // The sky drawn behind this pass's geometry, for the same reason the atlas is
+  // here: it is a property of the world being drawn, not of any surface in it.
+  // Invalid draws no sky at all and leaves the scene clear showing through.
+  skybox_handle_t                           sky       = {};
   // Already folded by shared::try_light_of, and LAID OUT: the first
   // `baked_light_count` entries are INDEXED BY BAKED SLOT, so a lightmapped
   // surface reads the four its chart named and never walks the array. Past

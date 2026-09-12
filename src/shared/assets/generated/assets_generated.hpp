@@ -180,6 +180,21 @@ constexpr uint32_t pbr_material_COUNT = 7;
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);
 
+// Missing is 0: an asset field that was never assigned resolves to the
+// placeholder, which is loudly wrong, rather than to whichever asset
+// happened to sort first, which would look plausible. It has no file --
+// its bytes are a compiled-in constant, so it cannot fail to load.
+enum class cubemap_asset : uint16_t
+{
+  Missing = 0,
+  night_sky = 1,
+};
+
+constexpr uint32_t cubemap_asset_COUNT = 2;
+
+const char* to_string(cubemap_asset value);
+template <> std::optional<cubemap_asset> try_from_string<cubemap_asset>(std::string_view text);
+
 // One manifest row. TWO columns: `path` is null for Missing and is the one
 // spelling read_asset_bytes takes for everything else.
 struct asset_info_t
@@ -222,6 +237,11 @@ Span<const asset_info_t> font_asset_manifest();
 // entry: registration must NOT be lazy, or an id resolves to nothing
 // depending on what ran first.
 Span<const asset_info_t> pbr_material_manifest();
+
+// The complete cubemap_asset manifest, indexed by id. register_all populates every
+// entry: registration must NOT be lazy, or an id resolves to nothing
+// depending on what ran first.
+Span<const asset_info_t> cubemap_asset_manifest();
 
 // The manifest an entities::field_info_t::asset_class_id refers to. Empty
 // span for an id no asset class owns, which is a caller bug -- check the
@@ -270,5 +290,10 @@ template <> struct enum_traits<assets::font_asset>
 template <> struct enum_traits<assets::pbr_material>
 {
   static constexpr uint32_t count = assets::pbr_material_COUNT;
+};
+
+template <> struct enum_traits<assets::cubemap_asset>
+{
+  static constexpr uint32_t count = assets::cubemap_asset_COUNT;
 };
 

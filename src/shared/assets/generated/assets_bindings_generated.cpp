@@ -218,6 +218,21 @@ asset_handle_t<pbr_material_asset_t> get_pbr_material(pbr_material id)
   return *handle;
 }
 
+asset_handle_t<cubemap_asset_t> get_cubemap(cubemap_asset id)
+{
+  asset_state_t& state = state_for("get_cubemap");
+  if (!state.manifest_initialized)
+    fatal_error("assets: get_cubemap called before assets::init() -- registration "
+                "is eager and must run first, or every id resolves to "
+                "nothing");
+
+  const asset_handle_t<cubemap_asset_t>* handle = state.cubemap_asset_handles.try_get(id);
+  if (handle == nullptr || !handle->valid())
+    return state.cubemap_asset_handles[cubemap_asset::Missing];
+
+  return *handle;
+}
+
 void register_all(asset_state_t& state)
 {
   if (state.manifest_initialized)
@@ -292,6 +307,16 @@ void register_all(asset_state_t& state)
     const Span<const asset_info_t> entries = pbr_material_manifest();
     for (uint32_t which = 1; which < entries.size(); ++which)
       state.pbr_material_handles[(pbr_material)which] = load_pbr_material(entries[which].path);
+  }
+
+  // Id 0 first, and from a constant rather than a file, so the fallback
+  // every other id falls back to exists before any of them are tried.
+  state.cubemap_asset_handles[cubemap_asset::Missing] =
+      state.cubemap_asset_pool.add("assets://cubemap_asset/Missing", make_missing_cubemap());
+  {
+    const Span<const asset_info_t> entries = cubemap_asset_manifest();
+    for (uint32_t which = 1; which < entries.size(); ++which)
+      state.cubemap_asset_handles[(cubemap_asset)which] = load_cubemap(entries[which].path);
   }
 
 }

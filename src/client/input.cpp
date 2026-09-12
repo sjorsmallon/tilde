@@ -160,6 +160,7 @@ constexpr vk_mapping_t vk_mappings[] = {
     {key_t::S, 0x53},
     {key_t::D, 0x44},
     {key_t::R, 0x52},
+    {key_t::G, 0x47},
     {key_t::Space, 0x20},
     {key_t::Num_0, 0x30},
     {key_t::Num_1, 0x31},

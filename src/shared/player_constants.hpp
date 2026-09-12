@@ -1,5 +1,7 @@
 #pragma once
 
+#include "aabb.hpp"
+
 namespace shared
 {
 
@@ -47,5 +49,12 @@ constexpr float player_capsule_center_offset = player_half_height;
 // lands, it gets its own constant (Source: 28 ducking) rather than scaling
 // this one.
 constexpr float player_eye_height = 64.f;
+
+// The standing hull as world bounds, from a position at the FEET.
+[[nodiscard]] inline aabb_bounds_t player_hull_bounds(const linalg::vec3f& feet)
+{
+  return {{feet.x - player_half_width, feet.y, feet.z - player_half_width},
+          {feet.x + player_half_width, feet.y + player_half_height * 2.f, feet.z + player_half_width}};
+}
 
 } // namespace shared

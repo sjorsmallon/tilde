@@ -1,11 +1,25 @@
 #include "inventory_system.hpp"
 
+#include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
+#include "../../shared/physics.hpp"
+#include "../../shared/player_constants.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
 
+#include <Jolt/Physics/Body/BodyInterface.h>
+
+#include <algorithm>
+#include <cmath>
+
 namespace server
 {
+
+static constexpr vec3f DROPPED_WEAPON_SIZE          = {24.f, 6.f, 6.f};
+static constexpr float THROW_SPAWN_DISTANCE         = 32.f;
+static constexpr float THROW_SPEED                  = 400.f;
+static constexpr float THROW_UPWARD_SPEED           = 150.f;
+static constexpr float THROW_PICKUP_DELAY_SECONDS   = 0.75f;
 
 // The one place a weapon enters a hand. Everything else -- the default grant
 // below, and every pickup or card-draw that follows it -- goes through here, so
@@ -164,6 +178,94 @@ entities::Weapon_Entity* try_find_active_weapon(shared::game_session_t&         
     return nullptr;
 
   return session.entity_system.get<entities::Weapon_Entity>(*weapon_uid);
+}
+
+bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity& player,
+                             vec3f aim_direction, float tick_dt)
+{
+  const uint32_t* weapon_uid = player.inventory.weapons.try_get(player.inventory.active_slot);
+  if (weapon_uid == nullptr || *weapon_uid == shared::null_entity_uid)
+    return false;
+
+  const shared::entity_uid_t thrown_uid = *weapon_uid;
+  entities::Weapon_Entity* weapon =
+      context.world.session.entity_system.get<entities::Weapon_Entity>(thrown_uid);
+  if (weapon == nullptr)
+  {
+    log_error("try_throw_active_weapon: player {} holds uid {} in {}, which resolves to nothing",
+              player.entity_id, thrown_uid, to_string(player.inventory.active_slot));
+    return false;
+  }
+
+  const vec3f eye      = player.position + vec3f{0.f, shared::player_eye_height, 0.f};
+  const vec3f position = eye + aim_direction * THROW_SPAWN_DISTANCE;
+  const vec3f velocity =
+      player.velocity + aim_direction * THROW_SPEED + vec3f{0.f, THROW_UPWARD_SPEED, 0.f};
+
+  player.inventory.weapons[player.inventory.active_slot] = shared::null_entity_uid;
+
+  weapon->owner_uid           = shared::null_entity_uid;
+  weapon->position            = position;
+  weapon->render.scale        = DROPPED_WEAPON_SIZE;
+  weapon->pickup_allowed_tick =
+      context.tick_number + static_cast<uint32_t>(std::ceil(THROW_PICKUP_DELAY_SECONDS / tick_dt));
+
+  register_dynamic_box(*context.world.physics, thrown_uid, position, DROPPED_WEAPON_SIZE * 0.5f,
+                       velocity);
+  return true;
+}
+
+void update_dropped_weapons(server_context_t& context)
+{
+  shared::game_session_t& session = context.world.session;
+  physics_state_t&        physics = *context.world.physics;
+  JPH::BodyInterface&     body_interface = physics.physics_system.GetBodyInterface();
+
+  const float reach = std::max({DROPPED_WEAPON_SIZE.x, DROPPED_WEAPON_SIZE.y, DROPPED_WEAPON_SIZE.z}) * 0.5f;
+
+  Span<entities::Weapon_Entity> weapons = session.entity_system.entities_of<entities::Weapon_Entity>();
+  Span<entities::Player_Entity> players = session.entity_system.entities_of<entities::Player_Entity>();
+
+  for (entities::Weapon_Entity& weapon : weapons)
+  {
+    if (weapon.owner_uid != shared::null_entity_uid)
+      continue;
+
+    const auto body = physics.entity_body_map.find(weapon.entity_id);
+    if (body != physics.entity_body_map.end())
+    {
+      const JPH::RVec3 jolt_position = body_interface.GetCenterOfMassPosition(body->second);
+      const JPH::Quat  jolt_rotation = body_interface.GetRotation(body->second);
+
+      weapon.position    = {jolt_position.GetX(), jolt_position.GetY(), jolt_position.GetZ()};
+      weapon.orientation = {jolt_rotation.GetX(), jolt_rotation.GetY(), jolt_rotation.GetZ(),
+                            jolt_rotation.GetW()};
+    }
+
+    if (context.tick_number < weapon.pickup_allowed_tick)
+      continue;
+
+    const vec3f minimum = weapon.position - vec3f{reach, reach, reach};
+    const vec3f maximum = weapon.position + vec3f{reach, reach, reach};
+    const entities::Inventory_Slot slot = shared::get_weapon_definition(weapon.weapon_id).slot;
+
+    for (entities::Player_Entity& player : players)
+    {
+      if (player.health.current_health <= 0)
+        continue;
+      if (player.inventory.weapons[slot] != shared::null_entity_uid)
+        continue;
+
+      const shared::aabb_bounds_t hull = shared::player_hull_bounds(player.position);
+      if (!linalg::intersect_aabb_aabb(hull.min, hull.max, minimum, maximum))
+        continue;
+
+      unregister_physics_body(physics, weapon.entity_id);
+      weapon.owner_uid               = player.entity_id;
+      player.inventory.weapons[slot] = weapon.entity_id;
+      break;
+    }
+  }
 }
 
 } // namespace server

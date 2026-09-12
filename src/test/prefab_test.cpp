@@ -20,6 +20,7 @@
 
 #include "log.hpp"
 #include "map.hpp"
+#include "map_connection.hpp"
 #include "map_fragment.hpp"
 
 #include <cmath>
@@ -143,6 +144,18 @@ int main()
     row.data.tag    = entities::entity_action::Kill;
     source.connections.push_back(row);
   }
+  // 2b. OUTBOUND again, at the SAME outside entity from another sender: the
+  //     two share a key, so a stamp asks for the target once.
+  {
+    connection_t row;
+    row.sender       = light;
+    row.signal       = entities::entity_signal::Color_Changed;
+    row.target_kind  = connection_target_t::Uid;
+    row.target       = crate;
+    row.data.tag     = entities::entity_action::Kill;
+    row.has_override = true;
+    source.connections.push_back(row);
+  }
   // 3. INBOUND: something outside the group switches the group's light off.
   {
     connection_t row;
@@ -173,14 +186,17 @@ int main()
 
   // ------------------------------------------------------- crossing detection
   const std::vector<crossing_connection_t> crossings = find_crossing_connections(source, members);
-  if (crossings.size() != 2)
-    return fail(std::format("expected 2 crossing rows, got {}", crossings.size()));
+  if (crossings.size() != 3)
+    return fail(std::format("expected 3 crossing rows, got {}", crossings.size()));
   if (!crossings[0].sender_is_inside || crossings[0].index != 1 ||
-      crossings[0].outside_uid != crate)
-    return fail("the outbound crossing row was not reported as one");
-  if (crossings[1].sender_is_inside || crossings[1].index != 2 ||
-      crossings[1].outside_uid != crate)
-    return fail("the inbound crossing row was not reported as one");
+      crossings[0].outside_uid != crate || !crossings[0].kept_as_unbound)
+    return fail("the outbound crossing row was not reported as one kept as a slot");
+  if (!crossings[1].sender_is_inside || crossings[1].index != 2 ||
+      crossings[1].outside_uid != crate || !crossings[1].kept_as_unbound)
+    return fail("the second outbound crossing row was not reported as one kept as a slot");
+  if (crossings[2].sender_is_inside || crossings[2].index != 3 ||
+      crossings[2].outside_uid != crate || crossings[2].kept_as_unbound)
+    return fail("the inbound crossing row was not reported as one that is lost");
 
   // ------------------------------------------------------------------ extract
   const map_t fragment = extract_map_subset(source, members);
@@ -193,13 +209,25 @@ int main()
   if (!fragment.attached_cvars.empty())
     return fail("the fragment carried the map's cvar lines");
 
-  if (fragment.connections.size() != 2)
-    return fail(std::format("fragment holds {} connections, expected the 2 internal ones",
+  if (fragment.connections.size() != 4)
+    return fail(std::format("fragment holds {} connections, expected 2 internal + 2 slots",
                             fragment.connections.size()));
-  if (find_row(fragment, entities::entity_action::Kill) != nullptr)
-    return fail("the outbound crossing row survived extraction");
   if (find_row(fragment, entities::entity_action::Disable) != nullptr)
     return fail("the inbound crossing row survived extraction");
+  // The two outbound rows are SLOTS: unbound, keyed by the uid they aimed at.
+  {
+    size_t slots = 0;
+    for (const connection_t &row : fragment.connections)
+    {
+      if (row.data.tag != entities::entity_action::Kill)
+        continue;
+      ++slots;
+      if (row.target_kind != connection_target_t::Unbound || row.target != crate)
+        return fail("an outbound crossing row was not kept as an Unbound slot keyed by its old target");
+    }
+    if (slots != 2)
+      return fail(std::format("expected 2 slots in the fragment, found {}", slots));
+  }
 
   // The anchor rule, measured rather than trusted: bottom-centre at the origin.
   if (!nearly(anchor_of(fragment), {0, 0, 0}))
@@ -224,12 +252,15 @@ int main()
   const map_t       reparsed  = parse_map_from_string(text);
   if (serialize_map_to_string(reparsed) != text)
     return fail("a fragment does not survive its own file format");
-  if (reparsed.connections.size() != 2)
+  if (reparsed.connections.size() != 4)
     return fail("the fragment's wiring did not survive the file format");
   {
     const connection_t *row = find_row(reparsed, entities::entity_action::Set_Respawn_Point);
     if (row == nullptr || row->data.as_set_respawn_point().location != spawn)
       return fail("the override's uid did not survive the file format");
+    const connection_t *slot = find_row(reparsed, entities::entity_action::Kill);
+    if (slot == nullptr || slot->target_kind != connection_target_t::Unbound || slot->target != crate)
+      return fail("a slot did not survive the file format with its kind and key");
   }
 
   // ------------------------------------------------------------------- stamp
@@ -255,23 +286,34 @@ int main()
       if (placed == other)
         return fail("the two stamps share a uid");
 
-  if (destination.connections.size() != 4)
-    return fail(std::format("destination holds {} connections, expected 4",
+  if (destination.connections.size() != 8)
+    return fail(std::format("destination holds {} connections, expected 8",
                             destination.connections.size()));
 
   // Every uid a row names is a uid of the copy it belongs to -- never the
-  // fragment's, and never the other copy's.
+  // fragment's, and never the other copy's. A slot's KEY is the exception: it
+  // is not a uid of any map and rides through untouched.
   for (int which = 0; which < 2; ++which)
   {
     const stamp_result_t &stamp = which == 0 ? first : second;
 
-    const connection_t &enable_row = destination.connections[(size_t)which * 2 + 0];
+    const connection_t &enable_row = destination.connections[(size_t)which * 4 + 0];
     if (enable_row.data.tag != entities::entity_action::Enable)
       return fail("the stamped rows are not in fragment order");
     if (enable_row.sender != stamp.remap.at(trigger) || enable_row.target != stamp.remap.at(light))
       return fail("a stamped row still names the fragment's uids");
 
-    const connection_t &respawn_row = destination.connections[(size_t)which * 2 + 1];
+    const connection_t &slot_a = destination.connections[(size_t)which * 4 + 1];
+    const connection_t &slot_b = destination.connections[(size_t)which * 4 + 2];
+    if (slot_a.data.tag != entities::entity_action::Kill || slot_b.data.tag != entities::entity_action::Kill)
+      return fail("the stamped rows are not in fragment order");
+    if (slot_a.sender != stamp.remap.at(trigger) || slot_b.sender != stamp.remap.at(light))
+      return fail("a stamped slot's sender was not remapped");
+    if (slot_a.target_kind != connection_target_t::Unbound || slot_a.target != crate ||
+        slot_b.target_kind != connection_target_t::Unbound || slot_b.target != crate)
+      return fail("a stamped slot did not keep its kind and key");
+
+    const connection_t &respawn_row = destination.connections[(size_t)which * 4 + 3];
     if (respawn_row.data.tag != entities::entity_action::Set_Respawn_Point)
       return fail("the stamped rows are not in fragment order");
     if (respawn_row.data.as_set_respawn_point().location != stamp.remap.at(spawn))
@@ -283,6 +325,21 @@ int main()
     const map_entity_t       *to     = destination.find_by_uid(stamp.remap.at(trigger));
     if (!from || !to || !nearly(to->entity->position, from->entity->position + offset))
       return fail("a stamped entity did not land at the stamp position");
+  }
+
+  // The loader refuses exactly the slots, by row, so build_session drops them
+  // and the editor draws them red; nothing else about the stamp is refused.
+  {
+    const std::vector<connection_refusal_t> refusals = validate_map_connections(destination);
+    if (refusals.size() != 4)
+      return fail(std::format("expected the 4 slots refused, got {} refusal(s)", refusals.size()));
+    for (const connection_refusal_t &refusal : refusals)
+    {
+      if (destination.connections[refusal.index].target_kind != connection_target_t::Unbound)
+        return fail("a refusal named a row that is not a slot");
+      if (refusal.reason.find("unbound") == std::string::npos)
+        return fail("a slot's refusal does not say it is unbound");
+    }
   }
 
   // The material is matched by PATH, so two stamps of one fragment append one
@@ -309,8 +366,8 @@ int main()
       return fail("a fragment carrying cvar lines was stamped anyway");
   }
 
-  printf("prefab_test: OK (4 objects extracted, 2 crossing rows dropped, stamped twice with "
-         "%zu connections remapped, material appended once)\n",
+  printf("prefab_test: OK (4 objects extracted, 2 slots kept, 1 crossing row dropped, stamped "
+         "twice with %zu connections remapped, material appended once)\n",
          destination.connections.size());
   return 0;
 }

@@ -27,7 +27,7 @@ constexpr field_info_t SET_COLOR_FIELDS[] = {
 
 constexpr field_info_t ADD_FIELDS[] = {
   {.name = "amount",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Add_Data, amount),
    .size_in_bytes = (uint32_t)sizeof(Add_Data::amount),
    .flags = 0u,

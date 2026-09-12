@@ -15,6 +15,7 @@ const char* to_string(connection_target_t kind)
   case connection_target_t::Uid: return "Uid";
   case connection_target_t::Activator: return "Activator";
   case connection_target_t::Self: return "Self";
+  case connection_target_t::Unbound: return "Unbound";
   }
   return "<unknown>";
 }
@@ -27,6 +28,8 @@ std::optional<connection_target_t> try_connection_target_from_text(std::string_v
     return connection_target_t::Activator;
   if (text == "Self")
     return connection_target_t::Self;
+  if (text == "Unbound")
+    return connection_target_t::Unbound;
   return std::nullopt;
 }
 
@@ -155,6 +158,10 @@ std::vector<connection_refusal_t> validate_map_connections(const map_t& map)
       }
       break;
     }
+
+    case connection_target_t::Unbound:
+      refuse(std::format("{} target is unbound -- pick one in the editor", action_name));
+      continue;
 
     case connection_target_t::Self:
       if (!entities::type_accepts_action(sender->type, connection.data.tag))

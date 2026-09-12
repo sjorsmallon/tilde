@@ -1117,12 +1117,10 @@ did not fix.
       clock is that state, so this is the item that forces it.
 
 - [ ] **Formalise the replay system; the current one is a remnant** (noted
-      2026-09-10, undecided -- think first). `src/shared/replay_system.hpp` is
-      two inline functions over the protobuf `Replay { GameTick ticks, seed }`
-      with ZERO callers, beside an `EntityState` naming position and velocity
-      only. It predates sub-tick input, the generated entities and the reliable
-      stream, and it rides protobuf, which P8 deletes -- delete it there
-      regardless. The decision is what a replay IS, and there are two honest
+      2026-09-10, undecided -- think first). The remnant is GONE (2026-09-11):
+      `src/shared/replay_system.hpp` was two inline functions over a protobuf
+      `Replay { GameTick ticks, seed }` with zero callers, deleted with the
+      dead proto messages. The decision is what a replay IS, and there are two honest
       answers that serve different things: an INPUT replay (record every
       `C2S_ClientInput` as the wire already encodes it, plus the map hash, the
       cvar set and the rng seed, and re-simulate -- tiny, exact because
@@ -1374,7 +1372,7 @@ envelope for ~10 tiny control messages, at the cost of building all of
 libprotobuf + protoc codegen. `def_gen` already emits serialization, so this is
 absorption, not a project.
 
-**The conversion list** (audited 2026-07-29): `NetCommand` +
+**The conversion list** (audited 2026-07-29): `C2S_Connection`/`S2C_Connection` +
 `CmdConnect`/`CmdAccept`/`CmdReject`/`CmdDisconnect`, `C2S_PlayerMoveCommand` +
 `ViewAngle`, `S2C_EntityPackage` (envelope only), `C2S_Command`,
 `S2C_ServerMessage`, `S2C_BotDebug` + `BotDebugEntry`, `S2C_GameEventBatch`,
@@ -1383,11 +1381,11 @@ bitstream-native and needs no conversion — it is the template, alongside the
 map-transfer messages.
 
 - [ ] Cheap prep — `game.proto` dead weight:
-      * Delete the entire "things that are uncertain" block (`Player`,
-        `EntityType`, `CmdSpawn`, `CmdMove`, `GameTick`, `Replay`,
-        `EntityState`, `Snapshot`, `AABB`, `EntitySpawn`, `MapSource`) — zero
-        references outside the generated `.pb.*`, and `Snapshot`/`EntityState`
-        actively masquerade as the live snapshot path.
+      * DONE 2026-09-11: deleted the "things that are uncertain" block
+        (`Player`, `EntityType`, `CmdSpawn`, `CmdMove`, `GameTick`, `Replay`,
+        `EntityState`, `Snapshot`, `AABB`, `EntitySpawn`, `MapSource`; `Vec3`
+        kept, the debug messages use it), `shared/replay_system.hpp` with it,
+        and the stale checked-in `src/proto/game.pb.*`.
       * `S2C_EntityPackage.is_delta` is write-only (`delta_from_tick != 0` is
         the real signal). Its one writer is `pack_entity_delta_for_update`,
         whose only caller is `test_entity_delta_packing` — both die together;
@@ -1398,7 +1396,7 @@ map-transfer messages.
 - [ ] Write NEW messages bitstream-native (`serialize_game_event` /
       `Bit_Writer`; the map-switch messages in `map_transfer.cpp` are the
       template).
-- [ ] Convert existing messages one at a time, smallest first (`NetCommand`
+- [ ] Convert existing messages one at a time, smallest first (the connection
       handshake, `C2S_Command`). Swap only `S2C_EntityPackage`'s envelope.
 - [ ] Delete the protobuf dep + codegen step once the last message migrates —
       the compile-time win only lands at the end.

@@ -793,6 +793,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_exposure),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "sv_skybox",
+     .description = "Cubemap the map shows as its sky (a folder name under resources/cubemaps/); empty for none",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_STRING,
+     .offset = offsetof(cvar_state_t, sv_skybox),
+     .size = sizeof(cvar_state_t::sv_skybox),
+     .string_capacity = 64,
+     .enum_info = NOT_AN_ENUM},
     {.name = "debug_show_collisions",
      .description = "Show collision faces in green",
      .flags = CVAR_FLAG_NONE,
@@ -982,7 +990,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[24] = {
+const cvar_id MIRRORED_CVAR_TABLE[25] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -1007,6 +1015,7 @@ const cvar_id MIRRORED_CVAR_TABLE[24] = {
     cvar_id::map_respawn_delay_seconds,
     cvar_id::map_kill_limit,
     cvar_id::map_round_time_limit_seconds,
+    cvar_id::sv_skybox,
 };
 
 // The value's bytes inside the state struct. Every text conversion goes
@@ -1068,7 +1077,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 24};
+  return {MIRRORED_CVAR_TABLE, 25};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

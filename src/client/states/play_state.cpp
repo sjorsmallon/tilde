@@ -8,6 +8,7 @@
 #include "../hud/crosshair.hpp"
 #include "../hud/deploy_timer.hpp"
 #include "../hud/run_timer.hpp"
+#include "../hud/weapon_name.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../hit_confirm_audio.hpp"
 #include "../held_snapshot.hpp"
@@ -132,6 +133,7 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
   case input::key_t::D:     return Button::Right;
   case input::key_t::Space: return Button::Jump;
   case input::key_t::R:     return Button::Reload;
+  case input::key_t::G:     return Button::Throw;
   case input::key_t::Num_0: return Button::Key0;
   case input::key_t::Num_1: return Button::Key1;
   case input::key_t::Num_2: return Button::Key2;
@@ -444,6 +446,9 @@ void Play_State::set_provisional_player_pose_for_new_map(client_context_t &ctx)
   if (!spawns.empty())
   {
     ctx.prediction.player_position = spawns.front().position;
+    snap_local_aim_to(ctx.prediction, spawns.front().orientation);
+    camera.yaw   = ctx.prediction.player_yaw;
+    camera.pitch = ctx.prediction.player_pitch;
     log_terminal("[CLIENT] Spawn from map: ({:.1f}, {:.1f}, {:.1f})",
                  ctx.prediction.player_position.x, ctx.prediction.player_position.y, ctx.prediction.player_position.z);
   }
@@ -1240,6 +1245,7 @@ void Play_State::update(float dt)
     if (input::is_key_down(input::key_t::Num_9)) buttons |= Button::Key9;
     if (input::is_key_down(input::key_t::Num_0)) buttons |= Button::Key0;
     if (input::is_key_down(input::key_t::R))     buttons |= Button::Reload;
+    if (input::is_key_down(input::key_t::G))     buttons |= Button::Throw;
 
 
     if (input::is_mouse_down(input::mouse_button_t::Left))
@@ -2541,7 +2547,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // Networked mode uses the snapshot map (no interpolation yet — see todo.md;
   // visible stutter at tick boundaries is expected for now).
   {
-    auto draw_one = [&](const entities::Physics_Body_Entity &body) {
+    auto draw_one = [&](const auto &body) {
       const auto &render = body.render;
       if (!render.visible) return;
 
@@ -2563,11 +2569,22 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
               ->entity_system.entities_of<entities::Physics_Body_Entity>();
       for (const entities::Physics_Body_Entity &body : physics_pool)
         draw_one(body);
+
+      Span<entities::Weapon_Entity> weapon_pool =
+          const_cast<shared::game_session_t *>(ctx.server_session)
+              ->entity_system.entities_of<entities::Weapon_Entity>();
+      for (const entities::Weapon_Entity& weapon : weapon_pool)
+        if (weapon.owner_uid == shared::null_entity_uid)
+          draw_one(weapon);
     }
     else
     {
       for (const auto &[id, body] : ctx.replication.remote_physics_bodies)
         draw_one(body);
+
+      for (const auto& [id, weapon] : ctx.replication.latest_weapon_entities)
+        if (weapon.owner_uid == shared::null_entity_uid)
+          draw_one(weapon);
     }
   }
 
@@ -2716,6 +2733,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 #endif
 
+  scene.sky = skybox.resolve(ctx.cvars->sv_skybox.c_str());
+
   passes.push_back(scene.to_pass());
 
 
@@ -2745,6 +2764,21 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                              ctx.prediction.seconds_until_local_deploy_complete);
     else
       log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
+  }
+
+  if (!connection_ui.show_pause_menu &&
+      ctx.replication.latest_player_entities.contains(ctx.connection.my_slot))
+  {
+    if (const ui::ui_font_t* font = ctx.font)
+    {
+      const shared::weapon_definition_t* held_weapon = try_find_local_weapon_definition(ctx);
+      hud::draw_weapon_name(ui, *font, renderer::screen_size(), renderer::display_scale(),
+                            held_weapon != nullptr ? held_weapon->display_name : "Empty");
+    }
+    else
+    {
+      log_error("[hud] no UI font registered; the weapon name cannot draw");
+    }
   }
 
   if (ctx.replication.round.phase == shared::Round_Phase::Live && !connection_ui.show_pause_menu)

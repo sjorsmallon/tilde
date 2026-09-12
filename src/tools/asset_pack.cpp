@@ -20,9 +20,10 @@
 //
 // 1. A CLAIMED FILE HAS NO ID. Something else already names it, so an id on top
 //    would be a second, weaker copy of an identity the format already has.
-//    There are exactly two ways to be claimed: sit in a MATERIAL DIRECTORY (one
-//    that holds MATERIAL_MARKER -- the folder is the asset and its maps are its
-//    contents), or carry an extension on IGNORED_EXTENSIONS (.mtl, .skeleton --
+//    There are exactly two ways to be claimed: sit in one of the directories
+//    DIRECTORY_CLASS_TABLE names by its marker file (a material, a cubemap --
+//    the folder is the asset and its files are its contents), or carry an
+//    extension on IGNORED_EXTENSIONS (.mtl, .skeleton --
 //    named as a bare sibling from inside the file that needs them). Everything
 //    unclaimed is enumerated, at ANY depth.
 //
@@ -129,23 +130,28 @@ constexpr class_row_t CLASS_TABLE[] = {
     {".ttf", "font_asset", "font_asset_t", "asset_types.hpp"},
 };
 
-// A MATERIAL is a FOLDER, which is why it needs a rule of its own: it is the one
-// asset whose unit is not a file, so no extension can reach it and the old
-// depth rule could only ever classify its maps individually. A directory
-// holding this file IS one pbr_material entry, minted from the DIRECTORY name,
-// and everything inside it is claimed -- packed, never enumerated. albedo is
-// the marker because it is the one map load_pbr_material cannot do without:
-// resolve_material_texture hands the renderer the albedo and a folder with no
-// albedo resolves to nothing.
-constexpr const char* MATERIAL_MARKER = "albedo.png";
-
-// The one class whose entries come from directories rather than files, so it is
-// not in CLASS_TABLE and claims no extension. A class with no extensions emits
-// no decoders and gets NO generated loader -- def_gen declares load_pbr_material
-// and leaves it to the hand-written one in asset.cpp, which is the same
+// The classes whose unit is a FOLDER rather than a file. No extension can reach
+// one, so they are not in CLASS_TABLE and claim none; a directory holding the
+// marker IS one entry, minted from the DIRECTORY name, and everything inside it
+// is claimed -- packed, never enumerated. A class with no extensions emits no
+// decoders and gets NO generated loader: def_gen declares load_<class> and
+// leaves it to the hand-written one in asset.cpp, the same
 // link-error-names-the-symbol seam every decoder already sits behind.
-constexpr class_row_t MATERIAL_CLASS = {nullptr, "pbr_material", "pbr_material_asset_t",
-                                        "asset_types.hpp"};
+//
+// The marker is the one file the loader cannot do without. albedo, because
+// resolve_material_texture hands the renderer the albedo and a folder with no
+// albedo resolves to nothing; up.png, because a cube with five faces is not a
+// cube -- load_cubemap needs all six and dies naming whichever is absent.
+struct directory_class_row_t
+{
+  const char*   marker;
+  class_row_t   row;
+};
+
+constexpr directory_class_row_t DIRECTORY_CLASS_TABLE[] = {
+    {"albedo.png", {nullptr, "pbr_material", "pbr_material_asset_t", "asset_types.hpp"}},
+    {"up.png", {nullptr, "cubemap_asset", "cubemap_asset_t", "asset_types.hpp"}},
+};
 
 // Never given an id. Each one is a decision with a reason:
 //
@@ -203,11 +209,17 @@ const class_row_t* find_class_row(const std::string& extension)
   return nullptr;
 }
 
-// A directory whose contents belong to it rather than to the id space.
-bool directory_is_material(const std::filesystem::path& directory)
+// A directory whose contents belong to it rather than to the id space: the
+// class it is an entry of, or null if it is an ordinary directory to walk into.
+const class_row_t* try_find_directory_class(const std::filesystem::path& directory)
 {
-  std::error_code failure;
-  return std::filesystem::is_regular_file(directory / MATERIAL_MARKER, failure);
+  for (const directory_class_row_t& candidate : DIRECTORY_CLASS_TABLE)
+  {
+    std::error_code failure;
+    if (std::filesystem::is_regular_file(directory / candidate.marker, failure))
+      return &candidate.row;
+  }
+  return nullptr;
 }
 
 bool extension_is_ignored(const std::string& extension)
@@ -408,25 +420,27 @@ void walk_directory(const std::filesystem::path& root, const std::string& relati
     // The one place a DIRECTORY becomes an asset. Minted from the directory
     // name, exactly as a file is minted from its stem -- and checked by the same
     // rule, because a material name goes into a .source map file the same way.
-    bool contents_are_claimed = claimed;
-    if (!claimed && directory_is_material(root / relative))
+    bool               contents_are_claimed = claimed;
+    const class_row_t* directory_class =
+        claimed ? nullptr : try_find_directory_class(root / relative);
+    if (directory_class != nullptr)
     {
       contents_are_claimed = true;
 
       const std::string logical = to_logical_path(relative);
       if (!name_is_mintable(name))
-        report_error("'%s' holds %s, so it is a material, but its name cannot become an "
-                     "identifier. Rename the directory: a minted name is never mangled",
-                     logical.c_str(), MATERIAL_MARKER);
+        report_error("'%s' is a %s, but its name cannot become an identifier. Rename the "
+                     "directory: a minted name is never mangled",
+                     logical.c_str(), directory_class->class_name);
       else
       {
-        class_bucket_t* bucket = bucket_for(buckets, &MATERIAL_CLASS);
+        class_bucket_t* bucket = bucket_for(buckets, directory_class);
         for (const entry_t& existing : bucket->entries)
         {
           if (existing.name != name)
             continue;
           report_error("asset class '%s' has two entries named '%s' ('%s' and '%s'); rename one",
-                       MATERIAL_CLASS.class_name, name.c_str(), existing.path.c_str(),
+                       directory_class->class_name, name.c_str(), existing.path.c_str(),
                        logical.c_str());
         }
         bucket->entries.push_back({name, logical});
@@ -534,7 +548,8 @@ int main(int argument_count, char** arguments)
   std::vector<class_bucket_t> buckets;
   for (const class_row_t& row : CLASS_TABLE)
     bucket_for(buckets, &row);
-  bucket_for(buckets, &MATERIAL_CLASS);
+  for (const directory_class_row_t& directory_class : DIRECTORY_CLASS_TABLE)
+    bucket_for(buckets, &directory_class.row);
 
   std::vector<assets::asset_package_input_t>  package_files;
   std::vector<assets::asset_package_input_t>* package_sink =

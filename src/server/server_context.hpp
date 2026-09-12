@@ -189,6 +189,11 @@ struct pending_hit_t
   shared::hit_region_t region = shared::hit_region_t::Torso;
 };
 
+struct pending_swap_t
+{
+  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
+  shared::entity_uid_t target_uid  = shared::null_entity_uid;
+};
 
 struct tick_output_t
 {
@@ -197,6 +202,8 @@ struct tick_output_t
   shared::event_stream_t events;
 
   std::vector<pending_hit_t> pending_hits;
+
+  std::vector<pending_swap_t> pending_swaps;
 };
 
 struct server_context_t

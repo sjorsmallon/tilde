@@ -20,8 +20,7 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     // see is the box that gets tested.
     case entities::entity_type::Damageable_Entity:
     {
-      const entities::Damageable_Entity *damageable =
-          static_cast<const entities::Damageable_Entity *>(entity);
+      const entities::Damageable_Entity* damageable = static_cast<const entities::Damageable_Entity*>(entity);
       volume = assets::make_box_hit_volume(damageable->position,
                                            damageable->hitbox_half_extents,
                                            shared::hit_region_t::Torso);
@@ -29,8 +28,6 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     }
     // A player's volumes come off a posed rig, not off fields -- see the header.
     case entities::entity_type::Player_Entity:
-    // A rocket has a collision sphere rather than a hit volume: nothing shoots
-    // it, it shoots you. Play_State draws that one beside its own model.
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Spectate_Entity:

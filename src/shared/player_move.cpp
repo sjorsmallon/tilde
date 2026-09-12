@@ -671,8 +671,9 @@ std::tuple<vec3, vec3> player_move(
   debug_collision::Face_Bucket *recording_bucket =
       cvars.debug_show_collisions ? debug_faces : nullptr;
 
-  // Resolve collisions: push player out of entities and collect contact planes
-  vec3 player_pos = old_position;
+  // The caller's position is at the FEET; everything below works on the hull centre.
+  const vec3 hull_center_offset{0.f, half_height, 0.f};
+  vec3 player_pos = old_position + hull_center_offset;
   Collider_Planes collider_planes =
       resolve_collisions(bvh, player_pos, half_width, half_height,
                          recording_bucket);
@@ -971,5 +972,5 @@ std::tuple<vec3, vec3> player_move(
     out_events->land_impact_speed = land_impact_speed;
   }
 
-  return {new_pos, new_vel};
+  return {new_pos - hull_center_offset, new_vel};
 }

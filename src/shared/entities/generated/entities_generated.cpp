@@ -30,6 +30,7 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Scout",
   "Rocket_Launcher",
   "Dash",
+  "Swapper",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -79,7 +80,7 @@ constexpr const char* Damage_Type_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 4}},
+  {"Weapon", {Weapon_VALUE_NAMES, 5}},
   {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 3}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 2}},
@@ -856,7 +857,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Weapon_Entity, owner_uid),
    .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::owner_uid),
-   .flags = 0u,
+   .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -865,6 +866,15 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Weapon_Entity, next_fire_time),
    .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::next_fire_time),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "pickup_allowed_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Weapon_Entity, pickup_allowed_tick),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::pickup_allowed_tick),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1866,7 +1876,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 25}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 420u, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 10}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 32u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 32u, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 12}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 32u, true, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 24}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 4}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 0u, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
@@ -1966,6 +1976,7 @@ const char* to_string(Weapon value)
     case Weapon::Scout: return "Scout";
     case Weapon::Rocket_Launcher: return "Rocket_Launcher";
     case Weapon::Dash: return "Dash";
+    case Weapon::Swapper: return "Swapper";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -1977,6 +1988,7 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Scout") return Weapon::Scout;
   if (text == "Rocket_Launcher") return Weapon::Rocket_Launcher;
   if (text == "Dash") return Weapon::Dash;
+  if (text == "Swapper") return Weapon::Swapper;
   return std::nullopt;
 }
 
@@ -2231,6 +2243,6 @@ Span<const entity_type> placeable_entity_types()
   return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x49c10876u;
+const uint32_t SCHEMA_HASH = 0x32a0dbf5u;
 
 } // namespace entities

@@ -2,10 +2,12 @@
 
 #include "../../shared/map.hpp"
 #include "../../shared/map_connection.hpp"
+#include "../../shared/span.hpp"
 
 #include <string>
 
 #include <cstddef>
+#include <vector>
 
 namespace client
 {
@@ -21,6 +23,20 @@ struct connection_pick_t
 {
   bool   armed = false;
   size_t row   = 0; // index into map_t::connections
+  // The other rows the SAME click fills: after a stamp, every unbound row of
+  // that stamp sharing `row`'s key, since they all aimed at one entity.
+  std::vector<size_t> also_rows;
+  // Unbound rows of the stamp still waiting for a click of their own; the next
+  // group is armed when this one resolves. Escape drops them, leaving the rows
+  // red where the panel's own Pick button still reaches them.
+  std::vector<size_t> queued_rows;
+
+  void disarm()
+  {
+    armed = false;
+    also_rows.clear();
+    queued_rows.clear();
+  }
 };
 
 // The selected entity's WIRING, over the map's one connection table. Draws
@@ -35,10 +51,10 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
 [[nodiscard]] std::string describe_connection_target(const shared::map_t &map,
                                                      const shared::connection_t &row);
 
-// Write a clicked target into one row, as its own undo entry. The panel's own
-// edits commit through a different path (an ImGui drag is many frames), so this
-// is the one the viewport uses.
+// Write a clicked target into every named row, as ONE undo entry. The panel's
+// own edits commit through a different path (an ImGui drag is many frames), so
+// this is the one the viewport uses.
 void commit_picked_connection_target(shared::map_t &map, Transaction_System &transactions,
-                                     size_t row, shared::entity_uid_t target);
+                                     Span<const size_t> rows, shared::entity_uid_t target);
 
 } // namespace client

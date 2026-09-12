@@ -27,7 +27,7 @@ struct Counting { static constexpr entity_trait tag = entity_trait::Counting; };
 
 struct Add_Data
 {
-  uint32_t amount = {};
+  int32_t amount = {};
 };
 static_assert(std::is_trivially_copyable_v<Add_Data>,
               "a verb payload rides a union in a map row and a queue record");

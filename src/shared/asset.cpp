@@ -1070,6 +1070,12 @@ const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
   return state.pbr_material_pool.get(handle);
 }
 
+const cubemap_asset_t *get(asset_handle_t<cubemap_asset_t> handle)
+{
+  asset_state_t &state = state_for("get(cubemap)");
+  return state.cubemap_asset_pool.get(handle);
+}
+
 const sound_asset_t *get(asset_handle_t<sound_asset_t> handle)
 {
   asset_state_t &state = state_for("get(sound)");
@@ -1137,6 +1143,57 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 // handing the renderer texture_asset::Missing. The placeholder only has to be
 // VALID.
 pbr_material_asset_t make_missing_pbr_material()
+{
+  return {};
+}
+
+// The other hand-written DIRECTORY class. Same seam as load_pbr_material: a
+// folder has no bytes and no extension, so def_gen declares this and stops.
+//
+// What differs is the failure rule. A material's absent map is an answer, so
+// that loader probes; a cube face is not optional, so this one takes the
+// ordinary path -- load_texture cannot fail, and a face that is not there dies
+// naming the file. Five faces is a broken install, not a sky to draw around.
+asset_handle_t<cubemap_asset_t> load_cubemap(const char *folder_path)
+{
+  asset_state_t &state  = state_for("load_cubemap");
+  const std::string folder = asset_cache_key(folder_path);
+
+  asset_handle_t<cubemap_asset_t> existing = state.cubemap_asset_pool.find(folder.c_str());
+  if (existing.valid())
+    return existing;
+
+  // The ONE place filenames become cube faces, in the cube's layer order
+  // (+X, -X, +Y, -Y, +Z, -Z).
+  //
+  // These faces are authored in THIS ENGINE's axes, not OpenGL's: forward is
+  // +X, up is +Y and right (forward x up) is +Z, so front.png is the +X face
+  // and right.png is the +Z one. A pack named for OpenGL would put front at +Z
+  // instead -- if a downloaded sky ever reads as turned 90 degrees, this table
+  // is what says which convention it was cut for.
+  static constexpr const char *FACE_FILES[CUBEMAP_FACE_COUNT] = {
+      "front.png", "back.png", "up.png", "down.png", "right.png", "left.png"};
+
+  cubemap_asset_t cubemap;
+  for (int face = 0; face < CUBEMAP_FACE_COUNT; ++face)
+  {
+    const std::string full_path = folder + "/" + FACE_FILES[face];
+    if (!asset_exists(full_path.c_str()))
+      fatal_error("load_cubemap: '{}' has no '{}'. A cube needs all six faces -- "
+                  "right/left/up/down/front/back",
+                  folder, FACE_FILES[face]);
+    cubemap.faces[face] = load_texture(full_path.c_str());
+  }
+
+  printf("[assets] loaded cubemap from folder: %s\n", folder.c_str());
+  return state.cubemap_asset_pool.add(folder.c_str(), std::move(cubemap));
+}
+
+// Six invalid handles, for make_missing_pbr_material's reason: the renderer
+// resolves an invalid face to texture_asset::Missing, so a map naming a sky
+// this build does not have draws a magenta checker on all six sides. Visibly
+// wrong is the point -- a black sky would pass for night.
+cubemap_asset_t make_missing_cubemap()
 {
   return {};
 }

@@ -2,7 +2,10 @@
 
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/log.hpp"
+#include "../../shared/map.hpp"
 #include "imgui.h"
+#include <cfloat>
+#include <format>
 #include <string>
 #include <vector>
 
@@ -21,7 +24,58 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
 } // namespace
 
 // there's some special casing for quaternions because editing those is easier in euler angles.
-void render_field_widget(void* field_ptr, const field_info_t& field, const char* label, int id)
+bool draw_entity_uid_combo(const shared::map_t& map, const char* label, shared::entity_uid_t& uid,
+                           std::optional<entities::entity_action> annotate_refusal_of)
+{
+  static char filter_buffer[64] = {};
+
+  const std::string preview =
+      uid == shared::null_entity_uid ? std::string("(nobody)") : shared::describe_map_entity(map, uid);
+
+  if (!ImGui::BeginCombo(label, preview.c_str()))
+    return false;
+
+  bool picked = false;
+
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::InputTextWithHint("##entity_filter", "filter", filter_buffer, sizeof(filter_buffer));
+
+  if (ImGui::Selectable("(nobody)", uid == shared::null_entity_uid))
+  {
+    uid    = shared::null_entity_uid;
+    picked = true;
+  }
+
+  for (const shared::map_entity_t& candidate : map.entities)
+  {
+    if (!candidate.entity)
+      continue;
+
+    const std::string entity_label = shared::describe_map_entity(map, candidate.uid);
+    if (filter_buffer[0] != 0 && entity_label.find(filter_buffer) == std::string::npos)
+      continue;
+
+    const bool refuses = annotate_refusal_of.has_value() &&
+                         !entities::type_accepts_action(candidate.entity->type, *annotate_refusal_of);
+    const std::string annotated =
+        refuses ? std::format("{}  -- does not accept {}", entity_label, entities::to_string(*annotate_refusal_of))
+                : entity_label;
+
+    ImGui::PushID((int)candidate.uid);
+    if (ImGui::Selectable(annotated.c_str(), candidate.uid == uid))
+    {
+      uid    = candidate.uid;
+      picked = true;
+    }
+    ImGui::PopID();
+  }
+
+  ImGui::EndCombo();
+  return picked;
+}
+
+void render_field_widget(void* field_ptr, const field_info_t& field, const char* label, int id,
+                         const shared::map_t* map)
 {
   ImGui::PushID(id);
 
@@ -40,8 +94,13 @@ void render_field_widget(void* field_ptr, const field_info_t& field, const char*
       ImGui::InputScalar(label, ImGuiDataType_U16, field_ptr);
       break;
     case FIELD_TYPE_U32:
-    case FIELD_TYPE_ENTITY_UID:
       ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
+      break;
+    case FIELD_TYPE_ENTITY_UID:
+      if (map != nullptr)
+        draw_entity_uid_combo(*map, label, *static_cast<shared::entity_uid_t*>(field_ptr));
+      else
+        ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
       break;
     case FIELD_TYPE_U64:
       ImGui::InputScalar(label, ImGuiDataType_U64, field_ptr);

@@ -79,6 +79,24 @@ static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 // Returns the absolute path to the maps/ directory, creating it if needed.
 // Resolved relative to the executable: <exe_dir>/../../maps/ which puts it at
 // the project root when running from a cmake_build/bin/ layout.
+// What the OPEN MAP says its sky is, out of its own cvars block.
+//
+// split_cvar_line is the one split the file writer, the file reader and the Map
+// Cvars panel all go through, so this cannot disagree with any of them about
+// where the name ends. Last line wins, matching apply_map_cvars: the map's list
+// is executed in order, so a repeated name ends on its final value.
+static std::string skybox_name_of(const shared::map_t &map)
+{
+  std::string name;
+  for (const std::string &line : map.attached_cvars)
+  {
+    const shared::cvar_line_t split = shared::split_cvar_line(line);
+    if (split.name == "sv_skybox")
+      name = split.value;
+  }
+  return name;
+}
+
 static std::string get_maps_dir()
 {
   std::filesystem::path base;
@@ -315,6 +333,40 @@ void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
   camera.orbit_target  = focus.center;
 
   hud::set_announcement(announcement);
+}
+
+constexpr float ORBIT_DEGREES_PER_PIXEL = 0.25f;
+
+linalg::vec3f Tool_Editor_State::pick_orbit_pivot()
+{
+  const viewport_state_t view = transform_viewport_state();
+  ray_hit_result_t       hit{};
+  if (!editor_bvh.bvh.nodes.empty() &&
+      bvh_intersect_ray(editor_bvh.bvh, view.mouse_ray.origin, view.mouse_ray.direction, hit))
+    return view.mouse_ray.origin + view.mouse_ray.direction * hit.t;
+
+  if (active_tool)
+  {
+    if (std::optional<view_focus_t> tool_focus = tools[*active_tool]->view_focus())
+      return tool_focus->center;
+  }
+
+  return {0.0f, 0.0f, 0.0f};
+}
+
+void Tool_Editor_State::orbit_camera_around_pivot(float yaw_delta_degrees, float pitch_delta_degrees)
+{
+  linalg::vec3f offset = camera.position - orbit_pivot;
+
+  offset = linalg::rotate(linalg::from_axis_angle({0.0f, 1.0f, 0.0f}, -yaw_delta_degrees), offset);
+  camera.yaw += yaw_delta_degrees;
+
+  const float          new_pitch = std::clamp(camera.pitch + pitch_delta_degrees, -89.0f, 89.0f);
+  const camera_basis_t basis     = get_orientation_vectors(camera);
+  offset = linalg::rotate(linalg::from_axis_angle(basis.right, new_pitch - camera.pitch), offset);
+  camera.pitch = new_pitch;
+
+  camera.position = orbit_pivot + offset;
 }
 
 void Tool_Editor_State::switch_tool(editor_tool_t tool)
@@ -612,7 +664,23 @@ void Tool_Editor_State::update(float dt)
     }
 
     const bool console_open = console::get().is_open();
-    if (input::is_mouse_down(input::mouse_button_t::Right) && view_mode == ViewMode::FreeCam && !console_open)
+    const bool middle_down  = input::is_mouse_down(input::mouse_button_t::Middle) && !console_open;
+    if (!middle_down)
+      orbiting = false;
+
+    if (middle_down)
+    {
+      if (!orbiting)
+      {
+        orbit_pivot = pick_orbit_pivot();
+        orbiting    = true;
+        view_mode   = ViewMode::FreeCam;
+      }
+      input::set_relative_mouse_mode(true);
+      const linalg::vec2i delta = input::mouse_delta();
+      orbit_camera_around_pivot(delta.x * ORBIT_DEGREES_PER_PIXEL, -delta.y * ORBIT_DEGREES_PER_PIXEL);
+    }
+    else if (input::is_mouse_down(input::mouse_button_t::Right) && view_mode == ViewMode::FreeCam && !console_open)
     {
       input::set_relative_mouse_mode(true);
       linalg::vec2i delta = input::mouse_delta();
@@ -1432,6 +1500,8 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   {
     tools[*active_tool]->on_draw_overlay(context, scene);
   }
+
+  scene.sky = skybox.resolve(skybox_name_of(map));
 
   passes.push_back(scene.to_pass());
 }

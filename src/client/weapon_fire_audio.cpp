@@ -61,6 +61,7 @@ constexpr Enum_Array<entities::Weapon, weapon_sounds_t> WEAPON_SOUNDS = {{
     // gunshot, and there is no file for one. The row exists because the table
     // is keyed by Weapon and every weapon has to answer.
     {entities::Weapon::Dash, assets::sound_asset::Missing, assets::sound_asset::Missing},
+    {entities::Weapon::Swapper, assets::sound_asset::Missing, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&weapon_sounds_t::weapon>(WEAPON_SOUNDS),

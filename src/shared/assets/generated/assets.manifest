@@ -91,3 +91,7 @@ class pbr_material pbr_material_asset_t asset_types.hpp
   sloppy_mortar_stone resources/textures/sloppy_mortar_stone
   stringy_marble resources/textures/stringy_marble
   titanium_scuffed resources/textures/titanium_scuffed
+
+class cubemap_asset cubemap_asset_t asset_types.hpp
+  Missing -
+  night_sky resources/cubemaps/night_sky

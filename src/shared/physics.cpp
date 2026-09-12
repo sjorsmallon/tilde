@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 
 #include "log.hpp"
+#include "world_units.hpp"
 
 using namespace linalg;
 
@@ -125,6 +126,8 @@ void register_dynamic_sphere(physics_state_t &state, shared::entity_uid_t uid,
         JPH::Quat::sIdentity(),
         JPH::EMotionType::Dynamic,
         Physics_Layers::DYNAMIC);
+    // Jolt's default cap is 500 m/s, but a world unit is an inch.
+    settings.mMaxLinearVelocity = 500.f * shared::WORLD_UNITS_PER_METRE;
     settings.mLinearVelocity = to_jolt(initial_velocity);
 
     JPH::BodyInterface &body_interface = state.physics_system.GetBodyInterface();
@@ -148,6 +151,8 @@ void register_dynamic_box(physics_state_t &state, shared::entity_uid_t uid,
         JPH::Quat::sIdentity(),
         JPH::EMotionType::Dynamic,
         Physics_Layers::DYNAMIC);
+    // Jolt's default cap is 500 m/s, but a world unit is an inch.
+    settings.mMaxLinearVelocity = 500.f * shared::WORLD_UNITS_PER_METRE;
     settings.mLinearVelocity = to_jolt(initial_velocity);
 
     JPH::BodyInterface &body_interface = state.physics_system.GetBodyInterface();

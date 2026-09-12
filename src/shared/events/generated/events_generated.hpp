@@ -94,6 +94,7 @@ static_assert(std::is_trivially_copyable_v<Player_Died>,
 struct Player_Spawned : Game_Event
 {
   uint32_t player_id = {};
+  int32_t client_slot = {};
   linalg::vec3f spawn_position = {};
   linalg::quatf spawn_orientation = {};
 };

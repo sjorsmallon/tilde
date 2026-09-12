@@ -8,6 +8,7 @@
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"
 #include "../frame_builder.hpp"
+#include "../skybox_selection.hpp"
 #include "../game_state.hpp"
 #include "../shared/collision_detection.hpp"
 #include "../shared/editor_grid.hpp"
@@ -83,6 +84,14 @@ private:
   // so the vectors keep their capacity and so the debug list can hold entries
   // that outlive a frame.
   pass_builder_t scene;
+
+  // The editor previews the OPEN MAP's sky, read straight out of its own cvars
+  // block -- apply_map_cvars runs on the server, and the editor has none, so
+  // sv_skybox here would hold whatever the last session set rather than what
+  // this map says. A READ, never an apply: nothing writes cvar state, so the
+  // integrated server's values are untouched and there is no second applier to
+  // disagree with the real one.
+  skybox_selection_t skybox;
   float aspect = 1.77f;
   float z_near = 0.1f;
   float z_far = 16000.0f;
@@ -161,6 +170,12 @@ private:
   // Points the camera down an axis, orthographic, centred on the active tool's
   // `view_focus` (world origin at map scale when it has no opinion).
   void snap_to_axis_view(ViewMode mode);
+
+  bool          orbiting    = false;
+  linalg::vec3f orbit_pivot = {0.0f, 0.0f, 0.0f};
+
+  linalg::vec3f pick_orbit_pivot();
+  void          orbit_camera_around_pivot(float yaw_delta_degrees, float pitch_delta_degrees);
 
   float navmesh_cell_size = 256.f;
 

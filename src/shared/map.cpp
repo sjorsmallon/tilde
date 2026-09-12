@@ -1211,14 +1211,15 @@ std::optional<connection_t> parse_connection(const map_block_t &block)
     const std::optional<connection_target_t> kind = try_connection_target_from_text(*kind_text);
     if (!kind)
     {
-      log_error("map parse: connection target_kind \"{}\" is not Uid, Activator or Self — dropped",
+      log_error("map parse: connection target_kind \"{}\" is not Uid, Activator, Self or Unbound — dropped",
                 *kind_text);
       return std::nullopt;
     }
     connection.target_kind = *kind;
   }
 
-  if (connection.target_kind == connection_target_t::Uid)
+  if (connection.target_kind == connection_target_t::Uid ||
+      connection.target_kind == connection_target_t::Unbound)
   {
     const std::string *target_text = text_at("target");
     const std::optional<uint32_t> target =
@@ -1749,7 +1750,8 @@ std::string serialize_map_to_string(const map_t &map)
       row.properties.emplace_back("sender", std::to_string(connection.sender));
       row.properties.emplace_back("signal", entities::to_string(connection.signal));
       row.properties.emplace_back("target_kind", to_string(connection.target_kind));
-      if (connection.target_kind == connection_target_t::Uid)
+      if (connection.target_kind == connection_target_t::Uid ||
+          connection.target_kind == connection_target_t::Unbound)
         row.properties.emplace_back("target", std::to_string(connection.target));
       row.properties.emplace_back("action", entities::to_string(connection.data.tag));
 

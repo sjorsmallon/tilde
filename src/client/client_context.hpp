@@ -557,5 +557,6 @@ struct client_context_t
 
 void reset_for_new_connection(client_context_t& context);
 void reset_state_in_preparation_for_new_map_load(client_context_t& context);
+void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientation);
 
 } // namespace client

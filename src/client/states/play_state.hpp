@@ -13,6 +13,7 @@
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/network_types.hpp"
 #include "../frame_builder.hpp"
+#include "../skybox_selection.hpp"
 #include "../state_manager.hpp"
 #include "imgui.h"
 #include "physics.hpp"
@@ -53,6 +54,11 @@ private:
 
   camera_t camera;
   pass_builder_t scene;
+
+  // Resolves sv_skybox's text once per change. The value arrives over the cvar
+  // mirror, so it can land AFTER the map did -- which is why this is asked
+  // every frame rather than once at load.
+  skybox_selection_t skybox;
 
 
   std::deque<assets::posed_skeleton_t> pose_storage;

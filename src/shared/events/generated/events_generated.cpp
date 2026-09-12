@@ -111,6 +111,15 @@ constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "client_slot",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Player_Spawned, client_slot),
+   .size_in_bytes = (uint32_t)sizeof(Player_Spawned::client_slot),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "spawn_position",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Player_Spawned, spawn_position),
@@ -266,7 +275,7 @@ std::string to_text(const Player_Died& value)
 void fire_player_spawned(event_stream_t& stream, const Player_Spawned& payload)
 {
   stream.writer.write_bits((uint32_t)game_event_type::Player_Spawned, 16);
-  for (const field_info_t& field : Span<const field_info_t>{PLAYER_SPAWNED_FIELDS, 3})
+  for (const field_info_t& field : Span<const field_info_t>{PLAYER_SPAWNED_FIELDS, 4})
     network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
   ++stream.count;
 
@@ -277,7 +286,7 @@ void fire_player_spawned(event_stream_t& stream, const Player_Spawned& payload)
 std::optional<Player_Spawned> try_read_player_spawned(network::Bit_Reader& reader)
 {
   Player_Spawned payload;
-  for (const field_info_t& field : Span<const field_info_t>{PLAYER_SPAWNED_FIELDS, 3})
+  for (const field_info_t& field : Span<const field_info_t>{PLAYER_SPAWNED_FIELDS, 4})
     if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
       return std::nullopt;
   return payload;
@@ -285,7 +294,7 @@ std::optional<Player_Spawned> try_read_player_spawned(network::Bit_Reader& reade
 
 std::string to_text(const Player_Spawned& value)
 {
-  return std::string("Player_Spawned") + fields_to_text({PLAYER_SPAWNED_FIELDS, 3}, &value);
+  return std::string("Player_Spawned") + fields_to_text({PLAYER_SPAWNED_FIELDS, 4}, &value);
 }
 
 void fire_round_phase_changed(event_stream_t& stream, const Round_Phase_Changed& payload)

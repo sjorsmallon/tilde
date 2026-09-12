@@ -128,6 +128,9 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
       record.target                          = context.activator;
       record.target_resolved_from_activator  = true;
       break;
+    case shared::connection_target_t::Unbound:
+      fatal_error("an Unbound connection reached the queue; validate_map_connections refuses "
+                  "those and build_session drops them");
     }
 
     // The payload, from the override or from the signal. The load check has

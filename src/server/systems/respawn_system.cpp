@@ -20,6 +20,7 @@ void fire_player_spawned_event(server_context_t &context,
 {
   shared::Player_Spawned spawned{};
   spawned.player_id         = player.entity_id;
+  spawned.client_slot       = player.client_slot_index;
   spawned.spawn_position    = player.position;
   spawned.spawn_orientation = player.orientation;
   shared::fire_player_spawned(context.outgoing.events, spawned);

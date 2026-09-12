@@ -9,6 +9,13 @@ message ViewAngle {
   float yaw = 2;
   float roll = 3;
 }
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
 // Client -> Server: every input the client has not seen acknowledged, oldest
 // first. This is the ONLY input message on the wire; a single input is a batch
 // of one.
@@ -252,92 +259,6 @@ message S2C_EntityPackage {
     optional uint32 phase_start_tick = 11; // server tick the current phase was entered on
 }
 
-// --------------------------------------------- things that are uncertain
-
-
-// I think most of this is deprecated.
-//
-// NOTE: entity_id fields in CmdSpawn/CmdMove (int32) and EntityState (uint64)
-// below are legacy. The live wire path is S2C_EntityPackage.entity_data, a
-// Bit_Writer-encoded bitstream where entity_uid_t rides as var-int uint32 —
-// see src/shared/entity_uid.hpp. If any of these legacy messages are revived,
-// align their entity_id type to uint32 to match.
-
-message Player {
-  string name = 1;
-  int32 id = 2;
-  float score = 3;
-}
-
-message Vec3 {
-  float x = 1;
-  float y = 2;
-  float z = 3;
-}
-
-enum EntityType {
-  UNKNOWN = 0;
-  PLAYER = 1;
-  WEAPON = 2;
-}
-
-message CmdSpawn {
-  int32 entity_id = 1;
-  int32 type_id = 2;
-  Vec3 position = 3;
-}
-
-
-
-message CmdMove {
-  int32 entity_id = 1;
-  Vec3 target_position = 2;
-}
-
-message GameTick {
-  uint32 tick_id = 1;
-  repeated CmdSpawn spawns = 2;
-  repeated CmdMove moves = 3;
-}
-
-message Replay {
-  string server_name = 1;
-  int64 timestamp = 2;
-  repeated GameTick ticks = 3;
-  uint64 seed = 4;
-}
-
-message EntityState {
-  uint64 entity_id = 1;
-  Vec3 position = 2;
-  Vec3 velocity = 3;
-  // Add other components here as optional fields
-}
-
-message Snapshot {
-  uint32 tick_id = 1;
-  uint32 delta_from_tick_id = 2; // 0 = Full Snapshot
-  repeated EntityState entities = 3;
-  uint64 rng_state = 4;
-}
-
-message AABB {
-  Vec3 center = 1;
-  Vec3 half_extents = 2;
-}
-
-message EntitySpawn {
-  EntityType type = 1;
-  Vec3 position = 2;
-  float yaw = 3;
-}
-
-message MapSource {
-  repeated AABB aabbs = 1;
-  string name = 2;
-  repeated EntitySpawn entities = 3;
-}
-
 // --------------------------------------------- Network Negotiation
 
 message CmdConnect {
@@ -375,13 +296,19 @@ message CmdDisconnect {
     string reason = 1;
 }
 
-message NetCommand {
-    // Oneof ensures only one payload is set
-    oneof command {
-        CmdConnect connect = 2;
-        CmdAccept accept = 3;
-        CmdReject reject = 4;
-        CmdDisconnect disconnect = 5;
+// Client → Server: joining and leaving.
+message C2S_Connection {
+    oneof kind {
+        CmdConnect connect = 1;
+        CmdDisconnect disconnect = 2;
+    }
+}
+
+// Server → Client: the answer to a CmdConnect.
+message S2C_Connection {
+    oneof kind {
+        CmdAccept accept = 1;
+        CmdReject reject = 2;
     }
 }
 
@@ -395,14 +322,6 @@ message S2C_ServerMessage {
     string message = 1;
 }
 
-// CvarPair / S2C_CVarSync lived here. They shipped every cvar NAME, description
-// and flag so the client could build stub registry entries for autocomplete and
-// forwarding. Both sides now compile the same generated tables out of cvars.def
-// and the handshake refuses a client whose SCHEMA_HASH differs, so names need no
-// message at all; @Mirrored VALUES ride S2C_CvarValues, which is
-// bitstream-native (src/shared/network/cvar_mirror.hpp).
-
-// Server → Client: bot debug state sent every tick
 message BotDebugEntry {
     int32 slot       = 1;
     int32 goal       = 2; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
@@ -415,20 +334,6 @@ message S2C_BotDebug {
     repeated BotDebugEntry bots = 1;
 }
 
-// Server -> Client: everything the server used to judge ONE shot, sent only to
-// the shooter and only while sv_shot_debug is on.
-//
-// This exists because the client cannot reconstruct any of it. It does not know
-// which bracket the server accepted, whether the rewind was clamped or refused,
-// or what the snapshot ring held -- so a client that redrew "where the server
-// probably tested" would be auditing its own guess. The disagreement is only
-// meaningful if this side of it arrives over the wire.
-//
-// POSES, not volumes. compute_player_hitboxes is one shared function and the
-// three sv_aim_* extents it reads are @Mirrored, so posing a pose reproduces the
-// volumes exactly -- at 16 bytes per target instead of a whole volume set. What
-// is genuinely the server's answer is the POSE (the rewind's output); turning it
-// into volumes is arithmetic both sides already agree on.
 message ShotDebugTarget {
     uint32 player_uid    = 1;
     Vec3   feet_position = 2;
@@ -477,26 +382,12 @@ message S2C_ShotDebug {
     float  nearest_miss_distance = 18;
 }
 
-// Server → Client: a batch of reliable gameplay events produced this tick.
-// The payload is the packed shared::game_event_t batch format
-// ([count:u16][kind:u16][packed payload]…), encoded via Bit_Writer. Reliable
-// channel by design (kill feed entries can't silently drop); ack/retransmit
-// is a follow-up if/when packet loss causes visible gaps.
 message S2C_GameEventBatch {
     optional bytes event_data  = 1;
     optional uint32 server_tick = 2;
 }
 
-// Server -> Client: a batch of cosmetic effects produced this tick. Same
-// payload shape as S2C_GameEventBatch -- the two channels differ in intended
-// reliability, not in encoding.
-//
-// This used to be spliced into S2C_EntityPackage.entity_data behind a
-// byte-align, which coupled two files that had to be edited together and
-// decoded as plausible garbage when they were not. It also put a burst of
-// cosmetics on the critical path of the entity delta: crossing 1200 bytes
-// fragments the packet, and losing one fragment of an unreliable message costs
-// the whole snapshot. A cosmetic can now only cost cosmetics.
+
 message S2C_EffectBatch {
     optional bytes effect_data  = 1;
     optional uint32 server_tick = 2;

@@ -107,6 +107,11 @@ constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"titanium_scuffed", "resources/textures/titanium_scuffed"},
 };
 
+constexpr asset_info_t cubemap_asset_MANIFEST[] = {
+  {"Missing", nullptr},
+  {"night_sky", "resources/cubemaps/night_sky"},
+};
+
 } // namespace
 
 Span<const asset_info_t> mesh_asset_manifest()
@@ -263,6 +268,28 @@ template <> std::optional<pbr_material> try_from_string<pbr_material>(std::strin
   return std::nullopt;
 }
 
+Span<const asset_info_t> cubemap_asset_manifest()
+{
+  return {cubemap_asset_MANIFEST, cubemap_asset_COUNT};
+}
+
+const char* to_string(cubemap_asset value)
+{
+  assert((uint32_t)value < cubemap_asset_COUNT);
+  return cubemap_asset_MANIFEST[(uint16_t)value].name;
+}
+
+template <> std::optional<cubemap_asset> try_from_string<cubemap_asset>(std::string_view text)
+{
+  for (uint32_t index = 0; index < cubemap_asset_COUNT; ++index)
+  {
+    if (text != cubemap_asset_MANIFEST[index].name)
+      continue;
+    return (cubemap_asset)index;
+  }
+  return std::nullopt;
+}
+
 Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)
 {
   switch (asset_class_id)
@@ -274,6 +301,7 @@ Span<const asset_info_t> asset_class_manifest(int32_t asset_class_id)
     case 4: return hitbox_rig_manifest();
     case 5: return font_asset_manifest();
     case 6: return pbr_material_manifest();
+    case 7: return cubemap_asset_manifest();
   }
   assert(false && "asset_class_manifest: no asset class has this id");
   return {};

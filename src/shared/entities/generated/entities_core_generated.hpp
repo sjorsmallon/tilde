@@ -57,9 +57,10 @@ enum class Weapon : uint8_t
   Scout = 1,
   Rocket_Launcher = 2,
   Dash = 3,
+  Swapper = 4,
 };
 
-constexpr uint32_t Weapon_COUNT = 4;
+constexpr uint32_t Weapon_COUNT = 5;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);

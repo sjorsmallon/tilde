@@ -441,6 +441,22 @@ Debugging :: cvars {
     // would have earned a rescale of every light in every map.
     r_exposure:             f32 = 1.4       @Client    "Exposure multiplier applied before the tonemap curve"
 
+    // The sky drawn behind the geometry: the NAME of a cubemap_asset (a folder
+    // under resources/cubemaps/), empty for none.
+    //
+    // A name and not an id, the rule a geometry mesh_path and a material folder
+    // already follow: the id is for DISCOVERY, storage stays a name, so a map
+    // naming a sky this build does not have still loads and simply shows no
+    // sky. (An asset-typed cvar is also not representable -- cvar_type_t is
+    // f32/i32/u32/bool/string/enum.)
+    //
+    // @Mirrored rather than @Client because a MAP is what picks a sky, and
+    // apply_map_cvars runs on the SERVER: a @Client cvar could never be set by
+    // a map's cvars block at all. Mirrored, the server applies the map's line
+    // and the existing memcmp broadcast replicates it to every client -- no new
+    // message, and a late joiner gets it too.
+    sv_skybox:              string<64> = ""  @Mirrored  "Cubemap the map shows as its sky (a folder name under resources/cubemaps/); empty for none"
+
     debug_show_collisions:  bool = false                "Show collision faces in green"
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"
     debug_show_navmesh:     bool = false                "Show baked navmesh as a line grid"

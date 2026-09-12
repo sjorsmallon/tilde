@@ -615,6 +615,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/ui.frag
     ${SHADER_SRC_DIR}/tonemap.vert
     ${SHADER_SRC_DIR}/tonemap.frag
+    ${SHADER_SRC_DIR}/skybox.vert
+    ${SHADER_SRC_DIR}/skybox.frag
 )
 # The lightmapped variants are the SAME sources compiled with -DLIGHTMAP, not
 # new files. A lightmap composes with lit, grid and blend alike, so a file per
@@ -721,6 +723,7 @@ add_library(game_client SHARED
     src/client/hit_confirm_audio.cpp
     src/client/shot_debug.cpp
     src/client/shadow_debug_draw.cpp
+    src/client/skybox_selection.cpp
     src/client/lightmap_gpu_vulkan.cpp
     # Decode one entity snapshot, then advance the newest held snapshot to it. Its own
     # TU so that second half cannot reach `dt` or the camera -- it runs once per
@@ -739,6 +742,7 @@ add_library(game_client SHARED
     src/client/hud/deploy_timer.cpp
     src/client/hud/run_timer.cpp
     src/client/hud/scoreboard.cpp
+    src/client/hud/weapon_name.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
     # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
     # same reason).

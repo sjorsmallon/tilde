@@ -396,15 +396,15 @@ entity
   "health.current_health" "20"
   "health.max_health" "20"
   "hitbox_half_extents" "103.6 77.6 81"
-  "weakness" "Orange"
+  "weakness" "Teal"
   "render.mesh" "target"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
-  "render.rotation" "0 0.008726535 0 0.9999619"
+  "render.rotation" "5.334299e-12 0.008726534 -6.112502e-10 0.9999619"
   "render.material.shader_type" "Lit"
-  "render.material.color" "0 0 1"
+  "render.material.color" "0 0.5 1"
   "render.material.roughness" "0.5"
 }
 entity

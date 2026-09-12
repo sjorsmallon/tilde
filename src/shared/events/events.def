@@ -38,6 +38,7 @@ Player_Died :: Game_Event  "a player's health crossed from >0 to <=0"
 Player_Spawned :: Game_Event  "a player entered the world at a spawn point"
 {
     player_id:         u32
+    client_slot:       i32
     spawn_position:    v3
     spawn_orientation: quat // the Entity rotation, x y z w
 }

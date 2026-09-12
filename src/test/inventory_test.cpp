@@ -127,9 +127,13 @@ int main()
     // An empty slot is a legal hand, not a decode failure: nothing is granted
     // into Utility_2, and selecting it resolves to no weapon rather than to
     // whatever sits at that index. This is what a spent card leaves behind.
+    const shared::entity_uid_t utility_2_uid =
+        player->inventory.weapons[entities::Inventory_Slot::Utility_2];
+    player->inventory.weapons[entities::Inventory_Slot::Utility_2] = shared::null_entity_uid;
     player->inventory.active_slot = entities::Inventory_Slot::Utility_2;
     check(server::try_find_active_weapon(session, *player) == nullptr,
           "an empty slot resolves to no weapon rather than to a neighbour's");
+    player->inventory.weapons[entities::Inventory_Slot::Utility_2] = utility_2_uid;
   }
 
   // --- the fix: the two clocks are independent ---
@@ -359,6 +363,49 @@ int main()
     check(context.world.session.entity_system.get<entities::Weapon_Entity>(displaced_uid) ==
               nullptr,
           "...and the weapon it displaced is destroyed rather than leaked");
+
+    const float tick_dt = 1.f / 60.f;
+    owner->inventory.active_slot = slot;
+    owner->position              = {0.f, 0.f, 0.f};
+    owner->velocity              = {900.f, 0.f, 0.f};
+
+    check(server::try_throw_active_weapon(context, *owner, {1.f, 0.f, 0.f}, tick_dt),
+          "throwing the held weapon succeeds");
+    check(owner->inventory.weapons[slot] == shared::null_entity_uid,
+          "...and empties the slot it was held in");
+    entities::Weapon_Entity* thrown =
+        context.world.session.entity_system.get<entities::Weapon_Entity>(granted_uid);
+    check(thrown != nullptr && thrown->owner_uid == shared::null_entity_uid,
+          "...and the same weapon entity survives with no owner");
+    check(context.world.physics->entity_body_map.contains(granted_uid),
+          "...as a registered physics body");
+    check(!server::try_throw_active_weapon(context, *owner, {1.f, 0.f, 0.f}, tick_dt),
+          "throwing an empty hand does nothing");
+
+    owner->position = thrown->position - vec3f{0.f, 36.f, 0.f};
+    server::update_dropped_weapons(context);
+    check(owner->inventory.weapons[slot] == shared::null_entity_uid,
+          "a thrown weapon cannot be picked up before its delay runs out");
+
+    context.tick_number = thrown->pickup_allowed_tick;
+    server::update_dropped_weapons(context);
+    check(owner->inventory.weapons[slot] == granted_uid && thrown->owner_uid == owner_uid,
+          "touching it after the delay puts the same weapon back in its slot");
+    check(!context.world.physics->entity_body_map.contains(granted_uid),
+          "...and removes its physics body");
+
+    check(server::try_throw_active_weapon(context, *owner, {1.f, 0.f, 0.f}, tick_dt),
+          "a picked-up weapon can be thrown again");
+    const shared::entity_uid_t replacement_uid =
+        server::try_grant_weapon(context, *owner, owner->inventory, entities::Weapon::Scout);
+    owner  = context.world.session.entity_system.get<entities::Player_Entity>(owner_uid);
+    thrown = context.world.session.entity_system.get<entities::Weapon_Entity>(granted_uid);
+    owner->position     = thrown->position - vec3f{0.f, 36.f, 0.f};
+    context.tick_number = thrown->pickup_allowed_tick;
+    server::update_dropped_weapons(context);
+    check(owner->inventory.weapons[slot] == replacement_uid &&
+              thrown->owner_uid == shared::null_entity_uid,
+          "a weapon is not picked up into a slot that is already full");
   }
 
   printf("%s (%d failure%s)\n", failure_count == 0 ? "PASSED" : "FAILED", failure_count,

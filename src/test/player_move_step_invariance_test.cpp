@@ -293,7 +293,7 @@ static void test_friction_speed_composes(const cvar_state_t& cvars)
   const Move_Input input;
   // Penetrating the floor by a hair: resolve_collisions is a penetration test,
   // and it pushes back out to a 0.01 skin so contact survives the next step.
-  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_position{0.f, -0.02f, 0.f};
   const vec3 start_velocity{300.f, 0.f, 0.f};
 
   const float expected_speed =
@@ -326,7 +326,7 @@ static void test_friction_floor_composes(const cvar_state_t& cvars)
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   const Move_Input input;
-  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_position{0.f, -0.02f, 0.f};
   const float start_speed = 0.5f * cvars.pm_stopspeed;
   const vec3 start_velocity{start_speed, 0.f, 0.f};
 
@@ -359,7 +359,7 @@ static void test_ground_position_is_first_order(const cvar_state_t& cvars)
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   const Move_Input input;
-  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_position{0.f, -0.02f, 0.f};
   const float start_speed = 300.f;
   const vec3 start_velocity{start_speed, 0.f, 0.f};
 
@@ -435,7 +435,7 @@ static void test_ground_accelerate_composes(const cvar_state_t& cvars)
   Move_Input input;
   input.forward_pressed = true;
 
-  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_position{0.f, -0.02f, 0.f};
   const float start_speed = 100.f;
   const vec3 start_velocity{start_speed, 0.f, 0.f};
 
@@ -476,7 +476,7 @@ static void test_ground_saturation_is_step_invariant(const cvar_state_t& cvars)
   Move_Input input;
   input.forward_pressed = true;
 
-  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_position{0.f, -0.02f, 0.f};
   // Already at the clamp: friction pulls it down, accelerate restores it.
   const vec3 start_velocity{cvars.pm_maxspeed, 0.f, 0.f};
 
@@ -713,10 +713,10 @@ static void test_ground_jump_arc_composes(const cvar_state_t& cvars)
   Move_Input holding_jump;
   holding_jump.jump_pressed = true;
 
-  const vec3 start_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 start_position{0.f, -0.02f, 0.f};
   const vec3 start_velocity{0.f, 0.f, 0.f};
 
-  const float resting_height = half_height - 0.01f;
+  const float resting_height = -0.01f;
   const float expected_height = resting_height + cvars.pm_jumpspeed * tick_dt -
                                 0.5f * cvars.g_gravity * tick_dt * tick_dt;
   const float expected_vertical_velocity = cvars.pm_jumpspeed - cvars.g_gravity * tick_dt;
@@ -746,7 +746,7 @@ static void test_carried_speed_survives_the_clip(const cvar_state_t& cvars)
   holding_jump.jump_pressed = true;
 
   const vec3 airborne_position{0.f, 1000.f, 0.f};
-  const vec3 grounded_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 grounded_position{0.f, -0.02f, 0.f};
   const vec3 carried_velocity{900.f, 0.f, 0.f};
 
   const float carried_speed = horizontal_speed(carried_velocity);
@@ -818,7 +818,7 @@ static void test_bunnyhop_hl2_jump_boost(const cvar_state_t& cvars)
   input.forward_pressed = true;
   input.jump_pressed    = true;
 
-  const vec3 grounded_position{0.f, half_height - 0.02f, 0.f};
+  const vec3 grounded_position{0.f, -0.02f, 0.f};
 
   cvar_state_t boosting = cvars;
   boosting.pm_bunnyhop = cvars::Bunnyhop_Mode::hl2;

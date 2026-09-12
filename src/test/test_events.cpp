@@ -288,7 +288,8 @@ void test_game_event_stream_round_trip()
 
   Player_Spawned spawned;
   spawned.player_id         = 77;
-  spawned.spawn_position    = {exact(1.0f, 1), exact(2.0f, 2), exact(3.0f, 3)};
+  spawned.client_slot       = -3;
+  spawned.spawn_position   = {exact(1.0f, 1), exact(2.0f, 2), exact(3.0f, 3)};
   // No `exact` here, and that is the assertion: a quat rides the wire as four
   // RAW floats rather than through write_coord, because its components live in
   // [-1, 1] where a 5-bit fraction is 3.6 degrees of angular error.
@@ -334,6 +335,7 @@ void test_game_event_stream_round_trip()
   const std::optional<Player_Spawned> read_spawned = try_read_player_spawned(reader);
   assert(read_spawned);
   assert(read_spawned->player_id == 77);
+  assert(read_spawned->client_slot == -3);
   assert(read_spawned->spawn_position.x == exact(1.0f, 1));
   assert(read_spawned->spawn_position.y == exact(2.0f, 2));
   assert(read_spawned->spawn_position.z == exact(3.0f, 3));

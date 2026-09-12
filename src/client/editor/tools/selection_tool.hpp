@@ -55,7 +55,12 @@ private:
   // would reselect, and the panel the author was editing would be gone before
   // the target landed in it.
   connection_pick_t connection_pick;
-  bool              pick_consumed_this_click = false;
+
+  // A press that MEANT something other than selecting, so its release must not
+  // fall through to the selection branch. Two gestures set it: the connection
+  // pick above, and the paste commit -- which hands the stamped copies to
+  // selected_uids, and a release landing on nothing would clear them again.
+  bool click_consumed_by_gesture = false;
 
 
   // While a pick is armed the RAY is not the answer. A point light has no
@@ -184,6 +189,11 @@ private:
   void begin_paste();
   void cancel_paste();
   void commit_paste(editor_context_t& ctx);
+
+  // Arms the pick for the next group of the stamp's unbound rows, selecting
+  // that group's sender so the panel being filled is the one on screen. Does
+  // nothing when none are queued. Called after a stamp and after each resolve.
+  void arm_next_unbound_pick(editor_context_t& ctx);
 
   // The nearest visible entity whose ICON is within `radius` pixels of the
   // cursor, if any. Pure proximity -- no ray, no BVH -- because an entity icon

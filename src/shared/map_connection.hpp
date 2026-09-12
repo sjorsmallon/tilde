@@ -35,6 +35,12 @@ enum class connection_target_t : uint8_t
   Uid = 0,   // `target` names the entity
   Activator, // whoever caused the signal -- the player who walked into the trigger
   Self,      // the sender itself
+  // A slot the author fills after a stamp. A prefab's outbound row named an
+  // entity outside the prefab, and a uid only means something inside the map
+  // it was minted in; `target` holds that old uid as a GROUPING KEY only, so
+  // two rows that aimed at one counter are filled by one click. Every loader
+  // refuses it (prefab_def.md step 6). retarget_row turns it into a Uid row.
+  Unbound,
 };
 
 const char* to_string(connection_target_t kind);
@@ -86,7 +92,8 @@ struct connection_remap_result_t
 // Rewrites every uid this row names: `sender`, `target` when the kind is `Uid`,
 // and every FIELD_TYPE_ENTITY_UID member of the override payload when there is
 // one. A payload uid of null_entity_uid names nobody and passes through
-// untouched -- it is a legitimate value, not a missing entity.
+// untouched -- it is a legitimate value, not a missing entity. An `Unbound`
+// target passes through the same way: it is a key, not an end.
 //
 // This is the ONE walk of a row's uids. bake_map_csg used to remap two of the
 // three by hand and silently carried an override payload pointing at a uid from

@@ -31,36 +31,14 @@ struct toucher_t
   shared::aabb_bounds_t bounds;
 };
 
-// Both bounds are what the thing physically IS, never compute_entity_bounds,
-// which answers with the drawn mesh: a trigger fires on where a body is, and a
-// body is what the simulation collides with. A player's is its movement hull,
-// with position at the feet; a physics body's is its own `size` half-extents,
-// which is what Jolt was given. Reading the mesh would also drag the asset
-// system into a function that has no other reason to need it.
-shared::aabb_bounds_t player_bounds(const entities::Player_Entity& player)
-{
-  return {{player.position.x - shared::player_half_width, player.position.y,
-           player.position.z - shared::player_half_width},
-          {player.position.x + shared::player_half_width,
-           player.position.y + shared::player_half_height * 2.f,
-           player.position.z + shared::player_half_width}};
-}
 
-// Exactly the types Touchable's `by` list names, and keeping the two in step is
-// what makes `by` mean anything: it is the set an !activator row is checked
-// against at load, so a type that can touch and is not listed passes a check
-// nothing then honours.
-//
-// A physics body is here because the loop this replaced could not do it -- a
-// trigger tested players only, so a crate could never fire anything, which is
-// one of the three defects entity_io_def.md ss2 names.
 void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& out)
 {
   out.clear();
 
   for (entities::Player_Entity& player :
        session.entity_system.entities_of<entities::Player_Entity>())
-    out.push_back({&player, player_bounds(player)});
+    out.push_back({&player, shared::player_hull_bounds(player.position)});
 
   for (entities::Physics_Body_Entity& body :
        session.entity_system.entities_of<entities::Physics_Body_Entity>())

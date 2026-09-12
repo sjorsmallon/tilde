@@ -1,46 +1,4 @@
-// entities.def -- entity definition DSL.
-//
-// Parsed by src/tools/def_gen.cpp, which emits into generated/ -- every name
-// ends in _generated, and open_generated_file refuses one that does not:
-//
-//   entities_generated.{hpp,cpp}          the structs, enums and reflection tables
-//   entity_io_generated.{hpp,cpp}         the action/signal TYPE layer
-//   server_action_bindings_generated.cpp  the dispatch table and its shims
-//
-// The binder is the seam: it calls one hand-written handler per trait verb and
-// nothing defines those, so a declared handler nobody wrote is a LINK error
-// naming the symbol. They live in src/server/traits/<trait>.cpp -- one file per
-// `trait` declared below, and the only entity code that is not generated.
-//
-//   @Networked  The server replicates this field to clients in snapshots.
-//               Earn it: the client must READ the field AND have no other way
-//               to get it. A map-placed entity's static config is already on
-//               the client -- it loaded the same map -- so replicating it is
-//               bandwidth spent to tell the client what it already knows.
-//
-//   @Editable   The editor inspector shows and edits it, AND it is written to
-//               and read from the .source map file. One flag, because those
-//               were never two decisions: a field an author can change and the
-//               map does not keep is an edit that vanishes on save, and a field
-//               the map keeps that the author cannot reach is a value only a
-//               text editor can set. There used to be a separate @Saveable, and
-//               across the whole schema not one field ever carried one without
-//               the other. The inspector and map I/O only ever walk map
-//               entities, so this is unreachable on a @runtime_only type -- and
-//               the generator rejects it there.
-//
-// Room to grow, if the need shows up -- same slot, same syntax:
-//   @no_network   nothing about this type is ever replicated; makes @Networked
-//                 on any of its fields an error. Trigger_Volume and
-//                 Player_Spawn would both take it today.
-//   @singleton    at most one per session (a gamemode / world-settings entity).
-//   @category("Lighting")  grouping for the placement menu -- the first case
-//                 that wants an ARGUMENT, which the grammar should be able to
-//                 grow without moving the attribute somewhere else.
-//
-// components can carry defaults
-//     render: Render = { mesh = .Leet_Full }
-//
+
 
 Fully_Serializable :: [@Networked, @Editable]
 
@@ -54,7 +12,7 @@ Entity :: base {
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum {Red, Blu, Free_For_All}
 
-Weapon :: enum {Knife, Scout, Rocket_Launcher, Dash}
+Weapon :: enum {Knife, Scout, Rocket_Launcher, Dash, Swapper}
 Fire_Resolution :: enum { Hitscan, Projectile, Self_Impulse }
 
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
@@ -98,7 +56,7 @@ Health:: component
 
 Counter:: component
 {
-    value:  u32 = 0                  @Editable
+    value: u32 = 0                  @Editable
     limit: u32 = 0                  @Editable
 }
 
@@ -114,7 +72,7 @@ Colorable :: trait {
 }
 
 Counting:: trait requires Counter {
-    accepts Add(amount:u32), Reset()
+    accepts Add(amount: i32), Reset()
     emits Limit_Reached()
 }
 
@@ -278,10 +236,12 @@ Damage_Type :: enum {Normal, Orange, Teal}
 Weapon_Entity :: entity {
     ammo:             i32               @Networked
     weapon_id:        Weapon            @Networked
-    owner_uid:        u32
+    // Null owner means the weapon lies in the world as a physics body, waiting to be picked up.
+    owner_uid:        u32               @Networked
     next_fire_time:   u64
+    pickup_allowed_tick: u32
     damage_type: Damage_Type = .Normal  @Editable
-    render:           Render
+    render:           Render = { mesh = .Box }
 }
 
 Rocket_Entity :: entity @runtime_only {

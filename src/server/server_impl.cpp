@@ -1196,26 +1196,39 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
 
       if (hit.hit_uid != shared::null_entity_uid)
       {
-        broadcast_server_text_message(
-            context, std::format("Player {} hit player {} in the {}",
-                                client_slot, hit.hit_uid,
-                                to_string(hit.region)));
-        const bool was_headshot = hit.region == shared::hit_region_t::Head;
+        switch (weapon.hit_effect)
+        {
+          case shared::hit_effect_t::Damage:
+          {
+            broadcast_server_text_message(
+                context, std::format("Player {} hit player {} in the {}",
+                                    client_slot, hit.hit_uid,
+                                    to_string(hit.region)));
+            const bool was_headshot = hit.region == shared::hit_region_t::Head;
 
-        damage_info_t info{};
-        info.victim_uid      = hit.hit_uid;
-        info.attacker_uid    = player->entity_id;
-        info.inflictor_uid   = player->entity_id;
-        info.weapon_id       = static_cast<uint16_t>(active_weapon->weapon_id);
-        info.amount          = weapon.damage *
-                              (was_headshot ? weapon.headshot_multiplier : 1.f);
-        info.source_position = eye;
-        info.was_headshot    = was_headshot;
-        info.type            = active_weapon->damage_type;
+            damage_info_t info{};
+            info.victim_uid      = hit.hit_uid;
+            info.attacker_uid    = player->entity_id;
+            info.inflictor_uid   = player->entity_id;
+            info.weapon_id       = static_cast<uint16_t>(active_weapon->weapon_id);
+            info.amount          = weapon.damage *
+                                  (was_headshot ? weapon.headshot_multiplier : 1.f);
+            info.source_position = eye;
+            info.was_headshot    = was_headshot;
+            info.type            = active_weapon->damage_type;
 
-        // defer for kill contribution.
-        context.outgoing.pending_hits.push_back(
-            {info, hit.impact_point, hit.impact_normal, hit.region});
+            // defer for kill contribution.
+            context.outgoing.pending_hits.push_back(
+                {info, hit.impact_point, hit.impact_normal, hit.region});
+            break;
+          }
+          case shared::hit_effect_t::Swap:
+          {
+            if (context.world.session.entity_system.get<entities::Player_Entity>(hit.hit_uid) != nullptr)
+              context.outgoing.pending_swaps.push_back({player->entity_id, hit.hit_uid});
+            break;
+          }
+        }
       }
       else if (shot_collided_with_static_geometry && world_hit.t <= weapon.range)
       {
@@ -1834,6 +1847,12 @@ bool Tick()
       // Inside the step loop, so the shot is taken from where the shooter had
       // actually reached when the trigger went down -- not from wherever the
       // whole tick left them, which is up to 16.7ms of travel away.
+      if ((pressed_in_this_step & Button::Throw) && !is_dead &&
+          try_throw_active_weapon(context, *player,
+                                  linalg::direction_from_angles(step.view.yaw, step.view.pitch),
+                                  tick_dt))
+        cancel_reload(*player);
+
       if (fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
         resolve_player_shot(context, client_slot, input, player, step.view.yaw,
                             step.view.pitch, step.start_slot);
@@ -1875,6 +1894,33 @@ bool Tick()
     // Fire is resolved inside the step loop above, at the sub-step the trigger
     // went down in -- see resolve_player_shot.
   }
+
+  // Before the damage pass, so a victim's knockback lands where the swap put them.
+  for (const pending_swap_t& swap : context.outgoing.pending_swaps)
+  {
+    entities::Player_Entity* shooter =
+        context.world.session.entity_system.get<entities::Player_Entity>(swap.shooter_uid);
+    entities::Player_Entity* target =
+        context.world.session.entity_system.get<entities::Player_Entity>(swap.target_uid);
+    if (shooter == nullptr || target == nullptr)
+    {
+      log_error("swap between uid {} and uid {} dropped: one of them is no longer a player",
+                swap.shooter_uid, swap.target_uid);
+      continue;
+    }
+
+    if (target->health.current_health <= 0)
+      continue;
+
+    std::swap(shooter->position, target->position);
+    std::swap(shooter->velocity, target->velocity);
+
+    for (entities::Player_Entity* swapped : {shooter, target})
+      set_kinematic_pose(*context.world.physics, swapped->entity_id,
+                         swapped->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                         swapped->velocity);
+  }
+  context.outgoing.pending_swaps.clear();
 
   // --- Apply the hits the input loop deferred ---
   //
@@ -1993,6 +2039,7 @@ bool Tick()
 
   step_physics(*context.world.physics, tick_dt);
   update_physics_bodies(context.world.session, *context.world.physics);
+  update_dropped_weapons(context);
 
   // Overlap -> Touched / Left. What a touch DOES is a connection now, so this
   // is the whole of the trigger code that lives in the tick.

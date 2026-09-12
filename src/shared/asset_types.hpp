@@ -177,6 +177,27 @@ struct pbr_material_asset_t
   asset_handle_t<texture_asset_t> emissive;
 };
 
+// The number of faces a cube has. Named rather than spelled 6 so the loader,
+// the uploader and the shader's layer arithmetic cannot disagree.
+constexpr int CUBEMAP_FACE_COUNT = 6;
+
+// A sky, as a FOLDER of six faces (resources/cubemaps/<name>/). The second
+// directory-unit class beside pbr_material, and the marker is up.png.
+//
+// Where a material's absent map IS an answer, all six faces here are mandatory:
+// a cube with five faces is not a cube, so load_cubemap dies naming whichever
+// is missing rather than handing back something half-built.
+//
+// Stored in the GL cube order -- +X, -X, +Y, -Y, +Z, -Z -- which is the order
+// reflection_cube_direction already documents and a samplerCube fetches by, so
+// the sky and the reflection captures index their faces one way. The files an
+// author ships are named for the camera (right/left/up/down/front/back), and
+// load_cubemap is the one place that mapping is written down.
+struct cubemap_asset_t
+{
+  Array<asset_handle_t<texture_asset_t>, CUBEMAP_FACE_COUNT> faces;
+};
+
 // --- Ownership ---
 //
 // game_shared is a STATIC lib linked into the launcher exe AND both DLLs, so

@@ -50,6 +50,11 @@ struct crossing_connection_t
   // copied at all, so this is also "would extraction have looked at this row".
   bool         sender_is_inside = false;
   entity_uid_t outside_uid      = null_entity_uid;
+  // True when extract_map_subset KEEPS this row as an `Unbound` slot rather
+  // than dropping it: outbound, the `Uid` target is the outside end, and no
+  // override payload names anything outside. This is the same predicate
+  // extraction applies, so the popup's "kept" and the file agree.
+  bool kept_as_unbound = false;
 };
 
 // Every row this selection cuts through, in map order. Empty means the subset
@@ -70,9 +75,12 @@ find_crossing_connections(const map_t& map, Span<const entity_uid_t> uids);
 // lets a row inside the subset go on naming the same objects. They are made
 // fresh at the STAMP, not here.
 //
-// A row with an end outside the selection is dropped (find_crossing_connections
-// is the list). `attached_cvars`, the navmesh and the lightmap are never
-// copied: a prefab is objects and wiring, not game settings and not a bake.
+// A row whose `Uid` TARGET is outside the selection is kept as an `Unbound`
+// slot, the outside uid becoming its grouping key, so a stamp can ask for the
+// target once; any other row with an end outside is dropped
+// (find_crossing_connections is the list, and `kept_as_unbound` says which).
+// `attached_cvars`, the navmesh and the lightmap are never copied: a prefab is
+// objects and wiring, not game settings and not a bake.
 [[nodiscard]] map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids);
 
 // What a stamp did, so the caller can select what it placed and push one undo

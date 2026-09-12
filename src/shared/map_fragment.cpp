@@ -33,16 +33,8 @@ std::shared_ptr<entities::Entity> clone_into_shared(const entities::Entity* enti
   return std::shared_ptr<entities::Entity>(copy, &entities::destroy_entity);
 }
 
-// Every uid a row names apart from its sender: the target when it is one, and
-// every entity-typed member of an override payload. A payload uid of
-// null_entity_uid names nobody and is not an end.
-void collect_row_targets(const connection_t& connection, std::vector<entity_uid_t>& out)
+void collect_payload_uids(const connection_t& connection, std::vector<entity_uid_t>& out)
 {
-  out.clear();
-
-  if (connection.target_kind == connection_target_t::Uid)
-    out.push_back(connection.target);
-
   if (!connection.has_override)
     return;
 
@@ -57,6 +49,37 @@ void collect_row_targets(const connection_t& connection, std::vector<entity_uid_
     if (named != null_entity_uid)
       out.push_back(named);
   }
+}
+
+// Every uid a row names apart from its sender: the target when it is one, and
+// every entity-typed member of an override payload. A payload uid of
+// null_entity_uid names nobody and is not an end.
+void collect_row_targets(const connection_t& connection, std::vector<entity_uid_t>& out)
+{
+  out.clear();
+
+  if (connection.target_kind == connection_target_t::Uid)
+    out.push_back(connection.target);
+
+  collect_payload_uids(connection, out);
+}
+
+// Whether an outbound row becomes an `Unbound` slot: its `Uid` target is the
+// outside end, and nothing in its override payload is outside -- a payload uid
+// has no kind to mark it unbound with, so a row like that is still dropped.
+bool row_is_kept_as_unbound(const connection_t& connection, const uid_set_t& members)
+{
+  if (members.count(connection.sender) == 0)
+    return false;
+  if (connection.target_kind != connection_target_t::Uid || members.count(connection.target) > 0)
+    return false;
+
+  std::vector<entity_uid_t> payload_uids;
+  collect_payload_uids(connection, payload_uids);
+  for (entity_uid_t named : payload_uids)
+    if (members.count(named) == 0)
+      return false;
+  return true;
 }
 
 // Bottom-centre of the union of the members' bounds. The cursor drives THAT, so
@@ -115,7 +138,7 @@ std::vector<crossing_connection_t> find_crossing_connections(const map_t&       
       {
         if (members.count(target) > 0)
           continue;
-        crossings.push_back({index, true, target});
+        crossings.push_back({index, true, target, row_is_kept_as_unbound(connection, members)});
         break;
       }
       continue;
@@ -184,7 +207,13 @@ map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
 
   for (const connection_t& connection : map.connections)
   {
-    connection_t                    row    = connection;
+    connection_t row = connection;
+
+    // The slot. The target stays as the grouping key; remap passes an Unbound
+    // target through, so the row survives on its sender alone.
+    if (row_is_kept_as_unbound(row, members))
+      row.target_kind = connection_target_t::Unbound;
+
     const connection_remap_result_t result = remap_connection_uids(row, identity);
     if (result.ok)
     {

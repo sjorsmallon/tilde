@@ -68,6 +68,7 @@ void init();
 [[nodiscard]] const mesh_asset_t *get(asset_handle_t<mesh_asset_t> handle);
 [[nodiscard]] const texture_asset_t *get(asset_handle_t<texture_asset_t> handle);
 [[nodiscard]] const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle);
+[[nodiscard]] const cubemap_asset_t *get(asset_handle_t<cubemap_asset_t> handle);
 [[nodiscard]] const skeleton_t *get(asset_handle_t<skeleton_t> handle);
 [[nodiscard]] const animation_asset_t *get(asset_handle_t<animation_asset_t> handle);
 [[nodiscard]] const sound_asset_t *get(asset_handle_t<sound_asset_t> handle);
