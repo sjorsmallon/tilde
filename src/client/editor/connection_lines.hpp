@@ -9,21 +9,6 @@
 #include <optional>
 #include <cstdint>
 
-// The map's WIRING, drawn in the viewport: one line per `map_t::connections`
-// row, from the sender's anchor to the target's.
-//
-// SCREEN-SPACE, into ImGui's BACKGROUND draw list, exactly like
-// entity_icons.cpp -- and for the icons' reasons plus one of its own. Constant
-// pixel width, so a connection across the room is not one pixel of nothing; on
-// top of geometry, because wiring is a DIAGRAM and a line through a wall is
-// still the answer to "what is this button attached to"; camera-facing
-// arrowheads for free; and background rather than foreground so the lines pass
-// UNDER the Connections panel they describe.
-//
-// The endpoint is the entity's own `position`, which is the anchor the pick
-// projects and the anchor the icon is stroked at -- a line to the bound's
-// CENTRE would attach to empty air for anything whose bound is not around it
-// (a spectate spot's is its view frustum, 36 units out in front).
 
 namespace shared { struct map_t; }
 

@@ -1,0 +1,59 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "platform_that_changes_color_when_touched.prefab"
+}
+connections
+{
+  connection
+  {
+    "sender" "15"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "12"
+    "action" "Set_Color"
+    override
+    {
+      "color" "0 1 0"
+    }
+  }
+}
+brush
+{
+  "_uid" "24"
+  "vertices" "-199.845428 0 -330.271484, -199.845428 0 244.041992, -199.845428 128 -330.271484, -199.845428 128 244.041992, 255.999939 0 -330.271484, 255.999939 0 244.041992, 255.999939 128 -330.271484, 255.999939 128 244.041992"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "12"
+  "position" "-128 999.005 -184.14258"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 0 0"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "2056"
+  "inner_degrees" "31"
+  "outer_degrees" "35"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "15"
+  "position" "0 231.005 71.85742"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "256.0531 96.32467 258.41406"
+}

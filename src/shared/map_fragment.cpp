@@ -205,6 +205,15 @@ map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
     identity[entry.uid] = entry.uid;
   }
 
+  // A group of part of the selection is a group of that part; one member or
+  // none is no group. Uids are kept, like everything else in a subset.
+  for (const map_group_t& group : map.groups)
+  {
+    map_group_t copy = group;
+    if (remap_group_members(copy, identity) >= 2)
+      add_group_with_uid(subset, std::move(copy));
+  }
+
   for (const connection_t& connection : map.connections)
   {
     connection_t row = connection;
@@ -318,6 +327,17 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
     }
 
     destination.connections.push_back(row);
+  }
+
+  // The fragment's groups, on the stamped copies. A fresh uid each, from the
+  // destination's space: the fragment's group uids mean nothing here.
+  for (const map_group_t& group : source.groups)
+  {
+    map_group_t copy = group;
+    if (remap_group_members(copy, result.remap) < 2)
+      continue;
+    copy.uid = destination.next_uid++;
+    destination.groups.push_back(std::move(copy));
   }
 
   return result;

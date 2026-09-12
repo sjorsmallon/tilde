@@ -1553,6 +1553,54 @@ map_t parse_map_from_string(const std::string &content)
       continue;
     }
 
+    // --- the map's groups ---
+    if (block.keyword == "groups")
+    {
+      for (const map_block_t &row : block.children)
+      {
+        if (row.keyword != "group")
+        {
+          log_error("map parse: \"{}\" is not a group — block skipped", row.keyword);
+          continue;
+        }
+
+        map_group_t group;
+        group.uid = read_uid(row);
+        if (group.uid == 0)
+        {
+          log_error("map parse: a group has no _uid — block skipped");
+          continue;
+        }
+        if (auto name_it = row.properties.find("name"); name_it != row.properties.end())
+          group.name = name_it->second;
+
+        // One member block per line, so a group of forty is forty diffable
+        // lines rather than one property that changes whole.
+        for (const map_block_t &member_block : row.children)
+        {
+          if (member_block.keyword != "member")
+          {
+            log_error("map parse: group {} holds a \"{}\" block — skipped", group.uid,
+                      member_block.keyword);
+            continue;
+          }
+          auto uid_it = member_block.properties.find("uid");
+          const std::optional<uint32_t> member =
+              uid_it != member_block.properties.end() ? try_uid_from_text(uid_it->second)
+                                                      : std::nullopt;
+          if (!member)
+          {
+            log_error("map parse: group {} has a member with no uid — dropped", group.uid);
+            continue;
+          }
+          group.members.push_back(*member);
+        }
+
+        add_group_with_uid(out_map, std::move(group));
+      }
+      continue;
+    }
+
     // --- geometry blocks ---
     if (block.keyword != "entity")
     {
@@ -1669,6 +1717,10 @@ map_t parse_map_from_string(const std::string &content)
 
   convert_legacy_trigger_actions(out_map, legacy_triggers);
 
+  // After every object is in, so a member declared further down the file than
+  // its group is not mistaken for a missing one.
+  (void)prune_map_groups(out_map);
+
   return out_map;
 }
 
@@ -1684,6 +1736,11 @@ std::optional<map_t> try_load_map(const std::string &filename)
   in.close();
 
   map_t map = parse_map_from_string(content);
+  // The file is the identity: the editor saves to `maps/<name>` and the server
+  // hands clients `name` as the wire id, so a stale "name" property inside a
+  // copied file made play overwrite ANOTHER map and run it. Stamped before the
+  // content hash, since the sidecar is keyed on what save_map will write.
+  map.name = std::filesystem::path(filename).filename().generic_string();
   load_navmesh(filename, map.navmesh);
   map.lightmap = load_lightmap_sidecar(filename, compute_map_content_hash(map));
 
@@ -1789,6 +1846,38 @@ std::string serialize_map_to_string(const map_t &map)
     }
 
     blocks.push_back(std::move(block));
+  }
+
+  // Groups. A member the map no longer has is skipped here rather than pruned
+  // in the session (it is inert there, and undo may bring it back), and a group
+  // that would be written with fewer than two members is not a group.
+  {
+    map_block_out_t block;
+    block.keyword = "groups";
+
+    for (const map_group_t &group : map.groups)
+    {
+      map_block_out_t row;
+      row.keyword = "group";
+      row.properties.emplace_back("_uid", std::to_string(group.uid));
+      row.properties.emplace_back("name", group.name);
+
+      for (entity_uid_t member : group.members)
+      {
+        if (!map.has_object(member))
+          continue;
+        map_block_out_t member_block;
+        member_block.keyword = "member";
+        member_block.properties.emplace_back("uid", std::to_string(member));
+        row.children.push_back(std::move(member_block));
+      }
+
+      if (row.children.size() >= 2)
+        block.children.push_back(std::move(row));
+    }
+
+    if (!block.children.empty())
+      blocks.push_back(std::move(block));
   }
 
   // Geometry first, so a level's structure reads before its props.

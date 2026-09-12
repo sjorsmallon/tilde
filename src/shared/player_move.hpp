@@ -39,6 +39,10 @@ constexpr uint64_t Zoom     = 1 << 16;
 constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
 constexpr uint64_t Reload   = 1 << 18;
 constexpr uint64_t Throw    = 1 << 19;
+// The right mouse button as a CLICK, for the weapon whose secondary is an
+// impulse (shared/weapons.hpp, secondary_fire_t). Zoom below is the same
+// button as a client-side toggle; the two ride together.
+constexpr uint64_t Secondary_Fire = 1 << 20;
 
 // The buttons whose EDGE is worth a sub-tick slot, and therefore an extra
 // movement step (shared/subtick.hpp).
@@ -55,9 +59,11 @@ constexpr uint64_t Throw    = 1 << 19;
 // client-side TOGGLE derived from a right-click, not the click itself, so there
 // is no raw edge to stamp and it rides in as tick-granular state
 // (raw_input_plan.md, D1). It is what `buttons & ~Subtick_Tracked` still
-// carries at the two merge sites in play_state.cpp.
+// carries at the two merge sites in play_state.cpp. The CLICK itself is
+// Secondary_Fire, and that one is here for the trigger's reason: a secondary
+// impulse lands on the player's own velocity at the moment of the press.
 constexpr uint64_t Subtick_Tracked =
-    Forward | Backward | Left | Right | Jump | Fire |
+    Forward | Backward | Left | Right | Jump | Fire | Secondary_Fire |
     Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8 | Key9 |
     Reload | Throw;
 } // namespace Button

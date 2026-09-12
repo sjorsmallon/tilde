@@ -73,10 +73,17 @@ struct diff_map_connections_t
   std::vector<shared::connection_t> after;
 };
 
+struct diff_map_groups_t
+{
+  std::vector<shared::map_group_t> before;
+  std::vector<shared::map_group_t> after;
+};
+
 using edit_diff_t =
     std::variant<diff_entity_created_t, diff_entity_removed_t, diff_entity_modified_t,
                  diff_geometry_created_t, diff_geometry_removed_t,
-                 diff_geometry_modified_t, diff_map_cvars_t, diff_map_connections_t>;
+                 diff_geometry_modified_t, diff_map_cvars_t, diff_map_connections_t,
+                 diff_map_groups_t>;
 
 // --- Free helpers ---
 
@@ -215,6 +222,18 @@ struct transaction_t
     }
     diffs.push_back(diff_map_connections_t{std::move(before), std::move(after)});
   }
+
+  // --- the map's groups ---
+
+  // Whole-list before/after, the cvar list's shape: a group is a uid list with
+  // a name, and == is exact.
+  void add_map_groups_modified(std::vector<shared::map_group_t> before,
+                               std::vector<shared::map_group_t> after)
+  {
+    if (before == after)
+      return;
+    diffs.push_back(diff_map_groups_t{std::move(before), std::move(after)});
+  }
 };
 
 // --- Transaction_System ---
@@ -289,7 +308,9 @@ private:
             [&](const diff_map_cvars_t &d)
             { map.attached_cvars = d.after; },
             [&](const diff_map_connections_t &d)
-            { map.connections = d.after; }},
+            { map.connections = d.after; },
+            [&](const diff_map_groups_t &d)
+            { map.groups = d.after; }},
         diff);
   }
 
@@ -312,7 +333,9 @@ private:
             [&](const diff_map_cvars_t &d)
             { map.attached_cvars = d.before; },
             [&](const diff_map_connections_t &d)
-            { map.connections = d.before; }},
+            { map.connections = d.before; },
+            [&](const diff_map_groups_t &d)
+            { map.groups = d.before; }},
         diff);
   }
 

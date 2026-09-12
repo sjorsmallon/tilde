@@ -16,38 +16,12 @@ message Vec3 {
   float z = 3;
 }
 
-// Client -> Server: every input the client has not seen acknowledged, oldest
-// first. This is the ONLY input message on the wire; a single input is a batch
-// of one.
-//
-// Redundancy instead of retransmission. These are the client's half of a
-// prediction the server re-runs, so a lost datagram is a lost tick of input --
-// the player pressed forward and the world disagrees. Re-sending the unacked
-// tail in every datagram costs a few dozen bytes and needs no timers, no acks
-// per input and no state on either side, because the pieces were already
-// here: S2C_EntityPackage.latest_processed_input_number is a HIGH-WATER mark, and
-// the server already drops anything at or below it. A duplicate is therefore
-// free by construction rather than by agreement.
-//
-// It also converts the move budget's failure mode: an input dropped for want
-// of a credit (server/move_budget.hpp) is still unacked, so it arrives again
-// next tick and runs when the credit does. The budget throttles rather than
-// discards, with the queue living on the client where the data already was.
 message C2S_ClientInputBatch {
   repeated C2S_ClientInput inputs = 1;
 }
 
-// One button transition inside the tick a C2S_ClientInput covers: WHEN it
-// happened, and the whole bitfield in effect from that moment on.
-//
-// A slot INDEX, not a fraction: 64 slots per tick, so 0.26ms at 60Hz. The client
-// predicts and the server re-simulates, and those two runs must agree exactly --
-// a float differing by one ULP feeds a dt that feeds a clamp, and diverges the
-// prediction. A 6-bit integer cannot disagree with itself. See
-// shared/subtick.hpp for the grammar and subtick_plan.md for why sub-tick at
-// all.
 message C2S_SubtickEdge {
-  optional uint32 slot = 1;          // 1..63, strictly ascending across edges
+  optional uint32 slot = 1; // 1..63, strictly ascending across edges
   optional uint64 buttons_after = 2; // the FULL bitfield, not a delta
 
   // Where the player was AIMING from this slot onward. Sampled at the edge
@@ -62,23 +36,6 @@ message C2S_SubtickEdge {
   optional ViewAngle view_after = 3;
 }
 
-// ONE TICK OF A CLIENT'S INPUT, PLUS WHAT THAT CLIENT WAS SEEING WHEN IT MADE
-// IT. Every word of the old name (C2S_PlayerMoveCommand) was wrong, which is
-// why it is worth spelling out what this actually is:
-//
-//   not "Move"    -- forwardmove/sidemove/upmove are gone (reserved below).
-//                    Movement travels as buttons_bitfield + subtick_edges, and
-//                    those also carry FIRE, which is a shot, not a move.
-//   not "Player"  -- a SPECTATOR has no player entity and still sends these;
-//                    the server has a branch for exactly that. A client sends
-//                    this. See CLAUDE.md, "Client vs Player".
-//   not "Command" -- C2S_Command, a console line, is a different message on
-//                    this same socket.
-//
-// Roughly half of it is not input at all. `input_number` sequences, and
-// `held_snapshot_tick` / `interpolated_*` are RIDERS: they describe the client,
-// not the tick's input, and they hitch along because this is the only regular
-// c2s traffic. Each says so at its own field.
 message C2S_ClientInput {
   // Sequencing only, and the client's own counter -- unrelated to any server
   // tick. The server acks a high-water mark of it (S2C_EntityPackage), which is
@@ -170,9 +127,9 @@ message C2S_ClientInput {
   // ("what did I reconstruct" vs "what did I draw"), and the equality is an
   // invariant of the client's publish path, not of this message -- it stops
   // holding the moment anything replicates at its own cadence.
-  optional uint32 interpolated_from_tick    = 9;
+  optional uint32 interpolated_from_tick = 9;
   optional uint32 interpolated_towards_tick = 10;
-  optional float  interpolation_fraction    = 11;   // 0..1, from -> towards
+  optional float interpolation_fraction = 11; // 0..1, from -> towards
 
   // A RIDER, and the third of them: the content hash of the map this client
   // currently holds. The server compares it to its own and sets
@@ -195,200 +152,199 @@ message C2S_ClientInput {
 
 // s2c is server to client.
 message S2C_EntityPackage {
-    // 1 was expected_max_entities, 3 was update_baseline. Both are gone with
-    // implicit removal: the payload used to list EVERY entity every tick (so
-    // "absent means gone" could express a despawn), and a receiver wanted to
-    // know how many to expect. Removals are explicit records now and unchanged
-    // entities are omitted, so a record count is not an entity count and the
-    // one at the head of entity_data is the only count that means anything.
-    // 2 was `is_delta`, a second field for the fact delta_from_tick's presence
-    // already carries. Nothing ever read it, so it could disagree with the tick
-    // beside it and no receiver would notice. One field, one fact.
-    reserved 1, 2, 3;
+  // 1 was expected_max_entities, 3 was update_baseline. Both are gone with
+  // implicit removal: the payload used to list EVERY entity every tick (so
+  // "absent means gone" could express a despawn), and a receiver wanted to
+  // know how many to expect. Removals are explicit records now and unchanged
+  // entities are omitted, so a record count is not an entity count and the
+  // one at the head of entity_data is the only count that means anything.
+  // 2 was `is_delta`, a second field for the fact delta_from_tick's presence
+  // already carries. Nothing ever read it, so it could disagree with the tick
+  // beside it and no receiver would notice. One field, one fact.
+  reserved 1, 2, 3;
 
-    optional bytes entity_data = 4; // this is the reflective snapshot data
-    optional int32 server_tick = 5;
-    // How far this client's input stream has been CONSUMED -- a HIGH-WATER MARK
-    // over C2S_ClientInput.input_number, not "the last input that moved you".
-    // A number, not an input: it is what trims the client's resend tail and
-    // where its reconciliation replay starts.
-    optional int32 latest_processed_input_number = 6;
+  optional bytes entity_data = 4; // this is the reflective snapshot data
+  optional int32 server_tick = 5;
+  // How far this client's input stream has been CONSUMED -- a HIGH-WATER MARK
+  // over C2S_ClientInput.input_number, not "the last input that moved you".
+  // A number, not an input: it is what trims the client's resend tail and
+  // where its reconciliation replay starts.
+  optional int32 latest_processed_input_number = 6;
 
-    // A package is exactly ONE of two kinds, and this field's PRESENCE is which:
-    //
-    //   absent  -- FULL UPDATE. Every networked leaf is on the wire; the
-    //              receiver needs no baseline and decodes it standalone.
-    //   present -- DELTA against this tick. The receiver must still hold its
-    //              reconstructed snapshot for it, or the packet is undecodable
-    //              and must be dropped whole -- applying a delta to the wrong
-    //              baseline is worse than missing a frame.
-    //
-    // Presence, not a sentinel value: there is no tick number that means "not a
-    // delta", so the field never carries two meanings at once. Both ends go
-    // through set_snapshot_baseline / snapshot_baseline_tick
-    // (network/entity_snapshot.hpp) so neither open-codes that.
-    optional uint32 delta_from_tick = 7;
+  // A package is exactly ONE of two kinds, and this field's PRESENCE is which:
+  //
+  //   absent  -- FULL UPDATE. Every networked leaf is on the wire; the
+  //              receiver needs no baseline and decodes it standalone.
+  //   present -- DELTA against this tick. The receiver must still hold its
+  //              reconstructed snapshot for it, or the packet is undecodable
+  //              and must be dropped whole -- applying a delta to the wrong
+  //              baseline is worse than missing a frame.
+  //
+  // Presence, not a sentinel value: there is no tick number that means "not a
+  // delta", so the field never carries two meanings at once. Both ends go
+  // through set_snapshot_baseline / snapshot_baseline_tick
+  // (network/entity_snapshot.hpp) so neither open-codes that.
+  optional uint32 delta_from_tick = 7;
 
-    // THE MATCH-LEVEL STATE, replicated as STATE rather than delivered as an
-    // event, and the distinction is load-bearing.
-    //
-    // The client PREDICTS against the phase (shared/round_phase_rules.hpp): the
-    // Countdown freeze suppresses movement, so a client that does not know it is
-    // frozen predicts seconds of walking the server discards. A phase that
-    // arrived only as a reliable event would be a round trip behind the
-    // snapshots describing the world it governs -- the two channels are on
-    // different clocks, and a snapshot never waits.
-    //
-    // So the phase is IN the snapshot, which is what makes the skew
-    // unrepresentable rather than merely small: the gate reads state that
-    // self-heals every tick, and Round_Phase_Changed goes back to being purely
-    // the banner occurrence it should always have been. Same rule as
-    // held_snapshot_tick in the other direction -- state that gates behavior is
-    // replicated as state, never delivered as an event.
-    //
-    // Not an entity, so not in entity_data: this is per-tick SERVER state, and
-    // the client's session is reconstructed from entities alone.
-    //
-    // phase is shared::Round_Phase, whose enum lives in events.def because the
-    // banner event carries it too. A value the client's build does not know is
-    // out of range and the client keeps the phase it had -- SCHEMA_HASH already
-    // refuses a build that could disagree, so this is belt and braces.
-    optional uint32 round_phase    = 8;
-    optional uint32 phase_end_tick = 9;  // server tick; 0 = ends on a win condition
-    optional uint32 round_number   = 10; // 1-based; 0 before the first round
-    optional uint32 phase_start_tick = 11; // server tick the current phase was entered on
+  // THE MATCH-LEVEL STATE, replicated as STATE rather than delivered as an
+  // event, and the distinction is load-bearing.
+  //
+  // The client PREDICTS against the phase (shared/round_phase_rules.hpp): the
+  // Countdown freeze suppresses movement, so a client that does not know it is
+  // frozen predicts seconds of walking the server discards. A phase that
+  // arrived only as a reliable event would be a round trip behind the
+  // snapshots describing the world it governs -- the two channels are on
+  // different clocks, and a snapshot never waits.
+  //
+  // So the phase is IN the snapshot, which is what makes the skew
+  // unrepresentable rather than merely small: the gate reads state that
+  // self-heals every tick, and Round_Phase_Changed goes back to being purely
+  // the banner occurrence it should always have been. Same rule as
+  // held_snapshot_tick in the other direction -- state that gates behavior is
+  // replicated as state, never delivered as an event.
+  //
+  // Not an entity, so not in entity_data: this is per-tick SERVER state, and
+  // the client's session is reconstructed from entities alone.
+  //
+  // phase is shared::Round_Phase, whose enum lives in events.def because the
+  // banner event carries it too. A value the client's build does not know is
+  // out of range and the client keeps the phase it had -- SCHEMA_HASH already
+  // refuses a build that could disagree, so this is belt and braces.
+  optional uint32 round_phase = 8;
+  optional uint32 phase_end_tick = 9; // server tick; 0 = ends on a win condition
+  optional uint32 round_number = 10; // 1-based; 0 before the first round
+  optional uint32 phase_start_tick = 11; // server tick the current phase was entered on
 }
 
 // --------------------------------------------- Network Negotiation
 
 message CmdConnect {
-    int32 protocol_version = 1;
-    string player_name = 2;
-    uint32 schema_hash = 3;     // entities::SCHEMA_HASH -- digest of every
-                                // declaration in entities.def plus the resolved
-                                // asset manifest. The server refuses a client
-                                // whose hash differs: the two builds disagree
-                                // about entity layout, so every snapshot after
-                                // the handshake would be misparsed.
+  int32 protocol_version = 1;
+  string player_name = 2;
+  uint32 schema_hash = 3; // entities::SCHEMA_HASH -- digest of every
+  // declaration in entities.def plus the resolved
+  // asset manifest. The server refuses a client
+  // whose hash differs: the two builds disagree
+  // about entity layout, so every snapshot after
+  // the handshake would be misparsed.
 }
 
 message CmdAccept {
-    int32 client_slot = 1;
-    string map_name = 2;        // Logical map name (worldspawn "name"), for display.
-    int32 server_tickrate = 3;
-    string map_path = 4;        // Loadable path/identifier the server loaded from.
-                                // TODO(map-stream): replace absolute path with a
-                                // maps-relative id once byte streaming lands; the
-                                // hash below already makes the path advisory, not trusted.
-    uint32 content_hash = 5;    // FNV-1a of the map file bytes. Client verifies its
-                                // locally-loaded map matches; mismatch = hard error
-                                // until S2C_MapData streaming exists.
+  int32 client_slot = 1;
+  string map_name = 2; // Logical map name (worldspawn "name"), for display.
+  int32 server_tickrate = 3;
+  string map_path = 4; // Loadable path/identifier the server loaded from.
+  // TODO(map-stream): replace absolute path with a
+  // maps-relative id once byte streaming lands; the
+  // hash below already makes the path advisory, not trusted.
+  uint32 content_hash = 5; // FNV-1a of the map file bytes. Client verifies its
+  // locally-loaded map matches; mismatch = hard error
+  // until S2C_MapData streaming exists.
 }
 
 message CmdReject {
-    string reason = 1;
-    uint32 server_schema_hash = 2;  // Only set when the rejection IS a schema
-                                    // mismatch, so the client can log both
-                                    // sides. 0 for every other reason.
+  string reason = 1;
+  uint32 server_schema_hash = 2; // Only set when the rejection IS a schema
+  // mismatch, so the client can log both
+  // sides. 0 for every other reason.
 }
 
 message CmdDisconnect {
-    string reason = 1;
+  string reason = 1;
 }
 
 // Client → Server: joining and leaving.
 message C2S_Connection {
-    oneof kind {
-        CmdConnect connect = 1;
-        CmdDisconnect disconnect = 2;
-    }
+  oneof kind {
+    CmdConnect connect = 1;
+    CmdDisconnect disconnect = 2;
+  }
 }
 
 // Server → Client: the answer to a CmdConnect.
 message S2C_Connection {
-    oneof kind {
-        CmdAccept accept = 1;
-        CmdReject reject = 2;
-    }
+  oneof kind {
+    CmdAccept accept = 1;
+    CmdReject reject = 2;
+  }
 }
 
 // Client → Server: a console command line (e.g. "spawn_bot")
 message C2S_Command {
-    string line = 1;
+  string line = 1;
 }
 
 // Server → Client: a text message to display in the client console
 message S2C_ServerMessage {
-    string message = 1;
+  string message = 1;
 }
 
 message BotDebugEntry {
-    int32 slot       = 1;
-    int32 goal       = 2; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
-    int32 type       = 3; // bot_behavior_t: 0=Idle 1=Chase 2=Regular
-    repeated Vec3 path = 4;
-    int32 path_index = 5;
+  int32 slot = 1;
+  int32 goal = 2; // BotGoal: 0=Idle 1=Chase 2=Attack 3=Retreat
+  int32 type = 3; // bot_behavior_t: 0=Idle 1=Chase 2=Regular
+  repeated Vec3 path = 4;
+  int32 path_index = 5;
 }
 
 message S2C_BotDebug {
-    repeated BotDebugEntry bots = 1;
+  repeated BotDebugEntry bots = 1;
 }
 
 message ShotDebugTarget {
-    uint32 player_uid    = 1;
-    Vec3   feet_position = 2;
-    float  body_yaw      = 3;
-    float  view_yaw      = 4;
-    float  view_pitch    = 5;
+  uint32 player_uid = 1;
+  Vec3 feet_position = 2;
+  float body_yaw = 3;
+  float view_yaw = 4;
+  float view_pitch = 5;
 }
 
 message S2C_ShotDebug {
-    // The key the client pairs its own stash against. Client input numbers are
-    // the one sequence both ends already agree on, and a shot is identified by
-    // the input that fired it.
-    uint32 input_number = 1;
-    uint32 server_tick  = 2;
-    // Which sub-tick slot the trigger went down in (shared/subtick.hpp).
-    uint32 fire_slot    = 3;
+  // The key the client pairs its own stash against. Client input numbers are
+  // the one sequence both ends already agree on, and a shot is identified by
+  // the input that fired it.
+  uint32 input_number = 1;
+  uint32 server_tick = 2;
+  // Which sub-tick slot the trigger went down in (shared/subtick.hpp).
+  uint32 fire_slot = 3;
 
-    // The ray as the server took it: post-move eye, along the aim in effect at
-    // the step the press opened.
-    Vec3 eye       = 4;
-    Vec3 direction = 5;
+  // The ray as the server took it: post-move eye, along the aim in effect at
+  // the step the press opened.
+  Vec3 eye = 4;
+  Vec3 direction = 5;
 
-    // bracket_status_t: 0=Ok 1=Clamped 2=Absent 3=Malformed 4=Unheld. Anything
-    // but Ok/Clamped means NO REWIND HAPPENED and the targets below are
-    // present-tick -- which is the single most common reason a dead-on shot
-    // misses, and is invisible without this field.
-    uint32 bracket_status = 6;
-    bool   used_rewind    = 7;
+  // bracket_status_t: 0=Ok 1=Clamped 2=Absent 3=Malformed 4=Unheld. Anything
+  // but Ok/Clamped means NO REWIND HAPPENED and the targets below are
+  // present-tick -- which is the single most common reason a dead-on shot
+  // misses, and is invisible without this field.
+  uint32 bracket_status = 6;
+  bool used_rewind = 7;
 
-    uint32 requested_from_tick    = 8;
-    uint32 requested_towards_tick = 9;
-    float  requested_fraction     = 10;
-    uint32 used_from_tick         = 11;
-    uint32 used_towards_tick      = 12;
-    float  used_fraction          = 13;
+  uint32 requested_from_tick = 8;
+  uint32 requested_towards_tick = 9;
+  float requested_fraction = 10;
+  uint32 used_from_tick = 11;
+  uint32 used_towards_tick = 12;
+  float used_fraction = 13;
 
-    // Every target the hitscan actually ranked, posed as the server posed them.
-    repeated ShotDebugTarget targets = 14;
+  // Every target the hitscan actually ranked, posed as the server posed them.
+  repeated ShotDebugTarget targets = 14;
 
-    // 0 = miss. On a miss, nearest_miss_distance is how far the ray passed from
-    // the closest target's bounding sphere -- 3 units is a pose problem, 200 is
-    // a rewind that never happened.
-    uint32 hit_uid               = 15;
-    uint32 hit_region            = 16;
-    Vec3   impact_point          = 17;
-    float  nearest_miss_distance = 18;
+  // 0 = miss. On a miss, nearest_miss_distance is how far the ray passed from
+  // the closest target's bounding sphere -- 3 units is a pose problem, 200 is
+  // a rewind that never happened.
+  uint32 hit_uid = 15;
+  uint32 hit_region = 16;
+  Vec3 impact_point = 17;
+  float nearest_miss_distance = 18;
 }
 
 message S2C_GameEventBatch {
-    optional bytes event_data  = 1;
-    optional uint32 server_tick = 2;
+  optional bytes event_data = 1;
+  optional uint32 server_tick = 2;
 }
 
-
 message S2C_EffectBatch {
-    optional bytes effect_data  = 1;
-    optional uint32 server_tick = 2;
+  optional bytes effect_data = 1;
+  optional uint32 server_tick = 2;
 }

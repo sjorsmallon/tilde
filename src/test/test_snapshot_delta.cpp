@@ -718,6 +718,48 @@ int main()
     std::cout << "    -> Success!" << std::endl;
   }
 
+  {
+    std::cout << "  [Subtest] A played sound emitter rides the wire..." << std::endl;
+
+    // The third map-placed receiver. What rides is the switch and the play
+    // counter; the sound, the volume and the reach are @Editable only and stay
+    // the client's own map's.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Sound_Emitter_Entity& emitter = server_frame.sound_emitters[90];
+    emitter.entity_id                       = 90;
+    emitter.position                        = {64.f, 0.f, 0.f};
+    emitter.volume                          = 0.25f;
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+    assert(client_frame.sound_emitters.at(90).playback.play_count == 0);
+    assert(client_frame.sound_emitters.at(90).volume == entities::Sound_Emitter_Entity{}.volume);
+    assert(emitter.volume != entities::Sound_Emitter_Entity{}.volume &&
+           "the sender must differ from the default, or this asserts nothing");
+
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.tick                = 2;
+    server_frame.sound_emitters[90].playback.play_count = 1;
+
+    network::snapshot_frame_t after_play;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked, after_play, &record_count);
+    assert(record_count == 1);
+    assert(after_play.sound_emitters.at(90).playback.play_count == 1);
+
+    network::snapshot_frame_t acked_after_play = after_play;
+    server_frame.tick                          = 3;
+
+    network::snapshot_frame_t idle;
+    transmit_snapshot(server_frame, &acked_after_play, idle, &record_count);
+    assert(record_count == 0);
+    assert(idle.sound_emitters.at(90).playback.play_count == 1);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
   std::cout << "[TEST] All Tests Passed." << std::endl;
   return 0;
 }

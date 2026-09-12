@@ -7,6 +7,7 @@
 #include "lightmap.hpp"
 #include "map_connection.hpp"
 #include "map_geometry.hpp"
+#include "map_group.hpp"
 #include "navmesh.hpp"
 #include "shapes.hpp"
 #include <algorithm>
@@ -67,6 +68,12 @@ struct map_t
   // Anything that rebuilds a map_t from another one has to carry this list,
   // the way bake_map_csg has to carry attached_cvars.
   std::vector<connection_t> connections;
+
+  // The map's GROUPS: click one member, select them all. Uid lists beside the
+  // entities for the reason connections are -- see map_group.hpp. Editor data
+  // the session never carries; every carrier of a map_t (bake, extract, stamp)
+  // remaps it through what the copy did, like the wiring.
+  std::vector<map_group_t> groups;
 
   // The map's material table. A brush FACE holds a uint16_t index into this, not
   // a path -- faces are the most numerous thing in a map, and geometry_def.md

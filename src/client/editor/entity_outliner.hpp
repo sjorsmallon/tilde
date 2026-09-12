@@ -6,6 +6,7 @@
 #include "../../shared/span.hpp"
 
 #include <optional>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -70,10 +71,27 @@ struct entity_visibility_t
   void refresh(const shared::map_t& map);
 };
 
-// The panel. Returns the uid of a clicked row, which the caller selects through
-// editor_context_t::requested_selection -- the outliner does not own the
-// selection any more than the connection list does.
-[[nodiscard]] std::optional<shared::entity_uid_t>
-draw_entity_outliner(const shared::map_t& map, entity_visibility_t& visibility);
+// What the panel asked for this frame. The outliner does not own the selection
+// any more than the connection list does: a clicked row goes through
+// editor_context_t::requested_selection, a clicked group and the two group
+// buttons through their own requests, and the Selection tool does the edit.
+struct outliner_result_t
+{
+  // A row: the object ALONE, group or not -- the outliner is where picking
+  // inside a group is free.
+  std::optional<shared::entity_uid_t> clicked_object;
+  std::optional<shared::entity_uid_t> clicked_group;
+  bool                                group_selection = false;
+  std::optional<shared::entity_uid_t> ungroup;
+};
+
+// One line naming any map object -- classname and name for an entity, the
+// kind for geometry -- shared by the outliner's group rows and the inspector's
+// member list, so a uid reads the same in both.
+[[nodiscard]] std::string object_label(const shared::map_t& map, shared::entity_uid_t uid);
+
+[[nodiscard]] outliner_result_t draw_entity_outliner(const shared::map_t&              map,
+                                                     entity_visibility_t&              visibility,
+                                                     Span<const shared::entity_uid_t> selection);
 
 } // namespace client

@@ -16,6 +16,7 @@
 // entity header.
 #include "traits/usable_generated.hpp"
 #include "traits/switchable_generated.hpp"
+#include "traits/playable_generated.hpp"
 #include "traits/colorable_generated.hpp"
 #include "traits/counting_generated.hpp"
 #include "traits/touchable_generated.hpp"
@@ -54,6 +55,7 @@ struct action_data_t
     Enable_Data enable;
     Disable_Data disable;
     Toggle_Enabled_Data toggle_enabled;
+    Play_Data play;
     Set_Color_Data set_color;
     Add_Data add;
     Reset_Data reset;
@@ -72,6 +74,7 @@ struct action_data_t
   const Enable_Data& as_enable() const { assert(tag == entity_action::Enable); return enable; }
   const Disable_Data& as_disable() const { assert(tag == entity_action::Disable); return disable; }
   const Toggle_Enabled_Data& as_toggle_enabled() const { assert(tag == entity_action::Toggle_Enabled); return toggle_enabled; }
+  const Play_Data& as_play() const { assert(tag == entity_action::Play); return play; }
   const Set_Color_Data& as_set_color() const { assert(tag == entity_action::Set_Color); return set_color; }
   const Add_Data& as_add() const { assert(tag == entity_action::Add); return add; }
   const Reset_Data& as_reset() const { assert(tag == entity_action::Reset); return reset; }
@@ -92,6 +95,7 @@ action_data_t erase(const Use_Data& payload);
 action_data_t erase(const Enable_Data& payload);
 action_data_t erase(const Disable_Data& payload);
 action_data_t erase(const Toggle_Enabled_Data& payload);
+action_data_t erase(const Play_Data& payload);
 action_data_t erase(const Set_Color_Data& payload);
 action_data_t erase(const Add_Data& payload);
 action_data_t erase(const Reset_Data& payload);
@@ -128,7 +132,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Objective),   // Game_Rules_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Trigger_Volume_Entity
-  trait_bit(entity_trait::Switchable),   // Sound_Emitter_Entity
+  trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Playable),   // Sound_Emitter_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Point_Light_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
@@ -173,7 +177,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Trigger_Volume_Entity
-  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Sound_Emitter_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Play),   // Sound_Emitter_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Point_Light_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity

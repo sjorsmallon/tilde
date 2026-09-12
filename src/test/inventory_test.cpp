@@ -293,33 +293,64 @@ int main()
     vec3f              velocity{0.f, -400.f, 0.f};
     const vec3f        aim{1.f, 0.f, 0.f};
 
-    const bool fired = shared::try_apply_self_impulse(dash, aim, movement, velocity);
-    check(fired && velocity.x == dash.self_impulse_along_aim_speed,
+    const bool fired = shared::try_apply_self_impulse(dash, shared::fire_trigger_t::Primary,
+                                                      aim, movement, velocity);
+    check(fired && velocity.x == dash.self_impulse.along_aim_speed,
           "a self-impulse pushes the shooter along the aim it was fired on");
 
     // Like a jump, not like a sum: the fall in progress is cancelled rather
     // than subtracted from the launch, so how long the player had been falling
     // does not decide how much of their dash survives.
-    check(velocity.y == dash.self_impulse_upward_speed,
+    check(velocity.y == dash.self_impulse.upward_speed,
           "the upward half cancels a fall rather than being eaten by it");
     check(movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
           "firing charges the cooldown, which is the only gate there is");
 
     vec3f      second_velocity{0.f, 0.f, 0.f};
-    const bool fired_again =
-        shared::try_apply_self_impulse(dash, aim, movement, second_velocity);
+    const bool fired_again = shared::try_apply_self_impulse(
+        dash, shared::fire_trigger_t::Primary, aim, movement, second_velocity);
     check(!fired_again && second_velocity.x == 0.f,
           "a second press while the cooldown runs does nothing at all");
 
+    // The secondary spends the SAME cooldown: one countdown in Movement, so
+    // one gate for both buttons.
+    vec3f secondary_while_cooling{0.f, 0.f, 0.f};
+    check(!shared::try_apply_self_impulse(dash, shared::fire_trigger_t::Secondary, aim,
+                                          movement, secondary_while_cooling),
+          "the secondary impulse is refused while the primary's cooldown runs");
+
+    // Set mode replaces the velocity outright, so what the player was doing at
+    // the press does not reach the outcome -- a sideways run and a fall both
+    // come out as exactly the aimed speed plus the lift.
+    entities::Movement secondary_movement{};
+    vec3f              secondary_velocity{0.f, -400.f, 250.f};
+    check(dash.secondary_fire == shared::secondary_fire_t::Self_Impulse &&
+              dash.secondary_self_impulse.mode == shared::impulse_mode_t::Set,
+          "the Dash's right mouse button is the Set-mode impulse this block tests");
+    check(shared::try_apply_self_impulse(dash, shared::fire_trigger_t::Secondary, aim,
+                                         secondary_movement, secondary_velocity),
+          "the secondary impulse fires off a fresh cooldown");
+    check(secondary_velocity.x == dash.secondary_self_impulse.along_aim_speed &&
+              secondary_velocity.y == dash.secondary_self_impulse.upward_speed &&
+              secondary_velocity.z == 0.f,
+          "a Set-mode impulse replaces the velocity rather than joining it");
+    check(secondary_movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
+          "the secondary charges the shared cooldown");
+
     // Nothing else in the table is one, and asking is the arm's own job rather
     // than the caller's -- the client calls this straight off whatever is in
-    // the hand, with no switch of its own to have got right.
+    // the hand, with no switch of its own to have got right. The Scout's
+    // secondary is Zoom, which is the client's FOV and no impulse at all.
     entities::Movement scout_movement{};
     vec3f              scout_velocity{0.f, 0.f, 0.f};
-    check(!shared::try_apply_self_impulse(
-              shared::get_weapon_definition(entities::Weapon::Scout), aim, scout_movement,
-              scout_velocity),
+    check(!shared::try_apply_self_impulse(shared::get_weapon_definition(entities::Weapon::Scout),
+                                          shared::fire_trigger_t::Primary, aim, scout_movement,
+                                          scout_velocity),
           "a weapon that is not a self-impulse is refused by the function, not by its caller");
+    check(!shared::try_apply_self_impulse(shared::get_weapon_definition(entities::Weapon::Scout),
+                                          shared::fire_trigger_t::Secondary, aim, scout_movement,
+                                          scout_velocity),
+          "a Zoom secondary is refused as an impulse: the scope is the client's, not a shove");
   }
 
   // --- an empty inventory is a refusal, not a crash ---

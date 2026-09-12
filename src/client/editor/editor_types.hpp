@@ -113,6 +113,20 @@ struct editor_context_t
   // path of its own, and a second one would be free to disagree with this one.
   std::optional<shared::map_t> requested_paste;
 
+  // The group a stamped `requested_paste` becomes, named after the prefab it
+  // came from; empty means loose. Placing a prefab is a paste that groups
+  // what it placed, so one click grabs the stamp -- a plain Ctrl+V keeps
+  // whatever groups the copy carried and adds none.
+  std::string requested_paste_group_name;
+
+  // The outliner's group rows. A group clicked there selects its members, and
+  // its Group / Ungroup buttons ask the Selection tool to do the edit, since
+  // the tool owns the selection the edit is about and the transaction goes
+  // through it.
+  std::optional<shared::entity_uid_t> requested_group_selection;
+  bool                                requested_group_of_selection = false;
+  std::optional<shared::entity_uid_t> requested_ungroup;
+
   // What the author hid in the entity outliner, flattened per frame from the
   // per-entity set and the per-type mask. Editor state and never map data: a
   // `hidden` field in map_t would either push an undo entry or bypass the

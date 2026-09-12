@@ -24,6 +24,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
 
 constexpr asset_info_t texture_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"audio", "resources/icons/audio.png"},
   {"counter", "resources/icons/counter.png"},
   {"directional_light", "resources/icons/directional_light.png"},
   {"game_rules", "resources/icons/game_rules.png"},
@@ -57,6 +58,7 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"knife_stab", "resources/sounds/knife_stab.wav"},
   {"player_jump", "resources/sounds/player_jump.wav"},
   {"player_land", "resources/sounds/player_land.wav"},
+  {"press_click", "resources/sounds/press_click.wav"},
   {"rocket_explosion", "resources/sounds/rocket_explosion.wav"},
   {"scout_bolt", "resources/sounds/scout_bolt.wav"},
   {"scout_clipin", "resources/sounds/scout_clipin.wav"},
@@ -93,6 +95,7 @@ constexpr asset_info_t font_asset_MANIFEST[] = {
   {"FiraMono_Bold", "resources/fonts/FiraMono_Bold.ttf"},
   {"FiraMono_Medium", "resources/fonts/FiraMono_Medium.ttf"},
   {"FiraMono_Regular", "resources/fonts/FiraMono_Regular.ttf"},
+  {"Karmina_Regular", "resources/fonts/Karmina_Regular.ttf"},
   {"Roboto_Medium", "resources/fonts/Roboto_Medium.ttf"},
   {"anwb_uu_regular", "resources/fonts/anwb_uu_regular.ttf"},
 };
@@ -109,6 +112,7 @@ constexpr asset_info_t pbr_material_MANIFEST[] = {
 
 constexpr asset_info_t cubemap_asset_MANIFEST[] = {
   {"Missing", nullptr},
+  {"actual_night_sky", "resources/cubemaps/actual_night_sky"},
   {"night_sky", "resources/cubemaps/night_sky"},
 };
 

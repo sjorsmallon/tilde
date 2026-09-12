@@ -264,28 +264,26 @@ static void apply_map_cvars(server_context_t &context, const shared::map_t &map)
 static bool load_map_file_into_context(server_context_t &context,
                                 const std::string &map_path)
 {
-  reset_state_in_preparation_for_new_map_load(context);
-  context.world.physics = make_physics_state();
-
+  // Loaded and checked BEFORE the wipe, so a refusal keeps the map that is
+  // running. The wipe used to come first, and "the map currently loaded stays"
+  // then named an empty session with no spawn markers, which the editor's play
+  // button dropped you into at the origin.
+  std::optional<shared::map_t> loaded;
   if (map_path.empty())
-  {
     log_terminal("load_map_file_into_context: empty path, leaving session empty.");
-    return false;
-  }
-
-  log_terminal("Loading map '{}'...", map_path);
-  std::optional<shared::map_t> loaded = shared::try_load_map(map_path);
-  if (!loaded)
+  else
   {
-    log_error("Failed to load map '{}'. Session is empty.", map_path);
-    return false;
+    log_terminal("Loading map '{}'...", map_path);
+    loaded = shared::try_load_map(map_path);
+    if (!loaded)
+      log_error("Failed to load map '{}'. The map currently loaded stays.", map_path);
   }
 
-  // The wiring, checked BEFORE anything is moved into the world: this is the
-  // server's half of the one-check-two-policies split. build_session drops a
-  // bad row and carries on, which is what an editor needs; a server running a
-  // level whose wiring is half there is a level that plays wrong with nothing
-  // on screen to say so, so it refuses the map and keeps the one it has.
+  // The wiring: this is the server's half of the one-check-two-policies split.
+  // build_session drops a bad row and carries on, which is what an editor
+  // needs; a server running a level whose wiring is half there is a level that
+  // plays wrong with nothing on screen to say so, so it refuses the map.
+  if (loaded)
   {
     const std::vector<shared::connection_refusal_t> refusals =
         shared::validate_map_connections(*loaded);
@@ -295,9 +293,24 @@ static bool load_map_file_into_context(server_context_t &context,
         log_error("Map '{}' connection {}: {}", map_path, refusal.index, refusal.reason);
       log_error("Refusing map '{}': {} ill-typed connection(s). The map currently loaded stays.",
                 map_path, refusals.size());
-      return false;
+      loaded.reset();
     }
   }
+
+  if (!loaded)
+  {
+    // Boot has nothing to keep, and its empty session still needs its rules
+    // and a physics state to tick against. A switch keeps what it has.
+    if (!context.world.physics)
+    {
+      reset_state_in_preparation_for_new_map_load(context);
+      context.world.physics = make_physics_state();
+    }
+    return false;
+  }
+
+  reset_state_in_preparation_for_new_map_load(context);
+  context.world.physics = make_physics_state();
 
   world_t& world = context.world;
 
@@ -1262,8 +1275,8 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
     }
     case entities::Fire_Resolution::Self_Impulse:
     {
-      (void)shared::try_apply_self_impulse(weapon, direction, player->movement,
-                                           player->velocity);
+      (void)shared::try_apply_self_impulse(weapon, shared::fire_trigger_t::Primary, direction,
+                                           player->movement, player->velocity);
       break;
     }
   }
@@ -1789,6 +1802,8 @@ bool Tick()
       }
 
       const bool fire_pressed_in_this_step = (pressed_in_this_step & Button::Fire) != 0;
+      const bool secondary_fire_pressed_in_this_step =
+          (pressed_in_this_step & Button::Secondary_Fire) != 0;
 
       // PER STEP, from the aim in effect when the step opened. One basis for
       // the whole tick meant a shot was fired along wherever the mouse finished
@@ -1856,6 +1871,21 @@ bool Tick()
       if (fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
         resolve_player_shot(context, client_slot, input, player, step.view.yaw,
                             step.view.pitch, step.start_slot);
+
+      // The right mouse button never passes through the shot clocks: Zoom is
+      // the client's (it arrives as Button::Zoom state), and an impulse is gated
+      // by the movement cooldown alone, the same call the client predicts.
+      if (secondary_fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
+      {
+        const entities::Weapon_Entity* held_entity =
+            try_find_active_weapon(context.world.session, *player);
+        if (held_entity != nullptr)
+          (void)shared::try_apply_self_impulse(
+              shared::get_weapon_definition(held_entity->weapon_id),
+              shared::fire_trigger_t::Secondary,
+              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
+              player->movement, player->velocity);
+      }
     }
 
     if (allowed_to_move && !world_is_frozen)
@@ -2143,6 +2173,12 @@ bool Tick()
   for (const entities::Spot_Light_Entity &light :
        context.world.session.entity_system.entities_of<entities::Spot_Light_Entity>())
     frame.spot_lights[light.entity_id] = light;
+
+  // And the emitter: its switch and its play counter are written by Enable and
+  // Play, and a counter change is what tells the client to play once.
+  for (const entities::Sound_Emitter_Entity &emitter :
+       context.world.session.entity_system.entities_of<entities::Sound_Emitter_Entity>())
+    frame.sound_emitters[emitter.entity_id] = emitter;
 
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_client_count; ++slot)

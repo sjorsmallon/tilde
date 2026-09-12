@@ -1,7 +1,7 @@
 entity
 {
   "classname" "worldspawn"
-  "name" "bunnyhop.source"
+  "name" "touch_all_the_platforms.source"
 }
 cvars
 {

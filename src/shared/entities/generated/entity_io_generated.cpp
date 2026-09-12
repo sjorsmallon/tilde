@@ -180,6 +180,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Enable
   {},   // Disable
   {},   // Toggle_Enabled
+  {},   // Play
   {SET_COLOR_FIELDS, 1},
   {ADD_FIELDS, 1},
   {},   // Reset
@@ -213,6 +214,7 @@ const char* to_string(entity_action value)
     case entity_action::Enable: return "Enable";
     case entity_action::Disable: return "Disable";
     case entity_action::Toggle_Enabled: return "Toggle_Enabled";
+    case entity_action::Play: return "Play";
     case entity_action::Set_Color: return "Set_Color";
     case entity_action::Add: return "Add";
     case entity_action::Reset: return "Reset";
@@ -235,6 +237,7 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Enable") return entity_action::Enable;
   if (text == "Disable") return entity_action::Disable;
   if (text == "Toggle_Enabled") return entity_action::Toggle_Enabled;
+  if (text == "Play") return entity_action::Play;
   if (text == "Set_Color") return entity_action::Set_Color;
   if (text == "Add") return entity_action::Add;
   if (text == "Reset") return entity_action::Reset;
@@ -281,6 +284,7 @@ const char* to_string(entity_trait value)
   {
     case entity_trait::Usable: return "Usable";
     case entity_trait::Switchable: return "Switchable";
+    case entity_trait::Playable: return "Playable";
     case entity_trait::Colorable: return "Colorable";
     case entity_trait::Counting: return "Counting";
     case entity_trait::Touchable: return "Touchable";
@@ -297,6 +301,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
 {
   if (text == "Usable") return entity_trait::Usable;
   if (text == "Switchable") return entity_trait::Switchable;
+  if (text == "Playable") return entity_trait::Playable;
   if (text == "Colorable") return entity_trait::Colorable;
   if (text == "Counting") return entity_trait::Counting;
   if (text == "Touchable") return entity_trait::Touchable;
@@ -328,6 +333,7 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Enable: return (uint32_t)sizeof(Enable_Data);
     case entity_action::Disable: return (uint32_t)sizeof(Disable_Data);
     case entity_action::Toggle_Enabled: return (uint32_t)sizeof(Toggle_Enabled_Data);
+    case entity_action::Play: return (uint32_t)sizeof(Play_Data);
     case entity_action::Set_Color: return (uint32_t)sizeof(Set_Color_Data);
     case entity_action::Add: return (uint32_t)sizeof(Add_Data);
     case entity_action::Reset: return (uint32_t)sizeof(Reset_Data);
@@ -387,6 +393,14 @@ action_data_t erase(const Toggle_Enabled_Data& payload)
   action_data_t data;
   data.tag = entity_action::Toggle_Enabled;
   data.toggle_enabled = payload;
+  return data;
+}
+
+action_data_t erase(const Play_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Play;
+  data.play = payload;
   return data;
 }
 

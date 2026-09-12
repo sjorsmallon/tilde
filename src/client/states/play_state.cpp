@@ -124,7 +124,14 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
     return 0; // travel, not a transition -- it steers, it does not cut a step
 
   if (edge.device == input::input_device_t::Mouse_Button)
-    return edge.button == input::mouse_button_t::Left ? Button::Fire : 0;
+  {
+    switch (edge.button)
+    {
+    case input::mouse_button_t::Left:  return Button::Fire;
+    case input::mouse_button_t::Right: return Button::Secondary_Fire;
+    default:                           return 0;
+    }
+  }
 
   switch (edge.key)
   {
@@ -1157,7 +1164,12 @@ void Play_State::update(float dt)
         // same cooldown the server will charge.
         if ((replay_pressed_in_this_step & Button::Fire) && replayed_weapon != nullptr)
           (void)shared::try_apply_self_impulse(
-              *replayed_weapon,
+              *replayed_weapon, shared::fire_trigger_t::Primary,
+              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
+              reconciled_movement, reconciled_velocity);
+        if ((replay_pressed_in_this_step & Button::Secondary_Fire) && replayed_weapon != nullptr)
+          (void)shared::try_apply_self_impulse(
+              *replayed_weapon, shared::fire_trigger_t::Secondary,
               linalg::direction_from_angles(step.view.yaw, step.view.pitch),
               reconciled_movement, reconciled_velocity);
       }
@@ -1204,7 +1216,13 @@ void Play_State::update(float dt)
 
   // now our position is subtick-accurate: based on the latest baseline provded
   // by the server with our "local" moves recalculated on top of it.
-  const bool zoom_input_allowed = connection_ui.mouse_captured && body_input_allowed;
+  // Zoom belongs to the weapon whose secondary is Zoom (the sniper) and to no
+  // other: a right-click on anything else toggles nothing, and switching away
+  // from the sniper drops the scope rather than carrying it onto the knife.
+  const shared::weapon_definition_t* zoom_weapon = try_find_local_weapon_definition(ctx);
+  const bool zoom_input_allowed = connection_ui.mouse_captured && body_input_allowed &&
+                                  zoom_weapon != nullptr &&
+                                  zoom_weapon->secondary_fire == shared::secondary_fire_t::Zoom;
 
   // if zoom is not allowed, just cancel the effect.
   // most of this zoom FOV / stepping looks confusing but we are just interpolating between the zoom FOV and the normal FOV based on the zoom easing time.
@@ -1212,7 +1230,7 @@ void Play_State::update(float dt)
   if (!zoom_input_allowed)
   {
     ctx.prediction.zoom_active = false;
-  } // @OTOD(SJM): this should check whether or not we are holding a sniper.
+  }
   else
   {
     // The EDGE, not is_mouse_pressed's frame-start level compare: a click that
@@ -1296,10 +1314,10 @@ void Play_State::update(float dt)
 
 
     if (input::is_mouse_down(input::mouse_button_t::Left))
-    {
-        buttons |= Button::Fire;
-    }
-      
+      buttons |= Button::Fire;
+    if (input::is_mouse_down(input::mouse_button_t::Right))
+      buttons |= Button::Secondary_Fire;
+
     // Sent even though zoom is drawn client-side: the server needs it the
     // moment scoping costs movement speed or accuracy, and it has to arrive
     // through the predicted button bitfield to do so. It is the zoom STATE,
@@ -1752,6 +1770,8 @@ void Play_State::update(float dt)
         {
           const uint64_t pressed_in_this_step = step.buttons & ~buttons_entering_step;
           const bool fire_pressed_in_this_step = (pressed_in_this_step & Button::Fire) != 0;
+          const bool secondary_fire_pressed_in_this_step =
+              (pressed_in_this_step & Button::Secondary_Fire) != 0;
           buttons_entering_step = step.buttons;
 
           // The predicted reload, started and cancelled on the SAME conditions
@@ -1860,16 +1880,23 @@ void Play_State::update(float dt)
           // off the same table row and the same arithmetic -- and the
           // reconciliation replay above runs the identical call, which is what
           // stops an unacked dash being undone for a round trip.
-          if (fire_pressed_in_this_step && have_own_body &&
-              local_movement_is_allowed(ctx))
+          if ((fire_pressed_in_this_step || secondary_fire_pressed_in_this_step) &&
+              have_own_body && local_movement_is_allowed(ctx))
           {
             const shared::weapon_definition_t *held_definition =
                 try_find_local_weapon_definition(ctx);
             if (held_definition != nullptr)
-              (void)shared::try_apply_self_impulse(
-                  *held_definition,
-                  linalg::direction_from_angles(step.view.yaw, step.view.pitch),
-                  ctx.prediction.player_movement, ctx.prediction.player_velocity);
+            {
+              const vec3f aim = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
+              if (fire_pressed_in_this_step)
+                (void)shared::try_apply_self_impulse(
+                    *held_definition, shared::fire_trigger_t::Primary, aim,
+                    ctx.prediction.player_movement, ctx.prediction.player_velocity);
+              if (secondary_fire_pressed_in_this_step)
+                (void)shared::try_apply_self_impulse(
+                    *held_definition, shared::fire_trigger_t::Secondary, aim,
+                    ctx.prediction.player_movement, ctx.prediction.player_velocity);
+            }
           }
 
           // Stashed HERE, and here specifically: after the step the press

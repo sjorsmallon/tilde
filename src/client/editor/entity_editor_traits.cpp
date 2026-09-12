@@ -203,14 +203,7 @@ void draw_directional_light_reach(pass_builder_t& draws,
   }
 }
 
-// Append a mesh draw. False means the mesh did not resolve and the caller
-// should fall back to a box -- the one place the editor turns an asset handle
-// into a draw, so the wireframe-support check lives here rather than at each of
-// the five call sites that used to make it.
-//
-// `material` is the entity's own, or null where the caller is drawing a GIZMO
-// rather than the entity's appearance (a selection pulse, a ghost) -- there the
-// tint IS the meaning and a base colour under it would only muddy it.
+
 bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
                const linalg::vec3f& position, const linalg::quatf& rotation,
                const linalg::vec3f& scale, color_t tint, renderer::fill_mode_t fill,
@@ -452,7 +445,9 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
     case entities::entity_type::Weapon_Entity: // render component draws it
     case entities::entity_type::Rocket_Entity: // runtime only
     case entities::entity_type::Sound_Emitter_Entity: // no gizmo yet
-      return {.half_extents = point_pick};
+      return {.half_extents = point_pick,
+              .color        = colors::white,
+              .icon         = assets::texture_asset::audio};
 
     // Lights pick as a point-sized box whatever their reach -- sizing the pick
     // volume to a 512-unit falloff sphere would make one light swallow every

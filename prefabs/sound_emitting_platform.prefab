@@ -1,0 +1,100 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "sound_emitting_platform.prefab"
+}
+connections
+{
+  connection
+  {
+    "sender" "27"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "26"
+    "action" "Set_Color"
+    override
+    {
+      "color" "0 1 0"
+    }
+  }
+  connection
+  {
+    "sender" "27"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "20"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "27"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "62"
+    "action" "Play"
+    "fire_once" "1"
+  }
+}
+groups
+{
+  group
+  {
+    "_uid" "63"
+    "name" "group 63"
+    member
+    {
+      "uid" "26"
+    }
+    member
+    {
+      "uid" "27"
+    }
+    member
+    {
+      "uid" "43"
+    }
+  }
+}
+brush
+{
+  "_uid" "43"
+  "vertices" "-199.792236 0 -330.271484, -199.792236 0 244.041992, -199.792236 128 -330.271484, -199.792236 128 244.041992, 256.052979 0 -330.271484, 256.052979 0 244.041992, 256.052979 128 -330.271484, 256.052979 128 244.041992"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "26"
+  "position" "0 768 -74.271484"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 0 0"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "2056"
+  "inner_degrees" "31"
+  "outer_degrees" "35"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "27"
+  "position" "0 256 9.064453"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "256.0531 96.32468 321.20703"
+}

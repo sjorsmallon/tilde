@@ -48,6 +48,13 @@ Enabled :: component {
     value: bool = true                  @Fully_Serializable
 }
 
+// A one-shot is an EDGE, not a level: Play bumps this and the client plays once
+// per change (the last_fire_tick change detector). Never authored, so it is
+// not @Editable; the map's copy is always zero.
+Playback :: component {
+    play_count: u32 = 0                 @Networked
+}
+
 Health:: component 
 {
     current_health: i32 = 100   @Fully_Serializable
@@ -64,6 +71,10 @@ Usable :: trait { accepts Use() }
 
 Switchable :: trait requires Enabled {
     accepts Enable(), Disable(), Toggle_Enabled()
+}
+
+Playable :: trait requires Playback {
+    accepts Play()
 }
 
 Colorable :: trait {
@@ -294,12 +305,21 @@ Trigger_Volume_Entity :: entity is Switchable, Touchable {
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
 }
 
-Sound_Emitter_Entity :: entity is Switchable {
+// The third map-placed receiver after the two lights, and the ONE place a
+// sound is authored per instance: an emitter's identity is its sound the way a
+// static mesh's is its mesh path. The switch is a MUTE for a one-shot (Play on
+// a disabled emitter does nothing) and the level for a loop. `spatial` off is
+// everyone's ears -- an announcer, music -- never one player's; that is a
+// state edge on the player, not an emitter. Loops are NOT built yet: the
+// client warns once and stays silent, hence the default is a one-shot.
+Sound_Emitter_Entity :: entity is Switchable, Playable {
     switch_state: Enabled
-    sound: sound_asset  @Editable
-    volume: f32 = 1.0   @Editable
-    loop: bool = true   @Editable
-    range: f32 = 128.0  @Editable
+    playback:     Playback
+    sound:        sound_asset          @Editable
+    volume:       f32 = 1.0            @Editable
+    loop:         bool = false         @Editable
+    spatial:      bool = true          @Editable
+    range:        f32 = 1024.0         @Editable
 }
 
 Point_Light_Entity :: entity is Colorable, Switchable {

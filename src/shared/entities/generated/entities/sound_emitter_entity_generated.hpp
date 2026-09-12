@@ -8,6 +8,7 @@
 
 #include "../entities_core_generated.hpp"
 #include "../traits/switchable_generated.hpp"
+#include "../traits/playable_generated.hpp"
 
 namespace entities
 {
@@ -19,10 +20,12 @@ struct Sound_Emitter_Entity : Entity
   Sound_Emitter_Entity() { type = entity_type::Sound_Emitter_Entity; }
 
   Enabled switch_state = {};
+  Playback playback = {};
   assets::sound_asset sound = {};
   float volume = 1.0f;
-  bool loop = true;
-  float range = 128.0f;
+  bool loop = false;
+  bool spatial = true;
+  float range = 1024.0f;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no
@@ -41,12 +44,13 @@ static_assert(std::is_base_of_v<Entity, Sound_Emitter_Entity>,
 
 // --- what a Sound_Emitter_Entity accepts ---
 //
-// Its `is` list is: Switchable.
+// Its `is` list is: Switchable, Playable.
 // No handler for a verb this type does not accept EXISTS, so calling one
 // is "no matching function" rather than a runtime refusal; a declared
 // handler nobody defined is a LINK error naming the symbol.
 void enable(Entity&, Enabled&, const Enable_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
 void disable(Entity&, Enabled&, const Disable_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
 void toggle_enabled(Entity&, Enabled&, const Toggle_Enabled_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
+void play(Entity&, Playback&, const Play_Data&, input_context_t&);   // Playable, shared by every opting-in type: src/server/traits/playable.cpp
 
 } // namespace entities

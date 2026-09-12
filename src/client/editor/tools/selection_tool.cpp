@@ -6,10 +6,12 @@
 #include "../editor_bvh.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../entity_inspector.hpp"
+#include "../entity_outliner.hpp"
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
 #include "../../../shared/map_connection.hpp"
 #include "../../../shared/map_fragment.hpp"
+#include "../../../shared/map_group.hpp"
 #include "../../../shared/lighting.hpp"
 #include "../../../shared/lightmap.hpp"
 #include "../../../shared/lightmap_lights.hpp"
@@ -509,6 +511,7 @@ void Selection_Tool::copy_selection_to_clipboard(editor_context_t& ctx)
     lost += crossing.kept_as_unbound ? 0 : 1;
 
   adopt_clipboard(std::move(fragment), lost);
+  clipboard_group_name.clear();
 
   if (clipboard_crossing_count > 0)
     hud::set_announcement(std::format("copied {} object(s), {} connection(s) -- {} more cross "
@@ -583,6 +586,7 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   // Captured BEFORE the stamp: the wiring is a whole-list diff, so the baseline
   // has to be what the map held a moment ago rather than what it holds now.
   std::vector<shared::connection_t> connections_before = ctx.map->connections;
+  std::vector<shared::map_group_t>  groups_before      = ctx.map->groups;
 
   const shared::stamp_result_t stamped = shared::stamp_map(*ctx.map, *clipboard, paste_anchor);
   if (stamped.uids.empty())
@@ -591,6 +595,12 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
     cancel_paste();
     return;
   }
+
+  // A placed prefab is ONE group, so a click grabs the whole stamp. Any group
+  // the fragment carried inside it is pulled into this one -- a member belongs
+  // to one group, and the stamp is the one the author placed.
+  if (!clipboard_group_name.empty())
+    (void)shared::group_objects(*ctx.map, stamped.uids, clipboard_group_name);
 
   transaction_t transaction;
   for (shared::entity_uid_t uid : stamped.uids)
@@ -606,6 +616,7 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
       transaction.add_created(uid, snapshot_entity(entry->entity.get()));
   }
   transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
+  transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
 
   // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
   // -- the objects AND the wiring between them -- the same rule the
@@ -635,6 +646,92 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
     connection_pick.queued_rows.push_back(index);
   }
   arm_next_unbound_pick(ctx);
+}
+
+void Selection_Tool::group_selection(editor_context_t& ctx)
+{
+  if (!ctx.map)
+    return;
+  if (selected_uids.size() < 2)
+  {
+    hud::set_announcement("Select at least two objects to group");
+    return;
+  }
+
+  std::vector<shared::map_group_t> before = ctx.map->groups;
+  const shared::entity_uid_t       group_uid = shared::group_objects(
+      *ctx.map, selected_uids, std::format("group {}", ctx.map->next_uid));
+  if (group_uid == shared::null_entity_uid)
+    return;
+
+  transaction_t transaction;
+  transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
+  ctx.transaction_system.push(std::move(transaction));
+
+  hud::set_announcement(std::format("Grouped {} objects", selected_uids.size()));
+}
+
+void Selection_Tool::ungroup_selection(editor_context_t& ctx)
+{
+  if (!ctx.map)
+    return;
+
+  std::vector<shared::entity_uid_t> group_uids;
+  for (shared::entity_uid_t selected : selected_uids)
+    if (const shared::map_group_t *group = shared::find_group_of(*ctx.map, selected))
+      if (std::find(group_uids.begin(), group_uids.end(), group->uid) == group_uids.end())
+        group_uids.push_back(group->uid);
+
+  if (group_uids.empty())
+  {
+    hud::set_announcement("Nothing selected is grouped");
+    return;
+  }
+
+  std::vector<shared::map_group_t> before = ctx.map->groups;
+  for (shared::entity_uid_t group_uid : group_uids)
+    (void)shared::ungroup(*ctx.map, group_uid);
+
+  transaction_t transaction;
+  transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
+  ctx.transaction_system.push(std::move(transaction));
+
+  hud::set_announcement(group_uids.size() == 1
+                            ? std::string("Ungrouped")
+                            : std::format("Ungrouped {} groups", group_uids.size()));
+}
+
+void Selection_Tool::ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid)
+{
+  if (!ctx.map)
+    return;
+
+  std::vector<shared::map_group_t> before = ctx.map->groups;
+  if (!shared::ungroup(*ctx.map, group_uid))
+  {
+    log_warning("selection_tool: no group has uid {}", group_uid);
+    return;
+  }
+
+  transaction_t transaction;
+  transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
+  ctx.transaction_system.push(std::move(transaction));
+}
+
+void Selection_Tool::select_group(editor_context_t& ctx, shared::entity_uid_t group_uid)
+{
+  selected_uids.clear();
+  if (!ctx.map)
+    return;
+  const shared::map_group_t *group = shared::find_group_by_uid(*ctx.map, group_uid);
+  if (group == nullptr)
+  {
+    log_warning("selection_tool: no group has uid {}", group_uid);
+    return;
+  }
+  for (shared::entity_uid_t member : group->members)
+    if (ctx.map->has_object(member))
+      selected_uids.push_back(member);
 }
 
 void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
@@ -691,8 +788,8 @@ void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
 
   const size_t fills = 1 + connection_pick.also_rows.size();
   hud::set_announcement(std::format(
-      "Click the target for the placed prefab's connection:\n{} --{}--> ? : {}{}\n{} more to "
-      "pick after this one. Esc leaves them unbound (red in the Connections panel).",
+      "Waiting to set a connection:\n{} {} ? : {}{}\n{} more to "
+      "pick after this one. Esc leaves them unbound.",
       shared::describe_map_entity(*ctx.map, row.sender), entities::to_string(row.signal),
       entities::to_string(row.data.tag),
       fills > 1 ? std::format(" (and {} more row(s) aimed at the same thing)", fills - 1)
@@ -808,6 +905,73 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
 
       if (ImGui::Button("Snap to surface below (End)"))
         snap_selection_to_surface_below(ctx);
+
+      // Groups. One line naming the group a single object is in, or how many
+      // groups a selection touches, and the two edits beside it.
+      {
+        std::vector<shared::entity_uid_t> touched;
+        for (shared::entity_uid_t selected : selected_uids)
+          if (const shared::map_group_t *group = shared::find_group_of(*ctx.map, selected))
+            if (std::find(touched.begin(), touched.end(), group->uid) == touched.end())
+              touched.push_back(group->uid);
+
+        if (touched.size() == 1)
+        {
+          const shared::map_group_t *group = shared::find_group_by_uid(*ctx.map, touched[0]);
+          ImGui::Text("Group \"%s\" (uid %u, %zu members)", group->name.c_str(), group->uid,
+                      group->members.size());
+        }
+        else if (touched.size() > 1)
+        {
+          ImGui::Text("%zu groups in this selection", touched.size());
+        }
+
+        if (selected_uids.size() > 1)
+        {
+          if (ImGui::Button("Group (Ctrl+G)"))
+            group_selection(ctx);
+          if (!touched.empty())
+            ImGui::SameLine();
+        }
+        if (!touched.empty() && ImGui::Button("Ungroup (Ctrl+Shift+G)"))
+          ungroup_selection(ctx);
+
+        // The members, one row each, a click narrowing the selection to that
+        // one: the outliner's pick-inside-a-group, in the panel already on
+        // screen. Lists the whole group when the selection sits in exactly one,
+        // so a single grouped object shows its siblings; the selection itself
+        // otherwise. Goes through requested_selection like the outliner does,
+        // since selected_uids is being read by this very frame's panel.
+        std::vector<shared::entity_uid_t> members;
+        if (touched.size() == 1)
+          shared::expand_to_group(*ctx.map, selected_uids[0], members);
+        else
+          members = selected_uids;
+
+        if (members.size() > 1)
+        {
+          ImGui::Separator();
+          ImGui::Text("Members (%zu)", members.size());
+          const float row_height = ImGui::GetTextLineHeightWithSpacing();
+          const float list_height =
+              row_height * static_cast<float>(std::min<size_t>(members.size(), 8)) +
+              ImGui::GetStyle().FramePadding.y * 2.f;
+          if (ImGui::BeginListBox("##members", ImVec2(-FLT_MIN, list_height)))
+          {
+            for (shared::entity_uid_t member : members)
+            {
+              const bool is_selected =
+                  std::find(selected_uids.begin(), selected_uids.end(), member) !=
+                  selected_uids.end();
+              ImGui::PushID(static_cast<int>(member));
+              if (ImGui::Selectable(object_label(*ctx.map, member).c_str(), is_selected))
+                ctx.requested_selection = member;
+              ImGui::PopID();
+            }
+            ImGui::EndListBox();
+          }
+        }
+      }
       ImGui::Separator();
 
       if (selected_uids.size() > 1)
@@ -1136,7 +1300,26 @@ void Selection_Tool::on_update(editor_context_t& ctx,
   {
     adopt_clipboard(std::move(*ctx.requested_paste), 0);
     ctx.requested_paste.reset();
+    clipboard_group_name = std::move(ctx.requested_paste_group_name);
+    ctx.requested_paste_group_name.clear();
     begin_paste();
+  }
+
+  // The outliner's group rows.
+  if (ctx.requested_group_selection)
+  {
+    select_group(ctx, *ctx.requested_group_selection);
+    ctx.requested_group_selection.reset();
+  }
+  if (ctx.requested_group_of_selection)
+  {
+    ctx.requested_group_of_selection = false;
+    group_selection(ctx);
+  }
+  if (ctx.requested_ungroup)
+  {
+    ungroup_by_uid(ctx, *ctx.requested_ungroup);
+    ctx.requested_ungroup.reset();
   }
 
   // Hiding the selected thing drops it: a gizmo on something invisible is a
@@ -1549,53 +1732,56 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
         if (!screen_pos)
           continue;
 
+        // A member inside the box brings its group, whole: a box and a click
+        // agree on what a grouped object is. Appends without duplicates.
         if (screen_pos->x >= x_min && screen_pos->x <= x_max &&
             screen_pos->y >= y_min && screen_pos->y <= y_max)
-        {
-          bool already_selected = false;
-          for (auto selected : selected_uids)
-            if (selected == uid)
-              already_selected = true;
-          if (!already_selected)
-            selected_uids.push_back(uid);
-        }
+          shared::expand_to_group(*ctx.map, uid, selected_uids);
       }
     }
     else
     {
       if (hovered_uid != 0)
       {
-        bool already_selected = false;
-        for (auto uid : selected_uids)
-        {
-          if (uid == hovered_uid)
-          {
-            already_selected = true;
-            break;
-          }
-        }
+        // What the click takes: the group's live members when the object has
+        // one, the object alone when it does not. The BVH answered a uid and
+        // the group is applied to that answer, nowhere earlier.
+        std::vector<shared::entity_uid_t> picked;
+        shared::expand_to_group(*ctx.map, hovered_uid, picked);
+
+        const auto is_selected = [&](shared::entity_uid_t uid)
+        { return std::find(selected_uids.begin(), selected_uids.end(), uid) != selected_uids.end(); };
 
         // Ctrl and shift both mean ADD, and mean it identically: two spellings
         // of one gesture, because every other editor binds one or the other and
-        // nobody should have to find out which this one chose.
+        // nobody should have to find out which this one chose. On a group it
+        // toggles the group: all in means out, otherwise the rest come in.
         if (e.mods.shift || e.mods.ctrl)
         {
-          if (already_selected)
+          const bool all_selected = std::all_of(picked.begin(), picked.end(), is_selected);
+          if (all_selected)
           {
-            auto it =
-                std::remove(selected_uids.begin(),
-                            selected_uids.end(), hovered_uid);
-            selected_uids.erase(it, selected_uids.end());
+            std::erase_if(selected_uids, [&](shared::entity_uid_t uid)
+                          { return std::find(picked.begin(), picked.end(), uid) != picked.end(); });
           }
           else
           {
-            selected_uids.push_back(hovered_uid);
+            for (shared::entity_uid_t uid : picked)
+              if (!is_selected(uid))
+                selected_uids.push_back(uid);
           }
+        }
+        // CLICK THROUGH: a plain click on a member of the group that IS the
+        // selection narrows to that member. First click the group, second
+        // click the thing -- the gesture for picking inside a group, with no
+        // modifier to find, since both of them already mean add.
+        else if (picked.size() > 1 && shared::uid_sets_equal(selected_uids, picked))
+        {
+          selected_uids = {hovered_uid};
         }
         else
         {
-          selected_uids.clear();
-          selected_uids.push_back(hovered_uid);
+          selected_uids = std::move(picked);
         }
       }
       else
@@ -1620,6 +1806,15 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
   if (e.key == input::key_t::V && e.mods.ctrl)
   {
     begin_paste();
+    return;
+  }
+
+  if (e.key == input::key_t::G && e.mods.ctrl)
+  {
+    if (e.mods.shift)
+      ungroup_selection(ctx);
+    else
+      group_selection(ctx);
     return;
   }
 
@@ -1743,15 +1938,15 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   int dy = drag_current_position.y - drag_start_position.y;
   bool is_dragging_significantly = is_dragging_box && (dx * dx + dy * dy > 25);
 
-  if (!is_dragging_significantly && hovered_uid != 0)
+  // Every member the click would take, so a group reads as one thing before
+  // it is one selection. Members already selected are drawn as selected.
+  if (!is_dragging_significantly && hovered_uid != 0 && ctx.map->has_object(hovered_uid))
   {
-    bool is_selected = false;
-    for (auto uid : selected_uids)
-      if (uid == hovered_uid)
-        is_selected = true;
-
-    if (!is_selected && ctx.map->has_object(hovered_uid))
-      draw_bounds_highlight(hovered_uid, colors::yellow);
+    std::vector<shared::entity_uid_t> would_pick;
+    shared::expand_to_group(*ctx.map, hovered_uid, would_pick);
+    for (shared::entity_uid_t uid : would_pick)
+      if (std::find(selected_uids.begin(), selected_uids.end(), uid) == selected_uids.end())
+        draw_bounds_highlight(uid, colors::yellow);
   }
 
   // 3. Highlight Box Selection candidates (Live Preview) - Yellow

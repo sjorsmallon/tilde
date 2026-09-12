@@ -236,6 +236,7 @@ file(MAKE_DIRECTORY ${ENTITY_GEN_OUT_DIR})
 # these files must sit in an anonymous namespace, which it should anyway.
 set(ENTITY_IO_HANDLERS
     src/server/traits/switchable.cpp
+    src/server/traits/playable.cpp
     src/server/traits/mortal.cpp
     src/server/traits/armable.cpp
     src/server/entities/point_light_entity.cpp
@@ -440,6 +441,7 @@ add_library(game_shared STATIC
     # prefabs are the same two functions (prefab_def.md).
     src/shared/map_fragment.hpp
     src/shared/map_fragment.cpp
+    src/shared/map_group.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
@@ -1044,6 +1046,12 @@ add_executable(prefab_test src/test/prefab_test.cpp)
 target_include_directories(prefab_test PRIVATE src src/shared)
 target_link_libraries(prefab_test PRIVATE game_shared)
 
+# 20e. Map Group Test (exclusive membership, inert deleted members, the file
+# block, the load clean, and the three carriers)
+add_executable(map_group_test src/test/map_group_test.cpp)
+target_include_directories(map_group_test PRIVATE src src/shared)
+target_link_libraries(map_group_test PRIVATE game_shared)
+
 # 20. Navmesh Simplification Test
 add_executable(navmesh_test src/test/test_navmesh.cpp)
 target_include_directories(navmesh_test PRIVATE src)
@@ -1308,6 +1316,7 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     prefab_test
+    map_group_test
     navmesh_test
     lightmap_bake_test
     shadow_test

@@ -170,6 +170,51 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   for (const auto& [uid, light] : decoded.frame.point_lights) apply_light(light, "point");
   for (const auto& [uid, light] : decoded.frame.spot_lights) apply_light(light, "spot");
 
+  // A sound emitter is the third receiver of that shape. Its play counter is
+  // an EDGE, exactly as a damageable's health crossing zero is: a change means
+  // Play ran on the server, and the client plays once per change. The switch
+  // is a mute for a one-shot, so a Play on a disabled emitter bumps the counter
+  // and plays nothing here.
+  for (const auto& [uid, emitter] : decoded.frame.sound_emitters)
+  {
+    entities::Sound_Emitter_Entity* local =
+        context.world.session.entity_system.get<entities::Sound_Emitter_Entity>(uid);
+    if (local == nullptr)
+    {
+      log_error("snapshot names sound emitter uid {}, which this client's map does not have -- "
+                "the two sides disagree about what is in the level",
+                uid);
+      continue;
+    }
+
+    const uint32_t previous_play_count = local->playback.play_count;
+    local->switch_state.value  = emitter.switch_state.value;
+    local->playback.play_count = emitter.playback.play_count;
+
+    if (local->loop)
+    {
+      if (!context.replication.loop_emitters_unbuilt_reported)
+      {
+        context.replication.loop_emitters_unbuilt_reported = true;
+        log_warning("sound emitter '{}' (uid {}) loops, and looping emitters are not built yet: "
+                    "it stays silent",
+                    local->name.c_str(), uid);
+      }
+      continue;
+    }
+
+    if (!context.replication.sound_emitter_playback_seeded || !context.audio)
+      continue;
+    if (local->playback.play_count == previous_play_count || !local->switch_state.value)
+      continue;
+
+    if (local->spatial)
+      context.audio->play_3d_within(local->sound, local->position, local->range, local->volume);
+    else
+      context.audio->play_2d(local->sound, local->volume);
+  }
+  context.replication.sound_emitter_playback_seeded = true;
+
   // --- 2. Connection facts derived from step 1 ---
   //@NOTE(SJM): this is not a particularly elegant way to do spectating. should it be a different team?
   context.connection.spectating =

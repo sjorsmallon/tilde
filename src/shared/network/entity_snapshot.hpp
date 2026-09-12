@@ -107,6 +107,9 @@ struct snapshot_frame_t
   // spawn record and then nothing.
   std::unordered_map<shared::entity_uid_t, entities::Point_Light_Entity>  point_lights;
   std::unordered_map<shared::entity_uid_t, entities::Spot_Light_Entity>   spot_lights;
+  // The third map-placed receiver: the switch and the play counter are its
+  // two runtime fields, and a counter change is a one-shot the client fires.
+  std::unordered_map<shared::entity_uid_t, entities::Sound_Emitter_Entity> sound_emitters;
 
   void clear()
   {
@@ -118,6 +121,7 @@ struct snapshot_frame_t
     damageables.clear();
     point_lights.clear();
     spot_lights.clear();
+    sound_emitters.clear();
   }
 };
 

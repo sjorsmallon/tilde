@@ -43,10 +43,11 @@
 namespace client
 {
 
-// Internal client hoochange_map_to in client_impl.cpp). Invokes the integrated
-// launcher's server::reload_map. Returns false if no hook is installed (e.g.
-// in a hypothetical dedicated/networked client build) — caller should treat
-// that as "server-side reload not available" but otherwise continue.
+// Internal client hook (set in client_impl.cpp). Invokes the integrated
+// launcher's server::change_map_to. Returns false both when no hook is
+// installed (a networked client build) and when the server refused the map,
+// which is why the installed test is a separate question.
+bool server_map_reload_hook_is_installed();
 bool invoke_server_map_reload_hook(const std::string &map_path);
 
 struct toolbox_row_t
@@ -149,6 +150,17 @@ static void rotate_backup_file(const std::string &path)
     log_error("Backup failed for '{}': {}", path, ec.message());
 }
 
+// What a commit did. `server_refused` is a file on disk the server would not
+// run -- an ill-typed connection row, which the panel shows red and the load
+// check refuses whole -- and the editor has to say so, because the server kept
+// the map it had and a play trip would otherwise join the wrong one.
+enum class commit_result_t
+{
+  save_failed,
+  server_refused,
+  committed,
+};
+
 // Single funnel for getting an editor map onto disk and into the running
 // server's session. Used by Ctrl+S, "Save Map As...", and the play button so
 // all three paths produce the same on-disk + in-memory state.
@@ -160,18 +172,15 @@ static void rotate_backup_file(const std::string &path)
 //   4. Ask the integrated server to reload from <full_path> so its session
 //      matches what we just saved (fixes the long-standing "save then play
 //      runs the old map" bug).
-//
-// Returns true on success. On failure the on-disk state is left untouched
-// (well, .bak may have been refreshed — but that's by design).
-static bool commit_map_to_disk(const shared::map_t &map,
-                                const std::string &full_path)
+static commit_result_t commit_map_to_disk(const shared::map_t &map,
+                                          const std::string &full_path)
 {
   rotate_backup_file(full_path);
 
   if (!shared::save_map(full_path, map))
   {
     log_error("save_map failed for '{}'", full_path);
-    return false;
+    return commit_result_t::save_failed;
   }
 
   std::ofstream last_map_f("last_map.txt");
@@ -180,12 +189,33 @@ static bool commit_map_to_disk(const shared::map_t &map,
   else
     log_error("Could not write last_map.txt");
 
-  // Server reload is best-effort: if the hook isn't installed (non-integrated
-  // build) we still want the save itself to succeed.
-  if (!invoke_server_map_reload_hook(full_path))
+  // A networked client has no in-process server to reload: the save itself
+  // stands and the server it connects to streams whatever it runs.
+  if (!server_map_reload_hook_is_installed())
+  {
     log_terminal("Server map-reload hook not installed; server session may be stale.");
+    return commit_result_t::committed;
+  }
 
-  return true;
+  if (!invoke_server_map_reload_hook(full_path))
+  {
+    log_error("The server refused '{}' and kept the map it was running; see the lines above",
+              full_path);
+    return commit_result_t::server_refused;
+  }
+
+  return commit_result_t::committed;
+}
+
+static const char* announcement_for(commit_result_t result)
+{
+  switch (result)
+  {
+    case commit_result_t::save_failed:    return "Save failed!";
+    case commit_result_t::server_refused: return "Saved, but the server refused the map (see log)";
+    case commit_result_t::committed:      return "Saved!";
+  }
+  return "";
 }
 
 // On-load backup: snapshot the file as it was when it was opened so the
@@ -238,7 +268,7 @@ void Tool_Editor_State::on_enter()
 
     if (!map_loaded)
     {
-      map.name = "Tool Editor Map";
+      map.name = "untitled.source";
       add_default_floor(map);
       hud::set_announcement("Welcome to the Tool Editor!");
     }
@@ -846,7 +876,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     const auto *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
     if (!brush || !shared::brush_is_axis_aligned_box(brush->hull_points))
     {
-      result.add_geometry(entry.value);
+      uid_after_bake[entry.uid] = result.add_geometry(entry.value);
       continue;
     }
 
@@ -892,6 +922,18 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     result.add_geometry(std::move(piece_brush));
   }
 
+  // Groups follow the same remap, after every uid the bake keeps is known. A
+  // box brush that went through the CSG is not one object any more, so it
+  // leaves its group; a group with fewer than two survivors is dropped.
+  for (const shared::map_group_t &group : src.groups)
+  {
+    shared::map_group_t baked_group = group;
+    if (shared::remap_group_members(baked_group, uid_after_bake) < 2)
+      continue;
+    baked_group.uid = result.next_uid++;
+    result.groups.push_back(std::move(baked_group));
+  }
+
   return result;
 }
 
@@ -905,10 +947,7 @@ void Tool_Editor_State::draw_imgui_panels()
     if (input::is_key_pressed(input::key_t::S) && (mods.ctrl || mods.gui))
     {
       std::string full_path = get_maps_dir() + map.name;
-      if (commit_map_to_disk(map, full_path))
-        hud::set_announcement("Saved!");
-      else
-        hud::set_announcement("Save failed!");
+      hud::set_announcement(announcement_for(commit_map_to_disk(map, full_path)));
     }
   }
 
@@ -1149,10 +1188,7 @@ void Tool_Editor_State::draw_imgui_panels()
     {
       std::string full_path = get_maps_dir() + filename_buf;
       map.name = filename_buf;
-      if (commit_map_to_disk(map, full_path))
-        hud::set_announcement("Saved!");
-      else
-        hud::set_announcement("Save failed!");
+      hud::set_announcement(announcement_for(commit_map_to_disk(map, full_path)));
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -1213,14 +1249,21 @@ void Tool_Editor_State::draw_imgui_panels()
   ImGui::Separator();
   if (ImGui::Button("play"))
   {
-    // Commit current edits to disk before switching. This is the same code
-    // change_map_torl+S, so Play_State's last_map.txt reload and the server's
-    // reload_map both see exactly what's in the editor right now — no more
-    // "I clicked save AND play and it still ran the old map" surprises.
+    // Commit current edits to disk before switching. The same funnel as
+    // Ctrl+S, so Play_State's last_map.txt reload and the server's
+    // change_map_to both see exactly what is in the editor right now. Only a
+    // full commit proceeds: a refused map means the server is still running
+    // the previous one, and joining it is the "spawned at the origin in an
+    // empty level" trip this used to make.
     std::string full_path = get_maps_dir() + map.name;
-    if (!commit_map_to_disk(map, full_path))
+    const commit_result_t result = commit_map_to_disk(map, full_path);
+    if (result == commit_result_t::save_failed)
     {
       hud::set_announcement("Save before play failed!");
+    }
+    else if (result == commit_result_t::server_refused)
+    {
+      hud::set_announcement("Server refused the map: fix the red connection rows (see log)");
     }
     else
     {
@@ -1246,13 +1289,29 @@ void Tool_Editor_State::draw_imgui_panels()
   // one family with Map Info and Map Cvars.
   if (ImGui::Begin("Map Entities", nullptr, ImGuiWindowFlags_NoNav))
   {
-    const std::optional<shared::entity_uid_t> clicked =
-        draw_entity_outliner(map, entity_visibility);
+    const outliner_result_t outliner = draw_entity_outliner(
+        map, entity_visibility,
+        active_tool ? tools[*active_tool]->selected_objects() : Span<const shared::entity_uid_t>{});
 
-    if (clicked)
+    if (outliner.clicked_object)
     {
       switch_tool(editor_tool_t::selection);
-      context.requested_selection = clicked;
+      context.requested_selection = outliner.clicked_object;
+    }
+    if (outliner.clicked_group)
+    {
+      switch_tool(editor_tool_t::selection);
+      context.requested_group_selection = outliner.clicked_group;
+    }
+    if (outliner.group_selection)
+    {
+      switch_tool(editor_tool_t::selection);
+      context.requested_group_of_selection = true;
+    }
+    if (outliner.ungroup)
+    {
+      switch_tool(editor_tool_t::selection);
+      context.requested_ungroup = outliner.ungroup;
     }
   }
   ImGui::End();

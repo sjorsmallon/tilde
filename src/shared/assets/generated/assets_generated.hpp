@@ -42,22 +42,23 @@ template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_vi
 enum class texture_asset : uint16_t
 {
   Missing = 0,
-  counter = 1,
-  directional_light = 2,
-  game_rules = 3,
-  point_light = 4,
-  spot_light = 5,
-  glasses = 6,
-  glasses_material = 7,
-  leet_hands = 8,
-  leet_hands_material = 9,
-  leet_skin = 10,
-  leet_skin_material = 11,
-  Smoke = 12,
-  dev_128x128 = 13,
+  audio = 1,
+  counter = 2,
+  directional_light = 3,
+  game_rules = 4,
+  point_light = 5,
+  spot_light = 6,
+  glasses = 7,
+  glasses_material = 8,
+  leet_hands = 9,
+  leet_hands_material = 10,
+  leet_skin = 11,
+  leet_skin_material = 12,
+  Smoke = 13,
+  dev_128x128 = 14,
 };
 
-constexpr uint32_t texture_asset_COUNT = 14;
+constexpr uint32_t texture_asset_COUNT = 15;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);
@@ -85,18 +86,19 @@ enum class sound_asset : uint16_t
   knife_stab = 14,
   player_jump = 15,
   player_land = 16,
-  rocket_explosion = 17,
-  scout_bolt = 18,
-  scout_clipin = 19,
-  scout_clipout = 20,
-  scout_fire_1 = 21,
-  success = 22,
-  target_break = 23,
-  wow_incredible = 24,
-  zoom = 25,
+  press_click = 17,
+  rocket_explosion = 18,
+  scout_bolt = 19,
+  scout_clipin = 20,
+  scout_clipout = 21,
+  scout_fire_1 = 22,
+  success = 23,
+  target_break = 24,
+  wow_incredible = 25,
+  zoom = 26,
 };
 
-constexpr uint32_t sound_asset_COUNT = 26;
+constexpr uint32_t sound_asset_COUNT = 27;
 
 const char* to_string(sound_asset value);
 template <> std::optional<sound_asset> try_from_string<sound_asset>(std::string_view text);
@@ -151,11 +153,12 @@ enum class font_asset : uint16_t
   FiraMono_Bold = 6,
   FiraMono_Medium = 7,
   FiraMono_Regular = 8,
-  Roboto_Medium = 9,
-  anwb_uu_regular = 10,
+  Karmina_Regular = 9,
+  Roboto_Medium = 10,
+  anwb_uu_regular = 11,
 };
 
-constexpr uint32_t font_asset_COUNT = 11;
+constexpr uint32_t font_asset_COUNT = 12;
 
 const char* to_string(font_asset value);
 template <> std::optional<font_asset> try_from_string<font_asset>(std::string_view text);
@@ -187,10 +190,11 @@ template <> std::optional<pbr_material> try_from_string<pbr_material>(std::strin
 enum class cubemap_asset : uint16_t
 {
   Missing = 0,
-  night_sky = 1,
+  actual_night_sky = 1,
+  night_sky = 2,
 };
 
-constexpr uint32_t cubemap_asset_COUNT = 2;
+constexpr uint32_t cubemap_asset_COUNT = 3;
 
 const char* to_string(cubemap_asset value);
 template <> std::optional<cubemap_asset> try_from_string<cubemap_asset>(std::string_view text);

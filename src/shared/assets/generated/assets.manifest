@@ -15,6 +15,7 @@ class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh .glb
 
 class texture_asset texture_asset_t asset_types.hpp .png .tga
   Missing -
+  audio resources/icons/audio.png
   counter resources/icons/counter.png
   directional_light resources/icons/directional_light.png
   game_rules resources/icons/game_rules.png
@@ -47,6 +48,7 @@ class sound_asset sound_asset_t asset_types.hpp .wav
   knife_stab resources/sounds/knife_stab.wav
   player_jump resources/sounds/player_jump.wav
   player_land resources/sounds/player_land.wav
+  press_click resources/sounds/press_click.wav
   rocket_explosion resources/sounds/rocket_explosion.wav
   scout_bolt resources/sounds/scout_bolt.wav
   scout_clipin resources/sounds/scout_clipin.wav
@@ -80,6 +82,7 @@ class font_asset font_asset_t asset_types.hpp .ttf
   FiraMono_Bold resources/fonts/FiraMono_Bold.ttf
   FiraMono_Medium resources/fonts/FiraMono_Medium.ttf
   FiraMono_Regular resources/fonts/FiraMono_Regular.ttf
+  Karmina_Regular resources/fonts/Karmina_Regular.ttf
   Roboto_Medium resources/fonts/Roboto_Medium.ttf
   anwb_uu_regular resources/fonts/anwb_uu_regular.ttf
 
@@ -94,4 +97,5 @@ class pbr_material pbr_material_asset_t asset_types.hpp
 
 class cubemap_asset cubemap_asset_t asset_types.hpp
   Missing -
+  actual_night_sky resources/cubemaps/actual_night_sky
   night_sky resources/cubemaps/night_sky

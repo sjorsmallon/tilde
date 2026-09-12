@@ -201,16 +201,17 @@ enum class component_type : uint16_t
 {
   Box_Volume = 0,
   Enabled = 1,
-  Health = 2,
-  Counter = 3,
-  Material = 4,
-  Render = 5,
-  Light = 6,
-  Movement = 7,
-  Inventory = 8,
+  Playback = 2,
+  Health = 3,
+  Counter = 4,
+  Material = 5,
+  Render = 6,
+  Light = 7,
+  Movement = 8,
+  Inventory = 9,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 9;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 10;
 
 } // namespace entities
 
@@ -314,6 +315,13 @@ struct Enabled
   static constexpr component_type static_component = component_type::Enabled;
 
   bool value = true;
+};
+
+struct Playback
+{
+  static constexpr component_type static_component = component_type::Playback;
+
+  uint32_t play_count = 0;
 };
 
 struct Health

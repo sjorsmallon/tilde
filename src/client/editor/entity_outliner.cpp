@@ -1,6 +1,7 @@
 #include "entity_outliner.hpp"
 
 #include "../../shared/map.hpp"
+#include "../../shared/map_group.hpp"
 
 #include <imgui.h>
 
@@ -34,6 +35,19 @@ std::string row_label(const entities::Entity& entity, shared::entity_uid_t uid)
 
 } // namespace
 
+std::string object_label(const shared::map_t& map, shared::entity_uid_t uid)
+{
+  if (const shared::map_entity_t* entry = map.find_by_uid(uid); entry && entry->entity)
+    return std::format("{}  {}", entities::entity_info(entry->entity->type).classname,
+                       row_label(*entry->entity, uid));
+  if (const shared::map_geometry_t* entry = map.find_geometry_by_uid(uid))
+    return std::format("{}  (uid {})",
+                       std::holds_alternative<shared::brush_geometry_t>(entry->value) ? "brush"
+                                                                                       : "static mesh",
+                       uid);
+  return std::format("uid {} (gone)", uid);
+}
+
 bool entity_visibility_t::anything_hidden() const
 {
   if (!hidden_entities.empty())
@@ -58,10 +72,54 @@ void entity_visibility_t::refresh(const shared::map_t& map)
       hidden_this_frame.push_back(entry.uid);
 }
 
-std::optional<shared::entity_uid_t>
-draw_entity_outliner(const shared::map_t& map, entity_visibility_t& visibility)
+outliner_result_t draw_entity_outliner(const shared::map_t&              map,
+                                       entity_visibility_t&              visibility,
+                                       Span<const shared::entity_uid_t> selection)
 {
-  std::optional<shared::entity_uid_t> clicked;
+  outliner_result_t result;
+
+  // Groups first: they are the rows an author made on purpose. The button is
+  // the Ctrl+G everyone will not know about yet.
+  {
+    ImGui::BeginDisabled(selection.size() < 2);
+    if (ImGui::SmallButton("Group selection"))
+      result.group_selection = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Ctrl+G, Ctrl+Shift+G ungroups)");
+
+    if (!map.groups.empty() && ImGui::TreeNode("##groups", "Groups (%zu)", map.groups.size()))
+    {
+      for (const shared::map_group_t& group : map.groups)
+      {
+        ImGui::PushID((int)group.uid);
+
+        if (ImGui::SmallButton("Select"))
+          result.clicked_group = group.uid;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Ungroup"))
+          result.ungroup = group.uid;
+        ImGui::SameLine();
+
+        if (ImGui::TreeNode("##group", "%s  (uid %u, %zu)", group.name.c_str(), group.uid,
+                            group.members.size()))
+        {
+          for (shared::entity_uid_t member : group.members)
+          {
+            ImGui::PushID((int)member);
+            if (ImGui::Selectable(object_label(map, member).c_str()))
+              result.clicked_object = member;
+            ImGui::PopID();
+          }
+          ImGui::TreePop();
+        }
+
+        ImGui::PopID();
+      }
+      ImGui::TreePop();
+    }
+    ImGui::Separator();
+  }
 
   // Always on screen when anything is hidden, and the reason the set is not
   // persisted: a map with something missing and no explanation is the failure
@@ -120,7 +178,7 @@ draw_entity_outliner(const shared::map_t& map, entity_visibility_t& visibility)
           ImGui::PushStyleColor(ImGuiCol_Text, HIDDEN_TEXT_COLOR);
 
         if (ImGui::Selectable(row_label(*entry->entity, entry->uid).c_str()))
-          clicked = entry->uid;
+          result.clicked_object = entry->uid;
 
         if (hidden)
           ImGui::PopStyleColor();
@@ -133,7 +191,7 @@ draw_entity_outliner(const shared::map_t& map, entity_visibility_t& visibility)
     ImGui::PopID();
   }
 
-  return clicked;
+  return result;
 }
 
 } // namespace client

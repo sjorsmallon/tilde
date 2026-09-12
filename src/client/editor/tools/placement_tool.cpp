@@ -256,7 +256,8 @@ void Placement_Tool::on_draw_ui(editor_context_t& ctx)
         continue;
       }
 
-      ctx.requested_paste = std::move(*fragment);
+      ctx.requested_paste            = std::move(*fragment);
+      ctx.requested_paste_group_name = prefab;
     }
   }
   ImGui::End();

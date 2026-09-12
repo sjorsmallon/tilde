@@ -7,6 +7,7 @@
 #include "miniaudio.h"
 
 #include <bit>
+#include <algorithm>
 #include <optional>
 
 namespace client
@@ -244,8 +245,9 @@ void audio_system_t::update(const linalg::vec3f& listener_position,
   return slot;
 }
 
-void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
-                             float volume)
+static void start_3d_voice(audio_impl_t* impl, const sound_attenuation_t& attenuation,
+                           assets::sound_asset sound, const linalg::vec3f& position,
+                           float max_distance, float volume)
 {
   if (!impl) return;
 
@@ -255,13 +257,24 @@ void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f& pos
 
   ma_sound* voice = &impl->voices.sounds[*slot];
   ma_sound_set_spatialization_enabled(voice, MA_TRUE);
-  // set the correct attenuation.
-  ma_sound_set_min_distance(voice, attenuation.reference_distance);
-  ma_sound_set_max_distance(voice, attenuation.max_distance_cutoff);
+  ma_sound_set_min_distance(voice, std::min(attenuation.reference_distance, max_distance));
+  ma_sound_set_max_distance(voice, max_distance);
   ma_sound_set_rolloff(voice, attenuation.rolloff_factor);
   ma_sound_set_position(voice, position.x, position.y, position.z);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);
+}
+
+void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
+                             float volume)
+{
+  start_3d_voice(impl, attenuation, sound, position, attenuation.max_distance_cutoff, volume);
+}
+
+void audio_system_t::play_3d_within(assets::sound_asset sound, const linalg::vec3f& position,
+                                    float max_distance, float volume)
+{
+  start_3d_voice(impl, attenuation, sound, position, max_distance, volume);
 }
 
 void audio_system_t::play_2d(assets::sound_asset sound, float volume)

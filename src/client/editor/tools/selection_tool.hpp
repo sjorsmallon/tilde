@@ -190,6 +190,21 @@ private:
   void cancel_paste();
   void commit_paste(editor_context_t& ctx);
 
+  // The group the next paste of this clipboard becomes, named after the prefab
+  // it was loaded from; empty for a copied selection, which pastes loose.
+  std::string clipboard_group_name;
+
+  // --- Groups ------------------------------------------------------------------
+  //
+  // A group is map data (map_group.hpp); what the tool adds is that a pick on a
+  // member takes the members, and the three edits, each one transaction:
+  // Ctrl+G groups the selection, Ctrl+Shift+G dissolves every group the
+  // selection touches, and the outliner's Ungroup names one group.
+  void group_selection(editor_context_t& ctx);
+  void ungroup_selection(editor_context_t& ctx);
+  void ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid);
+  void select_group(editor_context_t& ctx, shared::entity_uid_t group_uid);
+
   // Arms the pick for the next group of the stamp's unbound rows, selecting
   // that group's sender so the panel being filled is the one on screen. Does
   // nothing when none are queued. Called after a stamp and after each resolve.

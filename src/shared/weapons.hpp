@@ -18,6 +18,50 @@ enum class hit_effect_t : uint8_t
   Swap,
 };
 
+// What the RIGHT mouse button does on a weapon. Zoom is the sniper's and only
+// the sniper's: the client toggles its FOV off this and nothing else, so a
+// knife or a rocket launcher no longer scopes.
+enum class secondary_fire_t : uint8_t
+{
+  None,
+  Zoom,
+  Self_Impulse,
+};
+
+// Add joins the impulse to the velocity the player already has; Set REPLACES
+// it, so the outcome is the same whatever the player was doing at the press.
+enum class impulse_mode_t : uint8_t
+{
+  Add,
+  Set,
+};
+
+// Speed along the AIM at the moment of the press, and speed straight up. Two
+// numbers rather than one direction because the two abilities this exists for
+// want opposite halves of it: a Godspeed-shaped dash is aim with a little lift,
+// an Elevate-shaped launch is up with none. The lift is not decoration on a
+// dash either -- a purely horizontal shove taken while grounded is most of the
+// way eaten by ground friction before it is felt.
+//
+// Under Add the upward half is applied like a jump (it cancels a fall rather
+// than summing with it) and the aim half is added, so a dash off a ledge is a
+// dash, not a dash minus however long you had been falling.
+struct self_impulse_t
+{
+  impulse_mode_t mode;
+  float          along_aim_speed;
+  float          upward_speed;
+};
+
+// Which button the impulse came off. Primary is the trigger, Secondary the
+// right mouse button; each reads its own row half and both spend the one
+// movement cooldown.
+enum class fire_trigger_t : uint8_t
+{
+  Primary,
+  Secondary,
+};
+
 // IDENTITY lives in entities.def (`Weapon`, `Fire_Resolution`); STATS live here.
 //
 // The split is deliberate. `Weapon` is what rides the wire -- it is the type of
@@ -87,23 +131,18 @@ struct weapon_definition_t
   hit_effect_t          hit_effect;
 
   // --- Fire_Resolution::Self_Impulse only; zero on every other row ---
-  //
-  // Speed added along the AIM at the moment of the press, and speed added
-  // straight up. Two numbers rather than one direction because the two abilities
-  // this axis exists for want opposite halves of it: a Godspeed-shaped dash is
-  // aim with a little lift, an Elevate-shaped launch is up with none. The lift
-  // is not decoration on a dash either -- a purely horizontal shove taken while
-  // grounded is most of the way eaten by ground friction before it is felt.
-  //
-  // The upward half is applied like a jump (it cancels a fall rather than
-  // summing with it), the aim half is added. So a dash off a ledge is a dash,
-  // not a dash minus however long you had been falling.
-  float                 self_impulse_along_aim_speed;
-  float                 self_impulse_upward_speed;
-  // Seconds before the impulse may be taken again. THE gate -- see
+  self_impulse_t        self_impulse;
+  // Seconds before EITHER impulse may be taken again. THE gate -- see
   // try_apply_self_impulse and the static_assert below for why it is not
-  // fire_interval_seconds.
+  // fire_interval_seconds. Shared by the primary and the secondary impulse,
+  // because Movement carries one countdown and a second one is a second thing
+  // the replay has to restart.
   float                 self_impulse_cooldown_seconds;
+
+  // What the right mouse button does on this row, and the impulse it fires
+  // when that is Self_Impulse (zero otherwise).
+  secondary_fire_t      secondary_fire;
+  self_impulse_t        secondary_self_impulse;
 
   // WHERE this weapon is held when granted. A property of the weapon, so
   // "a scout is a primary" is written once here rather than at every site that
@@ -143,6 +182,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.7f,
      .fire_resolution       = entities::Fire_Resolution::Hitscan,
      .leaves_bullet_impact  = true,
+     .secondary_fire        = secondary_fire_t::Zoom,
      .slot                  = entities::Inventory_Slot::Primary},
     {.weapon               = entities::Weapon::Rocket_Launcher,
      .display_name          = "Rocket Launcher",
@@ -175,9 +215,16 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds       = 0.f,
      .fire_resolution               = entities::Fire_Resolution::Self_Impulse,
      .leaves_bullet_impact          = false,
-     .self_impulse_along_aim_speed  = 900.f,
-     .self_impulse_upward_speed     = 150.f,
+     .self_impulse                  = {.mode            = impulse_mode_t::Add,
+                                       .along_aim_speed = 900.f,
+                                       .upward_speed    = 150.f},
      .self_impulse_cooldown_seconds = 1.5f,
+     // The right mouse button is the same dash with the velocity REPLACED
+     // rather than added, so the two can be felt side by side on one key each.
+     .secondary_fire                = secondary_fire_t::Self_Impulse,
+     .secondary_self_impulse        = {.mode            = impulse_mode_t::Set,
+                                       .along_aim_speed = 900.f,
+                                       .upward_speed    = 0.f},
      .slot                          = entities::Inventory_Slot::Utility_1},
     {.weapon                        = entities::Weapon::Swapper,
      .display_name                  = "Swapper",
@@ -233,11 +280,22 @@ constexpr bool self_impulse_rows_are_gated_only_by_movement()
 {
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
-    if (definition.fire_resolution != entities::Fire_Resolution::Self_Impulse)
+    const bool primary_is_impulse =
+        definition.fire_resolution == entities::Fire_Resolution::Self_Impulse;
+    const bool secondary_is_impulse =
+        definition.secondary_fire == secondary_fire_t::Self_Impulse;
+
+    if (!primary_is_impulse && !secondary_is_impulse)
       continue;
 
-    if (definition.fire_interval_seconds != 0.f || definition.deploy_duration_seconds != 0.f ||
-        definition.magazine_size != 0 || definition.self_impulse_cooldown_seconds <= 0.f)
+    if (definition.self_impulse_cooldown_seconds <= 0.f)
+      return false;
+
+    // The secondary never passes through the shot clocks, so only a primary
+    // impulse has weapon-side clocks that could stand beside the movement one.
+    if (primary_is_impulse &&
+        (definition.fire_interval_seconds != 0.f || definition.deploy_duration_seconds != 0.f ||
+         definition.magazine_size != 0))
       return false;
   }
   return true;
@@ -245,10 +303,11 @@ constexpr bool self_impulse_rows_are_gated_only_by_movement()
 
 static_assert(self_impulse_rows_are_gated_only_by_movement(),
               "a Fire_Resolution::Self_Impulse row must carry zero fire_interval_seconds, "
-              "zero deploy_duration_seconds and no magazine, and a positive "
-              "self_impulse_cooldown_seconds: its only gate is "
-              "Movement::seconds_until_impulse_ready, which is the only one the client can "
-              "replay. A weapon-side clock beside it is a second gate the client cannot see.");
+              "zero deploy_duration_seconds and no magazine, and any row firing a "
+              "self-impulse on either button a positive self_impulse_cooldown_seconds: the "
+              "only gate is Movement::seconds_until_impulse_ready, which is the only one the "
+              "client can replay. A weapon-side clock beside it is a second gate the client "
+              "cannot see.");
 
 constexpr bool swap_rows_are_hitscan()
 {
@@ -289,12 +348,30 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 // `aim_direction` must be normalized; it is the step's view direction, so the
 // dash goes where the player was looking at the press rather than wherever the
 // mouse finished the tick.
+//
+// The TRIGGER picks the row half: Primary is a Fire_Resolution::Self_Impulse
+// row's own impulse, Secondary the one behind secondary_fire_t::Self_Impulse.
+// A button whose half is not an impulse is refused here rather than by the
+// caller, which is what lets every site call this off whatever is in the hand.
 [[nodiscard]] inline bool try_apply_self_impulse(const weapon_definition_t& weapon,
+                                                 fire_trigger_t trigger,
                                                  const vec3f& aim_direction,
                                                  entities::Movement& movement,
                                                  vec3f& velocity)
 {
-  if (weapon.fire_resolution != entities::Fire_Resolution::Self_Impulse)
+  const self_impulse_t* impulse = nullptr;
+  switch (trigger)
+  {
+  case fire_trigger_t::Primary:
+    if (weapon.fire_resolution == entities::Fire_Resolution::Self_Impulse)
+      impulse = &weapon.self_impulse;
+    break;
+  case fire_trigger_t::Secondary:
+    if (weapon.secondary_fire == secondary_fire_t::Self_Impulse)
+      impulse = &weapon.secondary_self_impulse;
+    break;
+  }
+  if (impulse == nullptr)
     return false;
 
   // Strictly greater than zero: the countdown is clamped at zero by
@@ -303,15 +380,19 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
   if (movement.seconds_until_impulse_ready > 0.f)
     return false;
 
-  velocity = velocity + aim_direction * weapon.self_impulse_along_aim_speed;
+  switch (impulse->mode)
+  {
+  case impulse_mode_t::Add:
+    velocity = velocity + aim_direction * impulse->along_aim_speed;
+    if (impulse->upward_speed > 0.f)
+      velocity.y = std::max(velocity.y, 0.f) + impulse->upward_speed;
+    break;
 
-  // Like a jump rather than like a sum: a fall in progress is cancelled, not
-  // subtracted from the launch. Without this a dash taken two seconds into a
-  // drop is a dash the player cannot feel, and how much of it survives depends
-  // on how long they had been falling -- which is not something an ability
-  // should vary on.
-  if (weapon.self_impulse_upward_speed > 0.f)
-    velocity.y = std::max(velocity.y, 0.f) + weapon.self_impulse_upward_speed;
+  case impulse_mode_t::Set:
+    velocity = aim_direction * impulse->along_aim_speed;
+    velocity.y += impulse->upward_speed;
+    break;
+  }
 
   movement.seconds_until_impulse_ready = weapon.self_impulse_cooldown_seconds;
   return true;

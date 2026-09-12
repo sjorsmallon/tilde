@@ -88,6 +88,12 @@ void shim_spot_light_entity_toggle_enabled(Entity& entity, const action_data_t& 
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
+void shim_sound_emitter_entity_play(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
+  play(self, self.playback, data.as_play(), context);
+}
+
 void shim_point_light_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Point_Light_Entity& self = *entity_as<Point_Light_Entity>(&entity);
@@ -198,6 +204,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
+    nullptr,   // Play
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -219,6 +226,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
+    nullptr,   // Play
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -237,6 +245,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
+    nullptr,   // Play
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -255,6 +264,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_trigger_volume_entity_enable,
     shim_trigger_volume_entity_disable,
     shim_trigger_volume_entity_toggle_enabled,
+    nullptr,   // Play
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -273,6 +283,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_sound_emitter_entity_enable,
     shim_sound_emitter_entity_disable,
     shim_sound_emitter_entity_toggle_enabled,
+    shim_sound_emitter_entity_play,
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -291,6 +302,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_point_light_entity_enable,
     shim_point_light_entity_disable,
     shim_point_light_entity_toggle_enabled,
+    nullptr,   // Play
     shim_point_light_entity_set_color,
     nullptr,   // Add
     nullptr,   // Reset
@@ -309,6 +321,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_spot_light_entity_enable,
     shim_spot_light_entity_disable,
     shim_spot_light_entity_toggle_enabled,
+    nullptr,   // Play
     shim_spot_light_entity_set_color,
     nullptr,   // Add
     nullptr,   // Reset
@@ -329,6 +342,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
+    nullptr,   // Play
     nullptr,   // Set_Color
     shim_logic_counter_entity_add,
     shim_logic_counter_entity_reset,
@@ -432,6 +446,23 @@ void toggle_enabled(Entity& entity, const Toggle_Enabled_Data& payload, input_co
 {
   if (!try_toggle_enabled(entity, payload, context))
     fatal_error("{} does not accept Toggle_Enabled", entity_info(entity.type).classname);
+}
+
+bool try_play(Entity& entity, const Play_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Play];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void play(Entity& entity, const Play_Data& payload, input_context_t& context)
+{
+  if (!try_play(entity, payload, context))
+    fatal_error("{} does not accept Play", entity_info(entity.type).classname);
 }
 
 bool try_set_color(Entity& entity, const Set_Color_Data& payload, input_context_t& context)

@@ -132,7 +132,9 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
       count_records(current.point_lights,
                     baseline ? &baseline->point_lights : nullptr) +
       count_records(current.spot_lights,
-                    baseline ? &baseline->spot_lights : nullptr);
+                    baseline ? &baseline->spot_lights : nullptr) +
+      count_records(current.sound_emitters,
+                    baseline ? &baseline->sound_emitters : nullptr);
 
   write_var_uint(writer, record_count);
 
@@ -147,6 +149,8 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
                 baseline ? &baseline->point_lights : nullptr);
   write_records(writer, current.spot_lights,
                 baseline ? &baseline->spot_lights : nullptr);
+  write_records(writer, current.sound_emitters,
+                baseline ? &baseline->sound_emitters : nullptr);
 }
 
 bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
@@ -163,6 +167,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.damageables    = baseline->damageables;
     out_frame.point_lights   = baseline->point_lights;
     out_frame.spot_lights    = baseline->spot_lights;
+    out_frame.sound_emitters = baseline->sound_emitters;
   }
   else
   {
@@ -173,6 +178,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.damageables.clear();
     out_frame.point_lights.clear();
     out_frame.spot_lights.clear();
+    out_frame.sound_emitters.clear();
   }
 
   const uint32_t record_count = read_var_uint(reader);
@@ -223,6 +229,11 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
           return false;
         continue;
 
+      case entities::entity_type::Sound_Emitter_Entity:
+        if (!apply_record(reader, out_frame.sound_emitters, uid, removed))
+          return false;
+        continue;
+
       // Everything below is a real entity type that is simply never
       // replicated: map-placed entities the client already has from its own
       // map load. Listed rather than folded into `default` so that adding a
@@ -234,7 +245,6 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       case entities::entity_type::Player_Spectate_Entity:
       case entities::entity_type::Particle_Emitter_Entity:
       case entities::entity_type::Trigger_Volume_Entity:
-      case entities::entity_type::Sound_Emitter_Entity:
       case entities::entity_type::Reflection_Volume_Entity:
       case entities::entity_type::Game_Rules_Entity:
       case entities::entity_type::Directional_Light_Entity:

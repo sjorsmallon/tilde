@@ -338,7 +338,12 @@ void set_server_map_reload_hook(server_map_reload_hook_t hook)
   g_server_map_reload_hook = hook;
 }
 
-// Internal accessor for tool_editor_state.cpp / play_state.cpp.
+// Internal accessors for tool_editor_state.cpp / play_state.cpp.
+bool server_map_reload_hook_is_installed()
+{
+  return g_server_map_reload_hook != nullptr;
+}
+
 bool invoke_server_map_reload_hook(const std::string &map_path)
 {
   if (!g_server_map_reload_hook)
