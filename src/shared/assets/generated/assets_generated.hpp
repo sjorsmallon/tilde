@@ -47,19 +47,22 @@ enum class texture_asset : uint16_t
   counter = 2,
   directional_light = 3,
   game_rules = 4,
-  point_light = 5,
-  spot_light = 6,
-  glasses = 7,
-  glasses_material = 8,
-  leet_hands = 9,
-  leet_hands_material = 10,
-  leet_skin = 11,
-  leet_skin_material = 12,
-  Smoke = 13,
-  dev_128x128 = 14,
+  hammer = 5,
+  point_light = 6,
+  spot_light = 7,
+  wall = 8,
+  wall_hammer = 9,
+  glasses = 10,
+  glasses_material = 11,
+  leet_hands = 12,
+  leet_hands_material = 13,
+  leet_skin = 14,
+  leet_skin_material = 15,
+  Smoke = 16,
+  dev_128x128 = 17,
 };
 
-constexpr uint32_t texture_asset_COUNT = 15;
+constexpr uint32_t texture_asset_COUNT = 18;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);

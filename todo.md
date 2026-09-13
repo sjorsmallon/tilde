@@ -13,6 +13,16 @@ tool action (`lightmap_pack`, `lightmap_compare direct|indirect|rays`), so a
 launch-and-drive script is keystrokes into the console. Raised 2026-09-06 off
 step 6 of the GPU bake.
 
+**Noclip exit is a console line, and that is the wrong shape.** `cl_noclip`
+going off puts the body under the camera by having the client EXECUTE
+`setpos x y z` through the console, so every exit leaves a line in the console
+scrollback beside the cvars the author actually typed, and the seam is a
+formatted string rather than a call. Not fixing now. The right shape is the
+one everything else on the C2S side uses: the position rides an existing
+message (a rider on `C2S_ClientInput`, or a dedicated message on the reliable
+stream) and the server applies it without a console in between; `setpos`
+itself can stay as the hand-typed verb. Raised 2026-09-12 off the first noclip.
+
 **Pack ORM inside `asset_pack`, and delete `src/tools/orm_pack.py`.** A
 material folder exported with `ao.png` / `roughness.png` / `metallic.png` and
 no `orm.png` today loads SILENTLY as occlusion 1, roughness 1, metallic 0, and
@@ -353,6 +363,17 @@ Team score, and teams on the scoreboard. Per-player kills/deaths replicate; the 
 Team assignment beyond "the smaller team." No switching, no locking, no picking. auto_assign_teams only says whether teams happen.
 After Game_Over, anything other than reloading the same map. Rotation, a vote, back to Warmup without a reload. 
 
+
+**DONE 2026-09-13**: `@predicted` is a class annotation in `entities.def`;
+replication is DERIVED (a type rides when one of its OWN fields is
+`@Networked`, through its components, the base's not counting), so there is
+no `@replicated` and the generator refuses one. `replicated_entity_types()` is
+emitted and pinned exactly by `entity_layout_test`; the snapshot frame is an
+`Entity_System` and the codec, the sender and the client's apply
+(`copy_networked_fields`) walk that list, so a replicated type needs no arm
+anywhere. The jump pad replicates its switch. The inert-leaf question in the
+item below is closed by the derivation: a `@Networked` leaf of a type's own IS
+what puts it on the wire, and only the base's three can now be inert.
 
 **Formalize `@Networked` across a component embedding.** Field flags are
 > declared on a component's own members — a component-typed field carries no
@@ -1099,7 +1120,9 @@ did not fix.
       like the others. Measure the BVH rebuild first: if it is cheap, keeping
       it is one fewer thing to get wrong.
 
-- [ ] **A speedrun timer that is actually accurate** (noted 2026-09-10). The
+- [ ] **A speedrun timer that is actually accurate** (noted 2026-09-10).
+      **`timer_def.md` is the plan** (2026-09-12): the tick-granular version
+      landed that day and steps 0-4 there are what is left. The
       run ends on `Touched` from `trigger_system`, which tests overlaps ONCE per
       tick after every sub-step has run -- so the finish is tick-granular,
       16.7 ms at 60 Hz, while the movement that reached the volume was resolved

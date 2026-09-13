@@ -20,8 +20,11 @@ class texture_asset texture_asset_t asset_types.hpp .png .tga
   counter resources/icons/counter.png
   directional_light resources/icons/directional_light.png
   game_rules resources/icons/game_rules.png
+  hammer resources/icons/hammer.png
   point_light resources/icons/point_light.png
   spot_light resources/icons/spot_light.png
+  wall resources/icons/wall.png
+  wall_hammer resources/icons/wall_hammer.png
   glasses resources/models/textures/glasses.png
   glasses_material resources/models/textures/glasses_material.png
   leet_hands resources/models/textures/leet_hands.png

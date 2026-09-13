@@ -59,7 +59,8 @@ void draw_cursor_target_marker(ImDrawList *overlay, ImVec2 mouse,
   if (target)
   {
     const ImVec2 at{target->x, target->y};
-    overlay->AddCircle(at, 10.0f, color, 0, 2.0f);
+    // Sized to ring the 44px entity icon rather than sit inside it.
+    overlay->AddCircle(at, 26.0f, color, 0, 2.0f);
     overlay->AddLine(mouse, at, (color & 0x00FFFFFFu) | 0xA0000000u, 1.5f);
   }
 
@@ -2146,13 +2147,32 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   // and picking the entity is the moment the author is asking. Magenta, the
   // entity's own colour, and bounds rather than hulls: this is "these ones",
   // not a second selection highlight.
+  //
+  // NOT draw_bounds_highlight, and the difference is the whole reason this was
+  // invisible when it was: that one draws the box exactly ON the object's own
+  // faces, depth-tested, so every edge either z-fights the surface it lies on or
+  // is hidden behind it. A hovered object survives that because the cursor is on
+  // it; a switched brush is routinely across the room and behind a wall, which
+  // is precisely when the author is asking which ones they are. So it is drawn
+  // THROUGH geometry and inflated off the surface -- the gizmo case the debug
+  // list's header already names.
   {
+    constexpr float OWNED_HIGHLIGHT_INFLATE = 1.0f;
+
     std::vector<shared::entity_uid_t> owned;
     for (shared::entity_uid_t uid : selected_uids)
     {
       collect_owned_geometry(ctx, uid, owned);
       for (shared::entity_uid_t owned_uid : owned)
-        draw_bounds_highlight(owned_uid, colors::magenta);
+      {
+        const shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, owned_uid);
+        draws.debug.box((bounds.min + bounds.max) * 0.5f,
+                        (bounds.max - bounds.min) * 0.5f +
+                            linalg::vec3{OWNED_HIGHLIGHT_INFLATE, OWNED_HIGHLIGHT_INFLATE,
+                                         OWNED_HIGHLIGHT_INFLATE},
+                        colors::magenta, renderer::fill_mode_t::wireframe, 0.f, 0.f,
+                        /*draw_when_occluded*/ true);
+      }
     }
   }
 

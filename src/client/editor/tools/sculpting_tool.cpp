@@ -4,7 +4,10 @@
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
 #include "../../../shared/log.hpp"
+#include "../../hud/announcement.hpp"
 #include "../transaction_system.hpp"
+#include <algorithm>
+#include <format>
 #include <cmath>
 
 namespace client
@@ -242,7 +245,109 @@ void Sculpting_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
-void Sculpting_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e) {}
+// Take the hovered object's half extents, keeping its centre, and push it as
+// one transaction -- the same two flavors commit_sculpt writes through.
+void Sculpting_Tool::apply_size_clipboard(editor_context_t& ctx,
+                                          shared::entity_uid_t uid)
+{
+  const std::optional<shared::aabb_t> box = shared::try_get_object_box(*ctx.map, uid);
+  if (!box)
+  {
+    log_error("sculpting tool: object {} has no box to resize", uid);
+    return;
+  }
+
+  linalg::vec3 half_extents = *size_clipboard;
+  for (int axis = 0; axis < 3; ++axis)
+    half_extents[axis] = std::max(half_extents[axis], editor::MIN_EXTENT);
+
+  entity_snapshot_t                       before_entity;
+  std::optional<shared::geometry_value_t> before_geometry;
+
+  if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
+    before_geometry = geometry->value;
+  else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
+    before_entity = snapshot_entity(entry->entity.get());
+  else
+  {
+    log_error("sculpting tool: uid {} is neither geometry nor an entity", uid);
+    return;
+  }
+
+  if (!shared::try_set_object_box(*ctx.map, uid, {box->center, half_extents}))
+  {
+    log_error("sculpting tool: object {} took a resize it cannot store", uid);
+    return;
+  }
+
+  transaction_t transaction;
+  if (before_geometry)
+  {
+    const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid);
+    if (!entry)
+    {
+      log_error("sculpting tool: geometry uid {} vanished mid-resize -- the "
+                "resize is not undoable",
+                uid);
+      return;
+    }
+    transaction.add_geometry_modified(uid, *before_geometry, entry->value);
+  }
+  else
+  {
+    auto *entry = ctx.map->find_by_uid(uid);
+    if (!entry || !entry->entity)
+    {
+      log_error("sculpting tool: entity uid {} vanished mid-resize -- the resize "
+                "is not undoable",
+                uid);
+      return;
+    }
+    transaction.add_modified_from_diff(uid, before_entity, entry->entity.get());
+  }
+
+  ctx.transaction_system.push(std::move(transaction));
+
+  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+}
+
+void Sculpting_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
+{
+  if (dragging || !ctx.map || hovered_uid == shared::invalid_entity_uid)
+    return;
+
+  switch (e.key)
+  {
+  case input::key_t::C:
+  {
+    const std::optional<shared::aabb_t> box =
+        shared::try_get_object_box(*ctx.map, hovered_uid);
+    if (!box)
+    {
+      log_error("sculpting tool: object {} has no box to sample", hovered_uid);
+      return;
+    }
+    size_clipboard = box->half_extents;
+    hud::set_announcement(std::format("Copied size {:.0f} x {:.0f} x {:.0f}",
+                                      box->half_extents.x * 2.0f,
+                                      box->half_extents.y * 2.0f,
+                                      box->half_extents.z * 2.0f));
+    return;
+  }
+
+  case input::key_t::V:
+  {
+    if (!size_clipboard)
+      return;
+    apply_size_clipboard(ctx, hovered_uid);
+    return;
+  }
+
+  default:
+    return;
+  }
+}
 
 void Sculpting_Tool::on_draw_overlay(editor_context_t& ctx,
                                      pass_builder_t &draws)

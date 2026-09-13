@@ -41,7 +41,12 @@ private:
   entity_snapshot_t sculpt_start_entity;
   std::optional<shared::geometry_value_t> sculpt_start_geometry;
 
+  // The SHAPE alone -- a sampled centre would teleport the target onto the
+  // object it was copied from.
+  std::optional<linalg::vec3> size_clipboard;
+
   void commit_sculpt(editor_context_t& ctx);
+  void apply_size_clipboard(editor_context_t& ctx, shared::entity_uid_t uid);
 };
 
 } // namespace client

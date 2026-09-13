@@ -510,11 +510,9 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
               .color        = colors::white,
               .icon         = assets::texture_asset::counter};
 
-    // A POINT, not the bound of the brushes it owns: the brushes are world
-    // geometry with a pointer, they are picked and dragged as themselves, and
-    // what says which ones belong to this entity is the selection highlight.
+
     case entities::entity_type::Brush_Entity:
-      return {.half_extents = point_pick, .color = colors::magenta};
+      return {.half_extents = point_pick, .color = colors::white, .icon = assets::texture_asset::wall_hammer};
 
     case entities::entity_type::Invalid:
       break;
