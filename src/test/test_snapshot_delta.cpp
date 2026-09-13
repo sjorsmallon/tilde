@@ -719,6 +719,38 @@ int main()
   }
 
   {
+    std::cout << "  [Subtest] A switched jump pad rides the wire..." << std::endl;
+
+    // @predicted: the client's player_move reads the switch, so a pad the
+    // server switched off has to arrive off. launch_speed is @Editable only
+    // and stays the client's own.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Jump_Pad_Entity& pad = server_frame.jump_pads[90];
+    pad.entity_id                  = 90;
+    pad.switch_state.value         = true;
+    pad.launch_speed               = 1234.f;
+
+    network::snapshot_frame_t client_frame;
+    transmit_snapshot(server_frame, nullptr, client_frame);
+    assert(client_frame.jump_pads.at(90).switch_state.value);
+    assert(client_frame.jump_pads.at(90).launch_speed == entities::Jump_Pad_Entity{}.launch_speed);
+
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.tick                          = 2;
+    server_frame.jump_pads[90].switch_state.value = false;
+
+    network::snapshot_frame_t after_switch;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, &acked, after_switch, &record_count);
+    assert(record_count == 1);
+    assert(!after_switch.jump_pads.at(90).switch_state.value);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
     std::cout << "  [Subtest] A played sound emitter rides the wire..." << std::endl;
 
     // The third map-placed receiver. What rides is the switch and the play

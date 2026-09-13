@@ -91,6 +91,18 @@ constexpr uint32_t Inventory_Slot_COUNT = 5;
 const char* to_string(Inventory_Slot value);
 template <> std::optional<Inventory_Slot> try_from_string<Inventory_Slot>(std::string_view text);
 
+enum class Damage_Type : uint8_t
+{
+  Normal = 0,
+  Orange = 1,
+  Teal = 2,
+};
+
+constexpr uint32_t Damage_Type_COUNT = 3;
+
+const char* to_string(Damage_Type value);
+template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_view text);
+
 enum class Shader_Type : uint8_t
 {
   Lit = 0,
@@ -113,6 +125,18 @@ constexpr uint32_t Shape_Kind_COUNT = 2;
 const char* to_string(Shape_Kind value);
 template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text);
 
+enum class Light_Mode : uint8_t
+{
+  Baked = 0,
+  Mixed = 1,
+  Dynamic = 2,
+};
+
+constexpr uint32_t Light_Mode_COUNT = 3;
+
+const char* to_string(Light_Mode value);
+template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_view text);
+
 enum class Aim_Pose : uint8_t
 {
   Forward = 0,
@@ -127,30 +151,6 @@ constexpr uint32_t Aim_Pose_COUNT = 5;
 const char* to_string(Aim_Pose value);
 template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view text);
 
-enum class Light_Mode : uint8_t
-{
-  Baked = 0,
-  Mixed = 1,
-  Dynamic = 2,
-};
-
-constexpr uint32_t Light_Mode_COUNT = 3;
-
-const char* to_string(Light_Mode value);
-template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_view text);
-
-enum class Damage_Type : uint8_t
-{
-  Normal = 0,
-  Orange = 1,
-  Teal = 2,
-};
-
-constexpr uint32_t Damage_Type_COUNT = 3;
-
-const char* to_string(Damage_Type value);
-template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_view text);
-
 enum class enum_type : uint16_t
 {
   Spawn_Type = 0,
@@ -158,11 +158,11 @@ enum class enum_type : uint16_t
   Weapon = 2,
   Fire_Resolution = 3,
   Inventory_Slot = 4,
-  Shader_Type = 5,
-  Shape_Kind = 6,
-  Aim_Pose = 7,
+  Damage_Type = 5,
+  Shader_Type = 6,
+  Shape_Kind = 7,
   Light_Mode = 8,
-  Damage_Type = 9,
+  Aim_Pose = 9,
 };
 
 constexpr uint32_t ENUM_TYPE_COUNT = 10;
@@ -175,23 +175,23 @@ extern const enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT];
 enum class entity_type : uint16_t
 {
   Invalid = 0,
-  Reflection_Volume_Entity = 1,
-  Player_Spawn_Entity = 2,
-  Player_Spectate_Entity = 3,
-  Player_Entity = 4,
-  Weapon_Entity = 5,
-  Rocket_Entity = 6,
-  Particle_Emitter_Entity = 7,
-  Game_Rules_Entity = 8,
-  Damageable_Entity = 9,
-  Trigger_Volume_Entity = 10,
-  Sound_Emitter_Entity = 11,
-  Point_Light_Entity = 12,
-  Spot_Light_Entity = 13,
-  Directional_Light_Entity = 14,
-  Physics_Body_Entity = 15,
-  Logic_Counter_Entity = 16,
-  Jump_Pad_Entity = 17,
+  Player_Spawn_Entity = 1,
+  Player_Spectate_Entity = 2,
+  Player_Entity = 3,
+  Weapon_Entity = 4,
+  Rocket_Entity = 5,
+  Physics_Body_Entity = 6,
+  Damageable_Entity = 7,
+  Particle_Emitter_Entity = 8,
+  Sound_Emitter_Entity = 9,
+  Point_Light_Entity = 10,
+  Spot_Light_Entity = 11,
+  Directional_Light_Entity = 12,
+  Trigger_Volume_Entity = 13,
+  Jump_Pad_Entity = 14,
+  Reflection_Volume_Entity = 15,
+  Game_Rules_Entity = 16,
+  Logic_Counter_Entity = 17,
 };
 
 // Not a member of the enum above, so `switch` over an
@@ -255,6 +255,12 @@ template <> struct enum_traits<entities::Inventory_Slot>
   static constexpr entities::enum_type type = entities::enum_type::Inventory_Slot;
 };
 
+template <> struct enum_traits<entities::Damage_Type>
+{
+  static constexpr uint32_t count = entities::Damage_Type_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Damage_Type;
+};
+
 template <> struct enum_traits<entities::Shader_Type>
 {
   static constexpr uint32_t count = entities::Shader_Type_COUNT;
@@ -267,22 +273,16 @@ template <> struct enum_traits<entities::Shape_Kind>
   static constexpr entities::enum_type type = entities::enum_type::Shape_Kind;
 };
 
-template <> struct enum_traits<entities::Aim_Pose>
-{
-  static constexpr uint32_t count = entities::Aim_Pose_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
-};
-
 template <> struct enum_traits<entities::Light_Mode>
 {
   static constexpr uint32_t count = entities::Light_Mode_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Light_Mode;
 };
 
-template <> struct enum_traits<entities::Damage_Type>
+template <> struct enum_traits<entities::Aim_Pose>
 {
-  static constexpr uint32_t count = entities::Damage_Type_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Damage_Type;
+  static constexpr uint32_t count = entities::Aim_Pose_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
 };
 
 template <> struct enum_traits<entities::enum_type>
@@ -337,8 +337,8 @@ struct Counter
 {
   static constexpr component_type static_component = component_type::Counter;
 
-  uint32_t value = 0;
-  uint32_t limit = 0;
+  int32_t value = 0;
+  int32_t limit = 0;
 };
 
 struct Material
@@ -347,7 +347,6 @@ struct Material
 
   Shader_Type shader_type = Shader_Type::Lit;
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
-  float roughness = 0.5f;
 };
 
 struct Render
@@ -383,6 +382,7 @@ struct Movement
   float time_since_grounded_seconds = {};
   bool jump_was_held = {};
   float seconds_until_impulse_ready = {};
+  uint32_t pad_contact_uid = {};
 };
 
 struct Inventory

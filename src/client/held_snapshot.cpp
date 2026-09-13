@@ -170,6 +170,22 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   for (const auto& [uid, light] : decoded.frame.point_lights) apply_light(light, "point");
   for (const auto& [uid, light] : decoded.frame.spot_lights) apply_light(light, "spot");
 
+  // A jump pad is @predicted: the switch is the one thing about it the client
+  // cannot know from its own map load, and player_move reads it.
+  for (const auto& [uid, pad] : decoded.frame.jump_pads)
+  {
+    entities::Jump_Pad_Entity* local =
+        context.world.session.entity_system.get<entities::Jump_Pad_Entity>(uid);
+    if (local == nullptr)
+    {
+      log_error("snapshot names jump pad uid {}, which this client's map does not have -- the "
+                "two sides disagree about what is in the level",
+                uid);
+      continue;
+    }
+    local->switch_state.value = pad.switch_state.value;
+  }
+
   // A sound emitter is the third receiver of that shape. Its play counter is
   // an EDGE, exactly as a damageable's health crossing zero is: a change means
   // Play ran on the server, and the client plays once per change. The switch

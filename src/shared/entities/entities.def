@@ -1,5 +1,3 @@
-
-
 Fully_Serializable :: [@Networked, @Editable]
 
 Entity :: base {
@@ -9,25 +7,99 @@ Entity :: base {
     name:        string<32>             @Editable
 }
 
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
 Spawn_Type :: enum { Human, Bot }
-Team_Allegiance :: enum {Red, Blu, Free_For_All}
+Team_Allegiance :: enum { Red, Blu, Free_For_All }
 
-Weapon :: enum {Knife, Scout, Rocket_Launcher, Dash, Swapper}
+Weapon :: enum { Knife, Scout, Rocket_Launcher, Dash, Swapper }
 Fire_Resolution :: enum { Hitscan, Projectile, Self_Impulse }
-
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
+
+//@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
+Damage_Type :: enum { Normal, Orange, Teal }
 
 Shader_Type :: enum { Lit, Unlit }
 Shape_Kind :: enum { Sphere, Box }
+Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
-Reflection_Volume_Entity :: entity {
-    volume: Box_Volume = { half_extents = {256, 256, 256} }
-}
+// ---------------------------------------------------------------------------
+// COMPONENTS
+// ---------------------------------------------------------------------------
+
 Box_Volume :: component {
     position: v3 = {0, 0, 0}            @Editable
     half_extents: v3 = {1, 1, 1}        @Editable
+}
+
+Enabled :: component {
+    value: bool = true                  @Fully_Serializable
+}
+
+Playback :: component {
+    play_count: u32 = 0                 @Networked
+}
+
+Health :: component {
+    current_health: i32 = 100   @Fully_Serializable
+    max_health: i32 = 100       @Editable
+}
+
+Counter :: component {
+    value: i32 = 0                  @Editable
+    limit: i32 = 0                  @Editable
+}
+
+Material :: component {
+    shader_type: Shader_Type = .Lit     @Fully_Serializable
+    color:       v3 = {1, 1, 1}         @Fully_Serializable
+}
+
+Render :: component {
+    mesh:         mesh_asset = .Missing @Fully_Serializable
+    visible:      bool = true           @Fully_Serializable
+    is_wireframe: bool = false          @Fully_Serializable
+    offset:       v3 = {0, 0, 0}        @Fully_Serializable
+    scale:        v3 = {1, 1, 1}        @Fully_Serializable
+    rotation:     quat = {0, 0, 0, 1}   @Fully_Serializable
+    material:     Material
+}
+
+Light :: component {
+    color:     v3 = {1, 1, 1}       @Fully_Serializable
+
+    // irradiance it delivers at one meter.
+    intensity: f32 = 1.0            @Editable
+    mode:      Light_Mode = .Baked  @Editable
+
+    // this is _NOT_ the reach of the light: this is if you want a sun.
+    source_radius: f32 = 0.0        @Editable
+    casts_shadows: bool = true      @Editable
+}
+
+Movement :: component {
+    air_jumps_used: u8                  @Networked
+    is_grounded: bool                   @Networked
+    time_since_grounded_seconds: f32    @Networked
+    jump_was_held: bool                 @Networked
+    seconds_until_impulse_ready: f32    @Networked
+
+    // Quake 3's jumppad_ent: WHICH movement volume last launched us, so a pad
+    // fires once per contact rather than every step you are inside it. A uid
+    // and not a bool, because a bool says "I am on a pad" and the uid says
+    // which -- so stepping from one pad straight onto another fires twice, and
+    // the clear condition is checkable against the volume list.
+    pad_contact_uid: u32                @Networked
+}
+
+Inventory :: component {
+    weapons:              u32[Inventory_Slot]      @Networked
+    active_slot:          Inventory_Slot = .Melee  @Networked
+    deploy_complete_time: u64
 }
 
 // ---------------------------------------------------------------------------
@@ -44,31 +116,6 @@ Box_Volume :: component {
 // A verb belongs to exactly one trait, and the two kinds share one namespace:
 // each emits a `<Name>_Data` payload struct.
 
-Enabled :: component {
-    value: bool = true                  @Fully_Serializable
-}
-
-// A one-shot is an EDGE, not a level: Play bumps this and the client plays once
-// per change (the last_fire_tick change detector). Never authored, so it is
-// not @Editable; the map's copy is always zero.
-Playback :: component {
-    play_count: u32 = 0                 @Networked
-}
-
-Health:: component 
-{
-    current_health: i32 = 100   @Fully_Serializable
-    max_health: i32 = 100       @Editable
-}
-
-Counter:: component
-{
-    value: u32 = 0                  @Editable
-    limit: u32 = 0                  @Editable
-}
-
-Usable :: trait { accepts Use() }
-
 Switchable :: trait requires Enabled {
     accepts Enable(), Disable(), Toggle_Enabled()
 }
@@ -82,17 +129,11 @@ Colorable :: trait {
     emits   Color_Changed(color: v3)
 }
 
-Counting:: trait requires Counter {
+Counting :: trait requires Counter {
     accepts Add(amount: i32), Reset()
     emits Limit_Reached()
 }
 
-
-// `by` names everything that can TRULY set this off, which is what makes the
-// list widenable: the load check admits a row SOME `by` type accepts, so
-// adding a type here refuses no wiring that already loads. A crate is not
-// Mortal, and a volume wired to kill whoever touched it simply logs a miss
-// when one rolls in. entity_io_def.md ss6.
 Touchable :: trait {
     emits Touched(), Left()
     by    Player_Entity, Physics_Body_Entity
@@ -121,67 +162,28 @@ Objective :: trait {
     accepts Complete_Level()
 }
 
-Material :: component {
-    shader_type: Shader_Type = .Lit     @Fully_Serializable
-    color:       v3 = {1, 1, 1}         @Fully_Serializable
-    roughness:   f32 = 0.5              @Fully_Serializable
-}
-
-Render :: component {
-    mesh:         mesh_asset = .Missing @Fully_Serializable
-    visible:      bool = true           @Fully_Serializable
-    is_wireframe: bool = false          @Fully_Serializable
-    offset:       v3 = {0, 0, 0}        @Fully_Serializable
-    scale:        v3 = {1, 1, 1}        @Fully_Serializable
-    rotation:     quat = {0, 0, 0, 1}   @Fully_Serializable
-    material:     Material
-}
-
-Light_Mode :: enum { Baked, Mixed, Dynamic }
-Light :: component {
-    // Networked because Colorable's Set_Color writes it at runtime, and a light
-    // is map-placed: the client holds one it loaded itself, so the wire is the
-    // only way the change reaches it (entity_io_def.md ss11 step 6).
-    color:     v3 = {1, 1, 1}       @Fully_Serializable
-
-    // irradiance it delivers at one meter.
-    intensity: f32 = 1.0            @Editable
-    mode:      Light_Mode = .Baked  @Editable
-
-    // this is _NOT_ the reach of the light: this is if you want a sun.
-    source_radius: f32 = 0.0        @Editable
-    casts_shadows: bool = true      @Editable
-}
-
-Movement :: component {
-    air_jumps_used: u8                  @Networked
-    is_grounded: bool                   @Networked
-    time_since_grounded_seconds: f32    @Networked
-    jump_was_held: bool                 @Networked
-    seconds_until_impulse_ready: f32    @Networked
-}
-
-Inventory :: component {
-    weapons:              u32[Inventory_Slot]      @Networked
-    active_slot:          Inventory_Slot = .Melee  @Networked
-    deploy_complete_time: u64
-}
+// ---------------------------------------------------------------------------
+// ENTITIES -- declaration order IS entity_type order: the placement menu, the
+// hand-written switches and SCHEMA_HASH all follow it.
+// @replicated: rides the snapshot. @predicted: player_move reads it on both
+// sides, so it must be @replicated (generalization_def.md ss6).
+// ---------------------------------------------------------------------------
 
 Player_Spawn_Entity :: entity {
     spawn_type: Spawn_Type = .Human     @Editable
-    team_allegiance: Team_Allegiance = .Free_For_All @Editable 
+    team_allegiance: Team_Allegiance = .Free_For_All @Editable
 }
 
-Player_Spectate_Entity:: entity {
+Player_Spectate_Entity :: entity {
 }
 
-Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
+Player_Entity :: entity @runtime_only @replicated is Mortal, Mobile, Armable, Respawnable {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
     body_yaw:          f32              @Networked
 
-    health:            Health           
+    health:            Health
 
     death_tick:        u32              @Networked
     last_fire_tick:    u32              @Networked
@@ -206,7 +208,6 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
 
     last_hit_tick:         u32          @Networked
     last_hit_was_headshot: bool         @Networked
-
 
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
@@ -241,12 +242,9 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     team_allegiance: Team_Allegiance = .Free_For_All @Networked
 }
 
-//@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
-Damage_Type :: enum {Normal, Orange, Teal}
-
-Weapon_Entity :: entity {
+Weapon_Entity :: entity @replicated {
     ammo:             i32               @Networked
-    weapon_id:        Weapon            @Networked
+    weapon_id:        Weapon            @Fully_Serializable
     // Null owner means the weapon lies in the world as a physics body, waiting to be picked up.
     owner_uid:        u32               @Networked
     next_fire_time:   u64
@@ -255,7 +253,7 @@ Weapon_Entity :: entity {
     render:           Render = { mesh = .Box }
 }
 
-Rocket_Entity :: entity @runtime_only {
+Rocket_Entity :: entity @runtime_only @replicated {
     velocity:        v3                 @Networked
     lifetime: f32 = 5.0
     damage_amount: f32 = 50.0
@@ -264,6 +262,30 @@ Rocket_Entity :: entity @runtime_only {
     owner_id:        u32
     collision_radius: f32 = 12.0        @Networked
     render:          Render
+}
+
+// Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
+// commands), which is why its Render component has to be @Networked while its
+// own configuration does not: play_state.cpp draws a body from
+// body.position / body.orientation / body.render and reads nothing else off it.
+Physics_Body_Entity :: entity @replicated {
+    // Jolt's shape and the editor's size box. Server-side simulation input;
+    // the visual size rides in render.scale, which the spawn path sets from
+    // the same extents.
+    shape:    Shape_Kind = .Box         @Editable
+    size:     v3                        @Editable
+    // Kept @Networked for the interpolation item in todo.md: bodies currently
+    // snap to each snapshot, and velocity is what a lerp/extrapolate needs.
+    velocity: v3                        @Networked
+    mass:     f32 = 10.0                @Editable
+    render:   Render
+}
+
+Damageable_Entity :: entity @replicated is Mortal {
+    health: Health
+    hitbox_half_extents: v3 = {16, 32, 16}   @Editable
+    weakness: Damage_Type = .Orange          @Editable
+    render:            Render
 }
 
 Particle_Emitter_Entity :: entity {
@@ -285,24 +307,6 @@ Particle_Emitter_Entity :: entity {
     color_end:          v3 = {0.5, 0.5, 0.5}  @Editable
     alpha_start:        f32 = 0.8             @Editable
     alpha_end:          f32 = 0.0             @Editable
-    emitter_lifetime:   f32 = 0.0             @Editable
-    parent_entity_id:   u32 = 0
-}
-
-
-Game_Rules_Entity :: entity is Objective {
-}
-
-Damageable_Entity :: entity is Mortal {
-    health: Health                         
-    hitbox_half_extents: v3 = {16, 32, 16}   @Editable
-    weakness: Damage_Type = .Orange          @Editable
-    render:            Render
-}
-
-Trigger_Volume_Entity :: entity is Switchable, Touchable {
-    switch_state:      Enabled
-    volume:            Box_Volume = { half_extents = {64, 64, 64} }
 }
 
 // The third map-placed receiver after the two lights, and the ONE place a
@@ -312,7 +316,7 @@ Trigger_Volume_Entity :: entity is Switchable, Touchable {
 // everyone's ears -- an announcer, music -- never one player's; that is a
 // state edge on the player, not an emitter. Loops are NOT built yet: the
 // client warns once and stays silent, hence the default is a one-shot.
-Sound_Emitter_Entity :: entity is Switchable, Playable {
+Sound_Emitter_Entity :: entity @replicated is Switchable, Playable {
     switch_state: Enabled
     playback:     Playback
     sound:        sound_asset          @Editable
@@ -322,7 +326,7 @@ Sound_Emitter_Entity :: entity is Switchable, Playable {
     range:        f32 = 1024.0         @Editable
 }
 
-Point_Light_Entity :: entity is Colorable, Switchable {
+Point_Light_Entity :: entity @replicated is Colorable, Switchable {
     switch_state:      Enabled
     light: Light
     // Where the falloff reaches zero, in engine units -- 1 unit = 1 inch, the
@@ -336,7 +340,7 @@ Point_Light_Entity :: entity is Colorable, Switchable {
     range: f32 = 256.0                  @Editable
 }
 
-Spot_Light_Entity :: entity is Colorable, Switchable {
+Spot_Light_Entity :: entity @replicated is Colorable, Switchable {
     switch_state:      Enabled
     light:         Light
     // 512 units = 42 feet (13m): a beam down a corridor rather than a room.
@@ -366,30 +370,25 @@ Directional_Light_Entity :: entity {
     angular_diameter_degrees: f32 = 0.0     @Editable
 }
 
-// Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
-// commands), which is why its Render component has to be @Networked while its
-// own configuration does not: play_state.cpp draws a body from
-// body.position / body.orientation / body.render and reads nothing else off it.
-Physics_Body_Entity :: entity {
-    // Jolt's shape and the editor's size box. Server-side simulation input;
-    // the visual size rides in render.scale, which the spawn path sets from
-    // the same extents.
-    shape:    Shape_Kind = .Box         @Editable
-    size:     v3                        @Editable
-    // Kept @Networked for the interpolation item in todo.md: bodies currently
-    // snap to each snapshot, and velocity is what a lerp/extrapolate needs.
-    velocity: v3                        @Networked
-    mass:     f32 = 10.0                @Editable
-    render:   Render
+Trigger_Volume_Entity :: entity is Switchable, Touchable {
+    switch_state:      Enabled
+    volume:            Box_Volume = { half_extents = {64, 64, 64} }
 }
 
-Logic_Counter_Entity :: entity is Counting {
-    counter: Counter 
-}
-
-Jump_Pad_Entity :: entity is Switchable, Touchable {
+Jump_Pad_Entity :: entity @replicated @predicted is Switchable, Touchable {
     switch_state:  Enabled
     volume:        Box_Volume = { half_extents = {32, 8, 32} }
     launch_speed:  f32 = 900   @Editable
     render: Render = {mesh = .Duck}
+}
+
+Reflection_Volume_Entity :: entity {
+    volume: Box_Volume = { half_extents = {256, 256, 256} }
+}
+
+Game_Rules_Entity :: entity is Objective {
+}
+
+Logic_Counter_Entity :: entity is Counting {
+    counter: Counter
 }

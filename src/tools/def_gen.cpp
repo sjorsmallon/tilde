@@ -364,6 +364,8 @@ enum class_flags_t : uint32_t
 {
   CLASS_FLAG_NONE         = 0,
   CLASS_FLAG_RUNTIME_ONLY = 1 << 0,
+  CLASS_FLAG_REPLICATED   = 1 << 1,
+  CLASS_FLAG_PREDICTED    = 1 << 2,
 };
 
 enum type_kind_t : uint8_t
@@ -2309,15 +2311,25 @@ static void resolve_class_annotations(program_t* program)
     if (declaration->kind == DECLARATION_FLAGSET)
       continue;
 
+    const annotation_t* predicted_annotation = nullptr;
+
     for (int32_t offset = 0; offset < declaration->annotation_count; ++offset)
     {
       const annotation_t* annotation = &program->annotations[declaration->first_annotation + offset];
 
-      if (!string_view_matches(annotation->name, "runtime_only"))
+      uint32_t flag = CLASS_FLAG_NONE;
+      if (string_view_matches(annotation->name, "runtime_only"))
+        flag = CLASS_FLAG_RUNTIME_ONLY;
+      else if (string_view_matches(annotation->name, "replicated"))
+        flag = CLASS_FLAG_REPLICATED;
+      else if (string_view_matches(annotation->name, "predicted"))
+        flag = CLASS_FLAG_PREDICTED;
+
+      if (flag == CLASS_FLAG_NONE)
       {
         report_error(program, annotation->offset, annotation->line,
-                     "'@%.*s' is not a class annotation; the complete list is '@runtime_only' "
-                     "(entities)",
+                     "'@%.*s' is not a class annotation; the complete list is '@runtime_only', "
+                     "'@replicated', '@predicted' (entities)",
                      annotation->name.length, annotation->name.data);
         continue;
       }
@@ -2325,14 +2337,27 @@ static void resolve_class_annotations(program_t* program)
       if (declaration->kind != DECLARATION_ENTITY)
       {
         report_error(program, annotation->offset, annotation->line,
-                     "'@runtime_only' may only be applied to an entity, but '%.*s' is a %s",
+                     "'@%.*s' may only be applied to an entity, but '%.*s' is a %s",
+                     annotation->name.length, annotation->name.data,
                      declaration->name.length, declaration->name.data,
                      declaration_kind_name(declaration->kind));
         continue;
       }
 
-      declaration->class_flags |= CLASS_FLAG_RUNTIME_ONLY;
+      if (flag == CLASS_FLAG_PREDICTED)
+        predicted_annotation = annotation;
+      declaration->class_flags |= flag;
     }
+
+    // A predicted type is simulated by the client inside player_move, so its
+    // state has to reach the client: predicted without replicated is a pad
+    // the client thinks is on after the server switched it off.
+    if (predicted_annotation != nullptr &&
+        (declaration->class_flags & CLASS_FLAG_REPLICATED) == 0)
+      report_error(program, predicted_annotation->offset, predicted_annotation->line,
+                   "'%.*s' is @predicted but not @replicated -- the client simulates a predicted "
+                   "type inside player_move, so its runtime state must ride the snapshot",
+                   declaration->name.length, declaration->name.data);
   }
 }
 
@@ -4936,7 +4961,9 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "  uint32_t            size_in_bytes;\n");
   fprintf(out, "  uint32_t            alignment;\n");
   fprintf(out, "  uint32_t            component_mask;\n");
-  fprintf(out, "  bool                runtime_only;\n\n");
+  fprintf(out, "  bool                runtime_only;\n");
+  fprintf(out, "  bool                replicated;   // rides the snapshot\n");
+  fprintf(out, "  bool                predicted;    // player_move reads it, both sides\n\n");
   fprintf(out, "  // Writes a default constructed entity of this type into `memory`, which\n");
   fprintf(out, "  // must be at least size_in_bytes wide and `alignment` aligned. Allocates\n");
   fprintf(out, "  // nothing -- this is the type-erased hook for callers that already own\n");
@@ -4992,6 +5019,13 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "// @runtime_only, in declaration order. Contiguous and stable, so a\n");
   fprintf(out, "// placement menu can index it directly.\n");
   fprintf(out, "Span<const entity_type> placeable_entity_types();\n\n");
+
+  fprintf(out, "// Every entity type that rides the snapshot: the ones the .def marked\n");
+  fprintf(out, "// @replicated, in declaration order. entity_snapshot.cpp must hold a map, an\n");
+  fprintf(out, "// encode and a decode arm for each; entity_layout_test pins the set.\n");
+  fprintf(out, "Span<const entity_type> replicated_entity_types();\n\n");
+  fprintf(out, "inline bool entity_type_is_replicated(entity_type type) { return entity_info(type).replicated; }\n");
+  fprintf(out, "inline bool entity_type_is_predicted(entity_type type) { return entity_info(type).predicted; }\n\n");
 
   fprintf(out, "// Digest of every declaration in EVERY .def of the generator run --\n");
   fprintf(out, "// entity layout, the resolved asset manifest, and the cvar/command\n");
@@ -5190,6 +5224,15 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
     // of silent remap the handshake exists to catch.
     if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
       mix(declaration->base_name.data, declaration->base_name.length);
+
+    // @replicated decides which types ride the snapshot, so two builds that
+    // disagree on it misparse every packet.
+    if (declaration->kind == DECLARATION_ENTITY)
+    {
+      char buffer[32];
+      int  written = snprintf(buffer, sizeof(buffer), "cf:%u", declaration->class_flags);
+      mix(buffer, written);
+    }
 
     for (int32_t offset = 0; offset < declaration->enum_value_count; ++offset)
     {
@@ -5403,7 +5446,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
   // --- entity info table, indexed by tag, slot 0 is Invalid ---
   fprintf(out, "constexpr entity_type_info_t ENTITY_INFOS[] = {\n");
-  fprintf(out, "  {\"\", \"\", {}, 0, 0, 0, false, nullptr, nullptr}, // Invalid\n");
+  fprintf(out, "  {\"\", \"\", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid\n");
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -5426,12 +5469,14 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     fprintf(out, "\", \"");
     write_display_name(out, declaration->name);
     fprintf(out,
-            "\", {%.*s_FIELDS, %d}, (uint32_t)sizeof(%.*s), (uint32_t)alignof(%.*s), %uu, %s, "
+            "\", {%.*s_FIELDS, %d}, (uint32_t)sizeof(%.*s), (uint32_t)alignof(%.*s), %uu, %s, %s, %s, "
             "construct_%.*s, as_base_%.*s},\n",
             declaration->name.length, declaration->name.data, total_field_count,
             declaration->name.length, declaration->name.data, declaration->name.length,
             declaration->name.data, component_mask,
             (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY) ? "true" : "false",
+            (declaration->class_flags & CLASS_FLAG_REPLICATED) ? "true" : "false",
+            (declaration->class_flags & CLASS_FLAG_PREDICTED) ? "true" : "false",
             declaration->name.length, declaration->name.data, declaration->name.length,
             declaration->name.data);
   }
@@ -5507,6 +5552,37 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
         const declaration_t* declaration = &program->declarations[index];
         if (declaration->kind != DECLARATION_ENTITY ||
             (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY) != 0)
+          continue;
+        fprintf(out, "  entity_type::%.*s,\n", declaration->name.length, declaration->name.data);
+      }
+      fprintf(out, "};\n\n");
+    }
+  }
+
+  // --- replicated types: the set the snapshot codec has to cover ---
+  {
+    int32_t replicated_count = 0;
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      const declaration_t* declaration = &program->declarations[index];
+      if (declaration->kind == DECLARATION_ENTITY &&
+          (declaration->class_flags & CLASS_FLAG_REPLICATED) != 0)
+        ++replicated_count;
+    }
+
+    fprintf(out, "constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = %d;\n", replicated_count);
+    if (replicated_count == 0)
+    {
+      fprintf(out, "constexpr entity_type REPLICATED_ENTITY_TYPES[1] = {entity_type::Invalid};\n\n");
+    }
+    else
+    {
+      fprintf(out, "constexpr entity_type REPLICATED_ENTITY_TYPES[] = {\n");
+      for (int32_t index = 0; index < program->declaration_count; ++index)
+      {
+        const declaration_t* declaration = &program->declarations[index];
+        if (declaration->kind != DECLARATION_ENTITY ||
+            (declaration->class_flags & CLASS_FLAG_REPLICATED) == 0)
           continue;
         fprintf(out, "  entity_type::%.*s,\n", declaration->name.length, declaration->name.data);
       }
@@ -5621,6 +5697,9 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
 
   fprintf(out, "Span<const entity_type> placeable_entity_types()\n{\n");
   fprintf(out, "  return {PLACEABLE_ENTITY_TYPES, PLACEABLE_ENTITY_TYPE_COUNT};\n}\n\n");
+
+  fprintf(out, "Span<const entity_type> replicated_entity_types()\n{\n");
+  fprintf(out, "  return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};\n}\n\n");
 
   fprintf(out, "const uint32_t SCHEMA_HASH = 0x%08xu;\n\n", schema_hash);
 
@@ -7935,6 +8014,10 @@ static void dump_program(const program_t* program)
 
     if (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY)
       printf(" @runtime_only");
+    if (declaration->class_flags & CLASS_FLAG_REPLICATED)
+      printf(" @replicated");
+    if (declaration->class_flags & CLASS_FLAG_PREDICTED)
+      printf(" @predicted");
 
     print_name_reference_list(program, declaration->first_requirement,
                               declaration->requirement_count, " requires ");
@@ -8799,7 +8882,7 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
   fprintf(out, "//\n");
   fprintf(out, "// One bit per trait per entity type. The rule for a call site is: ask for\n");
   fprintf(out, "// the TYPE when you need its fields (entity_as), ask for the TRAIT when\n");
-  fprintf(out, "// you need a verb -- `if (is<Usable>(*hit)) use(*hit, {}, ctx);`.\n");
+  fprintf(out, "// you need a verb -- `if (is<Switchable>(*hit)) enable(*hit, {}, ctx);`.\n");
   fprintf(out, "static_assert(ENTITY_TRAIT_COUNT <= 64, \"the trait mask is a uint64_t\");\n\n");
   fprintf(out, "constexpr uint64_t trait_bit(entity_trait trait) { return 1ull << (uint32_t)trait; }\n\n");
 

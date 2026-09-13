@@ -9,16 +9,17 @@ namespace entities
 {
 
 void add(struct entities::Entity& entity,
-       struct entities::Counter& counter,
-       struct entities::Add_Data const& add_data,
-       struct server::input_context_t& context)
+         struct entities::Counter& counter,
+         struct entities::Add_Data const& add_data,
+         struct server::input_context_t& context)
 {
-   counter.value += add_data.amount;
-   if (counter.value >= counter.limit)
-   {
-      entities::emit_limit_reached(entity, Limit_Reached_Data{}, context);
-      log_terminal("limit reached for counter {} (uid {})", entity.name.c_str(), entity.entity_id);
-   }
+  const bool was_below_limit = counter.value < counter.limit;
+  counter.value += add_data.amount;
+  if (was_below_limit && counter.value >= counter.limit)
+  {
+    entities::emit_limit_reached(entity, Limit_Reached_Data{}, context);
+    log_terminal("limit reached for counter {} (uid {})", entity.name.c_str(), entity.entity_id);
+  }
 }
 
 void reset(Entity&, Counter& state, const Reset_Data&, server::input_context_t&)
@@ -26,5 +27,4 @@ void reset(Entity&, Counter& state, const Reset_Data&, server::input_context_t&)
   state.value = 0;
 }
 
-
-}//namespace entities
+} // namespace entities

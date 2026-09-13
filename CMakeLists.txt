@@ -498,6 +498,7 @@ add_library(game_shared STATIC
     src/shared/player_rig.hpp
     src/shared/player_rig.cpp
     src/shared/player_move.cpp
+    src/shared/movement_volumes.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
@@ -1078,6 +1079,11 @@ add_executable(map_migration_test src/test/map_migration_test.cpp)
 target_include_directories(map_migration_test PRIVATE src src/shared)
 target_link_libraries(map_migration_test PRIVATE game_shared)
 
+# The @predicted flag against collect_movement_volumes' switch: prediction_def.md ss1.9 pin 2.
+add_executable(movement_volumes_test src/test/movement_volumes_test.cpp)
+target_include_directories(movement_volumes_test PRIVATE src src/shared)
+target_link_libraries(movement_volumes_test PRIVATE game_shared)
+
 # 22. CVar / command test — tables, text conversion, console dispatch,
 # argument binders, and the @Mirrored wire path.
 #
@@ -1326,6 +1332,7 @@ set(GAME_TESTS
     asset_test
     entity_layout_test
     map_migration_test
+    movement_volumes_test
     prefab_test
     map_group_test
     navmesh_test

@@ -134,7 +134,8 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
       count_records(current.spot_lights,
                     baseline ? &baseline->spot_lights : nullptr) +
       count_records(current.sound_emitters,
-                    baseline ? &baseline->sound_emitters : nullptr);
+                    baseline ? &baseline->sound_emitters : nullptr) +
+      count_records(current.jump_pads, baseline ? &baseline->jump_pads : nullptr);
 
   write_var_uint(writer, record_count);
 
@@ -151,6 +152,7 @@ void serialize_snapshot(Bit_Writer& writer, const snapshot_frame_t& current,
                 baseline ? &baseline->spot_lights : nullptr);
   write_records(writer, current.sound_emitters,
                 baseline ? &baseline->sound_emitters : nullptr);
+  write_records(writer, current.jump_pads, baseline ? &baseline->jump_pads : nullptr);
 }
 
 bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
@@ -168,6 +170,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.point_lights   = baseline->point_lights;
     out_frame.spot_lights    = baseline->spot_lights;
     out_frame.sound_emitters = baseline->sound_emitters;
+    out_frame.jump_pads      = baseline->jump_pads;
   }
   else
   {
@@ -179,6 +182,7 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
     out_frame.point_lights.clear();
     out_frame.spot_lights.clear();
     out_frame.sound_emitters.clear();
+    out_frame.jump_pads.clear();
   }
 
   const uint32_t record_count = read_var_uint(reader);
@@ -234,6 +238,11 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
           return false;
         continue;
 
+      case entities::entity_type::Jump_Pad_Entity:
+        if (!apply_record(reader, out_frame.jump_pads, uid, removed))
+          return false;
+        continue;
+
       // Everything below is a real entity type that is simply never
       // replicated: map-placed entities the client already has from its own
       // map load. Listed rather than folded into `default` so that adding a
@@ -249,9 +258,13 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
       case entities::entity_type::Game_Rules_Entity:
       case entities::entity_type::Directional_Light_Entity:
       case entities::entity_type::Logic_Counter_Entity:
-      case entities::entity_type::Jump_Pad_Entity:
         break;
     }
+
+    if (entities::entity_type_is_replicated(type))
+      fatal_error("snapshot: entity type {} is @replicated in entities.def but this codec has no "
+                  "arm for it -- add a map to snapshot_frame_t and the encode/decode cases",
+                  entities::entity_info(type).classname);
 
     // A type we cannot decode is not skippable: how many bits its payload
     // occupies is only knowable from that type's field table, so the rest of

@@ -189,6 +189,43 @@ int main()
     destroy_entity(nullptr); // must not crash
   }
 
+  // --- replicated and predicted types ---
+  //
+  // The exact set, so that marking a type @replicated fails here until the
+  // snapshot codec grows its map and its two arms (entity_snapshot.cpp).
+  {
+    const entity_type expected_replicated[] = {
+        entity_type::Player_Entity,       entity_type::Weapon_Entity,
+        entity_type::Rocket_Entity,       entity_type::Physics_Body_Entity,
+        entity_type::Damageable_Entity,   entity_type::Sound_Emitter_Entity,
+        entity_type::Point_Light_Entity,  entity_type::Spot_Light_Entity,
+        entity_type::Jump_Pad_Entity,
+    };
+    Span<const entity_type> replicated = replicated_entity_types();
+
+    bool same_set = replicated.size() == std::size(expected_replicated);
+    for (uint32_t index = 0; same_set && index < replicated.size(); ++index)
+      same_set = replicated[index] == expected_replicated[index];
+    check(same_set, "replicated_entity_types() is exactly the set the snapshot codec covers");
+
+    bool flags_agree = true;
+    for (uint32_t raw = 1; raw < ENTITY_TYPE_COUNT; ++raw)
+    {
+      const entity_type type = (entity_type)raw;
+      bool listed = false;
+      for (entity_type candidate : replicated)
+        listed = listed || candidate == type;
+      if (listed != entity_type_is_replicated(type))
+        flags_agree = false;
+      if (entity_type_is_predicted(type) && !entity_type_is_replicated(type))
+        flags_agree = false;
+    }
+    check(flags_agree, "entity_info flags agree with the list, and every predicted type is replicated");
+    check(entity_type_is_predicted(entity_type::Jump_Pad_Entity) &&
+              !entity_type_is_predicted(entity_type::Point_Light_Entity),
+          "@predicted is the jump pad and not the light");
+  }
+
   // --- placeable types ---
   //
   // The editor placement menu's source of truth: everything the .def did not
@@ -460,11 +497,11 @@ int main()
           "a type's `is` list becomes its trait bits");
     check(!is<Mortal>(trigger_base), "a trait nothing opted into is not set");
     check(is<Mortal>(crate_base), "Damageable_Entity is Mortal");
-    check(!is<Usable>(rocket_base) && !is<Switchable>(rocket_base),
+    check(!is<Playable>(rocket_base) && !is<Switchable>(rocket_base),
           "a type with no `is` list has an empty trait row");
 
     Entity invalid{};
-    check(!is<Usable>(invalid), "an unwritten tag accepts nothing");
+    check(!is<Playable>(invalid), "an unwritten tag accepts nothing");
 
     bool names_round_trip = true;
     for (uint32_t index = 0; index < ENTITY_ACTION_COUNT; ++index)

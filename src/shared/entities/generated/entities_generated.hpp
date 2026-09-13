@@ -10,23 +10,23 @@
 #pragma once
 
 #include "entities_core_generated.hpp"
-#include "entities/reflection_volume_entity_generated.hpp"
 #include "entities/player_spawn_entity_generated.hpp"
 #include "entities/player_spectate_entity_generated.hpp"
 #include "entities/player_entity_generated.hpp"
 #include "entities/weapon_entity_generated.hpp"
 #include "entities/rocket_entity_generated.hpp"
-#include "entities/particle_emitter_entity_generated.hpp"
-#include "entities/game_rules_entity_generated.hpp"
+#include "entities/physics_body_entity_generated.hpp"
 #include "entities/damageable_entity_generated.hpp"
-#include "entities/trigger_volume_entity_generated.hpp"
+#include "entities/particle_emitter_entity_generated.hpp"
 #include "entities/sound_emitter_entity_generated.hpp"
 #include "entities/point_light_entity_generated.hpp"
 #include "entities/spot_light_entity_generated.hpp"
 #include "entities/directional_light_entity_generated.hpp"
-#include "entities/physics_body_entity_generated.hpp"
-#include "entities/logic_counter_entity_generated.hpp"
+#include "entities/trigger_volume_entity_generated.hpp"
 #include "entities/jump_pad_entity_generated.hpp"
+#include "entities/reflection_volume_entity_generated.hpp"
+#include "entities/game_rules_entity_generated.hpp"
+#include "entities/logic_counter_entity_generated.hpp"
 
 namespace entities
 {
@@ -60,6 +60,8 @@ struct entity_type_info_t
   uint32_t            alignment;
   uint32_t            component_mask;
   bool                runtime_only;
+  bool                replicated;   // rides the snapshot
+  bool                predicted;    // player_move reads it, both sides
 
   // Writes a default constructed entity of this type into `memory`, which
   // must be at least size_in_bytes wide and `alignment` aligned. Allocates
@@ -112,6 +114,14 @@ void destroy_entity(Entity* entity);
 // @runtime_only, in declaration order. Contiguous and stable, so a
 // placement menu can index it directly.
 Span<const entity_type> placeable_entity_types();
+
+// Every entity type that rides the snapshot: the ones the .def marked
+// @replicated, in declaration order. entity_snapshot.cpp must hold a map, an
+// encode and a decode arm for each; entity_layout_test pins the set.
+Span<const entity_type> replicated_entity_types();
+
+inline bool entity_type_is_replicated(entity_type type) { return entity_info(type).replicated; }
+inline bool entity_type_is_predicted(entity_type type) { return entity_info(type).predicted; }
 
 // Digest of every declaration in EVERY .def of the generator run --
 // entity layout, the resolved asset manifest, and the cvar/command

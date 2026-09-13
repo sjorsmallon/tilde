@@ -249,6 +249,27 @@ struct Entity_System
     return entity->entity_id;
   }
 
+  // The untyped twin of spawn<T>(), and it stands in exactly the relationship
+  // to it that try_find stands in to get<T>: for a caller holding an
+  // entity_type VALUE rather than a type. There is no switch behind it -- the
+  // pool is picked by index and the construction goes through
+  // entity_info(type).construct_at, which is what spawn<T> already reaches.
+  //
+  // Invalid is fatal rather than a sentinel: it names no type, so there is no
+  // pool to push into and nothing a caller could do with the answer.
+  entity_uid_t spawn(entities::entity_type type)
+  {
+    if (type == entities::entity_type::Invalid)
+      fatal_error("Entity_System::spawn: entity_type::Invalid names no pool");
+
+    Entity_Pool      &pool   = pools[(uint32_t)type];
+    entities::Entity *entity = pool.push_default();
+
+    entity->entity_id = next_entity_id++;
+    locations[entity->entity_id] = {type, pool.count - 1};
+    return entity->entity_id;
+  }
+
   // Resolve a uid to the entity it names. Returns nullptr if no entity has that
   // uid (destroyed, or never existed) or if it has one of a different type —
   // both are ordinary answers, not errors, which is what makes this usable as a

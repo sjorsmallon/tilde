@@ -6,22 +6,24 @@
 // emits Touched and Left and knows nothing else: the map's connections decide
 // what happens, and the receiver need not be the toucher or even be near it.
 //
-// A jump pad is the second volume in the loop, and the one exception to "knows
-// nothing else": a pad launching is per-TYPE behaviour, the way a rocket
-// flying is, so it happens here rather than in a connection.
+// A jump pad is the second volume in the loop, and it emits Touched / Left like
+// any other -- a pad wired to a counter still counts. It no longer LAUNCHES:
+// that is player_move's, so the client predicts it (prediction_def.md ss1.6).
+// Both overlap tests read the same Box_Volume through the same
+// shared::get_bounds, so they cannot disagree about who is inside.
 //
 // Linear scan O(volumes x touchers), unchanged. The canonical replacement is
 // Jolt sensor bodies in the broadphase; see "Spatial query strategy" in
 // src/client/editor/readme.md for the migration trigger.
 #include "trigger_system.hpp"
 
-#include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/entities/generated/entities/jump_pad_entity_generated.hpp"
 #include "../../shared/entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "../../shared/entity_system.hpp"
 #include "../../shared/game_session.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/player_constants.hpp"
+#include "../../shared/shapes.hpp"
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"
 
@@ -51,31 +53,10 @@ void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& o
     out.push_back({&body, {body.position - body.size, body.position + body.size}});
 }
 
-// A player's velocity is ours to write; a crate's belongs to Jolt and is
-// overwritten by the next physics step, so a pad only ever announces one.
-void launch_from_jump_pad(server_context_t& context, const entities::Jump_Pad_Entity& pad,
-                          entities::Entity& toucher)
-{
-  entities::Player_Entity* player = entities::entity_as<entities::Player_Entity>(&toucher);
-  if (player == nullptr)
-    return;
-
-  const vec3f direction = linalg::forward(pad.orientation);
-  player->velocity      = direction * pad.launch_speed;
-
-  shared::Jump_Pad_Launch fx{};
-  fx.origin          = pad.position;
-  fx.normal          = direction;
-  fx.attached_entity = player->entity_id;
-  shared::fire_jump_pad_launch(context.outgoing.effects, fx);
-}
-
-// One pass over one pool of volumes. `on_touched` runs on the rising edge,
-// after the emit, with the volume and whoever entered it.
-template <typename Volume_T, typename On_Touched_T>
+// One pass over one pool of volumes.
+template <typename Volume_T>
 void collect_overlaps(server_context_t& context, Span<Volume_T> volumes,
-                      Span<const toucher_t> touchers, std::set<trigger_overlap_t>& current,
-                      On_Touched_T&& on_touched)
+                      Span<const toucher_t> touchers, std::set<trigger_overlap_t>& current)
 {
   for (Volume_T& volume : volumes)
   {
@@ -86,13 +67,14 @@ void collect_overlaps(server_context_t& context, Span<Volume_T> volumes,
     if (!volume.switch_state.value)
       continue;
 
-    const vec3f center  = volume.position + volume.volume.position;
-    const vec3f minimum = center - volume.volume.half_extents;
-    const vec3f maximum = center + volume.volume.half_extents;
+    // The ONE bounds function, shared with collect_movement_volumes: a pad's
+    // Touched and a pad's launch must agree about who is inside it.
+    const shared::aabb_bounds_t volume_bounds =
+        shared::get_bounds(volume.volume, volume.position);
 
     for (const toucher_t& toucher : touchers)
     {
-      if (!linalg::intersect_aabb_aabb(toucher.bounds.min, toucher.bounds.max, minimum, maximum))
+      if (!shared::aabbs_intersect(toucher.bounds, volume_bounds))
         continue;
 
       const trigger_overlap_t pair{volume.entity_id, toucher.entity->entity_id};
@@ -103,7 +85,6 @@ void collect_overlaps(server_context_t& context, Span<Volume_T> volumes,
 
       input_context_t emit_context{context, toucher.entity->entity_id, context.tick_number};
       entities::emit_touched(volume, entities::Touched_Data{}, emit_context);
-      on_touched(volume, *toucher.entity);
     }
   }
 }
@@ -124,14 +105,10 @@ void update_triggers(server_context_t& context)
   std::set<trigger_overlap_t> current;
 
   collect_overlaps(context, session.entity_system.entities_of<entities::Trigger_Volume_Entity>(),
-                   Span<const toucher_t>(touchers), current,
-                   [](entities::Trigger_Volume_Entity&, entities::Entity&) {});
+                   Span<const toucher_t>(touchers), current);
 
   collect_overlaps(context, session.entity_system.entities_of<entities::Jump_Pad_Entity>(),
-                   Span<const toucher_t>(touchers), current,
-                   [&context](entities::Jump_Pad_Entity& pad, entities::Entity& toucher) {
-                     launch_from_jump_pad(context, pad, toucher);
-                   });
+                   Span<const toucher_t>(touchers), current);
 
   // The falling edge, from the pairs that were there and are not. A trigger or
   // a toucher that stopped existing is one of them, and it still emits: the

@@ -3,7 +3,9 @@
 #include "cvars/generated/cvars_generated.hpp"
 #include "debug_collision.hpp"
 #include "entities/generated/entities_generated.hpp"
+#include "movement_volumes.hpp"
 #include "plane.hpp"
+#include "span.hpp"
 #include "subtick.hpp"
 #include <tuple>
 #include <vector>
@@ -131,6 +133,15 @@ struct Move_Events
   bool  jumped = false;          // a jump impulse was applied this tick
   bool  landed = false;          // touched down from the air this tick
   float land_impact_speed = 0.f; // downward speed (units/s) arrested on landing
+
+  // A movement volume launched the hull this tick, and which one. The effect
+  // rides the STEP because the step is where it became true: the launched
+  // player's own client fires its launch cosmetic from this and drops the
+  // server's copy of it, which it already felt a round trip earlier
+  // (prediction_def.md §1.7). That is Source's IsFirstTimePredicted in one
+  // comparison, and it generalises to any effect a predicted step produces.
+  bool                launched_by_pad = false;
+  shared::entity_uid_t pad_uid        = shared::null_entity_uid;
 };
 
 // new_player_position, new_player_velocity. Positions in and out are at the FEET,
@@ -154,6 +165,15 @@ struct Move_Events
 // starts depending on time and drifts with no error to say so. That is a design
 // decision, not a parameter to add -- see lag_compensation_def.md, "Why movement
 // needs no rewind".
+//
+// `movement_volumes` does NOT contradict that, and the difference is worth
+// saying exactly. Its BOUNDS are static map data, identical at every tick, so
+// there is still no "which tick did I overlap" to answer. The one
+// time-dependent bit is `enabled`, which is replicated state: it mispredicts
+// for the unacked window and is corrected, the same contract every @Networked
+// field already has. What the warning above is about -- a collider whose
+// POSITION differs between ticks -- is still a wall (movers,
+// prediction_def.md §4).
 //
 // `cvars` is the process's one cvar_state_t (the launcher's), passed by
 // reference rather than read from a global: the pm_* tunables are @Mirrored, so
@@ -183,6 +203,7 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
+    Span<const shared::movement_volume_t> movement_volumes,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events = nullptr,

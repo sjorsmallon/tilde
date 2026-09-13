@@ -14,7 +14,6 @@
 // Every trait, INCLUDING one no entity opts into yet: action_data_t's union
 // names every payload, and a trait nothing opts into is reachable through no
 // entity header.
-#include "traits/usable_generated.hpp"
 #include "traits/switchable_generated.hpp"
 #include "traits/playable_generated.hpp"
 #include "traits/colorable_generated.hpp"
@@ -47,12 +46,11 @@ Span<const field_info_t> signal_payload_fields(entity_signal signal);
 // the tag.
 struct action_data_t
 {
-  entity_action tag = entity_action::Use;
+  entity_action tag = entity_action::Enable;
 
   union
   {
-    Use_Data use = {};
-    Enable_Data enable;
+    Enable_Data enable = {};
     Disable_Data disable;
     Toggle_Enabled_Data toggle_enabled;
     Play_Data play;
@@ -70,7 +68,6 @@ struct action_data_t
     Complete_Level_Data complete_level;
   };
 
-  const Use_Data& as_use() const { assert(tag == entity_action::Use); return use; }
   const Enable_Data& as_enable() const { assert(tag == entity_action::Enable); return enable; }
   const Disable_Data& as_disable() const { assert(tag == entity_action::Disable); return disable; }
   const Toggle_Enabled_Data& as_toggle_enabled() const { assert(tag == entity_action::Toggle_Enabled); return toggle_enabled; }
@@ -91,7 +88,6 @@ struct action_data_t
 static_assert(std::is_trivially_copyable_v<action_data_t>,
               "a connection row and a queued record hold one by value");
 
-action_data_t erase(const Use_Data& payload);
 action_data_t erase(const Enable_Data& payload);
 action_data_t erase(const Disable_Data& payload);
 action_data_t erase(const Toggle_Enabled_Data& payload);
@@ -113,7 +109,7 @@ action_data_t erase(const Complete_Level_Data& payload);
 //
 // One bit per trait per entity type. The rule for a call site is: ask for
 // the TYPE when you need its fields (entity_as), ask for the TRAIT when
-// you need a verb -- `if (is<Usable>(*hit)) use(*hit, {}, ctx);`.
+// you need a verb -- `if (is<Switchable>(*hit)) enable(*hit, {}, ctx);`.
 static_assert(ENTITY_TRAIT_COUNT <= 64, "the trait mask is a uint64_t");
 
 constexpr uint64_t trait_bit(entity_trait trait) { return 1ull << (uint32_t)trait; }
@@ -122,23 +118,23 @@ constexpr uint64_t trait_bit(entity_trait trait) { return 1ull << (uint32_t)trai
 // whose tag never got written accepts nothing.
 inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Invalid
-  0u,   // Reflection_Volume_Entity
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
   trait_bit(entity_trait::Mortal) | trait_bit(entity_trait::Mobile) | trait_bit(entity_trait::Armable) | trait_bit(entity_trait::Respawnable),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
-  0u,   // Particle_Emitter_Entity
-  trait_bit(entity_trait::Objective),   // Game_Rules_Entity
+  0u,   // Physics_Body_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
-  trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Trigger_Volume_Entity
+  0u,   // Particle_Emitter_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Playable),   // Sound_Emitter_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Point_Light_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
-  0u,   // Physics_Body_Entity
-  trait_bit(entity_trait::Counting),   // Logic_Counter_Entity
+  trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Trigger_Volume_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Jump_Pad_Entity
+  0u,   // Reflection_Volume_Entity
+  trait_bit(entity_trait::Objective),   // Game_Rules_Entity
+  trait_bit(entity_trait::Counting),   // Logic_Counter_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -168,23 +164,23 @@ constexpr uint64_t action_bit(entity_action action) { return 1ull << (uint32_t)a
 
 inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Invalid
-  0u,   // Reflection_Volume_Entity
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
-  0u,   // Particle_Emitter_Entity
-  action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
+  0u,   // Physics_Body_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
-  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Trigger_Volume_Entity
+  0u,   // Particle_Emitter_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Play),   // Sound_Emitter_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Point_Light_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
-  0u,   // Physics_Body_Entity
-  action_bit(entity_action::Add) | action_bit(entity_action::Reset),   // Logic_Counter_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Trigger_Volume_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Jump_Pad_Entity
+  0u,   // Reflection_Volume_Entity
+  action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
+  action_bit(entity_action::Add) | action_bit(entity_action::Reset),   // Logic_Counter_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -206,23 +202,23 @@ constexpr uint64_t signal_bit(entity_signal signal) { return 1ull << (uint32_t)s
 
 inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Invalid
-  0u,   // Reflection_Volume_Entity
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
-  0u,   // Particle_Emitter_Entity
-  0u,   // Game_Rules_Entity
+  0u,   // Physics_Body_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity
-  signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Trigger_Volume_Entity
+  0u,   // Particle_Emitter_Entity
   0u,   // Sound_Emitter_Entity
   signal_bit(entity_signal::Color_Changed),   // Point_Light_Entity
   signal_bit(entity_signal::Color_Changed),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
-  0u,   // Physics_Body_Entity
-  signal_bit(entity_signal::Limit_Reached),   // Logic_Counter_Entity
+  signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Trigger_Volume_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Jump_Pad_Entity
+  0u,   // Reflection_Volume_Entity
+  0u,   // Game_Rules_Entity
+  signal_bit(entity_signal::Limit_Reached),   // Logic_Counter_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)
@@ -262,9 +258,9 @@ inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
 // these bytes through the action's field table, and a pass-through emit
 // copies the signal's payload straight over them.
 inline uint8_t* action_payload_bytes(action_data_t& data)
-{ return reinterpret_cast<uint8_t*>(&data.use); }
+{ return reinterpret_cast<uint8_t*>(&data.enable); }
 inline const uint8_t* action_payload_bytes(const action_data_t& data)
-{ return reinterpret_cast<const uint8_t*>(&data.use); }
+{ return reinterpret_cast<const uint8_t*>(&data.enable); }
 
 // How many bytes a verb's payload occupies. The pass-through check pairs
 // these with the field tables above: identical tables and equal sizes is

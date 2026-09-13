@@ -124,7 +124,7 @@ constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[9]},
+   .enum_info = &ENUM_INFOS[5]},
 };
 
 constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
@@ -176,7 +176,6 @@ constexpr field_info_t HEALTH_CHANGED_FIELDS[] = {
 };
 
 constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
-  {},   // Use
   {},   // Enable
   {},   // Disable
   {},   // Toggle_Enabled
@@ -210,7 +209,6 @@ const char* to_string(entity_action value)
 {
   switch (value)
   {
-    case entity_action::Use: return "Use";
     case entity_action::Enable: return "Enable";
     case entity_action::Disable: return "Disable";
     case entity_action::Toggle_Enabled: return "Toggle_Enabled";
@@ -233,7 +231,6 @@ const char* to_string(entity_action value)
 
 template <> std::optional<entity_action> try_from_string<entity_action>(std::string_view text)
 {
-  if (text == "Use") return entity_action::Use;
   if (text == "Enable") return entity_action::Enable;
   if (text == "Disable") return entity_action::Disable;
   if (text == "Toggle_Enabled") return entity_action::Toggle_Enabled;
@@ -282,7 +279,6 @@ const char* to_string(entity_trait value)
 {
   switch (value)
   {
-    case entity_trait::Usable: return "Usable";
     case entity_trait::Switchable: return "Switchable";
     case entity_trait::Playable: return "Playable";
     case entity_trait::Colorable: return "Colorable";
@@ -299,7 +295,6 @@ const char* to_string(entity_trait value)
 
 template <> std::optional<entity_trait> try_from_string<entity_trait>(std::string_view text)
 {
-  if (text == "Usable") return entity_trait::Usable;
   if (text == "Switchable") return entity_trait::Switchable;
   if (text == "Playable") return entity_trait::Playable;
   if (text == "Colorable") return entity_trait::Colorable;
@@ -329,7 +324,6 @@ uint32_t action_payload_size(entity_action action)
 {
   switch (action)
   {
-    case entity_action::Use: return (uint32_t)sizeof(Use_Data);
     case entity_action::Enable: return (uint32_t)sizeof(Enable_Data);
     case entity_action::Disable: return (uint32_t)sizeof(Disable_Data);
     case entity_action::Toggle_Enabled: return (uint32_t)sizeof(Toggle_Enabled_Data);
@@ -362,14 +356,6 @@ uint32_t signal_payload_size(entity_signal signal)
     case entity_signal::Health_Changed: return (uint32_t)sizeof(Health_Changed_Data);
   }
   return 0;
-}
-
-action_data_t erase(const Use_Data& payload)
-{
-  action_data_t data;
-  data.tag = entity_action::Use;
-  data.use = payload;
-  return data;
 }
 
 action_data_t erase(const Enable_Data& payload)

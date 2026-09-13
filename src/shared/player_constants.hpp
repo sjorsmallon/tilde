@@ -51,10 +51,21 @@ constexpr float player_capsule_center_offset = player_half_height;
 constexpr float player_eye_height = 64.f;
 
 // The standing hull as world bounds, from a position at the FEET.
+//
+// The parameterized overload is what player_move tests movement volumes with:
+// that function takes its half-extents as arguments and stays a pure function
+// of them, so it must not reach for the constants. Everything else holds the
+// standing hull and says so by omitting them.
+[[nodiscard]] inline aabb_bounds_t player_hull_bounds(const linalg::vec3f& feet,
+                                                      float half_width, float half_height)
+{
+  return {{feet.x - half_width, feet.y, feet.z - half_width},
+          {feet.x + half_width, feet.y + half_height * 2.f, feet.z + half_width}};
+}
+
 [[nodiscard]] inline aabb_bounds_t player_hull_bounds(const linalg::vec3f& feet)
 {
-  return {{feet.x - player_half_width, feet.y, feet.z - player_half_width},
-          {feet.x + player_half_width, feet.y + player_half_height * 2.f, feet.z + player_half_width}};
+  return player_hull_bounds(feet, player_half_width, player_half_height);
 }
 
 } // namespace shared

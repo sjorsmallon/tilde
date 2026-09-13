@@ -35,8 +35,6 @@ struct Particle_Emitter_Entity : Entity
   linalg::vec3f color_end = {0.5f, 0.5f, 0.5f};
   float alpha_start = 0.8f;
   float alpha_end = 0.0f;
-  float emitter_lifetime = 0.0f;
-  uint32_t parent_entity_id = 0;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

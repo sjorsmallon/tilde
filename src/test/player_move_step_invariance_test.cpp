@@ -134,6 +134,13 @@ struct move_result_t
   vec3 velocity;
 };
 
+// What a run saw of the movement volumes it passed through.
+struct pad_probe_t
+{
+  int  launches           = 0;
+  vec3 velocity_at_launch = {};
+};
+
 // Run `total_dt` as `sub_steps` equal steps, feeding each step's output into
 // the next -- exactly what a sub-tick split does.
 //
@@ -145,7 +152,9 @@ static move_result_t run_split(const cvar_state_t& cvars,
                                const Bounding_Volume_Hierarchy& bvh,
                                const Move_Input& input, vec3 position,
                                vec3 velocity, float total_dt, int sub_steps,
-                               entities::Movement* movement = nullptr)
+                               entities::Movement* movement = nullptr,
+                               Span<const shared::movement_volume_t> volumes = {},
+                               pad_probe_t* out_pad = nullptr)
 {
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
@@ -153,9 +162,18 @@ static move_result_t run_split(const cvar_state_t& cvars,
   const float step_dt = total_dt / (float)sub_steps;
   for (int i = 0; i < sub_steps; ++i)
   {
+    Move_Events events{};
     std::tie(position, velocity) =
-        player_move(cvars, input, state, bvh, position, velocity, look_front,
-                    look_right, aim_sweep_t{}, half_width, half_height, step_dt);
+        player_move(cvars, input, state, bvh, volumes, position, velocity, look_front,
+                    look_right, aim_sweep_t{}, half_width, half_height, step_dt, &events);
+    if (out_pad != nullptr && events.launched_by_pad)
+    {
+      ++out_pad->launches;
+      // The velocity the LAUNCHING step ended with. The tick's FINAL velocity is
+      // not the measurement: the sub-steps after the launch keep applying
+      // gravity, so 64 of them legitimately arrive lower than one does.
+      out_pad->velocity_at_launch = velocity;
+    }
   }
   return {position, velocity};
 }
@@ -639,6 +657,124 @@ static void test_air_jump_fires_once_per_press(const cvar_state_t& cvars)
         "pm_air_jump_count 0 spends nothing and leaves free fall untouched");
 }
 
+// --- movement volumes: a jump pad is an edge, like an air jump ----------------
+//
+// The launch used to be a server system's write after the move loop, which the
+// client could not see. It is a step now, which means it has to obey the same
+// rule every other ability in here does: the step that carries the hull in is
+// the step that launches it, once, whatever the split. And because the velocity
+// is a table lookup rather than an integration, "the same" here means BIT
+// identical -- an approximation would be a mispredicted launch.
+static shared::movement_volume_t pad_at(const vec3& center, const vec3& half_extents,
+                                        const vec3& launch_velocity, bool enabled)
+{
+  shared::movement_volume_t volume;
+  volume.uid             = 7;
+  volume.kind            = shared::movement_volume_kind_t::Jump_Pad;
+  volume.bounds          = {center - half_extents, center + half_extents};
+  volume.enabled         = enabled;
+  volume.launch_velocity = launch_velocity;
+  return volume;
+}
+
+static void test_a_jump_pad_fires_once_per_contact(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] jump pad: one launch per contact, bit-identical at any split\n");
+
+  const Bounding_Volume_Hierarchy bvh = floor_world();
+  const vec3 launch{0.f, 900.f, 0.f};
+
+  // Sitting ON the pad at the start, so every sub-step of the tick overlaps it
+  // and a level-read would fire on all of them.
+  const std::vector<shared::movement_volume_t> volumes = {
+      pad_at({0.f, 8.f, 0.f}, {32.f, 8.f, 32.f}, launch, true)};
+
+  float first_velocity_y = 0.f;
+  for (int sub_steps : {1, 2, 8, 64})
+  {
+    entities::Movement movement{};
+    pad_probe_t        pad{};
+    run_split(cvars, bvh, Move_Input{}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt, sub_steps,
+              &movement, Span<const shared::movement_volume_t>(volumes), &pad);
+
+    printf("    N=%-2d  launches = %d  vy at launch = %.9f  latch = %u\n", sub_steps,
+           pad.launches, pad.velocity_at_launch.y, (unsigned)movement.pad_contact_uid);
+
+    check(pad.launches == 1, "exactly one launch however many sub-steps the tick had");
+    check(movement.pad_contact_uid == 7, "the latch names the pad that fired");
+
+    if (sub_steps == 1)
+      first_velocity_y = pad.velocity_at_launch.y;
+    else
+      check(pad.velocity_at_launch.y == first_velocity_y,
+            "the launch velocity at that step is BIT identical to the single-step run");
+  }
+
+  // Still standing on it next tick: the latch holds, so nothing re-fires and
+  // gravity is free to take the launch back.
+  {
+    entities::Movement movement{};
+    pad_probe_t        pad{};
+    move_result_t      result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
+    for (int tick = 0; tick < 4; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt, 4,
+                         &movement, Span<const shared::movement_volume_t>(volumes), &pad);
+
+    check(pad.launches == 1, "four ticks of standing on one pad is still one launch");
+  }
+
+  // Leaving the volume clears the latch, so walking back on fires again. Run
+  // the away tick against an EMPTY list, which is what "not overlapping any
+  // volume" looks like from inside the step.
+  {
+    entities::Movement movement{};
+    pad_probe_t        pad{};
+
+    run_split(cvars, bvh, Move_Input{}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt, 4, &movement,
+              Span<const shared::movement_volume_t>(volumes), &pad);
+    check(movement.pad_contact_uid == 7, "on the pad, latched");
+
+    run_split(cvars, bvh, Move_Input{}, {512.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt, 4, &movement,
+              {}, &pad);
+    check(movement.pad_contact_uid == shared::null_entity_uid,
+          "off every volume, the latch is cleared");
+
+    run_split(cvars, bvh, Move_Input{}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt, 4, &movement,
+              Span<const shared::movement_volume_t>(volumes), &pad);
+    check(pad.launches == 2, "stepping back on fires a second time");
+  }
+}
+
+// The switch is replicated state and the volume carries it rather than being
+// filtered out at collection -- so the step has to be the thing that honours
+// it, and a disabled pad has to be indistinguishable from no pad at all.
+static void test_a_disabled_jump_pad_is_passed_through(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] jump pad: a disabled pad launches nobody and latches nothing\n");
+
+  const Bounding_Volume_Hierarchy bvh = floor_world();
+  const std::vector<shared::movement_volume_t> disabled = {
+      pad_at({0.f, 8.f, 0.f}, {32.f, 8.f, 32.f}, {0.f, 900.f, 0.f}, false)};
+
+  entities::Movement movement{};
+  pad_probe_t        pad{};
+  const move_result_t on_the_disabled_pad =
+      run_split(cvars, bvh, Move_Input{}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt, 8, &movement,
+                Span<const shared::movement_volume_t>(disabled), &pad);
+
+  entities::Movement no_volumes_movement{};
+  const move_result_t with_no_volumes =
+      run_split(cvars, bvh, Move_Input{}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt, 8,
+                &no_volumes_movement);
+
+  check(pad.launches == 0, "a disabled pad fires nothing");
+  check(movement.pad_contact_uid == shared::null_entity_uid,
+        "and latches nothing, so re-enabling it fires on the next step");
+  check(on_the_disabled_pad.velocity.y == with_no_volumes.velocity.y &&
+            on_the_disabled_pad.position.y == with_no_volumes.position.y,
+        "the step through it is bit-identical to a step through no volume at all");
+}
+
 // The coyote clock is ACCUMULATED, so it has to sum to the same total whatever
 // the split -- the plainest possible statement of what "step invariant" means
 // for a piece of state rather than for a position.
@@ -879,7 +1015,7 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
                       : aim_sweep_t{};
     const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
 
-    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, position, velocity,
+    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, position, velocity,
                                                front, right, sweep, half_width, half_height,
                                                step_dt);
     step_start = step_end;
@@ -951,6 +1087,8 @@ int main()
   test_bunnyhop_cs_strafe_gains(cvars);
   test_bunnyhop_hl2_jump_boost(cvars);
   test_air_push_ignores_edges_on_a_steady_turn(cvars);
+  test_a_jump_pad_fires_once_per_contact(cvars);
+  test_a_disabled_jump_pad_is_passed_through(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

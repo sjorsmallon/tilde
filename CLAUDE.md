@@ -22,7 +22,7 @@ cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in
 # OFF by default and never shipped -- it costs 100-500ns per allocation.
 cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
 
-# Run the whole test suite (~30s, all 45)
+# Run the whole test suite (~30s, all 46)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -310,7 +310,7 @@ Entities are **plain structs with no virtuals** (hence blittable, hence memcmp-d
 - `entity_as<T>(entity)` replaces `dynamic_cast` (exact type match — the hierarchy is closed and one level deep).
 - `entities::get_box_volume` / `get_render` are component-table lookups, not virtuals.
 - `destroy_entity()`, not `delete` through a base pointer — there is no virtual destructor to dispatch through.
-- Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
+- Per-type behavior is a handwritten **exhaustive switch** over the closed enum (`create_map_entity`, `compute_entity_bounds`, the editor's `ENTITY_DISPATCH`, `collect_movement_volumes`). That's the sanctioned pattern; adding an entity makes each switch a compile error, which is the point. **Storage is not on that list** — `Entity_System` sizes one byte pool per tag from `ENTITY_INFOS` directly, so a new entity needs no case anywhere in it (`make_entity_pool` was the fifth switch and is gone; see `entity_system_def.md`).
 
 Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entity`, `Player_Spectate_Entity`, `Player_Entity`, `Weapon_Entity`, `Rocket_Entity`, `Particle_Emitter_Entity`, `Trigger_Volume_Entity`, `Point_Light_Entity`, `Spot_Light_Entity`, `Directional_Light_Entity`, `Physics_Body_Entity`, `Damageable_Entity`, `Game_Rules_Entity`.
 
@@ -952,6 +952,70 @@ the aim still take the step's opening aim. **A ground jump flies its step throug
 `my_air_move`** exactly as an air jump does, so gravity starts at the impulse:
 through `my_walk_move` it started a step late, and jump height depended on where
 in the tick the press landed. Invariance tests 8 and 11 to 15 guard all of it.
+
+### Movement volumes — the predicted half of a jump pad
+
+`prediction_def.md` §1 is the design of record. A jump pad used to be a server
+system's velocity write AFTER the move loop, so the client's `player_move` could
+not see it: the launch was felt a round trip late and then snapped by
+reconciliation. Every Neon-White volume (pad, boost, teleporter, speed gate) is
+that shape. Quake 3 is the model — `BG_TouchJumpPad` compiled into both sides,
+run inside the client's prediction step.
+
+- **`shared/movement_volumes.hpp` is a flat list of plain VALUES cut out of the
+  session, the way the BVH is cut out of the geometry** — never the entities.
+  `player_move` is a pure function of its arguments and stays one; an entity
+  pointer would hand it the whole session. What a pad IS — an orientation and a
+  speed — is flattened into `launch_velocity` ONCE per tick, by the same
+  expression `launch_from_jump_pad` used, moved rather than copied.
+- **`collect_movement_volumes` is ONE exhaustive switch over `entity_type`**, and
+  the generator cannot write it: flattening a pad into a velocity is per-type
+  logic, which is why `@predicted` is a flag with one rule rather than an
+  emitter. `-Werror=switch` catches a type added with no arm;
+  `movement_volumes_test` is what catches an arm that disagrees with the flag,
+  by spawning one of EVERY type and asserting a volume comes out for exactly the
+  `entity_type_is_predicted` ones. It takes the `Entity_System` rather than the
+  session so that pin needs no map, no BVH and no navmesh.
+- **`Entity_System::spawn(entity_type)` is the untyped twin of `spawn<T>()`**,
+  the relationship `try_find` already has to `get<T>`. No switch behind it — the
+  pool is picked by index and construction goes through
+  `entity_info(type).construct_at`, which is what `spawn<T>` already reaches.
+- **`Movement::pad_contact_uid` is Quake 3's `jumppad_ent`**, `@Networked` like
+  every other `Movement` field, so the reconciliation replay restarts it with no
+  new plumbing (`prediction_t::latest_server_movement` carries the whole
+  component). Not a bool: a bool says "I am on a pad" and the uid says WHICH, so
+  stepping off one pad straight onto another fires twice, and the clear
+  condition is checkable against the list.
+- **The launch is applied at the END of the step, after the ground snap.** A
+  player falling onto a pad LANDS and is then thrown — the land is still
+  reported because it happened, and the launch is the velocity the step ends
+  with rather than something the snap flattens to zero. The step that carries
+  the hull in is the step that launches it, on both sides, so an edge count
+  changes nothing.
+- **The replay uses the CURRENT list, not the list at the replayed input's
+  tick.** A pad's BOUNDS are static map data; the one time-dependent bit,
+  `enabled`, is replicated state that mispredicts for the unacked window and is
+  corrected — the contract every `@Networked` field already has. That is what
+  makes the list need no history, and it is why the `player_move.hpp` warning
+  about dynamic colliders was AMENDED rather than deleted: a collider whose
+  POSITION differs between ticks is still a wall.
+- **Four call sites, one line each** — the server tick, the client's live
+  prediction, the client's reconciliation replay, and bots. Bots get pads for
+  free, which is the test that the seam is real.
+- **The trigger system keeps `Touched` / `Left` and loses the launch.** A pad
+  wired to a counter still counts. Both overlap tests go through the ONE
+  `shared::get_bounds(Box_Volume, position)`, so they cannot disagree about who
+  is inside.
+- **The effect is PREDICTED, and the server's copy is suppressed for its own
+  subject.** `Move_Events` gains `launched_by_pad` and the pad's uid, the way
+  `jumped` and `landed` already ride it; the launched client fires its own
+  cosmetic at the step and drops the server's `Jump_Pad_Launch` whose
+  `attached_entity` is itself. The server still fires it for everyone else, who
+  have no step to derive it from. That one comparison is Source's
+  `IsFirstTimePredicted`, and it generalises to any effect a predicted step
+  produces. `movement_volume_origin(volumes, uid, fallback)` is where both sides
+  get the sound's position — the centre of the bounds the step used, never
+  re-resolved through the entity.
 
 ### Player hit volumes
 

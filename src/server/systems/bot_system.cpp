@@ -96,6 +96,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f& bot_pos)
 // two drift apart.
 static void apply_bot_movement(server_context_t &context, physics_state_t &physics,
                                const shared::game_session_t &session,
+                               Span<const shared::movement_volume_t> movement_volumes,
                                entities::Player_Entity &bot_ent, const vec3f& front,
                                const Move_Input &input, float half_width, float dt)
 {
@@ -108,8 +109,8 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   // every ability for free -- which is the point of putting the state on the
   // entity rather than in a per-client side table.
   auto [new_pos, new_vel] =
-      player_move(*context.cvars, input, bot_ent.movement, session.bvh, bot_ent.position,
-                  bot_ent.velocity, front, right, aim_sweep_t{}, half_width,
+      player_move(*context.cvars, input, bot_ent.movement, session.bvh, movement_volumes,
+                  bot_ent.position, bot_ent.velocity, front, right, aim_sweep_t{}, half_width,
                   shared::player_half_height, dt, &move_events);
 
   bot_ent.position = new_pos;
@@ -134,12 +135,21 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
     fx.attached_entity = bot_ent.entity_id;
     shared::fire_land(context.outgoing.effects, fx);
   }
+  if (move_events.launched_by_pad)
+  {
+    shared::Jump_Pad_Launch fx{};
+    fx.origin = shared::movement_volume_origin(movement_volumes, move_events.pad_uid, new_pos);
+    fx.normal          = linalg::normalize(new_vel);
+    fx.attached_entity = bot_ent.entity_id;
+    shared::fire_jump_pad_launch(context.outgoing.effects, fx);
+  }
 
   set_kinematic_pose(physics, bot_ent.entity_id,
                      new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f}, new_vel);
 }
 
 void update_bots(server_context_t &context,
+                 Span<const shared::movement_volume_t> movement_volumes,
                  uint32_t          current_tick,
                  float             dt)
 {
@@ -180,7 +190,7 @@ void update_bots(server_context_t &context,
     // under an animation that is supposed to be settling.
     if (bot_ent->health.current_health <= 0)
     {
-      apply_bot_movement(context, physics, session, *bot_ent,
+      apply_bot_movement(context, physics, session, movement_volumes, *bot_ent,
                          linalg::direction_from_angles(bot_ent->view_angle_yaw, 0.f),
                          Move_Input{}, bot.personality.move_speed, dt);
       continue;
@@ -378,7 +388,7 @@ void update_bots(server_context_t &context,
     }
 
     // ---- apply movement ----
-    apply_bot_movement(context, physics, session, *bot_ent, front, input,
+    apply_bot_movement(context, physics, session, movement_volumes, *bot_ent, front, input,
                        bot.personality.move_speed, dt);
 
     // Update facing direction so the client can visualise it. DEGREES, in

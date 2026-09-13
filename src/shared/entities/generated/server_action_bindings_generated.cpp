@@ -16,12 +16,6 @@ namespace entities
 namespace
 {
 
-void shim_trigger_volume_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
-{
-  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
-  enable(self, self.switch_state, data.as_enable(), context);
-}
-
 void shim_sound_emitter_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -40,16 +34,16 @@ void shim_spot_light_entity_enable(Entity& entity, const action_data_t& data, in
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
+void shim_trigger_volume_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
+}
+
 void shim_jump_pad_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Jump_Pad_Entity& self = *entity_as<Jump_Pad_Entity>(&entity);
   enable(self, self.switch_state, data.as_enable(), context);
-}
-
-void shim_trigger_volume_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
-{
-  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
-  disable(self, self.switch_state, data.as_disable(), context);
 }
 
 void shim_sound_emitter_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
@@ -70,16 +64,16 @@ void shim_spot_light_entity_disable(Entity& entity, const action_data_t& data, i
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
+void shim_trigger_volume_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
+}
+
 void shim_jump_pad_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Jump_Pad_Entity& self = *entity_as<Jump_Pad_Entity>(&entity);
   disable(self, self.switch_state, data.as_disable(), context);
-}
-
-void shim_trigger_volume_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
-{
-  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
-  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
 void shim_sound_emitter_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
@@ -97,6 +91,12 @@ void shim_point_light_entity_toggle_enabled(Entity& entity, const action_data_t&
 void shim_spot_light_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Spot_Light_Entity& self = *entity_as<Spot_Light_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
+}
+
+void shim_trigger_volume_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Trigger_Volume_Entity& self = *entity_as<Trigger_Volume_Entity>(&entity);
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
@@ -214,11 +214,9 @@ using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&)
 // types in tag order, columns the derived action enum.
 constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT] = {
   {},   // Invalid
-  {},   // Reflection_Volume_Entity
   {},   // Player_Spawn_Entity
   {},   // Player_Spectate_Entity
   {   // Player_Entity
-    nullptr,   // Use
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
@@ -238,28 +236,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   },
   {},   // Weapon_Entity
   {},   // Rocket_Entity
-  {},   // Particle_Emitter_Entity
-  {   // Game_Rules_Entity
-    nullptr,   // Use
-    nullptr,   // Enable
-    nullptr,   // Disable
-    nullptr,   // Toggle_Enabled
-    nullptr,   // Play
-    nullptr,   // Set_Color
-    nullptr,   // Add
-    nullptr,   // Reset
-    nullptr,   // Kill
-    nullptr,   // Set_Health
-    nullptr,   // Damage
-    nullptr,   // Teleport
-    nullptr,   // Set_Velocity
-    nullptr,   // Add_Velocity
-    nullptr,   // Grant_Weapon
-    nullptr,   // Set_Respawn_Point
-    shim_game_rules_entity_complete_level,
-  },
+  {},   // Physics_Body_Entity
   {   // Damageable_Entity
-    nullptr,   // Use
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
@@ -277,27 +255,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
   },
-  {   // Trigger_Volume_Entity
-    nullptr,   // Use
-    shim_trigger_volume_entity_enable,
-    shim_trigger_volume_entity_disable,
-    shim_trigger_volume_entity_toggle_enabled,
-    nullptr,   // Play
-    nullptr,   // Set_Color
-    nullptr,   // Add
-    nullptr,   // Reset
-    nullptr,   // Kill
-    nullptr,   // Set_Health
-    nullptr,   // Damage
-    nullptr,   // Teleport
-    nullptr,   // Set_Velocity
-    nullptr,   // Add_Velocity
-    nullptr,   // Grant_Weapon
-    nullptr,   // Set_Respawn_Point
-    nullptr,   // Complete_Level
-  },
+  {},   // Particle_Emitter_Entity
   {   // Sound_Emitter_Entity
-    nullptr,   // Use
     shim_sound_emitter_entity_enable,
     shim_sound_emitter_entity_disable,
     shim_sound_emitter_entity_toggle_enabled,
@@ -316,7 +275,6 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Complete_Level
   },
   {   // Point_Light_Entity
-    nullptr,   // Use
     shim_point_light_entity_enable,
     shim_point_light_entity_disable,
     shim_point_light_entity_toggle_enabled,
@@ -335,7 +293,6 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Complete_Level
   },
   {   // Spot_Light_Entity
-    nullptr,   // Use
     shim_spot_light_entity_enable,
     shim_spot_light_entity_disable,
     shim_spot_light_entity_toggle_enabled,
@@ -354,16 +311,14 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Complete_Level
   },
   {},   // Directional_Light_Entity
-  {},   // Physics_Body_Entity
-  {   // Logic_Counter_Entity
-    nullptr,   // Use
-    nullptr,   // Enable
-    nullptr,   // Disable
-    nullptr,   // Toggle_Enabled
+  {   // Trigger_Volume_Entity
+    shim_trigger_volume_entity_enable,
+    shim_trigger_volume_entity_disable,
+    shim_trigger_volume_entity_toggle_enabled,
     nullptr,   // Play
     nullptr,   // Set_Color
-    shim_logic_counter_entity_add,
-    shim_logic_counter_entity_reset,
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -375,7 +330,6 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Complete_Level
   },
   {   // Jump_Pad_Entity
-    nullptr,   // Use
     shim_jump_pad_entity_enable,
     shim_jump_pad_entity_disable,
     shim_jump_pad_entity_toggle_enabled,
@@ -383,6 +337,43 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+  },
+  {},   // Reflection_Volume_Entity
+  {   // Game_Rules_Entity
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Play
+    nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    shim_game_rules_entity_complete_level,
+  },
+  {   // Logic_Counter_Entity
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Play
+    nullptr,   // Set_Color
+    shim_logic_counter_entity_add,
+    shim_logic_counter_entity_reset,
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage
@@ -416,23 +407,6 @@ static_assert(dispatch_matches_acceptance(),
               "the shared acceptance mask and this dispatch table disagree");
 
 } // namespace
-
-bool try_use(Entity& entity, const Use_Data& payload, input_context_t& context)
-{
-  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
-    return false;
-  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Use];
-  if (shim == nullptr)
-    return false;
-  shim(entity, erase(payload), context);
-  return true;
-}
-
-void use(Entity& entity, const Use_Data& payload, input_context_t& context)
-{
-  if (!try_use(entity, payload, context))
-    fatal_error("{} does not accept Use", entity_info(entity.type).classname);
-}
 
 bool try_enable(Entity& entity, const Enable_Data& payload, input_context_t& context)
 {

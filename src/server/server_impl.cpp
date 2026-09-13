@@ -25,6 +25,7 @@
 #include "../shared/array.hpp"
 #include "../shared/network/subtick_codec.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/movement_volumes.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1516,6 +1517,14 @@ bool Tick()
         context.clients[slot].move_credits, context.cvars->sv_max_move_backlog);
   }
 
+  // Cut once per tick, ahead of every move that reads it -- players and bots
+  // alike -- the way the BVH is cut once per map load. The client cuts the same
+  // list out of its own session copy, which is what makes a pad predicted
+  // (prediction_def.md ss1).
+  std::vector<shared::movement_volume_t> movement_volumes;
+  shared::collect_movement_volumes(context.world.session.entity_system, movement_volumes);
+  const Span<const shared::movement_volume_t> movement_volume_span{movement_volumes};
+
   // since the server is in lockstep, pose all players once before handling moves:
   // internalize:
   // Posing after the move would test a world no client has ever been shown,
@@ -1790,7 +1799,8 @@ bool Tick()
             *context.cvars,
             allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
             player->movement,
-            context.world.session.bvh, player->position, player->velocity, front, right,
+            context.world.session.bvh, movement_volume_span,
+            player->position, player->velocity, front, right,
             aim_sweep_of(step), 16.f, 36.f, step.dt, &step_events);
 
         player->position = new_pos;
@@ -1802,6 +1812,11 @@ bool Tick()
         {
           move_events.landed            = true;
           move_events.land_impact_speed = step_events.land_impact_speed;
+        }
+        if (step_events.launched_by_pad)
+        {
+          move_events.launched_by_pad = true;
+          move_events.pad_uid         = step_events.pad_uid;
         }
       }
 
@@ -1856,6 +1871,19 @@ bool Tick()
       fx.scale = move_events.land_impact_speed; // for volume scaling
       fx.attached_entity = player->entity_id;
       shared::fire_land(context.outgoing.effects, fx);
+    }
+    // Fired from the move now, not from the trigger system, because the move is
+    // where the launch happens. Still fired for EVERYONE: the launched player's
+    // own client drops it by attached_entity and plays its own, a round trip
+    // earlier, off the step that predicted it (prediction_def.md ss1.7).
+    if (move_events.launched_by_pad)
+    {
+      shared::Jump_Pad_Launch fx{};
+      fx.origin = shared::movement_volume_origin(movement_volume_span, move_events.pad_uid,
+                                                 player->position);
+      fx.normal          = linalg::normalize(player->velocity);
+      fx.attached_entity = player->entity_id;
+      shared::fire_jump_pad_launch(context.outgoing.effects, fx);
     }
 
     // jolt nonsense. Gated for the same reason the move is: the freeze used to
@@ -1962,7 +1990,7 @@ bool Tick()
     log_error("Server tick with no physics state — init() must have failed");
     return false;
   }
-  update_bots(context, context.tick_number, tick_dt);
+  update_bots(context, movement_volume_span, context.tick_number, tick_dt);
 
   // The feet chase the view, on the FIXED tick, for every player -- after
   // update_bots because a bot's view yaw is written in there and this reads it.
@@ -2125,6 +2153,12 @@ bool Tick()
   for (const entities::Sound_Emitter_Entity &emitter :
        context.world.session.entity_system.entities_of<entities::Sound_Emitter_Entity>())
     frame.sound_emitters[emitter.entity_id] = emitter;
+
+  // @predicted: the client's player_move will read the pad's switch, and a pad
+  // the server switched off must be off in that step too.
+  for (const entities::Jump_Pad_Entity &pad :
+       context.world.session.entity_system.entities_of<entities::Jump_Pad_Entity>())
+    frame.jump_pads[pad.entity_id] = pad;
 
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_client_count; ++slot)

@@ -2,6 +2,7 @@
 #include "network/network_types.hpp"
 #include "debug_collision.hpp"
 #include "log.hpp"
+#include "player_constants.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -653,6 +654,7 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
+    Span<const shared::movement_volume_t> movement_volumes,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events,
@@ -965,12 +967,55 @@ std::tuple<vec3, vec3> player_move(
   // this one actually saw.
   movement.jump_was_held = input.jump_pressed;
 
+  // --- MOVEMENT VOLUMES: a pad launches the step that carried us into it ---
+  //
+  // After the ground snap on purpose. A player falling onto a pad LANDS and is
+  // then thrown, so the land is still reported (it happened) and the launch is
+  // the velocity the step ends with, instead of being flattened to zero by the
+  // snap. Sub-tick invariant for free: the step that carries the hull in is the
+  // step that launches it, on both sides, so an edge count changes nothing.
+  //
+  // The latch fires on the first overlapped volume that is NOT the one we are
+  // already latched to, which is what makes stepping from one pad straight onto
+  // another fire twice while standing on one fires once.
+  const vec3 feet_after_move = new_pos - hull_center_offset;
+  const shared::aabb_bounds_t hull_after_move =
+      shared::player_hull_bounds(feet_after_move, half_width, half_height);
+
+  bool                 launched_by_pad = false;
+  shared::entity_uid_t launched_by     = shared::null_entity_uid;
+  bool                 touching_a_volume = false;
+
+  for (const shared::movement_volume_t &volume : movement_volumes)
+  {
+    if (!volume.enabled)
+      continue;
+    if (!shared::aabbs_intersect(hull_after_move, volume.bounds))
+      continue;
+
+    touching_a_volume = true;
+
+    if (volume.uid == movement.pad_contact_uid)
+      continue;
+
+    new_vel                    = volume.launch_velocity;
+    movement.pad_contact_uid   = volume.uid;
+    launched_by_pad            = true;
+    launched_by                = volume.uid;
+    break;
+  }
+
+  if (!touching_a_volume)
+    movement.pad_contact_uid = shared::null_entity_uid;
+
   if (out_events)
   {
     out_events->jumped            = jumped;
     out_events->landed            = land_impact_speed > 0.f;
     out_events->land_impact_speed = land_impact_speed;
+    out_events->launched_by_pad   = launched_by_pad;
+    out_events->pad_uid           = launched_by;
   }
 
-  return {new_pos - hull_center_offset, new_vel};
+  return {feet_after_move, new_vel};
 }

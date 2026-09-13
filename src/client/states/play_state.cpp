@@ -19,6 +19,7 @@
 #include "../../shared/hit_region.hpp"
 #include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
+#include "../../shared/movement_volumes.hpp"
 #include "../../shared/weapons.hpp"
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Physics/Body/BodyManager.h>
@@ -1085,6 +1086,18 @@ void Play_State::update(float dt)
   if (!ctx.world.ready)
     return;
 
+  // Cut once per frame out of OUR session copy, and fed to both the replay and
+  // the live step. A pad's bounds are our own map load; the one thing we cannot
+  // know for ourselves is its switch, which rides the snapshot and is written
+  // onto this session in held_snapshot.cpp. The replay deliberately uses the
+  // CURRENT list rather than the list at each replayed input's tick: a switch
+  // that flipped inside the unacked window mispredicts for that window and is
+  // corrected, which is what makes the list need no history (prediction_def.md
+  // ss1.4).
+  std::vector<shared::movement_volume_t> movement_volumes;
+  shared::collect_movement_volumes(ctx.world.session.entity_system, movement_volumes);
+  const Span<const shared::movement_volume_t> movement_volume_span{movement_volumes};
+
   // reconcile our locally predicted position with the server's simulated position of us.
   if (ctx.prediction.received_server_update &&
       ctx.connection.phase == Connection_Phase::Connected)
@@ -1150,7 +1163,7 @@ void Play_State::update(float dt)
 
         std::tie(reconciled_position, reconciled_velocity) = player_move(
             *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
-            ctx.world.session.bvh,
+            ctx.world.session.bvh, movement_volume_span,
             reconciled_position, reconciled_velocity, step_basis.forward,
             step_basis.right, aim_sweep_of(step), player_half_width, player_half_height,
             step.dt, nullptr,
@@ -1862,7 +1875,7 @@ void Play_State::update(float dt)
           {
             auto [new_position, new_velocity] = player_move(
                 *ctx.cvars, move_input_from_buttons(step.buttons),
-                ctx.prediction.player_movement, ctx.world.session.bvh,
+                ctx.prediction.player_movement, ctx.world.session.bvh, movement_volume_span,
                 ctx.prediction.player_position, ctx.prediction.player_velocity,
                 step_basis.forward, step_basis.right, aim_sweep_of(step), player_half_width,
                 player_half_height, step.dt, &step_events, &ctx.visuals.debug_collision_faces);
@@ -1940,6 +1953,11 @@ void Play_State::update(float dt)
             tick_events.landed            = true;
             tick_events.land_impact_speed = step_events.land_impact_speed;
           }
+          if (step_events.launched_by_pad)
+          {
+            tick_events.launched_by_pad = true;
+            tick_events.pad_uid         = step_events.pad_uid;
+          }
         }
       }
 
@@ -1951,6 +1969,11 @@ void Play_State::update(float dt)
       {
         frame_move_events.landed            = true;
         frame_move_events.land_impact_speed = tick_events.land_impact_speed;
+      }
+      if (tick_events.launched_by_pad)
+      {
+        frame_move_events.launched_by_pad = true;
+        frame_move_events.pad_uid         = tick_events.pad_uid;
       }
 
       int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
@@ -1972,6 +1995,16 @@ void Play_State::update(float dt)
         frame_move_events.land_impact_speed >
             ctx.cvars->pm_minimum_land_impact_speed)
       ctx.audio->play_2d(assets::sound_asset::player_land);
+
+    // Our OWN launch, fired from the step that predicted it -- a round trip
+    // before the server's copy of it arrives, which on_jump_pad_launch then
+    // drops by attached_entity. Spatialized rather than 2D because the sound
+    // belongs to the PAD, not to us (prediction_def.md ss1.7).
+    if (frame_move_events.launched_by_pad)
+      ctx.audio->play_3d(assets::sound_asset::twang,
+                         shared::movement_volume_origin(movement_volume_span,
+                                                        frame_move_events.pad_uid,
+                                                        ctx.prediction.player_position));
   }
 
   // --- Decay visual error offset (frame-rate independent) ---
