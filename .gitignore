@@ -17,3 +17,9 @@ build*/
 # Temporary/Generated files
 imgui.ini
 *.DS_Store
+
+# Baked lightmap sidecars: tens of megabytes per bake, rebuilt in the editor
+*.lightmap
+
+/*.md
+!todo.md
