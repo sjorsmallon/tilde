@@ -82,7 +82,7 @@ static void store_frame(history_t& history, uint32_t tick,
   network::snapshot_frame_t frame;
   frame.tick = tick;
   for (const entities::Player_Entity& player : players)
-    frame.players[player.entity_id] = player;
+    frame.entities.add_entity(player.entity_id, &player);
   history.slot_for(tick) = frame;
 }
 

@@ -860,6 +860,163 @@ groups
       "uid" "121"
     }
   }
+  group
+  {
+    "_uid" "127"
+    "name" "group 127"
+    member
+    {
+      "uid" "39"
+    }
+    member
+    {
+      "uid" "6"
+    }
+    member
+    {
+      "uid" "17"
+    }
+  }
+  group
+  {
+    "_uid" "128"
+    "name" "group 128"
+    member
+    {
+      "uid" "40"
+    }
+    member
+    {
+      "uid" "5"
+    }
+    member
+    {
+      "uid" "18"
+    }
+  }
+  group
+  {
+    "_uid" "129"
+    "name" "group 129"
+    member
+    {
+      "uid" "32"
+    }
+    member
+    {
+      "uid" "41"
+    }
+    member
+    {
+      "uid" "2"
+    }
+    member
+    {
+      "uid" "3"
+    }
+  }
+  group
+  {
+    "_uid" "130"
+    "name" "group 130"
+    member
+    {
+      "uid" "38"
+    }
+    member
+    {
+      "uid" "11"
+    }
+    member
+    {
+      "uid" "16"
+    }
+  }
+  group
+  {
+    "_uid" "131"
+    "name" "group 131"
+    member
+    {
+      "uid" "37"
+    }
+    member
+    {
+      "uid" "7"
+    }
+    member
+    {
+      "uid" "15"
+    }
+  }
+  group
+  {
+    "_uid" "132"
+    "name" "group 132"
+    member
+    {
+      "uid" "36"
+    }
+    member
+    {
+      "uid" "8"
+    }
+    member
+    {
+      "uid" "14"
+    }
+  }
+  group
+  {
+    "_uid" "133"
+    "name" "group 133"
+    member
+    {
+      "uid" "42"
+    }
+    member
+    {
+      "uid" "23"
+    }
+    member
+    {
+      "uid" "24"
+    }
+  }
+  group
+  {
+    "_uid" "134"
+    "name" "group 134"
+    member
+    {
+      "uid" "35"
+    }
+    member
+    {
+      "uid" "9"
+    }
+    member
+    {
+      "uid" "13"
+    }
+  }
+  group
+  {
+    "_uid" "135"
+    "name" "group 135"
+    member
+    {
+      "uid" "34"
+    }
+    member
+    {
+      "uid" "10"
+    }
+    member
+    {
+      "uid" "12"
+    }
+  }
 }
 static_mesh
 {
@@ -1936,7 +2093,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "counter.value" "0"
-  "counter.limit" "10"
+  "counter.limit" "19"
 }
 entity
 {
@@ -2298,7 +2455,6 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
-  "render.material.roughness" "0.5"
 }
 entity
 {
@@ -2319,7 +2475,6 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
-  "render.material.roughness" "0.5"
 }
 entity
 {
@@ -2340,5 +2495,4 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
-  "render.material.roughness" "0.5"
 }

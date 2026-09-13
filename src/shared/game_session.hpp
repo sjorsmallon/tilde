@@ -48,6 +48,18 @@ struct game_session_t
   // stops existing.
   std::vector<map_geometry_t> geometry;
 
+  // The DERIVED direction of the tie, parallel to `geometry`: owner_of[i] is the
+  // Brush_Entity geometry[i] is switched by, or null_entity_uid. The file stores
+  // brush -> owner and only that, because both directions stored is two answers
+  // that can disagree (prediction_def.md ss4.2); this is the one place the
+  // reverse is materialised, and it is keyed by INDEX because that is what a BVH
+  // leaf carries, so nothing resolves a uid to an index at all.
+  //
+  // Filled here rather than in the collect so the tie is CHECKED once per load
+  // instead of once per tick: an owner uid this session does not hold, or one
+  // that is not a Brush_Entity, is reported by build_session and left null.
+  std::vector<entity_uid_t> owner_of;
+
   // The map's material table, copied for the same reason the geometry is: a
   // brush face holds an INDEX into it, so the two have to travel together or the
   // index names nothing.

@@ -54,7 +54,9 @@ private:
   // resolves the hovered uid into the row and is SWALLOWED -- letting it through
   // would reselect, and the panel the author was editing would be gone before
   // the target landed in it.
-  connection_pick_t connection_pick;
+  uid_pick_t uid_pick;
+  void commit_picked_field_uid(editor_context_t& ctx, const field_pick_target_t& target,
+                               shared::entity_uid_t picked);
 
   // A press that MEANT something other than selecting, so its release must not
   // fall through to the selection branch. Two gestures set it: the connection
@@ -204,6 +206,23 @@ private:
   void ungroup_selection(editor_context_t& ctx);
   void ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid);
   void select_group(editor_context_t& ctx, shared::entity_uid_t group_uid);
+
+  // --- The tie ------------------------------------------------------------------
+  //
+  // Source's "tie to entity" with the storage direction turned around: the
+  // brush names its owner and nothing names the brush (prediction_def.md ss4.2).
+  // Tying spawns a Brush_Entity at the selection centroid and writes owner_uid
+  // on every selected object; untying clears it, whether the selection is the
+  // objects or the entity. One transaction per gesture -- the entity half as a
+  // created/removed snapshot, the geometry half as value swaps.
+  void tie_selection_to_entity(editor_context_t& ctx);
+  void untie_selection(editor_context_t& ctx);
+
+  // Every geometry uid `owner` switches, walked on demand. No cached list on
+  // the entity: the file stores one direction, so a second one held here is an
+  // answer that can disagree with it.
+  void collect_owned_geometry(const editor_context_t& ctx, shared::entity_uid_t owner,
+                              std::vector<shared::entity_uid_t>& out) const;
 
   // Arms the pick for the next group of the stamp's unbound rows, selecting
   // that group's sender so the panel being filled is the one on screen. Does

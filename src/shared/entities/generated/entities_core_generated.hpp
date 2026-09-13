@@ -7,6 +7,7 @@
 #pragma once
 
 #include "array.hpp"
+#include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "network/network_types.hpp"
 #include "reflection.hpp"
@@ -192,11 +193,12 @@ enum class entity_type : uint16_t
   Reflection_Volume_Entity = 15,
   Game_Rules_Entity = 16,
   Logic_Counter_Entity = 17,
+  Brush_Entity = 18,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 18;
+constexpr uint32_t ENTITY_TYPE_COUNT = 19;
 
 enum class component_type : uint16_t
 {
@@ -399,7 +401,7 @@ struct Entity
   // Set by each derived type's constructor. entity_as<T> compares it.
   entity_type type = entity_type::Invalid;
 
-  uint32_t entity_id = {};
+  shared::entity_uid_t entity_id = {};
   linalg::vec3f position = {};
   linalg::quatf orientation = {0.0f, 0.0f, 0.0f, 1.0f};
   network::pascal_string_t<32> name = {};

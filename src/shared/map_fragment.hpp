@@ -94,6 +94,10 @@ struct stamp_result_t
   // Rows the source held that could not be rewritten. Zero for a fragment that
   // came out of extract_map_subset, which already dropped them.
   size_t dropped_connection_count = 0;
+  // Entity-typed fields of the stamped copies that named something outside the
+  // fragment and were set to null_entity_uid: a uid from another map names
+  // nobody here, and leaving it is a reference to whatever happens to hold it.
+  size_t cleared_reference_count = 0;
 };
 
 // Copies every member of `source` into `destination` at fresh uids, offset by

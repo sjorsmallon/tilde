@@ -11,11 +11,15 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 
 namespace client
 {
+
+// Working directory, like last_map.txt.
+static constexpr const char *BINDS_FILE_PATH = "binds.cfg";
 
 console::console()
 {
@@ -72,10 +76,66 @@ bool console::bind_key(std::string_view key, std::string command_line)
   input::key_t bound_key = static_cast<input::key_t>(
       static_cast<int>(input::key_t::A) + (c - 'a'));
   bindings_[bound_key] = std::move(command_line);
+  save_bindings_to_file();
   return true;
 }
 
-void console::clear_bindings() { bindings_.clear(); }
+void console::clear_bindings()
+{
+  bindings_.clear();
+  save_bindings_to_file();
+}
+
+// The whole file is rewritten from the map, sorted by key, so a diff of
+// binds.cfg is stable and a removed bind cannot linger.
+void console::save_bindings_to_file() const
+{
+  std::vector<std::pair<char, const std::string *>> sorted;
+  sorted.reserve(bindings_.size());
+  for (const auto &[key, line] : bindings_)
+  {
+    char c = static_cast<char>('a' + (static_cast<int>(key) -
+                                      static_cast<int>(input::key_t::A)));
+    sorted.push_back({c, &line});
+  }
+  std::sort(sorted.begin(), sorted.end(),
+            [](const auto &left, const auto &right) { return left.first < right.first; });
+
+  std::ofstream file(BINDS_FILE_PATH, std::ios::trunc);
+  if (!file.is_open())
+  {
+    log_error("bind: could not open '{}' for writing; this session's binds will "
+              "not persist", BINDS_FILE_PATH);
+    return;
+  }
+  for (const auto &[key_character, line] : sorted)
+    file << "bind " << key_character << ' ' << *line << '\n';
+}
+
+// Console lines, not a bind-only format: the file is a tiny autoexec, so a
+// line that is not a bind still runs. Absent is the normal first-boot case.
+void console::load_bindings_from_file()
+{
+  std::vector<std::string> lines;
+  {
+    // Read to the end and close BEFORE executing: every bind rewrites the file.
+    std::ifstream file(BINDS_FILE_PATH);
+    if (!file.is_open())
+      return;
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+        line.pop_back();
+      if (!line.empty() && !line.starts_with("//"))
+        lines.push_back(line);
+    }
+  }
+
+  for (const std::string &line : lines)
+    execute_command(line.c_str());
+}
 
 void console::execute_pressed_bindings()
 {

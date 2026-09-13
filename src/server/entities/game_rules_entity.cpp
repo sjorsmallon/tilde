@@ -8,6 +8,7 @@
 #include "../server_messages.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <format>
 
@@ -52,7 +53,14 @@ void record_run(server::input_context_t& context, shared::Objective_Reached& rea
   shared::append_run_time(path, record);
 
   reached.attempt_ticks = record.ticks;
-  reached.best_ticks    = best_before.empty() ? 0 : best_before.front().ticks;
+  // In THIS server's ticks, not the ones the record was made at: the file is
+  // ranked by seconds, so a row from another tickrate must be converted or the
+  // client compares two different units and announces a record that is not one.
+  reached.best_ticks =
+      best_before.empty()
+          ? 0
+          : static_cast<uint32_t>(std::lround(shared::run_time_seconds(best_before.front()) *
+                                              static_cast<float>(record.tickrate_hz)));
 
   const std::string map_name =
       std::filesystem::path(server.world.current_map_path).stem().generic_string();

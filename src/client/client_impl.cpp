@@ -77,6 +77,9 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   cvars::bind_client_commands(*command_table);
   console::get().set_cvar_state(cvar_state, command_table);
 
+  // After the handler slots are filled, since these are console lines.
+  console::get().load_bindings_from_file();
+
   // Before SDL_Init, because SDL declares process DPI awareness during video
   // init and Windows refuses the change afterwards. Without it the process is
   // DPI-UNAWARE: Windows hands us a virtualized desktop (2560x1440 on a 4K

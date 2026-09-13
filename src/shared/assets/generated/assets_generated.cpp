@@ -13,6 +13,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Missing", nullptr},
   {"Duck", "resources/glb/Duck.glb"},
   {"damaged_helmet", "resources/glb/damaged_helmet.glb"},
+  {"rocket", "resources/glb/rocket.glb"},
   {"target", "resources/glb/target.glb"},
   {"Box", "resources/models/Box.mesh"},
   {"Leet_Full", "resources/models/Leet_Full.mesh"},

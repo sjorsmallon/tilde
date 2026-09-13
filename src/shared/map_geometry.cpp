@@ -136,6 +136,37 @@ void set_position(geometry_value_t &geometry, const linalg::vec3 &position)
   log_error("set_position: unhandled geometry kind {}", (int)get_kind(geometry));
 }
 
+entity_uid_t get_owner_uid(const geometry_value_t &geometry)
+{
+  switch (get_kind(geometry))
+  {
+  case geometry_kind_t::Static_Mesh:
+    return std::get<static_mesh_geometry_t>(geometry).owner_uid;
+
+  case geometry_kind_t::Brush:
+    return std::get<brush_geometry_t>(geometry).owner_uid;
+  }
+
+  log_error("get_owner_uid: unhandled geometry kind {}", (int)get_kind(geometry));
+  return null_entity_uid;
+}
+
+void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid)
+{
+  switch (get_kind(geometry))
+  {
+  case geometry_kind_t::Static_Mesh:
+    std::get<static_mesh_geometry_t>(geometry).owner_uid = owner_uid;
+    return;
+
+  case geometry_kind_t::Brush:
+    std::get<brush_geometry_t>(geometry).owner_uid = owner_uid;
+    return;
+  }
+
+  log_error("set_owner_uid: unhandled geometry kind {}", (int)get_kind(geometry));
+}
+
 void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta)
 {
   switch (get_kind(geometry))
@@ -809,7 +840,8 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
     const static_mesh_geometry_t &a = std::get<static_mesh_geometry_t>(lhs);
     const static_mesh_geometry_t &b = std::get<static_mesh_geometry_t>(rhs);
     return vec3_equal(a.position, b.position) && quat_equal(a.orientation, b.orientation) &&
-           vec3_equal(a.scale, b.scale) && surfaces_equal(a.surface, b.surface);
+           vec3_equal(a.scale, b.scale) && surfaces_equal(a.surface, b.surface) &&
+           a.owner_uid == b.owner_uid;
   }
 
   case geometry_kind_t::Brush:
@@ -817,7 +849,7 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
     const brush_geometry_t &a = std::get<brush_geometry_t>(lhs);
     const brush_geometry_t &b = std::get<brush_geometry_t>(rhs);
     if (a.hull_points.size() != b.hull_points.size() || !surfaces_equal(a.surface, b.surface) ||
-        !face_surfaces_equal(a.face_surfaces, b.face_surfaces))
+        !face_surfaces_equal(a.face_surfaces, b.face_surfaces) || a.owner_uid != b.owner_uid)
       return false;
 
     // ORDER CARRIES NO MEANING. A brush is the hull of a SET, so two lists with
@@ -2479,6 +2511,35 @@ void write_surface(const geometry_surface_t &surface,
   out.emplace_back("is_wireframe", format_bool(surface.is_wireframe));
 }
 
+// The tie, one key, written only when there is one -- so every geometry block
+// authored before B4 saves byte-for-byte as it did and a plain world brush stays
+// a plain world brush on disk.
+void write_owner(entity_uid_t owner_uid,
+                 std::vector<std::pair<std::string, std::string>> &out)
+{
+  if (owner_uid != null_entity_uid)
+    out.emplace_back("owner", std::to_string(owner_uid));
+}
+
+void read_owner(const std::map<std::string, std::string> &properties,
+                entity_uid_t &owner_uid)
+{
+  const std::string *raw = find_property(properties, "owner");
+  if (!raw)
+    return;
+
+  try
+  {
+    const unsigned long parsed = std::stoul(*raw);
+    owner_uid = (entity_uid_t)parsed;
+  }
+  catch (const std::exception &)
+  {
+    log_error("geometry property \"owner\": \"{}\" is not a uid — the object stays untied",
+              *raw);
+  }
+}
+
 void read_surface(const std::map<std::string, std::string> &properties,
                   geometry_surface_t &surface)
 {
@@ -2760,6 +2821,7 @@ void serialize_geometry(const geometry_value_t &geometry,
     out_properties.emplace_back("rotation", format_quat_exact(static_mesh.orientation));
     out_properties.emplace_back("scale", format_vec3(static_mesh.scale));
     write_surface(static_mesh.surface, out_properties);
+    write_owner(static_mesh.owner_uid, out_properties);
     return;
   }
 
@@ -2768,6 +2830,7 @@ void serialize_geometry(const geometry_value_t &geometry,
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
     out_properties.emplace_back("vertices", brush_vertices_to_text(brush.hull_points));
     write_surface(brush.surface, out_properties);
+    write_owner(brush.owner_uid, out_properties);
     for (const face_surface_t &face : brush.face_surfaces)
       write_face_surface(face, material_remap, out_children.emplace_back());
     return;
@@ -2817,6 +2880,7 @@ bool parse_geometry(const std::string &keyword,
     read_rotation(properties, static_mesh.orientation);
     read_vec3(properties, "scale", static_mesh.scale);
     read_surface(properties, static_mesh.surface);
+    read_owner(properties, static_mesh.owner_uid);
     out_geometry = std::move(static_mesh);
     return true;
   }
@@ -2852,6 +2916,7 @@ bool parse_geometry(const std::string &keyword,
 
     brush.hull_points = std::move(*vertices);
     read_surface(properties, brush.surface);
+    read_owner(properties, brush.owner_uid);
 
     for (const map_block_t &child : children)
     {

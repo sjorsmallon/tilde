@@ -488,6 +488,151 @@ void test_a_target_that_dies_during_the_delay_is_dropped()
   check(context.world.pending_actions.empty(), "the record is gone rather than retried forever");
 }
 
+// --- 4b. the drain HOPS -----------------------------------------------------
+//
+// A counter emits Limit_Reached from inside its own Add handler, so a row off
+// that signal is an action queued during the drain. Under a drain at the top of
+// the tick each of those cost a whole tick; it runs at the END of the tick now
+// and loops while anything is due, so a zero-delay chain settles inside the
+// tick that started it (prediction_def.md ss2). The reentrancy guard is
+// unchanged and is what the queue sizes below assert: a handler's emit opens
+// the NEXT hop, never a nested dispatch.
+
+shared::entity_uid_t add_counter_to(shared::map_t& map, const char* name, int32_t limit)
+{
+  auto counter = std::make_shared<entities::Logic_Counter_Entity>();
+  counter->name.set(name);
+  counter->counter.limit = limit;
+  return map.add_entity(counter);
+}
+
+shared::connection_t limit_reached_adds_one(shared::entity_uid_t sender,
+                                            shared::connection_target_t target_kind,
+                                            shared::entity_uid_t target)
+{
+  shared::connection_t connection;
+  connection.sender          = sender;
+  connection.signal          = entities::entity_signal::Limit_Reached;
+  connection.target_kind     = target_kind;
+  connection.target          = target;
+  connection.data.tag        = entities::entity_action::Add;
+  connection.data.add.amount = 1;
+  // Limit_Reached() carries nothing and Add takes an amount, so the row has to
+  // say what it sends -- a pass-through needs the two field tables to match.
+  connection.has_override = true;
+  return connection;
+}
+
+int32_t counter_value_in(server_context_t& context, shared::entity_uid_t uid)
+{
+  const entities::Logic_Counter_Entity* counter =
+      context.world.session.entity_system.get<entities::Logic_Counter_Entity>(uid);
+  return counter == nullptr ? -1 : counter->counter.value;
+}
+
+void test_a_zero_delay_chain_settles_in_one_drain()
+{
+  std::printf("connections: a chain of emits settles inside one tick\n");
+
+  wired_map_t wired = make_wired_map();
+
+  const shared::entity_uid_t first  = add_counter_to(wired.map, "first", 1);
+  const shared::entity_uid_t second = add_counter_to(wired.map, "second", 1);
+  const shared::entity_uid_t third  = add_counter_to(wired.map, "third", 1);
+
+  shared::connection_t touch = touched_enables_the_light(wired);
+  touch.target               = first;
+  touch.data.tag             = entities::entity_action::Add;
+  touch.data.add.amount      = 1;
+  touch.has_override         = true;
+  wired.map.connections.push_back(touch);
+
+  wired.map.connections.push_back(
+      limit_reached_adds_one(first, shared::connection_target_t::Uid, second));
+  wired.map.connections.push_back(
+      limit_reached_adds_one(second, shared::connection_target_t::Uid, third));
+
+  shared::connection_t finish;
+  finish.sender      = third;
+  finish.signal      = entities::entity_signal::Limit_Reached;
+  finish.target_kind = shared::connection_target_t::Uid;
+  finish.target      = wired.light;
+  finish.data.tag    = entities::entity_action::Enable;
+  wired.map.connections.push_back(finish);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  const uint32_t tick_it_started_on = context.tick_number;
+
+  emit_touched_from(context, wired.trigger, 0);
+  check(context.world.pending_actions.size() == 1,
+        "the touch queues one record and dispatches nothing");
+
+  drain_pending_entity_actions(context);
+
+  check(counter_value_in(context, first) == 1 && counter_value_in(context, second) == 1 &&
+            counter_value_in(context, third) == 1,
+        "all three counters were reached by one drain");
+  check(light_in(context, wired.light) != nullptr && light_in(context, wired.light)->switch_state.value,
+        "and so was the light four hops down the chain");
+  check(context.world.pending_actions.empty(), "with nothing left over for the next tick");
+  check(context.tick_number == tick_it_started_on,
+        "the whole chain belongs to the tick the signal fired in");
+}
+
+void test_a_wiring_loop_is_capped_and_dropped()
+{
+  std::printf("connections: a loop hits the hop cap (error lines below are the test passing)\n");
+
+  wired_map_t wired = make_wired_map();
+
+  // Reset first, then Add: the counter is put back below its limit and crossed
+  // again, so it emits Limit_Reached on every hop forever. Both rows target
+  // Self, which is what makes one entity a complete loop.
+  const shared::entity_uid_t counter = add_counter_to(wired.map, "spinner", 1);
+
+  shared::connection_t touch = touched_enables_the_light(wired);
+  touch.target               = counter;
+  touch.data.tag             = entities::entity_action::Add;
+  touch.data.add.amount      = 1;
+  touch.has_override         = true;
+  wired.map.connections.push_back(touch);
+
+  shared::connection_t rewind;
+  rewind.sender      = counter;
+  rewind.signal      = entities::entity_signal::Limit_Reached;
+  rewind.target_kind = shared::connection_target_t::Self;
+  rewind.data.tag    = entities::entity_action::Reset;
+  wired.map.connections.push_back(rewind);
+
+  wired.map.connections.push_back(
+      limit_reached_adds_one(counter, shared::connection_target_t::Self, 0));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  // A delayed record, to pin that the cap drops what is DUE and nothing else.
+  shared::connection_t later = touched_enables_the_light(wired);
+  later.delay_seconds        = 1.0f;
+  context.world.current_map.connections.push_back(later);
+  context.world.session = shared::build_session(context.world.current_map);
+
+  emit_touched_from(context, wired.trigger, 0);
+
+  // The failure this pins is a hang, so reaching the next line at all is most
+  // of it.
+  drain_pending_entity_actions(context);
+
+  check(context.world.pending_actions.size() == 1,
+        "the still-due records are dropped rather than run again every tick");
+  check(!context.world.pending_actions.empty() &&
+            context.world.pending_actions[0].fire_tick > context.tick_number,
+        "and the one that survives is the delayed record, which is not part of the loop");
+}
+
 
 // --- 5. the trigger system: where a Touched comes from ----------------------
 //
@@ -901,6 +1046,8 @@ int main()
   test_emit_order_breaks_a_tie_within_one_tick();
   test_fire_once_spends_the_sessions_copy();
   test_a_target_that_dies_during_the_delay_is_dropped();
+  test_a_zero_delay_chain_settles_in_one_drain();
+  test_a_wiring_loop_is_capped_and_dropped();
   test_the_trigger_system_emits_edges();
   test_a_disabled_trigger_releases_whoever_is_inside();
   test_the_toucher_is_the_activator();

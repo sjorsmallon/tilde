@@ -27,6 +27,7 @@
 #include "entities/reflection_volume_entity_generated.hpp"
 #include "entities/game_rules_entity_generated.hpp"
 #include "entities/logic_counter_entity_generated.hpp"
+#include "entities/brush_entity_generated.hpp"
 
 namespace entities
 {
@@ -60,7 +61,7 @@ struct entity_type_info_t
   uint32_t            alignment;
   uint32_t            component_mask;
   bool                runtime_only;
-  bool                replicated;   // rides the snapshot
+  bool                replicated;   // rides the snapshot: a @Networked field of its own (derived)
   bool                predicted;    // player_move reads it, both sides
 
   // Writes a default constructed entity of this type into `memory`, which
@@ -115,9 +116,11 @@ void destroy_entity(Entity* entity);
 // placement menu can index it directly.
 Span<const entity_type> placeable_entity_types();
 
-// Every entity type that rides the snapshot: the ones the .def marked
-// @replicated, in declaration order. entity_snapshot.cpp must hold a map, an
-// encode and a decode arm for each; entity_layout_test pins the set.
+// Every entity type that rides the snapshot, in declaration order. DERIVED,
+// not declared: a type is in it when one of its OWN fields is @Networked
+// (through its components; the base's fields do not count). The snapshot
+// codec walks this list over an Entity_System, so a new type needs no arm
+// anywhere; entity_layout_test pins the set.
 Span<const entity_type> replicated_entity_types();
 
 inline bool entity_type_is_replicated(entity_type type) { return entity_info(type).replicated; }

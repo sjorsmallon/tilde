@@ -861,10 +861,31 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     result.connections.push_back(baked_connection);
   }
 
+  // The tie rides the bake, through the same remap: entities are all placed
+  // above, so an owner resolves here. An owner that did not survive leaves the
+  // object untied rather than naming whatever now holds that number -- the rule
+  // a dropped connection row already follows.
+  const auto adopt_owner = [&uid_after_bake](shared::entity_uid_t owner,
+                                             shared::entity_uid_t geometry_uid)
+  {
+    if (owner == shared::null_entity_uid)
+      return shared::null_entity_uid;
+
+    const auto found = uid_after_bake.find(owner);
+    if (found != uid_after_bake.end())
+      return found->second;
+
+    log_error("bake CSG: geometry {} was tied to uid {}, which did not survive the bake "
+              "-- it is untied",
+              geometry_uid, owner);
+    return shared::null_entity_uid;
+  };
+
   struct input_box_t
   {
     shared::aabb_t shape;
     shared::geometry_surface_t surface;
+    shared::entity_uid_t owner_uid = shared::null_entity_uid;
   };
   std::vector<input_box_t> inputs;
 
@@ -876,7 +897,10 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     const auto *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
     if (!brush || !shared::brush_is_axis_aligned_box(brush->hull_points))
     {
-      uid_after_bake[entry.uid] = result.add_geometry(entry.value);
+      shared::geometry_value_t carried = entry.value;
+      shared::set_owner_uid(carried,
+                            adopt_owner(shared::get_owner_uid(carried), entry.uid));
+      uid_after_bake[entry.uid] = result.add_geometry(std::move(carried));
       continue;
     }
 
@@ -884,7 +908,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
     shared::aabb_t shape;
     shape.center       = (bounds.min + bounds.max) * 0.5f;
     shape.half_extents = (bounds.max - bounds.min) * 0.5f;
-    inputs.push_back({shape, brush->surface});
+    inputs.push_back({shape, brush->surface, adopt_owner(brush->owner_uid, entry.uid)});
   }
 
   // CSG union: each new AABB is clipped against all already-placed ones
@@ -893,6 +917,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   {
     shared::aabb_t shape;
     shared::geometry_surface_t surface;
+    shared::entity_uid_t owner_uid = shared::null_entity_uid;
   };
   std::vector<baked_piece_t> baked;
 
@@ -910,7 +935,7 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
       pieces = std::move(clipped);
     }
     for (const auto &piece : pieces)
-      baked.push_back({piece, inp.surface});
+      baked.push_back({piece, inp.surface, inp.owner_uid});
   }
 
   // Emit one box brush per piece
@@ -918,7 +943,8 @@ static shared::map_t bake_map_csg(const shared::map_t &src)
   {
     shared::brush_geometry_t piece_brush =
         shared::make_box_brush(piece.shape.center, piece.shape.half_extents);
-    piece_brush.surface = piece.surface;
+    piece_brush.surface   = piece.surface;
+    piece_brush.owner_uid = piece.owner_uid;
     result.add_geometry(std::move(piece_brush));
   }
 

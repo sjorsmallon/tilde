@@ -1,4 +1,5 @@
 #include "../shared/entities/entity_reflection.hpp"
+#include "disabled_geometry.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
 #include "map.hpp" // shared::create_entity_by_classname
@@ -440,6 +441,97 @@ int main()
         empty_system.entities_with<entities::Render>().end())
     {
       log_error("entities_with<Render> on an empty Entity_System is not empty");
+      return 1;
+    }
+  }
+
+  // --- The tie, and the bit that comes out of it (prediction_def.md §4) -------
+  //
+  // Three questions in one fixture, because they are one fact seen from three
+  // places: build_session derives the reverse direction, the collect turns a
+  // switch into a bitset keyed the way a BVH leaf is keyed, and the queries skip
+  // exactly what the bitset names.
+  {
+    map_t tie_map;
+    tie_map.name = "Tie Map";
+
+    // A wall the ray hits first, and a wall behind it that it must reach once
+    // the first is switched off. Both boxes, 20 units apart along +X.
+    const entity_uid_t near_wall = tie_map.add_geometry(make_box_brush({0, 0, 0}, {4, 64, 64}));
+    const entity_uid_t far_wall  = tie_map.add_geometry(make_box_brush({40, 0, 0}, {4, 64, 64}));
+
+    auto [owner_uid, owner] = spawn_entity(tie_map, entities::entity_type::Brush_Entity);
+    if (!owner)
+    {
+      log_error("a brush_entity would not spawn");
+      return 1;
+    }
+    set_owner_uid(tie_map.find_geometry_by_uid(near_wall)->value, owner_uid);
+
+    game_session_t tie_session = build_session(tie_map);
+
+    // Derived, and keyed by INDEX -- the session's geometry order, which is the
+    // map's, which is what Collision_Id::index names.
+    if (tie_session.owner_of.size() != 2 || tie_session.owner_of[0] != owner_uid ||
+        tie_session.owner_of[1] != null_entity_uid)
+    {
+      log_error("build_session did not derive owner_of from the geometry's owner key");
+      return 1;
+    }
+
+    const vec3f origin{-100.f, 0.f, 0.f};
+    const vec3f forward{1.f, 0.f, 0.f};
+
+    disabled_geometry_t disabled;
+    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of, disabled);
+    if (disabled.size() != 2 || disabled[0] != 0 || disabled[1] != 0)
+    {
+      log_error("an enabled owner disabled something");
+      return 1;
+    }
+
+    ray_hit_result_t hit{};
+    if (!bvh_intersect_ray(tie_session.bvh, origin, forward, hit, disabled) ||
+        tie_session.geometry[hit.id.index].uid != near_wall)
+    {
+      log_error("the ray did not hit the near wall while it was switched on");
+      return 1;
+    }
+
+    tie_session.entity_system.get<entities::Brush_Entity>(owner_uid)->switch_state.value = false;
+    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of, disabled);
+    if (disabled.size() != 2 || disabled[0] == 0 || disabled[1] != 0)
+    {
+      log_error("switching the owner off did not reach the geometry it owns");
+      return 1;
+    }
+
+    // The whole point: the SAME tree, the SAME ray, a different answer -- and
+    // the answer with no bitset is unchanged, which is what lets the bake, the
+    // editor and every other BVH go on passing nothing.
+    hit = {};
+    if (!bvh_intersect_ray(tie_session.bvh, origin, forward, hit, disabled) ||
+        tie_session.geometry[hit.id.index].uid != far_wall)
+    {
+      log_error("a ray through a disabled brush did not reach what is behind it");
+      return 1;
+    }
+
+    hit = {};
+    if (!bvh_intersect_ray(tie_session.bvh, origin, forward, hit) ||
+        tie_session.geometry[hit.id.index].uid != near_wall)
+    {
+      log_error("the same ray with an empty bitset stopped naming the near wall");
+      return 1;
+    }
+
+    // A point inside the disabled wall is not inside a solid any more: the
+    // probe goes through bvh_intersect_aabb, so one filter covers all three
+    // queries rather than three that can disagree.
+    if (!bvh_point_is_inside_solid(tie_session.bvh, {0.f, 0.f, 0.f}) ||
+        bvh_point_is_inside_solid(tie_session.bvh, {0.f, 0.f, 0.f}, disabled))
+    {
+      log_error("bvh_point_is_inside_solid does not honour the disabled set");
       return 1;
     }
   }

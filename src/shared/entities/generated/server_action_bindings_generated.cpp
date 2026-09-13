@@ -46,6 +46,12 @@ void shim_jump_pad_entity_enable(Entity& entity, const action_data_t& data, inpu
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
+void shim_brush_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Brush_Entity& self = *entity_as<Brush_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
+}
+
 void shim_sound_emitter_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -76,6 +82,12 @@ void shim_jump_pad_entity_disable(Entity& entity, const action_data_t& data, inp
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
+void shim_brush_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Brush_Entity& self = *entity_as<Brush_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
+}
+
 void shim_sound_emitter_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -103,6 +115,12 @@ void shim_trigger_volume_entity_toggle_enabled(Entity& entity, const action_data
 void shim_jump_pad_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Jump_Pad_Entity& self = *entity_as<Jump_Pad_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
+}
+
+void shim_brush_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Brush_Entity& self = *entity_as<Brush_Entity>(&entity);
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
@@ -374,6 +392,24 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Color
     shim_logic_counter_entity_add,
     shim_logic_counter_entity_reset,
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+  },
+  {   // Brush_Entity
+    shim_brush_entity_enable,
+    shim_brush_entity_disable,
+    shim_brush_entity_toggle_enabled,
+    nullptr,   // Play
+    nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
     nullptr,   // Kill
     nullptr,   // Set_Health
     nullptr,   // Damage

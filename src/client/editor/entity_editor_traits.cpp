@@ -283,27 +283,11 @@ struct entity_editor_traits_t
   linalg::vec3       half_extents        = {};
   placement_origin_t origin              = placement_origin_t::centered;
   color_t            color               = colors::white; // stand-in and diagram colour
-  // ART for a type with no mesh: the rung of the art ladder between the render
-  // component and the wire box. Drawn INSTEAD of the mesh, never beside it.
   draw_function_t    draw_stand_in       = nullptr;
-  // What the thing DOES -- a volume, a launch, an emitter. Drawn on top of
-  // whatever drew the art, in every context, never instead of it. A type that
-  // one day gets a mesh keeps its diagram; that is the whole point of the split.
   draw_function_t    draw_diagram        = nullptr;
-  // The diagram that is bigger than the object -- a light's falloff -- drawn
-  // ONLY for the selected entity and the one being placed. Always-on would be
-  // the same as never, because every one of them overlaps every other.
   draw_function_t    draw_reach          = nullptr;
-  // The screen-space icon, drawn at a constant pixel size by the icon pass.
-  // Absent for every type whose own shape is what you need to see.
   std::optional<assets::texture_asset> icon;
 };
-
-// -- Adapters: the shapes above under the uniform signature --------------
-//
-// Two kinds, and the traits table says which each is. A STAND-IN is art for a
-// type that has no mesh; a DIAGRAM is what the thing does, drawn on top of the
-// art in every context.
 
 void player_spawn_stand_in(const entities::Entity* e, pass_builder_t& draws,
                            const linalg::vec3& position, color_t color)
@@ -525,6 +509,12 @@ entity_editor_traits_t editor_traits_for(const entities::Entity* e)
      return {.half_extents = point_pick,
               .color        = colors::white,
               .icon         = assets::texture_asset::counter};
+
+    // A POINT, not the bound of the brushes it owns: the brushes are world
+    // geometry with a pointer, they are picked and dragged as themselves, and
+    // what says which ones belong to this entity is the selection highlight.
+    case entities::entity_type::Brush_Entity:
+      return {.half_extents = point_pick, .color = colors::magenta};
 
     case entities::entity_type::Invalid:
       break;

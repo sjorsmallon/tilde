@@ -19,11 +19,11 @@ struct Weapon_Entity : Entity
 
   int32_t ammo = {};
   Weapon weapon_id = {};
-  uint32_t owner_uid = {};
+  shared::entity_uid_t owner_uid = {};
   uint64_t next_fire_time = {};
   uint32_t pickup_allowed_tick = {};
   Damage_Type damage_type = Damage_Type::Normal;
-  Render render = {.mesh = assets::mesh_asset::Box};
+  Render render = {.mesh = assets::mesh_asset::Error};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

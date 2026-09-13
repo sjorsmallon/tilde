@@ -262,7 +262,7 @@ void draw_target_kind_combo(shared::connection_t &row)
 }
 
 void draw_target_entity_combo(const shared::map_t &map, shared::connection_t &row,
-                             size_t row_index, connection_pick_t &pick)
+                             size_t row_index, uid_pick_t &pick)
 {
   // Every entity is offered, and one that does not accept the current verb
   // says so rather than disappearing: picking the target first and the verb
@@ -285,8 +285,7 @@ void draw_target_entity_combo(const shared::map_t &map, shared::connection_t &ro
   ImGui::SameLine();
   if (ImGui::Button(pick_label))
   {
-    pick.armed = true;
-    pick.row   = row_index;
+    pick.arm_row(row_index);
   }
   if (ImGui::IsItemHovered())
     ImGui::SetTooltip("Then click the target in the viewport. The click sets the "
@@ -472,7 +471,7 @@ void commit_picked_connection_target(shared::map_t &map, Transaction_System &tra
 }
 
 void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid,
-                           Transaction_System &transactions, connection_pick_t &pick)
+                           Transaction_System &transactions, uid_pick_t &pick)
 {
   const shared::map_entity_t *entry = map.find_by_uid(selected_uid);
   if (entry == nullptr || !entry->entity)
@@ -512,7 +511,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
   // An armed pick names the row being filled, so that is the row to show -- a
   // stamp arms it on the prefab's UNBOUND row, which is rarely the sender's
   // first.
-  if (pick.armed && std::find(outbound.begin(), outbound.end(), pick.row) != outbound.end())
+  if (pick.is_row_pick() && std::find(outbound.begin(), outbound.end(), pick.row) != outbound.end())
     s_selected_row = pick.row;
 
   int row_to_remove = -1;
@@ -527,7 +526,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
       ImGui::TextDisabled("%s announces nothing: just a target. Not a Sender.",
                           entities::entity_info(sender.type).classname);
 
-    if (pick.armed)
+    if (pick.is_row_pick())
       ImGui::TextColored(pick_color,
                          "Pick a target: click an entity in the viewport (Escape cancels).");
 
@@ -621,19 +620,19 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
       // The new row has no target and is refused until it gets one, so the pick
       // is armed rather than left for the author to find: add-then-click is the
       // gesture, and the red row in between is what says why it is not done.
-      pick.armed = true;
-      pick.row   = s_selected_row;
+      pick.arm_row(s_selected_row);
     }
   }
   else if (row_to_remove >= 0)
   {
     map.connections.erase(map.connections.begin() + row_to_remove);
     s_selected_row = SIZE_MAX;
-    pick.armed     = false;
+    if (pick.is_row_pick())
+      pick.disarm();
   }
 
-  if (pick.row >= map.connections.size())
-    pick.armed = false;
+  if (pick.is_row_pick() && pick.row >= map.connections.size())
+    pick.disarm();
 
   // Nothing is being held, so whatever the frame changed is finished. One
   // transaction for the whole interaction, and a no-op when it changed nothing.

@@ -51,6 +51,9 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     {entities::entity_type::Reflection_Volume_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Game_Rules_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Logic_Counter_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
+    // A shot lands on the BRUSH, which is world geometry and has its own impact
+    // sound; the entity behind it is never what a ray reports.
+    {entities::entity_type::Brush_Entity, {}, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&entity_type_sounds_t::type>(ENTITY_TYPE_SOUNDS),

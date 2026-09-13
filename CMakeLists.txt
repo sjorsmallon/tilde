@@ -499,6 +499,7 @@ add_library(game_shared STATIC
     src/shared/player_rig.cpp
     src/shared/player_move.cpp
     src/shared/movement_volumes.cpp
+    src/shared/disabled_geometry.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp

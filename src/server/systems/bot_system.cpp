@@ -97,6 +97,7 @@ static vec3f advance_path(Bot_State &bot, const vec3f& bot_pos)
 static void apply_bot_movement(server_context_t &context, physics_state_t &physics,
                                const shared::game_session_t &session,
                                Span<const shared::movement_volume_t> movement_volumes,
+                               Span<const uint8_t> disabled_geometry,
                                entities::Player_Entity &bot_ent, const vec3f& front,
                                const Move_Input &input, float half_width, float dt)
 {
@@ -109,7 +110,8 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   // every ability for free -- which is the point of putting the state on the
   // entity rather than in a per-client side table.
   auto [new_pos, new_vel] =
-      player_move(*context.cvars, input, bot_ent.movement, session.bvh, movement_volumes,
+      player_move(*context.cvars, input, bot_ent.movement, session.bvh, disabled_geometry,
+                  movement_volumes,
                   bot_ent.position, bot_ent.velocity, front, right, aim_sweep_t{}, half_width,
                   shared::player_half_height, dt, &move_events);
 
@@ -150,6 +152,7 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
 
 void update_bots(server_context_t &context,
                  Span<const shared::movement_volume_t> movement_volumes,
+                 Span<const uint8_t> disabled_geometry,
                  uint32_t          current_tick,
                  float             dt)
 {
@@ -190,7 +193,7 @@ void update_bots(server_context_t &context,
     // under an animation that is supposed to be settling.
     if (bot_ent->health.current_health <= 0)
     {
-      apply_bot_movement(context, physics, session, movement_volumes, *bot_ent,
+      apply_bot_movement(context, physics, session, movement_volumes, disabled_geometry, *bot_ent,
                          linalg::direction_from_angles(bot_ent->view_angle_yaw, 0.f),
                          Move_Input{}, bot.personality.move_speed, dt);
       continue;
@@ -388,7 +391,7 @@ void update_bots(server_context_t &context,
     }
 
     // ---- apply movement ----
-    apply_bot_movement(context, physics, session, movement_volumes, *bot_ent, front, input,
+    apply_bot_movement(context, physics, session, movement_volumes, disabled_geometry, *bot_ent, front, input,
                        bot.personality.move_speed, dt);
 
     // Update facing direction so the client can visualise it. DEGREES, in

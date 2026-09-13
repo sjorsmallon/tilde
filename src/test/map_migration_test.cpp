@@ -13,6 +13,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "log.hpp"
 #include "map.hpp"
+#include "game_session.hpp"
 #include "map_connection.hpp"
 #include "network/map_transfer.hpp"
 #include <cstdio>
@@ -891,6 +892,59 @@ int main()
     if (!std::get<brush_geometry_t>(faceless_reparsed.geometry.front().value)
              .face_surfaces.empty())
       return fail("faces: a brush with no face blocks invented some");
+  }
+
+  // --- the tie (prediction_def.md §4) -----------------------------------------
+  //
+  // One key, `owner`, written only when there is one -- so a plain world brush
+  // saves byte-for-byte as it always did, which is what makes this format change
+  // need no version number either. The derived direction is build_session's, and
+  // it is checked here beside the file because the file is the only place the
+  // tie is STORED.
+  {
+    map_t tie_map;
+    const entity_uid_t tied   = tie_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
+    const entity_uid_t loose  = tie_map.add_geometry(make_box_brush({64, 0, 0}, {16, 16, 16}));
+    auto [owner_uid, owner]   = spawn_entity(tie_map, entities::entity_type::Brush_Entity);
+    if (!owner)
+      return fail("tie: a brush_entity would not spawn");
+    set_owner_uid(tie_map.find_geometry_by_uid(tied)->value, owner_uid);
+
+    const std::string  text     = serialize_map_to_string(tie_map);
+    const map_t        reloaded = parse_map_from_string(text);
+
+    if (text.find("\"owner\"") == std::string::npos)
+      return fail("tie: the owner key was not written");
+    if (reloaded.geometry.size() != 2)
+      return fail("tie: the geometry did not survive the round trip");
+    if (get_owner_uid(reloaded.geometry[0].value) != owner_uid)
+      return fail("tie: the owner did not survive the round trip");
+    if (get_owner_uid(reloaded.geometry[1].value) != null_entity_uid)
+      return fail("tie: an untied brush came back tied");
+    if (serialize_map_to_string(reloaded) != text)
+      return fail("tie: re-serialized text is not stable");
+
+    // A brush nobody tied writes NO key -- the byte-for-byte half.
+    map_t untied_map;
+    untied_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
+    if (serialize_map_to_string(untied_map).find("\"owner\"") != std::string::npos)
+      return fail("tie: an untied brush wrote an owner key");
+
+    // And the derived direction, keyed by INDEX because that is what a BVH leaf
+    // carries. A uid nothing holds is refused at load and left null, never
+    // carried into the collect that runs every tick.
+    const game_session_t session = build_session(reloaded);
+    if (session.owner_of.size() != 2 || session.owner_of[0] != owner_uid ||
+        session.owner_of[1] != null_entity_uid)
+      return fail("tie: build_session did not derive owner_of");
+
+    map_t broken_map;
+    broken_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
+    set_owner_uid(broken_map.geometry.front().value, 4242);
+    const game_session_t broken_session = build_session(broken_map);
+    if (broken_session.owner_of.size() != 1 ||
+        broken_session.owner_of[0] != null_entity_uid)
+      return fail("tie: an owner uid the map does not hold was not refused");
   }
 
   printf("map_migration_test: OK (%zu brushes, %zu subdivided faces converted from "

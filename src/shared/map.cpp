@@ -793,6 +793,11 @@ aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
     case entities::entity_type::Directional_Light_Entity:
     case entities::entity_type::Physics_Body_Entity:
     case entities::entity_type::Logic_Counter_Entity:
+    // A point, and deliberately not the bound of the brushes it owns: its
+    // `position` is the tie-time selection centroid and means nothing until a
+    // mover makes it live, so a handle wrapping the brushes would be a handle
+    // over something the entity does not move.
+    case entities::entity_type::Brush_Entity:
       return mesh_or_point_bounds(entity);
 
     case entities::entity_type::Invalid:

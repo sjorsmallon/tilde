@@ -19,6 +19,7 @@
 #include "../../shared/hit_region.hpp"
 #include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
+#include "../../shared/disabled_geometry.hpp"
 #include "../../shared/movement_volumes.hpp"
 #include "../../shared/weapons.hpp"
 #ifdef JPH_DEBUG_RENDERER
@@ -1098,6 +1099,15 @@ void Play_State::update(float dt)
   shared::collect_movement_volumes(ctx.world.session.entity_system, movement_volumes);
   const Span<const shared::movement_volume_t> movement_volume_span{movement_volumes};
 
+  // The geometry half of the same cut, for the same reason and with the same
+  // staleness rule: a brush's SHAPE is our own map load, its SWITCH rides the
+  // snapshot onto this session, and the replay reads the current set rather than
+  // one per replayed tick (prediction_def.md ss4).
+  shared::disabled_geometry_t disabled_geometry;
+  shared::collect_disabled_geometry(ctx.world.session.entity_system,
+                                    ctx.world.session.owner_of, disabled_geometry);
+  const Span<const uint8_t> disabled_geometry_span{disabled_geometry};
+
   // reconcile our locally predicted position with the server's simulated position of us.
   if (ctx.prediction.received_server_update &&
       ctx.connection.phase == Connection_Phase::Connected)
@@ -1163,7 +1173,7 @@ void Play_State::update(float dt)
 
         std::tie(reconciled_position, reconciled_velocity) = player_move(
             *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
-            ctx.world.session.bvh, movement_volume_span,
+            ctx.world.session.bvh, disabled_geometry_span, movement_volume_span,
             reconciled_position, reconciled_velocity, step_basis.forward,
             step_basis.right, aim_sweep_of(step), player_half_width, player_half_height,
             step.dt, nullptr,
@@ -1290,7 +1300,8 @@ void Play_State::update(float dt)
   // ctx.prediction.player_yaw underneath in both cases -- it just isn't always
   // what the view shows. The steering BASIS is no longer resolved once per
   // frame: every sub-step recomputes it from the aim in effect at that step.
-  auto apply_mouse_travel = [&](linalg::vec2i motion) {
+  auto apply_mouse_travel = [&](linalg::vec2i motion)
+  {
     if (!mouse_look_allowed)
       return;
     ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
@@ -1875,7 +1886,8 @@ void Play_State::update(float dt)
           {
             auto [new_position, new_velocity] = player_move(
                 *ctx.cvars, move_input_from_buttons(step.buttons),
-                ctx.prediction.player_movement, ctx.world.session.bvh, movement_volume_span,
+                ctx.prediction.player_movement, ctx.world.session.bvh,
+                disabled_geometry_span, movement_volume_span,
                 ctx.prediction.player_position, ctx.prediction.player_velocity,
                 step_basis.forward, step_basis.right, aim_sweep_of(step), player_half_width,
                 player_half_height, step.dt, &step_events, &ctx.visuals.debug_collision_faces);
@@ -2382,9 +2394,24 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // the editor, instead of being spelled out twice.
   if (!ctx.cvars->debug_hide_geometry)
   {
-    for (const shared::map_geometry_t &entry : ctx.world.session.geometry)
+    // The draw follows the same bit the sweep does, resolved through the same
+    // table, so what you walk through is what you cannot see. Cut here rather
+    // than reused from the prediction cut above: this runs on the frame clock
+    // and that one on the tick clock, and a set held across the gap would draw
+    // a gate one frame behind the wall you can already pass.
+    shared::disabled_geometry_t hidden;
+    shared::collect_disabled_geometry(ctx.world.session.entity_system,
+                                      ctx.world.session.owner_of, hidden);
+
+    for (uint32_t index = 0; index < ctx.world.session.geometry.size(); ++index)
+    {
+      if (index < hidden.size() && hidden[index] != 0)
+        continue;
+
+      const shared::map_geometry_t &entry = ctx.world.session.geometry[index];
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap);
+    }
   }
 
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);

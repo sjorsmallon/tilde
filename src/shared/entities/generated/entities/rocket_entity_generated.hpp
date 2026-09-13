@@ -22,9 +22,9 @@ struct Rocket_Entity : Entity
   float damage_amount = 50.0f;
   float damage_radius = 120.0f;
   float knockback_force = 600.0f;
-  uint32_t owner_id = {};
+  shared::entity_uid_t owner_id = {};
   float collision_radius = 12.0f;
-  Render render = {};
+  Render render = {.mesh = assets::mesh_asset::rocket};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

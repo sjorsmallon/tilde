@@ -30,7 +30,7 @@ struct Player_Entity : Entity
   Weapon last_fire_weapon = Weapon::Knife;
   uint64_t reload_complete_time = {};
   uint32_t last_empty_fire_warning_tick = {};
-  uint32_t checkpoint_uid = {};
+  shared::entity_uid_t checkpoint_uid = {};
   uint32_t last_hit_tick = {};
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};

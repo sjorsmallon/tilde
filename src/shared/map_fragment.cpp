@@ -1,5 +1,6 @@
 #include "map_fragment.hpp"
 
+#include "entities/entity_reflection.hpp"
 #include "log.hpp"
 
 #include <cstring>
@@ -257,6 +258,14 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
   result.uids.reserve(source.object_count());
   result.remap.reserve(source.object_count());
 
+  struct stamped_entity_t
+  {
+    entity_uid_t       uid;
+    entities::Entity*  entity;
+  };
+  std::vector<stamped_entity_t> stamped_entities;
+  stamped_entities.reserve(source.entities.size());
+
   // A source material index resolved against the DESTINATION's table, by path.
   // Index 0 is the map DEFAULT and belongs to whichever map is being drawn, so
   // it is carried across as 0 rather than as the source's entry-0 path.
@@ -290,9 +299,11 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
 
     copy->position = copy->position + position;
 
+    entities::Entity* placed  = copy.get();
     const entity_uid_t stamped = destination.add_entity(std::move(copy));
     result.remap[entry.uid]    = stamped;
     result.uids.push_back(stamped);
+    stamped_entities.push_back({stamped, placed});
   }
 
   for (const map_geometry_t& entry : source.geometry)
@@ -309,9 +320,72 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
       }
     }
 
+    // The TIE, through the same table everything else goes through. Done here
+    // rather than in the field pass below because an owner is always an ENTITY
+    // and every entity is already placed -- and because by the time that pass
+    // runs this value has been moved into the destination.
+    //
+    // A brush tied to a Brush_Entity OUTSIDE the fragment is the field-that-
+    // crosses case find_crossing_connections still does not report, so the
+    // author hears about it here: cleared loudly, never left naming whatever
+    // happens to hold that uid in the destination.
+    const entity_uid_t owner = get_owner_uid(value);
+    if (owner != null_entity_uid)
+    {
+      const auto found = result.remap.find(owner);
+      if (found == result.remap.end())
+      {
+        log_warning("stamp_map: geometry {} is tied to uid {}, which is not in the "
+                    "fragment -- untied",
+                    entry.uid, owner);
+        ++result.cleared_reference_count;
+        set_owner_uid(value, null_entity_uid);
+      }
+      else
+      {
+        set_owner_uid(value, found->second);
+      }
+    }
+
     const entity_uid_t stamped = destination.add_geometry(std::move(value));
     result.remap[entry.uid]    = stamped;
     result.uids.push_back(stamped);
+  }
+
+  // The copies' own references, through the same table the rows go through. A
+  // second pass because a copy can name a member placed after it, and a
+  // geometry uid is a legal value for an entity field (one uid space). A
+  // field naming nothing passes through; one naming something outside the
+  // fragment is cleared, since that uid means nothing in this map.
+  for (const stamped_entity_t& stamped : stamped_entities)
+  {
+    uint8_t* base = reinterpret_cast<uint8_t*>(stamped.entity);
+    for (const entities::leaf_field_t& leaf : entities::collect_leaf_fields(stamped.entity->type))
+    {
+      if (leaf.info->type != FIELD_TYPE_ENTITY_UID)
+        continue;
+
+      entity_uid_t named = null_entity_uid;
+      std::memcpy(&named, base + leaf.offset, sizeof(named));
+      if (named == null_entity_uid)
+        continue;
+
+      const auto found = result.remap.find(named);
+      if (found == result.remap.end())
+      {
+        log_warning("stamp_map: {} (uid {}) field '{}' named uid {}, which is not in the "
+                    "fragment -- cleared",
+                    entities::entity_info(stamped.entity->type).classname, stamped.uid,
+                    leaf.name, named);
+        ++result.cleared_reference_count;
+        named = null_entity_uid;
+      }
+      else
+      {
+        named = found->second;
+      }
+      std::memcpy(base + leaf.offset, &named, sizeof(named));
+    }
   }
 
   for (const connection_t& connection : source.connections)

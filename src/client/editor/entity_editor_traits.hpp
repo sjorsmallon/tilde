@@ -10,7 +10,6 @@
 // I can't really encode this in a good way in the def file,
 // but I want to control how some things are rendered if they have no definitions.
 
-
 namespace client
 {
 

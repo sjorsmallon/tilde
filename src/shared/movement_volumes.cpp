@@ -33,6 +33,14 @@ void collect_movement_volumes(Entity_System& system, std::vector<movement_volume
         break;
       }
 
+      // @predicted and deliberately silent HERE: a brush's switch is consulted
+      // INSIDE the sweep, by every leaf test, so it feeds
+      // collect_disabled_geometry instead. A volume is a box tested AFTER the
+      // step, which for a wall means colliding with it and then reading a volume
+      // saying "never mind".
+      case entities::entity_type::Brush_Entity:
+        break;
+
       // Every type that is not @predicted. Adding one makes this a compile
       // error, which is the point.
       case entities::entity_type::Invalid:

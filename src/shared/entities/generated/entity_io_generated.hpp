@@ -135,6 +135,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   trait_bit(entity_trait::Objective),   // Game_Rules_Entity
   trait_bit(entity_trait::Counting),   // Logic_Counter_Entity
+  trait_bit(entity_trait::Switchable),   // Brush_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -181,6 +182,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
   action_bit(entity_action::Add) | action_bit(entity_action::Reset),   // Logic_Counter_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Brush_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -219,6 +221,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   0u,   // Game_Rules_Entity
   signal_bit(entity_signal::Limit_Reached),   // Logic_Counter_Entity
+  0u,   // Brush_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)

@@ -22,6 +22,7 @@
 #include "imgui.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <limits>
@@ -635,7 +636,7 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   // A prefab's slots. Every unbound row this stamp placed is queued, in map
   // order, and the first group is armed right away: placing a prefab is stamp,
   // click the target.
-  connection_pick.disarm();
+  uid_pick.disarm();
   for (size_t index = 0; index < ctx.map->connections.size(); ++index)
   {
     const shared::connection_t &row = ctx.map->connections[index];
@@ -643,9 +644,124 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
       continue;
     if (std::find(stamped.uids.begin(), stamped.uids.end(), row.sender) == stamped.uids.end())
       continue;
-    connection_pick.queued_rows.push_back(index);
+    uid_pick.queued_rows.push_back(index);
   }
   arm_next_unbound_pick(ctx);
+}
+
+void Selection_Tool::collect_owned_geometry(const editor_context_t&  ctx,
+                                            shared::entity_uid_t     owner,
+                                            std::vector<shared::entity_uid_t>& out) const
+{
+  out.clear();
+  if (!ctx.map || owner == shared::null_entity_uid)
+    return;
+
+  for (const shared::map_geometry_t& entry : ctx.map->geometry)
+    if (shared::get_owner_uid(entry.value) == owner)
+      out.push_back(entry.uid);
+}
+
+void Selection_Tool::tie_selection_to_entity(editor_context_t& ctx)
+{
+  if (!ctx.map)
+    return;
+
+  std::vector<shared::entity_uid_t> objects;
+  for (shared::entity_uid_t uid : selected_uids)
+    if (ctx.map->find_geometry_by_uid(uid) != nullptr)
+      objects.push_back(uid);
+
+  if (objects.empty())
+  {
+    hud::set_announcement("Select at least one brush to tie to an entity");
+    return;
+  }
+
+  const std::optional<shared::aabb_bounds_t> bounds = try_compute_selection_bounds(ctx);
+
+  auto [owner_uid, owner] = shared::spawn_entity(*ctx.map, entities::entity_type::Brush_Entity);
+  if (!owner)
+  {
+    log_error("selection tool: a brush_entity would not spawn -- nothing was tied");
+    return;
+  }
+
+  // The tie-time centroid, and it means nothing until a mover makes the
+  // entity's position live (prediction_def.md ss4.2). It is here so the icon
+  // sits on what it owns rather than at the world origin.
+  if (bounds)
+    owner->position = (bounds->min + bounds->max) * 0.5f;
+
+  transaction_t transaction;
+  transaction.add_created(owner_uid, snapshot_entity(owner.get()));
+
+  for (shared::entity_uid_t uid : objects)
+  {
+    shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(uid);
+    const shared::geometry_value_t before = entry->value;
+
+    // A brush already tied is RE-tied, not refused: the second gesture is what
+    // an author means by it, and the old owner is left standing rather than
+    // reaped -- it may still own others, and deleting it here would be an edit
+    // nobody asked for.
+    shared::set_owner_uid(entry->value, owner_uid);
+    transaction.add_geometry_modified(uid, before, entry->value);
+  }
+
+  ctx.transaction_system.push(std::move(transaction));
+
+  selected_uids.clear();
+  selected_uids.push_back(owner_uid);
+  hud::set_announcement(std::format("Tied {} object(s) to brush_entity {}", objects.size(),
+                                    owner_uid));
+}
+
+void Selection_Tool::untie_selection(editor_context_t& ctx)
+{
+  if (!ctx.map)
+    return;
+
+  // Either end of the tie unties it: the objects, or the entity that switches
+  // them. Selecting the entity and pressing Untie is the gesture an author
+  // reaches for, and it is the one the objects cannot express when they are not
+  // the thing on screen.
+  std::vector<shared::entity_uid_t> objects;
+  std::vector<shared::entity_uid_t> owned;
+  for (shared::entity_uid_t uid : selected_uids)
+  {
+    if (ctx.map->find_geometry_by_uid(uid) != nullptr)
+    {
+      objects.push_back(uid);
+      continue;
+    }
+
+    collect_owned_geometry(ctx, uid, owned);
+    objects.insert(objects.end(), owned.begin(), owned.end());
+  }
+
+  transaction_t transaction;
+  size_t        untied = 0;
+  for (shared::entity_uid_t uid : objects)
+  {
+    shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(uid);
+    if (entry == nullptr || shared::get_owner_uid(entry->value) == shared::null_entity_uid)
+      continue;
+
+    const shared::geometry_value_t before = entry->value;
+    shared::set_owner_uid(entry->value, shared::null_entity_uid);
+    transaction.add_geometry_modified(uid, before, entry->value);
+    ++untied;
+  }
+
+  if (untied == 0)
+  {
+    hud::set_announcement("Nothing in the selection is tied to an entity");
+    return;
+  }
+
+  ctx.transaction_system.push(std::move(transaction));
+  hud::set_announcement(std::format("Untied {} object(s)", untied));
 }
 
 void Selection_Tool::group_selection(editor_context_t& ctx)
@@ -738,17 +854,17 @@ void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
 {
   if (!ctx.map)
   {
-    connection_pick.disarm();
+    uid_pick.disarm();
     return;
   }
 
   // The first queued row that is STILL unbound leads the group; a row the
   // author already filled through the panel, or undid away, is skipped.
   std::optional<size_t> lead;
-  while (!connection_pick.queued_rows.empty())
+  while (!uid_pick.queued_rows.empty())
   {
-    const size_t index = connection_pick.queued_rows.front();
-    connection_pick.queued_rows.erase(connection_pick.queued_rows.begin());
+    const size_t index = uid_pick.queued_rows.front();
+    uid_pick.queued_rows.erase(uid_pick.queued_rows.begin());
     if (index < ctx.map->connections.size() &&
         ctx.map->connections[index].target_kind == shared::connection_target_t::Unbound)
     {
@@ -758,7 +874,7 @@ void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
   }
   if (!lead)
   {
-    connection_pick.disarm();
+    uid_pick.disarm();
     return;
   }
 
@@ -766,27 +882,27 @@ void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
 
   // The key is the uid the prefab's rows named in the map they were saved from,
   // so rows sharing it aimed at ONE entity and take one click.
-  connection_pick.also_rows.clear();
+  uid_pick.also_rows.clear();
   std::vector<size_t> still_queued;
-  for (size_t index : connection_pick.queued_rows)
+  for (size_t index : uid_pick.queued_rows)
   {
     const shared::connection_t &other = ctx.map->connections[index];
     if (other.target_kind == shared::connection_target_t::Unbound && other.target == row.target)
-      connection_pick.also_rows.push_back(index);
+      uid_pick.also_rows.push_back(index);
     else
       still_queued.push_back(index);
   }
-  connection_pick.queued_rows = std::move(still_queued);
+  uid_pick.queued_rows = std::move(still_queued);
 
-  connection_pick.armed = true;
-  connection_pick.row   = *lead;
+  uid_pick.armed = true;
+  uid_pick.row   = *lead;
 
   // The panel is drawn for ONE selected entity and disarms the pick otherwise,
   // so the group's sender has to be the selection.
   selected_uids = {row.sender};
   editor_gizmo.clear_target();
 
-  const size_t fills = 1 + connection_pick.also_rows.size();
+  const size_t fills = 1 + uid_pick.also_rows.size();
   hud::set_announcement(std::format(
       "Waiting to set a connection:\n{} {} ? : {}{}\n{} more to "
       "pick after this one. Esc leaves them unbound.",
@@ -794,7 +910,7 @@ void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
       entities::to_string(row.data.tag),
       fills > 1 ? std::format(" (and {} more row(s) aimed at the same thing)", fills - 1)
                 : std::string(),
-      connection_pick.queued_rows.size()));
+      uid_pick.queued_rows.size()));
 }
 
 std::optional<shared::entity_uid_t>
@@ -852,7 +968,7 @@ void Selection_Tool::on_enable(editor_context_t& ctx)
   hovered_uid = 0;
   selected_uids.clear();
   editor_gizmo.clear_target();
-  connection_pick.disarm();
+  uid_pick.disarm();
   click_consumed_by_gesture = false;
 }
 
@@ -861,7 +977,7 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
   hovered_uid = 0;
   editor_gizmo.clear_target();
   cancel_paste();
-  connection_pick.disarm();
+  uid_pick.disarm();
   click_consumed_by_gesture = false;
 }
 
@@ -972,6 +1088,57 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
           }
         }
       }
+
+      // The tie. One line saying where the selection stands, and the two edits
+      // beside it -- the Map Cvars panel's argument: a thing nothing in the
+      // editor shows is a thing the next edit can silently drop, and an `owner`
+      // key is invisible everywhere else.
+      {
+        size_t tied_objects   = 0;
+        size_t untied_objects = 0;
+        for (shared::entity_uid_t selected : selected_uids)
+        {
+          const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected);
+          if (entry == nullptr)
+            continue;
+          if (shared::get_owner_uid(entry->value) != shared::null_entity_uid)
+            ++tied_objects;
+          else
+            ++untied_objects;
+        }
+
+        std::vector<shared::entity_uid_t> owned;
+        if (selected_uids.size() == 1)
+          collect_owned_geometry(ctx, selected_uids[0], owned);
+
+        if (tied_objects == 1 && selected_uids.size() == 1)
+        {
+          const shared::entity_uid_t owner =
+              shared::get_owner_uid(ctx.map->find_geometry_by_uid(selected_uids[0])->value);
+          ImGui::Text("Tied to entity %u", owner);
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Select owner"))
+            ctx.requested_selection = owner;
+        }
+        else if (tied_objects > 0)
+        {
+          ImGui::Text("%zu of %zu selected objects are tied to an entity", tied_objects,
+                      tied_objects + untied_objects);
+        }
+
+        if (!owned.empty())
+          ImGui::Text("Switches %zu object(s)", owned.size());
+
+        if (untied_objects + tied_objects > 0 && ImGui::Button("Tie to entity"))
+          tie_selection_to_entity(ctx);
+        if (tied_objects > 0 || !owned.empty())
+        {
+          if (untied_objects + tied_objects > 0)
+            ImGui::SameLine();
+          if (ImGui::Button("Untie"))
+            untie_selection(ctx);
+        }
+      }
       ImGui::Separator();
 
       if (selected_uids.size() > 1)
@@ -1002,7 +1169,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
       {
         draw_light_bake_status(ctx, uid, *entry->entity);
         draw_reflection_volume_status(ctx, *entry->entity);
-        render_entity_fields_in_an_imgui_window(entry->entity.get());
+        render_entity_fields_in_an_imgui_window(entry->entity.get(), uid, ctx.map, &uid_pick);
       }
 
       ImGui::Separator();
@@ -1028,7 +1195,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   // radius without this is a different kind of finicky -- it hits SOMETHING every
   // time and you find out which afterwards. The label is the same spelling the
   // panel and the loader's refusals use.
-  if (connection_pick.armed && ctx.map)
+  if (uid_pick.armed && ctx.map)
   {
     const ImVec2 mouse = ImGui::GetMousePos();
     const std::optional<shared::entity_uid_t> candidate =
@@ -1059,7 +1226,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   // proximity hit on a light in front of a wall is visibly a choice rather than
   // a surprise. Not drawn while another gesture owns the cursor -- a paste
   // preview, a drag or an armed pick each already say what the click will do.
-  if (ctx.map && hovered_uid != 0 && !connection_pick.armed && !paste_is_pending &&
+  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !paste_is_pending &&
       !is_dragging_box && !is_dragging_object && !editor_gizmo.is_dragging())
   {
     const std::optional<linalg::vec3> anchor =
@@ -1075,11 +1242,11 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   if (ctx.map && selected_uids.size() == 1)
   {
     draw_connection_panel(*ctx.map, selected_uids[0], ctx.transaction_system,
-                          connection_pick);
+                          uid_pick);
   }
   else
   {
-    connection_pick.disarm();
+    uid_pick.disarm();
   }
 
 }
@@ -1500,6 +1667,28 @@ void Selection_Tool::on_update(editor_context_t& ctx,
   }
 }
 
+// A picked uid into an entity FIELD, as one undo entry -- the inspector's own
+// widgets push none (a pre-existing gap), but a click is a discrete edit and
+// gets the entry the gizmo and the panel buttons already get.
+void Selection_Tool::commit_picked_field_uid(editor_context_t& ctx, const field_pick_target_t& target,
+                                             shared::entity_uid_t picked)
+{
+  shared::map_entity_t* entry = ctx.map->find_by_uid(target.entity);
+  if (entry == nullptr || !entry->entity)
+  {
+    hud::set_announcement("The entity being edited is gone — the pick is cancelled.");
+    return;
+  }
+
+  const entity_snapshot_t before = snapshot_entity(entry->entity.get());
+  uint8_t* base = reinterpret_cast<uint8_t*>(entry->entity.get());
+  std::memcpy(base + target.offset, &picked, sizeof(picked));
+
+  transaction_t transaction;
+  transaction.add_modified_from_diff(target.entity, before, entry->entity.get());
+  ctx.transaction_system.push(std::move(transaction));
+}
+
 void Selection_Tool::on_mouse_down(editor_context_t& ctx,
                                    const input::mouse_event_t &e)
 {
@@ -1507,27 +1696,32 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
   {
     // Before anything else, because every branch below either selects or drags,
     // and a pick must do neither.
-    if (connection_pick.armed && ctx.map)
+    if (uid_pick.armed && ctx.map)
     {
       click_consumed_by_gesture = true;
-      connection_pick.armed    = false;
+      uid_pick.armed    = false;
 
       const std::optional<shared::entity_uid_t> target = try_pick_entity_near_cursor(
           ctx, {(float)e.position.x, (float)e.position.y});
-      if (target)
+      if (target && uid_pick.field)
+      {
+        commit_picked_field_uid(ctx, *uid_pick.field, *target);
+        uid_pick.disarm();
+      }
+      else if (target)
       {
         std::vector<size_t> rows;
-        rows.push_back(connection_pick.row);
-        rows.insert(rows.end(), connection_pick.also_rows.begin(),
-                    connection_pick.also_rows.end());
+        rows.push_back(uid_pick.row);
+        rows.insert(rows.end(), uid_pick.also_rows.begin(),
+                    uid_pick.also_rows.end());
         commit_picked_connection_target(*ctx.map, ctx.transaction_system, rows, *target);
-        connection_pick.also_rows.clear();
+        uid_pick.also_rows.clear();
         arm_next_unbound_pick(ctx);
       }
       else
       {
         hud::set_announcement("No entity near the cursor — the pick is cancelled.");
-        connection_pick.disarm();
+        uid_pick.disarm();
       }
       return;
     }
@@ -1829,13 +2023,13 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 
   if (e.key == input::key_t::Escape)
   {
-    if (!connection_pick.queued_rows.empty())
+    if (!uid_pick.queued_rows.empty())
       hud::set_announcement(std::format("{} connection(s) left unbound.\nThey are red in the "
                                         "Connections panel, where the Pick button still "
                                         "reaches them.",
-                                        connection_pick.queued_rows.size() +
-                                            (connection_pick.armed ? 1u : 0u)));
-    connection_pick.disarm();
+                                        uid_pick.queued_rows.size() +
+                                            (uid_pick.armed ? 1u : 0u)));
+    uid_pick.disarm();
     cancel_paste();
     return;
   }
@@ -1858,6 +2052,21 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 
         if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
         {
+          // Deleting a Brush_Entity UNTIES its objects rather than deleting
+          // them: a brush is world geometry with a pointer, not a member of the
+          // entity, and a level losing its walls because a switch was removed
+          // is not what the gesture means. Left tied they would name a uid
+          // nothing holds, which build_session refuses at the next load.
+          std::vector<shared::entity_uid_t> owned;
+          collect_owned_geometry(ctx, uid, owned);
+          for (shared::entity_uid_t owned_uid : owned)
+          {
+            shared::map_geometry_t* owned_entry = ctx.map->find_geometry_by_uid(owned_uid);
+            const shared::geometry_value_t before = owned_entry->value;
+            shared::set_owner_uid(owned_entry->value, shared::null_entity_uid);
+            transaction.add_geometry_modified(owned_uid, before, owned_entry->value);
+          }
+
           transaction.add_removed(uid, snapshot_entity(entry->entity.get()));
           ctx.map->remove_entity(uid);
         }
@@ -1930,6 +2139,21 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
       draw_geometry_selection_highlight(geometry->value, draws, ctx.time, grid_step);
     else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step);
+  }
+
+  // 1b. What a selected Brush_Entity SWITCHES. Nothing in the viewport says
+  // which brushes a switch reaches otherwise -- the tie is one key in a file --
+  // and picking the entity is the moment the author is asking. Magenta, the
+  // entity's own colour, and bounds rather than hulls: this is "these ones",
+  // not a second selection highlight.
+  {
+    std::vector<shared::entity_uid_t> owned;
+    for (shared::entity_uid_t uid : selected_uids)
+    {
+      collect_owned_geometry(ctx, uid, owned);
+      for (shared::entity_uid_t owned_uid : owned)
+        draw_bounds_highlight(owned_uid, colors::magenta);
+    }
   }
 
   // 2. Highlight Hovered Item - Yellow

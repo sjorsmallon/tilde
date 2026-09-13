@@ -34,6 +34,11 @@ struct pending_action_t
   shared::entity_uid_t    target = shared::null_entity_uid;
   entities::action_data_t data   = {};
 
+  // Who emitted the signal this row hangs off. Nothing dispatches by it: it is
+  // here so the hop cap below can name the wiring that would not settle, which
+  // is the only information an author can act on.
+  shared::entity_uid_t sender = shared::null_entity_uid;
+
   // Who caused the signal this came from, resolved at EMIT time rather than at
   // drain time: `!activator` means the player who walked into the trigger,
   // and by the time a delayed record fires they may have left. Carried through
@@ -64,9 +69,27 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
                               entities::entity_signal signal, const void* payload_bytes,
                               uint32_t payload_size);
 
-// Deliver every record whose tick has come, in (fire_tick, sequence) order.
-// Runs at the TOP of a tick: a queue drained mid-tick would let one system see
-// a world another system's signal had already changed underneath it.
+// How many times the drain will go round before it calls the wiring a loop.
+// A constant rather than a cvar: a chain deeper than this is an author's
+// mistake in every game, and a number an operator can raise is a number that
+// hides one.
+constexpr uint32_t MAX_ACTION_HOPS_PER_TICK = 16;
+
+// Deliver every record whose tick has come, in (fire_tick, sequence) order,
+// and keep going while what those handlers emitted is due too.
+//
+// Runs at the END of a tick, after every system and before the snapshot. The
+// reentrancy guard is the HOP, not the tick: each pass moves the due records
+// out before running any of them, so a handler still never runs under the
+// system that emitted the signal -- what it emits opens the next pass instead.
+// What that buys is latency: a relay into a counter into a door completes
+// inside the tick the button was pressed, so the door's new state is in that
+// tick's snapshot rather than three ticks later.
+//
+// Past MAX_ACTION_HOPS_PER_TICK the chain is a loop: it is reported by sender
+// and target and the still-due records are DROPPED, because leaving them would
+// run the same loop again next tick, forever, one error line at a time. A
+// record with a positive delay is not due and is never touched by the cap.
 void drain_pending_entity_actions(server_context_t& context);
 
 // How sv_io_debug and ent_fire name one end of a connection: the author's label

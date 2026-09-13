@@ -22,5 +22,4 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 0.4 0"
-  "render.material.roughness" "0.5"
 }

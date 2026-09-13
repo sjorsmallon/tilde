@@ -495,13 +495,6 @@ struct replication_t
   uint32_t last_seen_hit_tick = 0;
   bool hit_tick_seeded = false;
 
-  // False until one snapshot's damageable health has been applied, so a target
-  // already broken when we join or load does not play its break on arrival.
-  bool damageable_health_seeded = false;
-
-  // Same rule for the emitters' play counters: the first snapshot seeds them,
-  // so a Play that happened before we joined is not replayed on arrival.
-  bool sound_emitter_playback_seeded = false;
   // Looping emitters are not built; said once per connection rather than per tick.
   bool loop_emitters_unbuilt_reported = false;
 

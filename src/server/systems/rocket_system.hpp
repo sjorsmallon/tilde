@@ -7,9 +7,10 @@
 namespace server
 {
 
-// Advance every Rocket_Entity by `dt`. On hit / lifetime expiry, applies splash
-// damage / knockback, dispatches a ROCKET_EXPLOSION cosmetic effect through
-// `context`, and removes the rocket from the session.
+// Advance every Rocket_Entity by `dt`. On hit / lifetime expiry, pushes
+// everything in the blast radius with a falloff velocity and NO damage,
+// dispatches a ROCKET_EXPLOSION cosmetic effect through `context`, and removes
+// the rocket from the session.
 void update_rockets(server_context_t &context, float dt);
 
 } // namespace server

@@ -166,6 +166,14 @@ struct Move_Events
 // decision, not a parameter to add -- see lag_compensation_def.md, "Why movement
 // needs no rewind".
 //
+// `disabled_geometry` does not contradict it either, and for the same reason
+// `movement_volumes` does not: it is the SWITCH and never the shape. The tree is
+// still identical at every tick and is still nothing this function writes to;
+// what the bitset says is which of its leaves are not there this tick, which is
+// replicated state that mispredicts for the unacked window and is corrected.
+// Empty means nothing is off, so a caller with no session (a test, a bot rig)
+// behaves exactly as it did. See shared/disabled_geometry.hpp.
+//
 // `movement_volumes` does NOT contradict that, and the difference is worth
 // saying exactly. Its BOUNDS are static map data, identical at every tick, so
 // there is still no "which tick did I overlap" to answer. The one
@@ -203,6 +211,7 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
+    Span<const uint8_t> disabled_geometry,
     Span<const shared::movement_volume_t> movement_volumes,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,

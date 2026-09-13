@@ -25,6 +25,7 @@
 #include "../shared/array.hpp"
 #include "../shared/network/subtick_codec.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/disabled_geometry.hpp"
 #include "../shared/movement_volumes.hpp"
 
 #include <algorithm>
@@ -958,6 +959,7 @@ static void cancel_reload(entities::Player_Entity &player)
 // is what that comment always meant.
 static void resolve_player_shot(server_context_t &context, int32_t client_slot,
                                 const game::C2S_ClientInput &input,
+                                Span<const uint8_t> disabled_geometry,
                                 entities::Player_Entity* player, float yaw, float pitch,
                                 uint32_t fire_slot)
 {
@@ -1083,7 +1085,8 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
 
       ray_hit_result_t world_hit{};
       const bool shot_collided_with_static_geometry =
-          bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit) &&
+          bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit,
+                            disabled_geometry) &&
           world_hit.hit;
 
       // clip the max range, since players outside of this range can't possibly be hit.
@@ -1287,7 +1290,6 @@ bool Tick()
 
   // if there is a pending map change, that's leading. set everything up.
   check_if_there_is_a_pending_map_change(context);
-  drain_pending_entity_actions(context);
 
   // The inbox is retained on the context so its vectors keep their capacity;
   // poll_network only push_backs, so it has to be emptied here.
@@ -1536,6 +1538,15 @@ bool Tick()
   std::vector<shared::movement_volume_t> movement_volumes;
   shared::collect_movement_volumes(context.world.session.entity_system, movement_volumes);
   const Span<const shared::movement_volume_t> movement_volume_span{movement_volumes};
+
+  // The geometry half of the same cut, and cut in the same breath so a shot and
+  // a step in one tick cannot disagree about which walls are there. The client
+  // cuts the same set out of its own session copy, which is what makes a gate
+  // predicted (prediction_def.md ss4).
+  shared::disabled_geometry_t disabled_geometry;
+  shared::collect_disabled_geometry(context.world.session.entity_system,
+                                    context.world.session.owner_of, disabled_geometry);
+  const Span<const uint8_t> disabled_geometry_span{disabled_geometry};
 
   // since the server is in lockstep, pose all players once before handling moves:
   // internalize:
@@ -1811,7 +1822,7 @@ bool Tick()
             *context.cvars,
             allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
             player->movement,
-            context.world.session.bvh, movement_volume_span,
+            context.world.session.bvh, disabled_geometry_span, movement_volume_span,
             player->position, player->velocity, front, right,
             aim_sweep_of(step), 16.f, 36.f, step.dt, &step_events);
 
@@ -1842,8 +1853,8 @@ bool Tick()
         cancel_reload(*player);
 
       if (fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
-        resolve_player_shot(context, client_slot, input, player, step.view.yaw,
-                            step.view.pitch, step.start_slot);
+        resolve_player_shot(context, client_slot, input, disabled_geometry_span, player,
+                            step.view.yaw, step.view.pitch, step.start_slot);
 
       // The right mouse button never passes through the shot clocks: Zoom is
       // the client's (it arrives as Button::Zoom state), and an impulse is gated
@@ -2002,7 +2013,7 @@ bool Tick()
     log_error("Server tick with no physics state — init() must have failed");
     return false;
   }
-  update_bots(context, movement_volume_span, context.tick_number, tick_dt);
+  update_bots(context, movement_volume_span, disabled_geometry_span, context.tick_number, tick_dt);
 
   // The feet chase the view, on the FIXED tick, for every player -- after
   // update_bots because a bot's view yaw is written in there and this reads it.
@@ -2061,6 +2072,14 @@ bool Tick()
   // is the whole of the trigger code that lives in the tick.
   update_triggers(context);
 
+  // Every connection this tick emitted, delivered before the snapshot is built,
+  // looping until the chain settles. Here rather than at the top of the tick so
+  // a zero-delay chain completes inside the tick that started it: the door a
+  // button opened is open in the snapshot of the tick it was pressed in, not
+  // one hop per tick later. Handlers still never run under an emitting system
+  // -- the reentrancy guard is the hop, not the tick (entity_io_queue.hpp).
+  drain_pending_entity_actions(context);
+
   // --- Broadcast bot debug state to all connected clients ---
   if (!context.world.bots.empty())
   {
@@ -2099,78 +2118,11 @@ bool Tick()
   // --- Broadcast entity state to all connected clients ---
   // Delta compression: serialize per-client with baselines (only send changed fields)
 
-  // All three re-fetched here, `player_pool` included: the trigger walk above got
-  // its own and a span does not survive what a `std::vector<T>*` did. The pointer
-  // form stayed valid across a reallocation and only its ELEMENTS moved, so a
-  // pointer grabbed a hundred lines ago silently kept working; a span carries the
-  // data pointer and the count, so the same reuse would read freed memory. Fetch
-  // at the point of use, per entities_of()'s contract.
-  Span<entities::Player_Entity> snapshot_player_pool =
-      context.world.session.entity_system.entities_of<entities::Player_Entity>();
-  Span<entities::Weapon_Entity> weapon_pool =
-      context.world.session.entity_system.entities_of<entities::Weapon_Entity>();
-  Span<entities::Rocket_Entity> rocket_pool =
-      context.world.session.entity_system.entities_of<entities::Rocket_Entity>();
-  Span<entities::Physics_Body_Entity> physics_body_pool =
-      context.world.session.entity_system.entities_of<entities::Physics_Body_Entity>();
-
-  // Build this tick's frame ONCE, straight into its slot in the ring. It is
-  // both what gets encoded and what a later ack will name as a baseline, so
-  // there is exactly one copy of the world per tick and the two can't drift.
-  //
-  // Storing it before sending (the old code stored after) is what lets the
-  // encoder read from it: the delta is now frame-vs-frame, not pool-vs-vector.
-  // A client that acked the tick occupying this same ring slot has by
-  // definition aged out — find() checks the tick, so it misses and that client
-  // gets a full update.
   network::snapshot_frame_t &frame = context.replication.snapshot_history.slot_for(context.tick_number);
   frame.clear();
   frame.tick = context.tick_number;
 
-  for (const entities::Player_Entity &entity : snapshot_player_pool)
-    frame.players[entity.entity_id] = entity;
-
-  // Every weapon in the world, not just the ones a client carries: the pool is
-  // the truth about what exists, and filtering it per client would need a
-  // relevance pass this codebase has nowhere else. A holstered weapon's fields
-  // never change, so each costs a spawn record and then nothing.
-  for (const entities::Weapon_Entity &weapon : weapon_pool)
-    frame.weapons[weapon.entity_id] = weapon;
-
-  for (const entities::Rocket_Entity &rocket : rocket_pool)
-    frame.rockets[rocket.entity_id] = rocket;
-
-  for (const entities::Physics_Body_Entity &body : physics_body_pool)
-    frame.physics_bodies[body.entity_id] = body;
-
-  // Map-placed, and replicated anyway: `health` and `visible` are the two
-  // things about one of these that the map file cannot tell the client.
-  for (const entities::Damageable_Entity &damageable :
-       context.world.session.entity_system.entities_of<entities::Damageable_Entity>())
-    frame.damageables[damageable.entity_id] = damageable;
-
-  // Same reason: Switchable and Colorable write these at runtime, and the client
-  // holds a light it loaded from the map, so the wire is the only route the
-  // change has (entity_io_def.md ss11 step 6).
-  for (const entities::Point_Light_Entity &light :
-       context.world.session.entity_system.entities_of<entities::Point_Light_Entity>())
-    frame.point_lights[light.entity_id] = light;
-
-  for (const entities::Spot_Light_Entity &light :
-       context.world.session.entity_system.entities_of<entities::Spot_Light_Entity>())
-    frame.spot_lights[light.entity_id] = light;
-
-  // And the emitter: its switch and its play counter are written by Enable and
-  // Play, and a counter change is what tells the client to play once.
-  for (const entities::Sound_Emitter_Entity &emitter :
-       context.world.session.entity_system.entities_of<entities::Sound_Emitter_Entity>())
-    frame.sound_emitters[emitter.entity_id] = emitter;
-
-  // @predicted: the client's player_move will read the pad's switch, and a pad
-  // the server switched off must be off in that step too.
-  for (const entities::Jump_Pad_Entity &pad :
-       context.world.session.entity_system.entities_of<entities::Jump_Pad_Entity>())
-    frame.jump_pads[pad.entity_id] = pad;
+  frame.copy_replicated_entities_from(context.world.session.entity_system);
 
   // Serialize and send to each client with per-client delta compression
   for (int slot = 0; slot < network::sv_max_client_count; ++slot)

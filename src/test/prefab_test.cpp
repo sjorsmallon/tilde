@@ -18,6 +18,7 @@
 // Plus the round trip: the fragment through serialize/parse is a no-op, since
 // the file the prefab lands in is the same file format a map lands in.
 
+#include "asset.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "map_connection.hpp"
@@ -96,6 +97,13 @@ static const char *TEST_MATERIAL = "resources/textures/prefab_test_material";
 
 int main()
 {
+  // A weapon carries a Render mesh, and compute_object_bounds resolves it, so
+  // the asset system has to be mounted the way a launcher mounts it.
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::mount_asset_source();
+  assets::init();
+
   // ---------------------------------------------------------------- the source
   //
   // A trigger, a light and a spawn marker that belong together, one brush under
@@ -112,10 +120,22 @@ int main()
       add_at(source, entities::entity_type::Player_Spawn_Entity, {160.f, 64.f, -140.f});
   const entity_uid_t crate =
       add_at(source, entities::entity_type::Damageable_Entity, {900.f, 64.f, 900.f});
+  // Two weapons naming an owner through an `entity` FIELD rather than a row:
+  // one names a member, one names the crate outside.
+  const entity_uid_t owned_weapon =
+      add_at(source, entities::entity_type::Weapon_Entity, {220.f, 64.f, -120.f});
+  const entity_uid_t stray_weapon =
+      add_at(source, entities::entity_type::Weapon_Entity, {180.f, 64.f, -80.f});
 
   if (trigger == null_entity_uid || light == null_entity_uid || spawn == null_entity_uid ||
-      crate == null_entity_uid)
+      crate == null_entity_uid || owned_weapon == null_entity_uid ||
+      stray_weapon == null_entity_uid)
     return fail("a fixture entity would not be created");
+
+  entities::entity_as<entities::Weapon_Entity>(source.find_by_uid(owned_weapon)->entity.get())
+      ->owner_uid = trigger;
+  entities::entity_as<entities::Weapon_Entity>(source.find_by_uid(stray_weapon)->entity.get())
+      ->owner_uid = crate;
 
   brush_geometry_t floor_brush = make_box_brush({200.f, 8.f, -100.f}, {64.f, 8.f, 64.f});
   sync_face_surfaces(floor_brush);
@@ -182,7 +202,7 @@ int main()
     source.connections.push_back(row);
   }
 
-  const std::vector<entity_uid_t> members = {trigger, light, spawn, floor};
+  const std::vector<entity_uid_t> members = {trigger, light, spawn, owned_weapon, stray_weapon, floor};
 
   // ------------------------------------------------------- crossing detection
   const std::vector<crossing_connection_t> crossings = find_crossing_connections(source, members);
@@ -201,8 +221,8 @@ int main()
   // ------------------------------------------------------------------ extract
   const map_t fragment = extract_map_subset(source, members);
 
-  if (fragment.entities.size() != 3 || fragment.geometry.size() != 1)
-    return fail(std::format("fragment holds {} entities and {} geometry, expected 3 and 1",
+  if (fragment.entities.size() != 5 || fragment.geometry.size() != 1)
+    return fail(std::format("fragment holds {} entities and {} geometry, expected 5 and 1",
                             fragment.entities.size(), fragment.geometry.size()));
   if (fragment.has_object(crate))
     return fail("the fragment took an object that was not selected");
@@ -273,12 +293,14 @@ int main()
   const stamp_result_t first  = stamp_map(destination, fragment, first_at);
   const stamp_result_t second = stamp_map(destination, fragment, second_at);
 
-  if (first.uids.size() != 4 || second.uids.size() != 4)
+  if (first.uids.size() != 6 || second.uids.size() != 6)
     return fail("a stamp did not place every member");
+  if (first.cleared_reference_count != 1 || second.cleared_reference_count != 1)
+    return fail("a stamp did not clear exactly the one field naming outside the fragment");
   if (first.dropped_connection_count != 0 || second.dropped_connection_count != 0)
     return fail("a stamp dropped a row of a fragment that had no crossing ones");
-  if (destination.object_count() != 8)
-    return fail(std::format("destination holds {} objects, expected 8",
+  if (destination.object_count() != 12)
+    return fail(std::format("destination holds {} objects, expected 12",
                             destination.object_count()));
 
   for (entity_uid_t placed : first.uids)
@@ -318,6 +340,19 @@ int main()
       return fail("the stamped rows are not in fragment order");
     if (respawn_row.data.as_set_respawn_point().location != stamp.remap.at(spawn))
       return fail("a stamped override payload still names the fragment's uid");
+
+    // A FIELD naming a member follows the copy exactly as a row does; one naming
+    // the outside is cleared rather than left pointing at a coincidence.
+    const map_entity_t* owned_copy = destination.find_by_uid(stamp.remap.at(owned_weapon));
+    const map_entity_t* stray_copy = destination.find_by_uid(stamp.remap.at(stray_weapon));
+    if (!owned_copy || !stray_copy)
+      return fail("a stamped weapon is missing");
+    if (entities::entity_as<entities::Weapon_Entity>(owned_copy->entity.get())->owner_uid !=
+        stamp.remap.at(trigger))
+      return fail("a stamped entity field still names the fragment's uid");
+    if (entities::entity_as<entities::Weapon_Entity>(stray_copy->entity.get())->owner_uid !=
+        null_entity_uid)
+      return fail("a stamped entity field naming outside the fragment was not cleared");
 
     // Where the anchor was told to land is where the copy sits.
     const linalg::vec3        offset = which == 0 ? first_at : second_at;
@@ -366,7 +401,55 @@ int main()
       return fail("a fragment carrying cvar lines was stamped anyway");
   }
 
-  printf("prefab_test: OK (4 objects extracted, 2 slots kept, 1 crossing row dropped, stamped "
+  // ----------------------------------------------------- the tie, across a stamp
+  //
+  // A brush names its owner (prediction_def.md §4.2), so a stamp has to rewrite
+  // that the way it rewrites a row and an entity field: the copy's brush must
+  // name the COPY's Brush_Entity, not the fragment's, and not the other stamp's.
+  // A brush tied outside the fragment is the field-that-crosses case, and it is
+  // cleared loudly rather than left naming whatever holds that number here.
+  {
+    map_t tie_source;
+    tie_source.name = "tie.source";
+
+    auto [inside_owner, owner_entity] =
+        spawn_entity(tie_source, entities::entity_type::Brush_Entity);
+    if (!owner_entity)
+      return fail("a brush_entity would not spawn");
+
+    const entity_uid_t tied_brush =
+        tie_source.add_geometry(make_box_brush({0.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));
+    const entity_uid_t stray_brush =
+        tie_source.add_geometry(make_box_brush({64.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));
+    set_owner_uid(tie_source.find_geometry_by_uid(tied_brush)->value, inside_owner);
+    // A uid from another map entirely: nothing in the fragment answers to it.
+    set_owner_uid(tie_source.find_geometry_by_uid(stray_brush)->value, 9999);
+
+    map_t tie_destination;
+    const stamp_result_t first_tie  = stamp_map(tie_destination, tie_source, {0.f, 0.f, 0.f});
+    const stamp_result_t second_tie = stamp_map(tie_destination, tie_source, {512.f, 0.f, 0.f});
+
+    if (first_tie.cleared_reference_count != 1 || second_tie.cleared_reference_count != 1)
+      return fail("a stamp did not clear exactly the one tie naming outside the fragment");
+
+    for (const stamp_result_t *stamp : {&first_tie, &second_tie})
+    {
+      const entity_uid_t copied_owner = stamp->remap.at(inside_owner);
+      const entity_uid_t copied_tied  = stamp->remap.at(tied_brush);
+      const entity_uid_t copied_stray = stamp->remap.at(stray_brush);
+
+      if (get_owner_uid(tie_destination.find_geometry_by_uid(copied_tied)->value) != copied_owner)
+        return fail("a stamped brush does not name the stamped copy of its owner");
+      if (get_owner_uid(tie_destination.find_geometry_by_uid(copied_stray)->value) !=
+          null_entity_uid)
+        return fail("a brush tied outside the fragment came through still tied");
+    }
+
+    if (first_tie.remap.at(inside_owner) == second_tie.remap.at(inside_owner))
+      return fail("the two stamps share an owner");
+  }
+
+  printf("prefab_test: OK (6 objects extracted, 2 field references remapped, 2 slots kept, 1 crossing row dropped, stamped "
          "twice with %zu connections remapped, material appended once)\n",
          destination.connections.size());
   return 0;

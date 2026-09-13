@@ -440,7 +440,7 @@ constexpr field_info_t Inventory_FIELDS[] = {
 
 constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Player_Spawn_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Player_Spawn_Entity::entity_id),
    .flags = 1u,
@@ -497,7 +497,7 @@ constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
 
 constexpr field_info_t Player_Spectate_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Player_Spectate_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Player_Spectate_Entity::entity_id),
    .flags = 1u,
@@ -536,7 +536,7 @@ constexpr field_info_t Player_Spectate_Entity_FIELDS[] = {
 
 constexpr field_info_t Player_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Player_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::entity_id),
    .flags = 1u,
@@ -653,7 +653,7 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "checkpoint_uid",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Player_Entity, checkpoint_uid),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::checkpoint_uid),
    .flags = 0u,
@@ -764,7 +764,7 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
 
 constexpr field_info_t Weapon_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Weapon_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::entity_id),
    .flags = 1u,
@@ -818,7 +818,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[2]},
   {.name = "owner_uid",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Weapon_Entity, owner_uid),
    .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::owner_uid),
    .flags = 1u,
@@ -866,7 +866,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
 
 constexpr field_info_t Rocket_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Rocket_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::entity_id),
    .flags = 1u,
@@ -947,7 +947,7 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "owner_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Rocket_Entity, owner_id),
    .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::owner_id),
    .flags = 0u,
@@ -977,7 +977,7 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
 
 constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Physics_Body_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::entity_id),
    .flags = 1u,
@@ -1061,7 +1061,7 @@ constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
 
 constexpr field_info_t Damageable_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Damageable_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::entity_id),
    .flags = 1u,
@@ -1136,7 +1136,7 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
 
 constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Particle_Emitter_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Particle_Emitter_Entity::entity_id),
    .flags = 1u,
@@ -1337,7 +1337,7 @@ constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
 
 constexpr field_info_t Sound_Emitter_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Sound_Emitter_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Sound_Emitter_Entity::entity_id),
    .flags = 1u,
@@ -1439,7 +1439,7 @@ constexpr field_info_t Sound_Emitter_Entity_FIELDS[] = {
 
 constexpr field_info_t Point_Light_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Point_Light_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Point_Light_Entity::entity_id),
    .flags = 1u,
@@ -1505,7 +1505,7 @@ constexpr field_info_t Point_Light_Entity_FIELDS[] = {
 
 constexpr field_info_t Spot_Light_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Spot_Light_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Spot_Light_Entity::entity_id),
    .flags = 1u,
@@ -1589,7 +1589,7 @@ constexpr field_info_t Spot_Light_Entity_FIELDS[] = {
 
 constexpr field_info_t Directional_Light_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Directional_Light_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Directional_Light_Entity::entity_id),
    .flags = 1u,
@@ -1646,7 +1646,7 @@ constexpr field_info_t Directional_Light_Entity_FIELDS[] = {
 
 constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Trigger_Volume_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::entity_id),
    .flags = 1u,
@@ -1703,7 +1703,7 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
 
 constexpr field_info_t Jump_Pad_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Jump_Pad_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Jump_Pad_Entity::entity_id),
    .flags = 1u,
@@ -1778,7 +1778,7 @@ constexpr field_info_t Jump_Pad_Entity_FIELDS[] = {
 
 constexpr field_info_t Reflection_Volume_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Reflection_Volume_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Reflection_Volume_Entity::entity_id),
    .flags = 1u,
@@ -1826,7 +1826,7 @@ constexpr field_info_t Reflection_Volume_Entity_FIELDS[] = {
 
 constexpr field_info_t Game_Rules_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Game_Rules_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Game_Rules_Entity::entity_id),
    .flags = 1u,
@@ -1865,7 +1865,7 @@ constexpr field_info_t Game_Rules_Entity_FIELDS[] = {
 
 constexpr field_info_t Logic_Counter_Entity_FIELDS[] = {
   {.name = "entity_id",
-   .type = FIELD_TYPE_U32,
+   .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Logic_Counter_Entity, entity_id),
    .size_in_bytes = (uint32_t)sizeof(Logic_Counter_Entity::entity_id),
    .flags = 1u,
@@ -1911,6 +1911,54 @@ constexpr field_info_t Logic_Counter_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Brush_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Brush_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Brush_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Brush_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Brush_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Brush_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Brush_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Brush_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Brush_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Brush_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Brush_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -1941,6 +1989,7 @@ Entity* construct_Jump_Pad_Entity(void* memory) { return new (memory) Jump_Pad_E
 Entity* construct_Reflection_Volume_Entity(void* memory) { return new (memory) Reflection_Volume_Entity(); }
 Entity* construct_Game_Rules_Entity(void* memory) { return new (memory) Game_Rules_Entity(); }
 Entity* construct_Logic_Counter_Entity(void* memory) { return new (memory) Logic_Counter_Entity(); }
+Entity* construct_Brush_Entity(void* memory) { return new (memory) Brush_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -1959,6 +2008,7 @@ Entity* as_base_Jump_Pad_Entity(void* memory) { return static_cast<Entity*>((Jum
 Entity* as_base_Reflection_Volume_Entity(void* memory) { return static_cast<Entity*>((Reflection_Volume_Entity*)memory); }
 Entity* as_base_Game_Rules_Entity(void* memory) { return static_cast<Entity*>((Game_Rules_Entity*)memory); }
 Entity* as_base_Logic_Counter_Entity(void* memory) { return static_cast<Entity*>((Logic_Counter_Entity*)memory); }
+Entity* as_base_Brush_Entity(void* memory) { return static_cast<Entity*>((Brush_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -1973,12 +2023,13 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"sound_emitter_entity", "Sound Emitter", {Sound_Emitter_Entity_FIELDS, 11}, (uint32_t)sizeof(Sound_Emitter_Entity), (uint32_t)alignof(Sound_Emitter_Entity), 6u, false, true, false, construct_Sound_Emitter_Entity, as_base_Sound_Emitter_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 130u, false, true, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 9}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 130u, false, true, false, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
-  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 128u, false, false, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
-  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, false, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
+  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 128u, false, true, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
+  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, true, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"jump_pad_entity", "Jump Pad", {Jump_Pad_Entity_FIELDS, 8}, (uint32_t)sizeof(Jump_Pad_Entity), (uint32_t)alignof(Jump_Pad_Entity), 67u, false, true, true, construct_Jump_Pad_Entity, as_base_Jump_Pad_Entity},
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 4}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 0u, false, false, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 16u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
+  {"brush_entity", "Brush", {Brush_Entity_FIELDS, 5}, (uint32_t)sizeof(Brush_Entity), (uint32_t)alignof(Brush_Entity), 2u, false, true, true, construct_Brush_Entity, as_base_Brush_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][10] = {
@@ -2000,9 +2051,10 @@ constexpr int32_t COMPONENT_OFFSETS[][10] = {
   {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Game_Rules_Entity
   {-1, -1, -1, -1, (int32_t)offsetof(Logic_Counter_Entity, counter), -1, -1, -1, -1, -1}, // Logic_Counter_Entity
+  {-1, (int32_t)offsetof(Brush_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1}, // Brush_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 15;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 16;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -2019,9 +2071,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Reflection_Volume_Entity,
   entity_type::Game_Rules_Entity,
   entity_type::Logic_Counter_Entity,
+  entity_type::Brush_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 9;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 12;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -2031,7 +2084,10 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Sound_Emitter_Entity,
   entity_type::Point_Light_Entity,
   entity_type::Spot_Light_Entity,
+  entity_type::Directional_Light_Entity,
+  entity_type::Trigger_Volume_Entity,
   entity_type::Jump_Pad_Entity,
+  entity_type::Brush_Entity,
 };
 
 } // namespace
@@ -2304,6 +2360,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Reflection_Volume_Entity: return new Reflection_Volume_Entity();
     case entity_type::Game_Rules_Entity: return new Game_Rules_Entity();
     case entity_type::Logic_Counter_Entity: return new Logic_Counter_Entity();
+    case entity_type::Brush_Entity: return new Brush_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -2342,6 +2399,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Reflection_Volume_Entity: delete static_cast<Reflection_Volume_Entity*>(entity); return;
     case entity_type::Game_Rules_Entity: delete static_cast<Game_Rules_Entity*>(entity); return;
     case entity_type::Logic_Counter_Entity: delete static_cast<Logic_Counter_Entity*>(entity); return;
+    case entity_type::Brush_Entity: delete static_cast<Brush_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -2356,6 +2414,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x42f86544u;
+const uint32_t SCHEMA_HASH = 0x851424bau;
 
 } // namespace entities

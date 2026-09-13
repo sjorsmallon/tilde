@@ -118,6 +118,35 @@ void Entity_System::add_entity(entity_uid_t uid, const entities::Entity *entity)
   locations[uid] = {entity->type, pool.count - 1};
 }
 
+entities::Entity *Entity_System::add_default(entities::entity_type type, entity_uid_t uid)
+{
+  if (type == entities::entity_type::Invalid)
+    fatal_error("Entity_System::add_default: entity_type::Invalid names no pool");
+
+  if (uid == null_entity_uid)
+  {
+    log_error("Entity_System::add_default: a {} was handed uid 0, which is the null "
+              "sentinel — not added",
+              entities::entity_info(type).classname);
+    return nullptr;
+  }
+
+  auto existing = locations.find(uid);
+  if (existing != locations.end())
+  {
+    log_error("Entity_System::add_default: uid {} is already held by a {} — not added",
+              uid, entities::entity_info(existing->second.type).classname);
+    return nullptr;
+  }
+
+  Entity_Pool      &pool   = pools[(uint32_t)type];
+  entities::Entity *entity = pool.push_default();
+  entity->entity_id        = uid;
+
+  locations[uid] = {type, pool.count - 1};
+  return entity;
+}
+
 void Entity_System::populate_from_map(const map_t &map)
 {
   reset();

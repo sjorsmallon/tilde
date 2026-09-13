@@ -40,6 +40,36 @@ game_session_t build_session(const map_t &map)
     }
   }
 
+  // The tie, derived and checked ONCE. A geometry naming an owner that is not a
+  // live Brush_Entity keeps no entry, so the collect that runs every tick has
+  // nothing left to refuse and the brush simply stays solid.
+  session.owner_of.assign(session.geometry.size(), null_entity_uid);
+  for (size_t index = 0; index < session.geometry.size(); ++index)
+  {
+    const entity_uid_t owner = get_owner_uid(session.geometry[index].value);
+    if (owner == null_entity_uid)
+      continue;
+
+    const entities::Entity *entity = session.entity_system.try_find(owner);
+    if (entity == nullptr)
+    {
+      log_error("build_session: geometry {} is tied to uid {}, which this map does not hold "
+                "— it stays solid",
+                session.geometry[index].uid, owner);
+      continue;
+    }
+    if (entity->type != entities::entity_type::Brush_Entity)
+    {
+      log_error("build_session: geometry {} is tied to uid {}, which is a {} and not a "
+                "brush_entity — it stays solid",
+                session.geometry[index].uid, owner,
+                entities::entity_info(entity->type).classname);
+      continue;
+    }
+
+    session.owner_of[index] = owner;
+  }
+
   // Build the BVH over the geometry. Collision_Id.index is the index into
   // session.geometry, which is frozen for the session's lifetime. (The editor's
   // BVH keys by uid instead — see build_editor_bvh.)

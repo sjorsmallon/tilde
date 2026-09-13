@@ -1,7 +1,7 @@
 Fully_Serializable :: [@Networked, @Editable]
 
 Entity :: base {
-    entity_id:   u32                    @Networked
+    entity_id:   entity                 @Networked
     position:    v3                     @Fully_Serializable
     orientation: quat = {0, 0, 0, 1}    @Fully_Serializable
     name:        string<32>             @Editable
@@ -88,11 +88,6 @@ Movement :: component {
     jump_was_held: bool                 @Networked
     seconds_until_impulse_ready: f32    @Networked
 
-    // Quake 3's jumppad_ent: WHICH movement volume last launched us, so a pad
-    // fires once per contact rather than every step you are inside it. A uid
-    // and not a bool, because a bool says "I am on a pad" and the uid says
-    // which -- so stepping from one pad straight onto another fires twice, and
-    // the clear condition is checkable against the volume list.
     pad_contact_uid: u32                @Networked
 }
 
@@ -165,8 +160,10 @@ Objective :: trait {
 // ---------------------------------------------------------------------------
 // ENTITIES -- declaration order IS entity_type order: the placement menu, the
 // hand-written switches and SCHEMA_HASH all follow it.
-// @replicated: rides the snapshot. @predicted: player_move reads it on both
-// sides, so it must be @replicated (generalization_def.md ss6).
+// A type rides the snapshot when one of its OWN fields is @Networked (through
+// its components; the base's do not count) -- derived, never written.
+// @predicted: player_move reads it on both
+// sides (generalization_def.md ss6).
 // ---------------------------------------------------------------------------
 
 Player_Spawn_Entity :: entity {
@@ -174,10 +171,11 @@ Player_Spawn_Entity :: entity {
     team_allegiance: Team_Allegiance = .Free_For_All @Editable
 }
 
+// this looks empty but that's because all the entity fields are good enough.
 Player_Spectate_Entity :: entity {
 }
 
-Player_Entity :: entity @runtime_only @replicated is Mortal, Mobile, Armable, Respawnable {
+Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
@@ -204,7 +202,7 @@ Player_Entity :: entity @runtime_only @replicated is Mortal, Mobile, Armable, Re
     last_empty_fire_warning_tick: u32
 
     // Where a death respawn puts you, from Set_Respawn_Point; 0 for none.
-    checkpoint_uid: u32
+    checkpoint_uid: entity
 
     last_hit_tick:         u32          @Networked
     last_hit_was_headshot: bool         @Networked
@@ -242,33 +240,33 @@ Player_Entity :: entity @runtime_only @replicated is Mortal, Mobile, Armable, Re
     team_allegiance: Team_Allegiance = .Free_For_All @Networked
 }
 
-Weapon_Entity :: entity @replicated {
+Weapon_Entity :: entity {
     ammo:             i32               @Networked
     weapon_id:        Weapon            @Fully_Serializable
     // Null owner means the weapon lies in the world as a physics body, waiting to be picked up.
-    owner_uid:        u32               @Networked
+    owner_uid:        entity            @Networked
     next_fire_time:   u64
     pickup_allowed_tick: u32
     damage_type: Damage_Type = .Normal  @Editable
-    render:           Render = { mesh = .Box }
+    render:           Render = { mesh = .Error }
 }
 
-Rocket_Entity :: entity @runtime_only @replicated {
+Rocket_Entity :: entity @runtime_only {
     velocity:        v3                 @Networked
     lifetime: f32 = 5.0
     damage_amount: f32 = 50.0
     damage_radius: f32 = 120.0
     knockback_force: f32 = 600.0
-    owner_id:        u32
+    owner_id:        entity
     collision_radius: f32 = 12.0        @Networked
-    render:          Render
+    render:          Render = { mesh = .rocket}
 }
 
 // Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
 // commands), which is why its Render component has to be @Networked while its
 // own configuration does not: play_state.cpp draws a body from
 // body.position / body.orientation / body.render and reads nothing else off it.
-Physics_Body_Entity :: entity @replicated {
+Physics_Body_Entity :: entity {
     // Jolt's shape and the editor's size box. Server-side simulation input;
     // the visual size rides in render.scale, which the spawn path sets from
     // the same extents.
@@ -281,7 +279,7 @@ Physics_Body_Entity :: entity @replicated {
     render:   Render
 }
 
-Damageable_Entity :: entity @replicated is Mortal {
+Damageable_Entity :: entity is Mortal {
     health: Health
     hitbox_half_extents: v3 = {16, 32, 16}   @Editable
     weakness: Damage_Type = .Orange          @Editable
@@ -316,7 +314,7 @@ Particle_Emitter_Entity :: entity {
 // everyone's ears -- an announcer, music -- never one player's; that is a
 // state edge on the player, not an emitter. Loops are NOT built yet: the
 // client warns once and stays silent, hence the default is a one-shot.
-Sound_Emitter_Entity :: entity @replicated is Switchable, Playable {
+Sound_Emitter_Entity :: entity is Switchable, Playable {
     switch_state: Enabled
     playback:     Playback
     sound:        sound_asset          @Editable
@@ -326,7 +324,7 @@ Sound_Emitter_Entity :: entity @replicated is Switchable, Playable {
     range:        f32 = 1024.0         @Editable
 }
 
-Point_Light_Entity :: entity @replicated is Colorable, Switchable {
+Point_Light_Entity :: entity is Colorable, Switchable {
     switch_state:      Enabled
     light: Light
     // Where the falloff reaches zero, in engine units -- 1 unit = 1 inch, the
@@ -340,7 +338,7 @@ Point_Light_Entity :: entity @replicated is Colorable, Switchable {
     range: f32 = 256.0                  @Editable
 }
 
-Spot_Light_Entity :: entity @replicated is Colorable, Switchable {
+Spot_Light_Entity :: entity is Colorable, Switchable {
     switch_state:      Enabled
     light:         Light
     // 512 units = 42 feet (13m): a beam down a corridor rather than a room.
@@ -375,7 +373,7 @@ Trigger_Volume_Entity :: entity is Switchable, Touchable {
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
 }
 
-Jump_Pad_Entity :: entity @replicated @predicted is Switchable, Touchable {
+Jump_Pad_Entity :: entity @predicted is Switchable, Touchable {
     switch_state:  Enabled
     volume:        Box_Volume = { half_extents = {32, 8, 32} }
     launch_speed:  f32 = 900   @Editable
@@ -391,4 +389,15 @@ Game_Rules_Entity :: entity is Objective {
 
 Logic_Counter_Entity :: entity is Counting {
     counter: Counter
+}
+
+// The entity a brush is TIED to, and the only thing it does is carry a switch.
+// No field names a brush: the brush names its owner through an `owner` key in
+// the map file, one direction stored and the other derived
+// (prediction_def.md ss4.2). @predicted because the switch is read INSIDE the
+// step -- every leaf test consults it -- rather than after it, which is what
+// separates this from a jump pad and why it feeds the disabled set rather than
+// the volume list.
+Brush_Entity :: entity @predicted is Switchable {
+    switch_state: Enabled
 }

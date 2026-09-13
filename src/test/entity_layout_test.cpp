@@ -191,22 +191,34 @@ int main()
 
   // --- replicated and predicted types ---
   //
-  // The exact set, so that marking a type @replicated fails here until the
-  // snapshot codec grows its map and its two arms (entity_snapshot.cpp).
+  // Replication is DERIVED, never written: a type rides the snapshot when one
+  // of its OWN fields is @Networked, through its components, the base's fields
+  // not counting since every type inherits those. The exact set is pinned so
+  // that a component gaining a @Networked field is seen here putting every type
+  // that carries it on the wire -- the trigger volume and the sun are on this
+  // list through Enabled and Light, not through anything of their own.
   {
     const entity_type expected_replicated[] = {
-        entity_type::Player_Entity,       entity_type::Weapon_Entity,
-        entity_type::Rocket_Entity,       entity_type::Physics_Body_Entity,
-        entity_type::Damageable_Entity,   entity_type::Sound_Emitter_Entity,
-        entity_type::Point_Light_Entity,  entity_type::Spot_Light_Entity,
+        entity_type::Player_Entity,
+        entity_type::Weapon_Entity,
+        entity_type::Rocket_Entity,
+        entity_type::Physics_Body_Entity,
+        entity_type::Damageable_Entity,
+        entity_type::Sound_Emitter_Entity,
+        entity_type::Point_Light_Entity,
+        entity_type::Spot_Light_Entity,
+        entity_type::Directional_Light_Entity,
+        entity_type::Trigger_Volume_Entity,
         entity_type::Jump_Pad_Entity,
+        entity_type::Brush_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 
     bool same_set = replicated.size() == std::size(expected_replicated);
     for (uint32_t index = 0; same_set && index < replicated.size(); ++index)
       same_set = replicated[index] == expected_replicated[index];
-    check(same_set, "replicated_entity_types() is exactly the set the snapshot codec covers");
+    check(same_set,
+          "replicated_entity_types() is exactly the types with a @Networked field of their own");
 
     bool flags_agree = true;
     for (uint32_t raw = 1; raw < ENTITY_TYPE_COUNT; ++raw)
@@ -217,13 +229,15 @@ int main()
         listed = listed || candidate == type;
       if (listed != entity_type_is_replicated(type))
         flags_agree = false;
-      if (entity_type_is_predicted(type) && !entity_type_is_replicated(type))
-        flags_agree = false;
     }
-    check(flags_agree, "entity_info flags agree with the list, and every predicted type is replicated");
+    check(flags_agree, "entity_info flags agree with the list");
+    check(!entity_type_is_replicated(entity_type::Player_Spawn_Entity) &&
+              !entity_type_is_replicated(entity_type::Logic_Counter_Entity),
+          "a type whose own fields are all @Editable does not ride the snapshot");
     check(entity_type_is_predicted(entity_type::Jump_Pad_Entity) &&
+              entity_type_is_predicted(entity_type::Brush_Entity) &&
               !entity_type_is_predicted(entity_type::Point_Light_Entity),
-          "@predicted is the jump pad and not the light");
+          "@predicted is the jump pad and the brush entity, and not the light");
   }
 
   // --- placeable types ---

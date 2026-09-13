@@ -7,9 +7,10 @@
 // exists stays visible instead of being folklore in a comment.
 //
 // Everything here drives the real shared pieces: network::Snapshot_History,
-// serialize_entity / deserialize_entity. What it cannot reach is the wiring in
-// server_impl.cpp and play_state.cpp -- that is exercised by running a
-// MyGame_Client against a MyGame_Server.
+// serialize_entity / deserialize_entity, and the frame, which is an
+// Entity_System. What it cannot reach is the wiring in server_impl.cpp and
+// held_snapshot.cpp -- that is exercised by running a MyGame_Client against a
+// MyGame_Server.
 
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
@@ -86,10 +87,8 @@ size_t transmit_snapshot(const network::snapshot_frame_t& current,
     *out_record_count = network::read_var_uint(counter);
   }
 
-  // A trailing payload, because the real packet has one: the cosmetic effect
-  // batch rides in the same bitstream directly after the entity records. That
-  // only works if the reader stops on exactly the bit the writer stopped on,
-  // so assert the position AND read the tail back.
+  // A trailing payload, so that the reader is shown to stop on exactly the bit
+  // the writer stopped on: assert the position AND read the tail back.
   constexpr uint32_t trailing_sentinel = 0xABCD;
   const int          writer_end_bit    = writer.bit_index;
   network::write_var_uint(writer, trailing_sentinel);
@@ -105,6 +104,30 @@ size_t transmit_snapshot(const network::snapshot_frame_t& current,
   assert(network::read_var_uint(reader) == trailing_sentinel);
 
   return (size_t)((writer_end_bit + 7) / 8);
+}
+
+// Adds `entity` to the frame under its own uid. The frame is an Entity_System,
+// so the pool copy is what the codec reads, and a pointer to it holds until the
+// next add or destroy in that TYPE's pool -- the same rule the world has.
+template <typename Entity_T>
+void put(network::snapshot_frame_t& frame, const Entity_T& entity)
+{
+  frame.entities.add_entity(entity.entity_id, &entity);
+}
+
+template <typename Entity_T>
+uint32_t count_of(const network::snapshot_frame_t& frame)
+{
+  return frame.entities.entities_of<Entity_T>().size();
+}
+
+// The frame's copy of `uid`, which a subtest expects to be there.
+template <typename Entity_T>
+const Entity_T& held(const network::snapshot_frame_t& frame, shared::entity_uid_t uid)
+{
+  const Entity_T* entity = frame.entities.get<Entity_T>(uid);
+  assert(entity != nullptr && "the frame does not hold that uid as that type");
+  return *entity;
 }
 
 entities::Rocket_Entity make_rocket(shared::entity_uid_t uid, float x)
@@ -275,32 +298,32 @@ int main()
     // moves. The wire carries ONE record, and the receiver still ends up with
     // three -- the other two ride across from the baseline it already holds.
     network::snapshot_frame_t server_frame;
-    server_frame.tick             = 1;
-    server_frame.rockets[10]      = make_rocket(10, 0.f);
-    server_frame.rockets[11]      = make_rocket(11, 100.f);
-    server_frame.rockets[12]      = make_rocket(12, 200.f);
+    server_frame.tick = 1;
+    put(server_frame, make_rocket(10, 0.f));
+    put(server_frame, make_rocket(11, 100.f));
+    put(server_frame, make_rocket(12, 200.f));
 
     network::snapshot_frame_t client_frame;
     uint32_t                  record_count = 0;
     const size_t full_size = transmit_snapshot(server_frame, nullptr, client_frame,
                                                &record_count);
     assert(record_count == 3); // no baseline: every entity is a full record
-    assert(client_frame.rockets.size() == 3);
+    assert(count_of<entities::Rocket_Entity>(client_frame) == 3);
 
     network::snapshot_frame_t acked = client_frame;
 
-    server_frame.tick               = 2;
-    server_frame.rockets[11].position.x = 140.f;
+    server_frame.tick = 2;
+    server_frame.entities.get<entities::Rocket_Entity>(11)->position.x = 140.f;
 
     network::snapshot_frame_t next_client_frame;
     const size_t delta_size = transmit_snapshot(server_frame, &acked, next_client_frame,
                                                 &record_count);
 
     assert(record_count == 1); // only the rocket that moved
-    assert(next_client_frame.rockets.size() == 3);
-    assert(next_client_frame.rockets.at(11).position.x == 140.f);
-    assert(next_client_frame.rockets.at(10).position.x == 0.f);   // carried over
-    assert(next_client_frame.rockets.at(12).position.x == 200.f); // carried over
+    assert(count_of<entities::Rocket_Entity>(next_client_frame) == 3);
+    assert(held<entities::Rocket_Entity>(next_client_frame, 11).position.x == 140.f);
+    assert(held<entities::Rocket_Entity>(next_client_frame, 10).position.x == 0.f);   // carried over
+    assert(held<entities::Rocket_Entity>(next_client_frame, 12).position.x == 200.f); // carried over
 
     std::cout << "    Full update: " << full_size << " bytes / 3 records, delta: "
               << delta_size << " bytes / 1 record" << std::endl;
@@ -311,7 +334,7 @@ int main()
     network::snapshot_frame_t idle_baseline = next_client_frame;
     transmit_snapshot(server_frame, &idle_baseline, idle_client_frame, &record_count);
     assert(record_count == 0);
-    assert(idle_client_frame.rockets.size() == 3);
+    assert(count_of<entities::Rocket_Entity>(idle_client_frame) == 3);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -336,8 +359,8 @@ int main()
           20 + index;
 
     network::snapshot_frame_t server_frame;
-    server_frame.tick       = 1;
-    server_frame.players[1] = shooter;
+    server_frame.tick = 1;
+    put(server_frame, shooter);
     // Walked by WEAPON, placed by SLOT: each definition names where it is held,
     // which is the same route grant_default_inventory takes.
     for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
@@ -349,7 +372,7 @@ int main()
       carried.entity_id = shooter.inventory.weapons[definition.slot];
       carried.weapon_id = weapon;
       carried.ammo      = definition.magazine_size;
-      server_frame.weapons[carried.entity_id] = carried;
+      put(server_frame, carried);
     }
 
     network::snapshot_frame_t client_frame;
@@ -358,16 +381,17 @@ int main()
 
     // The player plus one entity per carried weapon.
     assert(record_count == 1 + enum_traits<entities::Weapon>::count);
-    assert(client_frame.weapons.size() == enum_traits<entities::Weapon>::count);
+    assert(count_of<entities::Weapon_Entity>(client_frame) == enum_traits<entities::Weapon>::count);
 
     // The client resolves the same way the server does: one index into the
     // replicated forward list, never a scan for a weapon claiming this owner.
-    const entities::Player_Entity& received = client_frame.players.at(1);
+    const entities::Player_Entity& received = held<entities::Player_Entity>(client_frame, 1);
     const shared::entity_uid_t     held_uid =
         received.inventory.weapons[received.inventory.active_slot];
     assert(held_uid == 21);
-    assert(client_frame.weapons.at(held_uid).weapon_id == entities::Weapon::Scout);
-    assert(client_frame.weapons.at(held_uid).ammo ==
+    assert(held<entities::Weapon_Entity>(client_frame, held_uid).weapon_id ==
+           entities::Weapon::Scout);
+    assert(held<entities::Weapon_Entity>(client_frame, held_uid).ammo ==
            shared::get_weapon_definition(entities::Weapon::Scout).magazine_size);
 
     // One shot costs ONE record. A holstered weapon's fields do not change, so
@@ -375,17 +399,17 @@ int main()
     // "three entities per player is expensive".
     network::snapshot_frame_t acked = client_frame;
     server_frame.tick               = 2;
-    server_frame.weapons[21].ammo -= 1;
+    server_frame.entities.get<entities::Weapon_Entity>(21)->ammo -= 1;
 
     network::snapshot_frame_t next_client_frame;
     transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
 
     assert(record_count == 1);
-    assert(next_client_frame.weapons.at(21).ammo ==
+    assert(held<entities::Weapon_Entity>(next_client_frame, 21).ammo ==
            shared::get_weapon_definition(entities::Weapon::Scout).magazine_size - 1);
-    assert(next_client_frame.weapons.at(20).ammo ==
+    assert(held<entities::Weapon_Entity>(next_client_frame, 20).ammo ==
            shared::get_weapon_definition(entities::Weapon::Knife).magazine_size);
-    assert(next_client_frame.players.at(1)
+    assert(held<entities::Player_Entity>(next_client_frame, 1)
                .inventory.weapons[entities::Inventory_Slot::Primary] == 21);
 
     // And a SWITCH costs one record on the player and none on either weapon:
@@ -393,13 +417,14 @@ int main()
     // reload that used to hide in the switch handler.
     network::snapshot_frame_t acked_after_shot = next_client_frame;
     server_frame.tick                          = 3;
-    server_frame.players[1].inventory.active_slot = entities::Inventory_Slot::Melee;
+    server_frame.entities.get<entities::Player_Entity>(1)->inventory.active_slot =
+        entities::Inventory_Slot::Melee;
 
     network::snapshot_frame_t after_switch;
     transmit_snapshot(server_frame, &acked_after_shot, after_switch, &record_count);
 
     assert(record_count == 1);
-    assert(after_switch.weapons.at(21).ammo ==
+    assert(held<entities::Weapon_Entity>(after_switch, 21).ammo ==
            shared::get_weapon_definition(entities::Weapon::Scout).magazine_size - 1);
 
     std::cout << "    -> Success!" << std::endl;
@@ -409,13 +434,13 @@ int main()
     std::cout << "  [Subtest] Removal is explicit, and spawn needs no opcode..." << std::endl;
 
     network::snapshot_frame_t server_frame;
-    server_frame.tick        = 1;
-    server_frame.rockets[10] = make_rocket(10, 0.f);
-    server_frame.rockets[11] = make_rocket(11, 100.f);
+    server_frame.tick = 1;
+    put(server_frame, make_rocket(10, 0.f));
+    put(server_frame, make_rocket(11, 100.f));
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.rockets.size() == 2);
+    assert(count_of<entities::Rocket_Entity>(client_frame) == 2);
 
     network::snapshot_frame_t acked = client_frame;
 
@@ -423,17 +448,17 @@ int main()
     // record -- the spawn needs no opcode of its own, because "no baseline
     // entry" already means every mask bit is set.
     server_frame.tick = 2;
-    server_frame.rockets.erase(10);
-    server_frame.rockets[12] = make_rocket(12, 300.f);
+    server_frame.entities.destroy(10);
+    put(server_frame, make_rocket(12, 300.f));
 
     network::snapshot_frame_t next_client_frame;
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
 
     assert(record_count == 2);
-    assert(next_client_frame.rockets.count(10) == 0); // gone, and said so
-    assert(next_client_frame.rockets.count(11) == 1); // unchanged, carried over
-    assert(next_client_frame.rockets.at(12).position.x == 300.f);
+    assert(next_client_frame.entities.get<entities::Rocket_Entity>(10) == nullptr); // gone, and said so
+    assert(next_client_frame.entities.get<entities::Rocket_Entity>(11) != nullptr); // unchanged, carried over
+    assert(held<entities::Rocket_Entity>(next_client_frame, 12).position.x == 300.f);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -448,23 +473,24 @@ int main()
     // next snapshot is computed against a baseline that STILL HAS the entity
     // and says it again. No retransmit layer involved.
     network::snapshot_frame_t server_frame;
-    server_frame.tick        = 1;
-    server_frame.rockets[10] = make_rocket(10, 0.f);
+    server_frame.tick = 1;
+    put(server_frame, make_rocket(10, 0.f));
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.rockets.count(10) == 1);
+    assert(client_frame.entities.get<entities::Rocket_Entity>(10) != nullptr);
 
     // Tick 1 is the newest thing the client reconstructed, so it is what it
     // acks -- and it keeps acking it, because tick 2 never arrives.
     const network::snapshot_frame_t acked_tick_1 = client_frame;
 
     server_frame.tick = 2;
-    server_frame.rockets.erase(10);
+    server_frame.entities.destroy(10);
     {
       network::snapshot_frame_t discarded_by_packet_loss;
       transmit_snapshot(server_frame, &acked_tick_1, discarded_by_packet_loss);
-      assert(discarded_by_packet_loss.rockets.count(10) == 0); // it was in there
+      assert(discarded_by_packet_loss.entities.get<entities::Rocket_Entity>(10) ==
+             nullptr); // it was in there
     }
 
     // Tick 3: nothing about rocket 10 changed since tick 2 -- it is still
@@ -475,7 +501,7 @@ int main()
     transmit_snapshot(server_frame, &acked_tick_1, recovered, &record_count);
 
     assert(record_count == 1);
-    assert(recovered.rockets.count(10) == 0);
+    assert(recovered.entities.get<entities::Rocket_Entity>(10) == nullptr);
 
     std::cout << "    -> Success (removal survived the loss)!" << std::endl;
   }
@@ -501,23 +527,27 @@ int main()
     shooter.entity_id         = 1;
     shooter.client_slot_index = 0;
     shooter.last_fire_tick    = 0; // never fired
-    server_frame.players[1]   = shooter;
+    put(server_frame, shooter);
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.players.at(1).last_fire_tick == 0);
+    assert(held<entities::Player_Entity>(client_frame, 1).last_fire_tick == 0);
 
     // Tick 1 is the newest frame the client reconstructed, so it is what it
     // acks -- and it goes on acking it, because tick 2 is lost.
     const network::snapshot_frame_t acked_tick_1 = client_frame;
 
-    server_frame.tick                        = 2;
-    server_frame.players[1].last_fire_tick   = 2;
-    server_frame.players[1].last_fire_weapon = entities::Weapon::Scout;
+    server_frame.tick = 2;
+    {
+      entities::Player_Entity* server_shooter =
+          server_frame.entities.get<entities::Player_Entity>(1);
+      server_shooter->last_fire_tick   = 2;
+      server_shooter->last_fire_weapon = entities::Weapon::Scout;
+    }
     {
       network::snapshot_frame_t discarded_by_packet_loss;
       transmit_snapshot(server_frame, &acked_tick_1, discarded_by_packet_loss);
-      assert(discarded_by_packet_loss.players.at(1).last_fire_tick == 2);
+      assert(held<entities::Player_Entity>(discarded_by_packet_loss, 1).last_fire_tick == 2);
     }
 
     // Tick 3: the shot is over and nothing about the shooter has moved since,
@@ -530,8 +560,9 @@ int main()
     transmit_snapshot(server_frame, &acked_tick_1, recovered, &record_count);
 
     assert(record_count == 1);
-    assert(recovered.players.at(1).last_fire_tick == 2);
-    assert(recovered.players.at(1).last_fire_weapon == entities::Weapon::Scout);
+    assert(held<entities::Player_Entity>(recovered, 1).last_fire_tick == 2);
+    assert(held<entities::Player_Entity>(recovered, 1).last_fire_weapon ==
+           entities::Weapon::Scout);
 
     // The same loss deltaed against what was last SENT. The server believes
     // the client saw the stamp, so tick 3 says nothing about it -- while the
@@ -544,7 +575,7 @@ int main()
     transmit_snapshot(server_frame, &last_sent, deaf_client, &record_count,
                       &acked_tick_1);
     assert(record_count == 0);
-    assert(deaf_client.players.at(1).last_fire_tick == 0); // shot never heard
+    assert(held<entities::Player_Entity>(deaf_client, 1).last_fire_tick == 0); // shot never heard
 
     std::cout << "    -> Success (fire stamp survived the loss)!" << std::endl;
   }
@@ -559,35 +590,35 @@ int main()
     player.entity_id         = 1;
     player.client_slot_index = 0;
     player.health.current_health           = 100;
-    server_frame.players[1]  = player;
+    put(server_frame, player);
 
     entities::Physics_Body_Entity body;
     body.entity_id                 = 20;
     body.position                  = {5.f, 6.f, 7.f};
-    server_frame.physics_bodies[20] = body;
+    put(server_frame, body);
 
-    server_frame.rockets[30] = make_rocket(30, 42.f);
+    put(server_frame, make_rocket(30, 42.f));
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
 
-    assert(client_frame.players.at(1).health.current_health == 100);
-    assert(client_frame.players.at(1).client_slot_index == 0);
-    assert(client_frame.physics_bodies.at(20).position.y == 6.f);
-    assert(client_frame.rockets.at(30).position.x == 42.f);
+    assert(held<entities::Player_Entity>(client_frame, 1).health.current_health == 100);
+    assert(held<entities::Player_Entity>(client_frame, 1).client_slot_index == 0);
+    assert(held<entities::Physics_Body_Entity>(client_frame, 20).position.y == 6.f);
+    assert(held<entities::Rocket_Entity>(client_frame, 30).position.x == 42.f);
 
     // The player leaves; the other two types must be untouched by that.
     network::snapshot_frame_t acked = client_frame;
-    server_frame.players.clear();
+    server_frame.entities.destroy(1);
 
     network::snapshot_frame_t next_client_frame;
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
 
     assert(record_count == 1);
-    assert(next_client_frame.players.empty());
-    assert(next_client_frame.physics_bodies.size() == 1);
-    assert(next_client_frame.rockets.size() == 1);
+    assert(count_of<entities::Player_Entity>(next_client_frame) == 0);
+    assert(count_of<entities::Physics_Body_Entity>(next_client_frame) == 1);
+    assert(count_of<entities::Rocket_Entity>(next_client_frame) == 1);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -596,10 +627,10 @@ int main()
     std::cout << "  [Subtest] A damageable replicates only what the map cannot say..."
               << std::endl;
 
-    // Damageable_Entity is the one MAP-PLACED type that is replicated
-    // (generalization_def.md §3). The client already has its position and its
-    // mesh from its own map load, so what has to survive the wire is the two
-    // things that change at runtime: health, and whether it is still drawn.
+    // Damageable_Entity is map-placed and replicated (generalization_def.md
+    // §3). The client already has its position and its mesh from its own map
+    // load, so what has to survive the wire is the two things that change at
+    // runtime: health, and whether it is still drawn.
     network::snapshot_frame_t server_frame;
     server_frame.tick = 1;
 
@@ -610,14 +641,14 @@ int main()
     crate.health.current_health          = crate.health.max_health;
     crate.hitbox_half_extents = {16.f, 32.f, 16.f};
     crate.render.visible      = true;
-    server_frame.damageables[70] = crate;
+    put(server_frame, crate);
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
 
-    assert(client_frame.damageables.size() == 1);
-    assert(client_frame.damageables.at(70).health.current_health == 100);
-    assert(client_frame.damageables.at(70).render.visible);
+    assert(count_of<entities::Damageable_Entity>(client_frame) == 1);
+    assert(held<entities::Damageable_Entity>(client_frame, 70).health.current_health == 100);
+    assert(held<entities::Damageable_Entity>(client_frame, 70).render.visible);
 
     // hitbox_half_extents is deliberately NOT @Networked, so it arrives as the
     // struct default rather than as what the server holds -- the client reads
@@ -625,23 +656,27 @@ int main()
     // decision somebody makes on purpose rather than a silent bandwidth
     // increase.
     const entities::Damageable_Entity fresh{};
-    assert(client_frame.damageables.at(70).hitbox_half_extents.y ==
+    assert(held<entities::Damageable_Entity>(client_frame, 70).hitbox_half_extents.y ==
            fresh.hitbox_half_extents.y);
 
     // Destroyed: health crosses zero and the server hides it. That is TWO
     // changed leaves on one entity and must cost exactly one record.
     network::snapshot_frame_t acked = client_frame;
     server_frame.tick                        = 2;
-    server_frame.damageables[70].health.current_health       = 0;
-    server_frame.damageables[70].render.visible = false;
+    {
+      entities::Damageable_Entity* server_crate =
+          server_frame.entities.get<entities::Damageable_Entity>(70);
+      server_crate->health.current_health = 0;
+      server_crate->render.visible        = false;
+    }
 
     network::snapshot_frame_t after_death;
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, &acked, after_death, &record_count);
 
     assert(record_count == 1);
-    assert(after_death.damageables.at(70).health.current_health == 0);
-    assert(!after_death.damageables.at(70).render.visible);
+    assert(held<entities::Damageable_Entity>(after_death, 70).health.current_health == 0);
+    assert(!held<entities::Damageable_Entity>(after_death, 70).render.visible);
 
     // And an untouched one costs nothing at all, which is what makes a level
     // full of crates free after the first full update.
@@ -652,7 +687,7 @@ int main()
     transmit_snapshot(server_frame, &acked_after_death, idle, &record_count);
 
     assert(record_count == 0);
-    assert(idle.damageables.at(70).health.current_health == 0);
+    assert(held<entities::Damageable_Entity>(idle, 70).health.current_health == 0);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -666,21 +701,23 @@ int main()
     network::snapshot_frame_t server_frame;
     server_frame.tick = 1;
 
-    entities::Point_Light_Entity& lamp = server_frame.point_lights[80];
-    lamp.entity_id                     = 80;
-    lamp.position                      = {0.f, 128.f, 0.f};
-    lamp.switch_state.value            = true;
-    lamp.light.color                   = {1.f, 1.f, 1.f};
-    lamp.range                         = 512.f;
+    entities::Point_Light_Entity lamp;
+    lamp.entity_id          = 80;
+    lamp.position           = {0.f, 128.f, 0.f};
+    lamp.switch_state.value = true;
+    lamp.light.color        = {1.f, 1.f, 1.f};
+    lamp.range              = 512.f;
+    put(server_frame, lamp);
 
-    entities::Spot_Light_Entity& beam = server_frame.spot_lights[81];
-    beam.entity_id                    = 81;
-    beam.switch_state.value           = true;
+    entities::Spot_Light_Entity beam;
+    beam.entity_id          = 81;
+    beam.switch_state.value = true;
+    put(server_frame, beam);
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.point_lights.at(80).switch_state.value);
-    assert(client_frame.spot_lights.at(81).switch_state.value);
+    assert(held<entities::Point_Light_Entity>(client_frame, 80).switch_state.value);
+    assert(held<entities::Spot_Light_Entity>(client_frame, 81).switch_state.value);
 
     // `range` is @Editable and NOT @Networked, so the wire says nothing about
     // it -- the client's own map load is what carries it, and the decode is
@@ -688,24 +725,29 @@ int main()
     // light rather than a literal, so tuning that default does not break this;
     // what is pinned is that networking a light did not quietly turn into
     // networking all of it.
-    assert(client_frame.point_lights.at(80).range == entities::Point_Light_Entity{}.range);
+    assert(held<entities::Point_Light_Entity>(client_frame, 80).range ==
+           entities::Point_Light_Entity{}.range);
     assert(lamp.range != entities::Point_Light_Entity{}.range &&
            "the sender must differ from the default, or this asserts nothing");
 
     network::snapshot_frame_t acked = client_frame;
-    server_frame.tick                            = 2;
-    server_frame.point_lights[80].switch_state.value = false;
-    server_frame.point_lights[80].light.color        = {1.f, 0.f, 0.f};
+    server_frame.tick               = 2;
+    {
+      entities::Point_Light_Entity* server_lamp =
+          server_frame.entities.get<entities::Point_Light_Entity>(80);
+      server_lamp->switch_state.value = false;
+      server_lamp->light.color        = {1.f, 0.f, 0.f};
+    }
 
     network::snapshot_frame_t after_switch;
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, &acked, after_switch, &record_count);
 
     assert(record_count == 1);
-    assert(!after_switch.point_lights.at(80).switch_state.value);
-    assert(after_switch.point_lights.at(80).light.color.x == 1.f);
-    assert(after_switch.point_lights.at(80).light.color.y == 0.f);
-    assert(after_switch.spot_lights.at(81).switch_state.value);
+    assert(!held<entities::Point_Light_Entity>(after_switch, 80).switch_state.value);
+    assert(held<entities::Point_Light_Entity>(after_switch, 80).light.color.x == 1.f);
+    assert(held<entities::Point_Light_Entity>(after_switch, 80).light.color.y == 0.f);
+    assert(held<entities::Spot_Light_Entity>(after_switch, 81).switch_state.value);
 
     network::snapshot_frame_t acked_after_switch = after_switch;
     server_frame.tick                            = 3;
@@ -713,7 +755,7 @@ int main()
     network::snapshot_frame_t idle;
     transmit_snapshot(server_frame, &acked_after_switch, idle, &record_count);
     assert(record_count == 0);
-    assert(!idle.point_lights.at(80).switch_state.value);
+    assert(!held<entities::Point_Light_Entity>(idle, 80).switch_state.value);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -727,25 +769,27 @@ int main()
     network::snapshot_frame_t server_frame;
     server_frame.tick = 1;
 
-    entities::Jump_Pad_Entity& pad = server_frame.jump_pads[90];
-    pad.entity_id                  = 90;
-    pad.switch_state.value         = true;
-    pad.launch_speed               = 1234.f;
+    entities::Jump_Pad_Entity pad;
+    pad.entity_id          = 90;
+    pad.switch_state.value = true;
+    pad.launch_speed       = 1234.f;
+    put(server_frame, pad);
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.jump_pads.at(90).switch_state.value);
-    assert(client_frame.jump_pads.at(90).launch_speed == entities::Jump_Pad_Entity{}.launch_speed);
+    assert(held<entities::Jump_Pad_Entity>(client_frame, 90).switch_state.value);
+    assert(held<entities::Jump_Pad_Entity>(client_frame, 90).launch_speed ==
+           entities::Jump_Pad_Entity{}.launch_speed);
 
     network::snapshot_frame_t acked = client_frame;
-    server_frame.tick                          = 2;
-    server_frame.jump_pads[90].switch_state.value = false;
+    server_frame.tick               = 2;
+    server_frame.entities.get<entities::Jump_Pad_Entity>(90)->switch_state.value = false;
 
     network::snapshot_frame_t after_switch;
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, &acked, after_switch, &record_count);
     assert(record_count == 1);
-    assert(!after_switch.jump_pads.at(90).switch_state.value);
+    assert(!held<entities::Jump_Pad_Entity>(after_switch, 90).switch_state.value);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -759,27 +803,29 @@ int main()
     network::snapshot_frame_t server_frame;
     server_frame.tick = 1;
 
-    entities::Sound_Emitter_Entity& emitter = server_frame.sound_emitters[90];
-    emitter.entity_id                       = 90;
-    emitter.position                        = {64.f, 0.f, 0.f};
-    emitter.volume                          = 0.25f;
+    entities::Sound_Emitter_Entity emitter;
+    emitter.entity_id = 90;
+    emitter.position  = {64.f, 0.f, 0.f};
+    emitter.volume    = 0.25f;
+    put(server_frame, emitter);
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.sound_emitters.at(90).playback.play_count == 0);
-    assert(client_frame.sound_emitters.at(90).volume == entities::Sound_Emitter_Entity{}.volume);
+    assert(held<entities::Sound_Emitter_Entity>(client_frame, 90).playback.play_count == 0);
+    assert(held<entities::Sound_Emitter_Entity>(client_frame, 90).volume ==
+           entities::Sound_Emitter_Entity{}.volume);
     assert(emitter.volume != entities::Sound_Emitter_Entity{}.volume &&
            "the sender must differ from the default, or this asserts nothing");
 
     network::snapshot_frame_t acked = client_frame;
-    server_frame.tick                = 2;
-    server_frame.sound_emitters[90].playback.play_count = 1;
+    server_frame.tick               = 2;
+    server_frame.entities.get<entities::Sound_Emitter_Entity>(90)->playback.play_count = 1;
 
     network::snapshot_frame_t after_play;
     uint32_t                  record_count = 0;
     transmit_snapshot(server_frame, &acked, after_play, &record_count);
     assert(record_count == 1);
-    assert(after_play.sound_emitters.at(90).playback.play_count == 1);
+    assert(held<entities::Sound_Emitter_Entity>(after_play, 90).playback.play_count == 1);
 
     network::snapshot_frame_t acked_after_play = after_play;
     server_frame.tick                          = 3;
@@ -787,7 +833,60 @@ int main()
     network::snapshot_frame_t idle;
     transmit_snapshot(server_frame, &acked_after_play, idle, &record_count);
     assert(record_count == 0);
-    assert(idle.sound_emitters.at(90).playback.play_count == 1);
+    assert(held<entities::Sound_Emitter_Entity>(idle, 90).playback.play_count == 1);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] A trigger volume and the sun ride the wire through their "
+                 "components..."
+              << std::endl;
+
+    // Neither declares anything about the wire: replication is DERIVED from
+    // the fields, and Enabled::value and Light::color are @Networked because a
+    // lamp's switch and colour have to reach the client. That puts every type
+    // carrying those components on the wire -- the trigger through Enabled,
+    // the sun through Light -- and this pins that they arrive, and that what is
+    // @Editable only on them still does not.
+    network::snapshot_frame_t server_frame;
+    server_frame.tick = 1;
+
+    entities::Trigger_Volume_Entity gate;
+    gate.entity_id           = 100;
+    gate.switch_state.value  = false;
+    gate.volume.half_extents = {5.f, 5.f, 5.f};
+    put(server_frame, gate);
+
+    entities::Directional_Light_Entity sun;
+    sun.entity_id       = 101;
+    sun.light.color     = {0.5f, 0.25f, 0.125f}; // exact at the wire's 1/32
+    sun.light.intensity = 7.f;
+    put(server_frame, sun);
+
+    assert(gate.volume.half_extents.x != entities::Trigger_Volume_Entity{}.volume.half_extents.x &&
+           sun.light.intensity != entities::Directional_Light_Entity{}.light.intensity &&
+           "the sender must differ from the default, or this asserts nothing");
+
+    network::snapshot_frame_t client_frame;
+    uint32_t                  record_count = 0;
+    transmit_snapshot(server_frame, nullptr, client_frame, &record_count);
+    assert(record_count == 2);
+
+    assert(!held<entities::Trigger_Volume_Entity>(client_frame, 100).switch_state.value);
+    assert(held<entities::Trigger_Volume_Entity>(client_frame, 100).volume.half_extents.x ==
+           entities::Trigger_Volume_Entity{}.volume.half_extents.x);
+    assert(held<entities::Directional_Light_Entity>(client_frame, 101).light.color.y == 0.25f);
+    assert(held<entities::Directional_Light_Entity>(client_frame, 101).light.intensity ==
+           entities::Directional_Light_Entity{}.light.intensity);
+
+    // And, like every other map-placed type, nothing after the spawn record.
+    network::snapshot_frame_t acked = client_frame;
+    server_frame.tick               = 2;
+
+    network::snapshot_frame_t idle;
+    transmit_snapshot(server_frame, &acked, idle, &record_count);
+    assert(record_count == 0);
 
     std::cout << "    -> Success!" << std::endl;
   }

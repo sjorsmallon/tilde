@@ -326,18 +326,18 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 - **`by` is load-bearing, not documentation**, and an `Activator` target is checked against the types it admits — but the rule is SOME, not every, and that asymmetry is a decision. A `Uid` and a `Self` name ONE type, so those two are exact. An `Activator` does not: `Touchable` is truthfully activated by a player OR a physics body, so requiring every one of them to accept made `Touched -> !activator Kill` — the most ordinary trigger in any level — unspellable, since a crate is not `Mortal` and never will be. Worse, all-accept made a `by` list **unwidenable**: adding a type would refuse every `!activator` row in every map already on disk, which is the opposite of what a declaration should cost. So the check refuses only a row that NOTHING admitted by `by` accepts — one that could never do anything. A signal with no `by` refuses the target kind outright, there being no type to check against at all.
 - **What some-accept gives up, the DRAIN absorbs.** A row is no longer proof that every activation does something, so `pending_action_t::target_resolved_from_activator` records which case a queued action came from: a `Uid` or `Self` target keeps `send_action` and its `fatal_error`, because a null dispatch cell there is a generator or loader bug, while an `Activator` goes through `try_send_action` and a miss is one `log_warning` naming the type. A crate rolling into a volume wired to kill whoever touched it is that line and nothing else. It is the only way an author learns why nothing happened, which is why `sv_io_debug` (step 6c) matters more now.
 - **Pass-through is a MEMCPY checked at load.** A row with no override needs the signal's and the action's payload field tables to agree name for name, type for type, offset for offset, and the payloads to be the same size. The field NAMES are what separate `Died(killer: entity)` from `Set_Health(amount: i32)`, which are otherwise the same four bytes.
-- **EVERYTHING FROM A CONNECTION IS QUEUED, delay zero included; everything from code is SYNCHRONOUS.** That is the reentrancy guard: an action reached through a connection can spawn or destroy, and must not do so under the system that emitted the signal. `world_t::pending_actions` is the ONE queue, drained at the TOP of `Tick()` in `(fire_tick, sequence)` order (`server/entity_io_queue.{hpp,cpp}`); the due records are moved OUT before any runs, so a handler that emits feeds the NEXT tick.
+- **EVERYTHING FROM A CONNECTION IS QUEUED, delay zero included; everything from code is SYNCHRONOUS.** That is the reentrancy guard: an action reached through a connection can spawn or destroy, and must not do so under the system that emitted the signal. `world_t::pending_actions` is the ONE queue, drained at the END of `Tick()` — after every system, before the snapshot — in `(fire_tick, sequence)` order (`server/entity_io_queue.{hpp,cpp}`). **The guard is the HOP, not the tick**: each pass moves the due records OUT before any runs, so a handler that emits feeds the NEXT pass, and the drain loops while anything is still due. A zero-delay chain therefore settles inside the tick that started it, and the door a button opened is open in that tick's snapshot rather than one hop per tick later. Past `MAX_ACTION_HOPS_PER_TICK` (16) the wiring is a loop: it is reported by `sender -> action -> target` and the still-due records are DROPPED, because leaving them runs the same loop again every tick forever. A record with a positive delay is not due and the cap never touches it.
 - **Emitting happens in a SYSTEM, at the tick the state change becomes true, in the same statement that writes the state** — never in an action handler (it only requests) and never in the drain. `emit_<signal>` is generated per signal into the binder TU and calls one hand-written walk, `queue_signal_connections`.
 - **The activator is resolved at EMIT time**, not at drain time: `!activator` names whoever caused THIS signal, and a delayed record outlives that moment. A handler must tolerate it naming nobody by then.
 - **`fire_once` spends the SESSION's copy** (`session_connection_t::spent`), never the map's — a map is what the editor is editing and what the next round reloads from. A target destroyed during a delay is DROPPED with a line, which is the only way a queued action can fail.
 - **`Died` and `Health_Changed` are emitted from the DAMAGE CHOKE POINT** (`server/damage.cpp`'s two `*_damage_total` functions), by both `Player_Entity` and `Damageable_Entity` — the health write and the `>0 -> <=0` crossing are already there, which is what "emit in the same statement that writes the state" means here. `set_health` in `traits/mortal.cpp` deliberately emits nothing: a handler only requests. `Died` carries a KILLER, so the damageable path picks one by the same rule the player path credits a frag by (largest single contribution, ties to the lower attacker uid, a wrong-colour hit contributing zero and so never winning) — that is Died's payload, not kill credit, and it is what makes `!activator` name whoever broke the thing. A tick's hits are already summed per victim, so `Died` fires ONCE however many shooters landed one.
-- **A LIGHT IS THE FIRST RECEIVER THAT IS NOT THE PLAYER, and switching one is REPLICATED.** `Point_Light_Entity` and `Spot_Light_Entity` are `Colorable, Switchable`; `shared::light_is_switched_on(entity)` is the ONE rule (no `Enabled` component means always on, which is why a directional light needs no case) and `add_frame_light` plus the bake's `collect_lights` both ask it, while `try_light_of` deliberately does NOT — the editor's inspector says "Switched OFF" rather than falling silent. A light switched off before a bake is off for the bake too, or every chart names a slot whose radiance is permanently zero. And because a light is MAP-PLACED, the client holds one it loaded itself: `snapshot_frame_t` carries `point_lights` / `spot_lights`, `Light::color` joined `Enabled::value` as `@Networked`, and the client writes exactly those two fields onto its session copy — the `Damageable_Entity` shape, comment for comment. Everything else about a light stays `@Editable` and off the wire, so an unswitched one costs a spawn record and then nothing.
+- **A LIGHT IS THE FIRST RECEIVER THAT IS NOT THE PLAYER, and switching one is REPLICATED.** `Point_Light_Entity` and `Spot_Light_Entity` are `Colorable, Switchable`; `shared::light_is_switched_on(entity)` is the ONE rule (no `Enabled` component means always on, which is why a directional light needs no case) and `add_frame_light` plus the bake's `collect_lights` both ask it, while `try_light_of` deliberately does NOT — the editor's inspector says "Switched OFF" rather than falling silent. A light switched off before a bake is off for the bake too, or every chart names a slot whose radiance is permanently zero. And because a light is MAP-PLACED, the client holds one it loaded itself: `Light::color` joined `Enabled::value` as `@Networked`, which is what puts a light on the wire (replication is derived from the fields — see "A frame IS an `Entity_System`" under Networking), and the client writes every networked leaf onto its session copy through `copy_networked_fields`, as it does for every replicated entity it holds. Everything else about a light stays `@Editable` and off the wire, so an unswitched one costs a spawn record and then nothing.
 - **A SOUND EMITTER IS THE THIRD RECEIVER, and a one-shot is an EDGE.**
   `Sound_Emitter_Entity is Switchable, Playable`; `Play` bumps a `@Networked`
   `Playback::play_count` and the client plays once per change (the
   `last_fire_tick` rule, seeded by the first snapshot). The switch is a mute
   for a one-shot. `spatial` off is everyone's ears, never one player's.
-  Replicated exactly as the lights are (`snapshot_frame_t::sound_emitters`).
+  Replicated exactly as the lights are, through its `@Networked` fields.
   **Loops are not built**: the voice pool is fire-and-forget, a held voice
   needs a handle it will not recycle; a `loop = true` emitter warns once and is
   silent. `impact_sound_plan.md` §1 is the three-kinds rule and §6 the record.
@@ -1017,6 +1017,52 @@ run inside the client's prediction step.
   get the sound's position — the centre of the bounds the step used, never
   re-resolved through the entity.
 
+### A brush can be switched off — the second predicted cut
+
+`prediction_def.md` §4 is the design of record. A Neon-White gate and a CS
+breakable are both "this brush stops existing", and nothing moves — so the
+toggle lands where movers cannot.
+
+- **The BVH is the SHAPE of the map and the switch is STATE.** Both sides build
+  the tree from the same map and nothing writes to it after `build_session`,
+  which is what keeps `player_move` a pure function of its arguments. Which
+  brushes are off comes from entities, changes per tick, is predicted and is
+  corrected — so it travels as a PARAMETER, derived fresh, and never as a bit in
+  the tree. A bit in the tree is a copy of `Enabled::value` that every path
+  writing `Enabled` has to keep in step, and the reconciliation replay would
+  restart from a tree a snapshot had already overwritten. Every brush engine
+  does the same for a toggle (Jolt object layers, PhysX filter data,
+  `SetCollisionEnabled`); refit and rebuild are for geometry that MOVES.
+- **THE BRUSH NAMES ITS OWNER and nothing names the brush.** `brush_geometry_t`
+  and `static_mesh_geometry_t` carry an `owner_uid` written as an `owner` key
+  only when set; `Brush_Entity` (`@predicted is Switchable`) carries nothing but
+  the switch. Source nests the solids inside the entity block, we keep a flat
+  geometry list with uids, so the pointer runs this way and N brushes per entity
+  costs no array. **Store one direction, derive the other**:
+  `game_session_t::owner_of` is the reverse, filled and CHECKED once by
+  `build_session`, and the editor walks `map.geometry` on demand. Both stored is
+  two answers that can disagree.
+- **`collect_disabled_geometry(system, owner_of, out)` is the tick's second
+  cut**, beside `collect_movement_volumes` and at the same four sites. Keyed by
+  geometry INDEX because that is what `Collision_Id::index` carries, so the
+  sweep's test is one array read and nothing resolves a uid at all. **A disabled
+  brush is NOT a movement volume**: a volume is a box tested AFTER the step, this
+  is consulted INSIDE the sweep by every leaf test, or the step collides with the
+  wall and then reads a volume saying "never mind".
+- **Every session BVH query takes the set and skips a PRIMITIVE whose index is
+  in it** — `bvh_intersect_ray`, `bvh_intersect_aabb`, `bvh_point_is_inside_solid`
+  — per primitive and not per node, because one object is N leaves. Empty means
+  nothing is off, which is what the bake's BVH, the editor's and every test pass.
+  The DRAW follows the same bit through the same table, so what you walk through
+  is what you cannot see. **The lightmap bake ignores it** — a brush baked into
+  the atlas leaves its shadow when it disappears — and so does Jolt, so a physics
+  crate still rests on a gate the player walks through.
+- **Editor: "Tie to entity" / "Untie" in the inspector**, either end untying it,
+  and deleting a `Brush_Entity` UNTIES rather than deletes: a brush is world
+  geometry with a pointer, not part of the entity. `bake_map_csg` and `stamp_map`
+  remap the key through the same uid table as everything else; a brush tied
+  outside a prefab is the "field that crosses" case and is cleared loudly.
+
 ### Player hit volumes
 
 A player is hit-tested against the **posed skeletal volumes**, not a static box table. Three files, in order of who calls whom:
@@ -1278,9 +1324,10 @@ tickrate ranks honestly. `Objective_Reached` carries `attempt_ticks` and the
 map's `best_ticks` from BEFORE the run, so the client's banner says the time and
 "NEW BEST" without a second file read; `shared::format_run_time` is the one
 "mm:ss.cc" and the HUD run timer draws through it too. `timer_def.md` is the
-plan for the rest: the finish as a SLOT, the start as the first movement edge,
-and the +1 tick every run pays today because the drain hands a handler
-`tick_number` rather than the record's `fire_tick`.
+plan for the rest: the finish as a SLOT and the start as the first movement
+edge. The +1 tick every run used to pay went with B3 — the drain runs at the
+end of the tick and hands a handler the record's own `fire_tick`, so a row
+written before 2026-09-13 is one tick slow.
 
 **The key enum lives in `cvars.def`**, because `sv_gamemode` is typed by it —
 enum cvars convert by value name in both directions, so an undeclared mode is
@@ -1383,7 +1430,9 @@ The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the s
 
 Per-leaf change masks come from `networked_leaf_fields(type)` on both ends, so bit N is the same field by construction; `deserialize_entity` can hand that mask back via an optional `network::changed_fields_t*` out-param.
 
-Two levels, two files. `entity_serialization.{hpp,cpp}` encodes one entity's **fields**. `entity_snapshot.{hpp,cpp}` encodes the **set** — which entities exist, which changed, which are gone — as `network::snapshot_frame_t` (one type, held by both ends, keyed by entity uid). Its grammar is in the header.
+Two levels, two files. `entity_serialization.{hpp,cpp}` encodes one entity's **fields**. `entity_snapshot.{hpp,cpp}` encodes the **set** — which entities exist, which changed, which are gone — as `network::snapshot_frame_t` (one type, held by both ends). Its grammar is in the header.
+
+**A frame IS an `Entity_System`, and which types ride is DERIVED.** `snapshot_frame_t` is a tick number and an `Entity_System`: one pool per entity type sized from the generated table, the uid index, the same `entities_of<T>()` / `get<T>(uid)` / `try_find(uid)` the world answers. It used to be one hand-written `unordered_map<uid, T>` per replicated type, and a replicated type then cost four sites — the map, a sender loop, an encode call, a decode arm — every one of them forgettable, while the world had already stopped keeping per-type storage by hand (`entity_system_def.md` §1). Now the sender is `copy_replicated_entities_from(world)`, the codec is one loop over `replicated_entity_types()` in each direction (a record naming a type outside that list drops the packet), and the client's apply is `copy_networked_fields` onto every replicated entity its session holds — the four runtime types live in the replication maps instead and resolve to nothing there, which is not an error. The edge watchers (a crate breaking, an emitter's play counter) compare the new frame against the PREVIOUS held frame rather than the session copy before and after the write, so the first snapshot after a connect fires nothing and the two `_seeded` flags are gone. And `replicated_entity_types()` is not declared: there is no `@replicated`, and the generator refuses one. A type rides the snapshot when one of its OWN fields is `@Networked`, through its components, the base's three not counting since every type inherits them — so `Trigger_Volume_Entity` rides through `Enabled` and `Directional_Light_Entity` through `Light::color`, one spawn record each and then nothing. A written flag was a second answer to "does this type's state reach the client", free to disagree with the first. `@predicted` stays, being a different fact (`collect_movement_volumes` has an arm), and no longer requires anything: a predicted type with networked state replicates by construction, and one without has nothing to go stale. `entity_layout_test` pins the derived set; `snapshot_delta_test` drives the codec over the frame. Nothing on the wire moved.
 
 **Absence in a snapshot means UNCHANGED, not gone.** The receiver seeds the frame from the baseline and applies records on top, so only spawns, changes and removals ride the wire. Removal is an explicit per-record bit, and it lives *in* the delta rather than on a separate despawn channel precisely so it inherits the acked-baseline rule: a lost removal is recomputed against the older baseline that still holds the entity, and re-sent. Spawn needs no opcode — an entity with no baseline entry is written with every mask bit set, which is already a full update. An unknown entity type on the wire is undecodable (payload length comes from the type's field table), so the client drops that packet whole.
 

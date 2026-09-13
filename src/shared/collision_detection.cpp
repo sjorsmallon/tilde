@@ -6,6 +6,15 @@
 using namespace linalg;
 using namespace shared;
 
+// this is not that complicated, but I had to relearn it. sigh.
+// for all entities, you normally want to do like "binary search" in space.
+// e.g. for a raycast, you don't linearly want to visit all entities. or for collision.
+// you want to know who's near you. 
+// so we build a BVH. what we do here is kind of trivial. we group all entities and then
+// want to split them in subgroups. we take the union of all aabbs (read: what are the min(xyz), max(xyz) of all these entities?)
+// and then HEURISTIC: split the longest axis.
+// there is no verification if this split is balanced, if this is correct, or whatever.
+// if the split fails, you just equally divide the entities in indices left and right.
 Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
 {
   Bounding_Volume_Hierarchy bvh;
@@ -32,12 +41,15 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
     uint32_t node_idx = static_cast<uint32_t>(bvh.nodes.size());
     bvh.nodes.emplace_back();
 
-    // 1. Compute AABB for this node
-    // Also compute centroids AABB for splitting
+    // pick the first one in the active indices to be "node_aabb".
+    // same for first_center.
+    // centroid_aabb is just initialized from that.
     aabb_bounds_t node_aabb = inputs[active_indices[range_start]].aabb;
     vec3f first_center = get_aabb_center(node_aabb);
     aabb_bounds_t centroid_aabb = {first_center, first_center};
 
+    // for all the aabbs in this thing, union them so you get the maximum aabb?
+    // also for centroids (which is the thing we use for splitting because they are points and that's simple.)
     for (uint32_t i = range_start + 1; i < range_end; ++i)
     {
       const auto &input = inputs[active_indices[i]];
@@ -49,7 +61,8 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
 
     bvh.nodes[node_idx].aabb = node_aabb;
 
-    // 2. Check for leaf condition
+    // leaf condition: not really worth it to split, just dump everything in this bucket and linear search over it.
+    // there's probably some optimal max entities per leaf (or just none) but this is what we use.
     if (count <= BVH_Node::MAX_ENTITIES_PER_LEAF)
     {
       // Create Leaf
@@ -67,8 +80,7 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
       return node_idx;
     }
 
-    // 3. Split
-    // Find longest axis of centroid AABB
+    // find the axis that's the longest. that's the one we will be splitting on (I guess that's a worthwile heuristic?)
     vec3f extent = centroid_aabb.max - centroid_aabb.min;
     int axis = 0;
     if (extent.y > extent.x)
@@ -76,10 +88,11 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
     if (extent.z > extent[axis])
       axis = 2;
 
+    // pick the middle of the longest axis to split.
     float split_position =
         (centroid_aabb.min[axis] + centroid_aabb.max[axis]) * 0.5f;
 
-    // Partition
+    // create two partitions: one < split_position, one > split_position.
     auto split_pointer = std::partition(
         active_indices.begin() + range_start,
         active_indices.begin() + range_end, [&](uint32_t idx)
@@ -88,16 +101,19 @@ Bounding_Volume_Hierarchy build_bvh(const std::vector<BVH_Input> &inputs)
     uint32_t mid =
         static_cast<uint32_t>(std::distance(active_indices.begin(), split_pointer));
 
-    // If split failed, simply split in half
+    // if the split failed for some fucked up reason:
+    // (maybe all the entities are in the same place or whatever):
+    // there's nothing clever to be done so just split down the middle.
     if (mid == range_start || mid == range_end)
     {
       mid = range_start + (count / 2);
     }
 
+    // recursively invoke this function to build the left and right child.
     uint32_t left_child = build_recursive(range_start, mid);
     uint32_t right_child = build_recursive(mid, range_end);
 
-    // Re-access node
+    // set up the nodes correctly with the retrieved indices.
     bvh.nodes[node_idx].left = left_child;
     bvh.nodes[node_idx].right = right_child;
     bvh.nodes[node_idx].parent = 0;
@@ -178,7 +194,8 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
 }
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
-                       const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit)
+                       const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit,
+                       Span<const uint8_t> disabled_geometry)
 {
   if (bvh.nodes.empty())
     return false;
@@ -229,6 +246,9 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
       for (uint32_t i = 0; i < node.entity_count; ++i)
       {
         const BVH_Primitive &prim = bvh.primitives[node.first_entity_index + i];
+
+        if (collision_is_disabled(disabled_geometry, prim.id))
+          continue;
 
         // The AABB is the broad phase here exactly as it is in
         // resolve_collisions: it rejects cheaply, and a primitive that carries
@@ -284,7 +304,8 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
 }
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const aabb_bounds_t &aabb,
-                        std::vector<const BVH_Primitive *> &out_primitives)
+                        std::vector<const BVH_Primitive *> &out_primitives,
+                        Span<const uint8_t> disabled_geometry)
 {
   if (bvh.nodes.empty())
     return;
@@ -313,6 +334,9 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const aabb_bounds_
       for (uint32_t i = 0; i < node.entity_count; ++i)
       {
         const BVH_Primitive &prim = bvh.primitives[node.first_entity_index + i];
+
+        if (collision_is_disabled(disabled_geometry, prim.id))
+          continue;
 
         // Check precise primitive AABB overlap
         if (intersect_aabb_aabb(prim.aabb.min, prim.aabb.max, aabb.min,
@@ -353,12 +377,13 @@ void bvh_add_entry(Bounding_Volume_Hierarchy &bvh, Collision_Id id,
   bvh = build_bvh(inputs);
 }
 
-bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point)
+bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point,
+                              Span<const uint8_t> disabled_geometry)
 {
   constexpr float ON_FACE_TOLERANCE = 1e-3f;
 
   std::vector<const BVH_Primitive *> candidates;
-  bvh_intersect_aabb(bvh, {point, point}, candidates);
+  bvh_intersect_aabb(bvh, {point, point}, candidates, disabled_geometry);
 
   for (const BVH_Primitive *primitive : candidates)
   {

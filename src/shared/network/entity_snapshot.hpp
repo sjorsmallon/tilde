@@ -65,68 +65,53 @@
 // drops the packet whole.
 
 #include "../entities/entity_reflection.hpp"
+#include "../entity_system.hpp"
 #include "../entity_uid.hpp"
 #include "bitstream.hpp"
 #include "entity_serialization.hpp"
 
 #include <optional>
-#include <unordered_map>
 
 namespace network
 {
 
-// The replicated world at one tick, keyed by entity uid. Both ends hold these
-// and they must agree byte for byte: the server deltas against what it believes
-// the client reconstructed, so the two structures are the same type on purpose.
+// The replicated world at one tick. Both ends hold these and they must agree
+// byte for byte: the server deltas against what it believes the client
+// reconstructed, so the two structures are the same type on purpose.
 //
-// One map per replicated entity type. Adding a networked type means adding a
-// map here plus a case in each of the three switches in the .cpp -- the same
-// exhaustive-switch pattern the rest of the entity code uses, so the compiler
-// names every site.
+// The storage IS the world's storage, an Entity_System: one pool per entity
+// type sized from the generated table, and the uid index that makes a record's
+// uid resolvable in one step. It used to be one hand-written
+// `unordered_map<uid, T>` per replicated type, plus a sender loop, an encode
+// call and a decode arm per map -- four sites per type, every one of them
+// forgettable, while the world had already stopped keeping per-type storage by
+// hand (entity_system_def.md §1). A type that is not replicated simply has an
+// empty pool here; the codec walks replicated_entity_types() and never looks
+// at it.
+//
+// A frame that is a whole Entity_System also carries next_entity_id and
+// populate_from_map, which nothing here calls. Harmless, and cheaper than a
+// second storage type that would have to be kept the same shape.
+//
+// A player's inventory is one entity per carried weapon, spawned in the SAME
+// tick as its owner, which is what makes a frame self-consistent: a frame
+// reassembles or is dropped whole, so a player and the weapons its inventory
+// names arrive together and `weapons[active_weapon]` can never resolve to an
+// entity this receiver has not seen.
 struct snapshot_frame_t
 {
-  uint32_t tick = 0;
-
-  std::unordered_map<shared::entity_uid_t, entities::Player_Entity>       players;
-  // A player's inventory, one entity per carried weapon. Spawned in the SAME
-  // tick as its owner, which is what makes a frame self-consistent: a frame
-  // reassembles or is dropped whole, so a player and the weapons its
-  // inventory names arrive together and `weapons[active_weapon]` can never
-  // resolve to an entity this receiver has not seen.
-  std::unordered_map<shared::entity_uid_t, entities::Weapon_Entity>       weapons;
-  std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity>       rockets;
-  std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> physics_bodies;
-  // Map-PLACED, unlike the four above, and replicated anyway: it is the one
-  // placeable type whose state changes at runtime. Only `health` and the Render
-  // component are @Networked, so after the spawn record an untouched crate
-  // costs nothing -- the geometry the client draws it with came from the map.
-  std::unordered_map<shared::entity_uid_t, entities::Damageable_Entity>    damageables;
-  // Map-placed too, and here for the same reason: Switchable and Colorable write
-  // `switch_state` and `light.color` at runtime, and those are the only two
-  // fields on either that are @Networked. A light nobody switches costs one
-  // spawn record and then nothing.
-  std::unordered_map<shared::entity_uid_t, entities::Point_Light_Entity>  point_lights;
-  std::unordered_map<shared::entity_uid_t, entities::Spot_Light_Entity>   spot_lights;
-  // The third map-placed receiver: the switch and the play counter are its
-  // two runtime fields, and a counter change is a one-shot the client fires.
-  std::unordered_map<shared::entity_uid_t, entities::Sound_Emitter_Entity> sound_emitters;
-  // @predicted: the client's player_move reads the switch, so the switch has
-  // to be the server's.
-  std::unordered_map<shared::entity_uid_t, entities::Jump_Pad_Entity>     jump_pads;
+  uint32_t              tick = 0;
+  shared::Entity_System entities;
 
   void clear()
   {
     tick = 0;
-    players.clear();
-    weapons.clear();
-    rockets.clear();
-    physics_bodies.clear();
-    damageables.clear();
-    point_lights.clear();
-    spot_lights.clear();
-    sound_emitters.clear();
-    jump_pads.clear();
+    entities.reset();
   }
+
+  // Fills the frame from a live world: every entity of every replicated type,
+  // by value. The sender's half; the receiver's is deserialize_snapshot.
+  void copy_replicated_entities_from(const shared::Entity_System& world);
 };
 
 // Writes `current` as a delta against `baseline`, or as a full update when

@@ -180,6 +180,25 @@ Entity* clone_entity(const Entity* entity)
   return copy;
 }
 
+void copy_networked_fields(const Entity& from, Entity& to)
+{
+  if (from.type != to.type)
+  {
+    log_error("entity_reflection: cannot copy the networked fields of a {} onto a {} — nothing "
+              "copied",
+              classname_of(&from), classname_of(&to));
+    return;
+  }
+
+  // Leaf offsets are from the entity's base pointer, the same bet
+  // capture_field_changes makes.
+  const uint8_t* source = reinterpret_cast<const uint8_t*>(&from);
+  uint8_t*       target = reinterpret_cast<uint8_t*>(&to);
+
+  for (const leaf_field_t& leaf : networked_leaf_fields(from.type))
+    std::memcpy(target + leaf.offset, source + leaf.offset, leaf.info->size_in_bytes);
+}
+
 const char* classname_of(const Entity* entity)
 {
   if (entity == nullptr || entity->type == entity_type::Invalid ||

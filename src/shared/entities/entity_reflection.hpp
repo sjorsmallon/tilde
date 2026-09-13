@@ -113,6 +113,14 @@ bool write_field_changes(Entity* target, const std::vector<field_change_t>& chan
 // are trivially copyable structs, so this is one memcpy of the concrete size.
 Entity* clone_entity(const Entity* entity);
 
+// The networked subset of clone_entity, in place: every @Networked leaf of
+// `from` is copied onto `to`, everything else on `to` is left alone. What a
+// receiver does with a replicated entity it already holds a copy of -- a
+// map-placed light whose switch the server flipped keeps the reach and the
+// intensity its own map load gave it. Both must be the same concrete type; a
+// mismatch is logged and copies nothing.
+void copy_networked_fields(const Entity& from, Entity& to);
+
 // The on-disk identity of an entity's type. "unknown" for a null or
 // invalid-tagged entity, which is always a bug at the call site.
 const char* classname_of(const Entity* entity);

@@ -16,9 +16,36 @@ namespace
 {
 
 // renders a leaf field. components are flattened inside an entity so you can just take offsets and walk the size.
-void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id)
+void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id,
+                       shared::entity_uid_t uid, const shared::map_t* map, uid_pick_t* pick)
 {
-  render_field_widget(base + leaf.offset, *leaf.info, leaf.name.c_str(), id);
+  if (leaf.info->type != FIELD_TYPE_ENTITY_UID || map == nullptr || pick == nullptr)
+  {
+    render_field_widget(base + leaf.offset, *leaf.info, leaf.name.c_str(), id, map);
+    return;
+  }
+
+  ImGui::PushID(id);
+  const bool  picking_here = pick->armed && pick->field.has_value() &&
+                            pick->field->entity == uid && pick->field->offset == leaf.offset;
+  const float pick_button_width = ImGui::CalcTextSize("Pick").x + ImGui::GetStyle().FramePadding.x * 2.f;
+  const float label_width       = ImGui::CalcTextSize(leaf.name.c_str()).x + ImGui::GetStyle().ItemInnerSpacing.x;
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - pick_button_width - label_width -
+                          ImGui::GetStyle().ItemSpacing.x);
+  draw_entity_uid_combo(*map, leaf.name.c_str(), *reinterpret_cast<shared::entity_uid_t*>(base + leaf.offset));
+  ImGui::SameLine();
+  if (picking_here)
+  {
+    if (ImGui::Button("..."))
+      pick->disarm();
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Click an entity in the viewport to write it here. Escape cancels.");
+  }
+  else if (ImGui::Button("Pick"))
+  {
+    pick->arm_field(uid, leaf.offset);
+  }
+  ImGui::PopID();
 }
 
 } // namespace
@@ -226,7 +253,8 @@ bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
   return true;
 }
 
-void render_entity_fields_in_an_imgui_window(entities::Entity* entity)
+void render_entity_fields_in_an_imgui_window(entities::Entity* entity, shared::entity_uid_t uid,
+                                             const shared::map_t* map, uid_pick_t* pick)
 {
   if (!entity) return;
 
@@ -248,7 +276,7 @@ void render_entity_fields_in_an_imgui_window(entities::Entity* entity)
       entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_EDITABLE);
 
   for (size_t index = 0; index < leaves.size(); ++index)
-    render_leaf_field(base, leaves[index], (int)index);
+    render_leaf_field(base, leaves[index], (int)index, uid, map, pick);
 }
 
 } // namespace client

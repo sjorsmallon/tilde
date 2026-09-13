@@ -154,7 +154,8 @@ static move_result_t run_split(const cvar_state_t& cvars,
                                vec3 velocity, float total_dt, int sub_steps,
                                entities::Movement* movement = nullptr,
                                Span<const shared::movement_volume_t> volumes = {},
-                               pad_probe_t* out_pad = nullptr)
+                               pad_probe_t* out_pad = nullptr,
+                               Span<const uint8_t> disabled_geometry = {})
 {
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
@@ -164,7 +165,8 @@ static move_result_t run_split(const cvar_state_t& cvars,
   {
     Move_Events events{};
     std::tie(position, velocity) =
-        player_move(cvars, input, state, bvh, volumes, position, velocity, look_front,
+        player_move(cvars, input, state, bvh, disabled_geometry, volumes, position, velocity,
+                    look_front,
                     look_right, aim_sweep_t{}, half_width, half_height, step_dt, &events);
     if (out_pad != nullptr && events.launched_by_pad)
     {
@@ -775,6 +777,110 @@ static void test_a_disabled_jump_pad_is_passed_through(const cvar_state_t& cvars
         "the step through it is bit-identical to a step through no volume at all");
 }
 
+// --- a switched-off brush is not there ---------------------------------------
+//
+// The geometry half of the same rule the pad's `enabled` obeys, and it lands in
+// a different place for a reason: a volume is a box tested AFTER the step, while
+// this is consulted INSIDE the sweep by every leaf test. Which means the guard
+// here is not "the launch fired once" but "the hull never touched it" -- and
+// that has to hold at any split, since splitting the tick multiplies the number
+// of sweeps a wall gets tested against.
+//
+// The floor is object 0 and the wall object 1, so the bitset is {0, 1}: INDEX,
+// not uid, which is the whole point of keying it the way Collision_Id is keyed.
+// Getting that wrong disables the floor instead, which is why the last check
+// below is that the floor is still there.
+static Bounding_Volume_Hierarchy floor_and_wall_world()
+{
+  const shared::geometry_value_t floor =
+      shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
+  const shared::geometry_value_t wall =
+      shared::make_box_brush({128.f, 512.f, 0.f}, {16.f, 1024.f, 512.f});
+
+  std::vector<BVH_Input> inputs;
+  uint32_t               index = 0;
+  for (const shared::geometry_value_t &geometry : {floor, wall})
+  {
+    for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, index + 1))
+    {
+      BVH_Input input;
+      input.aabb             = piece.bounds;
+      input.id               = {Collision_Id::Type::Static_Geometry, index};
+      input.collision_planes = piece.planes;
+      input.face_polygons    = piece.face_polygons;
+      inputs.push_back(std::move(input));
+    }
+    ++index;
+  }
+
+  return build_bvh(inputs);
+}
+
+static void test_a_disabled_brush_is_walked_through(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] disabled geometry: the hull passes through, identically at any split\n");
+
+  const Bounding_Volume_Hierarchy bvh = floor_and_wall_world();
+
+  // COASTING, with no input and in the air: the only thing acting on x is
+  // `x += v*dt`, which composes exactly, so any difference between splits is
+  // the sweep and nothing else. A running player would bring the ground
+  // acceleration's own split behaviour in with it, which is measured elsewhere
+  // in this file and would drown this out.
+  const vec3 start_position{0.f, 512.f, 0.f};
+  const vec3 start_velocity{600.f, 0.f, 0.f};
+
+  // Twenty ticks at 600 u/s is 200 units, which carries the hull from x = 0
+  // clean past the wall: it spans [112, 144] and the hull is 16 wide, so the far
+  // side is at x = 160.
+  constexpr int ticks = 20;
+
+  const uint8_t wall_disabled[] = {0, 1};
+
+  float first_x = 0.f;
+  for (int sub_steps : {1, 2, 8, 64})
+  {
+    entities::Movement  blocked_movement{};
+    move_result_t       blocked{start_position, start_velocity};
+    entities::Movement  open_movement{};
+    move_result_t       open{start_position, start_velocity};
+
+    for (int tick = 0; tick < ticks; ++tick)
+    {
+      blocked = run_split(cvars, bvh, Move_Input{}, blocked.position, blocked.velocity, tick_dt,
+                          sub_steps, &blocked_movement);
+      open    = run_split(cvars, bvh, Move_Input{}, open.position, open.velocity, tick_dt,
+                          sub_steps, &open_movement, {}, nullptr, wall_disabled);
+    }
+
+    printf("    N=%-2d  solid x = %.6f   switched off x = %.6f\n", sub_steps, blocked.position.x,
+           open.position.x);
+
+    check(blocked.position.x < 100.f, "the solid wall stops the hull short of it");
+    check(open.position.x > 160.f, "the switched-off one is passed straight through");
+
+    if (sub_steps == 1)
+      first_x = open.position.x;
+    else
+      check(open.position.x == first_x,
+            "the run through it is BIT identical however many sub-steps each tick had");
+  }
+
+  // The floor is still there: the bitset names one object, not the world, and a
+  // player falling through the ground is what getting the index wrong looks
+  // like.
+  {
+    entities::Movement movement{};
+    move_result_t      result{{0.f, 8.f, 0.f}, {0.f, 0.f, 0.f}};
+    for (int tick = 0; tick < ticks; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt, 8,
+                         &movement, {}, nullptr, wall_disabled);
+
+    check(result.position.y >= -0.1f && result.position.y <= 0.1f,
+          "disabling the wall leaves the floor solid");
+  }
+}
+
 // The coyote clock is ACCUMULATED, so it has to sum to the same total whatever
 // the split -- the plainest possible statement of what "step invariant" means
 // for a piece of state rather than for a position.
@@ -1015,9 +1121,9 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
                       : aim_sweep_t{};
     const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
 
-    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, position, velocity,
-                                               front, right, sweep, half_width, half_height,
-                                               step_dt);
+    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, {}, position,
+                                               velocity, front, right, sweep, half_width,
+                                               half_height, step_dt);
     step_start = step_end;
   }
   return velocity;
@@ -1089,6 +1195,7 @@ int main()
   test_air_push_ignores_edges_on_a_steady_turn(cvars);
   test_a_jump_pad_fires_once_per_contact(cvars);
   test_a_disabled_jump_pad_is_passed_through(cvars);
+  test_a_disabled_brush_is_walked_through(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

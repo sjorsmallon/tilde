@@ -535,6 +535,7 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
 // whichever side is simulating rather than from a global. Null means the caller
 // has no reader for them (the server, every time) -- see debug_collision.hpp.
 Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
+                                   Span<const uint8_t> disabled_geometry,
                                    vec3 &player_pos,
                                    float half_width, float half_height,
                                    debug_collision::Face_Bucket *debug_faces)
@@ -548,7 +549,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
 
 
   std::vector<const BVH_Primitive *> overlapping;
-  bvh_intersect_aabb(bvh, player_aabb, overlapping);
+  bvh_intersect_aabb(bvh, player_aabb, overlapping, disabled_geometry);
 
   for (const auto *prim : overlapping)
   {
@@ -654,6 +655,7 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
+    Span<const uint8_t> disabled_geometry,
     Span<const shared::movement_volume_t> movement_volumes,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
@@ -677,7 +679,7 @@ std::tuple<vec3, vec3> player_move(
   const vec3 hull_center_offset{0.f, half_height, 0.f};
   vec3 player_pos = old_position + hull_center_offset;
   Collider_Planes collider_planes =
-      resolve_collisions(bvh, player_pos, half_width, half_height,
+      resolve_collisions(bvh, disabled_geometry, player_pos, half_width, half_height,
                          recording_bucket);
 
   bool has_ground = !collider_planes.ground_planes.empty();
@@ -774,7 +776,7 @@ std::tuple<vec3, vec3> player_move(
       const float step_height = cvars.pm_step_height;
       vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
       Collider_Planes raised_planes =
-          resolve_collisions(bvh, raised_pos, half_width, half_height,
+          resolve_collisions(bvh, disabled_geometry, raised_pos, half_width, half_height,
                              recording_bucket);
 
       // Only abort if a raised wall specifically blocks our wish direction.
@@ -824,7 +826,7 @@ std::tuple<vec3, vec3> player_move(
         drop_pos.z += wish_dir_xz.z * step_height;
         drop_pos.y -= step_height;
         Collider_Planes drop_planes =
-            resolve_collisions(bvh, drop_pos, half_width, half_height,
+            resolve_collisions(bvh, disabled_geometry, drop_pos, half_width, half_height,
                                recording_bucket);
 
         // Reject the step if a wall still blocks the wish direction at the
@@ -886,7 +888,7 @@ std::tuple<vec3, vec3> player_move(
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
   Collider_Planes post_planes =
-      resolve_collisions(bvh, new_pos, half_width, half_height,
+      resolve_collisions(bvh, disabled_geometry, new_pos, half_width, half_height,
                          recording_bucket);
 
   const float overbounce = cvars.pm_overbounce;

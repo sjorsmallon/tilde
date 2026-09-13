@@ -3,7 +3,6 @@
 
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../damage.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 
@@ -13,24 +12,8 @@
 namespace server
 {
 
-// Splash query at the detonation point. Linear falloff (1 - dist/radius).
-// Self-damage is NOT filtered: standing in your own blast radius hurts and
-// launches you. Direct-hit owner filtering happens at cast_sphere() time.
-//
-// Per-victim damage application (HP subtract, knockback write, PLAYER_DIED
-// crossing detection, respawn schedule) is delegated to inflict_damage in
-// src/server/damage.cpp — every damage source goes through that single
-// choke point so adding a new one (hitscan, fall, void volume) cannot
-// silently forget the death-event + respawn bookkeeping.
-//
-// `direct_hit_uid` is the entity uid the rocket's swept collision actually
-// contacted this tick, or 0 if the detonation came from lifetime expiry. It
-// becomes the gameplay event's `victim_id` only when the hit entity is a
-// Player_Entity — physics-body or world-geometry hits leave victim_id at 0.
-// `impact_normal` is the surface normal from the swept cast at the moment of
-// contact, or {0,0,0} for an airburst (lifetime expiry, no surface). The
-// client handler uses this to place a decal against the visible surface
-// instead of guessing direction from the origin alone.
+//@FIXME(SJM): the way this works is not ideal and does not feel good.
+
 static void detonate(const entities::Rocket_Entity &rocket,
                      server_context_t &context,
                      shared::entity_uid_t direct_hit_uid,
@@ -43,57 +26,56 @@ static void detonate(const entities::Rocket_Entity &rocket,
 
   std::vector<hit_result_t> hits = find_all_bodies_overlapping_sphere(physics, rocket.position, rocket.damage_radius);
 
-  // One body may surface multiple contact points; only apply damage/impulse once.
-  std::unordered_set<shared::entity_uid_t> already_applied;
-
-  const shared::entity_uid_t attacker_uid = rocket.owner_id;
-  const shared::entity_uid_t inflictor_uid = rocket.entity_id;
+  // One body may surface multiple contact points; only push it once.
+  std::unordered_set<shared::entity_uid_t> already_pushed;
 
   for (const auto &h : hits)
   {
     if (h.entity_id == 0) continue;
-    if (!already_applied.insert(h.entity_id).second) continue;
+    if (!already_pushed.insert(h.entity_id).second) continue;
 
-    // Resolve the entity center from network state — h.position is a surface
-    // contact point which sits near the explosion origin for direct hits and
-    // gives a degenerate direction.
-    //
-    // get<T>(uid) is a uid-index lookup and answers nullptr for "no such
-    // entity" and "wrong type" alike, which is exactly the two-way test this
-    // needs — so the type dispatch below IS the lookup.
+    // The type is asked ONE question -- "is this a player?" -- because that is
+    // the only thing the push branches on: a player is a kinematic capsule, so
+    // Jolt impulses are no-ops on it and an added velocity is clobbered by the
+    // next set_kinematic_pose, which makes its push a game-state write. Every
+    // other uid the overlap surfaced has a Jolt body and takes the delta
+    // directly, whatever it is -- a crate, a thrown weapon, a damageable.
+    entities::Player_Entity *player =
+        session.entity_system.get<entities::Player_Entity>(h.entity_id);
+
+    // Measured to the entity center, never to h.position: a surface contact
+    // point sits near the origin on a direct hit and gives a degenerate
+    // direction. A player's position is at the feet, so it carries the capsule
+    // offset; everything else is positioned at its own center.
     vec3f entity_center;
-    if (entities::Player_Entity *player =
-            session.entity_system.get<entities::Player_Entity>(h.entity_id))
+    if (player)
     {
       entity_center = player->position + vec3f{0.f, 38.f, 0.f};
     }
-    else if (entities::Physics_Body_Entity *body =
-                 session.entity_system.get<entities::Physics_Body_Entity>(h.entity_id))
+    else if (entities::Entity *entity = session.entity_system.try_find(h.entity_id))
     {
-      entity_center = body->position;
+      entity_center = entity->position;
     }
     else
     {
-      continue; // unknown entity type — inflict_damage would log_error
+      continue; // a body whose entity is already gone
     }
 
-    vec3f to_target = entity_center - rocket.position;
-    float distance  = linalg::length(to_target);
+    const vec3f to_target = entity_center - rocket.position;
+    const float distance  = linalg::length(to_target);
     if (distance > rocket.damage_radius) continue;
 
-    float falloff = 1.f - (distance / rocket.damage_radius);
+    // Straight up when the center coincides with the origin: a zero direction
+    // would spend the blast on nothing instead of launching the victim.
+    const vec3f direction = (distance > 1e-4f) ? to_target * (1.f / distance)
+                                               : vec3f{0.f, 1.f, 0.f};
+    const float falloff   = 1.f - (distance / rocket.damage_radius);
+    const vec3f push      = direction * (rocket.knockback_force * falloff);
 
-    damage_info_t info{};
-    info.victim_uid      = h.entity_id;
-    info.attacker_uid    = attacker_uid;
-    info.inflictor_uid   = inflictor_uid;
-    info.weapon_id       = 0; // no per-weapon ids yet
-    info.amount          = rocket.damage_amount * falloff;
-    info.source_position = rocket.position;
-    info.knockback_force = rocket.knockback_force * falloff;
-    info.type            = entities::Damage_Type::Normal;
-    info.was_headshot    = false;
-    inflict_damage(context, info);
+    if (player)
+      player->velocity = player->velocity + push;
+    else
+      add_linear_velocity(physics, h.entity_id, push);
   }
 
   // Cosmetic explosion: announce the detonation through the cosmetic-events

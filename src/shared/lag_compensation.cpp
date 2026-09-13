@@ -115,9 +115,12 @@ bool try_pose_players_across_bracket(
   // Liveness comes from the `from` frame: that is who the client was drawing at
   // the start of its blend, and a player who died mid-blend was still a body
   // under the crosshair for part of it.
+  const Span<const entities::Player_Entity> from_players =
+      from->entities.entities_of<entities::Player_Entity>();
+
   uint32_t living_count = 0;
-  for (const auto& [uid, player] : from->players)
-    living_count += player.health.current_health> 0 ? 1 : 0;
+  for (const entities::Player_Entity& player : from_players)
+    living_count += player.health.current_health > 0 ? 1 : 0;
 
   // Sized in full before a single target is pushed: each target holds a SPAN
   // into this vector, so filling the two in lockstep would leave every span
@@ -127,14 +130,13 @@ bool try_pose_players_across_bracket(
   out.poses.clear();
   out.poses.reserve(living_count);
 
-  for (const auto& [uid, from_player] : from->players)
+  for (const entities::Player_Entity& from_player : from_players)
   {
     if (from_player.health.current_health <= 0)
       continue;
 
-    const auto towards_it = towards->players.find(uid);
     const entities::Player_Entity* towards_player =
-        towards_it == towards->players.end() ? nullptr : &towards_it->second;
+        towards->entities.get<entities::Player_Entity>(from_player.entity_id);
 
     const Span<assets::posed_hitbox_t> slice{
         out.volumes.data() + (size_t)out.targets.size() * volume_count, volume_count};

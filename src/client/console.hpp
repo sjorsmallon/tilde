@@ -39,6 +39,10 @@ public:
   bool bind_key(std::string_view key, std::string command_line);
   void clear_bindings();
 
+  // Binds persist as console lines in binds.cfg beside last_map.txt: written
+  // whenever one changes, replayed through execute_command once at init.
+  void load_bindings_from_file();
+
   // Self-gating: a no-op while the console is open, so callers need not check.
   void execute_pressed_bindings();
 
@@ -49,6 +53,8 @@ public:
 private:
   console();
   ~console();
+
+  void save_bindings_to_file() const;
 
   bool should_draw;
   bool is_folded_open;

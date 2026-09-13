@@ -75,6 +75,11 @@ struct static_mesh_geometry_t
   linalg::quatf orientation = linalg::quatf::identity();
   linalg::vec3 scale{1.f, 1.f, 1.f};
   geometry_surface_t surface;
+
+  // The Brush_Entity this object is tied to, or null_entity_uid for plain world
+  // geometry. See brush_geometry_t::owner_uid -- the argument is the same and
+  // is written there.
+  entity_uid_t owner_uid = null_entity_uid;
 };
 
 // How a face's MATERIAL is parameterized: world-space axes an author aims, in
@@ -275,6 +280,15 @@ struct brush_geometry_t
   // per-object properties that stay per-object: visibility, wireframe, and the
   // mesh_path override.
   geometry_surface_t surface;
+
+  // The Brush_Entity this brush is tied to, or null_entity_uid for plain world
+  // geometry. THE BRUSH NAMES ITS OWNER and nothing names the brush: Source
+  // nests the solids inside the entity block, we keep a flat geometry list with
+  // uids, so the pointer runs this way and N brushes per entity costs no array.
+  // The other direction is DERIVED -- game_session_t::owner_of, and an on-demand
+  // walk in the editor -- because both stored is two answers that can disagree.
+  // prediction_def.md ss4.2.
+  entity_uid_t owner_uid = null_entity_uid;
 };
 
 // An axis-aligned box, as the brush it now is. `box_geometry_t` was a spelling
@@ -329,6 +343,12 @@ geometry_value_t make_default_geometry(geometry_kind_t kind);
 
 linalg::vec3 get_position(const geometry_value_t &geometry);
 void set_position(geometry_value_t &geometry, const linalg::vec3 &position);
+
+// The entity this object is tied to, across both kinds -- null_entity_uid for
+// plain world geometry. One pair of accessors rather than a std::visit at every
+// site, for the same reason get_position is one.
+[[nodiscard]] entity_uid_t get_owner_uid(const geometry_value_t &geometry);
+void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid);
 
 // Moves an object by a delta rather than to a place. set_position would do it
 // as (target - current) around a derived centre, which costs a float of drift

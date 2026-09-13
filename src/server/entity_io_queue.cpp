@@ -113,6 +113,7 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
 
     pending_action_t record;
     record.data      = connection.row.data;
+    record.sender    = sender.entity_id;
     record.activator = context.activator;
     record.fire_tick = context.tick + ticks_for_delay(context.server, connection.row.delay_seconds);
     record.sequence  = context.server.world.next_action_sequence++;
@@ -176,24 +177,61 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
                  entity_io_label(context.server, sender.entity_id), entities::to_string(signal));
 }
 
-void drain_pending_entity_actions(server_context_t& context)
+namespace
 {
-  std::vector<pending_action_t>& queue = context.world.pending_actions;
-  if (queue.empty())
-    return;
 
+bool anything_is_due(const server_context_t& context)
+{
   // A queue holding only delayed records is the common non-empty case, and it
   // runs every tick until they come due -- so it has to cost no allocation.
-  bool anything_is_due = false;
-  for (const pending_action_t& record : queue)
-    anything_is_due = anything_is_due || record.fire_tick <= context.tick_number;
-  if (!anything_is_due)
-    return;
+  for (const pending_action_t& record : context.world.pending_actions)
+    if (record.fire_tick <= context.tick_number)
+      return true;
+  return false;
+}
 
-  // Whatever is due, in emit order. A handler can emit again -- a signal fired
-  // from a system it reaches -- so the due records are MOVED OUT before any of
-  // them runs: anything queued during the drain belongs to the next tick,
-  // which is what makes "a queue that emits feeds itself" not a possibility.
+// The wiring did not settle. Reported by sender AND target because a loop is a
+// cycle and one end of it names nothing on its own, and the due records go with
+// the line: left in the queue they would run the same sixteen hops again on
+// every tick from here on.
+void report_a_chain_that_would_not_settle(server_context_t& context)
+{
+  constexpr size_t MAX_REPORTED_ROWS = 8;
+
+  std::vector<pending_action_t>& queue = context.world.pending_actions;
+
+  size_t dropped = 0;
+  for (const pending_action_t& record : queue)
+  {
+    if (record.fire_tick > context.tick_number)
+      continue;
+
+    if (dropped < MAX_REPORTED_ROWS)
+      log_error("entity I/O: {} -> {} -> {}", entity_io_label(context, record.sender),
+                entities::to_string(record.data.tag), entity_io_label(context, record.target));
+    ++dropped;
+  }
+
+  log_error("entity I/O: this wiring did not settle after {} hops in one tick and is a loop. "
+            "{} action(s) still due were dropped; the rows above are where it runs.",
+            MAX_ACTION_HOPS_PER_TICK, dropped);
+
+  std::vector<pending_action_t> delayed;
+  for (const pending_action_t& record : queue)
+    if (record.fire_tick > context.tick_number)
+      delayed.push_back(record);
+  queue = std::move(delayed);
+}
+
+// One hop: everything due right now, in emit order.
+void dispatch_the_due_actions(server_context_t& context)
+{
+  std::vector<pending_action_t>& queue = context.world.pending_actions;
+
+  // A handler can emit again -- a signal fired from a system it reaches -- so
+  // the due records are MOVED OUT before any of them runs: anything queued
+  // during this hop belongs to the NEXT one, which is what makes "a queue that
+  // emits feeds itself" not a possibility.
   std::vector<pending_action_t> due;
   std::vector<pending_action_t> later;
   for (const pending_action_t& record : queue)
@@ -222,7 +260,11 @@ void drain_pending_entity_actions(server_context_t& context)
       continue;
     }
 
-    input_context_t handler_context{context, record.activator, context.tick_number};
+    // The record's own tick, not the drain's. They are the same number while
+    // the drain runs at the end of the tick the record came due in -- which is
+    // the point: a handler that measures a duration (the speedrun timer) reads
+    // the tick the signal was actually emitted at rather than one past it.
+    input_context_t handler_context{context, record.activator, record.fire_tick};
 
     if (io_debug_is_on(context))
     {
@@ -257,6 +299,22 @@ void drain_pending_entity_actions(server_context_t& context)
                   "its activator and this one is not a receiver",
                   entities::to_string(record.data.tag),
                   entities::entity_info(target->type).classname, record.target);
+  }
+}
+
+} // namespace
+
+void drain_pending_entity_actions(server_context_t& context)
+{
+  for (uint32_t hop = 0; anything_is_due(context); ++hop)
+  {
+    if (hop == MAX_ACTION_HOPS_PER_TICK)
+    {
+      report_a_chain_that_would_not_settle(context);
+      return;
+    }
+
+    dispatch_the_due_actions(context);
   }
 }
 

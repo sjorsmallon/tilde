@@ -2311,17 +2311,25 @@ static void resolve_class_annotations(program_t* program)
     if (declaration->kind == DECLARATION_FLAGSET)
       continue;
 
-    const annotation_t* predicted_annotation = nullptr;
-
     for (int32_t offset = 0; offset < declaration->annotation_count; ++offset)
     {
       const annotation_t* annotation = &program->annotations[declaration->first_annotation + offset];
 
+      // Replication is not written, it is DERIVED (derive_replicated_types):
+      // a type rides the snapshot when one of its own fields is @Networked. A
+      // written flag was a second answer to that question, free to disagree
+      // with the first -- a type with networked fields that never rode.
+      if (string_view_matches(annotation->name, "replicated"))
+      {
+        report_error(program, annotation->offset, annotation->line,
+                     "'@replicated' is not written: a type rides the snapshot when one of its "
+                     "own fields is @Networked, and that is derived. Drop the annotation");
+        continue;
+      }
+
       uint32_t flag = CLASS_FLAG_NONE;
       if (string_view_matches(annotation->name, "runtime_only"))
         flag = CLASS_FLAG_RUNTIME_ONLY;
-      else if (string_view_matches(annotation->name, "replicated"))
-        flag = CLASS_FLAG_REPLICATED;
       else if (string_view_matches(annotation->name, "predicted"))
         flag = CLASS_FLAG_PREDICTED;
 
@@ -2329,7 +2337,7 @@ static void resolve_class_annotations(program_t* program)
       {
         report_error(program, annotation->offset, annotation->line,
                      "'@%.*s' is not a class annotation; the complete list is '@runtime_only', "
-                     "'@replicated', '@predicted' (entities)",
+                     "'@predicted' (entities)",
                      annotation->name.length, annotation->name.data);
         continue;
       }
@@ -2344,20 +2352,8 @@ static void resolve_class_annotations(program_t* program)
         continue;
       }
 
-      if (flag == CLASS_FLAG_PREDICTED)
-        predicted_annotation = annotation;
       declaration->class_flags |= flag;
     }
-
-    // A predicted type is simulated by the client inside player_move, so its
-    // state has to reach the client: predicted without replicated is a pad
-    // the client thinks is on after the server switched it off.
-    if (predicted_annotation != nullptr &&
-        (declaration->class_flags & CLASS_FLAG_REPLICATED) == 0)
-      report_error(program, predicted_annotation->offset, predicted_annotation->line,
-                   "'%.*s' is @predicted but not @replicated -- the client simulates a predicted "
-                   "type inside player_move, so its runtime state must ride the snapshot",
-                   declaration->name.length, declaration->name.data);
   }
 }
 
@@ -3870,6 +3866,49 @@ static void resolve_component_defaults(program_t* program)
   }
 }
 
+// A type rides the snapshot when one of its OWN fields is @Networked, recursing
+// through its components. The base's fields are not consulted: every type
+// inherits them, so counting them would put every type on the wire. Derived
+// rather than written, so "has networked fields" and "is replicated" cannot be
+// two answers to one question -- the shape entity_system_def.md ss1 settled for
+// storage, applied to the flag.
+//
+// After check_component_cycles, since the walk is over the component graph;
+// the depth cap is only so a cycle that was already reported cannot also hang
+// the tool.
+static bool own_fields_carry_networked_leaf(const program_t* program,
+                                            const declaration_t* declaration, int32_t depth)
+{
+  if (depth > 32)
+    return false;
+
+  for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+  {
+    const field_t* field = &program->fields[declaration->first_field + offset];
+    if (field->type.kind == TYPE_COMPONENT)
+    {
+      if (own_fields_carry_networked_leaf(
+              program, &program->declarations[field->type.declaration_index], depth + 1))
+        return true;
+      continue;
+    }
+    if ((field->flags & FIELD_FLAG_NETWORKED) != 0)
+      return true;
+  }
+  return false;
+}
+
+static void derive_replicated_types(program_t* program)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind == DECLARATION_ENTITY &&
+        own_fields_carry_networked_leaf(program, declaration, 0))
+      declaration->class_flags |= CLASS_FLAG_REPLICATED;
+  }
+}
+
 static void resolve_program(program_t* program)
 {
   name_table_t table = {};
@@ -3911,6 +3950,7 @@ static void resolve_program(program_t* program)
     check_base_declaration(program);
     check_base_field_shadowing(program);
     check_component_cycles(program);
+    derive_replicated_types(program);
     check_flag_contradictions(program);
     check_verb_names_are_unique(program);
     check_trait_verbs(program);
@@ -4670,6 +4710,7 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
   fprintf(out, "#pragma once\n\n");
   // Paths are relative to src/shared, which is game_shared's public include dir.
   fprintf(out, "#include \"array.hpp\"\n");
+  fprintf(out, "#include \"entity_uid.hpp\"\n");
   fprintf(out, "#include \"linalg.hpp\"\n");
   fprintf(out, "#include \"network/network_types.hpp\"\n");
   fprintf(out, "#include \"reflection.hpp\"\n");
@@ -4962,7 +5003,7 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "  uint32_t            alignment;\n");
   fprintf(out, "  uint32_t            component_mask;\n");
   fprintf(out, "  bool                runtime_only;\n");
-  fprintf(out, "  bool                replicated;   // rides the snapshot\n");
+  fprintf(out, "  bool                replicated;   // rides the snapshot: a @Networked field of its own (derived)\n");
   fprintf(out, "  bool                predicted;    // player_move reads it, both sides\n\n");
   fprintf(out, "  // Writes a default constructed entity of this type into `memory`, which\n");
   fprintf(out, "  // must be at least size_in_bytes wide and `alignment` aligned. Allocates\n");
@@ -5020,9 +5061,11 @@ static void emit_generated_header(FILE* out, const program_t* program)
   fprintf(out, "// placement menu can index it directly.\n");
   fprintf(out, "Span<const entity_type> placeable_entity_types();\n\n");
 
-  fprintf(out, "// Every entity type that rides the snapshot: the ones the .def marked\n");
-  fprintf(out, "// @replicated, in declaration order. entity_snapshot.cpp must hold a map, an\n");
-  fprintf(out, "// encode and a decode arm for each; entity_layout_test pins the set.\n");
+  fprintf(out, "// Every entity type that rides the snapshot, in declaration order. DERIVED,\n");
+  fprintf(out, "// not declared: a type is in it when one of its OWN fields is @Networked\n");
+  fprintf(out, "// (through its components; the base's fields do not count). The snapshot\n");
+  fprintf(out, "// codec walks this list over an Entity_System, so a new type needs no arm\n");
+  fprintf(out, "// anywhere; entity_layout_test pins the set.\n");
   fprintf(out, "Span<const entity_type> replicated_entity_types();\n\n");
   fprintf(out, "inline bool entity_type_is_replicated(entity_type type) { return entity_info(type).replicated; }\n");
   fprintf(out, "inline bool entity_type_is_predicted(entity_type type) { return entity_info(type).predicted; }\n\n");
@@ -5225,8 +5268,9 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
     if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
       mix(declaration->base_name.data, declaration->base_name.length);
 
-    // @replicated decides which types ride the snapshot, so two builds that
-    // disagree on it misparse every packet.
+    // The class flags carry the derived replicated bit, which decides which
+    // types ride the snapshot, so two builds that disagree on it misparse
+    // every packet.
     if (declaration->kind == DECLARATION_ENTITY)
     {
       char buffer[32];
@@ -5559,7 +5603,7 @@ static void emit_generated_source(FILE* out, const program_t* program, const cha
     }
   }
 
-  // --- replicated types: the set the snapshot codec has to cover ---
+  // --- replicated types: derived, see derive_replicated_types ---
   {
     int32_t replicated_count = 0;
     for (int32_t index = 0; index < program->declaration_count; ++index)
@@ -8015,7 +8059,7 @@ static void dump_program(const program_t* program)
     if (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY)
       printf(" @runtime_only");
     if (declaration->class_flags & CLASS_FLAG_REPLICATED)
-      printf(" @replicated");
+      printf(" (replicated)");
     if (declaration->class_flags & CLASS_FLAG_PREDICTED)
       printf(" @predicted");
 

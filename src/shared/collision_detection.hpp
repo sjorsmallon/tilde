@@ -116,11 +116,29 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
                                const vec3f& dir, float &out_t, float &out_t_exit,
                                vec3f& out_normal);
 
+// A brush that is switched off this tick, by INDEX -- see
+// shared/disabled_geometry.hpp for why the switch is a parameter and not a bit
+// in the tree. Non-zero means "not there": the primitive is skipped as if it had
+// never been built. The test is per PRIMITIVE and not per node, because one
+// object is N leaves and a node cannot know.
+//
+// Empty means nothing is disabled, which is what the bake's BVH, the editor's
+// and every test pass -- and what the default argument below spells, so a query
+// that answers for something other than the running session says nothing.
+[[nodiscard]] inline bool
+collision_is_disabled(Span<const uint8_t> disabled_geometry, Collision_Id id)
+{
+  return id.type == Collision_Id::Type::Static_Geometry &&
+         id.index < disabled_geometry.size() && disabled_geometry[id.index] != 0;
+}
+
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
-                       const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit);
+                       const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit,
+                       Span<const uint8_t> disabled_geometry = {});
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb_bounds_t &aabb,
-                        std::vector<const BVH_Primitive *> &out_primitives);
+                        std::vector<const BVH_Primitive *> &out_primitives,
+                        Span<const uint8_t> disabled_geometry = {});
 
 // Whether a point lies inside ANY solid the BVH holds. A primitive with planes
 // is tested against every one of them (a convex piece is the intersection of
@@ -128,7 +146,8 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb
 // counts as inside -- a grid snapped to a brush's own coordinates lands there
 // routinely, and a sample sitting on a wall is one the wall's half-sphere
 // swallows.
-bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point);
+bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point,
+                               Span<const uint8_t> disabled_geometry = {});
 
 // Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the
 // hit distance when the ray crosses the triangle in front of the origin.

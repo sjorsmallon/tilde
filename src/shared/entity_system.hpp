@@ -215,6 +215,11 @@ struct Entity_System
     return Span<T>(reinterpret_cast<T *>(pool.storage.data()), pool.count);
   }
 
+  template <typename T> Span<const T> entities_of() const
+  {
+    return const_cast<Entity_System *>(this)->entities_of<T>();
+  }
+
   // Every live entity carrying ALL of Component_T..., across every pool whose
   // type embeds them — in entity_type declaration order, then slot order.
   //
@@ -304,6 +309,11 @@ struct Entity_System
     return reinterpret_cast<T *>(pool.storage.data() + (size_t)location.slot * pool.stride);
   }
 
+  template <typename T> const T *get(entity_uid_t uid) const
+  {
+    return const_cast<Entity_System *>(this)->get<T>(uid);
+  }
+
   // Resolve a uid WITHOUT knowing its type. The untyped twin of get<T>, for the
   // callers that have a uid off the wire, out of a map row or out of a ray cast
   // and genuinely do not know what it names — the entity I/O drain above all,
@@ -331,6 +341,11 @@ struct Entity_System
     // Through the generated as_base thunk, not a cast: an entity and its base
     // are not pointer-interconvertible, so the offset has to come from the type.
     return pool.at(location.slot);
+  }
+
+  const entities::Entity *try_find(entity_uid_t uid) const
+  {
+    return const_cast<Entity_System *>(this)->try_find(uid);
   }
 
   // Destroy whichever entity holds `uid`. False if none does — the caller can
@@ -362,6 +377,16 @@ struct Entity_System
   // tied session storage to an editor allocation decision (entity_system_def.md
   // §6 — whether map_entity_t keeps its shared_ptr is now free to change here).
   void add_entity(entity_uid_t uid, const entities::Entity *entity);
+
+  // Default-construct an entity of `type` and index it under `uid`: add_entity
+  // with nothing to copy from. For a receiver reconstructing an entity whose
+  // uid the SENDER chose -- a snapshot record for an entity this frame has never
+  // seen -- where spawn() would mint one of its own. Hands back the new entity
+  // so the caller can fill it in; same lifetime rule as get<T>.
+  //
+  // nullptr, and a logged error, for uid 0 or a uid already held. Invalid is
+  // fatal for spawn()'s reason: it names no pool.
+  entities::Entity *add_default(entities::entity_type type, entity_uid_t uid);
 
   // Cross-check `locations` against what the pools actually hold, in both
   // directions. Returns true if they agree; logs every disagreement it finds.
