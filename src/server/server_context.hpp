@@ -227,6 +227,14 @@ struct server_context_t
  // allocated once but "reused" per shot, expected to be sized once and then just repopulated for every shot fired by clients.
   shared::posed_players_t rewind_scratch;
 
+  // A `map` console line, resolved but not yet serviced. Outside the reset
+  // scope because the request outlives the world it was made in: it is a
+  // REQUEST rather than a change for the same reason rules.map_restart_requested
+  // is -- the reload frees the world, the inbox and the console entry the
+  // handler is running inside. Serviced at the top of the next tick; empty
+  // means nothing pending.
+  std::string pending_map_change;
+
   // --- Reset-scoped state ---
   world_t       world;
   Array<client_slot_t, network::sv_max_client_count> clients;

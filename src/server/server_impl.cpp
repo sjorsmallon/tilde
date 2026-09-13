@@ -1231,6 +1231,18 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
 
 static void check_if_there_is_a_pending_map_change(server_context_t &context)
 {
+  // An explicit `map` line outranks a match-over restart: it is the newer
+  // instruction, and servicing both would load two maps in one tick.
+  if (!context.pending_map_change.empty())
+  {
+    // Moved out before the load: change_map_to reloads into this very context,
+    // and it is the only thing clearing the request either way.
+    const std::string requested = std::move(context.pending_map_change);
+    context.pending_map_change.clear();
+    change_map_to(requested);
+    return;
+  }
+
   if (!context.world.rules.map_restart_requested)
     return;
 
@@ -2552,6 +2564,12 @@ void spawn_sphere(const command_context_t &command_context)
 // over the network; change_map_to() keeps players connected, respawns them into
 // the new world, and broadcasts CmdChangeMap so every client follows.
 //
+// REQUESTS the switch rather than performing it: a forwarded line is dispatched
+// from inside Tick()'s walk of the console inbox, and the reload clears that
+// very inbox -- so loading here invalidated the iterator (and the string this
+// handler was reading from) mid-loop. Serviced at the top of the next tick,
+// exactly as a match-over restart is.
+//
 // Was a CVar<std::string> with an on-change callback -- a verb wearing a
 // variable costume, and the only user of the callback mechanism, which is why
 // v1 has no callback mechanism at all.
@@ -2559,9 +2577,19 @@ void map(std::string_view requested_name, const command_context_t &)
 {
   using namespace server;
 
-  // change_map_to resolves the name and refuses an unknown one before touching
-  // the running world, and it has already logged why by the time it returns.
-  (void)change_map_to(std::string(requested_name));
+  // Resolved here so a typo is refused in the reply the author is looking at,
+  // rather than a tick later in the log.
+  const std::optional<std::string> map_path =
+      try_resolve_map_path(std::string(requested_name));
+  if (!map_path)
+  {
+    log_error("map: '{}' not found (also tried 'maps/{}' and 'maps/{}.source'). "
+              "Not switching.",
+              requested_name, requested_name, requested_name);
+    return;
+  }
+
+  g_server_context.pending_map_change = *map_path;
 }
 
 
