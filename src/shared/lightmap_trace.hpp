@@ -63,6 +63,14 @@ struct traced_scene_t
 {
   const Bounding_Volume_Hierarchy *bvh = nullptr;
 
+  // The two sets the occluder BVH above deliberately does not hold, which
+  // light_occlusion_of names: the FENCES and the GLASS. Null when the map has
+  // neither, which is every map authored before transparency -- and that null is
+  // what makes a shadow ray skip both extra traversals and answer the 1-or-0 it
+  // has always answered.
+  const Bounding_Volume_Hierarchy *alpha_tested_bvh = nullptr;
+  const Bounding_Volume_Hierarchy *transmissive_bvh = nullptr;
+
   // Sorted by uid, so a hit resolves by binary search rather than by walking the
   // map's geometry list once per bounce.
   std::vector<std::pair<entity_uid_t, const brush_geometry_t *>> brushes;
@@ -79,12 +87,31 @@ struct traced_scene_t
   {
     const assets::texture_asset_t *albedo = nullptr;
     const assets::texture_asset_t *emissive = nullptr;
+
+    // What the albedo's alpha channel MEANS, derived at decode. A shadow ray
+    // reads it and nothing else does: a bounce lands on the surface either way.
+    assets::alpha_mode_t alpha_mode = assets::alpha_mode_t::opaque;
+    float alpha_cutoff = assets::DEFAULT_ALPHA_CUTOFF;
   };
   std::vector<material_t> materials;
 };
 
+// What a chain's next-event estimation casts against: the scene's own occluder
+// BVH, and the scene itself as the glass when it holds any. DERIVED rather than
+// held, so a chain cannot be tracing one world and shadowing against another.
+[[nodiscard]] shadow_scene_t shadow_scene_of(const traced_scene_t &scene);
+
+// The same thing for a caller holding the occluder BVH and a scene that may be
+// EMPTY -- a bake asked for no bounce, no probe, no solver and shading a map
+// with neither glass nor a fence builds no traced scene at all, and its shadow
+// rays must still be tested against something.
+[[nodiscard]] shadow_scene_t shadow_scene_for(const Bounding_Volume_Hierarchy &occluders,
+                                              const traced_scene_t &scene);
+
 [[nodiscard]] traced_scene_t build_traced_scene(const map_t &map,
-                                                const Bounding_Volume_Hierarchy &bvh);
+                                                const Bounding_Volume_Hierarchy &bvh,
+                                                const Bounding_Volume_Hierarchy *alpha_tested,
+                                                const Bounding_Volume_Hierarchy *transmissive);
 
 // sRGB-encoded bytes to a LINEAR reflectance. Albedo textures upload SRGB, so
 // their bytes are encoded and reflectance arithmetic is linear -- sampling them
@@ -98,6 +125,12 @@ struct traced_scene_t
 // lightmap_indirect.comp does this arithmetic verbatim over the same bytes.
 [[nodiscard]] linalg::vec3 sample_texture(const assets::texture_asset_t &texture,
                                           const linalg::vec2 &uv, const linalg::vec3 &fallback);
+
+// The same fetch, of the fourth channel, RAW -- alpha is a coverage and not a
+// colour, so it is the one channel of an albedo that is never sRGB-decoded. A
+// texture without one answers 1, which is opaque.
+[[nodiscard]] float sample_texture_alpha(const assets::texture_asset_t &texture,
+                                         const linalg::vec2 &uv);
 
 // What the surface under a hit REFLECTS and what it EMITS, both in linear RGB:
 // resolve the object, find the face by plane, read its material index, sample
@@ -119,6 +152,31 @@ struct traced_surface_t
 [[nodiscard]] traced_surface_t surface_at(const traced_scene_t &scene,
                                           const ray_hit_result_t &hit,
                                           const linalg::vec3 &hit_position);
+
+// What survives a crossing of ONE transmissive surface: `albedo * (1 - alpha)`
+// at the hit, in linear RGB. The same brush-and-face walk surface_at makes, and
+// deliberately the same one -- a shadow ray tinted by a material the bounce does
+// not agree it hit is two answers about one face.
+//
+// A hit on a face that is not `blend` transmits nothing and answers ZERO: the
+// transmissive BVH holds whole brushes, so a brush that got in there for one
+// glass face still has its opaque faces in it.
+[[nodiscard]] linalg::vec3 transmittance_at(const traced_scene_t &scene,
+                                            const ray_hit_result_t &hit,
+                                            const linalg::vec3 &hit_position);
+
+// Is this hit on the SOLID part of an alpha-tested surface -- a grate's BAR
+// rather than the gap between two of them? The same walk again, asking the
+// albedo's fourth channel against the material's cutoff. A face that is not
+// `cutout` is solid, so a brush that got into the tested set for its other faces
+// still stops a ray through this one.
+//
+// TRUE means the ray is STOPPED. The name says what the texel is, not what the
+// ray does, because the other way round reads as "the ray passes" and is how
+// this got written backwards once already.
+[[nodiscard]] bool alpha_test_is_solid_at(const traced_scene_t &scene,
+                                        const ray_hit_result_t &hit,
+                                        const linalg::vec3 &hit_position);
 
 // The indirect light arriving at a surface point, projected onto SH L1: the
 // average over `rays_per_sample` chains, each of which collects the DIRECT light

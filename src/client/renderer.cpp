@@ -3987,8 +3987,8 @@ static bool try_upload_lightmap_pages(const shared::lightmap_t &lightmap, gpu_li
 
   // A bake always writes the visibility, so an absent one is a lightmap_t that
   // came from somewhere else, and it says so.
-  shared::lightmap_pages_t visible =
-      one_texel_pages(shared::lightmap_pixel_format_t::Unorm8x4, 255, 1);
+  shared::lightmap_pages_t visible = one_texel_pages(
+      shared::lightmap_pixel_format_t::Unorm8x4, 255, shared::VISIBILITY_LAYERS_PER_PAGE);
   if (visibility.empty())
     log_warning("[renderer] this bake carries no visibility pages; every baked light will "
                 "be unshadowed on lightmapped surfaces");
@@ -5180,11 +5180,14 @@ static void create_default_resources()
 
   // Its visibility half is fully visible for the same reason: a pass that names
   // no bake should draw its baked lights unshadowed, not shadowed by everything.
+  // One layer per COLOUR channel, like every visibility page set: the shader
+  // reads layer page * VISIBILITY_LAYERS_PER_PAGE + channel, so a one-layer
+  // stand-in would have two of its three fetches land outside the image.
   shared::lightmap_pages_t visible_pages;
   visible_pages.format         = shared::lightmap_pixel_format_t::Unorm8x4;
   visible_pages.size_in_texels = 1;
-  visible_pages.page_count     = 1;
-  visible_pages.bytes.assign(4, 255);
+  visible_pages.page_count     = shared::VISIBILITY_LAYERS_PER_PAGE;
+  visible_pages.bytes.assign(4 * (size_t)shared::VISIBILITY_LAYERS_PER_PAGE, 255);
 
   // No bounce pages: the fallback ladder inside the upload gives this set a black
   // L0, so a mesh drawn in a pass that names no bake gets a white residual and

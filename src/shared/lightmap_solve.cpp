@@ -66,6 +66,16 @@ struct chart_scratch_t
   static constexpr int INDIRECT_CHANNEL_COUNT = 12;
   static constexpr int FIRST_LIGHT_CHANNEL = INDIRECT_CHANNEL + INDIRECT_CHANNEL_COUNT;
 
+  // THREE channels per light, not one: a shadow ray that came through stained
+  // glass arrives coloured, and the visibility pages store that colour
+  // (transparency_plan.md step 7). A map with no glass writes three equal
+  // numbers here and bakes what it always did.
+  static constexpr int CHANNELS_PER_LIGHT = 3;
+  static constexpr int light_channel_of(size_t slot)
+  {
+    return FIRST_LIGHT_CHANNEL + (int)slot * CHANNELS_PER_LIGHT;
+  }
+
   int width = 0;
   int height = 0;
   int channel_count = FIRST_LIGHT_CHANNEL;
@@ -102,7 +112,7 @@ struct chart_scratch_t
   {
     width = new_width;
     height = new_height;
-    channel_count = FIRST_LIGHT_CHANNEL + light_count;
+    channel_count = FIRST_LIGHT_CHANNEL + light_count * CHANNELS_PER_LIGHT;
     const size_t count = (size_t)width * (size_t)height;
     values.assign(count * (size_t)channel_count, 0.f);
     written.assign(count, 0);
@@ -131,6 +141,9 @@ struct solve_inputs_t
   const lightmap_solve_settings_t &solve_settings;
   const std::vector<baked_light_t> &lights;
   const Bounding_Volume_Hierarchy &bvh;
+
+  // The shadow rays' two sets: `bvh` above as the opaque half, and the glass.
+  shadow_scene_t shadow;
   const traced_scene_t *traced_scene = nullptr;
   gpu_bake_settings_t shade_settings;
   indirect_trace_settings_t indirect;
@@ -241,17 +254,17 @@ void collect_chart_samples(const lightmap_chart_t &chart,
 // because it is the CPU twin of the direct kernel and what the CPU batch solver
 // runs; defined here because it IS the solve.
 void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> lights,
-                         const Bounding_Volume_Hierarchy &bvh,
-                         const gpu_bake_settings_t &settings, uint64_t irradiance_light_mask,
-                         linalg::vec3 &out_irradiance, Span<float> out_coverage,
-                         Span<float> out_weight, shade_statistics_t &statistics)
+                         const shadow_scene_t &shadow, const gpu_bake_settings_t &settings,
+                         uint64_t irradiance_light_mask, linalg::vec3 &out_irradiance,
+                         Span<linalg::vec3> out_coverage, Span<float> out_weight,
+                         shade_statistics_t &statistics)
 {
   const bool binary = settings.mode == lightmap_solve_mode_t::Visibility;
 
   if (out_coverage.size() != lights.size() || out_weight.size() != lights.size())
     fatal_error("[lightmap] a coverage span of {} and a weight span of {} for {} lights.",
                 out_coverage.size(), out_weight.size(), lights.size());
-  for (float &coverage : out_coverage) coverage = 0.f;
+  for (linalg::vec3 &coverage : out_coverage) coverage = {0.f, 0.f, 0.f};
   for (float &weight : out_weight) weight = 0.f;
 
   linalg::vec3 irradiance{0.f, 0.f, 0.f};
@@ -273,10 +286,16 @@ void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> l
     // softness reaches the stored coverage, the slot ranking and the residual
     // by arithmetic rather than by three separate arms.
     statistics.direct_rays += (size_t)shadow_ray_count(arrival, settings.soft_shadow_samples);
-    const float visibility =
-        light_visibility(bvh, sample.position, sample.normal, arrival, settings.shadow_ray_bias,
-                         settings.soft_shadow_samples, hash_mix(sample.seed, slot));
-    if (visibility <= 0.f) continue;
+    const linalg::vec3 visibility =
+        light_visibility(shadow, sample.position, sample.normal, arrival,
+                         settings.shadow_ray_bias, settings.soft_shadow_samples,
+                         hash_mix(sample.seed, slot));
+
+    // How much light got through, whatever colour it is. What ranks a slot and
+    // what gates the sum is this ONE number: a chart keeps the four lights that
+    // deliver the most, and "most" is not a question three numbers can answer.
+    const float delivered = luminance_of(visibility);
+    if (delivered <= 0.f) continue;
 
     out_coverage[slot] = visibility;
 
@@ -284,7 +303,7 @@ void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> l
     // light's DELIVERY rather than its coverage: a dim lamp lighting the
     // whole face has coverage 1 everywhere and is not what the face is lit
     // by. N.L is left out for the same reason it is left out of the mask.
-    out_weight[slot] = visibility * arrival.attenuation * luminance_of(light.radiance);
+    out_weight[slot] = delivered * arrival.attenuation * luminance_of(light.radiance);
 
     if (!arrival.reaches) continue;
 
@@ -296,7 +315,7 @@ void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> l
     // penumbra instead of saturating the moment two lights overlap.
     if (binary)
     {
-      const float strongest = std::max(irradiance.x, visibility);
+      const float strongest = std::max(irradiance.x, delivered);
       irradiance = {strongest, strongest, strongest};
       continue;
     }
@@ -314,8 +333,8 @@ void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> l
     // is strictly better than the darkness dropping them used to mean.
     if (slot >= LIGHT_MASK_BITS || !((irradiance_light_mask >> slot) & 1u)) continue;
 
-    irradiance = irradiance + light.radiance * (arrival.attenuation *
-                                                arrival.normal_dot_light * visibility);
+    irradiance = irradiance + multiply_channels(light.radiance, visibility) *
+                                  (arrival.attenuation * arrival.normal_dot_light);
   }
 
   out_irradiance = irradiance;
@@ -497,8 +516,11 @@ void reduce_direct(chart_scratch_t &scratch, int gutter, size_t first_record, si
     ++scratch.inside_count[texel];
     for (size_t slot = 0; slot < light_count; ++slot)
     {
-      channels[(uint32_t)(chart_scratch_t::FIRST_LIGHT_CHANNEL + slot)] +=
-          results.coverage[at * light_count + slot];
+      const linalg::vec3 &coverage = results.coverage[at * light_count + slot];
+      const uint32_t channel = (uint32_t)chart_scratch_t::light_channel_of(slot);
+      channels[channel + 0] += coverage.x;
+      channels[channel + 1] += coverage.y;
+      channels[channel + 2] += coverage.z;
       scratch.light_weight[slot] += results.weight[at * light_count + slot];
     }
   }
@@ -547,7 +569,7 @@ void normalize_texels(chart_scratch_t &scratch, size_t light_count, bool trace_i
     if (trace_indirect)
       for (int channel = 0; channel < chart_scratch_t::INDIRECT_CHANNEL_COUNT; ++channel)
         channels[chart_scratch_t::INDIRECT_CHANNEL + channel] *= inverse;
-    for (size_t slot = 0; slot < light_count; ++slot)
+    for (size_t slot = 0; slot < light_count * chart_scratch_t::CHANNELS_PER_LIGHT; ++slot)
       channels[(uint32_t)(chart_scratch_t::FIRST_LIGHT_CHANNEL + slot)] *= inverse;
 
     // Marked written even when it is BLACK, which is what makes the fill
@@ -618,20 +640,25 @@ void store_chart(const lightmap_chart_t &chart, chart_scratch_t &scratch,
       // A slot no light claimed stores ZERO, which reads as fully occluded --
       // the same answer an unwritten texel gives, and the safe one: a channel
       // defaulting to 1 is a light nobody baked shining through every wall.
-      Array<float, LIGHTMAP_LIGHTS_PER_CHART> coverage;
+      Array<linalg::vec3, LIGHTMAP_LIGHTS_PER_CHART> coverage;
       for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
       {
         const int16_t light = chart.light_slots[slot];
         if (light == LIGHTMAP_NO_LIGHT_SLOT) continue;
-        coverage[slot] =
-            channels[(uint32_t)(chart_scratch_t::FIRST_LIGHT_CHANNEL + light)];
+        const uint32_t channel = (uint32_t)chart_scratch_t::light_channel_of((size_t)light);
+        coverage[slot] = {channels[channel + 0], channels[channel + 1], channels[channel + 2]};
       }
       out.visibility_pages.store_visibility(chart.page, atlas_x, atlas_y, coverage);
 
+      // The debug mask is ONE number a light, because it is a picture of what
+      // got through rather than of what colour it was.
       if (!out.masks) continue;
       for (uint32_t slot = 0; slot < (uint32_t)light_count; ++slot)
+      {
+        const uint32_t channel = (uint32_t)chart_scratch_t::light_channel_of(slot);
         out.masks->coverage[out.masks->index_of(slot, chart.page, atlas_x, atlas_y)] =
-            channels[chart_scratch_t::FIRST_LIGHT_CHANNEL + slot];
+            luminance_of({channels[channel + 0], channels[channel + 1], channels[channel + 2]});
+      }
     }
 }
 
@@ -667,8 +694,8 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
   // texels they came from before the next. The reduction is a plain sum in record
   // order, so where a chunk boundary falls changes nothing -- which is what lets a
   // batch replace a chunk without moving a pixel.
-  const size_t chunk_capacity =
-      std::max<size_t>(1, RESULT_BUDGET_IN_FLOATS / (3 + 2 * std::max<size_t>(light_count, 1)));
+  const size_t chunk_capacity = std::max<size_t>(
+      1, RESULT_BUDGET_IN_FLOATS / direct_floats_per_sample(std::max<size_t>(light_count, 1)));
 
   const auto shade_direct = [&](bool residual_pass) {
     for (size_t begin = 0; begin < scratch.samples.size(); begin += chunk_capacity)
@@ -681,10 +708,10 @@ void solve_chart(lightmap_chart_t &chart, const solve_inputs_t &in,
       for (size_t i = begin; i < end; ++i)
       {
         const size_t at = i - begin;
-        shade_sample_direct(scratch.samples[i], lights, in.bvh, in.shade_settings,
+        shade_sample_direct(scratch.samples[i], lights, in.shadow, in.shade_settings,
                             scratch.irradiance_light_mask, results.irradiance[at],
-                            Span<float>(results.coverage.data() + at * light_count,
-                                        (uint32_t)light_count),
+                            Span<linalg::vec3>(results.coverage.data() + at * light_count,
+                                               (uint32_t)light_count),
                             Span<float>(results.weight.data() + at * light_count,
                                         (uint32_t)light_count),
                             statistics.shade);
@@ -860,12 +887,12 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
   const bool trace_indirect = traces_indirect(in, out);
   const size_t strata = (size_t)std::max(solve_settings.samples_per_texel_edge, 1);
 
-  // A record's answer is 3 + 2 * light_count floats direct and 12 indirect, and
+  // A record's answer is direct_floats_per_sample() floats direct and 12 indirect, and
   // the budget covers the larger. A batch is cut by the UPPER bound of what a
   // chart can add -- covered texels times the strata, before any sample is
   // excluded for missing the face -- so the boundary is decided before anything
   // is collected and never has to give a record back.
-  const size_t floats_per_sample = std::max<size_t>(3 + 2 * light_count, 12);
+  const size_t floats_per_sample = std::max<size_t>(direct_floats_per_sample(light_count), 12);
   const size_t capacity_in_samples =
       std::max<size_t>(1, solver.result_budget_in_floats() / floats_per_sample);
 
@@ -1110,7 +1137,8 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
       solve_settings.mode != lightmap_solve_mode_t::Visibility;
 
   lightmap.irradiance_pages.allocate(atlas, lightmap_pixel_format_t::Rgb9e5);
-  lightmap.visibility_pages.allocate(atlas, lightmap_pixel_format_t::Unorm8x4);
+  lightmap.visibility_pages.allocate(atlas, lightmap_pixel_format_t::Unorm8x4,
+                                     VISIBILITY_LAYERS_PER_PAGE);
   if (trace_indirect)
   {
     lightmap.indirect_l0_pages.allocate(atlas, lightmap_pixel_format_t::Rgb9e5);
@@ -1131,6 +1159,21 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   if (out_masks) out_masks->allocate(atlas, lightmap.light_uids);
 
   const Bounding_Volume_Hierarchy bvh = build_occluder_bvh(map);
+
+  // The two sets the occluder BVH leaves out: the FENCES a ray is alpha-tested
+  // against and the GLASS that tints one. Empty for every map with neither, and
+  // an empty one is never handed to a shadow ray -- which is what makes those
+  // bakes bit-for-bit what they were.
+  const Bounding_Volume_Hierarchy alpha_tested = build_alpha_tested_bvh(map);
+  const Bounding_Volume_Hierarchy transmissive = build_transmissive_bvh(map);
+  const bool has_alpha_tested_geometry = !alpha_tested.primitives.empty();
+  const bool has_transmissive_geometry = !transmissive.primitives.empty();
+  const bool shadow_rays_read_a_material =
+      has_alpha_tested_geometry || has_transmissive_geometry;
+  if (shadow_rays_read_a_material)
+    log_terminal("[lightmap] {} alpha-tested and {} transmissive piece(s); a shadow ray is "
+                 "tested through the first and tinted by the second.",
+                 alpha_tested.primitives.size(), transmissive.primitives.size());
 
   // The chart loop is embarrassingly parallel: the packer places charts without
   // overlap, so each one writes a byte range of `pages` no other chart touches,
@@ -1165,9 +1208,14 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
   // always gets it, because the triangle scene it traces is derived from it.
   const bool bake_probes = solve_settings.bake_probes &&
                            solve_settings.mode != lightmap_solve_mode_t::Visibility;
-  const traced_scene_t traced_scene = (trace_indirect || bake_probes || solver)
-                                          ? build_traced_scene(map, bvh)
-                                          : traced_scene_t{};
+  // ...and a bake with GLASS in it needs one too, whatever else it was asked
+  // for: a shadow ray's tint is a material, and a material is what this resolves.
+  const traced_scene_t traced_scene =
+      (trace_indirect || bake_probes || solver || shadow_rays_read_a_material)
+          ? build_traced_scene(map, bvh,
+                               has_alpha_tested_geometry ? &alpha_tested : nullptr,
+                               has_transmissive_geometry ? &transmissive : nullptr)
+          : traced_scene_t{};
 
   const gpu_bake_scene_t gpu_scene =
       solver ? build_gpu_bake_scene(map, traced_scene) : gpu_bake_scene_t{};
@@ -1184,6 +1232,7 @@ void bake_lightmap(const map_t &map, lightmap_t &lightmap,
                               solve_settings,
                               lights,
                               bvh,
+                              shadow_scene_for(bvh, traced_scene),
                               trace_indirect ? &traced_scene : nullptr,
                               shade_settings,
                               indirect};

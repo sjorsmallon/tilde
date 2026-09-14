@@ -328,8 +328,15 @@ shared::lightmap_t bake_one_box(shared::map_t &map)
   // would have chosen.
   lightmap.light_uids = {11, 22, 33};
   lightmap.visibility_pages.allocate(lightmap.atlas,
-                                     shared::lightmap_pixel_format_t::Unorm8x4);
-  lightmap.visibility_pages.store_visibility(0, 0, 0, {{1.f, 0.5f, 0.f, 0.25f}});
+                                     shared::lightmap_pixel_format_t::Unorm8x4,
+                                     shared::VISIBILITY_LAYERS_PER_PAGE);
+  lightmap.visibility_pages.store_visibility(
+      0, 0, 0,
+      {{linalg::vec3{1.f, 1.f, 1.f}, linalg::vec3{0.5f, 0.5f, 0.5f},
+        linalg::vec3{0.f, 0.f, 0.f},
+        // A slot whose shadow ray came through red glass: the round trip has to
+        // keep the three channels apart, which one byte a slot could not.
+        linalg::vec3{0.25f, 0.05f, 0.f}}});
   for (shared::lightmap_chart_t &chart : lightmap.charts)
   {
     chart.light_slots[0] = 2;
@@ -370,12 +377,14 @@ void a_sidecar_round_trips_every_chart()
   assert(loaded.visibility_pages.format == shared::lightmap_pixel_format_t::Unorm8x4);
   assert(loaded.visibility_pages.bytes == baked.visibility_pages.bytes);
 
-  const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> coverage =
+  const Array<linalg::vec3, shared::LIGHTMAP_LIGHTS_PER_CHART> coverage =
       loaded.visibility_pages.load_visibility(0, 0, 0);
-  assert(coverage[0] == 1.f);
-  assert(std::abs(coverage[1] - 0.5f) < 0.01f);
-  assert(coverage[2] == 0.f);
-  assert(std::abs(coverage[3] - 0.25f) < 0.01f);
+  assert(coverage[0].x == 1.f && coverage[0].y == 1.f && coverage[0].z == 1.f);
+  assert(std::abs(coverage[1].x - 0.5f) < 0.01f);
+  assert(coverage[2].x == 0.f);
+  assert(std::abs(coverage[3].x - 0.25f) < 0.01f);
+  assert(std::abs(coverage[3].y - 0.05f) < 0.01f);
+  assert(coverage[3].z == 0.f);
 
   // The indirect pair. `bake_one_box` traces nothing, so what is pinned here is
   // the ABSENT case: four page sets are written whatever the bake produced, and a
@@ -708,7 +717,7 @@ linalg::vec3 texel_under_the_light(const shared::lightmap_t &lightmap)
   return lightmap.irradiance_pages.load(at.page, at.x, at.y);
 }
 
-Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART>
+Array<linalg::vec3, shared::LIGHTMAP_LIGHTS_PER_CHART>
 visibility_under_the_light(const shared::lightmap_t &lightmap)
 {
   const atlas_position_t at = texel_position_under_the_light(lightmap);
@@ -819,7 +828,7 @@ void the_light_mode_decides_where_a_light_is_evaluated()
     const shared::lightmap_t lightmap = bake_with(mode, {});
     assert(lightmap.light_uids.size() == 1);
     assert(texel_under_the_light(lightmap).x == 0.f);
-    assert(visibility_under_the_light(lightmap)[0] == 1.f);
+    assert(visibility_under_the_light(lightmap)[0].x == 1.f);
   }
 
   // A Dynamic light standing in the same spot reaches NEITHER page set and is
@@ -836,7 +845,7 @@ void the_light_mode_decides_where_a_light_is_evaluated()
       bake_with(entities::Light_Mode::Baked, entities::Light_Mode::Baked);
   assert(with_baked.light_uids.size() == 2);
   assert(upward_chart(with_baked)->light_slots[1] != shared::LIGHTMAP_NO_LIGHT_SLOT);
-  assert(visibility_under_the_light(with_baked)[1] == 1.f);
+  assert(visibility_under_the_light(with_baked)[1].x == 1.f);
 }
 
 // The other end of the N+1 cliff, and the reason step 6 could retire the flat
@@ -869,7 +878,7 @@ void a_light_a_chart_drops_becomes_the_residual()
 
   assert(kept_only.light_uids.size() == shared::LIGHTMAP_LIGHTS_PER_CHART);
   assert(texel_under_the_light(kept_only).x == 0.f);
-  assert(visibility_under_the_light(kept_only)[0] == 1.f);
+  assert(visibility_under_the_light(kept_only)[0].x == 1.f);
 }
 
 // A texel with a lid over it is dark in BOTH modes: the shadow ray is a gate
@@ -895,7 +904,7 @@ void an_occluder_darkens_both_modes()
     solve.mode = mode;
 
     const shared::lightmap_t lightmap = bake_for(map, solve);
-    assert(visibility_under_the_light(lightmap)[0] == 0.f);
+    assert(visibility_under_the_light(lightmap)[0].x == 0.f);
 
     // The binary mode's picture of the same rays, which is the one page set that
     // still says something about a kept light.
@@ -1169,28 +1178,35 @@ void one_shadow_ray_toward_the_disc_averages_to_the_spiral()
       shared::arrival_at(lights[0].light, position, normal, 100000.f);
   assert(arrival.arrives && arrival.shadow_disc_radius == 24.f);
 
-  const float spiral =
-      shared::light_visibility(bvh, position, normal, arrival, 0.25f, 256, 0x2545f491u);
-  assert(spiral > 0.05f && spiral < 0.95f);
+  // No glass in this map, so the transmissive half is absent and every answer
+  // below is the white-or-black one it has always been.
+  const shared::shadow_scene_t shadow{&bvh, nullptr, nullptr, nullptr};
+
+  const linalg::vec3 spiral =
+      shared::light_visibility(shadow, position, normal, arrival, 0.25f, 256, 0x2545f491u);
+  assert(spiral.x == spiral.y && spiral.y == spiral.z);
+  assert(spiral.x > 0.05f && spiral.x < 0.95f);
 
   constexpr int SINGLE_RAY_TRIALS = 4096;
   double reached = 0.0;
   for (int trial = 0; trial < SINGLE_RAY_TRIALS; ++trial)
   {
-    const float one = shared::light_visibility_single_ray(
-        bvh, position, normal, arrival, 0.25f, shared::hash_mix(0x9e3779b9u, (uint32_t)trial));
-    assert(one == 0.f || one == 1.f);
-    reached += one;
+    const linalg::vec3 one = shared::light_visibility_single_ray(
+        shadow, position, normal, arrival, 0.25f,
+        shared::hash_mix(0x9e3779b9u, (uint32_t)trial));
+    assert(one.x == 0.f || one.x == 1.f);
+    reached += one.x;
   }
   const float averaged = (float)(reached / SINGLE_RAY_TRIALS);
-  assert(std::abs(averaged - spiral) < 0.05f);
+  assert(std::abs(averaged - spiral.x) < 0.05f);
 
   // The punctual case: the same one ray, the same answer, whichever estimator.
   shared::light_arrival_t punctual = arrival;
   punctual.shadow_disc_radius = 0.f;
   for (uint32_t hash = 0; hash < 16; ++hash)
-    assert(shared::light_visibility_single_ray(bvh, position, normal, punctual, 0.25f, hash) ==
-           shared::light_visibility(bvh, position, normal, punctual, 0.25f, 32, hash));
+    assert(
+        shared::light_visibility_single_ray(shadow, position, normal, punctual, 0.25f, hash).x ==
+        shared::light_visibility(shadow, position, normal, punctual, 0.25f, 32, hash).x);
 }
 
 // The other half of a radius, and the one with no shadow in it: an emitter with
@@ -1287,25 +1303,25 @@ void a_chart_names_its_lights_and_stores_their_coverage()
 
   int shadowed_x = 0, shadowed_y = 0;
   top_face_texel_nearest(lightmap, 0.f, shadowed_x, shadowed_y);
-  const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> shadowed =
+  const Array<linalg::vec3, shared::LIGHTMAP_LIGHTS_PER_CHART> shadowed =
       lightmap.visibility_pages.load_visibility(chart.page, shadowed_x, shadowed_y);
 
   // Under the lid: the overhead light is blocked and the one off to the side
   // reaches it, which is the whole reason a mask is per LIGHT.
-  assert(shadowed[0] == 0.f);
-  assert(shadowed[1] == 1.f);
+  assert(shadowed[0].x == 0.f);
+  assert(shadowed[1].x == 1.f);
 
   int clear_x = 0, clear_y = 0;
   top_face_texel_nearest(lightmap, 100.f, clear_x, clear_y);
-  const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> clear =
+  const Array<linalg::vec3, shared::LIGHTMAP_LIGHTS_PER_CHART> clear =
       lightmap.visibility_pages.load_visibility(chart.page, clear_x, clear_y);
-  assert(clear[0] == 1.f);
-  assert(clear[1] == 1.f);
+  assert(clear[0].x == 1.f);
+  assert(clear[1].x == 1.f);
 
   // An unclaimed slot stores ZERO, which reads as fully occluded. One left at 1
   // is a light nobody baked shining through every wall.
-  assert(clear[2] == 0.f);
-  assert(clear[3] == 0.f);
+  assert(clear[2].x == 0.f);
+  assert(clear[3].x == 0.f);
 }
 
 // The cap is a CLIFF and the policy is to drop, loudly. What must not happen is
@@ -1811,7 +1827,7 @@ void nothing_bounces_where_there_is_nothing_to_bounce_off()
   // visibility channel and not the irradiance, which after ss14 step 6 holds only
   // what a chart dropped. A zero below is the bounce being absent, not the bake.
   const atlas_position_t at = texel_at_the_middle_of_the_floor(lightmap);
-  assert(lightmap.visibility_pages.load_visibility(at.page, at.x, at.y)[0] > 0.f);
+  assert(lightmap.visibility_pages.load_visibility(at.page, at.x, at.y)[0].x > 0.f);
 
   for (int page = 0; page < lightmap.indirect_l0_pages.page_count; ++page)
     for (int y = 0; y < lightmap.indirect_l0_pages.size_in_texels; ++y)
@@ -1857,7 +1873,7 @@ void emission_is_the_emissive_map_and_nothing_else()
   const assets::texture_asset_t emissive = one_texel(255, 128, 0);
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
-  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh, nullptr, nullptr);
 
   ray_hit_result_t hit = {};
   assert(bvh_intersect_ray(bvh, {0, 40, 0}, {0, -1, 0}, hit) && hit.hit);
@@ -1892,7 +1908,7 @@ void an_emissive_surface_lights_a_room_with_no_lights_in_it()
   const assets::texture_asset_t emissive = one_texel(255, 128, 0);
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
-  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh, nullptr, nullptr);
 
   shared::indirect_trace_settings_t settings;
   settings.rays_per_sample = 256;
@@ -2633,7 +2649,7 @@ void a_capture_sees_an_emissive_ceiling_directly_and_the_floor_reflects_it()
   const assets::texture_asset_t albedo = one_texel(255, 255, 255);
   const assets::texture_asset_t emissive = one_texel(255, 128, 0);
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
-  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+  shared::traced_scene_t scene = shared::build_traced_scene(map, bvh, nullptr, nullptr);
   scene.materials = {{nullptr, nullptr}, {&albedo, &emissive}};
 
   shared::reflection_capture_set_t set;
@@ -2909,7 +2925,7 @@ shared::probe_trace_t trace_probe_at(const shared::map_t &map, const linalg::vec
                                      int rays_per_sample = 64)
 {
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
-  const shared::traced_scene_t scene = shared::build_traced_scene(map, bvh);
+  const shared::traced_scene_t scene = shared::build_traced_scene(map, bvh, nullptr, nullptr);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
   const shared::probe_visibility_slots_t slots = shared::assign_probe_visibility_channels(lights);
 
@@ -3544,21 +3560,32 @@ void a_sidecar_round_trips_an_unwrap()
   assert(loaded.geometry_id == baked.geometry_id);
 }
 
+// Straight up from `from`, 200 units: what a shadow ray delivers there.
+linalg::vec3 upward_transmittance(const shared::shadow_scene_t &shadow,
+                                  const linalg::vec3 &from)
+{
+  return shared::shadow_ray_transmittance(shadow, from, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, 200.f,
+                                          0.5f);
+}
+
+bool ray_is_blocked(const shared::shadow_scene_t &shadow, const linalg::vec3 &from)
+{
+  return shared::luminance_of(upward_transmittance(shadow, from)) <= 0.f;
+}
+
 void a_static_mesh_casts_a_shadow_in_the_bake()
 {
   const shared::map_t map = map_with_a_box_mesh();
   const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
+  const shared::shadow_scene_t shadow{&occluders, nullptr, nullptr, nullptr};
 
   // Straight up through the box from underneath: blocked. Beside it: not.
-  assert(!shared::shadow_ray_reaches(occluders, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
-                                     {0.f, 1.f, 0.f}, 200.f, 0.5f));
-  assert(shared::shadow_ray_reaches(occluders, {100.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
-                                    {0.f, 1.f, 0.f}, 200.f, 0.5f));
+  assert(ray_is_blocked(shadow, {0.f, -100.f, 0.f}));
+  assert(!ray_is_blocked(shadow, {100.f, -100.f, 0.f}));
 
   // A texel on the box's own top face, looking up, sees the sky: the mesh is
   // its triangles and not its bound, or this ray would start inside a solid.
-  assert(shared::shadow_ray_reaches(occluders, {0.f, 64.f, 0.f}, {0.f, 1.f, 0.f},
-                                    {0.f, 1.f, 0.f}, 200.f, 0.5f));
+  assert(!ray_is_blocked(shadow, {0.f, 64.f, 0.f}));
 }
 
 #if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
@@ -3609,17 +3636,196 @@ void a_blend_faced_brush_does_not_occlude_the_bake()
     face.material = 1;
 
   const Bounding_Volume_Hierarchy glass = shared::build_occluder_bvh(map);
-  assert(shared::shadow_ray_reaches(glass, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
-                                    {0.f, 1.f, 0.f}, 200.f, 0.5f));
+  assert(!ray_is_blocked({&glass, nullptr, nullptr, nullptr}, {0.f, -100.f, 0.f}));
 
-  const shared::traced_scene_t traced = shared::build_traced_scene(map, glass);
-  assert(shared::build_gpu_bake_scene(map, traced).triangles.empty());
+  // The GPU scene partitions the same way the two BVHs do: an all-glass brush
+  // is twelve triangles of GLASS and none that occlude, which is what puts them
+  // in the second acceleration structure rather than in the one a shadow ray is
+  // stopped by.
+  const shared::traced_scene_t traced = shared::build_traced_scene(map, glass, nullptr, nullptr);
+  const shared::gpu_bake_scene_t transparent = shared::build_gpu_bake_scene(map, traced);
+  assert(transparent.first_transmissive_triangle == 0);
+  assert(transparent.triangles.size() == 12);
 
   pane.face_surfaces[0].material = 0;
   const Bounding_Volume_Hierarchy solid = shared::build_occluder_bvh(map);
-  assert(!shared::shadow_ray_reaches(solid, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
-                                     {0.f, 1.f, 0.f}, 200.f, 0.5f));
-  assert(shared::build_gpu_bake_scene(map, traced).triangles.size() == 12);
+  assert(ray_is_blocked({&solid, nullptr, nullptr, nullptr}, {0.f, -100.f, 0.f}));
+
+  const shared::gpu_bake_scene_t opaque = shared::build_gpu_bake_scene(map, traced);
+  assert(opaque.first_transmissive_triangle == 12 && opaque.triangles.size() == 12);
+}
+
+const char *FENCE_TGA_PATH = "cmake_build/lightmap_test_fixtures/fence.tga";
+
+// Two texels across: the left one cut away, the right one solid. A 1x2 image so
+// the u coordinate alone decides, which is what lets the test aim a ray at a
+// hole and another at a bar.
+void write_fence_tga()
+{
+  uint8_t header[18] = {};
+  header[2]  = 2;
+  header[12] = 2;
+  header[14] = 1;
+  header[16] = 32;
+  header[17] = 8;
+
+  const uint8_t pixels[8] = {255, 255, 255, 0, 255, 255, 255, 255};
+
+  std::filesystem::create_directories("cmake_build/lightmap_test_fixtures");
+  std::ofstream file(FENCE_TGA_PATH, std::ios::binary);
+  file.write(reinterpret_cast<char *>(header), sizeof(header));
+  file.write(reinterpret_cast<const char *>(pixels), sizeof(pixels));
+  assert(file);
+}
+
+// transparency_plan.md step 7: a fence stops the ray where its texel is solid
+// and passes it where the texel is cut away, which is the whole difference
+// between a holey shadow and the solid one step 6 left it casting.
+void a_cutout_brush_casts_a_holey_shadow()
+{
+  write_fence_tga();
+  assert(assets::get(assets::load_texture(FENCE_TGA_PATH))->alpha ==
+         assets::alpha_mode_t::cutout);
+
+  shared::map_t map;
+  map.materials = {"", FENCE_TGA_PATH};
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
+
+  shared::brush_geometry_t &fence = std::get<shared::brush_geometry_t>(map.geometry[0].value);
+  shared::sync_face_surfaces(fence);
+  for (shared::face_surface_t &face : fence.face_surfaces) face.material = 1;
+
+  // Its own set: neither the opaque one nor the glass.
+  assert(shared::light_occlusion_of(map.geometry[0].value, map.materials) ==
+         shared::light_occlusion_t::Alpha_Tested);
+
+  const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
+  const Bounding_Volume_Hierarchy alpha_tested = shared::build_alpha_tested_bvh(map);
+  assert(occluders.primitives.empty() && !alpha_tested.primitives.empty());
+
+  const shared::traced_scene_t traced =
+      shared::build_traced_scene(map, occluders, &alpha_tested, nullptr);
+  const shared::shadow_scene_t shadow = shared::shadow_scene_for(occluders, traced);
+
+  // The face's uv runs with the world at 128 units a repeat, so this 64-wide
+  // brush spans HALF of one -- its two texels meet at x = 0. A sweep across that
+  // boundary is a sweep from a bar to a hole, and the rays stay inside the brush
+  // so nothing is counted as a hole for having missed it entirely.
+  int holes = 0;
+  int bars = 0;
+  for (int step = -15; step <= 15; ++step)
+  {
+    const float x = (float)step * 2.f;
+    if (ray_is_blocked(shadow, {x, -100.f, 0.f}))
+      ++bars;
+    else
+      ++holes;
+  }
+  assert(holes > 0 && bars > 0);
+
+  // The GPU traces the same three sets: a fence is its own range, so its
+  // triangles are neither the ones a ray is stopped by nor the ones that tint.
+  const shared::gpu_bake_scene_t gpu = shared::build_gpu_bake_scene(map, traced);
+  assert(gpu.first_alpha_tested_triangle == 0);
+  assert(gpu.alpha_tested_triangle_count() == 12);
+  assert(gpu.transmissive_triangle_count() == 0);
+
+  // A BOUNCE lands on a fence exactly where a shadow ray is stopped by one: the
+  // two ask trace_nearest_surface, so light cannot pass through a grate one way
+  // and not the other.
+  int chain_hits = 0;
+  for (int step = -15; step <= 15; ++step)
+  {
+    const float x = (float)step * 2.f;
+    ray_hit_result_t hit = {};
+    const bool landed =
+        shared::trace_nearest_surface(shadow, {x, -100.f, 0.f}, {0.f, 1.f, 0.f}, hit);
+    if (landed) ++chain_hits;
+    assert(landed == ray_is_blocked(shadow, {x, -100.f, 0.f}));
+  }
+  assert(chain_hits == bars);
+}
+
+// transparency_plan.md step 7: the pane the ray got through TINTS it.
+void a_blend_faced_brush_tints_the_light_that_passes_through_it()
+{
+  write_glass_tga();
+
+  shared::map_t map;
+  map.materials = {"", GLASS_TGA_PATH};
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
+
+  shared::brush_geometry_t &pane = std::get<shared::brush_geometry_t>(map.geometry[0].value);
+  shared::sync_face_surfaces(pane);
+  for (shared::face_surface_t &face : pane.face_surfaces) face.material = 1;
+
+  // The two sets partition the map exactly: the pane is in one of them and the
+  // other is empty.
+  const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
+  const Bounding_Volume_Hierarchy transmissive = shared::build_transmissive_bvh(map);
+  assert(occluders.primitives.empty());
+  assert(!transmissive.primitives.empty());
+
+  const shared::traced_scene_t traced = shared::build_traced_scene(map, occluders, nullptr, &transmissive);
+  const shared::shadow_scene_t shadow = shared::shadow_scene_of(traced);
+
+  // What the fixture's glass filters by: its albedo, sRGB-decoded, times what it
+  // did not stop. Read off the LOADED texture rather than off the bytes written,
+  // because a .tga stores them blue first and this test is about the arithmetic.
+  const assets::texture_asset_t &texture =
+      *assets::get(assets::load_texture(GLASS_TGA_PATH));
+  const float alpha = (float)texture.pixels[3] * (1.f / 255.f);
+  const linalg::vec3 expected{shared::srgb_byte_to_linear(texture.pixels[0]) * (1.f - alpha),
+                              shared::srgb_byte_to_linear(texture.pixels[1]) * (1.f - alpha),
+                              shared::srgb_byte_to_linear(texture.pixels[2]) * (1.f - alpha)};
+
+  const linalg::vec3 through = upward_transmittance(shadow, {0.f, -100.f, 0.f});
+  for (int channel = 0; channel < 3; ++channel)
+    assert(std::abs(through[channel] - expected[channel]) < 1e-5f);
+
+  // A tint is a COLOUR: the fixture is not grey, so the channels must not agree
+  // -- which is the whole thing one UNORM8 a slot could not carry.
+  assert(through.x != through.y || through.y != through.z);
+
+  // Beside the pane, nothing was crossed and nothing is tinted.
+  const linalg::vec3 clear = upward_transmittance(shadow, {100.f, -100.f, 0.f});
+  assert(clear.x == 1.f && clear.y == 1.f && clear.z == 1.f);
+
+  // A BOUNCE crossing the same pane is filtered by the same number: a chain
+  // through a red window is as red as a shadow ray through it. And it does not
+  // LAND on the glass -- reflecting off one is the deferred Fresnel split.
+  ray_hit_result_t landed_on = {};
+  assert(!shared::trace_nearest_surface(shadow, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f}, landed_on));
+  const linalg::vec3 leg = shared::segment_transmittance(shadow, {0.f, -100.f, 0.f},
+                                                         {0.f, 1.f, 0.f}, 200.f);
+  for (int channel = 0; channel < 3; ++channel)
+    assert(std::abs(leg[channel] - expected[channel]) < 1e-5f);
+
+  // ONE tint per PIECE crossed: the pane is a convex brush, so a ray that enters
+  // and leaves it is filtered once, not twice. A second pane above it is.
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 64, 0}, {32, 4, 32})});
+  shared::brush_geometry_t &second =
+      std::get<shared::brush_geometry_t>(map.geometry[1].value);
+  shared::sync_face_surfaces(second);
+  for (shared::face_surface_t &face : second.face_surfaces) face.material = 1;
+
+  const Bounding_Volume_Hierarchy two_panes = shared::build_transmissive_bvh(map);
+  const shared::traced_scene_t traced_pair =
+      shared::build_traced_scene(map, occluders, nullptr, &two_panes);
+  const linalg::vec3 twice =
+      upward_transmittance(shared::shadow_scene_of(traced_pair), {0.f, -100.f, 0.f});
+  for (int channel = 0; channel < 3; ++channel)
+    assert(std::abs(twice[channel] - expected[channel] * expected[channel]) < 1e-5f);
+
+  // And a ray the OPAQUE set stops never looks at the glass at all, however
+  // much of it is in the way: a blocked ray delivers nothing.
+  shared::map_t with_a_wall = map;
+  with_a_wall.geometry.push_back(
+      {with_a_wall.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+  const Bounding_Volume_Hierarchy wall = shared::build_occluder_bvh(with_a_wall);
+  const Bounding_Volume_Hierarchy behind = shared::build_transmissive_bvh(with_a_wall);
+  const shared::traced_scene_t walled = shared::build_traced_scene(with_a_wall, wall, nullptr, &behind);
+  assert(ray_is_blocked(shared::shadow_scene_of(walled), {0.f, -100.f, 0.f}));
 }
 
 #endif
@@ -3659,7 +3865,7 @@ void the_gpu_scene_is_made_of_what_the_tracer_sees()
   const assets::texture_asset_t emissive = one_texel(255, 128, 0);
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
-  shared::traced_scene_t traced = shared::build_traced_scene(map, bvh);
+  shared::traced_scene_t traced = shared::build_traced_scene(map, bvh, nullptr, nullptr);
   traced.materials = {{nullptr, nullptr}, {&albedo, &emissive}};
 
   const shared::gpu_bake_scene_t scene = shared::build_gpu_bake_scene(map, traced);
@@ -3770,7 +3976,7 @@ void a_texture_reaches_the_gpu_scene_at_its_own_size()
 
   shared::map_t map;
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(map);
-  shared::traced_scene_t traced = shared::build_traced_scene(map, bvh);
+  shared::traced_scene_t traced = shared::build_traced_scene(map, bvh, nullptr, nullptr);
   traced.materials = {{&texture, &texture}};
 
   shared::gpu_bake_scene_t scene = shared::build_gpu_bake_scene(map, traced);
@@ -4000,9 +4206,12 @@ void the_direct_comparison_flags_a_bias_per_light_and_names_it()
   {
     const float noise = shared::unit_float_from(samples[i].seed) - 0.5f;
     reference.irradiance[i] = {2.f + noise, 1.f + noise * 0.5f, 0.5f};
-    reference.coverage[i * LIGHT_COUNT + 0] = 1.f;
-    reference.coverage[i * LIGHT_COUNT + 1] = noise > 0.f ? 1.f : 0.5f;
-    reference.coverage[i * LIGHT_COUNT + 2] = 0.f;
+    reference.coverage[i * LIGHT_COUNT + 0] = {1.f, 1.f, 1.f};
+    // A coloured one, because a coverage is three numbers now and a comparison
+    // that only ever saw grey would not notice a channel going astray.
+    reference.coverage[i * LIGHT_COUNT + 1] =
+        noise > 0.f ? linalg::vec3{1.f, 1.f, 1.f} : linalg::vec3{0.5f, 0.4f, 0.2f};
+    reference.coverage[i * LIGHT_COUNT + 2] = {0.f, 0.f, 0.f};
     reference.weight[i * LIGHT_COUNT + 0] = 3.f + noise;
     reference.weight[i * LIGHT_COUNT + 1] = 0.25f;
     reference.weight[i * LIGHT_COUNT + 2] = 0.f;
@@ -4011,7 +4220,7 @@ void the_direct_comparison_flags_a_bias_per_light_and_names_it()
   const shared::record_comparison_report_t same =
       shared::compare_direct_results(samples, Span<const size_t>(charts), reference, reference);
   assert(same.agrees());
-  assert(same.coefficient_count == 3 + 2 * LIGHT_COUNT);
+  assert(same.coefficient_count == shared::direct_floats_per_sample(LIGHT_COUNT));
   assert(same.charts.size() == 2);
   assert(same.group_scale.size() == 3);
   assert(same.group_scale[0] > 0.f && same.group_scale[1] > 0.f && same.group_scale[2] > 0.f);
@@ -4030,24 +4239,27 @@ void the_direct_comparison_flags_a_bias_per_light_and_names_it()
   // coefficient is coverage[1], and it is named as such.
   shared::gpu_direct_results_t biased = reference;
   for (size_t i = 0; i < samples.size(); ++i)
-    if (samples[i].chart_index == 1) biased.coverage[i * LIGHT_COUNT + 1] -= 0.1f;
+    if (samples[i].chart_index == 1) biased.coverage[i * LIGHT_COUNT + 1].y -= 0.1f;
   const shared::record_comparison_report_t bias =
       shared::compare_direct_results(samples, Span<const size_t>(charts), reference, biased);
   assert(!bias.agrees());
   assert(bias.charts_beyond_tolerance == 1);
   assert(bias.differing_records == RECORDS_PER_CHART);
-  assert(std::abs(bias.largest_absolute_difference_over(3, LIGHT_COUNT) - 0.1f) < 1e-6f);
+  assert(std::abs(bias.largest_absolute_difference_over(3, LIGHT_COUNT * 3) - 0.1f) < 1e-6f);
   assert(bias.largest_absolute_difference_over(0, 3) == 0.f);
   assert(bias.charts.front().chart == 5);
-  assert(bias.charts.front().largest_sigma_coefficient == 3 + 1);
+  // coverage[1].g -- the second light's second channel.
+  assert(bias.charts.front().largest_sigma_coefficient == 3 + 1 * 3 + 1);
   assert(bias.charts.front().largest_sigma > shared::RECORD_COMPARISON_SIGMA);
   assert(bias.charts[1].largest_sigma == 0.f);
 
   char storage[shared::DIRECT_COEFFICIENT_NAME_CAPACITY];
   assert(shared::direct_coefficient_name(0, LIGHT_COUNT, Span<char>(storage)) == "irradiance.r");
   assert(shared::direct_coefficient_name(2, LIGHT_COUNT, Span<char>(storage)) == "irradiance.b");
-  assert(shared::direct_coefficient_name(4, LIGHT_COUNT, Span<char>(storage)) == "coverage[1]");
-  assert(shared::direct_coefficient_name(8, LIGHT_COUNT, Span<char>(storage)) == "weight[2]");
+  assert(shared::direct_coefficient_name(4, LIGHT_COUNT, Span<char>(storage)) ==
+         "coverage[0].g");
+  assert(shared::direct_coefficient_name(3 + LIGHT_COUNT * 3 + 2, LIGHT_COUNT,
+                                         Span<char>(storage)) == "weight[2]");
 
   // A weight of one ulp more on every record of chart 2: below the weight
   // group's floor, so noise, whatever the zero standard error says.
@@ -4057,7 +4269,7 @@ void the_direct_comparison_flags_a_bias_per_light_and_names_it()
   const shared::record_comparison_report_t noise =
       shared::compare_direct_results(samples, Span<const size_t>(charts), reference, nudged);
   assert(noise.agrees());
-  assert(noise.mean_absolute_difference_over(3 + LIGHT_COUNT, LIGHT_COUNT) > 0.f);
+  assert(noise.mean_absolute_difference_over(3 + LIGHT_COUNT * 3, LIGHT_COUNT) > 0.f);
 }
 
 // The picture the comparison writes: every record's L0 averaged onto the texel it
@@ -4187,10 +4399,10 @@ void a_texel_buried_in_a_neighbouring_brush_reads_as_its_exposed_neighbour()
       // The row straddling the floor's top is a mix by construction; skip it.
       if (sample.position.y > -4.f && sample.position.y < 4.f) continue;
 
-      const Array<float, shared::LIGHTMAP_LIGHTS_PER_CHART> visibility =
+      const Array<linalg::vec3, shared::LIGHTMAP_LIGHTS_PER_CHART> visibility =
           lightmap.visibility_pages.load_visibility(face->page, face->atlas_rect.min_x + gutter + x,
                                                     face->atlas_rect.min_y + gutter + y);
-      assert(visibility[0] == 1.f);
+      assert(visibility[0].x == 1.f);
       if (sample.position.y < 0.f) ++buried;
       else ++exposed;
     }
@@ -4449,6 +4661,8 @@ int main()
   a_static_mesh_casts_a_shadow_in_the_bake();
 #if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
   a_blend_faced_brush_does_not_occlude_the_bake();
+  a_blend_faced_brush_tints_the_light_that_passes_through_it();
+  a_cutout_brush_casts_a_holey_shadow();
 #endif
 
   the_gpu_scene_is_made_of_what_the_tracer_sees();

@@ -53,12 +53,13 @@ struct sample_origin_t
 };
 
 // The direct term's answer per record. `coverage` and `weight` are sample-major,
-// light_count per sample -- what the CPU averages into a texel exactly as the
+// light_count per sample; a coverage is a vec3 because a shadow ray through
+// stained glass arrives coloured (transparency_plan.md step 7) -- what the CPU averages into a texel exactly as the
 // inside count did, and what the chart's slot ranking sums.
 struct gpu_direct_results_t
 {
   std::vector<linalg::vec3> irradiance;
-  std::vector<float> coverage;
+  std::vector<linalg::vec3> coverage;
   std::vector<float> weight;
   size_t light_count = 0;
 
@@ -66,7 +67,7 @@ struct gpu_direct_results_t
   {
     light_count = lights;
     irradiance.assign(sample_count, {0.f, 0.f, 0.f});
-    coverage.assign(sample_count * lights, 0.f);
+    coverage.assign(sample_count * lights, {0.f, 0.f, 0.f});
     weight.assign(sample_count * lights, 0.f);
   }
 };
@@ -134,8 +135,11 @@ struct gpu_material_t
 {
   uint32_t albedo_texture = GPU_NO_TEXTURE;
   uint32_t emissive_texture = GPU_NO_TEXTURE;
-  uint32_t pad0 = 0;
-  uint32_t pad1 = 0;
+
+  // assets::alpha_mode_t, and what a shadow ray reads at a transmissive hit. It
+  // rides the two words that were padding, so the record is the same 16 bytes.
+  uint32_t alpha_mode = 0;
+  float alpha_cutoff = assets::DEFAULT_ALPHA_CUTOFF;
 };
 static_assert(sizeof(gpu_material_t) == 16, "gpu_material_t is the std430 struct the kernels read");
 
@@ -160,6 +164,28 @@ struct gpu_bake_scene_t
   // Which map object each triangle came from. Parallel to `triangles`, never
   // uploaded: the GPU sees triangles, not brushes, and this is for a report.
   std::vector<entity_uid_t> triangle_object_uids;
+
+  // Where each of light_occlusion_of's other two answers BEGINS in `triangles`:
+  // the opaque set runs from 0, the fences from `first_alpha_tested_triangle`,
+  // the glass from `first_transmissive_triangle`, in that order. One array in
+  // three ranges rather than three arrays, because a triangle index has to mean
+  // one thing to gpu_surface_at, and because the acceleration structures are
+  // built over ranges of the same vertex and index buffers.
+  //
+  // Both equal to triangles.size() for a map with neither, which is every map
+  // authored before transparency -- and then there is one structure, one
+  // instance and one ray, exactly as before.
+  size_t first_alpha_tested_triangle = 0;
+  size_t first_transmissive_triangle = 0;
+
+  [[nodiscard]] size_t alpha_tested_triangle_count() const
+  {
+    return first_transmissive_triangle - first_alpha_tested_triangle;
+  }
+  [[nodiscard]] size_t transmissive_triangle_count() const
+  {
+    return triangles.size() - first_transmissive_triangle;
+  }
 };
 
 // The union of every brush's generate_brush_mesh output and every static
@@ -244,15 +270,16 @@ struct shade_statistics_t
 // texel is; the averaging is the caller's.
 //
 // The direct term answers three things per light -- its visibility (the
-// coverage), what it delivers (the ranking weight) and, for the lights
-// `irradiance_light_mask` admits, its irradiance. The mask is all zero on a first
+// coverage, three channels of it since a ray can come through glass), what it
+// delivers (the ranking weight, ONE number because a ranking is an order) and,
+// for the lights `irradiance_light_mask` admits, its irradiance. The mask is all zero on a first
 // pass, because which lights may sum is exactly what the ranking has not decided
 // yet, and the dropped lights' bits on the residual one.
 void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> lights,
-                         const Bounding_Volume_Hierarchy &bvh,
-                         const gpu_bake_settings_t &settings, uint64_t irradiance_light_mask,
-                         linalg::vec3 &out_irradiance, Span<float> out_coverage,
-                         Span<float> out_weight, shade_statistics_t &statistics);
+                         const shadow_scene_t &shadow, const gpu_bake_settings_t &settings,
+                         uint64_t irradiance_light_mask, linalg::vec3 &out_irradiance,
+                         Span<linalg::vec3> out_coverage, Span<float> out_weight,
+                         shade_statistics_t &statistics);
 
 // The indirect term shares the record's position, normal and seed with the
 // direct one rather than walking the chart a second time, so the two terms are
@@ -264,6 +291,16 @@ void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> l
                                                      Span<const baked_light_t> lights,
                                                      const indirect_trace_settings_t &settings,
                                                      shade_statistics_t &statistics);
+
+// How many result FLOATS one record's DIRECT answer is: the irradiance, then a
+// coverage and a weight per light. Written once because the batching, the
+// chunking and the kernel's results buffer must all agree about it, and a
+// coverage growing to three channels is exactly the change that would otherwise
+// have to be found in three places.
+[[nodiscard]] inline constexpr size_t direct_floats_per_sample(size_t light_count)
+{
+  return 3 + light_count * (3 + 1);
+}
 
 // A chart's residual mask is one bit per light of the resolve table, so a bake
 // serves at most this many baked lights. Not a new limit: the runtime's light

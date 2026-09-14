@@ -646,6 +646,8 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/direct_light.glsl
                     ${SHADER_SRC_DIR}/reflection.glsl
                     ${SHADER_SRC_DIR}/lightmap_bake.glsl
+                    ${SHADER_SRC_DIR}/lightmap_scene.glsl
+                    ${SHADER_SRC_DIR}/lightmap_shadow.glsl
                     ${SHADER_SRC_DIR}/alpha_cutout.glsl)
 
 set(SHADER_HEADERS "")

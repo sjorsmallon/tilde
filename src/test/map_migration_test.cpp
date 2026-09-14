@@ -590,10 +590,16 @@ int main()
     // each of its channels is OF. A package carrying the pixels and not the
     // table hands every chart four unnamed numbers.
     packaged.lightmap.light_uids = {41, 42};
+    // Three layers an atlas page, one per colour channel: a shadow ray through
+    // glass arrives coloured (transparency_plan.md step 7), so this is the
+    // second page set the atlas alone does not size.
     packaged.lightmap.visibility_pages.allocate(packaged.lightmap.atlas,
-                                                lightmap_pixel_format_t::Unorm8x4);
-    packaged.lightmap.visibility_pages.store_visibility(1, 3, 5,
-                                                        {{1.f, 0.5f, 0.f, 0.f}});
+                                                lightmap_pixel_format_t::Unorm8x4,
+                                                VISIBILITY_LAYERS_PER_PAGE);
+    packaged.lightmap.visibility_pages.store_visibility(
+        1, 3, 5,
+        {{linalg::vec3{1.f, 1.f, 1.f}, linalg::vec3{0.5f, 0.25f, 0.f},
+          linalg::vec3{0.f, 0.f, 0.f}, linalg::vec3{0.f, 0.f, 0.f}}});
 
     // The indirect bounce, SH L1: three layers an atlas page, so this is the one
     // page set the atlas alone does not size. A container deriving its layer

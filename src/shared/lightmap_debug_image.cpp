@@ -129,7 +129,12 @@ bool try_write_lightmap_debug_png(const std::vector<lightmap_chart_t> &charts,
                   chart.triangles[i + (size_t)((edge + 1) % 3)]);
     }
 
-    const std::string path = path_prefix + "_page" + std::to_string(page) + ".png";
+    // A layer is one COLOUR CHANNEL of one atlas page, four slots wide, so the
+    // name says which of the three it is rather than counting past the pages.
+    const char *const CHANNEL_NAMES[VISIBILITY_LAYERS_PER_PAGE] = {"r", "g", "b"};
+    const std::string path = path_prefix + "_page" +
+                             std::to_string(page / VISIBILITY_LAYERS_PER_PAGE) + "_" +
+                             CHANNEL_NAMES[page % VISIBILITY_LAYERS_PER_PAGE] + ".png";
     if (!stbi_write_png(path.c_str(), image.size, image.size, 3, image.pixels.data(),
                         image.size * 3))
     {

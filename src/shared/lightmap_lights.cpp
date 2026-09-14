@@ -3,6 +3,7 @@
 #include "brush.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "lightmap_bake.hpp"
+#include "lightmap_trace.hpp"
 #include "log.hpp"
 #include "map_geometry.hpp"
 #include "shader_math.hpp"
@@ -51,14 +52,19 @@ std::vector<baked_light_t> collect_lights(const map_t &map)
   return lights;
 }
 
-Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
+// The ONE walk, over whichever half of the map the caller asked for. Two calls
+// with opposite answers partition the geometry exactly, so a brush cannot be in
+// both sets or in neither -- which a second hand-written loop could not promise.
+static Bounding_Volume_Hierarchy build_geometry_bvh(const map_t &map,
+                                                   light_occlusion_t wanted)
 {
+  const bool occluding = wanted == light_occlusion_t::Opaque;
   std::vector<BVH_Input> inputs;
   inputs.reserve(map.geometry.size());
 
   for (const map_geometry_t &entry : map.geometry)
   {
-    if (!geometry_occludes_light(entry.value, map.materials))
+    if (light_occlusion_of(entry.value, map.materials) != wanted)
       continue;
 
     // A static mesh COLLIDES as its bound and must not SHADOW as it: a texel on
@@ -71,7 +77,7 @@ Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
     {
       const std::vector<world_triangle_t> triangles =
           static_mesh_world_triangles(std::get<static_mesh_geometry_t>(entry.value));
-      if (triangles.empty())
+      if (triangles.empty() && occluding)
         log_warning("[lightmap] static mesh {} names no mesh that resolves and casts no "
                     "shadow.", entry.uid);
 
@@ -117,7 +123,7 @@ Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
 
     const std::vector<collision_piece_t> pieces =
         get_collision_pieces(entry.value, entry.uid);
-    if (pieces.empty())
+    if (pieces.empty() && occluding)
       log_warning("[lightmap] object {} has no collision pieces and casts no shadow.",
                   entry.uid);
 
@@ -132,6 +138,21 @@ Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
   }
 
   return build_bvh(inputs);
+}
+
+Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
+{
+  return build_geometry_bvh(map, light_occlusion_t::Opaque);
+}
+
+Bounding_Volume_Hierarchy build_alpha_tested_bvh(const map_t &map)
+{
+  return build_geometry_bvh(map, light_occlusion_t::Alpha_Tested);
+}
+
+Bounding_Volume_Hierarchy build_transmissive_bvh(const map_t &map)
+{
+  return build_geometry_bvh(map, light_occlusion_t::Transmissive);
 }
 
 light_arrival_t arrival_at(const scene_light_t &light,
@@ -182,18 +203,188 @@ light_arrival_t arrival_at(const scene_light_t &light,
   return arrival;
 }
 
-bool shadow_ray_reaches(const Bounding_Volume_Hierarchy &bvh,
-                        const linalg::vec3 &surface_position,
-                        const linalg::vec3 &surface_normal,
-                        const linalg::vec3 &direction, float distance,
-                        float shadow_ray_bias)
+// The opaque half: did anything stop this ray before the light? The test the
+// whole shadow term was, unchanged, and still the first thing asked.
+static bool shadow_ray_is_unoccluded(const Bounding_Volume_Hierarchy &bvh,
+                                     const linalg::vec3 &origin,
+                                     const linalg::vec3 &direction, float travel)
 {
-  const linalg::vec3 origin = surface_position + surface_normal * shadow_ray_bias;
-
   ray_hit_result_t hit = {};
   if (!bvh_intersect_ray(bvh, origin, direction, hit)) return true;
 
-  return !(hit.hit && hit.t > 0.f && hit.t < distance - shadow_ray_bias);
+  return !(hit.hit && hit.t > 0.f && hit.t < travel);
+}
+
+// The transmissive half: the product of what the ray crossed on its way to the
+// light. Walked ENTRY to ENTRY -- a brush is a convex solid, so `t_exit` is
+// where the ray leaves the piece it just tinted by, and stepping a hair past `t`
+// instead would re-enter the same pane forever.
+//
+// One tint per PIECE crossed, taken from the face the ray entered through: a
+// pane is a thin brush and tints once. There is no absorption over a thickness
+// and deliberately no exit-face tint -- a solid the light passes through is
+// authored as the filter it is, not as two surfaces with a medium between them.
+static linalg::vec3 transmittance_along(const traced_scene_t &surfaces,
+                                        const Bounding_Volume_Hierarchy &bvh,
+                                        const linalg::vec3 &origin,
+                                        const linalg::vec3 &direction, float travel)
+{
+  linalg::vec3 transmittance{1.f, 1.f, 1.f};
+
+  // A ray crossing more panes than this is a bug in the map or in `t_exit`, and
+  // an unbounded march is a bake that never finishes.
+  constexpr int MAX_CROSSINGS = 16;
+  constexpr float STEP_EPSILON = 1e-3f;
+
+  float travelled = 0.f;
+  for (int crossing = 0; crossing < MAX_CROSSINGS; ++crossing)
+  {
+    ray_hit_result_t hit = {};
+    const linalg::vec3 at = origin + direction * travelled;
+    if (!bvh_intersect_ray(bvh, at, direction, hit)) break;
+    if (!hit.hit || hit.t >= travel - travelled) break;
+
+    // A hit at t ~ 0 is the piece we just LEFT, reported again because the march
+    // resumes on its exit face -- the entry parameter of a solid the origin is
+    // already on. Stepping past it without tinting is what keeps one crossing
+    // one filter; counting it squared every pane.
+    if (hit.t > STEP_EPSILON)
+    {
+      transmittance = multiply_channels(
+          transmittance, transmittance_at(surfaces, hit, at + direction * hit.t));
+      if (transmittance.x <= 0.f && transmittance.y <= 0.f && transmittance.z <= 0.f)
+        return {0.f, 0.f, 0.f};
+    }
+
+    travelled += std::max(hit.t_exit, hit.t) + STEP_EPSILON;
+  }
+
+  return transmittance;
+}
+
+// The alpha-tested half: a fence stops the ray where its texel is opaque and
+// passes it where the texel is cut away. Asked with the opaque test and not with
+// the tint, because what it decides is the same thing -- whether the ray got
+// through -- and a cutout that passes passes WHOLE: its alpha is a coverage that
+// has already been resolved to yes or no, not a filter.
+static bool alpha_test_lets_the_ray_through(const traced_scene_t &surfaces,
+                                            const Bounding_Volume_Hierarchy &bvh,
+                                            const linalg::vec3 &origin,
+                                            const linalg::vec3 &direction, float travel)
+{
+  constexpr int MAX_CROSSINGS = 16;
+  constexpr float STEP_EPSILON = 1e-3f;
+
+  float travelled = 0.f;
+  for (int crossing = 0; crossing < MAX_CROSSINGS; ++crossing)
+  {
+    ray_hit_result_t hit = {};
+    const linalg::vec3 at = origin + direction * travelled;
+    if (!bvh_intersect_ray(bvh, at, direction, hit)) break;
+    if (!hit.hit || hit.t >= travel - travelled) break;
+
+    // Solid texel, solid shadow: a bar stops the ray and the gap beside it does
+    // not, which is the whole of what an alpha-tested occluder is.
+    if (hit.t > STEP_EPSILON && alpha_test_is_solid_at(surfaces, hit, at + direction * hit.t))
+      return false;
+
+    travelled += std::max(hit.t_exit, hit.t) + STEP_EPSILON;
+  }
+  return true;
+}
+
+// The nearest hit on a fence whose texel is SOLID, which is the only part of one
+// a ray can land on or be stopped by.
+static bool nearest_solid_alpha_tested_hit(const traced_scene_t &surfaces,
+                                           const Bounding_Volume_Hierarchy &bvh,
+                                           const linalg::vec3 &origin,
+                                           const linalg::vec3 &direction, float travel,
+                                           ray_hit_result_t &out_hit)
+{
+  constexpr int MAX_CROSSINGS = 16;
+  constexpr float STEP_EPSILON = 1e-3f;
+
+  float travelled = 0.f;
+  for (int crossing = 0; crossing < MAX_CROSSINGS; ++crossing)
+  {
+    ray_hit_result_t hit = {};
+    const linalg::vec3 at = origin + direction * travelled;
+    if (!bvh_intersect_ray(bvh, at, direction, hit)) break;
+    if (!hit.hit || hit.t >= travel - travelled) break;
+
+    if (hit.t > STEP_EPSILON && alpha_test_is_solid_at(surfaces, hit, at + direction * hit.t))
+    {
+      out_hit = hit;
+      // The caller measures from ITS origin, not from where the march resumed.
+      out_hit.t += travelled;
+      out_hit.t_exit += travelled;
+      return true;
+    }
+
+    travelled += std::max(hit.t_exit, hit.t) + STEP_EPSILON;
+  }
+  return false;
+}
+
+bool trace_nearest_surface(const shadow_scene_t &scene, const linalg::vec3 &origin,
+                           const linalg::vec3 &direction, ray_hit_result_t &out_hit)
+{
+  if (!scene.occluders) return false;
+
+  ray_hit_result_t opaque = {};
+  const bool hit_opaque = bvh_intersect_ray(*scene.occluders, origin, direction, opaque) &&
+                          opaque.hit && opaque.t > 0.f;
+
+  if (!scene.alpha_tested || !scene.surfaces)
+  {
+    out_hit = opaque;
+    return hit_opaque;
+  }
+
+  // Only as far as the opaque hit: a fence behind a wall is not what this ray
+  // lands on, and marching past one is work with no answer in it.
+  const float travel = hit_opaque ? opaque.t : std::numeric_limits<float>::max();
+  ray_hit_result_t fence = {};
+  if (!nearest_solid_alpha_tested_hit(*scene.surfaces, *scene.alpha_tested, origin, direction,
+                                      travel, fence))
+  {
+    out_hit = opaque;
+    return hit_opaque;
+  }
+
+  out_hit = fence;
+  return true;
+}
+
+linalg::vec3 segment_transmittance(const shadow_scene_t &scene, const linalg::vec3 &origin,
+                                   const linalg::vec3 &direction, float travel)
+{
+  if (!scene.surfaces || !scene.transmissive) return {1.f, 1.f, 1.f};
+  return transmittance_along(*scene.surfaces, *scene.transmissive, origin, direction, travel);
+}
+
+linalg::vec3 shadow_ray_transmittance(const shadow_scene_t &scene,
+                                      const linalg::vec3 &surface_position,
+                                      const linalg::vec3 &surface_normal,
+                                      const linalg::vec3 &direction, float distance,
+                                      float shadow_ray_bias)
+{
+  if (!scene.occluders) return {1.f, 1.f, 1.f};
+
+  const linalg::vec3 origin = surface_position + surface_normal * shadow_ray_bias;
+  const float travel = distance - shadow_ray_bias;
+
+  if (!shadow_ray_is_unoccluded(*scene.occluders, origin, direction, travel))
+    return {0.f, 0.f, 0.f};
+
+  if (!scene.surfaces) return {1.f, 1.f, 1.f};
+
+  if (scene.alpha_tested &&
+      !alpha_test_lets_the_ray_through(*scene.surfaces, *scene.alpha_tested, origin, direction,
+                                       travel))
+    return {0.f, 0.f, 0.f};
+
+  return segment_transmittance(scene, origin, direction, travel);
 }
 
 uint32_t hash_mix(uint32_t hash, uint32_t value)
@@ -229,6 +420,10 @@ std::vector<light_reach_on_face_t> probe_light_reach(
   // as it is NOW, which after a move is not what the last bake saw.
   const std::vector<lightmap_chart_t> charts = build_lightmap_charts(map, settings);
   const Bounding_Volume_Hierarchy bvh = build_occluder_bvh(map);
+  const Bounding_Volume_Hierarchy alpha_tested = build_alpha_tested_bvh(map);
+  const Bounding_Volume_Hierarchy transmissive = build_transmissive_bvh(map);
+  const traced_scene_t glass = build_traced_scene(map, bvh, &alpha_tested, &transmissive);
+  const shadow_scene_t shadow = shadow_scene_of(glass);
   const linalg::vec3 axis = light.light.kind == light_kind_t::Point
                                 ? linalg::vec3{0.f, 0.f, 0.f}
                                 : linalg::normalize(light.light.forward);
@@ -279,8 +474,9 @@ std::vector<light_reach_on_face_t> probe_light_reach(
 
         // One hard ray: the probe asks whether ANYTHING gets through, and a
         // penumbra sample count is not what separates lit from black.
-        if (light_visibility(bvh, position, sample.normal, arrival, shadow_ray_bias, 1,
-                             sample_hash(texel_x, texel_y, 0, 0)) > 0.f)
+        if (luminance_of(light_visibility(shadow, position, sample.normal, arrival,
+                                          shadow_ray_bias, 1,
+                                          sample_hash(texel_x, texel_y, 0, 0))) > 0.f)
           ++face.visible;
       }
 
@@ -296,11 +492,10 @@ std::vector<light_reach_on_face_t> probe_light_reach(
 // differently from the other. The emitter is a sphere and the disc is its
 // silhouette from the surface: the half of it the surface cannot see is the half
 // that emits nothing toward it.
-static bool shadow_ray_reaches_disc_point(const Bounding_Volume_Hierarchy &bvh,
-                                          const linalg::vec3 &surface_position,
-                                          const linalg::vec3 &surface_normal,
-                                          const light_arrival_t &arrival, float radius,
-                                          float angle, float shadow_ray_bias)
+static linalg::vec3 shadow_ray_transmittance_to_disc_point(
+    const shadow_scene_t &scene, const linalg::vec3 &surface_position,
+    const linalg::vec3 &surface_normal, const light_arrival_t &arrival, float radius,
+    float angle, float shadow_ray_bias)
 {
   linalg::vec3 tangent_u;
   linalg::vec3 tangent_v;
@@ -312,25 +507,23 @@ static bool shadow_ray_reaches_disc_point(const Bounding_Volume_Hierarchy &bvh,
 
   const linalg::vec3 to_target = target - surface_position;
   const float distance = std::sqrt(linalg::dot(to_target, to_target));
-  if (distance < 1e-4f) return false;
+  if (distance < 1e-4f) return {0.f, 0.f, 0.f};
 
-  return shadow_ray_reaches(bvh, surface_position, surface_normal,
-                            to_target * (1.f / distance), distance, shadow_ray_bias);
+  return shadow_ray_transmittance(scene, surface_position, surface_normal,
+                                  to_target * (1.f / distance), distance, shadow_ray_bias);
 }
 
-float light_visibility(const Bounding_Volume_Hierarchy &bvh,
-                       const linalg::vec3 &surface_position,
-                       const linalg::vec3 &surface_normal,
-                       const light_arrival_t &arrival, float shadow_ray_bias,
-                       int soft_shadow_samples, uint32_t hash)
+linalg::vec3 light_visibility(const shadow_scene_t &scene,
+                              const linalg::vec3 &surface_position,
+                              const linalg::vec3 &surface_normal,
+                              const light_arrival_t &arrival, float shadow_ray_bias,
+                              int soft_shadow_samples, uint32_t hash)
 {
   const int sample_count = shadow_ray_count(arrival, soft_shadow_samples);
 
   if (sample_count == 1)
-    return shadow_ray_reaches(bvh, surface_position, surface_normal, arrival.direction,
-                              arrival.distance, shadow_ray_bias)
-               ? 1.f
-               : 0.f;
+    return shadow_ray_transmittance(scene, surface_position, surface_normal, arrival.direction,
+                                    arrival.distance, shadow_ray_bias);
 
   // The golden angle: consecutive samples land as far from each other in rotation
   // as an irrational turn allows, so a handful of them cover the disc evenly
@@ -338,7 +531,7 @@ float light_visibility(const Bounding_Volume_Hierarchy &bvh,
   constexpr float GOLDEN_ANGLE = 2.39996323f;
   constexpr float TWO_PI = 6.28318531f;
 
-  int reached = 0;
+  linalg::vec3 reached{0.f, 0.f, 0.f};
   for (int sample = 0; sample < sample_count; ++sample)
   {
     const uint32_t sample_bits = hash_mix(hash, (uint32_t)sample);
@@ -354,25 +547,23 @@ float light_visibility(const Bounding_Volume_Hierarchy &bvh,
         std::sqrt(((float)sample + radius_jitter) / (float)sample_count);
     const float angle = (float)sample * GOLDEN_ANGLE + angle_jitter * TWO_PI;
 
-    if (shadow_ray_reaches_disc_point(bvh, surface_position, surface_normal, arrival, radius,
-                                      angle, shadow_ray_bias))
-      ++reached;
+    reached = reached + shadow_ray_transmittance_to_disc_point(
+                            scene, surface_position, surface_normal, arrival, radius, angle,
+                            shadow_ray_bias);
   }
 
-  return (float)reached / (float)sample_count;
+  return reached * (1.f / (float)sample_count);
 }
 
-float light_visibility_single_ray(const Bounding_Volume_Hierarchy &bvh,
-                                  const linalg::vec3 &surface_position,
-                                  const linalg::vec3 &surface_normal,
-                                  const light_arrival_t &arrival, float shadow_ray_bias,
-                                  uint32_t hash)
+linalg::vec3 light_visibility_single_ray(const shadow_scene_t &scene,
+                                         const linalg::vec3 &surface_position,
+                                         const linalg::vec3 &surface_normal,
+                                         const light_arrival_t &arrival, float shadow_ray_bias,
+                                         uint32_t hash)
 {
   if (arrival.shadow_disc_radius <= 0.f)
-    return shadow_ray_reaches(bvh, surface_position, surface_normal, arrival.direction,
-                              arrival.distance, shadow_ray_bias)
-               ? 1.f
-               : 0.f;
+    return shadow_ray_transmittance(scene, surface_position, surface_normal, arrival.direction,
+                                    arrival.distance, shadow_ray_bias);
 
   // Uniform over the disc's AREA: sqrt on the radius for the reason the spiral
   // takes it, and a full random turn where the spiral had a golden-angle step,
@@ -381,10 +572,8 @@ float light_visibility_single_ray(const Bounding_Volume_Hierarchy &bvh,
   const float radius = arrival.shadow_disc_radius * std::sqrt(unit_float_from(hash));
   const float angle = TWO_PI * unit_float_from(hash_mix(hash, 0x68bc21ebu));
 
-  return shadow_ray_reaches_disc_point(bvh, surface_position, surface_normal, arrival, radius,
-                                       angle, shadow_ray_bias)
-             ? 1.f
-             : 0.f;
+  return shadow_ray_transmittance_to_disc_point(scene, surface_position, surface_normal,
+                                               arrival, radius, angle, shadow_ray_bias);
 }
 
 } // namespace shared

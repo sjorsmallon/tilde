@@ -129,12 +129,23 @@ private:
   gpu_buffer_t materials;
   gpu_buffer_t instance;
   gpu_buffer_t bottom_level_storage;
+  // The fences' and the glass's own structures, over ranges of the same vertex
+  // and index buffers. Null for a map with none of that kind.
+  gpu_buffer_t alpha_tested_storage;
+  gpu_buffer_t transmissive_storage;
   gpu_buffer_t top_level_storage;
   VkAccelerationStructureKHR bottom_level = VK_NULL_HANDLE;
+  VkAccelerationStructureKHR alpha_tested_level = VK_NULL_HANDLE;
+  VkAccelerationStructureKHR transmissive_level = VK_NULL_HANDLE;
   VkAccelerationStructureKHR top_level = VK_NULL_HANDLE;
   std::vector<gpu_texture_image_t> texture_images;
   gpu_buffer_t lights;
   uint32_t uploaded_triangle_count = 0;
+
+  // How many of them are GLASS -- the tail of the triangle buffer, its own BLAS
+  // and its own TLAS instance. Zero is a map with none, and then no second
+  // structure is built and no shadow ray runs a second traversal.
+  uint32_t transmissive_triangle_count = 0;
   uint32_t uploaded_light_count = 0;
   // One bit per slot whose light is Mixed: what a probe needs to know about a
   // light that the kernel's Light struct does not carry.
@@ -169,7 +180,9 @@ private:
   [[nodiscard]] VkCommandBuffer begin_commands() const;
   void submit_and_wait(VkCommandBuffer commands);
 
-  void build_acceleration_structures(uint32_t vertex_count, uint32_t triangle_count);
+  void build_acceleration_structures(uint32_t vertex_count, uint32_t triangle_count,
+                                     uint32_t first_alpha_tested_triangle,
+                                     uint32_t first_transmissive_triangle);
   void ensure_host_visible(gpu_buffer_t &buffer, VkDeviceSize bytes) const;
   void write_acceleration_structure_descriptor(VkWriteDescriptorSet &write,
                                                VkWriteDescriptorSetAccelerationStructureKHR &info,

@@ -610,26 +610,38 @@ static_assert(LIGHTMAP_LIGHTS_PER_CHART == 4,
               "Unorm8x4 is four scalars in four bytes. Growing the per-chart light "
               "count needs a pixel format beside it, not a wider read of this one.");
 
-void lightmap_pages_t::store_visibility(
-    int page, int x, int y, const Array<float, LIGHTMAP_LIGHTS_PER_CHART> &coverage)
-{
-  const size_t offset =
-      checked_offset(*this, page, x, y, lightmap_pixel_format_t::Unorm8x4, "visibility");
+static_assert(VISIBILITY_LAYERS_PER_PAGE == 3,
+              "One visibility layer per colour channel. A fourth would need a meaning.");
 
-  for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
-    bytes[offset + (size_t)slot] =
-        (uint8_t)std::clamp((int)std::lround(coverage[slot] * 255.f), 0, 255);
+void lightmap_pages_t::store_visibility(
+    int page, int x, int y, const Array<linalg::vec3, LIGHTMAP_LIGHTS_PER_CHART> &coverage)
+{
+  for (int channel = 0; channel < VISIBILITY_LAYERS_PER_PAGE; ++channel)
+  {
+    const size_t offset =
+        checked_offset(*this, page * VISIBILITY_LAYERS_PER_PAGE + channel, x, y,
+                       lightmap_pixel_format_t::Unorm8x4, "visibility");
+
+    for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+      bytes[offset + (size_t)slot] = (uint8_t)std::clamp(
+          (int)std::lround(coverage[slot][channel] * 255.f), 0, 255);
+  }
 }
 
-Array<float, LIGHTMAP_LIGHTS_PER_CHART> lightmap_pages_t::load_visibility(int page, int x,
-                                                                         int y) const
+Array<linalg::vec3, LIGHTMAP_LIGHTS_PER_CHART> lightmap_pages_t::load_visibility(int page,
+                                                                                int x,
+                                                                                int y) const
 {
-  const size_t offset =
-      checked_offset(*this, page, x, y, lightmap_pixel_format_t::Unorm8x4, "visibility");
+  Array<linalg::vec3, LIGHTMAP_LIGHTS_PER_CHART> coverage;
+  for (int channel = 0; channel < VISIBILITY_LAYERS_PER_PAGE; ++channel)
+  {
+    const size_t offset =
+        checked_offset(*this, page * VISIBILITY_LAYERS_PER_PAGE + channel, x, y,
+                       lightmap_pixel_format_t::Unorm8x4, "visibility");
 
-  Array<float, LIGHTMAP_LIGHTS_PER_CHART> coverage;
-  for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
-    coverage[slot] = (float)bytes[offset + (size_t)slot] * (1.f / 255.f);
+    for (uint32_t slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+      coverage[slot][channel] = (float)bytes[offset + (size_t)slot] * (1.f / 255.f);
+  }
   return coverage;
 }
 

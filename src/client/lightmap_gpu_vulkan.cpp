@@ -43,6 +43,16 @@ struct bake_push_t
 static_assert(sizeof(bake_push_t) == 40 && offsetof(bake_push_t, settings) == 8,
               "bake_push_t is the push block lightmap_indirect.comp and lightmap_direct.comp read");
 
+// lightmap_direct.comp's: the shared one, then how much glass the scene holds --
+// zero being no second instance and no second ray (transparency_plan.md step 7).
+struct direct_push_t
+{
+  bake_push_t bake;
+  uint32_t transmissive_triangle_count = 0;
+};
+static_assert(sizeof(direct_push_t) == 44 && offsetof(direct_push_t, transmissive_triangle_count) == 40,
+              "direct_push_t is the push block lightmap_direct.comp reads");
+
 // lightmap_indirect.comp's push block: the shared one, then the probe half --
 // the Mixed-light mask as the uvec2 the kernel reads, the four channel slots,
 // and the flag that makes a dispatch shade probes rather than texels.
@@ -53,10 +63,12 @@ struct indirect_push_t
   int32_t visibility_slots[4] = {-1, -1, -1, -1};
   uint32_t probes = 0;
   uint32_t capture = 0;
+  uint32_t transmissive_triangle_count = 0;
 };
-static_assert(sizeof(indirect_push_t) == 72 && offsetof(indirect_push_t, analytic_lights) == 40 &&
+static_assert(sizeof(indirect_push_t) == 76 && offsetof(indirect_push_t, analytic_lights) == 40 &&
                   offsetof(indirect_push_t, visibility_slots) == 48 &&
-                  offsetof(indirect_push_t, probes) == 64,
+                  offsetof(indirect_push_t, probes) == 64 &&
+                  offsetof(indirect_push_t, transmissive_triangle_count) == 72,
               "indirect_push_t is the push block lightmap_indirect.comp reads");
 
 // lightmap_direct.comp's results: a vec4 per record (irradiance rgb, shadow rays
@@ -71,7 +83,10 @@ static_assert(sizeof(linalg::vec3) == 12, "the coverage and weight readback is o
 
 size_t direct_result_floats_per_record(size_t light_count)
 {
-  return 4 + 2 * light_count;
+  // Four for the irradiance and the ray count, then THREE of coverage and one
+  // of weight per light -- the vec4 head is why this is not
+  // direct_floats_per_sample itself.
+  return 4 + light_count * (3 + 1);
 }
 
 // light_arrival.glsl's struct Light, filled the way renderer.cpp fills
@@ -508,6 +523,23 @@ void vulkan_batch_solver_t::dispatch_and_wait(const compute_kernel_t &kernel, co
   submit_and_wait(commands);
 }
 
+// The texture array write, as far as the scene fills it and no further: the
+// binding is partially bound and nothing indexes past the scene's count. Shared
+// because both kernels bind the same images now.
+static VkWriteDescriptorSet texture_array_write_for(
+    VkDescriptorSet set, uint32_t binding, const std::vector<VkDescriptorImageInfo> &infos)
+{
+  VkWriteDescriptorSet write{};
+  if (infos.empty()) return write;
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = set;
+  write.dstBinding = binding;
+  write.descriptorCount = (uint32_t)infos.size();
+  write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  write.pImageInfo = infos.data();
+  return write;
+}
+
 void vulkan_batch_solver_t::write_acceleration_structure_descriptor(
     VkWriteDescriptorSet &write, VkWriteDescriptorSetAccelerationStructureKHR &info,
     VkDescriptorSet set) const
@@ -529,22 +561,47 @@ void vulkan_batch_solver_t::write_acceleration_structure_descriptor(
 // --- The scene ----------------------------------------------------------------
 
 void vulkan_batch_solver_t::build_acceleration_structures(uint32_t vertex_count,
-                                                          uint32_t triangle_count)
+                                                          uint32_t triangle_count,
+                                                          uint32_t first_alpha_tested_triangle,
+                                                          uint32_t first_transmissive_triangle)
 {
-  // The BLAS: the driver's own BVH over the vertex and index buffers as they
-  // are. Opaque, so a query never asks a shader whether a hit counts.
-  VkAccelerationStructureGeometryKHR geometry{};
-  geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-  geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-  geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-  VkAccelerationStructureGeometryTrianglesDataKHR &triangle_data = geometry.geometry.triangles;
-  triangle_data.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-  triangle_data.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-  triangle_data.vertexData.deviceAddress = vertices.address;
-  triangle_data.vertexStride = sizeof(linalg::vec4);
-  triangle_data.maxVertex = vertex_count - 1;
-  triangle_data.indexType = VK_INDEX_TYPE_UINT32;
-  triangle_data.indexData.deviceAddress = indices.address;
+  // THREE structures over ranges of the SAME vertex and index buffers, one per
+  // answer light_occlusion_of gives: the opaque set, which stops a ray outright;
+  // the fences, which stop it where a texel says so; and the glass, which tints
+  // one that got through. One buffer because a triangle index has to mean one
+  // thing to the kernel, and the ranges are disjoint by construction --
+  // build_gpu_bake_scene emits them in this order and says where each begins.
+  //
+  // They are told apart at trace time by the INSTANCE CULL MASK, so the opaque
+  // ray is the traversal it has always been and pays nothing for glass being in
+  // the scene at all.
+  const auto triangle_geometry = [&](uint32_t first_triangle, bool opaque) {
+    VkAccelerationStructureGeometryKHR geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    // The glass is NOT opaque: its candidates have to reach the kernel, which is
+    // what lets a shadow ray read the texel it crossed instead of being stopped.
+    geometry.flags = opaque ? (VkGeometryFlagsKHR)VK_GEOMETRY_OPAQUE_BIT_KHR
+                            : (VkGeometryFlagsKHR)0;
+    VkAccelerationStructureGeometryTrianglesDataKHR &triangle_data = geometry.geometry.triangles;
+    triangle_data.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    triangle_data.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    triangle_data.vertexData.deviceAddress = vertices.address;
+    triangle_data.vertexStride = sizeof(linalg::vec4);
+    triangle_data.maxVertex = vertex_count - 1;
+    triangle_data.indexType = VK_INDEX_TYPE_UINT32;
+    // The range's own first index, so the BLAS holds this half and nothing else.
+    triangle_data.indexData.deviceAddress =
+        indices.address + (VkDeviceSize)first_triangle * 3 * sizeof(uint32_t);
+    return geometry;
+  };
+
+  const VkAccelerationStructureGeometryKHR geometry = triangle_geometry(0, true);
+
+  // lightmap_scene.glsl's three instance masks.
+  constexpr uint32_t OPAQUE_INSTANCE_MASK = 0x01;
+  constexpr uint32_t TRANSMISSIVE_INSTANCE_MASK = 0x02;
+  constexpr uint32_t ALPHA_TESTED_INSTANCE_MASK = 0x04;
 
   const auto build_one = [&](VkAccelerationStructureTypeKHR type,
                              const VkAccelerationStructureGeometryKHR &what,
@@ -597,25 +654,63 @@ void vulkan_batch_solver_t::build_acceleration_structures(uint32_t vertex_count,
     destroy_buffer(scratch);
   };
 
-  build_one(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry, triangle_count,
-            bottom_level_storage, bottom_level);
+  build_one(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry,
+            first_alpha_tested_triangle, bottom_level_storage, bottom_level);
 
-  // The TLAS: one instance of that BLAS under the identity, both faces hittable
-  // -- the CPU's slab test has no winding either.
-  VkAccelerationStructureDeviceAddressInfoKHR address_info{};
-  address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-  address_info.accelerationStructure = bottom_level;
+  const uint32_t alpha_tested_count =
+      first_transmissive_triangle - first_alpha_tested_triangle;
+  if (alpha_tested_count > 0)
+  {
+    const VkAccelerationStructureGeometryKHR fences =
+        triangle_geometry(first_alpha_tested_triangle, false);
+    build_one(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, fences, alpha_tested_count,
+              alpha_tested_storage, alpha_tested_level);
+  }
 
-  VkAccelerationStructureInstanceKHR instance_record{};
-  instance_record.transform.matrix[0][0] = 1.f;
-  instance_record.transform.matrix[1][1] = 1.f;
-  instance_record.transform.matrix[2][2] = 1.f;
-  instance_record.mask = 0xff;
-  instance_record.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-  instance_record.accelerationStructureReference =
-      device.get_acceleration_structure_device_address(device.device, &address_info);
+  const uint32_t transmissive_count = triangle_count - first_transmissive_triangle;
+  if (transmissive_count > 0)
+  {
+    const VkAccelerationStructureGeometryKHR glass =
+        triangle_geometry(first_transmissive_triangle, false);
+    build_one(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, glass, transmissive_count,
+              transmissive_storage, transmissive_level);
+  }
+
+  // The TLAS: one instance per structure under the identity, both faces hittable
+  // -- the CPU's slab test has no winding either. The instance's CUSTOM INDEX is
+  // where its range of the triangle buffer begins, which is how the kernel turns
+  // a per-BLAS primitive index back into a scene one; its MASK is which of the
+  // two sets it is, which is how a ray chooses.
+  const auto instance_for = [&](VkAccelerationStructureKHR structure, uint32_t mask,
+                                uint32_t first_triangle) {
+    VkAccelerationStructureDeviceAddressInfoKHR address_info{};
+    address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    address_info.accelerationStructure = structure;
+
+    VkAccelerationStructureInstanceKHR record{};
+    record.transform.matrix[0][0] = 1.f;
+    record.transform.matrix[1][1] = 1.f;
+    record.transform.matrix[2][2] = 1.f;
+    record.instanceCustomIndex = first_triangle;
+    record.mask = mask;
+    record.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    record.accelerationStructureReference =
+        device.get_acceleration_structure_device_address(device.device, &address_info);
+    return record;
+  };
+
+  std::vector<VkAccelerationStructureInstanceKHR> instance_records;
+  instance_records.push_back(instance_for(bottom_level, OPAQUE_INSTANCE_MASK, 0));
+  if (alpha_tested_count > 0)
+    instance_records.push_back(instance_for(alpha_tested_level, ALPHA_TESTED_INSTANCE_MASK,
+                                            first_alpha_tested_triangle));
+  if (transmissive_count > 0)
+    instance_records.push_back(
+        instance_for(transmissive_level, TRANSMISSIVE_INSTANCE_MASK, first_transmissive_triangle));
+
   instance = upload_device_local(
-      &instance_record, sizeof(instance_record),
+      instance_records.data(),
+      instance_records.size() * sizeof(VkAccelerationStructureInstanceKHR),
       VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
@@ -627,8 +722,8 @@ void vulkan_batch_solver_t::build_acceleration_structures(uint32_t vertex_count,
   instances.geometry.instances.arrayOfPointers = VK_FALSE;
   instances.geometry.instances.data.deviceAddress = instance.address;
 
-  build_one(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, instances, 1, top_level_storage,
-            top_level);
+  build_one(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, instances,
+            (uint32_t)instance_records.size(), top_level_storage, top_level);
 }
 
 void vulkan_batch_solver_t::upload_scene(const shared::batch_solver_scene_t &scene)
@@ -684,8 +779,11 @@ void vulkan_batch_solver_t::upload_scene(const shared::batch_solver_scene_t &sce
   // black, decided in the kernel off GPU_NO_TEXTURE; nothing is bound for it.
   upload_textures(gpu.textures);
 
-  build_acceleration_structures((uint32_t)gpu.vertices.size(), (uint32_t)gpu.triangles.size());
+  build_acceleration_structures((uint32_t)gpu.vertices.size(), (uint32_t)gpu.triangles.size(),
+                                (uint32_t)gpu.first_alpha_tested_triangle,
+                                (uint32_t)gpu.first_transmissive_triangle);
   uploaded_triangle_count = (uint32_t)gpu.triangles.size();
+  transmissive_triangle_count = (uint32_t)gpu.transmissive_triangle_count();
 }
 
 void vulkan_batch_solver_t::destroy_scene()
@@ -693,10 +791,18 @@ void vulkan_batch_solver_t::destroy_scene()
   if (top_level) device.destroy_acceleration_structure(device.device, top_level, nullptr);
   if (bottom_level)
     device.destroy_acceleration_structure(device.device, bottom_level, nullptr);
+  if (alpha_tested_level)
+    device.destroy_acceleration_structure(device.device, alpha_tested_level, nullptr);
+  if (transmissive_level)
+    device.destroy_acceleration_structure(device.device, transmissive_level, nullptr);
   top_level = VK_NULL_HANDLE;
   bottom_level = VK_NULL_HANDLE;
+  alpha_tested_level = VK_NULL_HANDLE;
+  transmissive_level = VK_NULL_HANDLE;
   destroy_buffer(top_level_storage);
   destroy_buffer(bottom_level_storage);
+  destroy_buffer(alpha_tested_storage);
+  destroy_buffer(transmissive_storage);
   destroy_buffer(instance);
   destroy_buffer(vertices);
   destroy_buffer(indices);
@@ -705,6 +811,7 @@ void vulkan_batch_solver_t::destroy_scene()
   destroy_buffer(lights);
   destroy_textures();
   uploaded_triangle_count = 0;
+  transmissive_triangle_count = 0;
   uploaded_light_count = 0;
 }
 
@@ -797,14 +904,15 @@ void vulkan_batch_solver_t::destroy_kernel(compute_kernel_t &kernel) const
 void vulkan_batch_solver_t::create_kernels()
 {
   // One pool for every kernel this solver has: the probe's three bindings, the
-  // indirect kernel's eight plus its texture array, the direct kernel's five.
+  // indirect kernel's eight plus its texture array, the direct kernel's seven
+  // plus the same array.
   VkDescriptorPoolSize pool_sizes[3]{};
   pool_sizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   pool_sizes[0].descriptorCount = 3;
   pool_sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  pool_sizes[1].descriptorCount = 13;
+  pool_sizes[1].descriptorCount = 15;
   pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-  pool_sizes[2].descriptorCount = texture_descriptor_capacity;
+  pool_sizes[2].descriptorCount = texture_descriptor_capacity * 2;
   VkDescriptorPoolCreateInfo pool_info{};
   pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   pool_info.maxSets = 3;
@@ -837,16 +945,22 @@ void vulkan_batch_solver_t::create_kernels()
                                   sizeof(indirect_push_t), "lightmap_indirect.comp");
 
   // lightmap_direct.comp's bindings, in order: the TLAS, samples, results, the
-  // chart light masks, lights. Shadow rays ask only whether something is in the
-  // way, so no triangle, material or texture reaches it.
-  const kernel_binding_t direct_bindings[] = {{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
-                                              {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
-                                              {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
-                                              {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
-                                              {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
+  // chart light masks, lights, then triangles, materials and the texture array.
+  // A shadow ray used to ask only whether something was in the way; since step 7
+  // one that gets THROUGH asks what the glass it crossed was made of, which is a
+  // triangle, a material and a texel.
+  const kernel_binding_t direct_bindings[] = {
+      {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+      {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, texture_descriptor_capacity}};
   direct_kernel = create_kernel(lightmap_direct_comp_spv, sizeof(lightmap_direct_comp_spv),
                                 Span<const kernel_binding_t>(direct_bindings),
-                                sizeof(bake_push_t), "lightmap_direct.comp");
+                                sizeof(direct_push_t), "lightmap_direct.comp");
 }
 
 void vulkan_batch_solver_t::solve_direct(Span<const shared::gpu_sample_t> samples,
@@ -880,16 +994,26 @@ void vulkan_batch_solver_t::solve_direct(Span<const shared::gpu_sample_t> sample
   ensure_host_visible(dispatch_chart_light_masks, masks_bytes);
   write_host_visible(dispatch_chart_light_masks, chart_light_masks.data, masks_bytes);
 
+  // The geometry rides along since step 7: a shadow ray that gets through has to
+  // read the material of the glass it crossed, which is the one thing the direct
+  // term needs a triangle for.
   VkWriteDescriptorSetAccelerationStructureKHR structure_write{};
   const VkDescriptorBufferInfo buffer_infos[] = {{dispatch_samples.buffer, 0, VK_WHOLE_SIZE},
                                                  {dispatch_results.buffer, 0, VK_WHOLE_SIZE},
                                                  {dispatch_chart_light_masks.buffer, 0, VK_WHOLE_SIZE},
-                                                 {lights.buffer, 0, VK_WHOLE_SIZE}};
-  VkWriteDescriptorSet writes[5]{};
+                                                 {lights.buffer, 0, VK_WHOLE_SIZE},
+                                                 {triangles.buffer, 0, VK_WHOLE_SIZE},
+                                                 {materials.buffer, 0, VK_WHOLE_SIZE}};
+  VkWriteDescriptorSet writes[8]{};
   write_acceleration_structure_descriptor(writes[0], structure_write, direct_kernel.set);
-  for (uint32_t i = 0; i < 4; ++i)
+  for (uint32_t i = 0; i < 6; ++i)
     writes[1 + i] = buffer_write(direct_kernel.set, 1 + i, &buffer_infos[i]);
-  vkUpdateDescriptorSets(device.device, 5, writes, 0, nullptr);
+  std::vector<VkDescriptorImageInfo> image_infos(texture_images.size());
+  for (size_t i = 0; i < texture_images.size(); ++i)
+    image_infos[i] = {VK_NULL_HANDLE, texture_images[i].view,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+  writes[7] = texture_array_write_for(direct_kernel.set, 7, image_infos);
+  vkUpdateDescriptorSets(device.device, image_infos.empty() ? 7 : 8, writes, 0, nullptr);
 
   std::vector<direct_record_result_t> record_results;
   for (size_t first = 0; first < samples.size(); first += records_per_dispatch)
@@ -898,10 +1022,11 @@ void vulkan_batch_solver_t::solve_direct(Span<const shared::gpu_sample_t> sample
     write_host_visible(dispatch_samples, samples.data + first,
                        (VkDeviceSize)count * sizeof(shared::gpu_sample_t));
 
-    bake_push_t push;
-    push.sample_count = (uint32_t)count;
-    push.light_count = (uint32_t)light_count;
-    push.settings = settings;
+    direct_push_t push;
+    push.bake.sample_count = (uint32_t)count;
+    push.bake.light_count = (uint32_t)light_count;
+    push.bake.settings = settings;
+    push.transmissive_triangle_count = transmissive_triangle_count;
     dispatch_and_wait(direct_kernel, &push, sizeof(push), (uint32_t)count);
 
     const VkDeviceSize results_bytes = (VkDeviceSize)count * floats_per_record * sizeof(float);
@@ -919,11 +1044,14 @@ void vulkan_batch_solver_t::solve_direct(Span<const shared::gpu_sample_t> sample
                                    record.irradiance[2]};
       accumulated.shade.direct_rays += (size_t)(record.rays_cast + 0.5f);
     }
-    const size_t per_light_floats = count * light_count;
+    // Three floats of coverage per (record, light) and one of weight, each region
+    // sample-major -- which is gpu_direct_results_t's own layout, so both are
+    // one memcpy.
+    const size_t coverage_floats = count * light_count * 3;
     std::memcpy(out.coverage.data() + first * light_count, floats + count * 4,
-                per_light_floats * sizeof(float));
-    std::memcpy(out.weight.data() + first * light_count, floats + count * 4 + per_light_floats,
-                per_light_floats * sizeof(float));
+                coverage_floats * sizeof(float));
+    std::memcpy(out.weight.data() + first * light_count, floats + count * 4 + coverage_floats,
+                count * light_count * sizeof(float));
     vkUnmapMemory(device.device, dispatch_results.memory);
   }
 }
@@ -1077,19 +1205,8 @@ void vulkan_batch_solver_t::write_indirect_kernel_descriptors()
   write_acceleration_structure_descriptor(writes[0], structure_write, indirect_kernel.set);
   for (uint32_t i = 0; i < 7; ++i)
     writes[1 + i] = buffer_write(indirect_kernel.set, 1 + i, &buffer_infos[i]);
-  uint32_t write_count = 8;
-  if (!image_infos.empty())
-  {
-    VkWriteDescriptorSet &write = writes[8];
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = indirect_kernel.set;
-    write.dstBinding = 8;
-    write.descriptorCount = (uint32_t)image_infos.size();
-    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    write.pImageInfo = image_infos.data();
-    write_count = 9;
-  }
-  vkUpdateDescriptorSets(device.device, write_count, writes, 0, nullptr);
+  writes[8] = texture_array_write_for(indirect_kernel.set, 8, image_infos);
+  vkUpdateDescriptorSets(device.device, image_infos.empty() ? 8 : 9, writes, 0, nullptr);
 }
 
 void vulkan_batch_solver_t::probe_rays(Span<const shared::gpu_sample_t> samples,

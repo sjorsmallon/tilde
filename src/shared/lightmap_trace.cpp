@@ -15,11 +15,6 @@ namespace
 constexpr float PI = 3.14159265f;
 constexpr float TWO_PI = 6.28318531f;
 
-linalg::vec3 multiply_channels(const linalg::vec3 &left, const linalg::vec3 &right)
-{
-  return {left.x * right.x, left.y * right.y, left.z * right.z};
-}
-
 // Cosine-weighted, which is what makes the bounce weight `weight *= albedo` and
 // nothing else: the cos and the 1/pi of a diffuse BRDF cancel against the
 // sampling density. Not a shortcut -- it is why everyone samples this way, and it
@@ -112,12 +107,13 @@ linalg::vec3 direct_irradiance_at(const traced_scene_t &scene,
     // the chain count and every vertex of every chain average it out, and the
     // spiral here cost soft_shadow_samples rays per light per vertex for a
     // penumbra the estimate already converges to. lightmap_gpu_plan.md step 0.
-    const float visibility = light_visibility_single_ray(
-        *scene.bvh, position, normal, arrival, settings.shadow_ray_bias, hash_mix(bits, slot));
-    if (visibility <= 0.f) continue;
+    const linalg::vec3 visibility = light_visibility_single_ray(
+        shadow_scene_of(scene), position, normal, arrival, settings.shadow_ray_bias,
+        hash_mix(bits, slot));
+    if (luminance_of(visibility) <= 0.f) continue;
 
-    irradiance = irradiance + light.radiance * (arrival.attenuation *
-                                                arrival.normal_dot_light * visibility);
+    irradiance = irradiance + multiply_channels(light.radiance, visibility) *
+                                  (arrival.attenuation * arrival.normal_dot_light);
   }
 
   return irradiance;
@@ -137,6 +133,7 @@ linalg::vec3 trace_one_chain(const traced_scene_t &scene, Span<const baked_light
   linalg::vec3 throughput{1.f, 1.f, 1.f};
   linalg::vec3 from = position;
   linalg::vec3 from_normal = normal;
+  const shadow_scene_t shadow = shadow_scene_of(scene);
 
   for (int bounce = 0; bounce < std::max(settings.max_bounces, 1); ++bounce)
   {
@@ -149,11 +146,22 @@ linalg::vec3 trace_one_chain(const traced_scene_t &scene, Span<const baked_light
     // A ray that leaves the level collects the SKY, and every map is interior --
     // so it collects nothing and the chain ends. lighting_def.md ss13 is where a
     // sky becomes one line here rather than a light kind in the solve.
+    //
+    // The nearest SURFACE, which counts a fence only where its texel is solid --
+    // the same rule a shadow ray applies, or light passes through a grate one
+    // way and not the other.
     ray_hit_result_t hit = {};
-    if (!bvh_intersect_ray(*scene.bvh, origin, direction, hit)) break;
+    if (!trace_nearest_surface(shadow, origin, direction, hit)) break;
     if (!hit.hit || hit.t <= 0.f) break;
 
     const linalg::vec3 hit_position = origin + direction * hit.t;
+
+    // The GLASS this leg crossed, before anything is gathered at the far end:
+    // what is collected there travels back along this segment and is filtered by
+    // whatever stands in it. A bounce through a red window is as red as a shadow
+    // ray through the same window -- one function answers both.
+    throughput = multiply_channels(
+        throughput, segment_transmittance(shadow, origin, direction, hit.t));
 
     // The entered face's outward normal, which faces the ray by construction --
     // except for a ray that started inside a solid, where it does not and the
@@ -230,10 +238,35 @@ linalg::vec3 sample_texture(const assets::texture_asset_t &texture, const linalg
           srgb_byte_to_linear(texture.pixels[at + 2])};
 }
 
-traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierarchy &bvh)
+float sample_texture_alpha(const assets::texture_asset_t &texture, const linalg::vec2 &uv)
+{
+  // Alpha is COVERAGE, never colour, so it is read raw where the three channels
+  // beside it are sRGB-decoded. A texture with no fourth channel is opaque.
+  if (texture.width <= 0 || texture.height <= 0 || texture.channels < 4) return 1.f;
+
+  const auto wrap = [](float coordinate, int size) {
+    int texel = (int)std::floor(coordinate * (float)size);
+    texel %= size;
+    if (texel < 0) texel += size;
+    return texel;
+  };
+
+  const size_t at = ((size_t)wrap(uv.y, texture.height) * (size_t)texture.width +
+                     (size_t)wrap(uv.x, texture.width)) *
+                    (size_t)texture.channels;
+  if (at + 3 >= texture.pixels.size()) return 1.f;
+
+  return (float)texture.pixels[at + 3] * (1.f / 255.f);
+}
+
+traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierarchy &bvh,
+                                  const Bounding_Volume_Hierarchy *alpha_tested,
+                                  const Bounding_Volume_Hierarchy *transmissive)
 {
   traced_scene_t scene;
   scene.bvh = &bvh;
+  scene.alpha_tested_bvh = alpha_tested;
+  scene.transmissive_bvh = transmissive;
 
   scene.brushes.reserve(map.geometry.size());
   for (const map_geometry_t &entry : map.geometry)
@@ -261,9 +294,28 @@ traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierar
 
   scene.materials.reserve(resolved.size());
   for (const assets::material_maps_t &maps : resolved)
-    scene.materials.push_back({pixels_of(maps.albedo), pixels_of(maps.emissive)});
+    scene.materials.push_back({pixels_of(maps.albedo), pixels_of(maps.emissive),
+                               maps.alpha_mode, maps.alpha_cutoff});
 
   return scene;
+}
+
+shadow_scene_t shadow_scene_of(const traced_scene_t &scene)
+{
+  // The occluders are what a bounce hits, and the glass is this same scene when
+  // it has any. Derived rather than stored, so a chain cannot be tracing one
+  // world and shadowing against another.
+  const bool resolves_a_material = scene.alpha_tested_bvh || scene.transmissive_bvh;
+  return {scene.bvh, scene.alpha_tested_bvh, scene.transmissive_bvh,
+          resolves_a_material ? &scene : nullptr};
+}
+
+shadow_scene_t shadow_scene_for(const Bounding_Volume_Hierarchy &occluders,
+                                const traced_scene_t &scene)
+{
+  shadow_scene_t shadow = shadow_scene_of(scene);
+  shadow.occluders = &occluders;
+  return shadow;
 }
 
 traced_surface_t surface_at(const traced_scene_t &scene, const ray_hit_result_t &hit,
@@ -296,6 +348,51 @@ traced_surface_t surface_at(const traced_scene_t &scene, const ray_hit_result_t 
                         : linalg::vec3{0.f, 0.f, 0.f};
 
   return {albedo, emission};
+}
+
+linalg::vec3 transmittance_at(const traced_scene_t &scene, const ray_hit_result_t &hit,
+                              const linalg::vec3 &hit_position)
+{
+  const brush_geometry_t *brush = find_brush(scene, hit.id.index);
+  if (!brush) return {0.f, 0.f, 0.f};
+
+  const face_surface_t brush_default;
+  const face_surface_t *matched = find_face_surface(*brush, Plane{hit_position, hit.normal});
+  const face_surface_t &face = matched ? *matched : brush_default;
+
+  if (face.material >= scene.materials.size()) return {0.f, 0.f, 0.f};
+  const traced_scene_t::material_t &material = scene.materials[face.material];
+  if (material.alpha_mode != assets::alpha_mode_t::blend || !material.albedo)
+    return {0.f, 0.f, 0.f};
+
+  const linalg::vec2 uv = face_uv_at(face.uv, hit_position, hit.normal);
+  const float alpha = sample_texture_alpha(*material.albedo, uv);
+
+  // The blend equation the renderer draws this face with, read as a filter:
+  // what the pane puts on the floor is what it did NOT stop, tinted by what it
+  // is made of. An untextured blend face has no colour to tint with, so the
+  // untextured grey is what it filters by, exactly as a bounce off it would.
+  constexpr linalg::vec3 untextured{UNTEXTURED_BOUNCE_ALBEDO, UNTEXTURED_BOUNCE_ALBEDO,
+                                    UNTEXTURED_BOUNCE_ALBEDO};
+  return sample_texture(*material.albedo, uv, untextured) * (1.f - alpha);
+}
+
+bool alpha_test_is_solid_at(const traced_scene_t &scene, const ray_hit_result_t &hit,
+                          const linalg::vec3 &hit_position)
+{
+  const brush_geometry_t *brush = find_brush(scene, hit.id.index);
+  if (!brush) return true;
+
+  const face_surface_t brush_default;
+  const face_surface_t *matched = find_face_surface(*brush, Plane{hit_position, hit.normal});
+  const face_surface_t &face = matched ? *matched : brush_default;
+
+  if (face.material >= scene.materials.size()) return true;
+  const traced_scene_t::material_t &material = scene.materials[face.material];
+  if (material.alpha_mode != assets::alpha_mode_t::cutout || !material.albedo) return true;
+
+  const linalg::vec2 uv = face_uv_at(face.uv, hit_position, hit.normal);
+  return sample_texture_alpha(*material.albedo, uv) >= material.alpha_cutoff;
 }
 
 indirect_sh_l1_t trace_indirect_light(const traced_scene_t &scene,
@@ -389,19 +486,25 @@ probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_li
 
     const light_arrival_t arrival =
         arrival_at(light, position, probe.direction, settings.directional_shadow_distance);
-    const float visibility =
-        light_visibility(*scene.bvh, position, arrival.direction, arrival,
+    const linalg::vec3 visibility =
+        light_visibility(shadow_scene_of(scene), position, arrival.direction, arrival,
                          settings.shadow_ray_bias, settings.soft_shadow_samples,
                          hash_mix(hash, 0x7f4a7c15u + slot));
 
     if (channel >= 0)
     {
-      traced.visibility[(uint32_t)channel] = visibility;
+      // A probe channel is ONE number, so a coloured shadow reaches a dynamic
+      // object as a dimming rather than as a tint: the four channels are the
+      // four Mixed lights and there is no room for a colour beside them
+      // (lightmap.hpp's probe_volume_t). A chart's slots carry the colour; a
+      // probe's carry how much.
+      traced.visibility[(uint32_t)channel] = luminance_of(visibility);
       continue;
     }
-    if (visibility <= 0.f) continue;
+    if (luminance_of(visibility) <= 0.f) continue;
 
-    add_from_direction(light.radiance * (arrival.attenuation * visibility), arrival.direction);
+    add_from_direction(multiply_channels(light.radiance, visibility) * arrival.attenuation,
+                       arrival.direction);
   }
 
   if (settings.rays_per_sample <= 0) return traced;

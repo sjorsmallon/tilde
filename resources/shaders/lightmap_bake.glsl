@@ -8,6 +8,10 @@
 // Expects, declared BEFORE this include: `scene`, the acceleration structure,
 // and `push`, carrying shadow_ray_bias, soft_shadow_samples and
 // directional_shadow_distance.
+//
+// The RAYS are not here, they are in lightmap_shadow.glsl -- a shadow ray has to
+// resolve the material of the glass it crosses, so it comes after the kernel's
+// own geometry bindings, where this comes before them.
 
 #include "light_arrival.glsl"
 
@@ -78,28 +82,6 @@ void face_tangents(vec3 normal, out vec3 tangent_u, out vec3 tangent_v)
   tangent_v = cross(normal, tangent_u);
 }
 
-// --- Rays --------------------------------------------------------------------
-
-bool ray_is_clear(vec3 origin, vec3 direction, float max_distance)
-{
-  // A ray asked to travel nowhere hits nothing: the CPU's `t < distance - bias`
-  // admits no hit there, and a query with tMax below tMin is undefined.
-  if (max_distance <= 0.0) return true;
-
-  rayQueryEXT query;
-  rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                        0xff, origin, 0.0, direction, max_distance);
-  while (rayQueryProceedEXT(query)) {}
-  return rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionNoneEXT;
-}
-
-bool shadow_ray_reaches(vec3 surface_position, vec3 surface_normal, vec3 direction,
-                        float distance)
-{
-  return ray_is_clear(surface_position + surface_normal * push.shadow_ray_bias, direction,
-                      distance - push.shadow_ray_bias);
-}
-
 // --- Arrival, on top of the shared text ----------------------------------------
 
 // lightmap_lights.cpp's light_arrival_t: light_arrival() from light_arrival.glsl
@@ -158,83 +140,6 @@ bake_arrival_t arrival_at(Light light, vec3 surface_position, vec3 surface_norma
 
   arrival.reaches = true;
   return arrival;
-}
-
-bool shadow_ray_reaches_disc_point(vec3 surface_position, vec3 surface_normal,
-                                   bake_arrival_t arrival, float radius, float angle)
-{
-  vec3 tangent_u;
-  vec3 tangent_v;
-  face_tangents(arrival.direction, tangent_u, tangent_v);
-
-  const vec3 centre = surface_position + arrival.direction * arrival.distance;
-  const vec3 target =
-      centre + tangent_u * (cos(angle) * radius) + tangent_v * (sin(angle) * radius);
-
-  const vec3 to_target = target - surface_position;
-  const float distance = sqrt(dot(to_target, to_target));
-  if (distance < 1e-4) return false;
-
-  return shadow_ray_reaches(surface_position, surface_normal, to_target * (1.0 / distance),
-                            distance);
-}
-
-// lightmap_lights.cpp's shadow_ray_count: one ray for a punctual light,
-// soft_shadow_samples for one with a disc.
-int shadow_ray_count(bake_arrival_t arrival)
-{
-  return arrival.shadow_disc_radius > 0.0 ? max(push.soft_shadow_samples, 1) : 1;
-}
-
-// light_visibility: the fraction of the emitter this point sees, over the
-// golden-angle spiral with the CPU's 16-bit jitters cut from the same hash.
-float light_visibility(vec3 surface_position, vec3 surface_normal, bake_arrival_t arrival,
-                       uint hash)
-{
-  const int sample_count = shadow_ray_count(arrival);
-
-  if (sample_count == 1)
-    return shadow_ray_reaches(surface_position, surface_normal, arrival.direction,
-                              arrival.distance)
-               ? 1.0
-               : 0.0;
-
-  int reached = 0;
-  for (int sample_index = 0; sample_index < sample_count; ++sample_index)
-  {
-    const uint sample_bits = hash_mix(hash, uint(sample_index));
-
-    const float radius_jitter = float(sample_bits & 0xffffu) * (1.0 / 65536.0);
-    const float angle_jitter = float((sample_bits >> 16) & 0xffffu) * (1.0 / 65536.0);
-
-    const float radius = arrival.shadow_disc_radius *
-                         sqrt((float(sample_index) + radius_jitter) / float(sample_count));
-    const float angle = float(sample_index) * GOLDEN_ANGLE + angle_jitter * TWO_PI;
-
-    if (shadow_ray_reaches_disc_point(surface_position, surface_normal, arrival, radius, angle))
-      ++reached;
-  }
-
-  return float(reached) / float(sample_count);
-}
-
-// light_visibility_single_ray: the chain's next-event estimation spends ONE ray
-// per light per vertex, toward a random point of the disc.
-float light_visibility_single_ray(vec3 surface_position, vec3 surface_normal,
-                                  bake_arrival_t arrival, uint hash)
-{
-  if (arrival.shadow_disc_radius <= 0.0)
-    return shadow_ray_reaches(surface_position, surface_normal, arrival.direction,
-                              arrival.distance)
-               ? 1.0
-               : 0.0;
-
-  const float radius = arrival.shadow_disc_radius * sqrt(unit_float_from(hash));
-  const float angle = TWO_PI * unit_float_from(hash_mix(hash, 0x68bc21ebu));
-
-  return shadow_ray_reaches_disc_point(surface_position, surface_normal, arrival, radius, angle)
-             ? 1.0
-             : 0.0;
 }
 
 // A uint64_t on the CPU IS the uvec2 here, low word first: one bit per light

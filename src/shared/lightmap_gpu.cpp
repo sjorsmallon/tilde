@@ -130,21 +130,38 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
   scene.materials.reserve(traced.materials.size() + 1);
   for (const traced_scene_t::material_t &material : traced.materials)
     scene.materials.push_back({texture_index_for(scene.textures, material.albedo),
-                               texture_index_for(scene.textures, material.emissive), 0, 0});
+                               texture_index_for(scene.textures, material.emissive),
+                               (uint32_t)material.alpha_mode, material.alpha_cutoff});
 
   scene.untextured_material = (uint32_t)scene.materials.size();
-  scene.materials.push_back({GPU_NO_TEXTURE, GPU_NO_TEXTURE, 0, 0});
+  scene.materials.push_back({GPU_NO_TEXTURE, GPU_NO_TEXTURE,
+                             (uint32_t)assets::alpha_mode_t::opaque,
+                             assets::DEFAULT_ALPHA_CUTOFF});
 
-  for (const map_geometry_t &entry : map.geometry)
+  // Three times over the same list, opaque first: the passes partition the
+  // geometry exactly the way the three BVHs do, through the same one question,
+  // so a brush cannot be in two ranges or in none.
+  constexpr light_occlusion_t PASSES[] = {light_occlusion_t::Opaque,
+                                          light_occlusion_t::Alpha_Tested,
+                                          light_occlusion_t::Transmissive};
+  for (const light_occlusion_t pass : PASSES)
   {
-    if (!geometry_occludes_light(entry.value, map.materials))
-      continue;
+    if (pass == light_occlusion_t::Alpha_Tested)
+      scene.first_alpha_tested_triangle = scene.triangles.size();
+    if (pass == light_occlusion_t::Transmissive)
+      scene.first_transmissive_triangle = scene.triangles.size();
 
-    if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
-      append_brush(scene, map, entry.uid, *brush);
-    else if (const static_mesh_geometry_t *static_mesh =
-                 std::get_if<static_mesh_geometry_t>(&entry.value))
-      append_static_mesh(scene, entry.uid, *static_mesh);
+    for (const map_geometry_t &entry : map.geometry)
+    {
+      if (light_occlusion_of(entry.value, map.materials) != pass)
+        continue;
+
+      if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
+        append_brush(scene, map, entry.uid, *brush);
+      else if (const static_mesh_geometry_t *static_mesh =
+                   std::get_if<static_mesh_geometry_t>(&entry.value))
+        append_static_mesh(scene, entry.uid, *static_mesh);
+    }
   }
 
   return scene;
@@ -294,6 +311,17 @@ void cpu_batch_solver_t::upload_scene(const batch_solver_scene_t &uploaded)
   accumulated = {};
 }
 
+// The shadow sets a CPU batch shades against: the uploaded occluder BVH, and the
+// uploaded traced scene as the glass when it holds any.
+static shadow_scene_t shadow_scene_of_batch(const batch_solver_scene_t &scene)
+{
+  // The uploaded occluder BVH wins: a solver is handed the two spellings of one
+  // world and must shade against the one it was uploaded with.
+  if (!scene.bvh) fatal_error("[lightmap] a CPU batch with no occluder BVH.");
+  if (!scene.traced) return {scene.bvh, nullptr, nullptr, nullptr};
+  return shadow_scene_for(*scene.bvh, *scene.traced);
+}
+
 void cpu_batch_solver_t::solve_direct(Span<const gpu_sample_t> samples,
                                       Span<const uint64_t> chart_light_masks,
                                       gpu_direct_results_t &out)
@@ -312,10 +340,10 @@ void cpu_batch_solver_t::solve_direct(Span<const gpu_sample_t> samples,
                       "masks.",
                       i, sample.chart_index, chart_light_masks.size());
 
-        shade_sample_direct(sample, scene.lights, *scene.bvh, scene.settings,
+        shade_sample_direct(sample, scene.lights, shadow_scene_of_batch(scene), scene.settings,
                             chart_light_masks[sample.chart_index], out.irradiance[i],
-                            Span<float>(out.coverage.data() + i * light_count,
-                                        (uint32_t)light_count),
+                            Span<linalg::vec3>(out.coverage.data() + i * light_count,
+                                               (uint32_t)light_count),
                             Span<float>(out.weight.data() + i * light_count,
                                         (uint32_t)light_count),
                             statistics);
@@ -474,17 +502,19 @@ float coefficient_of(const probe_trace_t &value, size_t coefficient)
   return value.visibility[(uint32_t)(coefficient - SH_L1_COEFFICIENT_COUNT)];
 }
 
+// A direct answer flattened for the paired test: the irradiance, then each
+// light's coverage as three channels, then each light's weight. Same order as
+// direct_coefficient_name, and direct_floats_per_sample is how many there are.
 float coefficient_of(const gpu_direct_results_t &results, size_t record, size_t coefficient)
 {
   if (coefficient < 3)
-  {
-    const linalg::vec3 &irradiance = results.irradiance[record];
-    return coefficient == 0 ? irradiance.x : coefficient == 1 ? irradiance.y : irradiance.z;
-  }
-  const size_t per_light = coefficient - 3;
+    return results.irradiance[record][(int)coefficient];
+
   const size_t light_count = results.light_count;
-  if (per_light < light_count) return results.coverage[record * light_count + per_light];
-  return results.weight[record * light_count + (per_light - light_count)];
+  const size_t per_light = coefficient - 3;
+  if (per_light < light_count * 3)
+    return results.coverage[record * light_count + per_light / 3][(int)(per_light % 3)];
+  return results.weight[record * light_count + (per_light - light_count * 3)];
 }
 
 // The paired test itself, over any record type: `reference_at(i, k)` and
@@ -713,9 +743,10 @@ record_comparison_report_t compare_direct_results(Span<const gpu_sample_t> sampl
   check_shape(reference, "reference");
   check_shape(candidate, "candidate");
 
-  const size_t coefficient_count = 3 + 2 * light_count;
+  const size_t coefficient_count = direct_floats_per_sample(light_count);
   std::vector<uint32_t> scale_group(coefficient_count, 0);
-  for (size_t k = 3; k < coefficient_count; ++k) scale_group[k] = k - 3 < light_count ? 1 : 2;
+  for (size_t k = 3; k < coefficient_count; ++k)
+    scale_group[k] = k - 3 < light_count * 3 ? 1 : 2;
 
   return compare_records(
       samples, charts, coefficient_count, Span<const uint32_t>(scale_group),
@@ -774,7 +805,7 @@ const char *probe_coefficient_name(size_t coefficient)
 std::string_view direct_coefficient_name(size_t coefficient, size_t light_count,
                                          Span<char> storage)
 {
-  if (coefficient >= 3 + 2 * light_count)
+  if (coefficient >= direct_floats_per_sample(light_count))
     fatal_error("[lightmap-gpu] naming direct coefficient {} of {} lights.", coefficient,
                 light_count);
   if (storage.size() < DIRECT_COEFFICIENT_NAME_CAPACITY)
@@ -784,11 +815,12 @@ std::string_view direct_coefficient_name(size_t coefficient, size_t light_count,
   int written = 0;
   if (coefficient < 3)
     written = std::snprintf(storage.data, storage.size(), "irradiance.%c", "rgb"[coefficient]);
-  else if (coefficient - 3 < light_count)
-    written = std::snprintf(storage.data, storage.size(), "coverage[%zu]", coefficient - 3);
+  else if (coefficient - 3 < light_count * 3)
+    written = std::snprintf(storage.data, storage.size(), "coverage[%zu].%c",
+                            (coefficient - 3) / 3, "rgb"[(coefficient - 3) % 3]);
   else
     written = std::snprintf(storage.data, storage.size(), "weight[%zu]",
-                            coefficient - 3 - light_count);
+                            coefficient - 3 - light_count * 3);
   return std::string_view(storage.data, (size_t)std::max(written, 0));
 }
 

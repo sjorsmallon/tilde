@@ -389,11 +389,38 @@ struct collision_piece_t
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid);
 
-// False only for a brush EVERY face of which resolves to an alpha-blended
-// material. The bake's occluder BVH and the GPU BLAS both ask it, so a pane of
-// glass is transparent to light on both sides of the comparison.
-[[nodiscard]] bool geometry_occludes_light(const geometry_value_t &geometry,
-                                           Span<const std::string> materials);
+// How an object stops light, which is the ONE question that partitions the map
+// into the bake's three occluder sets. Both the CPU's BVHs and the GPU's
+// acceleration structures ask it, so the two cannot disagree about which set a
+// brush is in.
+//
+// The unit is the whole OBJECT, not the face: the CPU occluder BVH holds convex
+// pieces, and a piece is not a face. So a brush is only as see-through as its
+// LEAST see-through face -- a solid brush with one glass face still casts a
+// solid shadow, and a window is its own thin brush.
+enum class light_occlusion_t : uint8_t
+{
+  // Stops every ray. Everything authored before transparency.
+  Opaque,
+  // Stops a ray where its texel is opaque and passes it where the texel is cut
+  // away: a grate, a fence, chain-link. Every face resolves to a `cutout`
+  // material.
+  Alpha_Tested,
+  // Stops nothing, and TINTS what it passes (transparency_plan.md step 7).
+  // Every face resolves to a `blend` material.
+  Transmissive,
+};
+
+[[nodiscard]] light_occlusion_t light_occlusion_of(const geometry_value_t &geometry,
+                                                   Span<const std::string> materials);
+
+// The first of the three, which is the set a shadow ray is STOPPED by with no
+// texel read at all.
+[[nodiscard]] inline bool geometry_occludes_light(const geometry_value_t &geometry,
+                                                  Span<const std::string> materials)
+{
+  return light_occlusion_of(geometry, materials) == light_occlusion_t::Opaque;
+}
 
 geometry_surface_t &get_surface(geometry_value_t &geometry);
 const geometry_surface_t &get_surface(const geometry_value_t &geometry);

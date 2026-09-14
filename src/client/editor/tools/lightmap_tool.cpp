@@ -205,9 +205,11 @@ void Lightmap_Tool::probe_gpu_rays(editor_context_t& ctx)
   if (!renderer::ray_query_is_available() || !has_packed()) return;
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy alpha_tested = shared::build_alpha_tested_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy transmissive = shared::build_transmissive_bvh(*ctx.map);
   const std::vector<shared::gpu_sample_t> samples =
       shared::collect_lightmap_samples(baked, solve_settings, bvh);
-  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh, &alpha_tested, &transmissive);
   const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
 
@@ -271,9 +273,11 @@ void Lightmap_Tool::compare_gpu_indirect(editor_context_t& ctx)
   if (!renderer::ray_query_is_available() || !has_packed()) return;
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy alpha_tested = shared::build_alpha_tested_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy transmissive = shared::build_transmissive_bvh(*ctx.map);
   const shared::lightmap_sample_set_t set =
       shared::collect_lightmap_sample_set(baked, solve_settings, bvh);
-  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh, &alpha_tested, &transmissive);
   const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
   const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
@@ -355,9 +359,11 @@ void Lightmap_Tool::compare_gpu_direct(editor_context_t& ctx)
   if (!renderer::ray_query_is_available() || !has_packed()) return;
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy alpha_tested = shared::build_alpha_tested_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy transmissive = shared::build_transmissive_bvh(*ctx.map);
   const shared::lightmap_sample_set_t set =
       shared::collect_lightmap_sample_set(baked, solve_settings, bvh);
-  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh, &alpha_tested, &transmissive);
   const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
   const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
@@ -456,7 +462,9 @@ void Lightmap_Tool::compare_gpu_probes(editor_context_t& ctx)
   }
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
-  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const Bounding_Volume_Hierarchy alpha_tested = shared::build_alpha_tested_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy transmissive = shared::build_transmissive_bvh(*ctx.map);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh, &alpha_tested, &transmissive);
   const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
   const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,
@@ -548,7 +556,9 @@ void Lightmap_Tool::compare_gpu_captures(editor_context_t& ctx)
   }
 
   const Bounding_Volume_Hierarchy bvh = shared::build_occluder_bvh(*ctx.map);
-  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh);
+  const Bounding_Volume_Hierarchy alpha_tested = shared::build_alpha_tested_bvh(*ctx.map);
+  const Bounding_Volume_Hierarchy transmissive = shared::build_transmissive_bvh(*ctx.map);
+  const shared::traced_scene_t traced = shared::build_traced_scene(*ctx.map, bvh, &alpha_tested, &transmissive);
   const shared::gpu_bake_scene_t gpu_scene = shared::build_gpu_bake_scene(*ctx.map, traced);
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(*ctx.map);
   const shared::batch_solver_scene_t scene{&gpu_scene, &bvh, &traced,

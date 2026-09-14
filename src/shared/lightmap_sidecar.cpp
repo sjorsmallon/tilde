@@ -80,7 +80,13 @@ constexpr uint32_t LIGHTMAP_MAGIC = 0x504D4C54; // "TLMP"
 //    face bits, the override flag, and the cube's whole RGB9E5 mip chain behind
 //    a size, a mip count and a byte count. A version-8 file is REFUSED: a
 //    capture can only come from a bake.
-constexpr uint32_t LIGHTMAP_VERSION = 9;
+// 10: the visibility pages are RGB (transparency_plan.md step 7) -- three
+//    layers per atlas page, one per colour channel, each still four UNORM8
+//    slots. Nothing else about the file moves: the layer count already rides
+//    every page set, so a version-9 reader would decode a third of the pages
+//    and call it the whole answer. REFUSED, for gate 2's reason: a shadow's
+//    colour can only come from a bake.
+constexpr uint32_t LIGHTMAP_VERSION = 10;
 
 std::string lightmap_path_for(const std::string &map_path)
 {

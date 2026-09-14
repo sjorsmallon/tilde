@@ -46,26 +46,13 @@ layout(push_constant) uniform Push
   ivec4 visibility_slots;
   uint probes;
   uint capture;
+  // How much glass the scene holds: zero is no second instance, no second ray
+  // and the bake every map without any has always had.
+  uint transmissive_triangle_count;
 } push;
 
 #include "lightmap_bake.glsl"
-
-struct gpu_triangle_t
-{
-  uint material;
-  uint pad;
-  vec2 uv0;
-  vec2 uv1;
-  vec2 uv2;
-};
-
-struct gpu_material_t
-{
-  uint albedo_texture;
-  uint emissive_texture;
-  uint pad0;
-  uint pad1;
-};
+#include "lightmap_scene.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer Samples { gpu_sample_t samples[]; };
 // Twelve floats per record in indirect_sh_l1_t's order: l0.rgb, then the L1
@@ -79,15 +66,14 @@ layout(std430, set = 0, binding = 6) readonly buffer Materials { gpu_material_t 
 layout(std430, set = 0, binding = 7) readonly buffer Lights { Light lights[]; };
 // Every texture of the scene at its OWN size, RGBA8 as raw BYTES, indexed per
 // thread by the material's texture number (lightmap_gpu_plan.md step 5b).
-// fetch_texture below is sample_texture's wrap and sRGB decode verbatim, so a
-// hit reads the texel the CPU reads and decodes it with the same arithmetic.
+// fetch_texture, in the include below, is sample_texture's wrap and sRGB decode
+// verbatim, so a hit reads the texel the CPU reads and decodes it the same way.
 layout(set = 0, binding = 8) uniform utexture2D textures[];
 
-const float UNTEXTURED_BOUNCE_ALBEDO = 0.5;
-const uint NO_TEXTURE = 0xffffffffu;
+#include "lightmap_shadow.glsl"
+
 const float SH_L1_Y0 = 0.282095;
 const float SH_L1_Y1 = 0.488603;
-const float NO_MAX_DISTANCE = 1e30;
 
 // --- Samplers, lightmap_trace.cpp's ---------------------------------------------
 
@@ -143,46 +129,15 @@ vec3 direct_irradiance_at(vec3 position, vec3 normal, uint bits)
     const bake_arrival_t arrival = arrival_at(light, position, normal);
     if (!arrival.reaches) continue;
 
-    const float visibility =
+    const vec3 visibility =
         light_visibility_single_ray(position, normal, arrival, hash_mix(bits, slot));
-    if (visibility <= 0.0) continue;
+    if (luminance_of(visibility) <= 0.0) continue;
 
-    irradiance += light.radiance.rgb *
-                  (arrival.attenuation * arrival.normal_dot_light * visibility);
+    irradiance += light.radiance.rgb * visibility *
+                  (arrival.attenuation * arrival.normal_dot_light);
   }
 
   return irradiance;
-}
-
-// --- The surface under a hit ---------------------------------------------------
-
-// lightmap_trace.cpp's srgb_byte_to_linear.
-float srgb_byte_to_linear(uint encoded)
-{
-  const float value = float(encoded) * (1.0 / 255.0);
-  if (value <= 0.04045) return value * (1.0 / 12.92);
-  return pow((value + 0.055) * (1.0 / 1.055), 2.4);
-}
-
-// sample_texture's wrap: floor of the coordinate times the size, modulo the
-// size, folded positive. GLSL leaves % of a negative operand undefined where
-// C++ truncates, so the negative side is folded by hand to the same texel.
-int wrap_texel(float coordinate, int size)
-{
-  const int texel = int(floor(coordinate * float(size)));
-  if (texel >= 0) return texel % size;
-  const int remainder = (-texel) % size;
-  return remainder == 0 ? 0 : size - remainder;
-}
-
-vec3 fetch_texture(uint index, vec2 uv, vec3 fallback)
-{
-  if (index == NO_TEXTURE) return fallback;
-  const ivec2 size = textureSize(textures[nonuniformEXT(index)], 0);
-  const ivec2 texel = ivec2(wrap_texel(uv.x, size.x), wrap_texel(uv.y, size.y));
-  const uvec4 bytes = texelFetch(textures[nonuniformEXT(index)], texel, 0);
-  return vec3(srgb_byte_to_linear(bytes.r), srgb_byte_to_linear(bytes.g),
-              srgb_byte_to_linear(bytes.b));
 }
 
 // --- The chain -----------------------------------------------------------------
@@ -204,21 +159,23 @@ vec3 trace_one_chain(vec3 position, vec3 normal, vec3 first_leg, uint bits)
         bounce == 0 ? first_leg : cosine_hemisphere_direction(from_normal, bits);
     const vec3 origin = from + from_normal * push.ray_bias;
 
-    rayQueryEXT query;
-    rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xff, origin, 0.0, direction,
-                          NO_MAX_DISTANCE);
-    while (rayQueryProceedEXT(query)) {}
-    if (rayQueryGetIntersectionTypeEXT(query, true) !=
-        gl_RayQueryCommittedIntersectionTriangleEXT)
+    // The nearest SURFACE, which counts a fence only where its texel is solid --
+    // lightmap_lights.cpp's trace_nearest_surface, the same rule a shadow ray
+    // applies.
+    float t = 0.0;
+    uint triangle_index = 0u;
+    vec2 barycentrics = vec2(0.0);
+    if (!trace_nearest_surface(origin, direction, NO_MAX_DISTANCE, t, triangle_index,
+                               barycentrics))
       break;
-
-    const float t = rayQueryGetIntersectionTEXT(query, true);
     if (t <= 0.0) break;
 
-    const uint triangle_index = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
-    const vec2 barycentrics = rayQueryGetIntersectionBarycentricsEXT(query, true);
-
     const vec3 hit_position = origin + direction * t;
+
+    // The GLASS this leg crossed, before anything is gathered at the far end:
+    // what is collected there travels back along this segment and is filtered by
+    // whatever stands in it.
+    throughput *= transmittance_along(origin, direction, t);
 
     const vec3 corner_0 = vertices[indices[triangle_index * 3u + 0u]].xyz;
     const vec3 corner_1 = vertices[indices[triangle_index * 3u + 1u]].xyz;
@@ -353,16 +310,19 @@ void shade_probe(uint i, gpu_sample_t sample_record)
     const bake_arrival_t arrival = arrival_at(light, position, vec3(0.0, 1.0, 0.0));
     if (!arrival.arrives) continue;
 
-    const float seen = light_visibility(position, arrival.direction, arrival,
-                                        hash_mix(hash, 0x7f4a7c15u + slot));
+    const vec3 seen = light_visibility(position, arrival.direction, arrival,
+                                       hash_mix(hash, 0x7f4a7c15u + slot));
     if (channel >= 0)
     {
-      visibility[channel] = seen;
+      // A probe channel is ONE number: the four are the four Mixed lights and
+      // there is no room for a colour beside them, so a coloured shadow reaches
+      // a dynamic object as a dimming. lightmap_trace.cpp says the same.
+      visibility[channel] = luminance_of(seen);
       continue;
     }
-    if (seen <= 0.0) continue;
+    if (luminance_of(seen) <= 0.0) continue;
 
-    add_from_direction(projected, light.radiance.rgb * (arrival.attenuation * seen),
+    add_from_direction(projected, light.radiance.rgb * seen * arrival.attenuation,
                        arrival.direction);
   }
 

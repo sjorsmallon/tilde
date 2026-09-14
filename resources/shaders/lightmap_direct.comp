@@ -1,5 +1,7 @@
 #version 460
 #extension GL_EXT_ray_query : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_samplerless_texture_functions : require
 
 // lightmap_gpu_plan.md step 6: the direct kernel. shade_sample_direct of
 // lightmap_solve.cpp in GLSL, one sample record per thread: arrival_at through
@@ -27,20 +29,35 @@ layout(push_constant) uniform Push
   float shadow_ray_bias;
   int soft_shadow_samples;
   float directional_shadow_distance;
+  // How much glass the scene holds: zero is no second instance, no second ray
+  // and the bake every map without any has always had.
+  uint transmissive_triangle_count;
 } push;
 
 #include "lightmap_bake.glsl"
+#include "lightmap_scene.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer Samples { gpu_sample_t samples[]; };
 // Three regions, in this order: vec4 per record (irradiance rgb, and in w the
-// number of shadow rays this record cast, for the report line), then the
-// coverage per (record, light) and the weight per (record, light), both
-// sample-major -- gpu_direct_results_t's three lists laid end to end.
+// number of shadow rays this record cast, for the report line), then THREE
+// floats of coverage per (record, light) -- a shadow ray through glass arrives
+// coloured -- and one weight per (record, light), both sample-major:
+// gpu_direct_results_t's three lists laid end to end.
 layout(std430, set = 0, binding = 2) writeonly buffer Results { float results[]; };
 // One 64-bit mask per chart of the batch, low word first, indexed by the
 // record's chart_index: which lights may sum into the irradiance.
 layout(std430, set = 0, binding = 3) readonly buffer Chart_Light_Masks { uvec2 chart_light_masks[]; };
 layout(std430, set = 0, binding = 4) readonly buffer Lights { Light lights[]; };
+
+// The geometry, for the one thing the direct term needs a MATERIAL for: the tint
+// of the glass a shadow ray crossed. A bounce's albedo is the indirect kernel's
+// business and is why these bindings exist there too -- same names, so the
+// shared shadow text can read them from either kernel.
+layout(std430, set = 0, binding = 5) readonly buffer Triangles { gpu_triangle_t triangles[]; };
+layout(std430, set = 0, binding = 6) readonly buffer Materials { gpu_material_t materials[]; };
+layout(set = 0, binding = 7) uniform utexture2D textures[];
+
+#include "lightmap_shadow.glsl"
 
 // lightmap_solve_mode_t::Visibility.
 const uint MODE_VISIBILITY = 1u;
@@ -54,8 +71,10 @@ void main()
   const uvec2 mask = chart_light_masks[sample_record.chart_index];
   const bool binary = push.mode == MODE_VISIBILITY;
 
-  const uint coverage_base = push.sample_count * 4u + i * push.light_count;
-  const uint weight_base = coverage_base + push.sample_count * push.light_count;
+  // Three floats of coverage per (record, light) since step 7, one of weight.
+  const uint coverage_base = push.sample_count * 4u + i * push.light_count * 3u;
+  const uint weight_base = push.sample_count * 4u + push.sample_count * push.light_count * 3u +
+                           i * push.light_count;
 
   vec3 irradiance = vec3(0.0);
   uint rays = 0u;
@@ -64,7 +83,7 @@ void main()
   {
     // The buffer is reused across dispatches: a light that does not arrive
     // writes its zero rather than leaving the last dispatch's answer.
-    float coverage = 0.0;
+    vec3 coverage = vec3(0.0);
     float weight = 0.0;
 
     const Light light = lights[slot];
@@ -72,30 +91,37 @@ void main()
     if (arrival.arrives)
     {
       rays += uint(shadow_ray_count(arrival));
-      const float visibility = light_visibility(sample_record.position, sample_record.normal,
-                                                arrival, hash_mix(sample_record.seed, slot));
-      if (visibility > 0.0)
+      const vec3 visibility = light_visibility(sample_record.position, sample_record.normal,
+                                               arrival, hash_mix(sample_record.seed, slot));
+
+      // How much light got through, whatever colour it is: what ranks a slot and
+      // what gates the sum, since a ranking is not a question three numbers can
+      // answer. lightmap_solve.cpp's `delivered`.
+      const float delivered = luminance_of(visibility);
+      if (delivered > 0.0)
       {
         coverage = visibility;
-        weight = visibility * arrival.attenuation * luminance_of(light.radiance.rgb);
+        weight = delivered * arrival.attenuation * luminance_of(light.radiance.rgb);
 
         if (arrival.reaches)
         {
           if (binary)
           {
-            const float strongest = max(irradiance.x, visibility);
+            const float strongest = max(irradiance.x, delivered);
             irradiance = vec3(strongest);
           }
           else if (mask_admits(mask, slot))
           {
-            irradiance += light.radiance.rgb *
-                          (arrival.attenuation * arrival.normal_dot_light * visibility);
+            irradiance += light.radiance.rgb * visibility *
+                          (arrival.attenuation * arrival.normal_dot_light);
           }
         }
       }
     }
 
-    results[coverage_base + slot] = coverage;
+    results[coverage_base + slot * 3u + 0u] = coverage.r;
+    results[coverage_base + slot * 3u + 1u] = coverage.g;
+    results[coverage_base + slot * 3u + 2u] = coverage.b;
     results[weight_base + slot] = weight;
   }
 

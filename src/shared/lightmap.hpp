@@ -29,6 +29,13 @@ namespace shared
 // occluded, so the failure is a dark face rather than light through a wall.
 inline constexpr uint32_t LIGHTMAP_LIGHTS_PER_CHART = 4;
 
+// How many ATLAS LAYERS one page of visibility occupies: one per colour channel,
+// each holding the four slots. A shadow ray that came through glass arrives
+// coloured, and the four kept lights are shaded analytically at runtime -- so
+// the channel is the only place their shadow's colour can live. Same shape and
+// same reason as SH_L1_LAYERS_PER_PAGE, which the L1 pages already pay for.
+inline constexpr int VISIBILITY_LAYERS_PER_PAGE = 3;
+
 // An unfilled slot. Zero would not do: it is the first entry of the resolve
 // table, which is a real light.
 inline constexpr int16_t LIGHTMAP_NO_LIGHT_SLOT = -1;
@@ -286,7 +293,8 @@ enum class lightmap_pixel_format_t : uint32_t
   // signed and cannot.
   Rgb9e5 = 0,
 
-  // The VISIBILITY role: one UNORM8 per light slot, in the chart's slot order.
+  // The VISIBILITY role: one UNORM8 per light slot per COLOUR CHANNEL, in the
+  // chart's slot order, over three layers per atlas page.
   // Eight bits is enough because the value is a coverage FRACTION rather than a
   // radiance -- it has a top of 1.0 and no window to place, which is the whole
   // reason the irradiance beside it cannot use the same eight bits.
@@ -582,11 +590,20 @@ struct lightmap_pages_t
 
   // The VISIBILITY role's, in coverage fractions -- one per light slot, in the
   // owning chart's slot order. A pair of its own rather than a widened `store`
-  // because these are four independent scalars and not a colour: nothing here
-  // may be tonemapped, exposed or sRGB-encoded, and a vec4 invites all three.
+  // because these are independent FRACTIONS and not a colour: nothing here may
+  // be tonemapped, exposed or sRGB-encoded.
+  //
+  // A vec3 per slot, over VISIBILITY_LAYERS_PER_PAGE layers, because a shadow
+  // ray through stained glass arrives coloured and the four kept lights are
+  // shaded ANALYTICALLY at runtime -- the channel is the only place their
+  // shadow's colour can live (transparency_plan.md step 7). A slot occluded by
+  // nothing but opaque geometry writes three equal numbers.
+  //
+  // `page` is the ATLAS page; the three layers it occupies are this pair's own
+  // business, exactly as with store_l1.
   void store_visibility(int page, int x, int y,
-                        const Array<float, LIGHTMAP_LIGHTS_PER_CHART> &coverage);
-  [[nodiscard]] Array<float, LIGHTMAP_LIGHTS_PER_CHART>
+                        const Array<linalg::vec3, LIGHTMAP_LIGHTS_PER_CHART> &coverage);
+  [[nodiscard]] Array<linalg::vec3, LIGHTMAP_LIGHTS_PER_CHART>
   load_visibility(int page, int x, int y) const;
 
   // The SH L1 role's, and it takes the texel's L0 because the encoding

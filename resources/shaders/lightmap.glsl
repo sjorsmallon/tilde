@@ -18,6 +18,12 @@
 // below is one vec4 and the slots one ivec4.
 #define LIGHTMAP_LIGHTS_PER_CHART 4
 
+// shared/lightmap.hpp's VISIBILITY_LAYERS_PER_PAGE. One layer per COLOUR
+// CHANNEL, each holding the four slots: a shadow ray that came through stained
+// glass arrives coloured, and the four kept lights are shaded analytically here,
+// so their channel is the only place that colour can live.
+#define VISIBILITY_LAYERS_PER_PAGE 3
+
 layout(location = 5) in vec3 fragLightmapUV;
 // flat, and it has to be: a slot is an identity, and interpolating two vertices
 // that named lights 3 and 7 produces light 5. A chart never spans a triangle, so
@@ -65,11 +71,39 @@ layout(set = 3, binding = 4) uniform sampler2DArray lightmapIndirectL1;
 // unclaimed channel gives and is the safe one: zero means both "fully occluded"
 // and "this chart has no channel for you", which is the N+1 policy's asymmetry
 // arriving at the far end.
-vec4 lightmap_coverage()
+// The four coverages of this texel, in CHANNEL order, one per COLOUR channel:
+// `coverage[slot]` is the vec3 the slot's shadow rays delivered. Three fetches
+// hoisted together for the reason the one was -- a sample at a loop-invariant
+// coordinate, taken once.
+struct lightmap_coverage_t
 {
+    vec3 slots[LIGHTMAP_LIGHTS_PER_CHART];
+};
+
+lightmap_coverage_t lightmap_coverage()
+{
+    lightmap_coverage_t coverage;
+    for (int slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+        coverage.slots[slot] = vec3(0.0);
     if (fragLightmapUV.z < 0.0)
-        return vec4(0.0);
-    return texture(lightmapVisibility, fragLightmapUV);
+        return coverage;
+
+    float first_layer = fragLightmapUV.z * float(VISIBILITY_LAYERS_PER_PAGE);
+    for (int channel = 0; channel < VISIBILITY_LAYERS_PER_PAGE; ++channel)
+    {
+        vec4 word = texture(lightmapVisibility,
+                            vec3(fragLightmapUV.xy, first_layer + float(channel)));
+        for (int slot = 0; slot < LIGHTMAP_LIGHTS_PER_CHART; ++slot)
+            coverage.slots[slot][channel] = word[slot];
+    }
+    return coverage;
+}
+
+// How much of a slot's light got through, whatever colour it is -- the one
+// number the "is this slot worth shading" test needs.
+float lightmap_coverage_strength(vec3 coverage)
+{
+    return max(coverage.r, max(coverage.g, coverage.b));
 }
 
 // Which light this channel names, or -1 for a channel that names none and for one
@@ -153,22 +187,26 @@ vec3 lightmap_indirect_diffuse(vec3 N)
 vec3 lightmap_direct_diffuse(vec3 N, vec3 world_position)
 {
     vec3 diffuse  = vec3(0.0);
-    vec4 coverage = lightmap_coverage();
+    lightmap_coverage_t coverage = lightmap_coverage();
 
     for (int channel = 0; channel < LIGHTMAP_LIGHTS_PER_CHART; ++channel)
     {
         int slot = lightmap_chart_slot(channel);
-        if (slot < 0 || coverage[channel] <= 0.0)
+        if (slot < 0 || lightmap_coverage_strength(coverage.slots[channel]) <= 0.0)
             continue;
 
         Light         light   = scene.lights[slot];
         Light_Arrival arrival = light_arrival(light, world_position);
 
         // Atlas visibility times the shadow map (decision K): independent
-        // blockers, so the product counts no occluder twice.
-        float visibility       = coverage[channel] * shadow_visibility(light, arrival, world_position, N);
+        // blockers, so the product counts no occluder twice. The atlas half is a
+        // COLOUR -- what the glass on the way here let through -- so it filters
+        // the radiance rather than scaling it.
+        vec3  visibility       = coverage.slots[channel] *
+                                 shadow_visibility(light, arrival, world_position, N);
         float normal_dot_light = max(dot(N, arrival.direction), 0.0);
-        diffuse += light.radiance.rgb * (arrival.attenuation * visibility * normal_dot_light) / PI;
+        diffuse += light.radiance.rgb * visibility *
+                   (arrival.attenuation * normal_dot_light) / PI;
     }
 
     return diffuse;

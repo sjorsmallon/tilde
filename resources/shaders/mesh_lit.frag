@@ -124,11 +124,11 @@ void main() {
     // Analytic means the material's other three maps finally do something on a
     // brush face: the real light direction against the normal-mapped normal,
     // with the bake contributing only the shadow.
-    vec4 coverage = lightmap_coverage();
+    lightmap_coverage_t coverage = lightmap_coverage();
     for (int channel = 0; channel < LIGHTMAP_LIGHTS_PER_CHART; ++channel)
     {
         int slot = lightmap_chart_slot(channel);
-        if (slot < 0 || coverage[channel] <= 0.0)
+        if (slot < 0 || lightmap_coverage_strength(coverage.slots[channel]) <= 0.0)
             continue;
 
         Light         light   = scene.lights[slot];
@@ -137,10 +137,17 @@ void main() {
         // Atlas visibility TIMES the shadow map (decision K): the bake holds the
         // static occluders, a Mixed light's map only the dynamic ones, so the
         // two are independent blockers and the product counts nothing twice.
-        float visibility = coverage[channel] * shadow_visibility(light, arrival, fragWorldPosition, N);
+        //
+        // The atlas half is a COLOUR -- what the glass between here and the
+        // light let through -- so it filters the RADIANCE rather than scaling
+        // the attenuation. Same number where the ray crossed nothing, and it is
+        // the radiance both the diffuse and the specular lobe are scaled by, so
+        // a stained-glass highlight is tinted too.
+        vec3 visibility = coverage.slots[channel] *
+                          shadow_visibility(light, arrival, fragWorldPosition, N);
 
         lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
-                            light.radiance.rgb, arrival.attenuation * visibility,
+                            light.radiance.rgb * visibility, arrival.attenuation,
                             light.direction.w, arrival.distance);
     }
 #endif
