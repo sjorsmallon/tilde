@@ -74,8 +74,9 @@ None of these has a number that says "good". Each is a judgement, so each
 item says what to set up, what a correct result LOOKS like, what the known
 failure looks like and which knob it points at, and the one sentence to write
 down. Work through them in order; 1 to 3 need no rebake, 4 and 5 need the
-32-chain bake saved as the sidecar. Take a screenshot per item so the verdict
-is not from memory.
+32-chain bake saved as the sidecar, and since 2026-09-14 EVERY map needs one
+rebake before it draws lit at all -- the sidecar is version 10 and 9 is refused.
+Take a screenshot per item so the verdict is not from memory.
 
 **Before starting.** Bake at 32 chains, "Trace indirect light" on, and save
 the sidecar so the game loads it. Leave `r_exposure` at 1.4 for every item:
@@ -219,10 +220,50 @@ step 5's pin, the shader has never been looked at).
 - Write down: slides correctly or swims; seams or none; and whether the
   matte floor's grazing reflection is visible at all.
 
-**After the six.** Two of them can end in code (4: the floor leaves the
+**7. Transparency, all of it** (added 2026-09-14, after steps 1-7 of
+`transparency_plan.md` landed -- nothing in that plan has EVER been seen in a
+map, so this one item covers the renderer half and the bake half at once).
+- Setup: a material folder whose `albedo.png` has a graded alpha (a glass) and
+  a second whose alpha is only 0 or 255 (a fence, chain-link). Build three
+  things: two glass panes as their own thin brushes, overlapping in view, in
+  front of a wall; a fence brush under a spot light; and a coloured pane over
+  a floor with a `Baked` light above it. Bake at 32 chains with "Trace
+  indirect light" on and save the sidecar. **Every `.lightmap` on disk is
+  refused now (version 10), so every map needs one rebake before it draws
+  lit at all** -- an unlit map is that, not a transparency bug.
+- Good: the near pane tints the far one and both tint the wall, with no
+  flicker as the camera moves (the blend tail is sorted per submesh by the
+  draw's origin -- two panes at ONE origin is the known limit, not a bug).
+  The fence's shadow has the fence's holes in it, in the real-time shadow map
+  AND in the bake, and the two agree at the boundary where one takes over.
+  The floor under the coloured pane carries a pool of that COLOUR, and the
+  colour survives a normal-mapped floor and shows in the specular highlight
+  -- that is the whole of what the RGB visibility pages bought and the one
+  thing a scalar coverage could not have done.
+- Bad, and the knob: a pane draws opaque -> its albedo's alpha never made it
+  through `classify_alpha`; check the material resolves at all. A pane draws
+  but casts a SOLID shadow -> its brush has a face that is not glass, since
+  the unit is the whole OBJECT (make the window its own thin brush). A
+  coloured pane throwing a GREY pool -> the light is in the chart's four and
+  the visibility channel lost its colour, which is a bug in the new pages;
+  report it with `r_debug_channel` off and on. Panes popping in front of each
+  other as you turn -> the sort, which is per submesh by origin and is
+  documented as not per-face. A fence's baked shadow INVERTED (light through
+  the bars, shadow through the holes) -> `alpha_test_is_solid_at` read the
+  wrong way round somewhere; it was exactly that bug on the CPU once.
+- Then press **"Compare GPU direct against the CPU shade"** on that map. It
+  is the only thing that pins the two marchers against each other -- the CPU
+  steps past `t_exit` and the kernel drops the back-facing candidate, which
+  agree on a convex pane BY CONSTRUCTION and have never been measured. A
+  coverage channel past 5 sigma is the answer to look for.
+- Write down: whether a coloured pane throws a coloured pool; whether the
+  fence's two shadows agree; and the comparison's sigma line.
+
+**After the seven.** Two of them can end in code (4: the floor leaves the
 lightmapped path; 5: emitter NEE in both chains) and three end in cvar defaults
-(1, 3) or a bake setting (2). Paste the verdicts and the screenshots into the
-next session and the code items get built in that order.
+(1, 3) or a bake setting (2); 6 and 7 are looks that may end in either. Paste the
+verdicts and the screenshots into the next session and the code items get built
+in that order.
 
 **Parked elsewhere until now (carried in Claude's session memory; written down
 2026-09-05 so the todo is the one list).** Order here is the order they were
