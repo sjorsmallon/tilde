@@ -25,11 +25,12 @@ std::unordered_map<uint64_t, std::vector<renderer::material_handle_t>> g_materia
 
 uint64_t variant_key(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t &state)
 {
-  const uint64_t packed_state = (uint64_t)state.shader | ((uint64_t)state.blend_mode << 2) |
-                                ((uint64_t)state.cull_mode << 4) |
-                                ((uint64_t)state.depth_test << 5) |
-                                ((uint64_t)state.depth_write << 6);
-  return ((uint64_t)mesh.index << 8) | packed_state;
+  const uint64_t packed_state = (uint64_t)state.shader | ((uint64_t)state.blend_mode << 3) |
+                                ((uint64_t)state.cull_mode << 5) |
+                                ((uint64_t)state.depth_test << 6) |
+                                ((uint64_t)state.depth_write << 7) |
+                                ((uint64_t)state.alpha_cutoff << 8);
+  return ((uint64_t)mesh.index << 16) | packed_state;
 }
 
 } // namespace
@@ -78,6 +79,14 @@ material_variant(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t 
     renderer::material_t material{};
     material.pipeline_state = state;
     material.parameters     = renderer::material_parameters(source);
+
+    // The caller's state shades; the alpha class is the submesh's own.
+    const renderer::pipeline_state_t registered = renderer::material_pipeline_state(source);
+    material.pipeline_state.blend_mode   = registered.blend_mode;
+    material.pipeline_state.alpha_cutoff = registered.alpha_cutoff;
+    if (registered.blend_mode == renderer::blend_mode_t::alpha)
+      material.pipeline_state.depth_write = false;
+
     variant.push_back(renderer::register_material(material));
   }
 

@@ -389,6 +389,12 @@ struct collision_piece_t
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid);
 
+// False only for a brush EVERY face of which resolves to an alpha-blended
+// material. The bake's occluder BVH and the GPU BLAS both ask it, so a pane of
+// glass is transparent to light on both sides of the comparison.
+[[nodiscard]] bool geometry_occludes_light(const geometry_value_t &geometry,
+                                           Span<const std::string> materials);
+
 geometry_surface_t &get_surface(geometry_value_t &geometry);
 const geometry_surface_t &get_surface(const geometry_value_t &geometry);
 

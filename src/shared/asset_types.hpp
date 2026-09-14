@@ -40,12 +40,26 @@ template <typename T> struct asset_handle_t
 
 // --- Asset types ---
 
+// transparency_plan.md ss2: derived from the albedo's alpha bytes at decode.
+enum class alpha_mode_t : uint8_t
+{
+  opaque,
+  cutout,
+  blend
+};
+
+// `rgba` is a whole decoded pixel buffer, stride 4.
+[[nodiscard]] alpha_mode_t classify_alpha(Span<const uint8_t> rgba);
+
+constexpr float DEFAULT_ALPHA_CUTOFF = 0.5f;
+
 struct texture_asset_t
 {
   std::vector<uint8_t> pixels;
   int32_t width = 0;
   int32_t height = 0;
   int32_t channels = 0; // always 4 (RGBA) — stb_image is forced to STBI_rgb_alpha
+  alpha_mode_t alpha = alpha_mode_t::opaque;
 };
 
 // Was obj_material_t; .mesh files carry materials too, and unlike .mtl they name
@@ -71,6 +85,10 @@ struct material_maps_t
   // no strength, no flag and no file saying so, exactly as an absent normal map
   // is how a material says it is flat.
   asset_handle_t<texture_asset_t> emissive;
+
+  // The albedo's class, or a .glb's declaration; read on layer 0 only.
+  alpha_mode_t alpha_mode = alpha_mode_t::opaque;
+  float alpha_cutoff = DEFAULT_ALPHA_CUTOFF;
 };
 
 struct material_t
@@ -170,6 +188,9 @@ struct pbr_material_asset_t
   asset_handle_t<texture_asset_t> normal;
   asset_handle_t<texture_asset_t> occlusion_roughness_metallic;
   asset_handle_t<texture_asset_t> height;
+
+  alpha_mode_t alpha_mode = alpha_mode_t::opaque;
+  float alpha_cutoff = DEFAULT_ALPHA_CUTOFF;
 
   // emissive.png, and its PRESENCE is the fact (lighting_def.md gate 4). A
   // folder with no emissive map does not glow; there is nothing else to author

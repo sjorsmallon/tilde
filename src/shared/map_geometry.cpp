@@ -885,6 +885,30 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
   return false;
 }
 
+bool geometry_occludes_light(const geometry_value_t &geometry,
+                             Span<const std::string> materials)
+{
+  const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&geometry);
+  if (!brush)
+    return true;
+
+  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush->hull_points);
+  if (!hull || hull->faces.empty())
+    return true;
+
+  const face_surface_t brush_default;
+  for (const brush_face_t &face : hull->faces)
+  {
+    const face_surface_t *matched = find_face_surface(*brush, face.plane);
+    const face_surface_t &surface = matched ? *matched : brush_default;
+    const std::string     path =
+        surface.material < materials.count ? materials[surface.material] : std::string();
+    if (resolve_material_maps(path).alpha_mode != assets::alpha_mode_t::blend)
+      return true;
+  }
+  return false;
+}
+
 assets::material_maps_t resolve_material_maps(const std::string &material_path)
 {
   if (material_path.empty())
@@ -896,13 +920,20 @@ assets::material_maps_t resolve_material_maps(const std::string &material_path)
   // file and making an author build a folder for it buys nothing; that spelling
   // carries an albedo and nothing else, which is exactly what it is.
   if (assets::asset_exists(material_path.c_str()))
-    return {assets::load_texture(material_path.c_str()), {}, {}, {}, {}};
+  {
+    assets::material_maps_t maps;
+    maps.albedo = assets::load_texture(material_path.c_str());
+    if (const assets::texture_asset_t *albedo = assets::get(maps.albedo))
+      maps.alpha_mode = albedo->alpha;
+    return maps;
+  }
 
   const assets::pbr_material_asset_t *resolved =
       assets::get(assets::load_pbr_material(material_path.c_str()));
   if (resolved && resolved->albedo.valid())
-    return {resolved->albedo, resolved->normal, resolved->occlusion_roughness_metallic,
-            resolved->height, resolved->emissive};
+    return {resolved->albedo,   resolved->normal,     resolved->occlusion_roughness_metallic,
+            resolved->height,   resolved->emissive,   resolved->alpha_mode,
+            resolved->alpha_cutoff};
 
   // Named but not there. The renderer draws the magenta checkerboard for a
   // material whose texture_path is set and whose albedo handle is not, so this

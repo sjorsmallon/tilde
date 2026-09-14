@@ -95,6 +95,10 @@ const uint32_t mesh_grid_frag_spv[] =
 #include "mesh_grid.frag.spv.h"
     ;
 
+const uint32_t shadow_cutout_frag_spv[] =
+#include "shadow_cutout.frag.spv.h"
+    ;
+
 const uint32_t particle_comp_spv[] =
 #include "particle.comp.spv.h"
     ;
@@ -249,10 +253,10 @@ struct pipeline_key_hash_t
   {
     // Every field is a small enumeration, so the whole key packs into one
     // integer and needs no hash combine.
-    return (size_t)key.state.shader | ((size_t)key.state.blend_mode << 2) |
-           ((size_t)key.state.cull_mode << 4) | ((size_t)key.state.depth_test << 5) |
-           ((size_t)key.state.depth_write << 6) | ((size_t)key.vertex_layout << 7) |
-           ((size_t)key.fill << 10);
+    return (size_t)key.state.shader | ((size_t)key.state.blend_mode << 3) |
+           ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 6) |
+           ((size_t)key.state.depth_write << 7) | ((size_t)key.vertex_layout << 8) |
+           ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12);
   }
 };
 
@@ -826,7 +830,10 @@ static VkDescriptorSetLayout g_shadow_pass_ds_layout  = VK_NULL_HANDLE;
 static VkDescriptorPool      g_shadow_pass_pool       = VK_NULL_HANDLE;
 static VkDescriptorSet       g_shadow_pass_set        = VK_NULL_HANDLE;
 static VkPipelineLayout      g_shadow_pipeline_layout = VK_NULL_HANDLE;
-static VkPipeline            g_shadow_pipelines[2][2] = {}; // [skinned][cull none]
+static VkPipeline            g_shadow_pipelines[2][2][2] = {}; // [skinned][cull none][cutout]
+// Where shadow_cutout.frag reads its threshold: past the model matrix, which is
+// all the shadow pass ever pushes.
+static constexpr uint32_t    SHADOW_CUTOFF_PUSH_OFFSET      = 64;
 static VkDescriptorPool g_descriptor_pool = VK_NULL_HANDLE;
 static VkCommandPool g_command_pool = VK_NULL_HANDLE;
 static std::vector<VkFramebuffer> g_swapchain_framebuffers;
@@ -1881,11 +1888,30 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
     return VK_NULL_HANDLE;
   }
 
+  // Resolved at pipeline compile time, so the discard folds away when false and
+  // one fragment module serves both the cutout and the plain arm.
+  struct alpha_specialization_t
+  {
+    VkBool32 cutout;
+    float    cutoff;
+  } alpha_specialization{key.state.blend_mode == blend_mode_t::cutout ? VK_TRUE : VK_FALSE,
+                         key.state.alpha_cutoff / 255.0f};
+
+  const VkSpecializationMapEntry alpha_entries[2] = {
+      {0, offsetof(alpha_specialization_t, cutout), sizeof(VkBool32)},
+      {1, offsetof(alpha_specialization_t, cutoff), sizeof(float)}};
+
+  VkSpecializationInfo alpha_info{};
+  alpha_info.mapEntryCount = 2;
+  alpha_info.pMapEntries   = alpha_entries;
+  alpha_info.dataSize      = sizeof(alpha_specialization);
+  alpha_info.pData         = &alpha_specialization;
+
   VkPipelineShaderStageCreateInfo stages[] = {
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
        vert_module, "main", nullptr},
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", &alpha_info}};
 
   VkVertexInputBindingDescription bindings[3]{};
   bindings[0]            = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
@@ -4469,6 +4495,8 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
     if (source.blends())
       material.pipeline_state.shader = shader_t::blend;
 
+    apply_alpha_mode(material.pipeline_state, source.maps.alpha_mode, source.maps.alpha_cutoff);
+
     gpu_mesh.default_materials.push_back(register_material(material));
   }
 
@@ -4563,6 +4591,30 @@ material_parameters_t material_parameters(material_handle_t handle)
   if (!handle.valid() || handle.index >= g_materials.size())
     return {};
   return g_materials[handle.index].parameters;
+}
+
+void apply_alpha_mode(pipeline_state_t &state, assets::alpha_mode_t mode, float cutoff)
+{
+  switch (mode)
+  {
+  case assets::alpha_mode_t::opaque: state.blend_mode = blend_mode_t::opaque; break;
+  case assets::alpha_mode_t::cutout:
+    state.blend_mode = blend_mode_t::cutout;
+    state.alpha_cutoff =
+        (uint8_t)std::clamp((int)std::lround(cutoff * 255.0f), 0, 255);
+    break;
+  case assets::alpha_mode_t::blend:
+    state.blend_mode  = blend_mode_t::alpha;
+    state.depth_write = false;
+    break;
+  }
+}
+
+pipeline_state_t material_pipeline_state(material_handle_t handle)
+{
+  if (!handle.valid() || handle.index >= g_materials.size())
+    return {};
+  return g_materials[handle.index].pipeline_state;
 }
 
 // The renderer's own textures and the material every mesh without one of its
@@ -4726,9 +4778,10 @@ static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
   return true;
 }
 
-// The mesh family's vertex shader with NO fragment stage: depth is all a shadow
-// map is. Depth bias is dynamic so the cvars tune it without a rebuild.
-static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none)
+// The mesh family's vertex shader with no fragment stage, except for a cutout
+// material, whose clear texels have to be dropped here too. Depth bias is
+// dynamic so the cvars tune it without a rebuild.
+static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none, bool cutout)
 {
   VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   vert_info.codeSize = skinned ? sizeof(mesh_skinned_vert_spv) : sizeof(mesh_vert_spv);
@@ -4741,10 +4794,29 @@ static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none)
     return VK_NULL_HANDLE;
   }
 
-  VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-  stage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
-  stage.module = vert_module;
-  stage.pName  = "main";
+  VkShaderModule frag_module = VK_NULL_HANDLE;
+  if (cutout)
+  {
+    VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    frag_info.codeSize = sizeof(shadow_cutout_frag_spv);
+    frag_info.pCode    = shadow_cutout_frag_spv;
+    if (vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module) != VK_SUCCESS)
+    {
+      log_error("[renderer] failed to create the shadow cutout fragment shader module");
+      vkDestroyShaderModule(g_device, vert_module, nullptr);
+      return VK_NULL_HANDLE;
+    }
+  }
+
+  VkPipelineShaderStageCreateInfo stages[2]{};
+  stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vert_module;
+  stages[0].pName  = "main";
+  stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = frag_module;
+  stages[1].pName  = "main";
 
   VkVertexInputBindingDescription bindings[2]{};
   bindings[0]            = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
@@ -4812,8 +4884,8 @@ static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none)
   dynamic_state.pDynamicStates    = dynamic_states;
 
   VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-  pipeline_info.stageCount          = 1;
-  pipeline_info.pStages             = &stage;
+  pipeline_info.stageCount          = cutout ? 2 : 1;
+  pipeline_info.pStages             = stages;
   pipeline_info.pVertexInputState   = &vertex_input;
   pipeline_info.pInputAssemblyState = &input_assembly;
   pipeline_info.pViewportState      = &viewport_state;
@@ -4832,6 +4904,8 @@ static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none)
   {
     log_error("[renderer] failed to create a shadow pipeline");
   }
+  if (frag_module != VK_NULL_HANDLE)
+    vkDestroyShaderModule(g_device, frag_module, nullptr);
   vkDestroyShaderModule(g_device, vert_module, nullptr);
   return pipeline;
 }
@@ -4945,16 +5019,22 @@ static void create_shadow_resources()
     set_layouts[1 + layer] = g_material_ds_layout;
   set_layouts[PASS_DESCRIPTOR_SET] = g_shadow_pass_ds_layout;
 
-  VkPushConstantRange push_range{};
-  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-  push_range.offset     = 0;
-  push_range.size       = sizeof(mesh_push_constants_t);
+  // The vertex range is the mesh block; the cutout fragment stage reads the
+  // threshold out of bytes 64..68, which the shadow pass never pushes a model
+  // matrix over.
+  VkPushConstantRange push_ranges[2]{};
+  push_ranges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_ranges[0].offset     = 0;
+  push_ranges[0].size       = sizeof(mesh_push_constants_t);
+  push_ranges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  push_ranges[1].offset     = SHADOW_CUTOFF_PUSH_OFFSET;
+  push_ranges[1].size       = sizeof(float);
 
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
   layout_info.setLayoutCount         = PASS_DESCRIPTOR_SET + 1;
   layout_info.pSetLayouts            = set_layouts;
-  layout_info.pushConstantRangeCount = 1;
-  layout_info.pPushConstantRanges    = &push_range;
+  layout_info.pushConstantRangeCount = 2;
+  layout_info.pPushConstantRanges    = push_ranges;
   if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_shadow_pipeline_layout) !=
       VK_SUCCESS)
   {
@@ -4963,7 +5043,9 @@ static void create_shadow_resources()
 
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int cull_none = 0; cull_none < 2; ++cull_none)
-      g_shadow_pipelines[skinned][cull_none] = create_shadow_pipeline(skinned == 1, cull_none == 1);
+      for (int cutout = 0; cutout < 2; ++cutout)
+        g_shadow_pipelines[skinned][cull_none][cutout] =
+            create_shadow_pipeline(skinned == 1, cull_none == 1, cutout == 1);
 
   const shadow_settings_t defaults{};
   g_shadow_requested_size        = defaults.map_size;
@@ -4977,8 +5059,9 @@ static void destroy_shadow_resources()
   destroy_shadow_pool();
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int cull_none = 0; cull_none < 2; ++cull_none)
-      if (g_shadow_pipelines[skinned][cull_none] != VK_NULL_HANDLE)
-        vkDestroyPipeline(g_device, g_shadow_pipelines[skinned][cull_none], nullptr);
+      for (int cutout = 0; cutout < 2; ++cutout)
+        if (g_shadow_pipelines[skinned][cull_none][cutout] != VK_NULL_HANDLE)
+          vkDestroyPipeline(g_device, g_shadow_pipelines[skinned][cull_none][cutout], nullptr);
   if (g_shadow_pipeline_layout != VK_NULL_HANDLE)
     vkDestroyPipelineLayout(g_device, g_shadow_pipeline_layout, nullptr);
   if (g_shadow_pass_pool != VK_NULL_HANDLE)
@@ -5683,6 +5766,8 @@ struct mesh_draw_item_t
   uint32_t material_index;
   uint32_t draw_index;
   uint32_t submesh_index;
+  bool     blended;
+  float    camera_distance_squared;
 };
 
 // Reused across frames so a frame's draw list costs no allocation once the
@@ -6240,18 +6325,29 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
 
       // A translucent surface has no depth to give and a depth-less one asked
       // not to be in the depth buffer at all.
-      const pipeline_state_t &state = g_materials[material.index].pipeline_state;
+      const gpu_material_t   &gpu_material = g_materials[material.index];
+      const pipeline_state_t &state        = gpu_material.pipeline_state;
       if (state.blend_mode == blend_mode_t::alpha || !state.depth_write)
         continue;
 
+      const bool       cutout   = state.blend_mode == blend_mode_t::cutout;
       const VkPipeline pipeline =
-          g_shadow_pipelines[skinned ? 1 : 0][state.cull_mode == cull_mode_t::none ? 1 : 0];
+          g_shadow_pipelines[skinned ? 1 : 0][state.cull_mode == cull_mode_t::none ? 1 : 0]
+                            [cutout ? 1 : 0];
       if (pipeline == VK_NULL_HANDLE)
         continue; // already logged at creation
       if (pipeline != bound_pipeline)
       {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         bound_pipeline = pipeline;
+      }
+      if (cutout && gpu_material.material_set != VK_NULL_HANDLE)
+      {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout, 0,
+                                1, &gpu_material.material_set, 0, nullptr);
+        const float cutoff = state.alpha_cutoff / 255.0f;
+        vkCmdPushConstants(cmd, g_shadow_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                           SHADOW_CUTOFF_PUSH_OFFSET, sizeof(cutoff), &cutoff);
       }
       vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);
     }
@@ -6264,7 +6360,8 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
 // opened so the shadow passes and this one bind the same bone matrices.
 static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws,
                               lightmap_handle_t lightmap, uint32_t scene_block_offset,
-                              Span<const frame_uniform_allocation_t> skinning)
+                              Span<const frame_uniform_allocation_t> skinning,
+                              const linalg::vec3f                   &camera_position)
 {
   g_draw_items.clear();
 
@@ -6307,12 +6404,22 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
       if (pipeline_id == UINT32_MAX)
         continue;
 
-      g_draw_items.push_back({pipeline_id, material.index, draw_index, submesh_index});
+      const bool blended =
+          g_materials[material.index].pipeline_state.blend_mode == blend_mode_t::alpha;
+      const linalg::vec3f origin = {draw.transform[3].x, draw.transform[3].y,
+                                    draw.transform[3].z};
+
+      g_draw_items.push_back({pipeline_id, material.index, draw_index, submesh_index, blended,
+                              linalg::length_squared(origin - camera_position)});
     }
   }
 
   std::sort(g_draw_items.begin(), g_draw_items.end(),
             [](const mesh_draw_item_t &a, const mesh_draw_item_t &b) {
+              if (a.blended != b.blended)
+                return b.blended;
+              if (a.blended)
+                return a.camera_distance_squared > b.camera_distance_squared;
               if (a.pipeline_id != b.pipeline_id)
                 return a.pipeline_id < b.pipeline_id;
               return a.material_index < b.material_index;
@@ -7677,7 +7784,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     // Before the geometry: the sky writes no depth and tests none, so it is the
     // background every later draw covers.
     record_skybox_draw(cmd, pass);
-    record_mesh_draws(cmd, pass.draws, pass.lightmap, prepared.scene_block_offset, skinning);
+    record_mesh_draws(cmd, pass.draws, pass.lightmap, prepared.scene_block_offset, skinning,
+                      pass.view.camera.position);
 
     if (!pass.particles.empty())
     {

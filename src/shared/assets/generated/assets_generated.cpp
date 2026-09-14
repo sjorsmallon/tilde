@@ -12,8 +12,10 @@ namespace
 constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Missing", nullptr},
   {"Duck", "resources/glb/Duck.glb"},
+  {"GlassBrokenWindow", "resources/glb/GlassBrokenWindow.glb"},
   {"damaged_helmet", "resources/glb/damaged_helmet.glb"},
   {"rocket", "resources/glb/rocket.glb"},
+  {"shattered_glass", "resources/glb/shattered_glass.glb"},
   {"target", "resources/glb/target.glb"},
   {"Box", "resources/models/Box.mesh"},
   {"Leet_Full", "resources/models/Leet_Full.mesh"},
@@ -109,6 +111,8 @@ constexpr asset_info_t font_asset_MANIFEST[] = {
 constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"Missing", nullptr},
   {"bricks_mortar", "resources/textures/bricks_mortar"},
+  {"glass_amber", "resources/textures/glass_amber"},
+  {"glass_blue", "resources/textures/glass_blue"},
   {"harsh_bricks", "resources/textures/harsh_bricks"},
   {"scuffed_plastic", "resources/textures/scuffed_plastic"},
   {"sloppy_mortar_stone", "resources/textures/sloppy_mortar_stone"},

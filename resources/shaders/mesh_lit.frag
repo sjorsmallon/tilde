@@ -9,6 +9,7 @@
 #include "probes.glsl"
 #include "direct_light.glsl"
 #include "reflection.glsl"
+#include "alpha_cutout.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -39,6 +40,9 @@ layout(set = 0, binding = 3) uniform sampler2D heightMap;
 #endif
 
 void main() {
+    float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
+    discard_below_alpha_cutoff(surfaceAlpha);
+
     vec3 ambient = scene.ambient.rgb;
 
     // Ahead of every arm: a shadow that is wrong looks exactly like lighting
@@ -194,7 +198,7 @@ void main() {
     // number and draw it from another -- ss11.
     lit += texture(emissiveMap, uv).rgb;
 
-    outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, fragAlpha), fragWorldPosition),
+    outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, surfaceAlpha), fragWorldPosition),
                                         fragWorldPosition);
 #else
     // The non-PBR arm is Lambert against the SAME light list the PBR arm shades:
@@ -232,7 +236,7 @@ void main() {
     // rather than replaces.
     vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting +
                  texture(emissiveMap, fragUV).rgb;
-    outColor   = reflection_capture_debug(shadow_cascade_debug(vec4(color, fragAlpha), fragWorldPosition),
+    outColor   = reflection_capture_debug(shadow_cascade_debug(vec4(color, surfaceAlpha), fragWorldPosition),
                                           fragWorldPosition);
 #endif
 }

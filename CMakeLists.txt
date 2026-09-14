@@ -615,6 +615,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_blend.frag
     ${SHADER_SRC_DIR}/mesh_unlit.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
+    ${SHADER_SRC_DIR}/shadow_cutout.frag
     ${SHADER_SRC_DIR}/particle.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
@@ -644,7 +645,8 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl
                     ${SHADER_SRC_DIR}/direct_light.glsl
                     ${SHADER_SRC_DIR}/reflection.glsl
-                    ${SHADER_SRC_DIR}/lightmap_bake.glsl)
+                    ${SHADER_SRC_DIR}/lightmap_bake.glsl
+                    ${SHADER_SRC_DIR}/alpha_cutout.glsl)
 
 set(SHADER_HEADERS "")
 

@@ -18,6 +18,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 
 namespace
 {
@@ -3560,6 +3561,69 @@ void a_static_mesh_casts_a_shadow_in_the_bake()
                                     {0.f, 1.f, 0.f}, 200.f, 0.5f));
 }
 
+#if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
+
+const char *GLASS_TGA_PATH = "cmake_build/lightmap_test_fixtures/glass.tga";
+
+void write_glass_tga()
+{
+  uint8_t header[18] = {};
+  header[2]  = 2;
+  header[12] = 2;
+  header[14] = 2;
+  header[16] = 32;
+  header[17] = 8;
+
+  uint8_t pixels[16] = {};
+  for (int texel = 0; texel < 4; ++texel)
+  {
+    pixels[texel * 4 + 0] = 200;
+    pixels[texel * 4 + 1] = 220;
+    pixels[texel * 4 + 2] = 255;
+    pixels[texel * 4 + 3] = 128;
+  }
+
+  std::filesystem::create_directories("cmake_build/lightmap_test_fixtures");
+  std::ofstream file(GLASS_TGA_PATH, std::ios::binary);
+  file.write(reinterpret_cast<char *>(header), sizeof(header));
+  file.write(reinterpret_cast<char *>(pixels), sizeof(pixels));
+  assert(file);
+}
+
+// transparency_plan.md step 6.
+void a_blend_faced_brush_does_not_occlude_the_bake()
+{
+  write_glass_tga();
+  assert(assets::get(assets::load_texture(GLASS_TGA_PATH))->alpha ==
+         assets::alpha_mode_t::blend);
+
+  shared::map_t map;
+  map.materials = {"", GLASS_TGA_PATH};
+  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
+
+  shared::brush_geometry_t &pane =
+      std::get<shared::brush_geometry_t>(map.geometry[0].value);
+  shared::sync_face_surfaces(pane);
+  assert(pane.face_surfaces.size() == 6);
+  for (shared::face_surface_t &face : pane.face_surfaces)
+    face.material = 1;
+
+  const Bounding_Volume_Hierarchy glass = shared::build_occluder_bvh(map);
+  assert(shared::shadow_ray_reaches(glass, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
+                                    {0.f, 1.f, 0.f}, 200.f, 0.5f));
+
+  const shared::traced_scene_t traced = shared::build_traced_scene(map, glass);
+  assert(shared::build_gpu_bake_scene(map, traced).triangles.empty());
+
+  pane.face_surfaces[0].material = 0;
+  const Bounding_Volume_Hierarchy solid = shared::build_occluder_bvh(map);
+  assert(!shared::shadow_ray_reaches(solid, {0.f, -100.f, 0.f}, {0.f, 1.f, 0.f},
+                                     {0.f, 1.f, 0.f}, 200.f, 0.5f));
+  assert(shared::build_gpu_bake_scene(map, traced).triangles.size() == 12);
+}
+
+#endif
+
 // --- The GPU scene: lightmap_gpu_plan.md step 2 ------------------------------
 
 // The pin between the two scenes: for every triangle the GPU scene holds, a ray
@@ -4383,6 +4447,9 @@ int main()
   a_lightmapped_static_mesh_draws_through_its_unwrap();
   a_sidecar_round_trips_an_unwrap();
   a_static_mesh_casts_a_shadow_in_the_bake();
+#if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
+  a_blend_faced_brush_does_not_occlude_the_bake();
+#endif
 
   the_gpu_scene_is_made_of_what_the_tracer_sees();
   a_texture_reaches_the_gpu_scene_at_its_own_size();

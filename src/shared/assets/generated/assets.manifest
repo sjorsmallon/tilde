@@ -4,8 +4,10 @@
 class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh .glb
   Missing -
   Duck resources/glb/Duck.glb
+  GlassBrokenWindow resources/glb/GlassBrokenWindow.glb
   damaged_helmet resources/glb/damaged_helmet.glb
   rocket resources/glb/rocket.glb
+  shattered_glass resources/glb/shattered_glass.glb
   target resources/glb/target.glb
   Box resources/models/Box.mesh
   Leet_Full resources/models/Leet_Full.mesh
@@ -95,6 +97,8 @@ class font_asset font_asset_t asset_types.hpp .ttf
 class pbr_material pbr_material_asset_t asset_types.hpp
   Missing -
   bricks_mortar resources/textures/bricks_mortar
+  glass_amber resources/textures/glass_amber
+  glass_blue resources/textures/glass_blue
   harsh_bricks resources/textures/harsh_bricks
   scuffed_plastic resources/textures/scuffed_plastic
   sloppy_mortar_stone resources/textures/sloppy_mortar_stone

@@ -19,6 +19,7 @@
 #include "scene.glsl"
 #include "direct_light.glsl"
 #include "reflection.glsl"
+#include "alpha_cutout.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -62,6 +63,9 @@ float grid_coverage(vec2 cell)
 }
 
 void main() {
+    float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
+    discard_below_alpha_cutoff(surfaceAlpha);
+
     vec3  N = normalize(fragWorldNormal);
 
     if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
@@ -123,6 +127,6 @@ void main() {
                     grid_coverage(fragUV * MINOR_SUBDIVISIONS) * MINOR_STRENGTH);
 
     outColor = reflection_capture_debug(
-        shadow_cascade_debug(vec4(mix(color, GRID_COLOR, ink), fragAlpha), fragWorldPosition),
+        shadow_cascade_debug(vec4(mix(color, GRID_COLOR, ink), surfaceAlpha), fragWorldPosition),
         fragWorldPosition);
 }

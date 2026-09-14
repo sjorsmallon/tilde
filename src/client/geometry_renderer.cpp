@@ -155,14 +155,21 @@ namespace
 struct material_maps_key_t
 {
   uint32_t handles[renderer::MATERIAL_MAP_COUNT] = {};
+  uint32_t alpha = 0;
 
   bool operator==(const material_maps_key_t &) const = default;
 };
 
+uint32_t alpha_key(renderer::blend_mode_t mode, uint8_t cutoff)
+{
+  return (uint32_t)mode | ((uint32_t)cutoff << 8);
+}
+
 material_maps_key_t material_maps_key(const renderer::material_maps_t &maps)
 {
   return {{maps.albedo.index, maps.normal.index, maps.orm.index, maps.height.index,
-           maps.emissive.index}};
+           maps.emissive.index},
+          0};
 }
 
 struct material_maps_key_hash_t
@@ -172,7 +179,7 @@ struct material_maps_key_hash_t
     size_t hash = 1469598103934665603ull;
     for (uint32_t handle : key.handles)
       hash = (hash ^ handle) * 1099511628211ull;
-    return hash;
+    return (hash ^ key.alpha) * 1099511628211ull;
   }
 };
 } // namespace
@@ -181,19 +188,26 @@ struct material_maps_key_hash_t
 // brush mesh is re-registered on every edit, and registering a fresh material
 // each time would grow the renderer's table for the length of an editing
 // session.
-renderer::material_handle_t textured_face_material(const renderer::material_maps_t &maps)
+renderer::material_handle_t textured_face_material(const renderer::material_maps_t &maps,
+                                                  renderer::blend_mode_t alpha_mode,
+                                                  uint8_t                alpha_cutoff)
 {
   static std::unordered_map<material_maps_key_t, renderer::material_handle_t,
                             material_maps_key_hash_t>
       by_maps;
 
-  const material_maps_key_t key = material_maps_key(maps);
-  const auto                cached = by_maps.find(key);
+  material_maps_key_t key = material_maps_key(maps);
+  key.alpha               = alpha_key(alpha_mode, alpha_cutoff);
+  const auto cached       = by_maps.find(key);
   if (cached != by_maps.end())
     return cached->second;
 
   renderer::material_t built{};
-  built.parameters.maps = maps;
+  built.parameters.maps             = maps;
+  built.pipeline_state.blend_mode   = alpha_mode;
+  built.pipeline_state.alpha_cutoff = alpha_cutoff;
+  if (alpha_mode == renderer::blend_mode_t::alpha)
+    built.pipeline_state.depth_write = false;
 
   // A material that resolved to a PBR FOLDER; a single texture file has no maps for it to read.
   if (maps.normal.valid() || maps.orm.valid() || maps.height.valid())
@@ -208,11 +222,14 @@ renderer::material_handle_t textured_face_material(const renderer::material_maps
 // textured_face_material's reason: the mesh is re-registered on every edit and
 // a fresh material per rebuild would grow the renderer's table for the length
 // of an editing session.
-renderer::material_handle_t blended_face_material(const renderer::material_parameters_t &parameters)
+renderer::material_handle_t blended_face_material(const renderer::material_parameters_t &parameters,
+                                                 renderer::blend_mode_t alpha_mode,
+                                                 uint8_t                alpha_cutoff)
 {
   struct key_t
   {
     uint32_t handles[renderer::MATERIAL_MAP_COUNT * BLEND_LAYER_COUNT] = {};
+    uint32_t alpha = 0;
 
     bool operator==(const key_t &) const = default;
   };
@@ -223,7 +240,7 @@ renderer::material_handle_t blended_face_material(const renderer::material_param
       size_t hash = 1469598103934665603ull;
       for (uint32_t handle : key.handles)
         hash = (hash ^ handle) * 1099511628211ull;
-      return hash;
+      return (hash ^ key.alpha) * 1099511628211ull;
     }
   };
 
@@ -237,15 +254,20 @@ renderer::material_handle_t blended_face_material(const renderer::material_param
   write_layer(0, parameters.maps);
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
     write_layer(layer, parameters.blend_maps.data[layer - 1]);
+  key.alpha = alpha_key(alpha_mode, alpha_cutoff);
 
   const auto cached = by_maps.find(key);
   if (cached != by_maps.end())
     return cached->second;
 
   renderer::material_t built{};
-  built.pipeline_state.shader = renderer::shader_t::blend;
-  built.parameters.maps       = parameters.maps;
-  built.parameters.blend_maps = parameters.blend_maps;
+  built.pipeline_state.shader       = renderer::shader_t::blend;
+  built.pipeline_state.blend_mode   = alpha_mode;
+  built.pipeline_state.alpha_cutoff = alpha_cutoff;
+  if (alpha_mode == renderer::blend_mode_t::alpha)
+    built.pipeline_state.depth_write = false;
+  built.parameters.maps             = parameters.maps;
+  built.parameters.blend_maps       = parameters.blend_maps;
 
   const renderer::material_handle_t handle = renderer::register_material(built);
   by_maps.emplace(key, handle);
@@ -269,11 +291,16 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
   {
     const renderer::material_parameters_t parameters = renderer::material_parameters(slot);
 
+    const renderer::pipeline_state_t registered = renderer::material_pipeline_state(slot);
+    const renderer::blend_mode_t     alpha_mode = registered.blend_mode;
+    const uint8_t                    cutoff     = registered.alpha_cutoff;
+
     if (parameters.blend_maps.data[0].albedo.valid())
-      table.push_back(blended_face_material(parameters));
+      table.push_back(blended_face_material(parameters, alpha_mode, cutoff));
     else
-      table.push_back(parameters.maps.albedo.valid() ? textured_face_material(parameters.maps)
-                                                     : blockout_material());
+      table.push_back(parameters.maps.albedo.valid()
+                          ? textured_face_material(parameters.maps, alpha_mode, cutoff)
+                          : blockout_material());
   }
   return table;
 }

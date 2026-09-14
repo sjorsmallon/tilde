@@ -20,18 +20,20 @@ enum class mesh_asset : uint16_t
 {
   Missing = 0,
   Duck = 1,
-  damaged_helmet = 2,
-  rocket = 3,
-  target = 4,
-  Box = 5,
-  Leet_Full = 6,
-  Sphere = 7,
-  Error = 8,
-  Isosphere = 9,
-  Pyramid = 10,
+  GlassBrokenWindow = 2,
+  damaged_helmet = 3,
+  rocket = 4,
+  shattered_glass = 5,
+  target = 6,
+  Box = 7,
+  Leet_Full = 8,
+  Sphere = 9,
+  Error = 10,
+  Isosphere = 11,
+  Pyramid = 12,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 11;
+constexpr uint32_t mesh_asset_COUNT = 13;
 
 const char* to_string(mesh_asset value);
 template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);
@@ -177,14 +179,16 @@ enum class pbr_material : uint16_t
 {
   Missing = 0,
   bricks_mortar = 1,
-  harsh_bricks = 2,
-  scuffed_plastic = 3,
-  sloppy_mortar_stone = 4,
-  stringy_marble = 5,
-  titanium_scuffed = 6,
+  glass_amber = 2,
+  glass_blue = 3,
+  harsh_bricks = 4,
+  scuffed_plastic = 5,
+  sloppy_mortar_stone = 6,
+  stringy_marble = 7,
+  titanium_scuffed = 8,
 };
 
-constexpr uint32_t pbr_material_COUNT = 7;
+constexpr uint32_t pbr_material_COUNT = 9;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

@@ -137,6 +137,9 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
 
   for (const map_geometry_t &entry : map.geometry)
   {
+    if (!geometry_occludes_light(entry.value, map.materials))
+      continue;
+
     if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
       append_brush(scene, map, entry.uid, *brush);
     else if (const static_mesh_geometry_t *static_mesh =

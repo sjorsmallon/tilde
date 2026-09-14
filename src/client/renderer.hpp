@@ -125,9 +125,12 @@ enum class shader_t : uint8_t
   pbr
 };
 
+// The renderer's copy of assets::alpha_mode_t; fixed per material at
+// registration. A cutout draws through the opaque pipelines and only discards.
 enum class blend_mode_t : uint8_t
 {
   opaque,
+  cutout,
   alpha
 };
 
@@ -194,8 +197,14 @@ struct pipeline_state_t
   bool         depth_test  = true;
   bool         depth_write = true;
 
+  // An alpha BYTE, reaching the fragment stage as a specialization constant.
+  uint8_t      alpha_cutoff = 128;
+
   bool operator==(const pipeline_state_t &) const = default;
 };
+
+// Writes blend_mode, depth_write and alpha_cutoff; touches nothing else.
+void apply_alpha_mode(pipeline_state_t &state, assets::alpha_mode_t mode, float cutoff);
 
 // An invalid handle resolves to an internal default that composes to no effect.
 struct material_maps_t
@@ -318,6 +327,7 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightma
 // it wants, and passes the result as mesh_draw_t::material_overrides.
 [[nodiscard]] Span<const material_handle_t> mesh_default_materials(mesh_handle_t handle);
 [[nodiscard]] material_parameters_t         material_parameters(material_handle_t handle);
+[[nodiscard]] pipeline_state_t              material_pipeline_state(material_handle_t handle);
 
 // --- Draws ---
 
@@ -606,20 +616,11 @@ struct view_pass_t
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
 };
 
-// Whatever the tonemap pass needs, which today is one number. It is per FRAME
-// and not per view_pass_t -- unlike debug_channel, which rides the view because
-// "what am I looking at" is a property of one camera. The curve runs once over
-// the finished image, so a second view pass cannot have its own exposure.
 struct tonemap_settings_t
 {
   // Multiplies the HDR value before the curve. r_exposure.
   float exposure = 1.0f;
 };
-
-// The shadow map pool (lighting_def.md gate 9): one sampler2DArrayShadow of
-// this many layers at most, shared by every view pass in the frame. Per FRAME
-// for the tonemap's reason -- the pool is one image, so a second pass cannot
-// have its own resolution. scene.glsl spells the count as a literal.
 constexpr uint32_t MAX_SHADOW_LAYERS = 16;
 
 struct shadow_settings_t

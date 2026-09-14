@@ -237,6 +237,20 @@ static void add_default_floor(shared::map_t &map)
        editor::DEFAULT_FLOOR_HALF_W}));
 }
 
+static void add_default_spawner(shared::map_t &map)
+{
+  auto entity = entities::Player_Spawn_Entity{};
+  entity.position = {0, editor::DEFAULT_FLOOR_Y, 0};
+  map.add_entity(std::make_shared<entities::Player_Spawn_Entity>(entity));
+}
+static void add_default_warp_trigger(shared::map_t &map)
+{
+  auto entity = entities::Trigger_Volume_Entity{};
+  entity.position = {0, editor::DEFAULT_FLOOR_Y -128.0, 0};
+  entity.volume.half_extents = {editor::DEFAULT_FLOOR_HALF_W,editor::DEFAULT_FLOOR_HALF_W,editor::DEFAULT_FLOOR_HALF_W};
+  map.add_entity(std::make_shared<entities::Trigger_Volume_Entity>(entity));
+}
+
 void Tool_Editor_State::on_enter()
 {
   log_terminal("Entered Tool_Editor_State");
@@ -1072,6 +1086,8 @@ void Tool_Editor_State::draw_imgui_panels()
       entity_visibility.show_all();
       map.name = "new_map.source";
       add_default_floor(map);
+      add_default_spawner(map);
+      add_default_warp_trigger(map);
 
       transaction_system = Transaction_System{};
       geometry_updated_flag = true;

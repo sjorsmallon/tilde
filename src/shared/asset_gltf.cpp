@@ -547,8 +547,20 @@ void import_materials(glb_import_t& import)
     material.maps.orm      = occlusion_roughness_metallic_of(import, source, material_index);
     material.maps.emissive = emissive_of(import, source, material_index);
 
-    if (source.alphaMode != "OPAQUE")
-      note_ignored(import, "alpha mode " + source.alphaMode + " (drawn opaque)");
+    // The declaration wins over the scan.
+    if (source.alphaMode == "MASK")
+      material.maps.alpha_mode = alpha_mode_t::cutout;
+    else if (source.alphaMode == "BLEND")
+      material.maps.alpha_mode = alpha_mode_t::blend;
+    else if (source.alphaMode != "OPAQUE")
+    {
+      note_ignored(import, "alpha mode " + source.alphaMode);
+      material.maps.alpha_mode = alpha_mode_t::opaque;
+    }
+    material.maps.alpha_cutoff = (float)source.alphaCutoff;
+    if (material.maps.alpha_mode != alpha_mode_t::opaque)
+      log_terminal("[glb] {}: material '{}' is {}, cutoff {}", import.key, material.name,
+                   source.alphaMode, material.maps.alpha_cutoff);
     if (source.doubleSided)
       note_ignored(import, "double-sided materials");
     if (source.normalTexture.index >= 0 && source.normalTexture.scale != 1.0)

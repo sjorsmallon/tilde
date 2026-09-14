@@ -8,6 +8,7 @@
 #include "scene.glsl"
 #include "direct_light.glsl"
 #include "reflection.glsl"
+#include "alpha_cutout.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -35,6 +36,9 @@ layout(set = 2, binding = 0) uniform sampler2D blendAlbedo1;
 #endif
 
 void main() {
+    float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
+    discard_below_alpha_cutoff(surfaceAlpha);
+
     vec3 N = normalize(fragWorldNormal);
 
     if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
@@ -97,7 +101,7 @@ void main() {
     outColor = reflection_capture_debug(
         shadow_cascade_debug(vec4(layers * fragColor * lighting +
                                       texture(emissiveMap, fragUV).rgb * weight0,
-                                  fragAlpha),
+                                  surfaceAlpha),
                              fragWorldPosition),
         fragWorldPosition);
 }

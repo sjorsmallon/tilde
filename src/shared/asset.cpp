@@ -769,6 +769,8 @@ void resolve_material_textures(const char *mesh_path, mesh_asset_t &mesh)
                   material.name, material.texture_path);
 
     material.maps.albedo = load_texture(material.texture_path.c_str());
+    if (const texture_asset_t *albedo = get(material.maps.albedo))
+      material.maps.alpha_mode = albedo->alpha;
   }
 }
 
@@ -816,6 +818,26 @@ mesh_asset_t decode_obj(Span<const uint8_t> bytes, const char *key)
 // extension set is what the generated loader dispatches on and what a new
 // format has to reach -- collapsing them into one would put back the runtime
 // question ("does this loader accept a .tga?") that the class table answers.
+alpha_mode_t classify_alpha(Span<const uint8_t> rgba)
+{
+  bool saw_partial = false;
+  bool saw_clear   = false;
+  for (uint32_t at = 3; at < rgba.size(); at += 4)
+  {
+    const uint8_t alpha = rgba[at];
+    if (alpha == 255)
+      continue;
+    if (alpha == 0)
+      saw_clear = true;
+    else
+      saw_partial = true;
+  }
+
+  if (saw_partial)
+    return alpha_mode_t::blend;
+  return saw_clear ? alpha_mode_t::cutout : alpha_mode_t::opaque;
+}
+
 texture_asset_t decode_image(Span<const uint8_t> bytes, const char *key)
 {
   int w, h, ch;
@@ -833,6 +855,7 @@ texture_asset_t decode_image(Span<const uint8_t> bytes, const char *key)
   tex.channels = 4;
   tex.pixels.assign(pixels, pixels + (w * h * 4));
   stbi_image_free(pixels);
+  tex.alpha = classify_alpha(tex.pixels);
 
   printf("[assets] loaded texture: %s (%dx%d, %d->4 channels)\n", key, w, h, ch);
   return tex;
@@ -1132,6 +1155,9 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
   // Absent on almost every material, and that absence IS the answer: a folder
   // with no emissive.png does not glow. Nothing else says so.
   mat.emissive                     = load_optional_map("emissive.png");
+
+  if (const texture_asset_t *albedo = get(mat.albedo))
+    mat.alpha_mode = albedo->alpha;
 
   printf("[assets] loaded pbr_material from folder: %s\n", folder.c_str());
   return state.pbr_material_pool.add(folder.c_str(), std::move(mat));

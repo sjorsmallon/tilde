@@ -9,6 +9,8 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <initializer_list>
+#include <vector>
 
 // --- Helpers ---
 
@@ -534,6 +536,32 @@ static int test_baked_primitives_are_wound_outward()
   return 0;
 }
 
+// transparency_plan.md step 1: the three classes, over one synthesized run each.
+static int test_classify_alpha_reads_the_three_classes()
+{
+  const auto run = [](std::initializer_list<uint8_t> alphas) {
+    std::vector<uint8_t> rgba;
+    for (uint8_t alpha : alphas)
+    {
+      rgba.push_back(200);
+      rgba.push_back(100);
+      rgba.push_back(50);
+      rgba.push_back(alpha);
+    }
+    return assets::classify_alpha(rgba);
+  };
+
+  assert(run({255, 255, 255}) == assets::alpha_mode_t::opaque);
+  assert(run({255, 0, 255, 0}) == assets::alpha_mode_t::cutout);
+  assert(run({0, 0, 0}) == assets::alpha_mode_t::cutout);
+  assert(run({255, 128, 255}) == assets::alpha_mode_t::blend);
+  assert(run({254}) == assets::alpha_mode_t::blend);
+  assert(run({}) == assets::alpha_mode_t::opaque);
+
+  printf("  PASS: test_classify_alpha_reads_the_three_classes\n");
+  return 0;
+}
+
 // An OBJ with no `vn` loads with unit normals that agree with its faces
 // (lightmap_unwrap_plan.md step 5), rather than the zeros that made every such
 // mesh read as bare texture under any bake.
@@ -695,6 +723,7 @@ int main()
   test_out_of_range_id_resolves_to_missing();
   test_one_cache_key_per_file();
   test_asset_package_round_trip();
+  test_classify_alpha_reads_the_three_classes();
   test_an_obj_without_normals_derives_them();
   test_a_mirrored_glb_node_arrives_outward_in_engine_units();
   test_the_duck_glb_arrives_through_the_manifest();

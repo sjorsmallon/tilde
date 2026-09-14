@@ -58,6 +58,9 @@ Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map)
 
   for (const map_geometry_t &entry : map.geometry)
   {
+    if (!geometry_occludes_light(entry.value, map.materials))
+      continue;
+
     // A static mesh COLLIDES as its bound and must not SHADOW as it: a texel on
     // a sphere sits inside the sphere's box, and every ray from it would start
     // in shadow. So the bake's own BVH gets one zero-thickness convex piece per

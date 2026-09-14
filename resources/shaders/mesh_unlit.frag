@@ -18,8 +18,14 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
+#include "alpha_cutout.glsl"
+
 void main() {
     // Same tint semantics as the lit path -- the material's base colour
     // multiplies the texture rather than replacing it.
-    outColor = vec4(texture(albedo, fragUV).rgb * fragColor, fragAlpha);
+    vec4  sampled      = texture(albedo, fragUV);
+    float surfaceAlpha = fragAlpha * sampled.a;
+    discard_below_alpha_cutoff(surfaceAlpha);
+
+    outColor = vec4(sampled.rgb * fragColor, surfaceAlpha);
 }
