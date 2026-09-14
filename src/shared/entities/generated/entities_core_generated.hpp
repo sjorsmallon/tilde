@@ -23,6 +23,10 @@ namespace entities
 
 template <typename T> std::optional<T> try_from_string(std::string_view text);
 
+// The component list a trait's `requires` names -- a type list, expanded
+// by entities_with_trait<Trait>() into the row it hands back.
+template <typename... Component_T> struct component_list_t {};
+
 // Every enum below is DENSE and starts at 0, so its _COUNT is both the
 // number of declared names and one past the largest value -- which is
 // what makes it safe as an array size. The DSL has no explicit or

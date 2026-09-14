@@ -4734,6 +4734,13 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
   // bug, so it is the caller's business rather than a fatal_error.
   fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
 
+  // The components a trait's `requires` names, as a TYPE LIST rather than as a
+  // tuple of values: entities_with_trait<Trait>() expands it into the row it
+  // hands back, so a trait with no `requires` yields the Entity alone.
+  fprintf(out, "// The component list a trait's `requires` names -- a type list, expanded\n");
+  fprintf(out, "// by entities_with_trait<Trait>() into the row it hands back.\n");
+  fprintf(out, "template <typename... Component_T> struct component_list_t {};\n\n");
+
   // --- enums ---
   //
   // Each gets a _COUNT beside it, matching the asset classes above. The
@@ -8539,8 +8546,18 @@ static void emit_trait_header(FILE* out, const program_t* program, const declara
   fprintf(out, "// A tag type, so `is<%.*s>(e)` is one name rather than a value and a\n",
           trait->name.length, trait->name.data);
   fprintf(out, "// template argument that could disagree.\n");
-  fprintf(out, "struct %.*s { static constexpr entity_trait tag = entity_trait::%.*s; };\n\n",
-          trait->name.length, trait->name.data, trait->name.length, trait->name.data);
+  fprintf(out, "struct %.*s\n{\n", trait->name.length, trait->name.data);
+  fprintf(out, "  static constexpr entity_trait tag = entity_trait::%.*s;\n", trait->name.length,
+          trait->name.data);
+  fprintf(out, "  using required_components_t = component_list_t<");
+  for (int32_t offset = 0; offset < trait->requirement_count; ++offset)
+  {
+    const name_reference_t* requirement =
+        &program->name_references[trait->first_requirement + offset];
+    fprintf(out, "%s%.*s", offset > 0 ? ", " : "", requirement->name.length,
+            requirement->name.data);
+  }
+  fprintf(out, ">;\n};\n\n");
 
   fprintf(out, "// One payload struct per verb. Trivially copyable, with a field table\n");
   fprintf(out, "// beside it in entity_io_generated.cpp, so a map row's override converts\n");

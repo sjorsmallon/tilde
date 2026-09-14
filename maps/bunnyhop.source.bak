@@ -670,6 +670,39 @@ connections
     "action" "Play"
     "fire_once" "1"
   }
+  connection
+  {
+    "sender" "138"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "137"
+    "action" "Set_Color"
+    override
+    {
+      "color" "0 1 0"
+    }
+  }
+  connection
+  {
+    "sender" "138"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "20"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "138"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "62"
+    "action" "Play"
+    "fire_once" "1"
+  }
 }
 groups
 {
@@ -2466,7 +2499,7 @@ entity
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "32 8 32"
-  "launch_speed" "970.3"
+  "launch_speed" "1003.9"
   "render.mesh" "Duck"
   "render.visible" "true"
   "render.is_wireframe" "false"

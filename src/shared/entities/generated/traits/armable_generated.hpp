@@ -17,7 +17,11 @@ namespace entities
 
 // A tag type, so `is<Armable>(e)` is one name rather than a value and a
 // template argument that could disagree.
-struct Armable { static constexpr entity_trait tag = entity_trait::Armable; };
+struct Armable
+{
+  static constexpr entity_trait tag = entity_trait::Armable;
+  using required_components_t = component_list_t<Inventory>;
+};
 
 // One payload struct per verb. Trivially copyable, with a field table
 // beside it in entity_io_generated.cpp, so a map row's override converts

@@ -129,7 +129,7 @@ Counting :: trait requires Counter {
     emits Limit_Reached()
 }
 
-Touchable :: trait {
+Touchable :: trait requires Box_Volume, Enabled {
     emits Touched(), Left()
     by    Player_Entity, Physics_Body_Entity
 }

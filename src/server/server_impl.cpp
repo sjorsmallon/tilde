@@ -582,6 +582,84 @@ bool change_map_to(const std::string &map_name)
   return true;
 }
 
+// How a Mortal type turns into hit volumes. Per TYPE and not per component: a
+// player is a posed rig and a damageable is one box, which is what the thing IS
+// rather than anything its Health says. Exhaustive with no default, so the third
+// Mortal type is a compile error here rather than a target nothing can shoot.
+struct target_shape_t
+{
+  uint32_t volume_count = 0;
+  bool     has_pose     = false;   // a rig to re-pose, which is what shot debug ships
+};
+
+static target_shape_t target_shape_of(entities::entity_type type,
+                                      const shared::player_rig_t &rig)
+{
+  switch (type)
+  {
+  case entities::entity_type::Player_Entity:     return {rig.volume_count(), true};
+  case entities::entity_type::Damageable_Entity: return {1, false};
+
+  case entities::entity_type::Invalid:
+  case entities::entity_type::Player_Spawn_Entity:
+  case entities::entity_type::Player_Spectate_Entity:
+  case entities::entity_type::Weapon_Entity:
+  case entities::entity_type::Rocket_Entity:
+  case entities::entity_type::Physics_Body_Entity:
+  case entities::entity_type::Particle_Emitter_Entity:
+  case entities::entity_type::Sound_Emitter_Entity:
+  case entities::entity_type::Point_Light_Entity:
+  case entities::entity_type::Spot_Light_Entity:
+  case entities::entity_type::Directional_Light_Entity:
+  case entities::entity_type::Trigger_Volume_Entity:
+  case entities::entity_type::Jump_Pad_Entity:
+  case entities::entity_type::Reflection_Volume_Entity:
+  case entities::entity_type::Game_Rules_Entity:
+  case entities::entity_type::Logic_Counter_Entity:
+  case entities::entity_type::Brush_Entity:
+    break;
+  }
+
+  fatal_error("target_shape_of: {} is Mortal and has no hit volumes; add an arm",
+              entities::entity_info(type).classname);
+}
+
+// Write one target's volumes into `slice`, and its pose if it has one.
+static void build_target_volumes(const entities::Entity &entity, const shared::player_rig_t &rig,
+                                 const aim_settings_t &settings,
+                                 Span<assets::posed_hitbox_t> slice,
+                                 std::vector<shared::player_pose_t> &poses)
+{
+  if (const entities::Player_Entity *player = entities::entity_as<entities::Player_Entity>(&entity))
+  {
+    const shared::player_pose_t pose{.feet_position = player->position,
+                                     .body_yaw      = player->body_yaw,
+                                     .view_yaw      = player->view_angle_yaw,
+                                     .view_pitch    = player->view_angle_pitch};
+
+    shared::compute_player_hitboxes(rig, pose, settings, slice);
+    poses.push_back(pose);
+    return;
+  }
+
+  if (const entities::Damageable_Entity *damageable =
+          entities::entity_as<entities::Damageable_Entity>(&entity))
+  {
+    // The entity's `orientation` is deliberately ignored: turning it into a
+    // frame is the obvious next step and it is not free (the editor gizmo, the
+    // bounds in map.cpp and this would all have to agree about the euler
+    // order), so it waits for a level that actually wants a rotated crate.
+    slice[0] = assets::make_box_hit_volume(damageable->position,
+                                           damageable->hitbox_half_extents,
+                                           shared::hit_region_t::Torso);
+    return;
+  }
+
+  fatal_error("build_target_volumes: {} is Mortal and target_shape_of gave it volumes, but "
+              "nothing here builds them",
+              entities::entity_info(entity.type).classname);
+}
+
 // Poses every living target's hit volumes into context.posed_players, once, for
 // every shot this tick to share.
 //
@@ -603,96 +681,72 @@ bool change_map_to(const std::string &map_name)
 static void pose_all_targets(server_context_t &context)
 {
   shared::posed_players_t &posed = context.posed_players;
-  // `volumes` is resized rather than cleared: every element it ends up holding
-  // is overwritten below, so clearing first would only zero them all twice.
   posed.targets.clear();
+  posed.poses.clear();
   posed.built_for_tick = context.tick_number;
 
   const shared::player_rig_t &rig = shared::player_rig();
   const aim_settings_t settings   = aim_settings_from(*context.cvars);
-  const uint32_t volume_count     = rig.volume_count();
 
-  Span<entities::Player_Entity> players =
-      context.world.session.entity_system.entities_of<entities::Player_Entity>();
-  Span<entities::Damageable_Entity> damageables =
-      context.world.session.entity_system.entities_of<entities::Damageable_Entity>();
+  shared::Entity_System &system = context.world.session.entity_system;
 
-  // Sized in full before a single target is pushed: each target holds a SPAN
-  // into this vector, so filling the two in lockstep would leave every span
-  // taken before a reallocation pointing at freed storage.
+  // WHO is a target is `is Mortal`, which entities.def declares -- not "carries
+  // Health", and not the two pools this used to hard-list. A third Mortal type
+  // joins by declaring the trait.
   //
-  // Two volume counts now, and they are not the same number: a player is
-  // rig.volume_count() volumes and a damageable is exactly ONE box. That is why
-  // the slice below is cut with a running offset rather than
-  // `targets.size() * volume_count` -- that expression was only ever right
-  // while every target had the same stride, and it would have silently handed
-  // out overlapping spans the moment one did not.
-  uint32_t living_player_count = 0;
-  for (const entities::Player_Entity &player : players)
-    living_player_count += player.health.current_health > 0 ? 1 : 0;
-
-  uint32_t living_damageable_count = 0;
-  for (const entities::Damageable_Entity &damageable : damageables)
-    living_damageable_count += damageable.health.current_health > 0 ? 1 : 0;
-
-  const size_t total_target_count = (size_t)living_player_count + living_damageable_count;
-
-  posed.volumes.resize((size_t)living_player_count * volume_count + living_damageable_count);
-  posed.targets.reserve(total_target_count);
-  posed.poses.clear();
-  posed.poses.reserve(living_player_count);
-
-  size_t next_volume = 0;
-
-  for (const entities::Player_Entity &player : players)
+  // Sized in full before a single target is pushed: each target holds a SPAN
+  // into `volumes`, so filling the two in lockstep would leave every span taken
+  // before a reallocation pointing at freed storage. The counts are not one
+  // number times a stride -- a player is rig.volume_count() volumes and a
+  // damageable is exactly one -- which is why this sums rather than multiplies.
+  size_t total_volume_count = 0;
+  size_t total_target_count = 0;
+  size_t posed_target_count = 0;
+  for (auto [entity, health] : system.entities_with_trait<entities::Mortal>())
   {
-    if (player.health.current_health <= 0)
+    if (health.current_health <= 0)
       continue;
 
-    // this constness confused the fuck out of me: it's the span that can't be modified, not that the entities it points to cannot.
-    // so no reassignment to point to some other thing.
-    const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, volume_count};
-    next_volume += volume_count;
-
-    const shared::player_pose_t pose{.feet_position = player.position,
-                                     .body_yaw      = player.body_yaw,
-                                     .view_yaw      = player.view_angle_yaw,
-                                     .view_pitch    = player.view_angle_pitch};
-
-    shared::compute_player_hitboxes(rig, pose, settings, slice);
-
-    posed.poses.push_back(pose);
-    posed.targets.push_back(shared::make_hitscan_target(
-        player.entity_id, Span<const assets::posed_hitbox_t>{slice}));
+    const target_shape_t shape = target_shape_of(entity.type, rig);
+    total_volume_count += shape.volume_count;
+    total_target_count += 1;
+    posed_target_count += shape.has_pose ? 1 : 0;
   }
 
-  // The damageables, AFTER every player, and deliberately NOT pushed to
-  // `poses`. That vector is what shot debug ships so the client can re-pose a
-  // player rig, and a damageable has no rig to re-pose -- send_shot_debug walks
-  // min(targets, poses), which is what keeps it to the player prefix. That
-  // guard was written as belt-and-braces; this is what makes it load-bearing.
-  //
-  // Ordering matters for one reason only: `poses` describes a PREFIX of
-  // `targets`, so the players have to come first. resolve_hitscan itself ranks
-  // by distance and does not care.
-  for (const entities::Damageable_Entity &damageable : damageables)
+  posed.volumes.resize(total_volume_count);
+  posed.targets.reserve(total_target_count);
+  posed.poses.reserve(posed_target_count);
+
+  // TWO passes, posed targets first, because `poses` describes a PREFIX of
+  // `targets` -- send_shot_debug walks min(targets, poses) and
+  // append_static_targets keys off poses.size() to tell a rewindable target from
+  // a static one. Splitting the passes is what makes that prefix true BY
+  // CONSTRUCTION; one pass got it right only because Player_Entity happens to be
+  // declared before Damageable_Entity, which is not something to rest an
+  // invariant on.
+  size_t next_volume = 0;
+
+  for (const bool want_posed : {true, false})
   {
-    if (damageable.health.current_health <= 0)
-      continue;
+    for (auto [entity, health] : system.entities_with_trait<entities::Mortal>())
+    {
+      if (health.current_health <= 0)
+        continue;
 
-    const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, 1};
-    next_volume += 1;
+      const target_shape_t shape = target_shape_of(entity.type, rig);
+      if (shape.has_pose != want_posed)
+        continue;
 
-    // The entity's `orientation` is deliberately ignored: turning it into a
-    // frame is the obvious next step and it is not free (the editor gizmo, the
-    // bounds in map.cpp and this would all have to agree about the euler
-    // order), so it waits for a level that actually wants a rotated crate.
-    slice[0] = assets::make_box_hit_volume(damageable.position,
-                                           damageable.hitbox_half_extents,
-                                           shared::hit_region_t::Torso);
+      // The constness is the SPAN's, not the volumes' -- it cannot be pointed
+      // somewhere else; what it points at is written through.
+      const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume,
+                                               shape.volume_count};
+      next_volume += shape.volume_count;
 
-    posed.targets.push_back(shared::make_hitscan_target(
-        damageable.entity_id, Span<const assets::posed_hitbox_t>{slice}));
+      build_target_volumes(entity, rig, settings, slice, posed.poses);
+      posed.targets.push_back(shared::make_hitscan_target(
+          entity.entity_id, Span<const assets::posed_hitbox_t>{slice}));
+    }
   }
 }
 

@@ -17,7 +17,11 @@ namespace entities
 
 // A tag type, so `is<Playable>(e)` is one name rather than a value and a
 // template argument that could disagree.
-struct Playable { static constexpr entity_trait tag = entity_trait::Playable; };
+struct Playable
+{
+  static constexpr entity_trait tag = entity_trait::Playable;
+  using required_components_t = component_list_t<Playback>;
+};
 
 // One payload struct per verb. Trivially copyable, with a field table
 // beside it in entity_io_generated.cpp, so a map row's override converts

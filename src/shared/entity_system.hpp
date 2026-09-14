@@ -2,6 +2,8 @@
 
 #include "array.hpp"
 #include "entities/entity_reflection.hpp"
+// ENTITY_TRAIT_MASKS and component_list_t, for entities_with_trait<Trait_T>().
+#include "entities/generated/entity_io_generated.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "span.hpp"
@@ -152,7 +154,25 @@ struct entity_location_t
   uint32_t              slot = 0;
 };
 
-template <typename... Component_T> struct Component_View;
+template <typename Pool_Filter_T, typename... Component_T> struct Pool_View;
+template <typename... Component_T> struct Component_Pool_Filter;
+template <typename Trait_T> struct Trait_Pool_Filter;
+
+// Every pool whose type embeds all of Component_T...
+template <typename... Component_T>
+using Component_View = Pool_View<Component_Pool_Filter<Component_T...>, Component_T...>;
+
+// Every pool whose type carries Trait_T, handing back the components that
+// trait's `requires` names -- which is why the list has to be unwrapped here
+// rather than passed through: a view takes components, and a trait names them.
+template <typename Trait_T, typename Component_List_T> struct Trait_View_Of;
+template <typename Trait_T, typename... Component_T>
+struct Trait_View_Of<Trait_T, entities::component_list_t<Component_T...>>
+{
+  using type = Pool_View<Trait_Pool_Filter<Trait_T>, Component_T...>;
+};
+template <typename Trait_T>
+using Trait_View = typename Trait_View_Of<Trait_T, typename Trait_T::required_components_t>::type;
 
 struct Entity_System
 {
@@ -233,6 +253,25 @@ struct Entity_System
   // Same lifetime rule as entities_of<T>(): a view, not a container, invalidated
   // by the next spawn or destroy in any pool it covers.
   template <typename... Component_T> Component_View<Component_T...> entities_with();
+
+  // Every live entity whose type carries Trait_T, handing back the components
+  // that trait's `requires` names -- in entity_type declaration order, then
+  // slot order.
+  //
+  //   for (auto [entity, health] : entity_system.entities_with_trait<entities::Mortal>())
+  //
+  // Asks what entities.def DECLARES ("who is Mortal") rather than what the
+  // layout happens to say ("who carries Health"). Those name the same pools
+  // today and stop doing so the moment a type gains a component without opting
+  // into the trait that reads it -- which nothing prevents, since `is Mortal`
+  // and `health: Health` are two separate lines of the declaration.
+  //
+  // A trait with no `requires` yields the Entity alone, so the row binds as
+  // `for (entities::Entity& volume : ...)` rather than as a structured binding.
+  //
+  // Same lifetime rule as entities_of<T>(): a view, not a container,
+  // invalidated by the next spawn or destroy in any pool it covers.
+  template <typename Trait_T> Trait_View<Trait_T> entities_with_trait();
 
   // Create an entity of type T and return its uid — the handle. Resolve it with
   // get<T>(uid) to write the new entity's fields. Cannot fail.
@@ -405,30 +444,53 @@ private:
   void remove_at_slot(entities::entity_type type, uint32_t slot);
 };
 
-// The result of Entity_System::entities_with<Component_T...>(). A lazy range:
-// nothing is allocated, nothing is cached, and nothing has to be kept in sync at
-// spawn or destroy — which is the whole reason this is not a stored aggregate.
+// The result of Entity_System::entities_with<Component_T...>() and of
+// entities_with_trait<Trait_T>(). A lazy range: nothing is allocated, nothing is
+// cached, and nothing has to be kept in sync at spawn or destroy -- which is the
+// whole reason this is not a stored aggregate.
 //
-// "Which entity types have Render" is not a fact anyone declares twice: it comes
-// out of `render: Render` in entities.def as entity_type_info_t::component_mask.
-// So the outer loop walks TYPES (ENTITY_TYPE_COUNT of them, one mask test each,
-// once per query) rather than entities, and the inner loop walks the matching
-// pools at their runtime stride. The component byte offsets are resolved ONCE
-// PER POOL, in settle(), instead of once per entity.
+// WHICH POOLS qualify is the one thing the two callers disagree about, so it is
+// a policy -- `Pool_Filter_T::accepts(type)`, constant per pool and evaluated
+// once per pool rather than once per entity. Neither question is one anyone
+// declares twice: `render: Render` becomes entity_type_info_t::component_mask
+// and `is Mortal` becomes ENTITY_TRAIT_MASKS, so the outer loop walks TYPES
+// (ENTITY_TYPE_COUNT of them, one mask test each) and the inner loop walks the
+// matching pools at their runtime stride. The component byte offsets are
+// resolved ONCE PER POOL, in settle(), instead of once per entity.
 //
-// Intersections come free: required_mask is a fold over the pack, so
-// entities_with<Render, Box_Volume>() is the same test against both bits.
-template <typename... Component_T> struct Component_View
+// Intersections come free: the component filter's mask is a fold over the pack,
+// so entities_with<Render, Box_Volume>() is the same test against both bits.
+template <typename... Component_T> struct Component_Pool_Filter
 {
-  static_assert(sizeof...(Component_T) > 0, "entities_with<> needs at least one component");
-
   static constexpr uint32_t REQUIRED_MASK =
       (... | (1u << (uint16_t)Component_T::static_component));
 
-  // A pack cannot be expanded into struct members, so the row is a tuple —
+  static bool accepts(entities::entity_type type)
+  {
+    return (entities::entity_info(type).component_mask & REQUIRED_MASK) == REQUIRED_MASK;
+  }
+};
+
+// A trait's components are guaranteed present by `requires`, so this tests the
+// trait bit alone and the offsets below still resolve.
+template <typename Trait_T> struct Trait_Pool_Filter
+{
+  static bool accepts(entities::entity_type type)
+  {
+    return entities::type_has_trait(type, Trait_T::tag);
+  }
+};
+
+template <typename Pool_Filter_T, typename... Component_T> struct Pool_View
+{
+  // A pack cannot be expanded into struct members, so the row is a tuple --
   // which still binds as `auto [entity, render]` at the call site. The members
-  // are references INTO THE POOL, so writing through them writes the entity.
-  using row_t = std::tuple<entities::Entity &, Component_T &...>;
+  // are references INTO THE POOL, so writing through them writes the entity. An
+  // EMPTY pack is the trait-with-no-`requires` case and hands back the Entity
+  // reference bare, so the loop variable is one name rather than a one-element
+  // structured binding.
+  using row_t = std::conditional_t<sizeof...(Component_T) == 0, entities::Entity &,
+                                   std::tuple<entities::Entity &, Component_T &...>>;
 
   Entity_System *system = nullptr;
 
@@ -441,11 +503,12 @@ template <typename... Component_T> struct Component_View
     uint32_t type_index = 1;
     uint32_t slot       = 0;
 
-    // Resolved once per pool by settle(), in pack order.
-    Array<uint32_t, sizeof...(Component_T)> offsets = {};
+    // Resolved once per pool by settle(), in pack order. Sized to at least one
+    // so an empty pack still names a type.
+    Array<uint32_t, sizeof...(Component_T) + 1> offsets = {};
 
     // Postcondition: either type_index == ENTITY_TYPE_COUNT (the end), or
-    // pools[type_index] embeds every component, holds `slot`, and `offsets` is
+    // pools[type_index] passes the filter, holds `slot`, and `offsets` is
     // resolved for it.
     void settle()
     {
@@ -453,8 +516,7 @@ template <typename... Component_T> struct Component_View
       {
         const entities::entity_type type = (entities::entity_type)type_index;
 
-        if ((entities::entity_info(type).component_mask & REQUIRED_MASK) == REQUIRED_MASK &&
-            slot < system->pools[type_index].count)
+        if (Pool_Filter_T::accepts(type) && slot < system->pools[type_index].count)
         {
           uint32_t next = 0;
           // Left-to-right by the fold's evaluation order, so `offsets` ends up
@@ -500,10 +562,13 @@ template <typename... Component_T> struct Component_View
     row_t make_row(entities::Entity *base, std::index_sequence<Index...>) const
     {
       // `base` comes from Entity_Pool::at, which goes through the generated
-      // as_base thunk — an entity and its base are not pointer-interconvertible,
-      // so the adjustment is not ours to guess (entity_system.hpp §Entity_Pool).
-      return row_t(*base, *reinterpret_cast<Component_T *>(reinterpret_cast<uint8_t *>(base) +
-                                                           offsets[Index])...);
+      // as_base thunk -- an entity and its base are not pointer-interconvertible,
+      // so the adjustment is not ours to guess (entity_system.hpp SS Entity_Pool).
+      if constexpr (sizeof...(Component_T) == 0)
+        return *base;
+      else
+        return row_t(*base, *reinterpret_cast<Component_T *>(reinterpret_cast<uint8_t *>(base) +
+                                                             offsets[Index])...);
     }
   };
 
@@ -520,6 +585,11 @@ template <typename... Component_T> struct Component_View
 template <typename... Component_T> Component_View<Component_T...> Entity_System::entities_with()
 {
   return Component_View<Component_T...>{this};
+}
+
+template <typename Trait_T> Trait_View<Trait_T> Entity_System::entities_with_trait()
+{
+  return Trait_View<Trait_T>{this};
 }
 
 } // namespace shared

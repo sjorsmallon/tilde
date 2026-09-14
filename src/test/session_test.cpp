@@ -445,6 +445,146 @@ int main()
     }
   }
 
+  // --- entities_with_trait<Trait_T>: the trait aggregate ----------------------
+  //
+  // The component view above asks what the LAYOUT says; this asks what
+  // entities.def DECLARES, and the two are free to disagree the moment a type
+  // gains a component without opting into the trait that reads it. Same
+  // stride/offset hazard, so the same guard: a comparison against the
+  // brute-force walk, entity by entity, not a count.
+  {
+    game_session_t trait_session = build_session(test_map);
+    Entity_System &entity_system = trait_session.entity_system;
+
+    // Two Mortal types (one of them twice, so the inner slot walk has somewhere
+    // to go), two Switchable ones, one Objective, and two carrying no trait at
+    // all -- the pools that must be skipped.
+    entity_system.spawn<entities::Player_Entity>();
+    entity_system.spawn<entities::Damageable_Entity>();
+    entity_system.spawn<entities::Damageable_Entity>();
+    entity_system.spawn<entities::Trigger_Volume_Entity>();
+    entity_system.spawn<entities::Jump_Pad_Entity>();
+    entity_system.spawn<entities::Game_Rules_Entity>();
+    entity_system.spawn<entities::Rocket_Entity>();
+    entity_system.spawn<entities::Physics_Body_Entity>();
+
+    // What `for (pool) for (slot) if (is<Mortal>(entity))` produces.
+    std::vector<std::pair<entity_uid_t, const void *>> expected_mortal;
+    for (Entity_Pool &pool : entity_system.pools)
+    {
+      for (uint32_t slot = 0; slot < pool.count; ++slot)
+      {
+        const entities::Entity *entity = pool.at(slot);
+        if (!entities::is<entities::Mortal>(*entity))
+          continue;
+        expected_mortal.push_back(
+            {entity->entity_id, entities::get_component<entities::Health>(entity)});
+      }
+    }
+
+    // Or the sequence compare below passes on two empty lists.
+    if (expected_mortal.size() < 3)
+    {
+      log_error("the brute-force walk found {} Mortal entities; a Player and two Damageables "
+                "were spawned",
+                expected_mortal.size());
+      return 1;
+    }
+
+    std::vector<std::pair<entity_uid_t, const void *>> actual_mortal;
+    for (auto [entity, health] : entity_system.entities_with_trait<entities::Mortal>())
+    {
+      // Same object, not merely the same values: `requires Health` is what makes
+      // this reference non-null by declaration, and it must point INTO the
+      // pooled entity.
+      if (&health != entities::get_component<entities::Health>(&entity))
+      {
+        log_error("entities_with_trait<Mortal> handed a component that is not the entity's "
+                  "own (uid {})",
+                  entity.entity_id);
+        return 1;
+      }
+      actual_mortal.push_back({entity.entity_id, &health});
+    }
+
+    // Both walk pools in type order then slot order, so this is an exact
+    // sequence compare rather than a set compare.
+    if (actual_mortal != expected_mortal)
+    {
+      log_error("entities_with_trait<Mortal> visited {} entities; the brute-force walk "
+                "visited {} (or visited them in a different order)",
+                actual_mortal.size(), expected_mortal.size());
+      return 1;
+    }
+
+    // A trait with more than one `requires`, so the pack is expanded in
+    // DECLARATION order -- Box_Volume then Enabled. Swapping the two here would
+    // still compile and would hand back a Box_Volume's bytes as an Enabled.
+    uint32_t touchable_count = 0;
+    for (auto [entity, box, switch_state] :
+         entity_system.entities_with_trait<entities::Touchable>())
+    {
+      if (&box != entities::get_component<entities::Box_Volume>(&entity) ||
+          &switch_state != entities::get_component<entities::Enabled>(&entity))
+      {
+        log_error("entities_with_trait<Touchable> handed the requires pack out of order "
+                  "(uid {})",
+                  entity.entity_id);
+        return 1;
+      }
+      ++touchable_count;
+    }
+    if (touchable_count != 2)
+    {
+      log_error("entities_with_trait<Touchable> found {} entities; a Trigger_Volume and a "
+                "Jump_Pad were spawned",
+                touchable_count);
+      return 1;
+    }
+
+    // A trait with NO `requires`: the row is the Entity alone rather than a
+    // one-element structured binding, which is what the empty-pack arm of
+    // Pool_View::row_t exists for.
+    uint32_t objective_count = 0;
+    for (entities::Entity &entity : entity_system.entities_with_trait<entities::Objective>())
+    {
+      if (!entities::is<entities::Objective>(entity))
+      {
+        log_error("entities_with_trait<Objective> visited uid {}, which is not Objective",
+                  entity.entity_id);
+        return 1;
+      }
+      ++objective_count;
+    }
+    if (objective_count != 1)
+    {
+      log_error("entities_with_trait<Objective> found {} entities; one Game_Rules was spawned",
+                objective_count);
+      return 1;
+    }
+
+    // The trait filter is not the component filter. Nothing carries Playback
+    // except the one Playable type, and none was spawned -- an over-matching
+    // trait mask (a shifted bit, say) shows up here as a non-empty result.
+    for (auto [entity, playback] : entity_system.entities_with_trait<entities::Playable>())
+    {
+      (void)playback;
+      log_error("entities_with_trait<Playable> matched uid {}; no Sound_Emitter was spawned",
+                entity.entity_id);
+      return 1;
+    }
+
+    // The empty case: begin() must settle all the way to end() rather than
+    // stopping on the first pool that happens to be empty.
+    Entity_System empty_system;
+    if (empty_system.entities_with_trait<entities::Mortal>().begin() !=
+        empty_system.entities_with_trait<entities::Mortal>().end())
+    {
+      log_error("entities_with_trait<Mortal> on an empty Entity_System is not empty");
+      return 1;
+    }
+  }
+
   // --- The tie, and the bit that comes out of it (prediction_def.md §4) -------
   //
   // Three questions in one fixture, because they are one fact seen from three

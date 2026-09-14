@@ -17,7 +17,11 @@ namespace entities
 
 // A tag type, so `is<Colorable>(e)` is one name rather than a value and a
 // template argument that could disagree.
-struct Colorable { static constexpr entity_trait tag = entity_trait::Colorable; };
+struct Colorable
+{
+  static constexpr entity_trait tag = entity_trait::Colorable;
+  using required_components_t = component_list_t<>;
+};
 
 // One payload struct per verb. Trivially copyable, with a field table
 // beside it in entity_io_generated.cpp, so a map row's override converts

@@ -1,7 +1,7 @@
 // Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The trait Touchable: every verb it declares, and the handler shape those
-// verbs are written against once PER TYPE, in src/server/entities/.
+// verbs are written against ONCE, in src/server/traits/touchable.cpp.
 //
 // The includes are relative to THIS file rather than to src/shared: a
 // quoted include is resolved against the including file's directory first.
@@ -17,7 +17,11 @@ namespace entities
 
 // A tag type, so `is<Touchable>(e)` is one name rather than a value and a
 // template argument that could disagree.
-struct Touchable { static constexpr entity_trait tag = entity_trait::Touchable; };
+struct Touchable
+{
+  static constexpr entity_trait tag = entity_trait::Touchable;
+  using required_components_t = component_list_t<Box_Volume, Enabled>;
+};
 
 // One payload struct per verb. Trivially copyable, with a field table
 // beside it in entity_io_generated.cpp, so a map row's override converts
@@ -36,6 +40,15 @@ struct Left_Data
 };
 static_assert(std::is_trivially_copyable_v<Left_Data>,
               "a verb payload rides a union in a map row and a queue record");
+
+// --- the handlers, written ONCE -------------------------------------
+//
+// `requires` is what buys this: one handler for every opting-in type
+// rather than one per type, written against the required components. The
+// receiver is first and is the BASE, because a component cannot name its
+// owner. A type that wants its own still beats this by exact match.
+// Defined in src/server/traits/touchable.cpp; a declared handler nobody defined
+// is a LINK error naming the symbol.
 
 // --- what it ANNOUNCES ----------------------------------------------
 //

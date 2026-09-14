@@ -40,8 +40,24 @@ struct toucher_t
 };
 
 
+// The one walk that decides WHO can trip a trigger.
+//
+// Unlike the volumes above, this cannot be a component or a trait view: a
+// toucher's bounds are what the thing physically IS -- the player's movement
+// hull, a body's own half-extents -- and that is per TYPE, not per component.
+// What IS derivable is the type LIST, which `by` declares. So the arms stay
+// hand-written and the static_assert is what keeps them in step with the
+// declaration: a type that can touch and is not walked here passes a check
+// nothing then honours, which is one of the three defects entity_io_def.md ss2
+// names.
 void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& out)
 {
+  static_assert(
+      entities::SIGNAL_ACTIVATOR_MASKS[(uint16_t)entities::entity_signal::Touched] ==
+          (entities::entity_type_bit(entities::entity_type::Player_Entity) |
+           entities::entity_type_bit(entities::entity_type::Physics_Body_Entity)),
+      "Touched's `by` list moved: add or remove the matching pool walk below");
+
   out.clear();
 
   for (entities::Player_Entity& player :
@@ -53,24 +69,26 @@ void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& o
     out.push_back({&body, {body.position - body.size, body.position + body.size}});
 }
 
-// One pass over one pool of volumes.
-template <typename Volume_T>
-void collect_overlaps(server_context_t& context, Span<Volume_T> volumes,
-                      Span<const toucher_t> touchers, std::set<trigger_overlap_t>& current)
+// One pass over every Touchable there is, whatever pool it lives in. Keyed on
+// the TRAIT rather than on the two pools that carry it today: `is Touchable` is
+// what entities.def declares, and `requires Box_Volume, Enabled` is what makes
+// the two components non-null here by declaration rather than by coincidence.
+void collect_overlaps(server_context_t& context, Span<const toucher_t> touchers,
+                      std::set<trigger_overlap_t>& current)
 {
-  for (Volume_T& volume : volumes)
+  for (auto [volume, box, switch_state] :
+       context.world.session.entity_system.entities_with_trait<entities::Touchable>())
   {
     // A disabled volume has no overlaps at all rather than merely no new ones,
     // so switching one off while somebody stands in it emits their Left. The
     // alternative -- freezing the pair set -- leaves a Touched with no Left,
     // and a door that never closes is worse than one that closes early.
-    if (!volume.switch_state.value)
+    if (!switch_state.value)
       continue;
 
     // The ONE bounds function, shared with collect_movement_volumes: a pad's
     // Touched and a pad's launch must agree about who is inside it.
-    const shared::aabb_bounds_t volume_bounds =
-        shared::get_bounds(volume.volume, volume.position);
+    const shared::aabb_bounds_t volume_bounds = shared::get_bounds(box, volume.position);
 
     for (const toucher_t& toucher : touchers)
     {
@@ -98,17 +116,9 @@ void update_triggers(server_context_t& context)
   std::vector<toucher_t> touchers;
   collect_touchers(session, touchers);
 
-  // Both pools are fetched HERE rather than reused from earlier in the tick:
-  // this is a walk over everything, not a lookup of one, so it wants the pool
-  // -- but a pool pointer grabbed hundreds of lines ago would have survived
-  // every spawn and destroy in between.
   std::set<trigger_overlap_t> current;
 
-  collect_overlaps(context, session.entity_system.entities_of<entities::Trigger_Volume_Entity>(),
-                   Span<const toucher_t>(touchers), current);
-
-  collect_overlaps(context, session.entity_system.entities_of<entities::Jump_Pad_Entity>(),
-                   Span<const toucher_t>(touchers), current);
+  collect_overlaps(context, Span<const toucher_t>(touchers), current);
 
   // The falling edge, from the pairs that were there and are not. A trigger or
   // a toucher that stopped existing is one of them, and it still emits: the

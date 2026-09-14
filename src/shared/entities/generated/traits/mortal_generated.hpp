@@ -17,7 +17,11 @@ namespace entities
 
 // A tag type, so `is<Mortal>(e)` is one name rather than a value and a
 // template argument that could disagree.
-struct Mortal { static constexpr entity_trait tag = entity_trait::Mortal; };
+struct Mortal
+{
+  static constexpr entity_trait tag = entity_trait::Mortal;
+  using required_components_t = component_list_t<Health>;
+};
 
 // One payload struct per verb. Trivially copyable, with a field table
 // beside it in entity_io_generated.cpp, so a map row's override converts
