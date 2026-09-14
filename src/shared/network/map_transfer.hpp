@@ -73,6 +73,16 @@ struct map_package_t
 // entity_text is taken from the canonical serialize_map_to_string(map).
 map_package_t build_map_package(const map_t &map);
 
+// The inverse, and the ONE way a streamed package becomes a map. Every baked
+// sidecar comes off the package HERE rather than at the call site, so a third
+// one added to map_package_t is added beside its two neighbours and cannot be
+// left off a downloaded map -- which draws as a shader bug, not as missing data.
+//
+// package.map_name is the identity, the way the FILE is on the disk path: a
+// map's worldspawn carries whatever "name" was inside the text it was copied
+// from, and try_load_map already overrides that for the same reason.
+map_t make_map_from_package(const map_package_t &package);
+
 // Container (de)serialization. deserialize returns false on a bad magic/version
 // or a truncated blob rather than silently yielding a half-built package.
 std::vector<uint8_t> serialize_map_package(const map_package_t &package);

@@ -509,7 +509,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
     s_selected_row = outbound.empty() ? SIZE_MAX : outbound.front();
 
   // An armed pick names the row being filled, so that is the row to show -- a
-  // stamp arms it on the prefab's UNBOUND row, which is rarely the sender's
+  // paste arms it on the prefab's UNBOUND row, which is rarely the sender's
   // first.
   if (pick.is_row_pick() && std::find(outbound.begin(), outbound.end(), pick.row) != outbound.end())
     s_selected_row = pick.row;

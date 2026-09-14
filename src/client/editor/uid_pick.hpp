@@ -32,7 +32,7 @@ struct uid_pick_t
   bool   armed = false;
   size_t row   = 0; // index into map_t::connections
   std::optional<field_pick_target_t> field;
-  // The other rows the SAME click fills: after a stamp, every unbound row of
+  // The other rows the SAME click fills: after a paste, every unbound row of
   // that stamp sharing `row`'s key, since they all aimed at one entity.
   std::vector<size_t> also_rows;
   // Unbound rows of the stamp still waiting for a click of their own; the next

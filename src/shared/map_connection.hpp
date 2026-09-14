@@ -95,9 +95,9 @@ struct connection_remap_result_t
 // untouched -- it is a legitimate value, not a missing entity. An `Unbound`
 // target passes through the same way: it is a key, not an end.
 //
-// This is the ONE walk of a row's uids. bake_map_csg used to remap two of the
-// three by hand and silently carried an override payload pointing at a uid from
-// the map it came from.
+// This is the ONE walk of a row's uids. A caller remapping two of the three by
+// hand silently carries an override payload pointing at a uid from the map it
+// came from, which is what the CSG bake did until it was deleted.
 [[nodiscard]] connection_remap_result_t remap_connection_uids(connection_t&      connection,
                                                               const uid_remap_t& remap);
 

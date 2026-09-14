@@ -380,13 +380,10 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
 {
   frame_timing::exclude_current_frame("map package applied");
 
-  // Build the map from the streamed package: entities from the canonical text,
-  // the baked sidecars from what the package carries beside it.
-  // parse_map_from_string returns a fresh map (no navmesh, no lightmap), so both
-  // are attached afterward rather than surviving from the previous map.
-  shared::map_t map = shared::parse_map_from_string(package.entity_text);
-  map.navmesh  = package.navmesh;
-  map.lightmap = package.lightmap;
+  // The package IS the map, through the one inverse of build_map_package: text,
+  // name and every baked sidecar come off it there, so nothing here can be left
+  // surviving from the previous map.
+  shared::map_t map = shared::make_map_from_package(package);
 
   switch_to_map(map);
   return true;

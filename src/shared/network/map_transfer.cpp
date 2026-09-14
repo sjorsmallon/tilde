@@ -414,6 +414,20 @@ map_package_t build_map_package(const map_t &map)
   return package;
 }
 
+map_t make_map_from_package(const map_package_t &package)
+{
+  map_t map = parse_map_from_string(package.entity_text);
+
+  // Empty only for a package built before the name was carried; the text's own
+  // worldspawn name is the fallback rather than a nameless map.
+  if (!package.map_name.empty())
+    map.name = package.map_name;
+
+  map.navmesh  = package.navmesh;
+  map.lightmap = package.lightmap;
+  return map;
+}
+
 std::vector<uint8_t> serialize_map_package(const map_package_t &package)
 {
   network::Bit_Writer writer;

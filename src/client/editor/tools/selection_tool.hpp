@@ -60,7 +60,7 @@ private:
 
   // A press that MEANT something other than selecting, so its release must not
   // fall through to the selection branch. Two gestures set it: the connection
-  // pick above, and the paste commit -- which hands the stamped copies to
+  // pick above, and the paste commit -- which hands the pasted copies to
   // selected_uids, and a release landing on nothing would clear them again.
   bool click_consumed_by_gesture = false;
 
@@ -135,13 +135,13 @@ private:
   //
   // Two keys, not one: Ctrl+C fills the clipboard, Ctrl+V opens a pending paste
   // that follows the cursor until LMB commits it or Escape drops it. Splitting
-  // them is what makes a cancelled paste cost nothing and one copy stampable
+  // them is what makes a cancelled paste cost nothing and one copy pasteable
   // repeatedly. The clipboard outlives the paste and the tool switch; the
   // pending paste does not.
   //
-  // THE CLIPBOARD IS A MAP -- a fragment whose anchor is its own origin, which
+  // THE CLIPBOARD IS A MAP -- a piece whose anchor is its own origin, which
   // is exactly what a prefab file holds (prefab_def.md). Copy is
-  // extract_map_subset and paste is stamp_map, so Ctrl+C carries the
+  // copy_map_piece and paste is paste_map_piece, so Ctrl+C carries the
   // CONNECTIONS between the copied objects, which the per-object clipboard this
   // replaced silently dropped. Only the ANCHOR meets the grid at paste time --
   // snapping each member on its own would deform the arrangement that was
@@ -157,7 +157,7 @@ private:
   // Rows the copy could not take, because one of their ends was not selected.
   // Reported once at Ctrl+C: the same loss "Save as prefab" warns about, and
   // the same walk decides both.
-  size_t clipboard_crossing_count = 0;
+  size_t clipboard_outside_end_count = 0;
 
   // --- Save as prefab ----------------------------------------------------------
   //
@@ -183,10 +183,10 @@ private:
   // what you see and what gets stored cannot disagree.
   linalg::vec3 paste_anchor{0, 0, 0};
 
-  // The one way the clipboard is filled, whatever produced the fragment: a
+  // The one way the clipboard is filled, whatever produced the piece: a
   // copied selection or a prefab off disk. Builds the ghost hulls and the low
   // corner the paste snaps by, so those cannot be forgotten at a second site.
-  void adopt_clipboard(shared::map_t fragment, size_t crossing_count);
+  void adopt_clipboard(shared::map_t piece, size_t outside_end_count);
   void copy_selection_to_clipboard(editor_context_t& ctx);
   void begin_paste();
   void cancel_paste();
@@ -226,7 +226,7 @@ private:
 
   // Arms the pick for the next group of the stamp's unbound rows, selecting
   // that group's sender so the panel being filled is the one on screen. Does
-  // nothing when none are queued. Called after a stamp and after each resolve.
+  // nothing when none are queued. Called after a paste and after each resolve.
   void arm_next_unbound_pick(editor_context_t& ctx);
 
   // The nearest visible entity whose ICON is within `radius` pixels of the

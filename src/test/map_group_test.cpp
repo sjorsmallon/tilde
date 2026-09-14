@@ -12,12 +12,12 @@
 //      next_uid clears the group's uid on the way back in.
 //   4. The LOAD CLEAN. prune_map_groups drops a missing member, refuses a
 //      second claim on one uid, and dissolves what is left with one member.
-//   5. The CARRIERS. Extract keeps the intersection, stamp mints fresh uids and
+//   5. The CARRIERS. Copy keeps the intersection, paste mints fresh uids and
 //      remaps the members onto them, twice gives two groups.
 
 #include "log.hpp"
 #include "map.hpp"
-#include "map_fragment.hpp"
+#include "map_piece.hpp"
 #include "map_group.hpp"
 
 #include <algorithm>
@@ -179,14 +179,14 @@ int main()
     // Extract {a, floor} out of a map whose group is {a, c}: one member comes
     // along, so no group. Extract {a, c, floor}: the group comes whole.
     const entity_uid_t partial[] = {a, floor};
-    const map_t        one = extract_map_subset(map, partial);
+    const map_t        one = copy_map_piece(map, partial);
     if (!one.groups.empty())
-      return fail("a subset holding one member of a group should carry no group");
+      return fail("a piece holding one member of a group should carry no group");
 
     const entity_uid_t all[] = {a, c, floor};
-    const map_t        fragment = extract_map_subset(map, all);
-    if (fragment.groups.size() != 1 || fragment.groups[0].members.size() != 2)
-      return fail("a subset holding the whole group should carry it");
+    const map_t        piece = copy_map_piece(map, all);
+    if (piece.groups.size() != 1 || piece.groups[0].members.size() != 2)
+      return fail("a piece holding the whole group should carry it");
 
     map_t destination;
     destination.name = "destination.source";
@@ -197,31 +197,31 @@ int main()
         add_at(destination, entities::entity_type::Player_Spawn_Entity, {0.f, 0.f, 0.f});
     (void)anchor_entity;
 
-    const stamp_result_t once  = stamp_map(destination, fragment, {1000.f, 0.f, 0.f});
-    const stamp_result_t twice = stamp_map(destination, fragment, {2000.f, 0.f, 0.f});
+    const paste_result_t once  = paste_map_piece(destination, piece, {1000.f, 0.f, 0.f});
+    const paste_result_t twice = paste_map_piece(destination, piece, {2000.f, 0.f, 0.f});
     if (destination.groups.size() != 2)
-      return fail("two stamps of a grouped fragment should give two groups");
+      return fail("two stamps of a grouped piece should give two groups");
     if (destination.groups[0].uid == destination.groups[1].uid)
-      return fail("the two stamped groups share a uid");
+      return fail("the two pasted groups share a uid");
     for (const map_group_t &group : destination.groups)
     {
       if (group.members.size() != 2)
-        return fail("a stamped group lost members");
+        return fail("a pasted group lost members");
       for (entity_uid_t member : group.members)
       {
         if (!destination.has_object(member))
-          return fail("a stamped group names a uid the destination does not have");
+          return fail("a pasted group names a uid the destination does not have");
         if (member == a || member == c)
-          return fail("a stamped group still names a source uid");
+          return fail("a pasted group still names a source uid");
       }
     }
     const map_group_t *first_stamp = find_group_of(destination, once.remap.at(a));
     if (first_stamp == nullptr || !has_member(*first_stamp, once.remap.at(c)))
-      return fail("the first stamp's group does not hold the first stamp's copies");
+      return fail("the first paste's group does not hold the first paste's copies");
     if (find_group_of(destination, twice.remap.at(a)) == first_stamp)
-      return fail("the second stamp's copies landed in the first stamp's group");
+      return fail("the second paste's copies landed in the first paste's group");
     if (destination.next_uid <= destination.groups[1].uid)
-      return fail("the destination's next_uid did not clear the stamped group uids");
+      return fail("the destination's next_uid did not clear the pasted group uids");
   }
 
   std::puts("map_group_test: all passed");

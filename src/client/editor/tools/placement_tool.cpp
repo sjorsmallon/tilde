@@ -11,7 +11,7 @@
 
 #define ENTITIES_WANT_INCLUDES
 #undef ENTITIES_WANT_INCLUDES
-#include "../../../shared/map_fragment.hpp"
+#include "../../../shared/map_piece.hpp"
 #include "imgui.h"
 #include "log.hpp"
 #include "renderer.hpp"
@@ -225,7 +225,7 @@ void Placement_Tool::on_draw_ui(editor_context_t& ctx)
         select_placeable(idx);
     }
 
-    // Prefabs are files, not a kind: picking one hands the fragment to the
+    // Prefabs are files, not a kind: picking one hands the piece to the
     // Selection tool and the PASTE gesture places it (prefab_def.md step 5).
     // That is why they are listed apart from the placeables above rather than
     // appended to that table.
@@ -249,14 +249,14 @@ void Placement_Tool::on_draw_ui(editor_context_t& ctx)
 
       const std::string path =
           std::string(shared::PREFAB_DIRECTORY) + "/" + prefab + shared::PREFAB_EXTENSION;
-      std::optional<shared::map_t> fragment = shared::try_load_map(path);
-      if (!fragment)
+      std::optional<shared::map_t> piece = shared::try_load_map(path);
+      if (!piece)
       {
         log_error("placement tool: prefab \"{}\" could not be read", path);
         continue;
       }
 
-      ctx.requested_paste            = std::move(*fragment);
+      ctx.requested_paste            = std::move(*piece);
       ctx.requested_paste_group_name = prefab;
     }
   }

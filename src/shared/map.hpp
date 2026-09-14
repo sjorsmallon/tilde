@@ -66,12 +66,12 @@ struct map_t
   // attached_cvars are -- see map_connection.hpp and entity_io_def.md ss6.
   //
   // Anything that rebuilds a map_t from another one has to carry this list,
-  // the way bake_map_csg has to carry attached_cvars.
+  // remapped through what the copy actually did -- see map_piece.hpp.
   std::vector<connection_t> connections;
 
   // The map's GROUPS: click one member, select them all. Uid lists beside the
   // entities for the reason connections are -- see map_group.hpp. Editor data
-  // the session never carries; every carrier of a map_t (bake, extract, stamp)
+  // the session never carries; every carrier of a map_t (copy, paste)
   // remaps it through what the copy did, like the wiring.
   std::vector<map_group_t> groups;
 

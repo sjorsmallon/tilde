@@ -1,4 +1,4 @@
-#include "map_fragment.hpp"
+#include "map_piece.hpp"
 
 #include "entities/entity_reflection.hpp"
 #include "log.hpp"
@@ -84,8 +84,8 @@ bool row_is_kept_as_unbound(const connection_t& connection, const uid_set_t& mem
 }
 
 // Bottom-centre of the union of the members' bounds. The cursor drives THAT, so
-// a stamped group sits on the surface under it the way one placed object does.
-linalg::vec3 compute_subset_anchor(const map_t& map, const uid_set_t& members)
+// a pasted group sits on the surface under it the way one placed object does.
+linalg::vec3 compute_piece_anchor(const map_t& map, const uid_set_t& members)
 {
   bool          any = false;
   aabb_bounds_t bounds{{0, 0, 0}, {0, 0, 0}};
@@ -115,13 +115,14 @@ linalg::vec3 compute_subset_anchor(const map_t& map, const uid_set_t& members)
 
 } // namespace
 
-std::vector<crossing_connection_t> find_crossing_connections(const map_t&              map,
-                                                             Span<const entity_uid_t> uids)
+std::vector<connection_with_an_end_outside_t>
+find_connections_with_an_end_outside_the_selection(const map_t&             map,
+                                                   Span<const entity_uid_t> selection)
 {
-  const uid_set_t members = make_uid_set(uids);
+  const uid_set_t members = make_uid_set(selection);
 
-  std::vector<crossing_connection_t> crossings;
-  std::vector<entity_uid_t>          targets;
+  std::vector<connection_with_an_end_outside_t> outside_ends;
+  std::vector<entity_uid_t>                     targets;
 
   for (size_t index = 0; index < map.connections.size(); ++index)
   {
@@ -139,7 +140,7 @@ std::vector<crossing_connection_t> find_crossing_connections(const map_t&       
       {
         if (members.count(target) > 0)
           continue;
-        crossings.push_back({index, true, target, row_is_kept_as_unbound(connection, members)});
+        outside_ends.push_back({index, true, target, row_is_kept_as_unbound(connection, members)});
         break;
       }
       continue;
@@ -149,29 +150,29 @@ std::vector<crossing_connection_t> find_crossing_connections(const map_t&       
     {
       if (members.count(target) == 0)
         continue;
-      crossings.push_back({index, false, connection.sender});
+      outside_ends.push_back({index, false, connection.sender});
       break;
     }
   }
 
-  return crossings;
+  return outside_ends;
 }
 
-map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
+map_t copy_map_piece(const map_t& map, Span<const entity_uid_t> uids)
 {
   const uid_set_t    members = make_uid_set(uids);
-  const linalg::vec3 anchor  = compute_subset_anchor(map, members);
+  const linalg::vec3 anchor  = compute_piece_anchor(map, members);
 
-  map_t subset;
+  map_t piece;
 
   // The whole table, uncompacted. save_map's build_material_remap drops what no
   // face names any more, which is the ONE place a material table is compacted;
   // doing it here as well would be a second rule free to disagree with it.
-  subset.materials = map.materials;
+  piece.materials = map.materials;
 
   // Uids are kept, so the identity is the remap a row is tested against: a row
   // survives exactly when every uid it names is a member. That is the same
-  // question find_crossing_connections answers, asked through the one walk of a
+  // question find_connections_with_an_end_outside_the_selection answers, asked through the one walk of a
   // row's uids rather than through a second copy of the rule.
   uid_remap_t identity;
   identity.reserve(members.size());
@@ -186,12 +187,12 @@ map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
     std::shared_ptr<entities::Entity> copy = clone_into_shared(entry.entity.get());
     if (!copy)
     {
-      log_error("extract_map_subset: uid {} would not clone and was left out", entry.uid);
+      log_error("copy_map_piece: uid {} would not clone and was left out", entry.uid);
       continue;
     }
 
     copy->position = copy->position - anchor;
-    subset.add_entity_with_uid(entry.uid, std::move(copy));
+    piece.add_entity_with_uid(entry.uid, std::move(copy));
     identity[entry.uid] = entry.uid;
   }
 
@@ -202,17 +203,17 @@ map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
 
     geometry_value_t value = entry.value;
     translate_geometry(value, linalg::vec3{0.f, 0.f, 0.f} - anchor);
-    subset.add_geometry_with_uid(entry.uid, std::move(value));
+    piece.add_geometry_with_uid(entry.uid, std::move(value));
     identity[entry.uid] = entry.uid;
   }
 
   // A group of part of the selection is a group of that part; one member or
-  // none is no group. Uids are kept, like everything else in a subset.
+  // none is no group. Uids are kept, like everything else in a piece.
   for (const map_group_t& group : map.groups)
   {
     map_group_t copy = group;
     if (remap_group_members(copy, identity) >= 2)
-      add_group_with_uid(subset, std::move(copy));
+      add_group_with_uid(piece, std::move(copy));
   }
 
   for (const connection_t& connection : map.connections)
@@ -227,7 +228,7 @@ map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
     const connection_remap_result_t result = remap_connection_uids(row, identity);
     if (result.ok)
     {
-      subset.connections.push_back(row);
+      piece.connections.push_back(row);
       continue;
     }
 
@@ -235,22 +236,22 @@ map_t extract_map_subset(const map_t& map, Span<const entity_uid_t> uids)
     // wiring fails this test too, and saying so once per row would bury the
     // ones the author might actually have meant to take along.
     if (members.count(connection.sender) > 0)
-      log_warning("extract_map_subset: a {} row is not included -- its {} (uid {}) is outside "
+      log_warning("copy_map_piece: a {} row is not included -- its {} (uid {}) is outside "
                   "the selection",
                   entities::to_string(connection.signal), result.end, result.unmapped);
   }
 
-  return subset;
+  return piece;
 }
 
-stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::vec3& position)
+paste_result_t paste_map_piece(map_t& destination, const map_t& source, const linalg::vec3& position)
 {
-  stamp_result_t result;
+  paste_result_t result;
 
   if (!source.attached_cvars.empty())
   {
-    log_error("stamp_map: refusing a fragment carrying {} cvar line(s) -- those are the MAP's "
-              "game settings and are not a prefab's to bring along. Nothing was stamped.",
+    log_error("paste_map_piece: refusing a piece carrying {} cvar line(s) -- those are the MAP's "
+              "game settings and are not a prefab's to bring along. Nothing was pasted.",
               source.attached_cvars.size());
     return result;
   }
@@ -258,13 +259,13 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
   result.uids.reserve(source.object_count());
   result.remap.reserve(source.object_count());
 
-  struct stamped_entity_t
+  struct pasted_entity_t
   {
     entity_uid_t       uid;
     entities::Entity*  entity;
   };
-  std::vector<stamped_entity_t> stamped_entities;
-  stamped_entities.reserve(source.entities.size());
+  std::vector<pasted_entity_t> pasted_entities;
+  pasted_entities.reserve(source.entities.size());
 
   // A source material index resolved against the DESTINATION's table, by path.
   // Index 0 is the map DEFAULT and belongs to whichever map is being drawn, so
@@ -276,7 +277,7 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
 
     if (index >= source.materials.size())
     {
-      log_error("stamp_map: a face names material {}, which the fragment's table does not have "
+      log_error("paste_map_piece: a face names material {}, which the piece's table does not have "
                 "({} entries) -- it falls back to the map default",
                 index, source.materials.size());
       return 0;
@@ -293,17 +294,17 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
     std::shared_ptr<entities::Entity> copy = clone_into_shared(entry.entity.get());
     if (!copy)
     {
-      log_error("stamp_map: uid {} would not clone and was not stamped", entry.uid);
+      log_error("paste_map_piece: uid {} would not clone and was not pasted", entry.uid);
       continue;
     }
 
     copy->position = copy->position + position;
 
     entities::Entity* placed  = copy.get();
-    const entity_uid_t stamped = destination.add_entity(std::move(copy));
-    result.remap[entry.uid]    = stamped;
-    result.uids.push_back(stamped);
-    stamped_entities.push_back({stamped, placed});
+    const entity_uid_t pasted = destination.add_entity(std::move(copy));
+    result.remap[entry.uid]    = pasted;
+    result.uids.push_back(pasted);
+    pasted_entities.push_back({pasted, placed});
   }
 
   for (const map_geometry_t& entry : source.geometry)
@@ -325,18 +326,18 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
     // and every entity is already placed -- and because by the time that pass
     // runs this value has been moved into the destination.
     //
-    // A brush tied to a Brush_Entity OUTSIDE the fragment is the field-that-
-    // crosses case find_crossing_connections still does not report, so the
-    // author hears about it here: cleared loudly, never left naming whatever
-    // happens to hold that uid in the destination.
+    // A brush tied to a Brush_Entity OUTSIDE the piece names an end outside the
+    // selection too, and is the one kind the connection walk still does not
+    // report -- so the author hears about it here: cleared loudly, never left
+    // naming whatever happens to hold that uid in the destination.
     const entity_uid_t owner = get_owner_uid(value);
     if (owner != null_entity_uid)
     {
       const auto found = result.remap.find(owner);
       if (found == result.remap.end())
       {
-        log_warning("stamp_map: geometry {} is tied to uid {}, which is not in the "
-                    "fragment -- untied",
+        log_warning("paste_map_piece: geometry {} is tied to uid {}, which is not in the "
+                    "piece -- untied",
                     entry.uid, owner);
         ++result.cleared_reference_count;
         set_owner_uid(value, null_entity_uid);
@@ -347,20 +348,20 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
       }
     }
 
-    const entity_uid_t stamped = destination.add_geometry(std::move(value));
-    result.remap[entry.uid]    = stamped;
-    result.uids.push_back(stamped);
+    const entity_uid_t pasted = destination.add_geometry(std::move(value));
+    result.remap[entry.uid]    = pasted;
+    result.uids.push_back(pasted);
   }
 
   // The copies' own references, through the same table the rows go through. A
   // second pass because a copy can name a member placed after it, and a
   // geometry uid is a legal value for an entity field (one uid space). A
   // field naming nothing passes through; one naming something outside the
-  // fragment is cleared, since that uid means nothing in this map.
-  for (const stamped_entity_t& stamped : stamped_entities)
+  // piece is cleared, since that uid means nothing in this map.
+  for (const pasted_entity_t& pasted : pasted_entities)
   {
-    uint8_t* base = reinterpret_cast<uint8_t*>(stamped.entity);
-    for (const entities::leaf_field_t& leaf : entities::collect_leaf_fields(stamped.entity->type))
+    uint8_t* base = reinterpret_cast<uint8_t*>(pasted.entity);
+    for (const entities::leaf_field_t& leaf : entities::collect_leaf_fields(pasted.entity->type))
     {
       if (leaf.info->type != FIELD_TYPE_ENTITY_UID)
         continue;
@@ -373,9 +374,9 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
       const auto found = result.remap.find(named);
       if (found == result.remap.end())
       {
-        log_warning("stamp_map: {} (uid {}) field '{}' named uid {}, which is not in the "
-                    "fragment -- cleared",
-                    entities::entity_info(stamped.entity->type).classname, stamped.uid,
+        log_warning("paste_map_piece: {} (uid {}) field '{}' named uid {}, which is not in the "
+                    "piece -- cleared",
+                    entities::entity_info(pasted.entity->type).classname, pasted.uid,
                     leaf.name, named);
         ++result.cleared_reference_count;
         named = null_entity_uid;
@@ -394,7 +395,7 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
     const connection_remap_result_t remapped = remap_connection_uids(row, result.remap);
     if (!remapped.ok)
     {
-      log_error("stamp_map: a {} row was dropped -- its {} (uid {}) is not in the fragment",
+      log_error("paste_map_piece: a {} row was dropped -- its {} (uid {}) is not in the piece",
                 entities::to_string(connection.signal), remapped.end, remapped.unmapped);
       ++result.dropped_connection_count;
       continue;
@@ -403,8 +404,8 @@ stamp_result_t stamp_map(map_t& destination, const map_t& source, const linalg::
     destination.connections.push_back(row);
   }
 
-  // The fragment's groups, on the stamped copies. A fresh uid each, from the
-  // destination's space: the fragment's group uids mean nothing here.
+  // The piece's groups, on the pasted copies. A fresh uid each, from the
+  // destination's space: the piece's group uids mean nothing here.
   for (const map_group_t& group : source.groups)
   {
     map_group_t copy = group;

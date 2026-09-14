@@ -439,8 +439,8 @@ add_library(game_shared STATIC
     src/shared/map_connection.cpp
     # Cutting a piece out of a map and stamping one back in -- the clipboard and
     # prefabs are the same two functions (prefab_def.md).
-    src/shared/map_fragment.hpp
-    src/shared/map_fragment.cpp
+    src/shared/map_piece.hpp
+    src/shared/map_piece.cpp
     # A map's completed runs, one appended line each (run_times.hpp).
     src/shared/run_times.hpp
     src/shared/run_times.cpp

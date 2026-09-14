@@ -303,8 +303,8 @@ brush_geometry_t make_box_brush(const linalg::vec3 &center,
                                 const linalg::vec3 &half_extents);
 
 // Whether this point set is the eight corners of a world-axis-aligned box, i.e.
-// whether the brush is one make_box_brush could have produced. The bake's CSG
-// pass works in AABBs and needs to know which brushes it may consume.
+// whether the brush is one make_box_brush could have produced. The selection
+// highlight asks so it can keep drawing the measured face grid on one.
 bool brush_is_axis_aligned_box(Span<const linalg::vec3> vertices);
 
 // One geometry object. `std::variant` rather than a tagged struct so a
@@ -352,7 +352,7 @@ void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid);
 
 // Moves an object by a delta rather than to a place. set_position would do it
 // as (target - current) around a derived centre, which costs a float of drift
-// per hop -- and a fragment is rebased twice, once at extraction and once at
+// per hop -- and a piece is rebased twice, once at the copy and once at
 // every stamp. Texture lock rides along, since translate_brush carries it.
 void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta);
 
