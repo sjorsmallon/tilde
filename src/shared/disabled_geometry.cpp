@@ -55,6 +55,8 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       case entities::entity_type::Reflection_Volume_Entity:
       case entities::entity_type::Game_Rules_Entity:
       case entities::entity_type::Logic_Counter_Entity:
+      case entities::entity_type::Ping_Marker_Entity:
+      case entities::entity_type::Logic_Timer_Entity:
         break;
     }
   }

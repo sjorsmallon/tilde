@@ -198,11 +198,13 @@ enum class entity_type : uint16_t
   Game_Rules_Entity = 16,
   Logic_Counter_Entity = 17,
   Brush_Entity = 18,
+  Ping_Marker_Entity = 19,
+  Logic_Timer_Entity = 20,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 19;
+constexpr uint32_t ENTITY_TYPE_COUNT = 21;
 
 enum class component_type : uint16_t
 {
@@ -216,9 +218,10 @@ enum class component_type : uint16_t
   Light = 7,
   Movement = 8,
   Inventory = 9,
+  Timer_State = 10,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 10;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 11;
 
 } // namespace entities
 
@@ -398,6 +401,16 @@ struct Inventory
   Enum_Array<Inventory_Slot, uint32_t> weapons = {};
   Inventory_Slot active_slot = Inventory_Slot::Melee;
   uint64_t deploy_complete_time = {};
+};
+
+struct Timer_State
+{
+  static constexpr component_type static_component = component_type::Timer_State;
+
+  float duration_seconds = 1.0f;
+  bool repeat = false;
+  bool running = false;
+  uint32_t deadline_tick = 0;
 };
 
 struct Entity

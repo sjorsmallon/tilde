@@ -438,6 +438,45 @@ constexpr field_info_t Inventory_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Timer_State_FIELDS[] = {
+  {.name = "duration_seconds",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Timer_State, duration_seconds),
+   .size_in_bytes = (uint32_t)sizeof(Timer_State::duration_seconds),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "repeat",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Timer_State, repeat),
+   .size_in_bytes = (uint32_t)sizeof(Timer_State::repeat),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "running",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Timer_State, running),
+   .size_in_bytes = (uint32_t)sizeof(Timer_State::running),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "deadline_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Timer_State, deadline_tick),
+   .size_in_bytes = (uint32_t)sizeof(Timer_State::deadline_tick),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
@@ -1959,6 +1998,120 @@ constexpr field_info_t Brush_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Ping_Marker_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "lifetime",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, lifetime),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::lifetime),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "pinged_by",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, pinged_by),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::pinged_by),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Ping_Marker_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Ping_Marker_Entity::render),
+   .flags = 0u,
+   .component_id = 6,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t Logic_Timer_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Logic_Timer_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Logic_Timer_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Logic_Timer_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Logic_Timer_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Logic_Timer_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Logic_Timer_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Logic_Timer_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Logic_Timer_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "timer",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Logic_Timer_Entity, timer),
+   .size_in_bytes = (uint32_t)sizeof(Logic_Timer_Entity::timer),
+   .flags = 0u,
+   .component_id = 10,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -1970,6 +2123,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Light", {Light_FIELDS, 5}, (uint32_t)sizeof(Light)},
   {"Movement", {Movement_FIELDS, 6}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
+  {"Timer_State", {Timer_State_FIELDS, 4}, (uint32_t)sizeof(Timer_State)},
 };
 
 Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player_Spawn_Entity(); }
@@ -1990,6 +2144,8 @@ Entity* construct_Reflection_Volume_Entity(void* memory) { return new (memory) R
 Entity* construct_Game_Rules_Entity(void* memory) { return new (memory) Game_Rules_Entity(); }
 Entity* construct_Logic_Counter_Entity(void* memory) { return new (memory) Logic_Counter_Entity(); }
 Entity* construct_Brush_Entity(void* memory) { return new (memory) Brush_Entity(); }
+Entity* construct_Ping_Marker_Entity(void* memory) { return new (memory) Ping_Marker_Entity(); }
+Entity* construct_Logic_Timer_Entity(void* memory) { return new (memory) Logic_Timer_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -2009,6 +2165,8 @@ Entity* as_base_Reflection_Volume_Entity(void* memory) { return static_cast<Enti
 Entity* as_base_Game_Rules_Entity(void* memory) { return static_cast<Entity*>((Game_Rules_Entity*)memory); }
 Entity* as_base_Logic_Counter_Entity(void* memory) { return static_cast<Entity*>((Logic_Counter_Entity*)memory); }
 Entity* as_base_Brush_Entity(void* memory) { return static_cast<Entity*>((Brush_Entity*)memory); }
+Entity* as_base_Ping_Marker_Entity(void* memory) { return static_cast<Entity*>((Ping_Marker_Entity*)memory); }
+Entity* as_base_Logic_Timer_Entity(void* memory) { return static_cast<Entity*>((Logic_Timer_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -2030,31 +2188,35 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 4}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 0u, false, false, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 16u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
   {"brush_entity", "Brush", {Brush_Entity_FIELDS, 5}, (uint32_t)sizeof(Brush_Entity), (uint32_t)alignof(Brush_Entity), 2u, false, true, true, construct_Brush_Entity, as_base_Brush_Entity},
+  {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 7}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 64u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
+  {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 1024u, false, false, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
 };
 
-constexpr int32_t COMPONENT_OFFSETS[][10] = {
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Invalid
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
-  {-1, -1, -1, (int32_t)offsetof(Player_Entity, health), -1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory)}, // Player_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1}, // Weapon_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1}, // Rocket_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
-  {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
-  {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), (int32_t)offsetof(Sound_Emitter_Entity, playback), -1, -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
-  {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
-  {-1, (int32_t)offsetof(Spot_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1}, // Spot_Light_Entity
-  {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1}, // Directional_Light_Entity
-  {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
-  {(int32_t)offsetof(Jump_Pad_Entity, volume), (int32_t)offsetof(Jump_Pad_Entity, switch_state), -1, -1, -1, -1, (int32_t)offsetof(Jump_Pad_Entity, render), -1, -1, -1}, // Jump_Pad_Entity
-  {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Game_Rules_Entity
-  {-1, -1, -1, -1, (int32_t)offsetof(Logic_Counter_Entity, counter), -1, -1, -1, -1, -1}, // Logic_Counter_Entity
-  {-1, (int32_t)offsetof(Brush_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1}, // Brush_Entity
+constexpr int32_t COMPONENT_OFFSETS[][11] = {
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Invalid
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
+  {-1, -1, -1, (int32_t)offsetof(Player_Entity, health), -1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory), -1}, // Player_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1, -1}, // Weapon_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1, -1}, // Rocket_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1, -1}, // Physics_Body_Entity
+  {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1, -1}, // Damageable_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
+  {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), (int32_t)offsetof(Sound_Emitter_Entity, playback), -1, -1, -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
+  {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1, -1}, // Point_Light_Entity
+  {-1, (int32_t)offsetof(Spot_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1, -1}, // Spot_Light_Entity
+  {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1, -1}, // Directional_Light_Entity
+  {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
+  {(int32_t)offsetof(Jump_Pad_Entity, volume), (int32_t)offsetof(Jump_Pad_Entity, switch_state), -1, -1, -1, -1, (int32_t)offsetof(Jump_Pad_Entity, render), -1, -1, -1, -1}, // Jump_Pad_Entity
+  {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Game_Rules_Entity
+  {-1, -1, -1, -1, (int32_t)offsetof(Logic_Counter_Entity, counter), -1, -1, -1, -1, -1, -1}, // Logic_Counter_Entity
+  {-1, (int32_t)offsetof(Brush_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Brush_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Ping_Marker_Entity, render), -1, -1, -1, -1}, // Ping_Marker_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Logic_Timer_Entity, timer)}, // Logic_Timer_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 16;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 17;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -2072,9 +2234,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Game_Rules_Entity,
   entity_type::Logic_Counter_Entity,
   entity_type::Brush_Entity,
+  entity_type::Logic_Timer_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 12;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 13;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -2088,6 +2251,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Trigger_Volume_Entity,
   entity_type::Jump_Pad_Entity,
   entity_type::Brush_Entity,
+  entity_type::Ping_Marker_Entity,
 };
 
 } // namespace
@@ -2361,6 +2525,8 @@ Entity* create_entity(entity_type type)
     case entity_type::Game_Rules_Entity: return new Game_Rules_Entity();
     case entity_type::Logic_Counter_Entity: return new Logic_Counter_Entity();
     case entity_type::Brush_Entity: return new Brush_Entity();
+    case entity_type::Ping_Marker_Entity: return new Ping_Marker_Entity();
+    case entity_type::Logic_Timer_Entity: return new Logic_Timer_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -2400,6 +2566,8 @@ void destroy_entity(Entity* entity)
     case entity_type::Game_Rules_Entity: delete static_cast<Game_Rules_Entity*>(entity); return;
     case entity_type::Logic_Counter_Entity: delete static_cast<Logic_Counter_Entity*>(entity); return;
     case entity_type::Brush_Entity: delete static_cast<Brush_Entity*>(entity); return;
+    case entity_type::Ping_Marker_Entity: delete static_cast<Ping_Marker_Entity*>(entity); return;
+    case entity_type::Logic_Timer_Entity: delete static_cast<Logic_Timer_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -2414,6 +2582,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x48ac9bbdu;
+const uint32_t SCHEMA_HASH = 0x33883a58u;
 
 } // namespace entities

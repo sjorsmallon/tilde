@@ -24,6 +24,7 @@
 #include "traits/armable_generated.hpp"
 #include "traits/respawnable_generated.hpp"
 #include "traits/objective_generated.hpp"
+#include "traits/timer_generated.hpp"
 #include <cassert>
 #include <cstdint>
 #include <type_traits>
@@ -66,6 +67,9 @@ struct action_data_t
     Grant_Weapon_Data grant_weapon;
     Set_Respawn_Point_Data set_respawn_point;
     Complete_Level_Data complete_level;
+    Start_Data start;
+    Stop_Data stop;
+    Restart_Data restart;
   };
 
   const Enable_Data& as_enable() const { assert(tag == entity_action::Enable); return enable; }
@@ -84,6 +88,9 @@ struct action_data_t
   const Grant_Weapon_Data& as_grant_weapon() const { assert(tag == entity_action::Grant_Weapon); return grant_weapon; }
   const Set_Respawn_Point_Data& as_set_respawn_point() const { assert(tag == entity_action::Set_Respawn_Point); return set_respawn_point; }
   const Complete_Level_Data& as_complete_level() const { assert(tag == entity_action::Complete_Level); return complete_level; }
+  const Start_Data& as_start() const { assert(tag == entity_action::Start); return start; }
+  const Stop_Data& as_stop() const { assert(tag == entity_action::Stop); return stop; }
+  const Restart_Data& as_restart() const { assert(tag == entity_action::Restart); return restart; }
 };
 static_assert(std::is_trivially_copyable_v<action_data_t>,
               "a connection row and a queued record hold one by value");
@@ -104,6 +111,9 @@ action_data_t erase(const Add_Velocity_Data& payload);
 action_data_t erase(const Grant_Weapon_Data& payload);
 action_data_t erase(const Set_Respawn_Point_Data& payload);
 action_data_t erase(const Complete_Level_Data& payload);
+action_data_t erase(const Start_Data& payload);
+action_data_t erase(const Stop_Data& payload);
+action_data_t erase(const Restart_Data& payload);
 
 // --- the trait table --------------------------------------------------
 //
@@ -136,6 +146,8 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Objective),   // Game_Rules_Entity
   trait_bit(entity_trait::Counting),   // Logic_Counter_Entity
   trait_bit(entity_trait::Switchable),   // Brush_Entity
+  0u,   // Ping_Marker_Entity
+  trait_bit(entity_trait::Timer),   // Logic_Timer_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -183,6 +195,8 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Complete_Level),   // Game_Rules_Entity
   action_bit(entity_action::Add) | action_bit(entity_action::Reset),   // Logic_Counter_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Brush_Entity
+  0u,   // Ping_Marker_Entity
+  action_bit(entity_action::Start) | action_bit(entity_action::Stop) | action_bit(entity_action::Restart),   // Logic_Timer_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -222,6 +236,8 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Game_Rules_Entity
   signal_bit(entity_signal::Limit_Reached),   // Logic_Counter_Entity
   0u,   // Brush_Entity
+  0u,   // Ping_Marker_Entity
+  signal_bit(entity_signal::Elapsed),   // Logic_Timer_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)
@@ -252,6 +268,7 @@ inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
   entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Left
   0u,   // Died
   0u,   // Health_Changed
+  0u,   // Elapsed
 };
 
 // --- the payload, erased ----------------------------------------------

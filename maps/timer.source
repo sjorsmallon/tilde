@@ -1,7 +1,7 @@
 entity
 {
   "classname" "worldspawn"
-  "name" "new_map.source"
+  "name" "timer.source"
 }
 connections
 {

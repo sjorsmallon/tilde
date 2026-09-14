@@ -117,6 +117,14 @@ bool ray_is_clear(vec3 origin, vec3 direction, float max_distance)
         gl_RayQueryCandidateIntersectionTriangleEXT)
       continue;
 
+    // The ENTRY face only, for the reason transmittance_along skips one: a fence
+    // is a SLAB, so a ray crosses its top and its bottom, and at an angle those
+    // two sample the texture at offset places. Testing both blocks wherever
+    // EITHER is solid -- the union of two grates, a visibly finer pattern than
+    // the one authored. The CPU tests one face per piece and steps past t_exit;
+    // this is that rule in the shape a ray query has.
+    if (!rayQueryGetIntersectionFrontFaceEXT(query, false)) continue;
+
     const uint triangle_index = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, false)) +
                                 rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
     if (alpha_test_is_solid_at(triangle_index,
@@ -194,6 +202,14 @@ bool trace_nearest_surface(vec3 origin, vec3 direction, float max_distance, out 
     if (rayQueryGetIntersectionTypeEXT(query, false) !=
         gl_RayQueryCandidateIntersectionTriangleEXT)
       continue;
+
+    // The ENTRY face only, for the reason transmittance_along skips one: a fence
+    // is a SLAB, so a ray crosses its top and its bottom, and at an angle those
+    // two sample the texture at offset places. Testing both blocks wherever
+    // EITHER is solid -- the union of two grates, a visibly finer pattern than
+    // the one authored. The CPU tests one face per piece and steps past t_exit;
+    // this is that rule in the shape a ray query has.
+    if (!rayQueryGetIntersectionFrontFaceEXT(query, false)) continue;
 
     const uint triangle_index = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, false)) +
                                 rayQueryGetIntersectionPrimitiveIndexEXT(query, false);

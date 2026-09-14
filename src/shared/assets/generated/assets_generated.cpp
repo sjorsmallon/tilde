@@ -34,6 +34,7 @@ constexpr asset_info_t texture_asset_MANIFEST[] = {
   {"hammer", "resources/icons/hammer.png"},
   {"point_light", "resources/icons/point_light.png"},
   {"spot_light", "resources/icons/spot_light.png"},
+  {"timer", "resources/icons/timer.png"},
   {"wall", "resources/icons/wall.png"},
   {"wall_hammer", "resources/icons/wall_hammer.png"},
   {"glasses", "resources/models/textures/glasses.png"},
@@ -74,6 +75,7 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"success", "resources/sounds/success.wav"},
   {"target_break", "resources/sounds/target_break.wav"},
   {"twang", "resources/sounds/twang.wav"},
+  {"ui_ping", "resources/sounds/ui_ping.wav"},
   {"wow_incredible", "resources/sounds/wow_incredible.wav"},
   {"zoom", "resources/sounds/zoom.wav"},
 };
@@ -111,6 +113,7 @@ constexpr asset_info_t font_asset_MANIFEST[] = {
 constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"Missing", nullptr},
   {"bricks_mortar", "resources/textures/bricks_mortar"},
+  {"fence_grate", "resources/textures/fence_grate"},
   {"glass_amber", "resources/textures/glass_amber"},
   {"glass_blue", "resources/textures/glass_blue"},
   {"harsh_bricks", "resources/textures/harsh_bricks"},

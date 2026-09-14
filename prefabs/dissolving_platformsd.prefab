@@ -1,0 +1,218 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "dissolving_platformsd.prefab"
+}
+connections
+{
+  connection
+  {
+    "sender" "65"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "64"
+    "action" "Set_Color"
+    override
+    {
+      "color" "0 1 0"
+    }
+  }
+  connection
+  {
+    "sender" "65"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "20"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "65"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "62"
+    "action" "Play"
+    "fire_once" "1"
+  }
+  connection
+  {
+    "sender" "65"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "138"
+    "action" "Disable"
+  }
+}
+groups
+{
+  group
+  {
+    "_uid" "139"
+    "name" "group 139"
+    member
+    {
+      "uid" "64"
+    }
+    member
+    {
+      "uid" "65"
+    }
+    member
+    {
+      "uid" "66"
+    }
+    member
+    {
+      "uid" "138"
+    }
+  }
+}
+brush
+{
+  "_uid" "66"
+  "vertices" "-242.210938 41.7511063 -286.68457, -242.210938 41.7511063 287.62793, -242.210938 169.751099 -286.68457, -242.210938 169.751099 287.62793, 213.632812 41.7511063 -286.68457, 213.632812 41.7511063 287.62793, 213.632812 169.751099 -286.68457, 213.632812 169.751099 287.62793"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  "owner" "138"
+  face
+  {
+    "normal" "-1 0 0"
+    "distance" "242.210938"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "955.49707"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -1 -0"
+    "distance" "-41.7511063"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "1132.79919"
+    "v_shift" "955.49707"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 -0.99999994"
+    "distance" "286.68457"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "1132.79919"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0 0.99999994"
+    "distance" "287.627869"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "1132.79919"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 1 0"
+    "distance" "169.751099"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "1132.79919"
+    "v_shift" "955.49707"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 -0 -0"
+    "distance" "213.632812"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "955.49707"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "64"
+  "position" "-14.235962 745.7511 0.4716797"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 0 0"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "2056"
+  "inner_degrees" "31"
+  "outer_degrees" "35"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "65"
+  "position" "-11.92749 105.75111 -6.3150024"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "220.98656 105.75111 281.31293"
+}
+entity
+{
+  "classname" "brush_entity"
+  "_uid" "138"
+  "position" "241.71094 520.8174 -8.048523"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+}

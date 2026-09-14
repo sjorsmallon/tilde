@@ -380,6 +380,63 @@ constexpr field_info_t JUMP_PAD_LAUNCH_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t PING_FIELDS[] = {
+  {.name = "origin",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Ping, origin),
+   .size_in_bytes = (uint32_t)sizeof(Ping::origin),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "normal",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Ping, normal),
+   .size_in_bytes = (uint32_t)sizeof(Ping::normal),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "color",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Ping, color),
+   .size_in_bytes = (uint32_t)sizeof(Ping::color),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "scale",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Ping, scale),
+   .size_in_bytes = (uint32_t)sizeof(Ping::scale),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "attached_entity",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Ping, attached_entity),
+   .size_in_bytes = (uint32_t)sizeof(Ping::attached_entity),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "surface_material",
+   .type = FIELD_TYPE_U16,
+   .offset = (uint32_t)offsetof(Ping, surface_material),
+   .size_in_bytes = (uint32_t)sizeof(Ping::surface_material),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 } // namespace
 
 const char* to_string(effect_type value)
@@ -392,6 +449,7 @@ const char* to_string(effect_type value)
     case effect_type::Land: return "Land";
     case effect_type::Shot_Impact: return "Shot_Impact";
     case effect_type::Jump_Pad_Launch: return "Jump_Pad_Launch";
+    case effect_type::Ping: return "Ping";
   }
   assert(false && "invalid effect_type");
   return "";
@@ -547,6 +605,31 @@ std::string to_text(const Jump_Pad_Launch& value)
   return std::string("Jump_Pad_Launch") + fields_to_text({JUMP_PAD_LAUNCH_FIELDS, 6}, &value);
 }
 
+void fire_ping(event_stream_t& stream, const Ping& payload)
+{
+  stream.writer.write_bits((uint32_t)effect_type::Ping, 16);
+  for (const field_info_t& field : Span<const field_info_t>{PING_FIELDS, 6})
+    network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
+  ++stream.count;
+
+  if (stream.log_fired)
+    log_terminal("[event fired] {}", to_text(payload));
+}
+
+std::optional<Ping> try_read_ping(network::Bit_Reader& reader)
+{
+  Ping payload;
+  for (const field_info_t& field : Span<const field_info_t>{PING_FIELDS, 6})
+    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
+      return std::nullopt;
+  return payload;
+}
+
+std::string to_text(const Ping& value)
+{
+  return std::string("Ping") + fields_to_text({PING_FIELDS, 6}, &value);
+}
+
 std::string effect_stream_to_text(const event_stream_t& stream)
 {
   if (stream.empty())
@@ -629,6 +712,17 @@ std::string effect_stream_to_text(const event_stream_t& stream)
       case effect_type::Jump_Pad_Launch:
       {
         const std::optional<Jump_Pad_Launch> payload = try_read_jump_pad_launch(reader);
+        if (!payload)
+        {
+          text += "<undecodable payload; the rest is unreadable>";
+          return text;
+        }
+        text += to_text(*payload);
+        break;
+      }
+      case effect_type::Ping:
+      {
+        const std::optional<Ping> payload = try_read_ping(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";

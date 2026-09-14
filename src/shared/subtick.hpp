@@ -107,6 +107,21 @@ constexpr subtick_time_t subtick_time_after(subtick_time_t from, float seconds,
   return from + whole_slots + (static_cast<float>(whole_slots) < slots ? 1 : 0);
 }
 
+// A duration in seconds as a whole number of TICKS, for a deadline that is a
+// tick rather than a sub-tick moment: a connection row's delay, a logic
+// timer's duration. Rounds UP for subtick_time_after's reason, and with one
+// more consequence -- a positive duration is never zero ticks, so a record
+// queued this tick cannot be due in it.
+constexpr uint32_t ticks_from_seconds(float seconds, float tickrate)
+{
+  if (!(seconds > 0.f) || !(tickrate > 0.f))
+    return 0;
+
+  const float ticks = seconds * tickrate;
+  const uint32_t whole_ticks = static_cast<uint32_t>(ticks);
+  return whole_ticks + (static_cast<float>(whole_ticks) < ticks ? 1 : 0);
+}
+
 // Where the player was AIMING, carried alongside the buttons.
 //
 // The angle is a continuous quantity and the buttons are discrete, so it does

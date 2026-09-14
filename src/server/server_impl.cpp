@@ -11,6 +11,8 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "entity_lifecycle.hpp"
 #include "server_api.hpp"
+#include "systems/ping_system.hpp"
+#include "systems/timer_system.hpp"
 #include "systems/trigger_system.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/game_rules_system.hpp"
@@ -617,6 +619,8 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Game_Rules_Entity:
   case entities::entity_type::Logic_Counter_Entity:
   case entities::entity_type::Brush_Entity:
+  case entities::entity_type::Ping_Marker_Entity:
+  case entities::entity_type::Logic_Timer_Entity:
     break;
   }
 
@@ -1906,6 +1910,17 @@ bool Tick()
                                   tick_dt))
         cancel_reload(*player);
 
+      // A ping lands on the WORLD, so it passes through none of the weapon
+      // clocks and needs no weapon in hand -- but it is still resolved here
+      // rather than once per tick, because the ray has to leave from where the
+      // pinger had actually reached along the aim they clicked at.
+      if ((pressed_in_this_step & Button::Ping) && !is_dead && allowed_to_move &&
+          !world_is_frozen)
+        (void)try_place_ping(context, *player,
+                             player->position + vec3f{0.f, shared::player_eye_height, 0.f},
+                             linalg::direction_from_angles(step.view.yaw, step.view.pitch),
+                             disabled_geometry_span);
+
       if (fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
         resolve_player_shot(context, client_slot, input, disabled_geometry_span, player,
                             step.view.yaw, step.view.pitch, step.start_slot);
@@ -2090,6 +2105,7 @@ bool Tick()
   }
 
   update_rockets(context, tick_dt);
+  update_ping_markers(context, tick_dt);
   // Respawn drain runs after damage systems so any deaths registered this
   // tick are eligible for the deadline check (delay is >0 ticks, so a
   // same-tick death-respawn never happens — but ordering is the intent).
@@ -2125,6 +2141,9 @@ bool Tick()
   // Overlap -> Touched / Left. What a touch DOES is a connection now, so this
   // is the whole of the trigger code that lives in the tick.
   update_triggers(context);
+
+  // Deadline -> Elapsed, the same shape one line up.
+  update_timers(context);
 
   // Every connection this tick emitted, delivered before the snapshot is built,
   // looping until the chain settles. Here rather than at the top of the tick so

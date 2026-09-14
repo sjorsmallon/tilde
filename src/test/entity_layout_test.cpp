@@ -211,6 +211,9 @@ int main()
         entity_type::Trigger_Volume_Entity,
         entity_type::Jump_Pad_Entity,
         entity_type::Brush_Entity,
+        // On the wire through Render alone: its lifetime countdown is the
+        // server's bookkeeping, and the client only needs the duck to stand up.
+        entity_type::Ping_Marker_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

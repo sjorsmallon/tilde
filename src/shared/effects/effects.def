@@ -53,3 +53,5 @@ Shot_Impact      :: Effect  "a shot landed; attached_entity is what it hit, 0 fo
 }
 
 Jump_Pad_Launch  :: Effect  "a pad threw somebody; normal is the launch direction, attached_entity who"
+
+Ping             :: Effect  "a player pinged a spot; attached_entity is who pinged, normal the surface"

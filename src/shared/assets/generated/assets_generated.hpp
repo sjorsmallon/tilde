@@ -52,19 +52,20 @@ enum class texture_asset : uint16_t
   hammer = 5,
   point_light = 6,
   spot_light = 7,
-  wall = 8,
-  wall_hammer = 9,
-  glasses = 10,
-  glasses_material = 11,
-  leet_hands = 12,
-  leet_hands_material = 13,
-  leet_skin = 14,
-  leet_skin_material = 15,
-  Smoke = 16,
-  dev_128x128 = 17,
+  timer = 8,
+  wall = 9,
+  wall_hammer = 10,
+  glasses = 11,
+  glasses_material = 12,
+  leet_hands = 13,
+  leet_hands_material = 14,
+  leet_skin = 15,
+  leet_skin_material = 16,
+  Smoke = 17,
+  dev_128x128 = 18,
 };
 
-constexpr uint32_t texture_asset_COUNT = 18;
+constexpr uint32_t texture_asset_COUNT = 19;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);
@@ -102,11 +103,12 @@ enum class sound_asset : uint16_t
   success = 24,
   target_break = 25,
   twang = 26,
-  wow_incredible = 27,
-  zoom = 28,
+  ui_ping = 27,
+  wow_incredible = 28,
+  zoom = 29,
 };
 
-constexpr uint32_t sound_asset_COUNT = 29;
+constexpr uint32_t sound_asset_COUNT = 30;
 
 const char* to_string(sound_asset value);
 template <> std::optional<sound_asset> try_from_string<sound_asset>(std::string_view text);
@@ -179,16 +181,17 @@ enum class pbr_material : uint16_t
 {
   Missing = 0,
   bricks_mortar = 1,
-  glass_amber = 2,
-  glass_blue = 3,
-  harsh_bricks = 4,
-  scuffed_plastic = 5,
-  sloppy_mortar_stone = 6,
-  stringy_marble = 7,
-  titanium_scuffed = 8,
+  fence_grate = 2,
+  glass_amber = 3,
+  glass_blue = 4,
+  harsh_bricks = 5,
+  scuffed_plastic = 6,
+  sloppy_mortar_stone = 7,
+  stringy_marble = 8,
+  titanium_scuffed = 9,
 };
 
-constexpr uint32_t pbr_material_COUNT = 9;
+constexpr uint32_t pbr_material_COUNT = 10;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

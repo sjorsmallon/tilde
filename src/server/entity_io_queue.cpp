@@ -2,6 +2,7 @@
 
 #include "../shared/log.hpp"
 #include "../shared/reflection.hpp"
+#include "../shared/subtick.hpp"
 #include "server_context.hpp"
 
 #include <algorithm>
@@ -13,18 +14,6 @@ namespace server
 
 namespace
 {
-
-// A delay in seconds as a whole number of ticks, rounded UP: a connection that
-// asks for any delay at all must not fire in the tick that emitted it, which
-// rounding down would let it do for anything under half a tick.
-uint32_t ticks_for_delay(const server_context_t& context, float delay_seconds)
-{
-  if (delay_seconds <= 0.0f)
-    return 0;
-
-  const float tickrate = std::max(1.0f, (float)context.cvars->sv_tickrate);
-  return (uint32_t)std::ceil(delay_seconds * tickrate);
-}
 
 bool io_debug_is_on(const server_context_t& context)
 {
@@ -115,7 +104,8 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
     record.data      = connection.row.data;
     record.sender    = sender.entity_id;
     record.activator = context.activator;
-    record.fire_tick = context.tick + ticks_for_delay(context.server, connection.row.delay_seconds);
+    record.fire_tick = context.tick + shared::ticks_from_seconds(connection.row.delay_seconds,
+                                                                context.server.cvars->sv_tickrate);
     record.sequence  = context.server.world.next_action_sequence++;
 
     // Resolved NOW, not at drain time. `!activator` names whoever caused this

@@ -54,6 +54,10 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     // A shot lands on the BRUSH, which is world geometry and has its own impact
     // sound; the entity behind it is never what a ray reports.
     {entities::entity_type::Brush_Entity, {}, assets::sound_asset::Missing},
+    // A ping marker is scenery: no shot is tested against it, so no shot can
+    // land on it.
+    {entities::entity_type::Ping_Marker_Entity, {}, assets::sound_asset::Missing},
+    {entities::entity_type::Logic_Timer_Entity, {}, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&entity_type_sounds_t::type>(ENTITY_TYPE_SOUNDS),

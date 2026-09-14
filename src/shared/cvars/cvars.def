@@ -172,6 +172,15 @@ Lag_Compensation :: cvars {
     sv_shot_debug:             bool = false  @Server  "Send each shooter the server's view of their own shots (S2C_ShotDebug)"
 }
 
+// The placeholder world ping: middle mouse raycasts against the map and stands
+// a duck where it landed. One marker per player, so a second ping moves the
+// first rather than filling the level with waterfowl.
+
+Ping :: cvars {
+    sv_ping_range:            f32 = 8192.0 @Server "How far a ping ray reaches before it gives up"
+    sv_ping_lifetime_seconds: f32 = 10.0   @Server "Seconds a ping marker stands before it vanishes (0 = forever)"
+}
+
 // ---------------------------------------------------------------------------
 // Server -- was server_impl.cpp
 // ---------------------------------------------------------------------------

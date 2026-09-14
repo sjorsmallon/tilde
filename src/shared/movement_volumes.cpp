@@ -60,6 +60,8 @@ void collect_movement_volumes(Entity_System& system, std::vector<movement_volume
       case entities::entity_type::Reflection_Volume_Entity:
       case entities::entity_type::Game_Rules_Entity:
       case entities::entity_type::Logic_Counter_Entity:
+      case entities::entity_type::Ping_Marker_Entity:
+      case entities::entity_type::Logic_Timer_Entity:
         break;
     }
   }

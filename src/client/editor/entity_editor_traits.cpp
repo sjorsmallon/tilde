@@ -473,6 +473,8 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Game_Rules_Entity, .icon = assets::texture_asset::game_rules},
     {.type = entity_type::Logic_Counter_Entity, .icon = assets::texture_asset::counter},
     {.type = entity_type::Brush_Entity, .icon = assets::texture_asset::wall_hammer},
+    {.type = entity_type::Ping_Marker_Entity}, // runtime only; the render component draws it
+    {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::timer},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

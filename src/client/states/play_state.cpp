@@ -128,9 +128,10 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
   {
     switch (edge.button)
     {
-    case input::mouse_button_t::Left:  return Button::Fire;
-    case input::mouse_button_t::Right: return Button::Secondary_Fire;
-    default:                           return 0;
+    case input::mouse_button_t::Left:   return Button::Fire;
+    case input::mouse_button_t::Middle: return Button::Ping;
+    case input::mouse_button_t::Right:  return Button::Secondary_Fire;
+    default:                            return 0;
     }
   }
 
@@ -1333,6 +1334,8 @@ void Play_State::update(float dt)
       buttons |= Button::Fire;
     if (input::is_mouse_down(input::mouse_button_t::Right))
       buttons |= Button::Secondary_Fire;
+    if (input::is_mouse_down(input::mouse_button_t::Middle))
+      buttons |= Button::Ping;
 
     // Sent even though zoom is drawn client-side: the server needs it the
     // moment scoping costs movement speed or accuracy, and it has to arrive

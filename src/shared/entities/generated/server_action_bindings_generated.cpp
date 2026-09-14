@@ -226,6 +226,24 @@ void shim_game_rules_entity_complete_level(Entity& entity, const action_data_t& 
   complete_level(self, data.as_complete_level(), context);
 }
 
+void shim_logic_timer_entity_start(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Timer_Entity& self = *entity_as<Logic_Timer_Entity>(&entity);
+  start(self, self.timer, data.as_start(), context);
+}
+
+void shim_logic_timer_entity_stop(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Timer_Entity& self = *entity_as<Logic_Timer_Entity>(&entity);
+  stop(self, self.timer, data.as_stop(), context);
+}
+
+void shim_logic_timer_entity_restart(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Timer_Entity& self = *entity_as<Logic_Timer_Entity>(&entity);
+  restart(self, self.timer, data.as_restart(), context);
+}
+
 using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&);
 
 // A non-null cell means the type accepts the action. Rows are entity
@@ -251,6 +269,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_player_entity_grant_weapon,
     shim_player_entity_set_respawn_point,
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {},   // Weapon_Entity
   {},   // Rocket_Entity
@@ -272,6 +293,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {},   // Particle_Emitter_Entity
   {   // Sound_Emitter_Entity
@@ -291,6 +315,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {   // Point_Light_Entity
     shim_point_light_entity_enable,
@@ -309,6 +336,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {   // Spot_Light_Entity
     shim_spot_light_entity_enable,
@@ -327,6 +357,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {},   // Directional_Light_Entity
   {   // Trigger_Volume_Entity
@@ -346,6 +379,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {   // Jump_Pad_Entity
     shim_jump_pad_entity_enable,
@@ -364,6 +400,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {},   // Reflection_Volume_Entity
   {   // Game_Rules_Entity
@@ -383,6 +422,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     shim_game_rules_entity_complete_level,
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {   // Logic_Counter_Entity
     nullptr,   // Enable
@@ -401,6 +443,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
   },
   {   // Brush_Entity
     shim_brush_entity_enable,
@@ -419,6 +464,31 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Grant_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
+  },
+  {},   // Ping_Marker_Entity
+  {   // Logic_Timer_Entity
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Play
+    nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+    shim_logic_timer_entity_start,
+    shim_logic_timer_entity_stop,
+    shim_logic_timer_entity_restart,
   },
 };
 
@@ -716,6 +786,57 @@ void complete_level(Entity& entity, const Complete_Level_Data& payload, input_co
     fatal_error("{} does not accept Complete_Level", entity_info(entity.type).classname);
 }
 
+bool try_start(Entity& entity, const Start_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Start];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void start(Entity& entity, const Start_Data& payload, input_context_t& context)
+{
+  if (!try_start(entity, payload, context))
+    fatal_error("{} does not accept Start", entity_info(entity.type).classname);
+}
+
+bool try_stop(Entity& entity, const Stop_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Stop];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void stop(Entity& entity, const Stop_Data& payload, input_context_t& context)
+{
+  if (!try_stop(entity, payload, context))
+    fatal_error("{} does not accept Stop", entity_info(entity.type).classname);
+}
+
+bool try_restart(Entity& entity, const Restart_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Restart];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void restart(Entity& entity, const Restart_Data& payload, input_context_t& context)
+{
+  if (!try_restart(entity, payload, context))
+    fatal_error("{} does not accept Restart", entity_info(entity.type).classname);
+}
+
 bool try_send_action(Entity& target, const action_data_t& data, input_context_t& context)
 {
   if (target.type <= entity_type::Invalid || (uint32_t)target.type >= ENTITY_TYPE_COUNT)
@@ -788,6 +909,14 @@ void emit_health_changed(const Entity& sender, const Health_Changed_Data& payloa
   if (!type_emits_signal(sender.type, entity_signal::Health_Changed))
     fatal_error("{} does not emit Health_Changed", entity_info(sender.type).classname);
   server::queue_signal_connections(context, sender, entity_signal::Health_Changed,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_elapsed(const Entity& sender, const Elapsed_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Elapsed))
+    fatal_error("{} does not emit Elapsed", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Elapsed,
                                    &payload, (uint32_t)sizeof(payload));
 }
 

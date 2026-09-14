@@ -1,0 +1,60 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "dissolving_platform.prefab"
+}
+connections
+{
+  connection
+  {
+    "sender" "65"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "64"
+    "action" "Set_Color"
+    override
+    {
+      "color" "0 1 0"
+    }
+  }
+  connection
+  {
+    "sender" "65"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "20"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "65"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "62"
+    "action" "Play"
+    "fire_once" "1"
+  }
+  connection
+  {
+    "sender" "65"
+    "signal" "Left"
+    "target_kind" "Unbound"
+    "target" "138"
+    "action" "Disable"
+  }
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "65"
+  "position" "0 105.75111 0"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "220.98656 105.75111 281.31293"
+}

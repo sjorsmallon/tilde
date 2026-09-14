@@ -28,6 +28,8 @@
 #include "entities/game_rules_entity_generated.hpp"
 #include "entities/logic_counter_entity_generated.hpp"
 #include "entities/brush_entity_generated.hpp"
+#include "entities/ping_marker_entity_generated.hpp"
+#include "entities/logic_timer_entity_generated.hpp"
 
 namespace entities
 {

@@ -48,9 +48,12 @@ enum class entity_action : uint16_t
   Grant_Weapon = 13,   // Armable
   Set_Respawn_Point = 14,   // Respawnable
   Complete_Level = 15,   // Objective
+  Start = 16,   // Timer
+  Stop = 17,   // Timer
+  Restart = 18,   // Timer
 };
 
-constexpr uint32_t ENTITY_ACTION_COUNT = 16;
+constexpr uint32_t ENTITY_ACTION_COUNT = 19;
 
 enum class entity_signal : uint16_t
 {
@@ -60,9 +63,10 @@ enum class entity_signal : uint16_t
   Left = 3,   // Touchable
   Died = 4,   // Mortal
   Health_Changed = 5,   // Mortal
+  Elapsed = 6,   // Timer
 };
 
-constexpr uint32_t ENTITY_SIGNAL_COUNT = 6;
+constexpr uint32_t ENTITY_SIGNAL_COUNT = 7;
 
 enum class entity_trait : uint16_t
 {
@@ -76,9 +80,10 @@ enum class entity_trait : uint16_t
   Armable = 7,
   Respawnable = 8,
   Objective = 9,
+  Timer = 10,
 };
 
-constexpr uint32_t ENTITY_TRAIT_COUNT = 10;
+constexpr uint32_t ENTITY_TRAIT_COUNT = 11;
 
 const char* to_string(entity_action value);
 const char* to_string(entity_signal value);

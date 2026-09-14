@@ -239,6 +239,7 @@ set(ENTITY_IO_HANDLERS
     src/server/traits/playable.cpp
     src/server/traits/mortal.cpp
     src/server/traits/armable.cpp
+    src/server/traits/timer.cpp
     src/server/entities/point_light_entity.cpp
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
@@ -730,6 +731,7 @@ add_library(game_client SHARED
     src/client/effects/land.cpp
     src/client/effects/shot_impact.cpp
     src/client/effects/jump_pad_launch.cpp
+    src/client/effects/ping.cpp
     src/client/weapon_fire_audio.cpp
     src/client/entity_type_audio.cpp
     src/client/snapshot_edges.cpp
@@ -871,7 +873,9 @@ add_library(game_server SHARED
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/systems/rocket_system.cpp
+    src/server/systems/ping_system.cpp
     src/server/systems/trigger_system.cpp
+    src/server/systems/timer_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/physics_body_system.cpp

@@ -34,6 +34,7 @@ using shared::subtick_time_t;
 using shared::subtick_time;
 using shared::subtick_seconds_between;
 using shared::subtick_time_after;
+using shared::ticks_from_seconds;
 
 static int failures = 0;
 
@@ -641,6 +642,18 @@ static void test_a_deadline_is_never_shorter_than_the_duration()
   check_equal(subtick_time_after(start, 0.f, TICK_DT), start, "a zero duration is now");
 }
 
+static void test_a_tick_count_is_never_shorter_than_the_duration()
+{
+  printf("a duration rounds UP into a tick count, and a positive one is never zero\n");
+
+  check_equal(ticks_from_seconds(2.0f, 60.f), 120, "an exact duration is exact");
+  check_equal(ticks_from_seconds(0.1f, 60.f), 6, "float noise does not round 6 down to 5");
+  check_equal(ticks_from_seconds(0.3333f, 60.f), 20, "an awkward one rounds up");
+  check_equal(ticks_from_seconds(0.001f, 60.f), 1, "under a tick is still a whole tick");
+  check_equal(ticks_from_seconds(0.f, 60.f), 0, "zero is now");
+  check_equal(ticks_from_seconds(-1.f, 60.f), 0, "backwards is now, not a wrap");
+}
+
 static void test_the_step_a_press_opens_carries_its_slot()
 {
   printf("the server reads a press's slot off the step it opened\n");
@@ -697,6 +710,7 @@ int main()
   test_subtick_time_is_a_moment_not_a_tick();
   test_seconds_between_matches_the_step_splitter();
   test_a_deadline_is_never_shorter_than_the_duration();
+  test_a_tick_count_is_never_shorter_than_the_duration();
   test_the_step_a_press_opens_carries_its_slot();
   test_wire_round_trip();
   test_wire_refuses_a_malformed_command();

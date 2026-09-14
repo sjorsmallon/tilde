@@ -45,6 +45,11 @@ constexpr uint64_t Throw    = 1 << 19;
 // impulse (shared/weapons.hpp, secondary_fire_t). Zoom below is the same
 // button as a client-side toggle; the two ride together.
 constexpr uint64_t Secondary_Fire = 1 << 20;
+// The middle mouse button as a CLICK. It lands on the WORLD (a raycast and a
+// marker), not on the player's own velocity, so nothing about it is predicted --
+// it is here for Throw's reason, which is that the server resolves it in the
+// step loop off a press edge.
+constexpr uint64_t Ping = 1 << 21;
 
 // The buttons whose EDGE is worth a sub-tick slot, and therefore an extra
 // movement step (shared/subtick.hpp).
@@ -67,7 +72,7 @@ constexpr uint64_t Secondary_Fire = 1 << 20;
 constexpr uint64_t Subtick_Tracked =
     Forward | Backward | Left | Right | Jump | Fire | Secondary_Fire |
     Key0 | Key1 | Key2 | Key3 | Key4 | Key5 | Key6 | Key7 | Key8 | Key9 |
-    Reload | Throw;
+    Reload | Throw | Ping;
 } // namespace Button
 
 // Initializers are load-bearing, not decoration. `Move_Input input;` at block

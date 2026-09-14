@@ -192,6 +192,9 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {GRANT_WEAPON_FIELDS, 2},
   {SET_RESPAWN_POINT_FIELDS, 1},
   {},   // Complete_Level
+  {},   // Start
+  {},   // Stop
+  {},   // Restart
 };
 
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
@@ -201,6 +204,7 @@ constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
   {},   // Left
   {DIED_FIELDS, 1},
   {HEALTH_CHANGED_FIELDS, 1},
+  {},   // Elapsed
 };
 
 } // namespace
@@ -225,6 +229,9 @@ const char* to_string(entity_action value)
     case entity_action::Grant_Weapon: return "Grant_Weapon";
     case entity_action::Set_Respawn_Point: return "Set_Respawn_Point";
     case entity_action::Complete_Level: return "Complete_Level";
+    case entity_action::Start: return "Start";
+    case entity_action::Stop: return "Stop";
+    case entity_action::Restart: return "Restart";
   }
   return "<unknown>";
 }
@@ -247,6 +254,9 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Grant_Weapon") return entity_action::Grant_Weapon;
   if (text == "Set_Respawn_Point") return entity_action::Set_Respawn_Point;
   if (text == "Complete_Level") return entity_action::Complete_Level;
+  if (text == "Start") return entity_action::Start;
+  if (text == "Stop") return entity_action::Stop;
+  if (text == "Restart") return entity_action::Restart;
   return std::nullopt;
 }
 
@@ -260,6 +270,7 @@ const char* to_string(entity_signal value)
     case entity_signal::Left: return "Left";
     case entity_signal::Died: return "Died";
     case entity_signal::Health_Changed: return "Health_Changed";
+    case entity_signal::Elapsed: return "Elapsed";
   }
   return "<unknown>";
 }
@@ -272,6 +283,7 @@ template <> std::optional<entity_signal> try_from_string<entity_signal>(std::str
   if (text == "Left") return entity_signal::Left;
   if (text == "Died") return entity_signal::Died;
   if (text == "Health_Changed") return entity_signal::Health_Changed;
+  if (text == "Elapsed") return entity_signal::Elapsed;
   return std::nullopt;
 }
 
@@ -289,6 +301,7 @@ const char* to_string(entity_trait value)
     case entity_trait::Armable: return "Armable";
     case entity_trait::Respawnable: return "Respawnable";
     case entity_trait::Objective: return "Objective";
+    case entity_trait::Timer: return "Timer";
   }
   return "<unknown>";
 }
@@ -305,6 +318,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Armable") return entity_trait::Armable;
   if (text == "Respawnable") return entity_trait::Respawnable;
   if (text == "Objective") return entity_trait::Objective;
+  if (text == "Timer") return entity_trait::Timer;
   return std::nullopt;
 }
 
@@ -340,6 +354,9 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Grant_Weapon: return (uint32_t)sizeof(Grant_Weapon_Data);
     case entity_action::Set_Respawn_Point: return (uint32_t)sizeof(Set_Respawn_Point_Data);
     case entity_action::Complete_Level: return (uint32_t)sizeof(Complete_Level_Data);
+    case entity_action::Start: return (uint32_t)sizeof(Start_Data);
+    case entity_action::Stop: return (uint32_t)sizeof(Stop_Data);
+    case entity_action::Restart: return (uint32_t)sizeof(Restart_Data);
   }
   return 0;
 }
@@ -354,6 +371,7 @@ uint32_t signal_payload_size(entity_signal signal)
     case entity_signal::Left: return (uint32_t)sizeof(Left_Data);
     case entity_signal::Died: return (uint32_t)sizeof(Died_Data);
     case entity_signal::Health_Changed: return (uint32_t)sizeof(Health_Changed_Data);
+    case entity_signal::Elapsed: return (uint32_t)sizeof(Elapsed_Data);
   }
   return 0;
 }
@@ -483,6 +501,30 @@ action_data_t erase(const Complete_Level_Data& payload)
   action_data_t data;
   data.tag = entity_action::Complete_Level;
   data.complete_level = payload;
+  return data;
+}
+
+action_data_t erase(const Start_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Start;
+  data.start = payload;
+  return data;
+}
+
+action_data_t erase(const Stop_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Stop;
+  data.stop = payload;
+  return data;
+}
+
+action_data_t erase(const Restart_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Restart;
+  data.restart = payload;
   return data;
 }
 
