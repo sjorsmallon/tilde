@@ -348,19 +348,6 @@ uint32_t compute_map_content_hash(const map_t &map);
 // Returns false if nav is not valid.
 bool save_navmesh_sidecar(const std::string &map_path, const navmesh_t &nav);
 
-// Compute world-space AABB bounds for an entity.
-// Data-driven: uses mesh bounds if available, else entity-specific shape,
-// else default 1x1x1 box at position.
-aabb_bounds_t compute_entity_bounds(const entities::Entity *entity);
-
-// Compute outward-facing collision planes for an entity's shape.
-// AABB entities -> 6 planes, Wedge entities -> 5 planes (including slope),
-// Static mesh / fallback -> 6 AABB planes from bounds.
-std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entity);
-
-// Returns polygon vertices for each face, parallel to compute_entity_collision_planes().
-std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entities::Entity *entity);
-
 // --- The map's cvar list -----------------------------------------------------
 //
 // map_t::attached_cvars holds whole console lines ("g_gravity 200"), but the
@@ -383,8 +370,15 @@ std::string make_cvar_line(std::string_view name, std::string_view value);
 // These are free functions rather than members because resolving a static mesh's
 // bounds means touching the asset cache, which map.hpp has no business pulling in.
 
-// World-space AABB of whichever object holds `uid`. Logs and returns a degenerate
-// box at the origin if nothing does.
+// World-space AABB of whichever object holds `uid`: a geometry value's own
+// bound, or the bound an entity's COMPONENTS describe (a Box_Volume, else a
+// visible Render mesh, else a point). Logs and returns a degenerate box at the
+// origin if nothing does.
+//
+// This is the physical extent, which is what a prefab's anchor wants. The shape
+// the editor draws and picks an entity as has a per-type stand-in in it (a
+// spawn's hull, a spectate spot's frustum) and is the editor's own question:
+// client/editor/editor_object_bounds.hpp.
 aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid);
 
 // Position of whichever object holds `uid`. Empty if none does.
@@ -412,10 +406,8 @@ aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid);
 [[nodiscard]] bool try_set_object_orientation(map_t &map, entity_uid_t uid,
                                               const linalg::quatf &orientation);
 
-// Every editable object's uid and world bounds, geometry first then entities.
-// This is what "iterate the editable map objects" means for the tools: box
-// select, hover preview and the picking BVH all want exactly (identity, bounds)
-// and nothing else, so none of them has to walk two lists or branch on regime.
+// Every editable object's uid and world bounds, geometry first then entities,
+// by the same rule as compute_object_bounds.
 std::vector<std::pair<entity_uid_t, aabb_bounds_t>>
 collect_object_bounds(const map_t &map);
 

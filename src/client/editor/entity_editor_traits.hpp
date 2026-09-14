@@ -2,21 +2,31 @@
 
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/linalg.hpp"
+#include "../../shared/shapes.hpp"
 #include "editor_types.hpp"
 
 #include <optional>
+#include <variant>
+#include <vector>
 
-// this establishes some helpers to map from entities to some draw behavior.
-// I can't really encode this in a good way in the def file,
-// but I want to control how some things are rendered if they have no definitions.
+// How the editor treats an entity, in two halves that are different KINDS of
+// fact and are kept apart on purpose:
+//
+//   PER TYPE      editor_data_per_entity_type_t -- colour, icon, stand-in shape
+//                 and the three draw functions. Constants, one row per
+//                 entity_type, in a table pinned by rows_in_enum_order.
+//   PER INSTANCE  editor_shape_at() -- the shape THIS entity is drawn and
+//                 picked as, derived from its components and, failing those,
+//                 from its type's stand-in. Nothing else answers that question,
+//                 which is what makes the box you click the box you see.
+//
+// The `.def` cannot say any of this: it is about how the editor DRAWS a type,
+// and the editor is the only party to that decision.
 
 namespace client
 {
 
 // The type's screen-space icon, or no `texture` for a type that has none.
-// It lives here rather than beside the icon pass because this file is where "how
-// does the editor treat this type" is answered -- a second per-type switch in
-// the icon pass is the drift this file exists to prevent.
 //
 // The colour is the TYPE's, used only where the instance has nothing better to
 // say; a light's icon is tinted by its own colour instead.
@@ -28,28 +38,44 @@ struct entity_icon_t
 
 entity_icon_t get_entity_icon(const entities::Entity* e);
 
-linalg::vec3 get_placement_half_extents(const entities::Entity* e);
+// The shape the editor draws and picks an entity as, at `position` -- a
+// parameter because the placement ghost is drawn where the cursor is, not
+// where the entity is. ONE ordered rule, and no type arm but the stand-in:
+//
+//   1. a Box_Volume component      -> that box (a trigger, a pad, a hitbox)
+//   2. else a Render mesh          -> its bounds under render.scale
+//   3. else the type's stand-in    -> the player hull, the spectate frustum,
+//                                     the pyramid marker
+//   4. else a point, padded so it can be clicked at all
+//
+// A frustum is a shape of its own rather than its bound because its corner is
+// empty space, and a click there should fall through to what is behind it.
+using editor_shape_t = std::variant<shared::aabb_bounds_t, shared::spectate_frustum_t>;
+
+editor_shape_t editor_shape_at(const entities::Entity* e, const linalg::vec3& position);
+
+// The two readings of editor_shape_at(e, e->position) the picking BVH wants.
+shared::aabb_bounds_t editor_bounds_of(const entities::Entity* e);
+std::vector<Plane>    editor_collision_planes_of(const entities::Entity* e);
 
 // Every context draws the same three layers: ART (the render component, else
-// the type's stand-in, else a wire box), the type's DIAGRAM on top of it, and
-// the REACH on top of that for the selected and the placed entity only. A
-// diagram never substitutes for art: a pad that grows a mesh keeps its arrow.
+// the type's stand-in, else the shape as a wire box), the type's DIAGRAM on top
+// of it, and the REACH on top of that for the selected and the placed entity
+// only. A diagram never substitutes for art: a pad that grows a mesh keeps its
+// arrow.
 
 // Placement preview at `origin` -- the entity's position, NOT necessarily the
 // center of the drawn shape.
 void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
-                       const linalg::vec3& origin);
+                       const linalg::vec3& origin, const entity_draw_settings_t& settings);
 
-void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws);
+void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws,
+                           const entity_draw_settings_t& settings);
 
-// How far above a surface the entity's ORIGIN sits when placed on it. Half the
-// entity's height for the usual centered origin, ZERO for the player-shaped
-// types whose origin is at the feet.
-float get_placement_origin_height(const entities::Entity* e);
-
-// Convenience: surface point under the cursor -> where entity->position goes.
-// This is the ORIGIN, not the center of the drawn shape -- the two differ for
-// feet-origin types, and draw_entity_ghost takes the origin as well.
+// Surface point under the cursor -> where entity->position goes, lifted so the
+// entity's shape RESTS on the surface: zero for a type whose origin is at its
+// feet (the hull rises from position), half a box for a centred one, whatever
+// the mesh says for a prop. The ORIGIN, not the center of the drawn shape.
 linalg::vec3 compute_placement_origin(const entities::Entity* e,
                                       const linalg::vec3& ghost_position);
 
@@ -58,8 +84,7 @@ linalg::vec3 compute_placement_origin(const entities::Entity* e,
 color_t compute_selection_pulse_color(float time);
 
 // The three layers in the pulse colour.
-void draw_selection_highlight(const entities::Entity* e,
-                              pass_builder_t& draws, float time,
-                              float grid_step);
+void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, float time,
+                              float grid_step, const entity_draw_settings_t& settings);
 
 } // namespace client

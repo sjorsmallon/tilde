@@ -96,8 +96,8 @@ inline std::array<linalg::vec3, 5> get_pyramid_points(const pyramid_t &pyramid)
 
 // The spectate spot's camera gizmo. It lives here rather than beside the code
 // that draws it because the frustum is the shape a spectate spot is DRAWN as,
-// and therefore the shape it has to PICK as: compute_entity_bounds handed back
-// a player hull at the apex, which is a volume the picture never occupies.
+// and therefore the shape it has to PICK as (editor_shape_at): the pick used to
+// hand back a player hull at the apex, a volume the picture never occupies.
 constexpr float SPECTATE_FRUSTUM_DEPTH = 72.f;
 
 // Matches r_fov's default, and is deliberately NOT read from the live cvar: the

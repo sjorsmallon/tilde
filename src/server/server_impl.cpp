@@ -649,8 +649,8 @@ static void build_target_volumes(const entities::Entity &entity, const shared::p
     // frame is the obvious next step and it is not free (the editor gizmo, the
     // bounds in map.cpp and this would all have to agree about the euler
     // order), so it waits for a level that actually wants a rotated crate.
-    slice[0] = assets::make_box_hit_volume(damageable->position,
-                                           damageable->hitbox_half_extents,
+    slice[0] = assets::make_box_hit_volume(damageable->position + damageable->volume.position,
+                                           damageable->volume.half_extents,
                                            shared::hit_region_t::Torso);
     return;
   }

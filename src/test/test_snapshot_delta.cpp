@@ -639,7 +639,7 @@ int main()
     crate.position            = {100.f, 0.f, 200.f};
     crate.health.max_health              = 100;
     crate.health.current_health          = crate.health.max_health;
-    crate.hitbox_half_extents = {16.f, 32.f, 16.f};
+    crate.volume.half_extents = {16.f, 32.f, 16.f};
     crate.render.visible      = true;
     put(server_frame, crate);
 
@@ -650,14 +650,14 @@ int main()
     assert(held<entities::Damageable_Entity>(client_frame, 70).health.current_health == 100);
     assert(held<entities::Damageable_Entity>(client_frame, 70).render.visible);
 
-    // hitbox_half_extents is deliberately NOT @Networked, so it arrives as the
-    // struct default rather than as what the server holds -- the client reads
-    // the real one out of the map. Asserted so that flagging it later is a
-    // decision somebody makes on purpose rather than a silent bandwidth
+    // The hitbox (`volume`) is deliberately NOT @Networked, so it arrives as
+    // the struct default rather than as what the server holds -- the client
+    // reads the real one out of the map. Asserted so that flagging it later is
+    // a decision somebody makes on purpose rather than a silent bandwidth
     // increase.
     const entities::Damageable_Entity fresh{};
-    assert(held<entities::Damageable_Entity>(client_frame, 70).hitbox_half_extents.y ==
-           fresh.hitbox_half_extents.y);
+    assert(held<entities::Damageable_Entity>(client_frame, 70).volume.half_extents.y ==
+           fresh.volume.half_extents.y);
 
     // Destroyed: health crosses zero and the server hides it. That is TWO
     // changed leaves on one entity and must cost exactly one record.

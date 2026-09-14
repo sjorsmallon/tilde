@@ -21,8 +21,8 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     case entities::entity_type::Damageable_Entity:
     {
       const entities::Damageable_Entity* damageable = static_cast<const entities::Damageable_Entity*>(entity);
-      volume = assets::make_box_hit_volume(damageable->position,
-                                           damageable->hitbox_half_extents,
+      volume = assets::make_box_hit_volume(damageable->position + damageable->volume.position,
+                                           damageable->volume.half_extents,
                                            shared::hit_region_t::Torso);
       break;
     }

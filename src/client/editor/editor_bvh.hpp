@@ -3,6 +3,7 @@
 #include "../../shared/collision_detection.hpp"
 #include "../../shared/map.hpp"
 #include "../../shared/shapes.hpp"
+#include "entity_editor_traits.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -67,11 +68,11 @@ build_editor_bvh(const shared::map_t &map)
       log_error("wile iterating over map entities, encountered a non_entity?");
       continue;
     }
-    // Entities carry their hull for the same reason geometry does: for every
-    // type but the spectate spot the hull IS the bound, and for that one the
-    // frustum's empty corner should fall through to what is behind it.
-    add_leaf(entry.uid, shared::compute_entity_bounds(entry.entity.get()),
-             shared::compute_entity_collision_planes(entry.entity.get()));
+    // Entities pick as the shape the editor draws them as, planes included:
+    // for every type but the spectate spot the hull IS the bound, and for that
+    // one the frustum's empty corner should fall through to what is behind it.
+    add_leaf(entry.uid, editor_bounds_of(entry.entity.get()),
+             editor_collision_planes_of(entry.entity.get()));
   }
 
   result.bvh = build_bvh(inputs);

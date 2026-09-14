@@ -7,7 +7,9 @@
 #include "../../shared/shapes.hpp"
 #include "render_assets.hpp"
 #include "renderer.hpp"
-#include "state_manager.hpp"
+#include "../../shared/aabb.hpp"
+#include "../../shared/array.hpp"
+#include "../../shared/log.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -83,13 +85,6 @@ void draw_particle_emitter_shape(pass_builder_t& draws,
   draws.debug.line(position, position + linalg::vec3{0, 32, 0}, color);
 }
 
-void draw_trigger_volume_shape(pass_builder_t& draws,
-                               const linalg::vec3& position,
-                               const linalg::vec3& half_extents, color_t color)
-{
-  draws.debug.box(position, half_extents, color);
-}
-
 constexpr float JUMP_PAD_ARROW_SECONDS = 0.1f;
 constexpr float JUMP_PAD_ARC_SECONDS   = 3.f;
 constexpr int   JUMP_PAD_ARC_SEGMENTS  = 48;
@@ -104,12 +99,11 @@ void draw_jump_pad_shape(pass_builder_t& draws, const entities::Jump_Pad_Entity*
   draws.debug.arrow(position, position + launch * JUMP_PAD_ARROW_SECONDS, color);
 }
 
-// Where a launched player lands: the ballistic arc under the live g_gravity,
-// cut where it drops below the pad.
+// Where a launched player lands: the ballistic arc under `gravity`, cut where
+// it drops below the pad.
 void draw_jump_pad_arc(pass_builder_t& draws, const entities::Jump_Pad_Entity* pad,
-                       const linalg::vec3& position, color_t color)
+                       const linalg::vec3& position, color_t color, float gravity)
 {
-  const float        gravity  = state_manager::get_client_context().cvars->g_gravity;
   const linalg::vec3 velocity = linalg::forward(pad->orientation) * pad->launch_speed;
   const float        floor_y  = position.y - pad->volume.half_extents.y;
 
@@ -263,269 +257,327 @@ bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_
 }
 
 using draw_function_t = void (*)(const entities::Entity*, pass_builder_t&,
-                                 const linalg::vec3&, color_t);
+                                 const linalg::vec3&, color_t,
+                                 const entity_draw_settings_t&);
 
-// Where `position` sits when placed on a surface: centered lifts by half the
-// height so the shape rests on it; feet means position IS the surface point.
-// Adding half a hull to a feet-origin type is what left editor-placed spawns
-// 36 units in the air, since the runtime reads a spawn's position as the feet.
-enum class placement_origin_t
+// The shape a type is drawn and picked as when no component says otherwise.
+// Feet-versus-centred is implicit in the shape: the hull RISES from position,
+// so a spawn placed on a floor lands with its feet on it rather than half a
+// hull in the air.
+enum class stand_in_shape_t
 {
-  centered,
-  feet,
+  none, // a point
+  player_hull,
+  spectate_frustum,
+  pyramid_marker,
 };
 
-struct entity_editor_traits_t
+// A point type's pick box. Small enough that a lamp does not swallow the wall
+// behind it, big enough to click; its screen-space icon is the visible thing.
+constexpr float POINT_PICK_HALF_EXTENT = 16.f;
+
+struct editor_data_per_entity_type_t
 {
-  // Pick + placement volume. NOT necessarily the drawn shape: a light picks
-  // point-sized whatever its reach, or a 512-unit falloff sphere would swallow
-  // every click in the room it lights.
-  linalg::vec3       half_extents        = {};
-  placement_origin_t origin              = placement_origin_t::centered;
-  color_t            color               = colors::white; // stand-in and diagram colour
-  draw_function_t    draw_stand_in       = nullptr;
-  draw_function_t    draw_diagram        = nullptr;
-  draw_function_t    draw_reach          = nullptr;
+  entities::entity_type                type;
+  color_t                              color         = colors::white; // stand-in and diagram
   std::optional<assets::texture_asset> icon;
+  stand_in_shape_t                     stand_in      = stand_in_shape_t::none;
+  draw_function_t                      draw_stand_in = nullptr;
+  draw_function_t                      draw_diagram  = nullptr;
+  draw_function_t                      draw_reach    = nullptr;
 };
+
+// ---- stand-ins ----------------------------------------------------------
 
 void player_spawn_stand_in(const entities::Entity* e, pass_builder_t& draws,
-                           const linalg::vec3& position, color_t color)
+                           const linalg::vec3& position, color_t color,
+                           const entity_draw_settings_t&)
 {
   draw_player_spawn_shape(draws, position, e->orientation, color);
 }
 
 void spectate_camera_stand_in(const entities::Entity* e, pass_builder_t& draws,
-                              const linalg::vec3& position, color_t color)
+                              const linalg::vec3& position, color_t color,
+                              const entity_draw_settings_t&)
 {
   draw_spectate_camera_shape(draws, position, e->orientation, color);
 }
 
 void particle_emitter_stand_in(const entities::Entity*, pass_builder_t& draws,
-                               const linalg::vec3& position, color_t color)
+                               const linalg::vec3& position, color_t color,
+                               const entity_draw_settings_t&)
 {
   draw_particle_emitter_shape(draws, position, color);
 }
 
-// Player_Entity has no placeable representation of its own (runtime-spawned);
-// its stand-in is its actual mesh drawn in wireframe.
-void player_mesh_stand_in(const entities::Entity* e, pass_builder_t& draws,
-                          const linalg::vec3& position, color_t color)
+// Player_Entity is runtime-spawned and has no placeable representation of its
+// own; the marker is the pyramid, by id.
+void pyramid_marker_stand_in(const entities::Entity* e, pass_builder_t& draws,
+                             const linalg::vec3& position, color_t color,
+                             const entity_draw_settings_t&)
 {
-  push_mesh(draws, assets::load_mesh("resources/obj/Pyramid.obj"), position,
-            e->orientation, {1, 1, 1}, color, renderer::fill_mode_t::wireframe);
+  push_mesh(draws, assets::get_mesh(assets::mesh_asset::Pyramid), position, e->orientation,
+            {1, 1, 1}, color, renderer::fill_mode_t::wireframe);
 }
 
-void trigger_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
-                            const linalg::vec3& position, color_t color)
-{
-  draw_trigger_volume_shape(
-      draws, position,
-      static_cast<const entities::Trigger_Volume_Entity*>(e)->volume.half_extents,
-      color);
-}
+// ---- diagrams and reach -------------------------------------------------
 
-void reflection_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
-                               const linalg::vec3& position, color_t color)
+// Every Box_Volume owner draws its box the same way: a trigger, a reflection
+// volume, a damageable's hitbox.
+void box_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
+                        const linalg::vec3& position, color_t color,
+                        const entity_draw_settings_t&)
 {
-  draw_trigger_volume_shape(
-      draws, position,
-      static_cast<const entities::Reflection_Volume_Entity*>(e)->volume.half_extents,
-      color);
+  const entities::Box_Volume* volume = entities::get_box_volume(e);
+  if (!volume)
+  {
+    log_error("box_volume_diagram: {} carries no Box_Volume",
+              entities::entity_info(e->type).classname);
+    return;
+  }
+  draws.debug.box(position + volume->position, volume->half_extents, color);
 }
 
 void jump_pad_diagram(const entities::Entity* e, pass_builder_t& draws,
-                      const linalg::vec3& position, color_t color)
+                      const linalg::vec3& position, color_t color,
+                      const entity_draw_settings_t&)
 {
   draw_jump_pad_shape(draws, static_cast<const entities::Jump_Pad_Entity*>(e), position, color);
 }
 
 void jump_pad_reach(const entities::Entity* e, pass_builder_t& draws,
-                    const linalg::vec3& position, color_t color)
+                    const linalg::vec3& position, color_t color,
+                    const entity_draw_settings_t& settings)
 {
-  draw_jump_pad_arc(draws, static_cast<const entities::Jump_Pad_Entity*>(e), position, color);
+  draw_jump_pad_arc(draws, static_cast<const entities::Jump_Pad_Entity*>(e), position, color,
+                    settings.gravity);
 }
 
 void point_light_diagram(const entities::Entity* e, pass_builder_t& draws,
-                         const linalg::vec3& position, color_t color)
+                         const linalg::vec3& position, color_t color,
+                         const entity_draw_settings_t&)
 {
   draw_point_light_shape(
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
 }
 
 void spot_light_diagram(const entities::Entity* e, pass_builder_t& draws,
-                        const linalg::vec3& position, color_t color)
+                        const linalg::vec3& position, color_t color,
+                        const entity_draw_settings_t&)
 {
   draw_spot_light_shape(
       draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
 }
 
 void directional_light_diagram(const entities::Entity* e, pass_builder_t& draws,
-                               const linalg::vec3& position, color_t color)
+                               const linalg::vec3& position, color_t color,
+                               const entity_draw_settings_t&)
 {
   draw_directional_light_shape(
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
 }
 
 void point_light_reach(const entities::Entity* e, pass_builder_t& draws,
-                       const linalg::vec3& position, color_t color)
+                       const linalg::vec3& position, color_t color,
+                       const entity_draw_settings_t&)
 {
   draw_point_light_reach(
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
 }
 
 void spot_light_reach(const entities::Entity* e, pass_builder_t& draws,
-                      const linalg::vec3& position, color_t color)
+                      const linalg::vec3& position, color_t color,
+                      const entity_draw_settings_t&)
 {
   draw_spot_light_reach(
       draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
 }
 
 void directional_light_reach(const entities::Entity* e, pass_builder_t& draws,
-                             const linalg::vec3& position, color_t color)
+                             const linalg::vec3& position, color_t color,
+                             const entity_draw_settings_t&)
 {
   draw_directional_light_reach(
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
 }
 
-entity_editor_traits_t default_entity_traits(const entities::Entity* e)
+// ---- the table ----------------------------------------------------------
+//
+// A row carries only what is constant for the TYPE. Anything read off the
+// instance (a box, a mesh, a range) is editor_shape_at's business or the draw
+// function's, never a row's -- which is why a row can be constexpr and why the
+// table needs no switch to build.
+//
+// Lights get no stand-in and pick as a point whatever their reach: sizing the
+// pick volume to a 512-unit falloff sphere would make one light swallow every
+// click in the room it lights.
+
+using entities::entity_type;
+
+constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER_ENTITY_TYPE = {{
+    {.type = entity_type::Invalid},
+
+    {.type          = entity_type::Player_Spawn_Entity,
+     .color         = colors::pink,
+     .stand_in      = stand_in_shape_t::player_hull,
+     .draw_stand_in = &player_spawn_stand_in},
+
+    {.type          = entity_type::Player_Spectate_Entity,
+     .color         = colors::green,
+     .stand_in      = stand_in_shape_t::spectate_frustum,
+     .draw_stand_in = &spectate_camera_stand_in},
+
+    {.type          = entity_type::Player_Entity,
+     .stand_in      = stand_in_shape_t::pyramid_marker,
+     .draw_stand_in = &pyramid_marker_stand_in},
+
+    {.type = entity_type::Weapon_Entity}, // the render component draws it
+    {.type = entity_type::Rocket_Entity}, // runtime only
+    {.type = entity_type::Physics_Body_Entity},
+
+    {.type = entity_type::Damageable_Entity, .draw_diagram = &box_volume_diagram},
+
+    {.type          = entity_type::Particle_Emitter_Entity,
+     .color         = colors::gold,
+     .draw_stand_in = &particle_emitter_stand_in},
+
+    {.type = entity_type::Sound_Emitter_Entity, .icon = assets::texture_asset::audio},
+
+    {.type         = entity_type::Point_Light_Entity,
+     .color        = colors::yellow,
+     .icon         = assets::texture_asset::point_light,
+     .draw_diagram = &point_light_diagram,
+     .draw_reach   = &point_light_reach},
+
+    {.type         = entity_type::Spot_Light_Entity,
+     .color        = colors::yellow,
+     .icon         = assets::texture_asset::spot_light,
+     .draw_diagram = &spot_light_diagram,
+     .draw_reach   = &spot_light_reach},
+
+    {.type         = entity_type::Directional_Light_Entity,
+     .color        = colors::yellow,
+     .icon         = assets::texture_asset::directional_light,
+     .draw_diagram = &directional_light_diagram,
+     .draw_reach   = &directional_light_reach},
+
+    {.type = entity_type::Trigger_Volume_Entity, .color = colors::red, .draw_diagram = &box_volume_diagram},
+
+    {.type         = entity_type::Jump_Pad_Entity,
+     .color        = colors::orange,
+     .draw_diagram = &jump_pad_diagram,
+     .draw_reach   = &jump_pad_reach},
+
+    {.type = entity_type::Reflection_Volume_Entity, .color = colors::cyan, .draw_diagram = &box_volume_diagram},
+
+    {.type = entity_type::Game_Rules_Entity, .icon = assets::texture_asset::game_rules},
+    {.type = entity_type::Logic_Counter_Entity, .icon = assets::texture_asset::counter},
+    {.type = entity_type::Brush_Entity, .icon = assets::texture_asset::wall_hammer},
+}};
+
+static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),
+              "EDITOR_DATA_PER_ENTITY_TYPE rows must sit at their own entity_type index");
+
+const editor_data_per_entity_type_t& editor_data_for(const entities::Entity* e)
 {
-  entity_editor_traits_t traits{};
-  if (const entities::Box_Volume* volume = entities::get_box_volume(e))
-  {
-    traits.half_extents = volume->half_extents;
-  }
-  else
-  {
-    const shared::aabb_bounds_t bounds = shared::compute_entity_bounds(e);
-    traits.half_extents = (bounds.max - bounds.min) * 0.5f;
-    traits.half_extents.x = std::max(traits.half_extents.x, editor::DEFAULT_HALF_EXTENT);
-    traits.half_extents.y = std::max(traits.half_extents.y, editor::DEFAULT_HALF_EXTENT);
-    traits.half_extents.z = std::max(traits.half_extents.z, editor::DEFAULT_HALF_EXTENT);
-  }
-  return traits;
+  // try_get, not [] : the type tag came out of a map file or off the wire.
+  if (const editor_data_per_entity_type_t* row = EDITOR_DATA_PER_ENTITY_TYPE.try_get(e->type))
+    return *row;
+
+  log_error("editor_data_for: entity carries an invalid type tag ({})", (int)e->type);
+  return EDITOR_DATA_PER_ENTITY_TYPE[entity_type::Invalid];
 }
 
-entity_editor_traits_t editor_traits_for(const entities::Entity* e)
+// ---- the instance shape -------------------------------------------------
+
+shared::aabb_bounds_t scaled_mesh_bounds(const assets::mesh_asset_t& mesh,
+                                         const linalg::vec3& scale,
+                                         const linalg::vec3& position)
 {
-  const linalg::vec3 player_hull{shared::player_half_width,
-                                 shared::player_half_height,
-                                 shared::player_half_width};
-  const linalg::vec3 point_pick{editor::DEFAULT_HALF_EXTENT,
-                                editor::DEFAULT_HALF_EXTENT,
-                                editor::DEFAULT_HALF_EXTENT};
+  const shared::aabb_bounds_t local  = assets::compute_mesh_bounds(&mesh);
+  const linalg::vec3          center = (local.min + local.max) * 0.5f;
+  const linalg::vec3          half   = (local.max - local.min) * 0.5f;
+  const linalg::vec3          world_center =
+      position + linalg::vec3{center.x * scale.x, center.y * scale.y, center.z * scale.z};
+  const linalg::vec3 world_half{half.x * scale.x, half.y * scale.y, half.z * scale.z};
+  return {world_center - world_half, world_center + world_half};
+}
 
-  switch (e->type)
-  {
-    case entities::entity_type::Player_Spawn_Entity:
-      return {.half_extents = player_hull,
-              .origin       = placement_origin_t::feet,
-              .color        = colors::pink,
-              .draw_stand_in = &player_spawn_stand_in};
+shared::aabb_bounds_t player_hull_rising_from(const linalg::vec3& feet)
+{
+  return {{feet.x - shared::player_half_width, feet.y, feet.z - shared::player_half_width},
+          {feet.x + shared::player_half_width, feet.y + 2.f * shared::player_half_height,
+           feet.z + shared::player_half_width}};
+}
 
-    case entities::entity_type::Player_Spectate_Entity:
-      return {.half_extents = player_hull,
-              .origin       = placement_origin_t::feet,
-              .color        = colors::green,
-              .draw_stand_in = &spectate_camera_stand_in};
+shared::aabb_bounds_t point_pick_box(const linalg::vec3& position)
+{
+  const linalg::vec3 half{POINT_PICK_HALF_EXTENT, POINT_PICK_HALF_EXTENT, POINT_PICK_HALF_EXTENT};
+  return {position - half, position + half};
+}
 
-    case entities::entity_type::Player_Entity:
-      return {.half_extents    = player_hull,
-              .origin          = placement_origin_t::feet,
-              .draw_stand_in   = &player_mesh_stand_in};
-
-    case entities::entity_type::Particle_Emitter_Entity:
-      return {.half_extents        = {0, 0, 0},
-              .color               = colors::gold,
-              .draw_stand_in       = &particle_emitter_stand_in};
-
-    case entities::entity_type::Trigger_Volume_Entity:
-      return {.half_extents = static_cast<const entities::Trigger_Volume_Entity*>(e)
-                                  ->volume.half_extents,
-              .color        = colors::red,
-              .draw_diagram = &trigger_volume_diagram};
-
-    case entities::entity_type::Reflection_Volume_Entity:
-      return {.half_extents = static_cast<const entities::Reflection_Volume_Entity*>(e)
-                                  ->volume.half_extents,
-              .color        = colors::cyan,
-              .draw_diagram = &reflection_volume_diagram};
-
-    case entities::entity_type::Jump_Pad_Entity:
-      return {.half_extents = static_cast<const entities::Jump_Pad_Entity*>(e)
-                                  ->volume.half_extents,
-              .color        = colors::orange,
-              .draw_diagram = &jump_pad_diagram,
-              .draw_reach   = &jump_pad_reach};
-
-    case entities::entity_type::Physics_Body_Entity:
-      return {.half_extents =
-                  static_cast<const entities::Physics_Body_Entity*>(e)->size};
-
-    // Sized by the volume you SHOOT rather than the mesh you see: the hitbox
-    // is what an author is placing. No gizmo on purpose: the render component
-    // draws the art, and the AABB fallback traces the hitbox around it --
-    // exactly the pair an author wants when the two disagree.
-    case entities::entity_type::Damageable_Entity:
-      return {.half_extents = static_cast<const entities::Damageable_Entity*>(e)
-                                  ->hitbox_half_extents};
-
-    case entities::entity_type::Weapon_Entity: // render component draws it
-    case entities::entity_type::Rocket_Entity: // runtime only
-    case entities::entity_type::Sound_Emitter_Entity: // no gizmo yet
-      return {.half_extents = point_pick,
-              .color        = colors::white,
-              .icon         = assets::texture_asset::audio};
-
-    // Lights pick as a point-sized box whatever their reach -- sizing the pick
-    // volume to a 512-unit falloff sphere would make one light swallow every
-    // click in the room it lights.
-    case entities::entity_type::Point_Light_Entity:
-      return {.half_extents = point_pick,
-              .color        = colors::yellow,
-              .draw_diagram = &point_light_diagram,
-              .draw_reach   = &point_light_reach,
-              .icon         = assets::texture_asset::point_light};
-
-    case entities::entity_type::Spot_Light_Entity:
-      return {.half_extents = point_pick,
-              .color        = colors::yellow,
-              .draw_diagram = &spot_light_diagram,
-              .draw_reach   = &spot_light_reach,
-              .icon         = assets::texture_asset::spot_light};
-
-    case entities::entity_type::Directional_Light_Entity:
-      return {.half_extents = point_pick,
-              .color        = colors::yellow,
-              .draw_diagram = &directional_light_diagram,
-              .draw_reach   = &directional_light_reach,
-              .icon         = assets::texture_asset::directional_light};
-      
-    case entities::entity_type::Game_Rules_Entity:
-      return {.half_extents = point_pick,
-              .color        = colors::white,
-              .icon         = assets::texture_asset::game_rules};
-    case entities::entity_type::Logic_Counter_Entity:
-     return {.half_extents = point_pick,
-              .color        = colors::white,
-              .icon         = assets::texture_asset::counter};
-
-
-    case entities::entity_type::Brush_Entity:
-      return {.half_extents = point_pick, .color = colors::white, .icon = assets::texture_asset::wall_hammer};
-
-    case entities::entity_type::Invalid:
-      break;
-  }
-
-  return default_entity_traits(e);
+shared::aabb_bounds_t bounds_of_shape(const editor_shape_t& shape)
+{
+  if (const shared::spectate_frustum_t* frustum = std::get_if<shared::spectate_frustum_t>(&shape))
+    return shared::get_bounds(*frustum);
+  return std::get<shared::aabb_bounds_t>(shape);
 }
 
 } // namespace
 
+editor_shape_t editor_shape_at(const entities::Entity* e, const linalg::vec3& position)
+{
+  if (const entities::Box_Volume* volume = entities::get_box_volume(e))
+    return shared::get_bounds(*volume, position);
+
+  // The same gate draw_art uses, so an invisible render draws AND picks as the
+  // stand-in rather than as a mesh nobody can see.
+  if (const entities::Render* render = entities::get_render(e); render && render->visible)
+  {
+    const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(render->mesh));
+    if (mesh && !mesh->vertices.empty())
+      return scaled_mesh_bounds(*mesh, render->scale, position);
+  }
+
+  switch (editor_data_for(e).stand_in)
+  {
+    case stand_in_shape_t::player_hull:
+      return player_hull_rising_from(position);
+
+    case stand_in_shape_t::spectate_frustum:
+      return shared::make_spectate_frustum(position, e->orientation);
+
+    case stand_in_shape_t::pyramid_marker:
+    {
+      const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(assets::mesh_asset::Pyramid));
+      if (mesh && !mesh->vertices.empty())
+        return scaled_mesh_bounds(*mesh, {1, 1, 1}, position);
+      break;
+    }
+
+    case stand_in_shape_t::none:
+      break;
+  }
+
+  return point_pick_box(position);
+}
+
+shared::aabb_bounds_t editor_bounds_of(const entities::Entity* e)
+{
+  return bounds_of_shape(editor_shape_at(e, e->position));
+}
+
+std::vector<Plane> editor_collision_planes_of(const entities::Entity* e)
+{
+  const editor_shape_t shape = editor_shape_at(e, e->position);
+  if (const shared::spectate_frustum_t* frustum = std::get_if<shared::spectate_frustum_t>(&shape))
+    return shared::compute_collision_planes(*frustum);
+  return shared::compute_collision_planes(shared::to_aabb(std::get<shared::aabb_bounds_t>(shape)));
+}
+
 // ===================================================================
 // The drivers. Every context draws the same three layers:
-//   art      the render component, else the type's stand-in, else a wire box
+//   art      the render component, else the type's stand-in, else the shape as a wire box
 //   diagram  always, on top of the art
 //   reach    on top of that, selected and placing only
 // ===================================================================
@@ -551,69 +603,60 @@ bool try_draw_render_component(const entities::Entity* e, pass_builder_t& draws,
                    fill, &rc->material);
 }
 
-// debug.box takes a CENTER, which is the origin only for centered-origin types
-// -- a feet-origin one sits half a hull lower.
-void draw_wire_box(const entity_editor_traits_t& traits, pass_builder_t& draws,
-                   const linalg::vec3& origin, color_t color, float depth_bias)
+// The shape as a wire box: the same bounds the pick uses, so what is drawn for
+// a bare entity is exactly what a click hits.
+void draw_shape_wire_box(const entities::Entity* e, pass_builder_t& draws,
+                         const linalg::vec3& origin, color_t color, float depth_bias)
 {
-  const float lift = traits.origin == placement_origin_t::feet ? traits.half_extents.y : 0.f;
-  draws.debug.box(origin + linalg::vec3{0, lift, 0}, traits.half_extents, color,
+  const shared::aabb_bounds_t bounds = bounds_of_shape(editor_shape_at(e, origin));
+  draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f, color,
                   renderer::fill_mode_t::wireframe, depth_bias);
 }
 
 // The art ladder. `box_when_bare` is false for the in-editor pass, where a
 // point type with nothing to draw is what the icon pass exists for.
-void draw_art(const entities::Entity* e, const entity_editor_traits_t& traits,
+void draw_art(const entities::Entity* e, const editor_data_per_entity_type_t& row,
               pass_builder_t& draws, const linalg::vec3& origin, color_t color,
-              renderer::fill_mode_t fill, bool box_when_bare, float depth_bias = 0.f)
+              renderer::fill_mode_t fill, bool box_when_bare,
+              const entity_draw_settings_t& settings, float depth_bias = 0.f)
 {
   if (try_draw_render_component(e, draws, origin, color, fill))
     return;
-  if (traits.draw_stand_in)
-    traits.draw_stand_in(e, draws, origin, color);
+  if (row.draw_stand_in)
+    row.draw_stand_in(e, draws, origin, color, settings);
   else if (box_when_bare)
-    draw_wire_box(traits, draws, origin, color, depth_bias);
+    draw_shape_wire_box(e, draws, origin, color, depth_bias);
 }
 
 } // namespace
 
 entity_icon_t get_entity_icon(const entities::Entity* e)
 {
-  const entity_editor_traits_t traits = editor_traits_for(e);
-  return {.texture = traits.icon, .fallback_color = traits.color};
-}
-
-linalg::vec3 get_placement_half_extents(const entities::Entity* e)
-{
-  return editor_traits_for(e).half_extents;
-}
-
-float get_placement_origin_height(const entities::Entity* e)
-{
-  const entity_editor_traits_t traits = editor_traits_for(e);
-  return traits.origin == placement_origin_t::feet ? 0.f : traits.half_extents.y;
+  const editor_data_per_entity_type_t& row = editor_data_for(e);
+  return {.texture = row.icon, .fallback_color = row.color};
 }
 
 void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
-                       const linalg::vec3& origin)
+                       const linalg::vec3& origin, const entity_draw_settings_t& settings)
 {
-  const entity_editor_traits_t traits = editor_traits_for(e);
-  draw_art(e, traits, draws, origin, traits.color, renderer::fill_mode_t::wireframe, true);
-  if (traits.draw_diagram)
-    traits.draw_diagram(e, draws, origin, traits.color);
+  const editor_data_per_entity_type_t& row = editor_data_for(e);
+  draw_art(e, row, draws, origin, row.color, renderer::fill_mode_t::wireframe, true, settings);
+  if (row.draw_diagram)
+    row.draw_diagram(e, draws, origin, row.color, settings);
   // Placing IS the moment the reach is the question -- a spot light is aimed by
   // where its cone lands, and finding that out after the click is a placement
   // you then have to undo.
-  if (traits.draw_reach)
-    traits.draw_reach(e, draws, origin, traits.color);
+  if (row.draw_reach)
+    row.draw_reach(e, draws, origin, row.color, settings);
 }
 
-void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws)
+void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws,
+                           const entity_draw_settings_t& settings)
 {
-  const entity_editor_traits_t traits = editor_traits_for(e);
-  draw_art(e, traits, draws, e->position, traits.color, renderer::fill_mode_t::solid, false);
-  if (traits.draw_diagram)
-    traits.draw_diagram(e, draws, e->position, traits.color);
+  const editor_data_per_entity_type_t& row = editor_data_for(e);
+  draw_art(e, row, draws, e->position, row.color, renderer::fill_mode_t::solid, false, settings);
+  if (row.draw_diagram)
+    row.draw_diagram(e, draws, e->position, row.color, settings);
 }
 
 // ===================================================================
@@ -636,22 +679,21 @@ color_t compute_selection_pulse_color(float time)
                  lerp_byte(from.b, to.b, t), 255};
 }
 
-void draw_selection_highlight(const entities::Entity* e,
-                              pass_builder_t& draws, float time,
-                              float)
+void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, float time,
+                              float, const entity_draw_settings_t& settings)
 {
   const color_t color = compute_selection_pulse_color(time);
 
   // A very strong bias so the box renders in FRONT of the surface it traces.
   constexpr float highlight_bias = -200.0f;
 
-  const entity_editor_traits_t traits = editor_traits_for(e);
-  draw_art(e, traits, draws, e->position, color, renderer::fill_mode_t::wireframe, true,
+  const editor_data_per_entity_type_t& row = editor_data_for(e);
+  draw_art(e, row, draws, e->position, color, renderer::fill_mode_t::wireframe, true, settings,
            highlight_bias);
-  if (traits.draw_diagram)
-    traits.draw_diagram(e, draws, e->position, color);
-  if (traits.draw_reach)
-    traits.draw_reach(e, draws, e->position, color);
+  if (row.draw_diagram)
+    row.draw_diagram(e, draws, e->position, color, settings);
+  if (row.draw_reach)
+    row.draw_reach(e, draws, e->position, color, settings);
 }
 
 // ===================================================================
@@ -661,9 +703,14 @@ void draw_selection_highlight(const entities::Entity* e,
 linalg::vec3 compute_placement_origin(const entities::Entity* e,
                                       const linalg::vec3& ghost_position)
 {
-  linalg::vec3 origin = ghost_position;
-  origin.y += get_placement_origin_height(e);
-  return origin;
+  // The shape at the origin says how far below position it reaches; lifting by
+  // that puts its lowest point on the surface. A frustum is a diagram of where
+  // a camera looks rather than a solid that rests, so it takes no lift.
+  const editor_shape_t shape = editor_shape_at(e, {0, 0, 0});
+  float                lift  = 0.f;
+  if (const shared::aabb_bounds_t* bounds = std::get_if<shared::aabb_bounds_t>(&shape))
+    lift = -bounds->min.y;
+  return ghost_position + linalg::vec3{0, lift, 0};
 }
 
 } // namespace client

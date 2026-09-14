@@ -56,6 +56,14 @@ try_project_to_screen(const viewport_state_t &view, const linalg::vec3 &world_po
 class Transaction_System;
 
 // Forward declaration of the editor state or game state if needed
+// What drawing an entity needs from outside the entity. Cut from the cvars
+// once per frame by Tool_Editor_State, so no tool and no draw function reaches
+// for the client context itself.
+struct entity_draw_settings_t
+{
+  float gravity = 0.f; // g_gravity, for the jump pad's landing arc
+};
+
 struct editor_context_t
 {
   // A REFERENCE, so a tool cannot be handed a context without one and no call
@@ -98,6 +106,8 @@ struct editor_context_t
   bool *lightmap_updated_so_atlas_upload_is_needed = nullptr;
 
   editor::grid_settings_t *grid = nullptr;
+
+  entity_draw_settings_t entity_draw_settings;
 
   // A panel OUTSIDE the tools asking for an object to be selected -- the Map
   // Info panel's connection list is the one caller, and clicking a row there has

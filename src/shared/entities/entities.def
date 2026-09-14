@@ -279,11 +279,16 @@ Physics_Body_Entity :: entity {
     render:   Render
 }
 
+// `volume` is the HITBOX: the box a shot is tested against and the box the
+// editor's reshape gizmo resizes. A component rather than a bare v3 so the
+// editor treats it as it treats a trigger's, and so it can sit off the origin.
+// Carrying Box_Volume without `is Touchable` is deliberate: a crate is not a
+// trigger, it merely has a box.
 Damageable_Entity :: entity is Mortal {
-    health: Health
-    hitbox_half_extents: v3 = {16, 32, 16}   @Editable
+    health:   Health
+    volume:   Box_Volume = { half_extents = {16, 32, 16} }
     weakness: Damage_Type = .Orange          @Editable
-    render:            Render
+    render:   Render
 }
 
 Particle_Emitter_Entity :: entity {

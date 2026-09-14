@@ -2712,15 +2712,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     ctx.visuals.debug_collision_faces.clear();
   }
 
-  // Debug: collision volumes as wireframe AABBs. Magenta for trigger volumes
-  // (the only box-volume entity left, and invisible otherwise), white for the
+  // Debug: collision volumes as wireframe AABBs. Magenta for every Box_Volume
+  // (triggers, pads, reflection volumes, a damageable's hitbox), white for the
   // map's geometry.
   if (ctx.cvars->debug_show_box_volumes)
   {
     for (auto [entity, volume] : entity_system.entities_with<entities::Box_Volume>())
     {
-      scene.debug.aabb(entity.position - volume.half_extents,
-                       entity.position + volume.half_extents, colors::magenta);
+      const shared::aabb_bounds_t bounds = shared::get_bounds(volume, entity.position);
+      scene.debug.aabb(bounds.min, bounds.max, colors::magenta);
     }
 
     for (const shared::map_geometry_t &entry : ctx.world.session.geometry)

@@ -67,7 +67,7 @@ enum class message_direction_t
 // A switch with no `default:`, which is the whole point: -Werror=switch makes a
 // new Message_Type a compile error HERE first, before it can be added to the
 // enum and quietly compile everywhere else. Same trick create_map_entity and
-// compute_entity_bounds rely on over entity_type.
+// collect_movement_volumes rely on over entity_type.
 constexpr message_direction_t message_direction(Message_Type type)
 {
   switch (type)

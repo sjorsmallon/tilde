@@ -511,8 +511,11 @@ void rewrite_legacy_entity_properties(std::map<std::string, std::string> &proper
 
   // 2. Renamed keys. `action_name` held the string the server looked up in the
   //    trigger action registry; it is the Trigger_Action enum `action` now.
+  //    `hitbox_half_extents` was a damageable's bare v3 before its hitbox
+  //    became a Box_Volume; the offset half of that component loads as zero.
   static constexpr legacy_classname_t RENAMED_KEYS[] = {
       {"action_name", "action"},
+      {"hitbox_half_extents", "volume.half_extents"},
   };
   for (const legacy_classname_t &rename : RENAMED_KEYS)
   {
@@ -670,167 +673,47 @@ void read_entity_fields(entities::Entity &entity, const std::string &classname,
 } // namespace
 
 // ============================================================================
-// Per-entity picking bounds
+// The bound an entity's own DATA describes
 //
-// One exhaustive switch over the closed enum, where this used to be a template
-// whose primary was deliberately left undefined so a missing specialization
-// became a link error. The switch is the better version of the same trick: an
-// unhandled entity_type is a -Wswitch warning at COMPILE time, in this file,
-// naming the type -- rather than an undefined symbol at link time.
+// A Box_Volume, else a visible Render mesh under its scale, else a point. No
+// type arm: this is the physical extent the components spell out, which is
+// what a prefab's anchor and a pasted piece's low corner want. The shape the
+// EDITOR draws and picks an entity as is a different question with a per-type
+// stand-in in it, and lives in client/editor/entity_editor_traits.hpp.
 // ============================================================================
 
 namespace
 {
 
-// Mesh-bounds-or-default-box. Shared by every entity whose picking shape is
-// "whatever the Render component's mesh says, with a small fallback if the mesh
-// has not loaded yet".
-aabb_bounds_t mesh_or_point_bounds(const entities::Entity *entity,
-                                   float fallback_half = 0.5f)
+aabb_bounds_t compute_entity_component_bounds(const entities::Entity *entity)
 {
-  if (const entities::Render *render = entities::get_render(entity))
+  if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
+    return get_bounds(*volume, entity->position);
+
+  if (const entities::Render *render = entities::get_render(entity);
+      render && render->visible)
   {
     const assets::mesh_asset_t *mesh = assets::get(assets::get_mesh(render->mesh));
-
     if (mesh && !mesh->vertices.empty())
     {
-      aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
-      vec3f mesh_center = (mesh_bounds.min + mesh_bounds.max) * 0.5f;
-      vec3f mesh_half = (mesh_bounds.max - mesh_bounds.min) * 0.5f;
-      vec3f s = render->scale;
-      vec3f world_center =
-          entity->position + vec3f{mesh_center.x * s.x, mesh_center.y * s.y,
-                                   mesh_center.z * s.z};
-      vec3f world_half = vec3f{mesh_half.x * s.x, mesh_half.y * s.y,
-                               mesh_half.z * s.z};
+      const aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
+      const vec3f         mesh_center = (mesh_bounds.min + mesh_bounds.max) * 0.5f;
+      const vec3f         mesh_half   = (mesh_bounds.max - mesh_bounds.min) * 0.5f;
+      const vec3f         s           = render->scale;
+      const vec3f         world_center =
+          entity->position +
+          vec3f{mesh_center.x * s.x, mesh_center.y * s.y, mesh_center.z * s.z};
+      const vec3f world_half{mesh_half.x * s.x, mesh_half.y * s.y, mesh_half.z * s.z};
       return {world_center - world_half, world_center + world_half};
     }
   }
-  return {entity->position -
-              vec3f{fallback_half, fallback_half, fallback_half},
-          entity->position +
-              vec3f{fallback_half, fallback_half, fallback_half}};
-}
 
-// The player hull, used by both player-shaped types.
-//
-// The origin is at the FEET -- the same convention as `player_eye_height`, the
-// hitbox table and the runtime's `player->position = spawn_position` -- so the
-// hull rises from position rather than straddling it.
-aabb_bounds_t player_hull_bounds(const entities::Entity *entity)
-{
-  return {{entity->position.x - player_half_width,
-           entity->position.y,
-           entity->position.z - player_half_width},
-          {entity->position.x + player_half_width,
-           entity->position.y + 2.f * player_half_height,
-           entity->position.z + player_half_width}};
+  constexpr float point_half = 0.5f;
+  return {entity->position - vec3f{point_half, point_half, point_half},
+          entity->position + vec3f{point_half, point_half, point_half}};
 }
 
 } // namespace
-
-aabb_bounds_t compute_entity_bounds(const entities::Entity *entity)
-{
-  if (!entity)
-  {
-    log_error("compute_entity_bounds called with null entity");
-    return {{0, 0, 0}, {0, 0, 0}};
-  }
-
-  switch (entity->type)
-  {
-    case entities::entity_type::Player_Spectate_Entity:
-      // Drawn as the camera frustum, so it picks as one. A spectate spot is a
-      // camera and nothing ever stands there, so the player hull it used to
-      // report was a volume the picture never occupies.
-      return get_bounds(make_spectate_frustum(entity->position, entity->orientation));
-
-    case entities::entity_type::Player_Spawn_Entity:
-      return player_hull_bounds(entity);
-
-    case entities::entity_type::Player_Entity:
-    {
-      // Drawn as the pyramid marker, so it picks as one -- the Render component
-      // is not what a player is drawn from.
-      const assets::mesh_asset_t *mesh = assets::get(assets::get_mesh(assets::mesh_asset::Pyramid));
-      if (mesh && !mesh->vertices.empty())
-      {
-        aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
-        return {entity->position + mesh_bounds.min, entity->position + mesh_bounds.max};
-      }
-      return player_hull_bounds(entity);
-    }
-
-    case entities::entity_type::Trigger_Volume_Entity:
-    case entities::entity_type::Reflection_Volume_Entity:
-    case entities::entity_type::Jump_Pad_Entity:
-    {
-      const entities::Box_Volume *volume = entities::get_box_volume(entity);
-      assert(volume != nullptr && "volume entity lost its Box_Volume component");
-      return get_bounds(*volume, entity->position);
-    }
-
-    case entities::entity_type::Damageable_Entity:
-    {
-      // Picks as the volume you SHOOT, not as the mesh you see. Those can
-      // differ -- a mesh is art and a hitbox is gameplay -- and when they do it
-      // is the hitbox an author is placing, so it is the hitbox the editor's
-      // handle has to wrap.
-      const entities::Damageable_Entity *damageable =
-          entities::entity_as<entities::Damageable_Entity>(entity);
-      assert(damageable != nullptr && "Damageable_Entity failed its own type test");
-      return {entity->position - damageable->hitbox_half_extents,
-              entity->position + damageable->hitbox_half_extents};
-    }
-
-    case entities::entity_type::Weapon_Entity:
-    case entities::entity_type::Rocket_Entity:
-    case entities::entity_type::Particle_Emitter_Entity:
-    case entities::entity_type::Game_Rules_Entity:
-    case entities::entity_type::Sound_Emitter_Entity:
-    case entities::entity_type::Point_Light_Entity:
-    case entities::entity_type::Spot_Light_Entity:
-    case entities::entity_type::Directional_Light_Entity:
-    case entities::entity_type::Physics_Body_Entity:
-    case entities::entity_type::Logic_Counter_Entity:
-    // A point, and deliberately not the bound of the brushes it owns: its
-    // `position` is the tie-time selection centroid and means nothing until a
-    // mover makes it live, so a handle wrapping the brushes would be a handle
-    // over something the entity does not move.
-    case entities::entity_type::Brush_Entity:
-      return mesh_or_point_bounds(entity);
-
-    case entities::entity_type::Invalid:
-      break;
-  }
-
-  log_error("compute_entity_bounds: entity carries an invalid type tag ({})",
-            (int)entity->type);
-  return {entity->position - vec3f{0.5f, 0.5f, 0.5f},
-          entity->position + vec3f{0.5f, 0.5f, 0.5f}};
-}
-
-std::vector<Plane> compute_entity_collision_planes(const entities::Entity *entity)
-{
-  // Entities are not collision geometry — that's the map's geometry list now
-  // (see get_collision_pieces in map_geometry.hpp). What's left here serves the
-  // callers that want an entity's shape for overlap tests: a box volume if it
-  // has one (trigger volumes), otherwise its picking bounds.
-  if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
-    return compute_collision_planes(to_aabb(*volume, entity->position));
-
-  // The one entity whose hull is not its bound: the frustum's corner is empty
-  // space, and a click there should fall through to whatever is behind it.
-  if (entity->type == entities::entity_type::Player_Spectate_Entity)
-    return compute_collision_planes(
-        make_spectate_frustum(entity->position, entity->orientation));
-
-  auto bounds = compute_entity_bounds(entity);
-  aabb_t t;
-  t.center = (bounds.min + bounds.max) * 0.5f;
-  t.half_extents = (bounds.max - bounds.min) * 0.5f;
-  return compute_collision_planes(t);
-}
 
 // ============================================================================
 // Uniform per-uid accessors over both regimes
@@ -842,7 +725,7 @@ aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid)
     return get_bounds(entry->value);
 
   if (const map_entity_t *entry = map.find_by_uid(uid))
-    return compute_entity_bounds(entry->entity.get());
+    return compute_entity_component_bounds(entry->entity.get());
 
   log_error("compute_object_bounds: no map object has uid {}", uid);
   return {{0, 0, 0}, {0, 0, 0}};
@@ -962,7 +845,7 @@ collect_object_bounds(const map_t &map)
   {
     if (!entry.entity)
       continue;
-    result.emplace_back(entry.uid, compute_entity_bounds(entry.entity.get()));
+    result.emplace_back(entry.uid, compute_entity_component_bounds(entry.entity.get()));
   }
 
   return result;
@@ -1020,26 +903,6 @@ bool try_set_object_position(map_t &map, entity_uid_t uid, const linalg::vec3 &p
   }
 
   return false;
-}
-
-std::vector<std::vector<linalg::vec3>> compute_entity_face_polygons(const entities::Entity *entity)
-{
-  // Any entity that owns a box volume -> 6 axis-aligned face quads
-  if (const entities::Box_Volume *volume = entities::get_box_volume(entity))
-    return compute_face_polygons(to_aabb(*volume, entity->position));
-
-  // Parallel to compute_entity_collision_planes above, which means this one
-  // needs the frustum too.
-  if (entity->type == entities::entity_type::Player_Spectate_Entity)
-    return compute_face_polygons(
-        make_spectate_frustum(entity->position, entity->orientation));
-
-  // Fallback: use entity bounds as an AABB
-  auto bounds = compute_entity_bounds(entity);
-  aabb_t t;
-  t.center = (bounds.min + bounds.max) * 0.5f;
-  t.half_extents = (bounds.max - bounds.min) * 0.5f;
-  return compute_face_polygons(t);
 }
 
 cvar_line_t split_cvar_line(std::string_view line)

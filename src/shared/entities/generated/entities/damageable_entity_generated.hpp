@@ -19,7 +19,7 @@ struct Damageable_Entity : Entity
   Damageable_Entity() { type = entity_type::Damageable_Entity; }
 
   Health health = {};
-  linalg::vec3f hitbox_half_extents = {16.0f, 32.0f, 16.0f};
+  Box_Volume volume = {.half_extents = {16.0f, 32.0f, 16.0f}};
   Damage_Type weakness = Damage_Type::Orange;
   Render render = {};
 };

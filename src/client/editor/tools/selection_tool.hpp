@@ -66,8 +66,8 @@ private:
 
 
   // While a pick is armed the RAY is not the answer. A point light has no
-  // Render mesh, so compute_entity_bounds gives it a POINT, and a point is
-  // sub-pixel at any distance -- which is what made clicking one finicky. This
+  // Render mesh, so editor_bounds_of gives it a small point box, which is
+  // sub-pixel at a distance -- what made clicking one finicky. This
   // is screen-space instead: the nearest entity ANCHOR within a radius of the
   // cursor, with a real BVH hit winning outright because that one is
   // unambiguous. Deliberately scoped to the pick and not to ordinary selection,

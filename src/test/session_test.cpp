@@ -345,9 +345,10 @@ int main()
     game_session_t component_session = build_session(test_map);
     Entity_System &entity_system     = component_session.entity_system;
 
-    // A deliberate mix: three types carrying Render (and one of them spawned
+    // A deliberate mix: four types carrying Render (and one of them spawned
     // more than once, so the inner slot walk has somewhere to go), one carrying
-    // Box_Volume, and two carrying neither — the pools that must be skipped.
+    // Box_Volume alone, one carrying BOTH, and two carrying neither — the pools
+    // that must be skipped.
     entity_system.spawn<entities::Rocket_Entity>();
     entity_system.spawn<entities::Rocket_Entity>();
     entity_system.spawn<entities::Rocket_Entity>();
@@ -356,6 +357,7 @@ int main()
     entity_system.spawn<entities::Trigger_Volume_Entity>();
     entity_system.spawn<entities::Spot_Light_Entity>();
     entity_system.spawn<entities::Player_Spectate_Entity>();
+    const entity_uid_t damageable_uid = entity_system.spawn<entities::Damageable_Entity>();
 
     // What `for (pool) for (slot) if (get_render(entity))` used to produce.
     std::vector<std::pair<entity_uid_t, const void *>> expected_render;
@@ -370,9 +372,9 @@ int main()
       }
     }
 
-    if (expected_render.size() != 5)
+    if (expected_render.size() != 6)
     {
-      log_error("the brute-force walk found {} renderable entities; 5 were spawned",
+      log_error("the brute-force walk found {} renderable entities; 6 were spawned",
                 expected_render.size());
       return 1;
     }
@@ -414,23 +416,38 @@ int main()
       }
       ++volume_count;
     }
-    if (volume_count != 1)
+    if (volume_count != 2)
     {
-      log_error("entities_with<Box_Volume> found {} entities; one Trigger_Volume was spawned",
+      log_error("entities_with<Box_Volume> found {} entities; a Trigger_Volume and a "
+                "Damageable were spawned",
                 volume_count);
       return 1;
     }
 
-    // The intersection form. No entity declares both today, so the fold over the
-    // pack must OR the bits rather than take either alone — an over-matching
-    // mask shows up here as a non-empty result.
+    // The intersection form. Exactly one spawned type declares both, so the
+    // fold over the pack must AND the bits: taking either alone over-matches
+    // (the trigger, or the five other renderables) and shows up here as a
+    // second row.
+    uint32_t both_count = 0;
     for (auto [entity, render, volume] :
          entity_system.entities_with<entities::Render, entities::Box_Volume>())
     {
       (void)render;
       (void)volume;
-      log_error("entities_with<Render, Box_Volume> matched uid {}; no entity has both",
-                entity.entity_id);
+      if (entity.entity_id != damageable_uid)
+      {
+        log_error("entities_with<Render, Box_Volume> matched uid {}; only the Damageable "
+                  "has both",
+                  entity.entity_id);
+        return 1;
+      }
+      ++both_count;
+    }
+    if (both_count != 1)
+    {
+      log_error("entities_with<Render, Box_Volume> matched {} entities; one Damageable was "
+                "spawned",
+                both_count);
       return 1;
     }
 

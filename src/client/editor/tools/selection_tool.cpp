@@ -5,6 +5,7 @@
 #include "../connection_panel.hpp"
 #include "../editor_bvh.hpp"
 #include "../entity_editor_traits.hpp"
+#include "../editor_object_bounds.hpp"
 #include "../entity_inspector.hpp"
 #include "../entity_outliner.hpp"
 #include "../geometry_editor.hpp"
@@ -155,10 +156,9 @@ Selection_Tool::try_compute_selection_bounds(editor_context_t& ctx) const
   if (selected_uids.empty() || !ctx.map)
     return std::nullopt;
 
-  shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, selected_uids[0]);
+  shared::aabb_bounds_t bounds = editor_object_bounds(*ctx.map, selected_uids[0]);
   for (size_t index = 1; index < selected_uids.size(); ++index)
-    bounds = shared::union_aabb(bounds,
-                                shared::compute_object_bounds(*ctx.map, selected_uids[index]));
+    bounds = shared::union_aabb(bounds, editor_object_bounds(*ctx.map, selected_uids[index]));
   return bounds;
 }
 
@@ -1569,7 +1569,7 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     // handles sit on -- those are the same point for a box and 36 units apart
     // for a feet-origin spawn.
     editor_gizmo.set_target(editable_box ? shared::get_bounds(*editable_box)
-                                         : shared::compute_object_bounds(*ctx.map, uid),
+                                         : editor_object_bounds(*ctx.map, uid),
                             capabilities, gizmo_view,
                             shared::try_get_object_position(*ctx.map, uid));
     editor_gizmo.update_hover(view.mouse_ray);
@@ -1913,7 +1913,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
 
       const auto &view = cached_viewport;
 
-      for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
+      for (const auto &[uid, bounds] : collect_editor_object_bounds(*ctx.map))
       {
         if (!ctx.object_is_visible(uid))
           continue;
@@ -2088,6 +2088,8 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   if (!ctx.map)
     return;
 
+  const entity_draw_settings_t& draw_settings = ctx.entity_draw_settings;
+
   // The paste preview is the placement tool's ghost, deliberately: a wireframe
   // is what "not placed yet" already looks like in this editor, and the
   // pulsating outline below already means "selected".
@@ -2118,7 +2120,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
         if (!entry.entity)
           continue;
         const linalg::vec3 position = paste_anchor + entry.entity->position;
-        draw_entity_ghost(entry.entity.get(), draws, position);
+        draw_entity_ghost(entry.entity.get(), draws, position, draw_settings);
       }
     }
   }
@@ -2127,7 +2129,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   // uniform bounds accessor and doesn't care which regime an object is in.
   auto draw_bounds_highlight = [&](shared::entity_uid_t uid, color_t color)
   {
-    const shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, uid);
+    const shared::aabb_bounds_t bounds = editor_object_bounds(*ctx.map, uid);
     draws.debug.box((bounds.min + bounds.max) * 0.5f,
                            (bounds.max - bounds.min) * 0.5f, color);
   };
@@ -2139,7 +2141,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
     if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
       draw_geometry_selection_highlight(geometry->value, draws, ctx.time, grid_step);
     else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step);
+      draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step, draw_settings);
   }
 
   // 1b. What a selected Brush_Entity SWITCHES. Nothing in the viewport says
@@ -2202,7 +2204,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
 
     const auto &view = cached_viewport;
 
-    for (const auto &[uid, bounds] : shared::collect_object_bounds(*ctx.map))
+    for (const auto &[uid, bounds] : collect_editor_object_bounds(*ctx.map))
     {
       linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
                            .value_or((bounds.min + bounds.max) * 0.5f);

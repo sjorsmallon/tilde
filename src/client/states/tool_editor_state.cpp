@@ -420,6 +420,8 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
+  context.entity_draw_settings = {
+      .gravity = state_manager::get_client_context().cvars->g_gravity};
   entity_visibility.refresh(map);
   context.hidden_objects = entity_visibility.hidden_this_frame;
   // context.time is NOT reset here -- it is seconds since the editor opened,
@@ -718,6 +720,8 @@ void Tool_Editor_State::update(float dt)
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
+  context.entity_draw_settings = {
+      .gravity = state_manager::get_client_context().cvars->g_gravity};
 
   // Flattened out of the one pass that knows both the per-entity set and the
   // per-type mask, the way objects_without_collision is.
@@ -1317,7 +1321,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       // is what makes a bake previewed here the bake that ships.
       shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
 
-      draw_entity_in_editor(entry.entity.get(), scene);
+      draw_entity_in_editor(entry.entity.get(), scene, context.entity_draw_settings);
       // ALONGSIDE the model, never instead of it: a hit volume lives inside the
       // model it belongs to.
       if (show_hitboxes)

@@ -1105,12 +1105,12 @@ constexpr field_info_t Damageable_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "hitbox_half_extents",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Damageable_Entity, hitbox_half_extents),
-   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::hitbox_half_extents),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
+  {.name = "volume",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Damageable_Entity, volume),
+   .size_in_bytes = (uint32_t)sizeof(Damageable_Entity::volume),
+   .flags = 0u,
+   .component_id = 0,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
@@ -2018,7 +2018,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 64u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 12}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 64u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 64u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
-  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 72u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
+  {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 73u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 22}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, false, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
   {"sound_emitter_entity", "Sound Emitter", {Sound_Emitter_Entity_FIELDS, 11}, (uint32_t)sizeof(Sound_Emitter_Entity), (uint32_t)alignof(Sound_Emitter_Entity), 6u, false, true, false, construct_Sound_Emitter_Entity, as_base_Sound_Emitter_Entity},
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 7}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 130u, false, true, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
@@ -2040,7 +2040,7 @@ constexpr int32_t COMPONENT_OFFSETS[][10] = {
   {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1}, // Weapon_Entity
   {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1}, // Rocket_Entity
   {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1}, // Physics_Body_Entity
-  {-1, -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
+  {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1}, // Damageable_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
   {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), (int32_t)offsetof(Sound_Emitter_Entity, playback), -1, -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
   {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1}, // Point_Light_Entity
@@ -2414,6 +2414,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x5d96bf6cu;
+const uint32_t SCHEMA_HASH = 0x1b81c3d7u;
 
 } // namespace entities
