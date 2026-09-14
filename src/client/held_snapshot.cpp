@@ -5,10 +5,8 @@
 #include "../shared/log.hpp"
 #include "audio/audio_system.hpp"
 #include "client_context.hpp"
-#include "entity_type_audio.hpp"
-#include "hit_confirm_audio.hpp"
 #include "remote_interpolation.hpp"
-#include "weapon_fire_audio.hpp"
+#include "snapshot_edges.hpp"
 
 #include "game.pb.h"
 
@@ -105,127 +103,49 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
 {
   const uint32_t server_tick = decoded.frame.tick;
 
-  // --- 1. Replication: the raw truth, nothing derived from it yet ---
-  //
-  // The frame the newest held snapshot was applied from, for the two watchers
-  // below that fire on an EDGE. Null on the first snapshot after a connect or a
-  // map load, which is what keeps a crate already broken when we joined from
-  // playing its break on arrival. Taken before latest_processed_tick moves.
   const ::network::snapshot_frame_t* previous =
       context.replication.snapshot_history.find(context.replication.latest_processed_tick);
 
-  //@NOTE(SJM): should we just  overwrite?
-  context.replication.latest_player_entities.clear();
-  for (const entities::Player_Entity& player :
-       decoded.frame.entities.entities_of<entities::Player_Entity>())
-    context.replication.latest_player_entities[player.client_slot_index] = player;
-
-  context.replication.latest_weapon_entities.clear();
-  for (const entities::Weapon_Entity& weapon :
-       decoded.frame.entities.entities_of<entities::Weapon_Entity>())
-    context.replication.latest_weapon_entities[weapon.entity_id] = weapon;
-
-  context.replication.remote_rockets.clear();
-  for (const entities::Rocket_Entity& rocket :
-       decoded.frame.entities.entities_of<entities::Rocket_Entity>())
-    context.replication.remote_rockets[rocket.entity_id] = rocket;
-
-  context.replication.remote_physics_bodies.clear();
-  for (const entities::Physics_Body_Entity& body :
-       decoded.frame.entities.entities_of<entities::Physics_Body_Entity>())
-    context.replication.remote_physics_bodies[body.entity_id] = body;
-
   context.replication.latest_processed_tick = server_tick;
 
-  // Everything the frame holds that this client's SESSION also holds takes the
-  // server's networked fields: every map-placed replicated entity -- a crate's
-  // health, a light's switch and colour, a pad's switch, an emitter's play
-  // counter, a trigger's switch -- with no per-type write to forget. The leaf
-  // list is the generated one, so a field flagged @Networked in entities.def
-  // reaches the session copy the draw loop and player_move already walk.
-  //
-  // The four types above live in the replication maps and are drawn from
-  // there, so they resolve to nothing here, and that is not an error. Nor is a
-  // map-placed uid the session lacks a state that can be reached: both sides
-  // get uids from the same map file, and the server withholds snapshots until
-  // this client reports the same map hash.
+  // blit delta directly onto the session.
+  shared::Entity_System& session = context.world.session.entity_system;
   for (entities::entity_type type : entities::replicated_entity_types())
   {
     const shared::Entity_Pool& pool = decoded.frame.entities.pools[(uint32_t)type];
     for (uint32_t slot = 0; slot < pool.count; ++slot)
     {
       const entities::Entity* replicated = pool.at(slot);
-      entities::Entity* local = context.world.session.entity_system.try_find(replicated->entity_id);
-      if (local != nullptr && local->type == type)
+      entities::Entity* local = session.try_find(replicated->entity_id);
+      if (local == nullptr)
+        local = session.add_default(type, replicated->entity_id);
+      else if (local->type != type)
+      {
+        log_error("[CLIENT] snapshot {} carries uid {} as a {}, but the session holds it as a {}; "
+                  "record ignored",
+                  server_tick, replicated->entity_id, entities::entity_info(type).classname,
+                  entities::entity_info(local->type).classname);
+        continue;
+      }
+      if (local != nullptr)
         entities::copy_networked_fields(*replicated, *local);
     }
   }
 
-  // A damageable breaking is a state EDGE, not an effect: a lost batch would be
-  // a target that broke silently. Read off the two frames rather than off the
-  // session copy before and after the write above, so the watcher is a consumer
-  // of the replicated state and not a step of applying it.
-  for (const entities::Damageable_Entity& damageable :
-       decoded.frame.entities.entities_of<entities::Damageable_Entity>())
+  for (entities::entity_type type : entities::replicated_entity_types())
   {
-    const entities::Damageable_Entity* before =
-        previous ? previous->entities.get<entities::Damageable_Entity>(damageable.entity_id)
-                 : nullptr;
-    const bool just_broke = before != nullptr && before->health.current_health > 0 &&
-                            damageable.health.current_health <= 0;
-    if (!just_broke || !context.audio)
-      continue;
-
-    // The session copy for the position: the frame's is the wire's quantized one.
-    const entities::Damageable_Entity* local =
-        context.world.session.entity_system.get<entities::Damageable_Entity>(damageable.entity_id);
-    if (local != nullptr)
-      context.audio->play_3d(break_sound_for(local->type), local->position);
-  }
-
-  // A sound emitter's play counter is the same shape of edge: a change means
-  // Play ran on the server, and the client plays once per change. The switch
-  // is a mute for a one-shot, so a Play on a disabled emitter bumps the counter
-  // and plays nothing here. The sound, the reach and the volume are @Editable
-  // only, so they are read off the session copy, which has the map's.
-  for (const entities::Sound_Emitter_Entity& emitter :
-       decoded.frame.entities.entities_of<entities::Sound_Emitter_Entity>())
-  {
-    const entities::Sound_Emitter_Entity* local =
-        context.world.session.entity_system.get<entities::Sound_Emitter_Entity>(emitter.entity_id);
-    if (local == nullptr)
-      continue;
-
-    if (local->loop)
+    const shared::Entity_Pool& pool = session.pools[(uint32_t)type];
+    for (uint32_t slot = pool.count; slot-- > 0;)
     {
-      if (!context.replication.loop_emitters_unbuilt_reported)
-      {
-        context.replication.loop_emitters_unbuilt_reported = true;
-        log_warning("sound emitter '{}' (uid {}) loops, and looping emitters are not built yet: "
-                    "it stays silent",
-                    local->name.c_str(), emitter.entity_id);
-      }
-      continue;
+      const shared::entity_uid_t uid = pool.at(slot)->entity_id;
+      if (decoded.frame.entities.try_find(uid) == nullptr)
+        session.destroy(uid);
     }
-
-    const entities::Sound_Emitter_Entity* before =
-        previous ? previous->entities.get<entities::Sound_Emitter_Entity>(emitter.entity_id)
-                 : nullptr;
-    if (before == nullptr || !context.audio)
-      continue;
-    if (emitter.playback.play_count == before->playback.play_count || !emitter.switch_state.value)
-      continue;
-
-    if (local->spatial)
-      context.audio->play_3d_within(local->sound, local->position, local->range, local->volume);
-    else
-      context.audio->play_2d(local->sound, local->volume);
   }
 
   // --- 2. Connection facts derived from step 1 ---
   //@NOTE(SJM): this is not a particularly elegant way to do spectating. should it be a different team?
-  context.connection.spectating =
-      !context.replication.latest_player_entities.contains(context.connection.my_slot);
+  context.connection.spectating = try_find_my_player(context) == nullptr;
   if (context.connection.spectating)
   {
     // Or the stale uid would keep suppressing our own cosmetic effects for a
@@ -233,14 +153,8 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
     context.connection.my_entity_uid = shared::null_entity_uid;
   }
 
-  // --- 3. The stamp watchers ---
-  // Their headers say "once per received snapshot, right after
-  // latest_player_entities is refreshed", and both also read my_entity_uid to
-  // decide whose shot to skip -- so they go after step 2 settles it, not
-  // between the two. That is the ordering the old loop had; it is written down
-  // here because the two steps read as independent and are not.
-  update_weapon_fire_audio(context);
-  play_hitmarker_audio_and_update_hit_tick_state(context);
+  // --- 3. The edge watchers: previous frame against this one ---
+  play_snapshot_edge_audio(context, previous, decoded.frame);
 
   // --- 4. The server's word on our input stream ---
   if (decoded.latest_processed_input_number.has_value())
@@ -256,8 +170,9 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
                 });
 
   // --- 5. Seed prediction from our own body; feed the remotes' rings ---
-  for (const auto& [slot_index, player] : context.replication.latest_player_entities)
+  for (const entities::Player_Entity& player : session.entities_of<entities::Player_Entity>())
   {
+    const int32_t slot_index = player.client_slot_index;
     if (slot_index == context.connection.my_slot)
     {
       context.connection.my_entity_uid = player.entity_id;
@@ -314,7 +229,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   // remove disconnected players.
   for (auto it = context.replication.remote_players.begin();
        it != context.replication.remote_players.end();)
-    it = context.replication.latest_player_entities.count(it->first) == 0
+    it = try_find_player_in_slot(context, it->first) == nullptr
              ? context.replication.remote_players.erase(it)
              : std::next(it);
 

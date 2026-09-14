@@ -449,25 +449,6 @@ struct replication_t
   // question without deriving it from a clock that never measured it.
   client::drawn_history_t drawn_history;
 
-  // --- Delta decompression: the latest reconstructed snapshot ---
-  // What the game reads. A copy of the newest frame in the history below, kept
-  // separate because the rest of the client wants "the current world", not
-  // "frame N".
-  std::unordered_map<int32_t, entities::Player_Entity> latest_player_entities;
-  // Every weapon in the world, keyed by uid -- ours and everyone else's, since
-  // the server has no relevance filtering. Resolved through our own
-  // Player_Entity::inventory.weapons, the same forward list the server uses,
-  // rather than by scanning for one whose owner_uid is us: deriving the
-  // inventory from the back-reference is a second answer to "what am I
-  // carrying" and the two are free to disagree.
-  std::unordered_map<shared::entity_uid_t, entities::Weapon_Entity> latest_weapon_entities;
-  std::unordered_map<shared::entity_uid_t, entities::Rocket_Entity> remote_rockets;
-  // Physics bodies received from server. State is replaced wholesale each
-  // snapshot — no interpolation yet (see todo.md). Renders correctly in
-  // integrated mode via server_session; in networked mode this will visibly
-  // stutter at server tick boundaries until interpolation is added.
-  std::unordered_map<shared::entity_uid_t, entities::Physics_Body_Entity> remote_physics_bodies;
-
   // --- Delta decompression: the snapshot history ---
   // The server deltas against a tick we ACKED, so we must still be holding the
   // exact state we reconstructed for that tick — not merely "the current
@@ -476,24 +457,15 @@ struct replication_t
   // back in every C2S_ClientInput. The frame type is the same one the
   // server stores — the server deltas against what it believes we
   // reconstructed, so the two structures being one type is not a convenience,
-  // it is the guarantee. Keyed by entity uid on both ends;
-  // `latest_player_entities` above is the by-slot view, rebuilt on publish.
+  // it is the guarantee.
+  //
+  // There is deliberately no "latest frame" copy beside it. The newest frame is
+  // applied INTO world.session.entity_system, which is the client's ONE world:
+  // every replicated entity, map-placed or spawned by the server, is read from
+  // there by uid. A frame in this ring is the delta baseline and the previous
+  // state the edge watchers compare against, and nothing else reads one.
   ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
   uint32_t latest_processed_tick = 0;
-
-  // Per-player Player_Entity::last_fire_tick as of the last snapshot we looked
-  // at, keyed by entity uid. An advance means that player fired; see
-  // weapon_fire_audio.hpp. Keyed by uid rather than slot so a slot changing
-  // occupant cannot inherit the previous player's stamp.
-  std::unordered_map<shared::entity_uid_t, uint32_t> last_seen_fire_tick_per_player;
-
-  // The same trick for OUR OWN Player_Entity::last_hit_tick — an advance means
-  // a shot of ours landed. A scalar and not a map because a hitmarker is ours
-  // alone: nobody else's hits are our business. `seeded` distinguishes "never
-  // looked" from "looked, and it was 0", so joining a server where we already
-  // have a stamp does not ding on the first snapshot.
-  uint32_t last_seen_hit_tick = 0;
-  bool hit_tick_seeded = false;
 
   // Looping emitters are not built; said once per connection rather than per tick.
   bool loop_emitters_unbuilt_reported = false;
@@ -557,5 +529,13 @@ struct client_context_t
 void reset_for_new_connection(client_context_t& context);
 void reset_state_in_preparation_for_new_map_load(client_context_t& context);
 void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientation);
+
+// The Player_Entity a connection slot has a body for, or nullptr: a spectator,
+// an empty slot, or a connect the server has not answered yet. A walk of the
+// player pool rather than a by-slot index -- players are few, and an index
+// would be a second copy of client_slot_index. Same lifetime rule as get<T>.
+[[nodiscard]] const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context,
+                                                                    int32_t slot);
+[[nodiscard]] const entities::Player_Entity* try_find_my_player(const client_context_t& context);
 
 } // namespace client

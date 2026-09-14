@@ -7,7 +7,6 @@
 
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 
 namespace client::hud
 {
@@ -25,13 +24,12 @@ struct scoreboard_row_t
   bool        is_alive = true;
 };
 
-// Fill `storage` from the snapshot's by-slot player view, in DRAW ORDER, and
-// return the rows actually written.
+// Fill `storage` from the session's player pool, in DRAW ORDER, and return the
+// rows actually written.
 //
-// The sort is not cosmetic. `latest_player_entities` is an unordered_map, whose
-// iteration order is free to change when it rehashes -- so drawing it in
-// traversal order would let rows swap places mid-match for no reason the player
-// could see. Ranked by kills, then by fewest deaths, and finally by slot, which
+// The sort is not cosmetic. A pool is swap-and-pop storage, whose order moves
+// whenever a player leaves -- so drawing it in traversal order would let rows
+// swap places mid-match for no reason the player could see. Ranked by kills, then by fewest deaths, and finally by slot, which
 // is what makes the order TOTAL: without that last key two tied players still
 // have no defined position relative to each other.
 //
@@ -43,7 +41,7 @@ struct scoreboard_row_t
 // second copy of the count to be wrong. The one failure left is a real one --
 // more players than the buffer holds -- and it is fatal.
 [[nodiscard]] Span<scoreboard_row_t> collect_scoreboard_rows(
-    const std::unordered_map<int32_t, entities::Player_Entity> &players,
+    Span<const entities::Player_Entity> players,
     int32_t local_slot,
     Span<scoreboard_row_t> storage);
 

@@ -728,7 +728,7 @@ add_library(game_client SHARED
     src/client/effects/jump_pad_launch.cpp
     src/client/weapon_fire_audio.cpp
     src/client/entity_type_audio.cpp
-    src/client/hit_confirm_audio.cpp
+    src/client/snapshot_edges.cpp
     src/client/shot_debug.cpp
     src/client/fly_camera.cpp
     src/client/shadow_debug_draw.cpp

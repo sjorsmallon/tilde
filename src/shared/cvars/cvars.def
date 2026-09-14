@@ -70,7 +70,6 @@ Player_Movement :: cvars {
 }
 
 Gameplay :: cvars {
-    game_rocket_speed:      f32 = 600.0       @Mirrored "Rocket velocity"
 }
 
 // ---------------------------------------------------------------------------

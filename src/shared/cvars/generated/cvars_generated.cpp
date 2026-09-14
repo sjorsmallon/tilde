@@ -193,14 +193,6 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::pm_air_speed_cap),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
-    {.name = "game_rocket_speed",
-     .description = "Rocket velocity",
-     .flags = CVAR_FLAG_MIRRORED,
-     .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, game_rocket_speed),
-     .size = sizeof(cvar_state_t::game_rocket_speed),
-     .string_capacity = 0,
-     .enum_info = NOT_AN_ENUM},
     {.name = "sv_gamemode",
      .description = "Which game mode to run on the next map load",
      .flags = CVAR_FLAG_SERVER,
@@ -1002,7 +994,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[25] = {
+const cvar_id MIRRORED_CVAR_TABLE[24] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -1020,7 +1012,6 @@ const cvar_id MIRRORED_CVAR_TABLE[25] = {
     cvar_id::pm_jump_boost,
     cvar_id::pm_jump_boost_max_speed,
     cvar_id::pm_air_speed_cap,
-    cvar_id::game_rocket_speed,
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
     cvar_id::sv_aim_body_turn_rate,
@@ -1089,7 +1080,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 25};
+  return {MIRRORED_CVAR_TABLE, 24};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

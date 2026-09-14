@@ -1135,7 +1135,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
   {
     case entities::Fire_Resolution::Hitscan:
     {
-      float range = weapon.range;
+      float range = weapon.hitscan.range;
 
       ray_hit_result_t world_hit{};
       const bool shot_collided_with_static_geometry =
@@ -1213,7 +1213,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
 
       if (hit.hit_uid != shared::null_entity_uid)
       {
-        switch (weapon.hit_effect)
+        switch (weapon.hitscan.hit_effect)
         {
           case shared::hit_effect_t::Damage:
           {
@@ -1228,8 +1228,8 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
             info.attacker_uid    = player->entity_id;
             info.inflictor_uid   = player->entity_id;
             info.weapon_id       = static_cast<uint16_t>(active_weapon->weapon_id);
-            info.amount          = weapon.damage *
-                                  (was_headshot ? weapon.headshot_multiplier : 1.f);
+            info.amount          = weapon.hitscan.damage *
+                                  (was_headshot ? weapon.hitscan.headshot_multiplier : 1.f);
             info.source_position = eye;
             info.was_headshot    = was_headshot;
             info.type            = active_weapon->damage_type;
@@ -1247,7 +1247,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
           }
         }
       }
-      else if (shot_collided_with_static_geometry && world_hit.t <= weapon.range)
+      else if (shot_collided_with_static_geometry && world_hit.t <= weapon.hitscan.range)
       {
         shared::Shot_Impact fx{};
         fx.origin = eye + direction * world_hit.t;
@@ -1268,7 +1268,7 @@ static void resolve_player_shot(server_context_t &context, int32_t client_slot,
       if (rocket)
       {
         rocket->position = eye;
-        rocket->velocity = direction * context.cvars->game_rocket_speed;
+        rocket->velocity = direction * weapon.projectile.speed;
         rocket->owner_id = player->entity_id;
 
         printf("[SERVER] Rocket spawned at (%.1f, %.1f, %.1f), mesh='%s', visible=%d\n",

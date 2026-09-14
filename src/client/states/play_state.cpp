@@ -10,7 +10,6 @@
 #include "../hud/run_timer.hpp"
 #include "../hud/weapon_name.hpp"
 #include "../weapon_fire_audio.hpp"
-#include "../hit_confirm_audio.hpp"
 #include "../held_snapshot.hpp"
 #include "../event_handlers.hpp"
 #include "../../shared/cvars/cvar_console.hpp"
@@ -160,8 +159,8 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
 
 // Our own gunshot. Played off the trigger EDGE inside the tick that carries it,
 // not off the server's replicated last_fire_tick a round trip later -- the one
-// sound where that delay is most audible, which is why update_weapon_fire_audio
-// skips our own uid.
+// sound where that delay is most audible, which is why play_snapshot_edge_audio
+// skips our own slot.
 //
 // Edge, not held state: the server fires once per press
 // (`step.buttons & ~buttons_entering_step & Button::Fire` in its step loop), so
@@ -196,11 +195,7 @@ try_find_weapon_in_slot(const client_context_t &ctx, const entities::Player_Enti
   if (weapon_uid == nullptr || *weapon_uid == shared::null_entity_uid)
     return nullptr;
 
-  const auto found = ctx.replication.latest_weapon_entities.find(*weapon_uid);
-  if (found == ctx.replication.latest_weapon_entities.end())
-    return nullptr;
-
-  return &found->second;
+  return ctx.world.session.entity_system.get<entities::Weapon_Entity>(*weapon_uid);
 }
 
 static const entities::Weapon_Entity *
@@ -222,11 +217,11 @@ try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entit
 static const shared::weapon_definition_t *
 try_find_local_weapon_definition(const client_context_t &ctx)
 {
-  const auto my_entity = ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
-  if (my_entity == ctx.replication.latest_player_entities.end())
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr)
     return nullptr;
 
-  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, my_entity->second);
+  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *my_player);
   if (held == nullptr)
     return nullptr;
 
@@ -249,14 +244,14 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
   if (!ctx.audio)
     return;
 
-  auto my_entity = ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
-  if (my_entity == ctx.replication.latest_player_entities.end())
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr)
     return;
 
   // WHAT IS IN THE HAND, resolved through the slot exactly as the server does.
   // A null is an empty slot or a weapon this snapshot did not carry, and both
   // mean no bang -- the second is one missing sound, not an assert.
-  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, my_entity->second);
+  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *my_player);
   if (held == nullptr)
     return;
 
@@ -1804,10 +1799,8 @@ void Play_State::update(float dt)
           // Looked up once for both blocks below. Absent means we have no body
           // this frame -- a spectator, or a connect not yet answered -- and
           // neither a reload nor a switch means anything then.
-          const auto my_entity =
-              ctx.replication.latest_player_entities.find(ctx.connection.my_slot);
-          const bool have_own_body =
-              my_entity != ctx.replication.latest_player_entities.end();
+          const entities::Player_Entity* my_player = try_find_my_player(ctx);
+          const bool have_own_body = my_player != nullptr;
 
           // A SWITCH, predicted off the same edge and the same table the server
           // applies it from (shared::try_slot_selected_by), which is why an
@@ -1831,10 +1824,10 @@ void Play_State::update(float dt)
           {
             const std::optional<entities::Inventory_Slot> selected =
                 shared::try_slot_selected_by(pressed_in_this_step);
-            if (selected && *selected != my_entity->second.inventory.active_slot)
+            if (selected && *selected != my_player->inventory.active_slot)
             {
               const entities::Weapon_Entity *raised =
-                  try_find_weapon_in_slot(ctx, my_entity->second, *selected);
+                  try_find_weapon_in_slot(ctx, *my_player, *selected);
 
               ctx.prediction.seconds_until_local_reload_complete = 0.f;
               ctx.prediction.seconds_until_local_deploy_complete =
@@ -1847,7 +1840,7 @@ void Play_State::update(float dt)
           if ((pressed_in_this_step & Button::Reload) && have_own_body)
           {
             const entities::Weapon_Entity *held_entity =
-                try_find_active_weapon(ctx, my_entity->second);
+                try_find_active_weapon(ctx, *my_player);
             if (held_entity != nullptr)
             {
               const shared::weapon_definition_t &held =
@@ -2237,7 +2230,7 @@ void Play_State::draw_imgui_panels()
       if (remote_count > 0)
         ImGui::Text("%-20s %d", "remote players", remote_count);
 
-      int rocket_count = (int)ctx.replication.remote_rockets.size();
+      int rocket_count = (int)ctx.world.session.entity_system.entities_of<entities::Rocket_Entity>().size();
       if (rocket_count > 0)
         ImGui::Text("%-20s %d", "remote rockets", rocket_count);
 
@@ -2421,9 +2414,20 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {
-    // Players are drawn below, from replication rather than from the pool.
+    // Players are drawn below, through the interpolation ring rather than at
+    // the newest tick the session holds. A held weapon is the viewmodel's, and
+    // draws nowhere in the world.
     if (entity.type == entities::entity_type::Player_Entity)
       continue;
+    if (entity.type == entities::entity_type::Weapon_Entity &&
+        static_cast<const entities::Weapon_Entity&>(entity).owner_uid != shared::null_entity_uid)
+      continue;
+
+    // The same sphere rocket_system sweeps the flight path with.
+    if (entity.type == entities::entity_type::Rocket_Entity && ctx.cvars->debug_show_hitboxes)
+      scene.debug.wire_sphere(entity.position,
+                              static_cast<const entities::Rocket_Entity&>(entity).collision_radius,
+                              colors::green);
 
     // ALONGSIDE the model and ahead of every skip below: a hit volume is not an
     // alternative to the mesh, and an entity whose mesh is hidden or unresolved
@@ -2471,11 +2475,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     // than Remote_Player_State, because that is where the snapshot put it; the
     // interpolated POSITION comes off Remote_Player_State, because that is
     // where the interpolation happens. Neither has both.
-    auto player_entity = ctx.replication.latest_player_entities.find(slot);
-    if (player_entity != ctx.replication.latest_player_entities.end() &&
-        player_entity->second.render.visible)
+    const entities::Player_Entity* player_entity = try_find_player_in_slot(ctx, slot);
+    if (player_entity != nullptr && player_entity->render.visible)
     {
-      const entities::Render &render = player_entity->second.render;
+      const entities::Render &render = player_entity->render;
 
       const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
           assets::get_mesh(render.mesh);
@@ -2652,80 +2655,6 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
   }
 
-  // Render rockets received from server
-  for (const auto &[id, rocket] : ctx.replication.remote_rockets)
-  {
-    const auto *rc = &rocket.render;
-    if (!rc->visible)
-      continue;
-
-    const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(rc->mesh));
-    if (mesh.valid())
-    {
-      renderer::mesh_draw_t draw{};
-      draw.mesh      = mesh;
-      draw.transform =
-          linalg::compose_transform(rocket.position, rocket.orientation, rc->scale);
-      draw.tint      = colors::cyan;
-      scene.meshes.push_back(draw);
-    }
-    else
-    {
-      std::print("[CLIENT] Rocket {} mesh '{}' did not resolve\n", id,
-                 assets::to_string(rc->mesh));
-    }
-
-    // The same sphere rocket_system sweeps the flight path with.
-    if (ctx.cvars->debug_show_hitboxes)
-      scene.debug.wire_sphere(rocket.position, rocket.collision_radius, colors::green);
-  }
-
-  // --- Render physics bodies ---
-  // Integrated mode reads straight from the server's authoritative pool.
-  // Networked mode uses the snapshot map (no interpolation yet — see todo.md;
-  // visible stutter at tick boundaries is expected for now).
-  {
-    auto draw_one = [&](const auto &body) {
-      const auto &render = body.render;
-      if (!render.visible) return;
-
-      const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(render.mesh));
-      if (!mesh.valid()) return;
-
-      renderer::mesh_draw_t draw{};
-      draw.mesh      = mesh;
-      draw.transform = linalg::compose_transform(
-          body.position, linalg::compose_model_rotation(body.orientation, render.rotation),
-          render.scale);
-      scene.meshes.push_back(draw);
-    };
-
-    if (ctx.server_session)
-    {
-      Span<entities::Physics_Body_Entity> physics_pool =
-          const_cast<shared::game_session_t *>(ctx.server_session)
-              ->entity_system.entities_of<entities::Physics_Body_Entity>();
-      for (const entities::Physics_Body_Entity &body : physics_pool)
-        draw_one(body);
-
-      Span<entities::Weapon_Entity> weapon_pool =
-          const_cast<shared::game_session_t *>(ctx.server_session)
-              ->entity_system.entities_of<entities::Weapon_Entity>();
-      for (const entities::Weapon_Entity& weapon : weapon_pool)
-        if (weapon.owner_uid == shared::null_entity_uid)
-          draw_one(weapon);
-    }
-    else
-    {
-      for (const auto &[id, body] : ctx.replication.remote_physics_bodies)
-        draw_one(body);
-
-      for (const auto& [id, weapon] : ctx.replication.latest_weapon_entities)
-        if (weapon.owner_uid == shared::null_entity_uid)
-          draw_one(weapon);
-    }
-  }
-
   // Debug: navmesh as triangle wireframes, colored by island ID
   if (ctx.cvars->debug_show_navmesh)
   {
@@ -2831,10 +2760,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         scene.debug.line({wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);
       }
 
-      auto pit = ctx.replication.latest_player_entities.find(bot.slot);
-      if (pit != ctx.replication.latest_player_entities.end())
+      const entities::Player_Entity* bot_player = try_find_player_in_slot(ctx, bot.slot);
+      if (bot_player != nullptr)
       {
-        const auto &ent = pit->second;
+        const entities::Player_Entity &ent = *bot_player;
         vec3f facing = linalg::direction_from_angles(ent.view_angle_yaw, 0.f);
         vec3f origin = ent.position;
         origin.y += 40.f;
@@ -2904,8 +2833,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
   }
 
-  if (!connection_ui.show_pause_menu &&
-      ctx.replication.latest_player_entities.contains(ctx.connection.my_slot))
+  if (!connection_ui.show_pause_menu && try_find_my_player(ctx) != nullptr)
   {
     if (const ui::ui_font_t* font = ctx.font)
     {
@@ -2940,7 +2868,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const ui::ui_font_t* font = ctx.font)
     {
       const Span<hud::scoreboard_row_t> rows = hud::collect_scoreboard_rows(
-          ctx.replication.latest_player_entities, ctx.connection.my_slot, scoreboard_rows);
+          ctx.world.session.entity_system.entities_of<entities::Player_Entity>(),
+          ctx.connection.my_slot, scoreboard_rows);
       hud::draw_scoreboard(ui, *font, renderer::screen_size(), renderer::display_scale(), rows);
     }
     else

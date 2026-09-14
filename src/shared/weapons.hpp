@@ -62,43 +62,57 @@ enum class fire_trigger_t : uint8_t
   Secondary,
 };
 
-// IDENTITY lives in entities.def (`Weapon`, `Fire_Resolution`); STATS live here.
-//
-// The split is deliberate. `Weapon` is what rides the wire -- it is the type of
-// Weapon_Entity::weapon_id and of Player_Entity::last_fire_weapon -- so it has
-// to be a schema enum, known to the generated tables and mixed into
-// SCHEMA_HASH. The numbers below are not replicated at all: both sides compile
-// this header, same as player_hitboxes and the reflection tables. So the .def
-// owns which weapons exist, and this file owns what they do.
-//
-// `Fire_Resolution` is a separate axis from `Weapon` on purpose: the fire path
-// switches on HOW a shot resolves, the wire carries WHICH weapon it was, and
-// those do not coincide (Knife and Scout both resolve as hitscan; a second
-// sniper later would share Scout's resolution and need its own id).
-//
-// A row is UNION-SHAPED and the resolution is its discriminant: `damage` and
-// `range` mean nothing to a Self_Impulse, the two impulse speeds mean nothing
-// to a Hitscan, and the unused half of every row is zero. That is the one place
-// this codebase does not follow the lights rule (an enum selecting which fields
-// are live is a type -- see CLAUDE.md), and deliberately: a variant over a
-// three-row constexpr table read by one switch would cost more than the zeros.
+
+// Fire_Resolution::Hitscan's parameters.
+struct hitscan_t
+{
+  float        damage;
+  float        headshot_multiplier; // 1.0: no headshots
+  float        range;               // knife 50, scout map-length
+  // Swap exchanges position and velocity with a player target instead of damaging it.
+  hit_effect_t hit_effect;
+  // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
+  // the client -- the effect itself always fires, so the knife still sounds.
+  // A BOOL rather than an "is this melee" test: a silenced pistol or a fist
+  // would each want the same answer for an unrelated reason.
+  bool         leaves_bullet_impact;
+};
+
+struct projectile_t
+{
+  float speed;
+};
+
+// What the weapon sounds like. Client-only facts, on the shared row (see
+// above). Missing is a declared absence, logged once per id by the audio
+// system, never a silent skip.
+struct weapon_sounds_t
+{
+  assets::sound_asset fire;
+  // A Shot_Impact on static geometry. Scout has no bullet-on-wall file on disk.
+  assets::sound_asset world_impact;
+};
+
 struct weapon_definition_t
 {
   // Which weapon this row is for. Present so the row can be checked against
   // its own index (see the static_assert below) rather than trusting that
   // whoever last edited this list counted correctly.
-  entities::Weapon      weapon;
-  const char*           display_name;
-  float                 damage;
-  float                 headshot_multiplier; // Knife / Rocket: 1.0, no headshots
-  float                 fire_interval_seconds;
-  float                 range;               // knife 50, scout map-length
-  // 0 means NO MAGAZINE: the weapon never consumes ammo and never reloads, and
-  // the reload edge is a no-op on it. That is the knife, and it is a real
-  // state rather than an unfilled row -- the static_assert below catches the
-  // unfilled row, since a zeroed tail row is not at its own index.
-  int32_t               magazine_size;
-  float                 reload_duration_seconds;
+  entities::Weapon         weapon;
+  const char*              display_name;
+  // WHERE this weapon is held when granted. A property of the weapon, so
+  // "a scout is a primary" is written once here rather than at every site that
+  // hands one out -- which is what stopped the inventory needing to be keyed by
+  // weapon identity at all (generalization_def.md §1).
+  //
+  // Two weapons naming one slot is legal and is what a pickup does: the second
+  // one granted replaces the first. Nothing checks for uniqueness, deliberately
+  // -- an Enum_Array of slots with two rifles competing for Primary is exactly
+  // the loadout question, not a table error.
+  entities::Inventory_Slot slot;
+
+  // --- The clocks. Every resolution but Self_Impulse runs through them. ---
+  float   fire_interval_seconds;
   // How long after this weapon is RAISED before anything may fire. A property
   // of the weapon, but the gate it feeds is the PLAYER's
   // (Inventory::deploy_complete_time): it blocks every weapon at once, which is
@@ -111,102 +125,88 @@ struct weapon_definition_t
   // silently reshuffled its timings; Source 2 moving weapon timings into .vdata
   // is Valve walking that back. A future draw animation is authored against
   // this, not the reverse.
-  float                 deploy_duration_seconds;
+  float   deploy_duration_seconds;
+  // 0 means NO MAGAZINE: the weapon never consumes ammo and never reloads, and
+  // the reload edge is a no-op on it. That is the knife, and it is a real
+  // state rather than an unfilled row -- the static_assert below catches the
+  // unfilled row, since a zeroed tail row is not at its own index.
+  int32_t magazine_size;
+  float   reload_duration_seconds;
 
   // WHAT PULLING THE TRIGGER DOES. The switch in resolve_player_shot is over
-  // this and nothing else.
+  // this and nothing else, and it reads exactly one of the three structs.
   entities::Fire_Resolution fire_resolution;
-
-  // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
-  // the client -- the effect itself always fires, so the knife still sounds.
-  // False for the knife: a swing that reaches a wall should not leave one.
-  //
-  // A BOOL rather than the `kind != Melee` test it replaces, because "is this
-  // melee" was never the question -- it was a proxy for one, asked outside the
-  // switch, and a silenced pistol or a fist would each have wanted the same
-  // answer for an unrelated reason.
-  bool                  leaves_bullet_impact;
-
-  // Hitscan only. Swap exchanges position and velocity with a player target instead of damaging it.
-  hit_effect_t          hit_effect;
-
-  // --- Fire_Resolution::Self_Impulse only; zero on every other row ---
-  self_impulse_t        self_impulse;
+  hitscan_t                 hitscan;
+  projectile_t              projectile;
+  self_impulse_t            self_impulse;
   // Seconds before EITHER impulse may be taken again. THE gate -- see
   // try_apply_self_impulse and the static_assert below for why it is not
   // fire_interval_seconds. Shared by the primary and the secondary impulse,
   // because Movement carries one countdown and a second one is a second thing
   // the replay has to restart.
-  float                 self_impulse_cooldown_seconds;
+  float                     self_impulse_cooldown_seconds;
 
   // What the right mouse button does on this row, and the impulse it fires
   // when that is Self_Impulse (zero otherwise).
-  secondary_fire_t      secondary_fire;
-  self_impulse_t        secondary_self_impulse;
+  secondary_fire_t secondary_fire;
+  self_impulse_t   secondary_self_impulse;
 
-  // WHERE this weapon is held when granted. A property of the weapon, so
-  // "a scout is a primary" is written once here rather than at every site that
-  // hands one out -- which is what stopped the inventory needing to be keyed by
-  // weapon identity at all (generalization_def.md §1).
-  //
-  // Two weapons naming one slot is legal and is what a pickup does: the second
-  // one granted replaces the first. Nothing checks for uniqueness, deliberately
-  // -- an Enum_Array of slots with two rifles competing for Primary is exactly
-  // the loadout question, not a table error.
-  entities::Inventory_Slot slot;
+  weapon_sounds_t sounds;
 };
 
 // Indexed by entities::Weapon, so entry N is the weapon whose enum value is N
 // and the order here must track the .def's, not Fire_Resolution's.
 inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS = {{
-    {.weapon               = entities::Weapon::Knife,
-     .display_name          = "Knife",
-     .damage                = 50.f,
-     .headshot_multiplier   = 1.0f,
-     .fire_interval_seconds = 0.5f,
-     .range                 = 50.f,
+    {.weapon                  = entities::Weapon::Knife,
+     .display_name            = "Knife",
+     .slot                    = entities::Inventory_Slot::Melee,
+     .fire_interval_seconds   = 0.5f,
+     .deploy_duration_seconds = 0.4f,
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
-     .deploy_duration_seconds = 0.4f,
-     .fire_resolution       = entities::Fire_Resolution::Hitscan,
-     .leaves_bullet_impact  = false,
-     .slot                  = entities::Inventory_Slot::Melee},
-    {.weapon               = entities::Weapon::Scout,
-     .display_name          = "Scout",
-     .damage                = 60.f,
-     .headshot_multiplier   = 2.0f,
-     .fire_interval_seconds = 1.25f,
-     .range                 = 10000.f,
+     .fire_resolution         = entities::Fire_Resolution::Hitscan,
+     .hitscan                 = {.damage               = 50.f,
+                                 .headshot_multiplier  = 1.0f,
+                                 .range                = 50.f,
+                                 .hit_effect           = hit_effect_t::Damage,
+                                 .leaves_bullet_impact = false},
+     .sounds                  = {.fire         = assets::sound_asset::knife_slash1,
+                                 .world_impact = assets::sound_asset::knife_hitwall1}},
+    {.weapon                  = entities::Weapon::Scout,
+     .display_name            = "Scout",
+     .slot                    = entities::Inventory_Slot::Primary,
+     .fire_interval_seconds   = 1.25f,
+     .deploy_duration_seconds = 0.7f,
      .magazine_size           = 10,
      .reload_duration_seconds = 2.0f,
-     .deploy_duration_seconds = 0.7f,
-     .fire_resolution       = entities::Fire_Resolution::Hitscan,
-     .leaves_bullet_impact  = true,
-     .secondary_fire        = secondary_fire_t::Zoom,
-     .slot                  = entities::Inventory_Slot::Primary},
-    {.weapon               = entities::Weapon::Rocket_Launcher,
-     .display_name          = "Rocket Launcher",
-     .damage                = 100.f,
-     .headshot_multiplier   = 1.0f,
-     .fire_interval_seconds = 0.1f,
-     .range                 = 150.f,
+     .fire_resolution         = entities::Fire_Resolution::Hitscan,
+     .hitscan                 = {.damage               = 60.f,
+                                 .headshot_multiplier  = 2.0f,
+                                 .range                = 10000.f,
+                                 .hit_effect           = hit_effect_t::Damage,
+                                 .leaves_bullet_impact = true},
+     .secondary_fire          = secondary_fire_t::Zoom,
+     .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
+                                 .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Rocket_Launcher,
+     .display_name            = "Rocket Launcher",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 0.1f,
+     .deploy_duration_seconds = 0.9f,
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
-     .deploy_duration_seconds = 0.9f,
-     .fire_resolution       = entities::Fire_Resolution::Projectile,
-     .leaves_bullet_impact  = false,
-     .slot                  = entities::Inventory_Slot::Secondary},
+     .fire_resolution         = entities::Fire_Resolution::Projectile,
+     .projectile              = {.speed = 600.f},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
     {.weapon                        = entities::Weapon::Dash,
      .display_name                  = "Dash",
-     .damage                        = 0.f,
-     .headshot_multiplier           = 1.0f,
+     .slot                          = entities::Inventory_Slot::Utility_1,
      .fire_interval_seconds         = 0.f,
-     .range                         = 0.f,
+     .deploy_duration_seconds       = 0.f,
      .magazine_size                 = 0,
      .reload_duration_seconds       = 0.f,
-     .deploy_duration_seconds       = 0.f,
      .fire_resolution               = entities::Fire_Resolution::Self_Impulse,
-     .leaves_bullet_impact          = false,
      .self_impulse                  = {.mode            = impulse_mode_t::Add,
                                        .along_aim_speed = 900.f,
                                        .upward_speed    = 150.f},
@@ -217,20 +217,23 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .secondary_self_impulse        = {.mode            = impulse_mode_t::Set,
                                        .along_aim_speed = 900.f,
                                        .upward_speed    = 0.f},
-     .slot                          = entities::Inventory_Slot::Utility_1},
-    {.weapon                        = entities::Weapon::Swapper,
-     .display_name                  = "Swapper",
-     .damage                        = 0.f,
-     .headshot_multiplier           = 1.0f,
-     .fire_interval_seconds         = 2.f,
-     .range                         = 10000.f,
-     .magazine_size                 = 0,
-     .reload_duration_seconds       = 0.f,
-     .deploy_duration_seconds       = 0.f,
-     .fire_resolution               = entities::Fire_Resolution::Hitscan,
-     .leaves_bullet_impact          = false,
-     .hit_effect                    = hit_effect_t::Swap,
-     .slot                          = entities::Inventory_Slot::Utility_2},
+     .sounds                        = {.fire         = assets::sound_asset::gust_of_wind,
+                                       .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Swapper,
+     .display_name            = "Swapper",
+     .slot                    = entities::Inventory_Slot::Utility_2,
+     .fire_interval_seconds   = 2.f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .fire_resolution         = entities::Fire_Resolution::Hitscan,
+     .hitscan                 = {.damage               = 0.f,
+                                 .headshot_multiplier  = 1.0f,
+                                 .range                = 10000.f,
+                                 .hit_effect           = hit_effect_t::Swap,
+                                 .leaves_bullet_impact = false},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -301,18 +304,47 @@ static_assert(self_impulse_rows_are_gated_only_by_movement(),
               "client can replay. A weapon-side clock beside it is a second gate the client "
               "cannot see.");
 
-constexpr bool swap_rows_are_hitscan()
+// THE THIRD CHECK: a row's parameters match its resolution. The struct a
+// resolution reads must be filled and the two it does not read must be zero
+// -- a Swap on a Projectile row or a range on a Self_Impulse row is a number
+// nothing reads, which is the same silence as an unfilled row.
+constexpr bool row_parameters_match_their_resolution()
 {
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
-    if (definition.hit_effect == hit_effect_t::Swap &&
-        definition.fire_resolution != entities::Fire_Resolution::Hitscan)
-      return false;
+  {
+    const hitscan_t&    hitscan    = definition.hitscan;
+    const projectile_t& projectile = definition.projectile;
+    const bool hitscan_is_zero = hitscan.damage == 0.f && hitscan.headshot_multiplier == 0.f &&
+                                 hitscan.range == 0.f &&
+                                 hitscan.hit_effect == hit_effect_t::Damage &&
+                                 !hitscan.leaves_bullet_impact;
+    const bool projectile_is_zero = projectile.speed == 0.f;
+    const bool impulse_is_zero    = definition.self_impulse.along_aim_speed == 0.f &&
+                                 definition.self_impulse.upward_speed == 0.f;
+
+    switch (definition.fire_resolution)
+    {
+    case entities::Fire_Resolution::Hitscan:
+      if (hitscan.range <= 0.f || hitscan.headshot_multiplier <= 0.f) return false;
+      if (!projectile_is_zero || !impulse_is_zero) return false;
+      break;
+    case entities::Fire_Resolution::Projectile:
+      if (projectile.speed <= 0.f) return false;
+      if (!hitscan_is_zero || !impulse_is_zero) return false;
+      break;
+    case entities::Fire_Resolution::Self_Impulse:
+      if (!hitscan_is_zero || !projectile_is_zero) return false;
+      break;
+    }
+  }
   return true;
 }
 
-static_assert(swap_rows_are_hitscan(),
-              "hit_effect_t::Swap is read only by the Hitscan arm of resolve_player_shot; "
-              "on any other resolution it would silently do nothing.");
+static_assert(row_parameters_match_their_resolution(),
+              "a WEAPON_DEFINITIONS row fills the parameter struct of its own Fire_Resolution "
+              "(hitscan: positive range and headshot_multiplier; projectile: positive speed) "
+              "and leaves the other two zero: resolve_player_shot reads exactly one of them, "
+              "so a value in another is a number nothing reads.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {
@@ -366,9 +398,6 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
   if (impulse == nullptr)
     return false;
 
-  // Strictly greater than zero: the countdown is clamped at zero by
-  // player_move, so "ready" is the resting value rather than a value it passes
-  // through.
   if (movement.seconds_until_impulse_ready > 0.f)
     return false;
   

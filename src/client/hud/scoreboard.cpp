@@ -55,7 +55,7 @@ row_columns_t columns_of(ui::ui_rect_t row, float scale)
 } // namespace
 
 Span<scoreboard_row_t> collect_scoreboard_rows(
-    const std::unordered_map<int32_t, entities::Player_Entity> &players,
+    Span<const entities::Player_Entity> players,
     int32_t local_slot,
     Span<scoreboard_row_t> storage)
 {
@@ -67,8 +67,9 @@ Span<scoreboard_row_t> collect_scoreboard_rows(
   const Span<scoreboard_row_t> rows = storage.subspan(0, row_count);
 
   uint32_t index = 0;
-  for (const auto &[slot, player] : players)
+  for (const entities::Player_Entity &player : players)
   {
+    const int32_t slot = player.client_slot_index;
     // Assigned member-wise rather than replaced wholesale: the row's name keeps
     // whatever heap buffer it already had.
     scoreboard_row_t &row = rows[index++];

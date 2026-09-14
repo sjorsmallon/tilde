@@ -24,7 +24,7 @@ void play_world_impact(client_context_t& context, const shared::Shot_Impact& dat
   if (!sound)
     return;
 
-  if (shared::WEAPON_DEFINITIONS[weapon].leaves_bullet_impact)
+  if (shared::WEAPON_DEFINITIONS[weapon].hitscan.leaves_bullet_impact)
   {
     // The bullet decal, at data.origin facing data.normal: not built yet.
   }
@@ -60,10 +60,7 @@ void play_type_impact(client_context_t& context, const shared::Shot_Impact& data
 
 bool is_replicated_player(const client_context_t& context, shared::entity_uid_t uid)
 {
-  for (const auto& [slot_index, player] : context.replication.latest_player_entities)
-    if (player.entity_id == uid)
-      return true;
-  return false;
+  return context.world.session.entity_system.get<entities::Player_Entity>(uid) != nullptr;
 }
 
 } // namespace
@@ -99,7 +96,8 @@ void on_shot_impact(client_context_t& context, const shared::Shot_Impact& data)
     return;
   }
 
-  if (context.replication.remote_physics_bodies.contains(data.attached_entity))
+  if (context.world.session.entity_system.get<entities::Physics_Body_Entity>(data.attached_entity) !=
+      nullptr)
   {
     play_type_impact(context, data, entities::entity_type::Physics_Body_Entity);
     return;

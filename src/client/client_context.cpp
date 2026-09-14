@@ -36,6 +36,20 @@ void reset_state_in_preparation_for_new_map_load(client_context_t& context)
   context.visuals     = {};
 }
 
+const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context, int32_t slot)
+{
+  for (const entities::Player_Entity& player :
+       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+    if (player.client_slot_index == slot)
+      return &player;
+  return nullptr;
+}
+
+const entities::Player_Entity* try_find_my_player(const client_context_t& context)
+{
+  return try_find_player_in_slot(context, context.connection.my_slot);
+}
+
 void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientation)
 {
   const linalg::view_angles_t facing =
