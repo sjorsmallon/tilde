@@ -29,12 +29,13 @@ namespace
 
 constexpr assets::mesh_asset PREVIEW_MESH = assets::mesh_asset::Leet_Full;
 
-// A leaf bone has no child to draw toward, so its segment is a stub along the
+// a leaf bone has no child to draw toward, so its segment is a stub along the
 // bone's own local +Y (its height). Long enough to see which way the bone points.
 constexpr float LEAF_BONE_STUB_LENGTH = 4.0f;
 
 linalg::vec3f get_bone_head_position(const assets::posed_skeleton_t &posed, uint32_t bone_index)
 {
+  // sneaky beaky extract the translation.
   const linalg::vec4 &translation = posed.model_space[bone_index][3];
   return linalg::vec3f{translation.x, translation.y, translation.z};
 }
@@ -42,7 +43,8 @@ linalg::vec3f get_bone_head_position(const assets::posed_skeleton_t &posed, uint
 // called one time to populate the tool.
 assets::aim_pose_clips_t aim_clips()
 {
-  assets::aim_pose_clips_t clips;
+  auto clips = assets::aim_pose_clips_t{};
+
   for (uint32_t index = 0; index < entities::Aim_Pose_COUNT; ++index)
   {
     const entities::Aim_Pose pose = (entities::Aim_Pose)index;
@@ -53,19 +55,17 @@ assets::aim_pose_clips_t aim_clips()
 
 assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities::Aim_Pose chosen)
 {
-  assets::aim_poses_blend_weights_t weights;
+  auto blend_weights = assets::aim_poses_blend_weights_t{};
   for (uint32_t index = 0; index < entities::Aim_Pose_COUNT; ++index)
   {
     const entities::Aim_Pose pose = (entities::Aim_Pose)index;
-    weights.weights[pose] = (pose == chosen) ? 1.0f : 0.0f;
+    blend_weights.weights[pose] = (pose == chosen) ? 1.0f : 0.0f;
   }
-  return weights;
+  return blend_weights;
 }
 
-// Retried every frame on purpose: nothing here changes once it succeeds, but
-// the assets can resolve late, and the frame it first succeeds is the frame the
-// hitbox rig can first load.
-[[nodiscard]] bool try_resolve_preview_model(preview_model_t &model, bool report)
+
+[[nodiscard]] bool try_resolve_preview_model(preview_model_t &model, const bool should_report_failure)
 {
   model.posed    = false;
   model.skeleton = nullptr;
@@ -73,7 +73,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   model.mesh = assets::get_mesh(PREVIEW_MESH);
   if (!model.mesh.valid())
   {
-    if (report)
+    if (should_report_failure)
       log_error("[animation] preview mesh '{}' did not resolve through the asset manifest",
                 assets::to_string(PREVIEW_MESH));
     return false;
@@ -82,7 +82,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   const assets::mesh_asset_t* mesh = assets::get(model.mesh);
   if (!mesh || !mesh->is_skinned())
   {
-    if (report)
+    if (should_report_failure)
       log_error("[animation] preview mesh '{}' has no skin arrays: it exported unskinned",
                 assets::to_string(PREVIEW_MESH));
     return false;
@@ -91,7 +91,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   model.skeleton = assets::get(mesh->skeleton);
   if (!model.skeleton)
   {
-    if (report)
+    if (should_report_failure)
       log_error("[animation] preview mesh '{}' names a skeleton that is not in the cache",
                 assets::to_string(PREVIEW_MESH));
     return false;
@@ -102,7 +102,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
 
 [[nodiscard]] bool try_update_pose(preview_model_t &model, const pose_controls_t &controls,
                                    const clip_playback_t &clip, const aim_settings_t &settings,
-                                   bool report)
+                                   const bool should_report_failure)
 {
   switch (controls.pose_source)
   {
@@ -131,7 +131,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
       const assets::animation_asset_t* asset = assets::get(clip.handle);
       if (clip.selected == assets::animation_asset::Missing || !asset)
       {
-        if (report)
+        if (should_report_failure)
           log_error("[animation] no clip is selected; pick one in the Clip panel");
         return false;
       }
@@ -144,7 +144,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   const uint32_t bone_count = (uint32_t)model.skeleton->bones.size();
   if (model.sampled_pose.parent_space.size() != bone_count)
   {
-    if (report)
+    if (should_report_failure)
       log_error("[animation] the sampled pose has {} bones but skeleton '{}' has {}",
                 model.sampled_pose.parent_space.size(), model.skeleton->name, bone_count);
     return false;
@@ -171,8 +171,7 @@ assets::animation_asset first_clip()
 
 void advance_clip(clip_playback_t &clip, const assets::animation_asset_t &asset, float dt)
 {
-  if (!clip.playing)
-    return;
+  if (!clip.playing) return;
   
   // a clip consisting of one pose has _no_ duration. so nothing to advance.
   const float duration = assets::clip_duration_seconds(asset, clip.looping);
@@ -180,7 +179,8 @@ void advance_clip(clip_playback_t &clip, const assets::animation_asset_t &asset,
 
   clip.phase += dt * clip.playback_speed / duration;
 
-  if (clip.looping)
+  // wrap
+  if (clip.looping) 
   {
     clip.phase -= std::floor(clip.phase);
     return;
@@ -213,8 +213,8 @@ std::string rig_path_of(const hitbox_workspace_t &workspace, const assets::skele
 void recompute_vertex_analysis(hitbox_workspace_t &workspace, const assets::mesh_asset_t &mesh,
                                const assets::skeleton_t &skeleton)
 {
-  if (workspace.rig.volumes.empty())
-    return;
+  // no work to do.
+  if (workspace.rig.volumes.empty()) return;
 
   workspace.guesstimated_hitboxes_from_bones.resize(workspace.rig.volumes.size());
   assets::guesstimate_hitbox_sizes(mesh, skeleton, workspace.rig, workspace.guesstimated_hitboxes_from_bones);
@@ -223,16 +223,16 @@ void recompute_vertex_analysis(hitbox_workspace_t &workspace, const assets::mesh
   // so it is computed against the bind pose (read: t-pose) rather than the one on
   // screen. Both of these walk every vertex against every volume and derivation
   // prints a table, so this runs on edits that change the answer.
-  std::vector<linalg::mat4f> bind_model(skeleton.bones.size());
-  assets::compute_bind_model_matrices(skeleton, bind_model);
+  std::vector<linalg::mat4f> bind_pose_model_matrices(skeleton.bones.size());
+  assets::compute_bind_model_matrices(skeleton, bind_pose_model_matrices);
 
-  std::vector<assets::posed_hitbox_t> bind_hitboxes(workspace.rig.volumes.size());
-  assets::compute_posed_hitboxes(workspace.rig, bind_model, bind_hitboxes);
-  workspace.coverage = assets::compute_hitbox_coverage(mesh, skeleton, bind_hitboxes,
+  std::vector<assets::posed_hitbox_t> bind_pose_hitboxes(workspace.rig.volumes.size());
+  assets::compute_posed_hitboxes(workspace.rig, bind_pose_model_matrices, bind_pose_hitboxes);
+  workspace.coverage = assets::compute_hitbox_coverage(mesh, skeleton, bind_pose_hitboxes,
                                                        assets::HITBOX_COVERAGE_TOLERANCE);
 }
 
-void load_rig(hitbox_workspace_t &workspace, const preview_model_t &model)
+void load_rig(hitbox_workspace_t& workspace, const preview_model_t& model)
 {
   workspace = {};
   workspace.loaded_for_skeleton = model.skeleton;
@@ -244,8 +244,8 @@ void load_rig(hitbox_workspace_t &workspace, const preview_model_t &model)
   }
 
   workspace.file_based_hitbox_rig = assets::try_from_string<assets::hitbox_rig>(model.skeleton->name);
-  if (!workspace.file_based_hitbox_rig)
-    return;
+
+  if (!workspace.file_based_hitbox_rig) return;
 
 
   workspace.rig = *assets::get(assets::get_hitbox_rig(*workspace.file_based_hitbox_rig));
@@ -266,8 +266,9 @@ void load_rig(hitbox_workspace_t &workspace, const preview_model_t &model)
     recompute_vertex_analysis(workspace, *mesh, *model.skeleton);
 }
 
-// The volumes follow the pose every frame, through the same model-space matrices
-// the mesh is skinned by -- which is the whole claim phase B makes.
+// hitboxes are recomputed every frame. they are not "animated" along.
+// you just pose each bone and attach hitboxes to some bone in it's direction.
+// maybe with some offset.
 void pose_hitboxes(hitbox_workspace_t &workspace, const assets::posed_skeleton_t& posed_skeleton)
 {
   if (workspace.posed_hitboxes.empty())
@@ -298,9 +299,7 @@ void Animation_Tool::on_enable(editor_context_t& ctx)
   refresh_preview();
 }
 
-// Resolve, then load the rig if the skeleton changed under us, then pose. The
-// rig hangs off the SKELETON and not off the pose: it is the resolve that has
-// to have succeeded before it can load.
+
 void Animation_Tool::refresh_preview()
 {
   const bool report_failures = !model.failure_logged;
@@ -310,7 +309,9 @@ void Animation_Tool::refresh_preview()
     return;
 
   if (workspace.loaded_for_skeleton != model.skeleton)
+  {
     load_rig(workspace, model);
+  }
 
   if (!try_update_pose(model, pose_controls, clip, aim_settings, report_failures))
     return;
@@ -349,7 +350,7 @@ std::optional<view_focus_t> Animation_Tool::view_focus() const
     return view_focus_t{.center = {0.0f, shared::player_half_height, 0.0f},
                         .radius = shared::player_half_height};
 
-
+  // otherwise, try to calculate the bounds of the to-animate object from the bones. 
   linalg::vec3f minimum = get_bone_head_position(model.posed_skeleton, 0);
   linalg::vec3f maximum = minimum;
   for (uint32_t index = 1; index < (uint32_t)model.posed_skeleton.model_space.size(); ++index)
@@ -381,7 +382,8 @@ void Animation_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draw
   {
     const renderer::mesh_handle_t mesh = get_render_mesh(model.mesh);
 
-    renderer::mesh_draw_t draw{};
+    auto draw = renderer::mesh_draw_t{};
+
     draw.mesh      = mesh;
     draw.transform = linalg::compose_transform(
         {0, 0, 0}, linalg::from_axis_angle({0.f, 1.f, 0.f}, display.model_yaw_degrees),
@@ -433,9 +435,6 @@ void Animation_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draw
         draws.debug.line(head, axis, selected ? colors::gold : colors::green);
       }
 
-      // Joints get a marker so a bone that has collapsed onto its parent -- the
-      // classic wrong-inverse-bind symptom -- is visible as a doubled dot
-      // rather than as nothing at all.
       draws.debug.box(head, {0.6f, 0.6f, 0.6f}, selected ? colors::gold : colors::white);
 
       if (display.bone_names || selected)
@@ -488,27 +487,28 @@ void Animation_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draw
 namespace
 {
 
-// The sliders floor at 0.1, so a non-positive size is one nobody ever authored.
-void use_guesstimated_size_if_unauthored(assets::hitbox_volume_t &volume,
-                                    const assets::guesstimated_hitbox_from_bone_t &guesstimated)
+void use_guesstimated_size_if_unauthored(assets::hitbox_volume_t& volume,
+                                    const assets::guesstimated_hitbox_from_bone_t& guesstimated)
 {
+  // degenerate radius, or uninitialized
   if (assets::hitbox_shape_uses_radius(volume.shape))
   {
     if (volume.radius <= 0.0f)
       volume.radius = guesstimated.radius;
     return;
   }
-
+  
+  // degenerate planar volume, or uninitialized
   if (volume.half_extents.x <= 0.0f || volume.half_extents.y <= 0.0f ||
       volume.half_extents.z <= 0.0f)
     volume.half_extents = guesstimated.half_extents;
 }
 
-[[nodiscard]] bool draw_hitbox_volume_inspector(assets::rigged_hitbox_volume_t &rigged,
-                                         const assets::guesstimated_hitbox_from_bone_t &guesstimated)
+[[nodiscard]] bool draw_hitbox_volume_inspector(assets::rigged_hitbox_volume_t& rigged,
+                                         const assets::guesstimated_hitbox_from_bone_t& guesstimated_hitbox)
 {
-  assets::hitbox_volume_t &hitbox_volume = rigged.volume;
-  bool                     edit_finished = false;
+  assets::hitbox_volume_t& hitbox_volume = rigged.volume;
+  bool edit_finished = false;
 
   ImGui::SetNextItemWidth(120.0f);
   if (ImGui::BeginCombo("shape", assets::to_string(hitbox_volume.shape)))
@@ -527,7 +527,7 @@ void use_guesstimated_size_if_unauthored(assets::hitbox_volume_t &volume,
         rigged.span_bones = {rigged.start_bone};
       }
 
-      use_guesstimated_size_if_unauthored(hitbox_volume, guesstimated);
+      use_guesstimated_size_if_unauthored(hitbox_volume, guesstimated_hitbox);
 
       edit_finished = true;
     }
@@ -542,11 +542,11 @@ void use_guesstimated_size_if_unauthored(assets::hitbox_volume_t &volume,
     ImGui::SameLine();
     if (ImGui::SmallButton("fill from guess"))
     {
-      hitbox_volume.radius = guesstimated.radius;
+      hitbox_volume.radius = guesstimated_hitbox.radius;
       edit_finished = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%.2f", guesstimated.radius);
+    ImGui::TextDisabled("%.2f", guesstimated_hitbox.radius);
   }
   else
   {
@@ -558,15 +558,14 @@ void use_guesstimated_size_if_unauthored(assets::hitbox_volume_t &volume,
     ImGui::SameLine();
     if (ImGui::SmallButton("fill from guess"))
     {
-      hitbox_volume.half_extents = guesstimated.half_extents;
+      hitbox_volume.half_extents = guesstimated_hitbox.half_extents;
       edit_finished       = true;
     }
-    ImGui::TextDisabled("guess %.2f %.2f %.2f", guesstimated.half_extents.x,
-                        guesstimated.half_extents.y, guesstimated.half_extents.z);
+    ImGui::TextDisabled("guess %.2f %.2f %.2f", guesstimated_hitbox.half_extents.x,
+                        guesstimated_hitbox.half_extents.y, guesstimated_hitbox.half_extents.z);
   }
 
-  // Bone space, so it rotates with the pose. Only the head and the hands want
-  // one, which is why it is here rather than in the table.
+
   ImGui::SetNextItemWidth(120.0f);
   ImGui::DragFloat("offset along start bone", &hitbox_volume.offset, 0.05f, -32.0f, 32.0f, "%.2f");
   edit_finished |= ImGui::IsItemDeactivatedAfterEdit();
@@ -591,7 +590,7 @@ void draw_hitbox_volume_table(hitbox_workspace_t &workspace)
   for (uint32_t index = 0; index < (uint32_t)workspace.rig.volumes.size(); ++index)
   {
     const assets::hitbox_volume_t &volume = workspace.rig.volumes[index].volume;
-    const bool                     round  = assets::hitbox_shape_uses_radius(volume.shape);
+    const bool round  = assets::hitbox_shape_uses_radius(volume.shape);
     ImGui::PushID((int)index);
     ImGui::TableNextRow();
 
@@ -708,9 +707,6 @@ void draw_hitbox_panel(hitbox_workspace_t &workspace, const preview_model_t &mod
 
 void draw_animation_clip_panel(clip_playback_t &clip)
 {
-  // Every `.animation` the manifest carries. There is no directory scan and no
-  // rescan button: a clip that is not in the manifest is a clip this build does
-  // not have, and adding one is a rebuild either way.
   const char* preview = clip.selected == assets::animation_asset::Missing
                             ? "(no clips in the manifest)"
                             : assets::to_string(clip.selected);
@@ -764,9 +760,7 @@ void draw_animation_clip_panel(clip_playback_t &clip)
   if (ImGui::SliderFloat("Phase", &clip.phase, 0.0f, 1.0f, "%.3f"))
     clip.playing = false;
 
-  // Where the sampler actually is, in the clip's own terms. Two adjacent frames
-  // and a blend is the whole of what it does, so showing the fractional frame is
-  // showing the interpolation rather than describing it.
+  // where is the sampler?
   const float wrapped = clip.looping ? clip.phase - std::floor(clip.phase) : clip.phase;
   const float frame_position =
       clip.looping ? wrapped * (float)frame_count : wrapped * (float)(frame_count - 1);
@@ -823,8 +817,8 @@ void Animation_Tool::on_draw_ui(editor_context_t& ctx)
   {
     ImGui::SliderFloat("Pitch", &pose_controls.pitch_degrees, -aim_settings.max_pitch_degrees,
                        aim_settings.max_pitch_degrees);
-    // Deviation, not absolute yaw: it is the twist between the feet and the
-    // view, which is what the left/right poses were authored against.
+    
+    // note this is deviation and not absolute yaw because we have a neutral pose.
     ImGui::SliderFloat("Yaw deviation", &pose_controls.yaw_deviation_degrees,
                        -aim_settings.max_yaw_degrees, aim_settings.max_yaw_degrees);
     if (ImGui::Button("Centre"))

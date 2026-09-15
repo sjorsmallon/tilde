@@ -74,7 +74,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   context.outgoing.pending_swaps.push_back({7, 42});
 
   // A map whose attached_cvars claimed two values. Set through the state the
-  // context points at, exactly as apply_map_cvars does.
+  // context points at, exactly as apply_map_cvars_that_were_supplied_from_the_editor does.
   cvar_state.g_gravity   = 200.f;
   cvar_state.pm_maxspeed = 400.f;
   context.world.cvars_applied_by_map = {cvars::cvar_id::g_gravity,

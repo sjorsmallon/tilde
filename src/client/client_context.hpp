@@ -21,7 +21,7 @@
 namespace client
 {
 
-struct audio_system_t; // owned by client_impl.cpp; see init()/shutdown()
+struct Audio_System; // owned by client_impl.cpp; see init()/shutdown()
 
 namespace ui
 {
@@ -490,7 +490,7 @@ struct client_context_t
 {
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
-  audio_system_t* audio = nullptr;
+  Audio_System* audio = nullptr;
   // The HUD font. Borrowed, like `audio` above: client_impl.cpp owns it and
   // neither reset touches it, because a font means the same thing in every map
   // and on every connection.

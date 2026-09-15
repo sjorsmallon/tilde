@@ -172,12 +172,8 @@ Timer :: trait requires Timer_State {
 
 
 // ---------------------------------------------------------------------------
-// ENTITIES -- declaration order IS entity_type order: the placement menu, the
-// hand-written switches and SCHEMA_HASH all follow it.
-// A type rides the snapshot when one of its OWN fields is @Networked (through
-// its components; the base's do not count) -- derived, never written.
-// @predicted: player_move reads it on both
-// sides (generalization_def.md ss6).
+// ENTITIES - note that declaration order is sacred. or: if you break it,
+// you have to repair a lot of places, which the compiler will tell you at least, but is annoying as fuck.
 // ---------------------------------------------------------------------------
 
 Player_Spawn_Entity :: entity {
@@ -195,7 +191,7 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     view_angle_pitch:  f32              @Networked
     body_yaw:          f32              @Networked
 
-    health:            Health
+    health:            Health = {current_health = 100, max_health = 100}
 
     death_tick:        u32              @Networked
     last_fire_tick:    u32              @Networked

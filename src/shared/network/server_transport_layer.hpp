@@ -87,12 +87,65 @@ struct Outbound_Transfer
   }
 };
 
-// How bytes reach each peer, one entry per slot, and nothing about what they
-// mean. The client's counterpart is Client_Transport_Layer; game-level
-// connection state (who is in a slot, what they are doing) lives in the
-// server's own context, a stratum above this one.
 struct Server_Transport_Layer
 {
+
+  //@NOTE(SJM): I think this is the better pattern over raw for loops.
+  // it's less volatile.
+  // additionally, I think actually sv_max_client_count needs to be a template argument.
+  struct client_slot_t
+  {
+      size_t index; // referential back so we can report which slot is doing something stinky
+      bool& occupied;
+      Address& address;
+      Byte_Buffer& byte_buffer;
+      uint32_t& latest_packet_tick;
+      std::map<uint8, Partial_Message>& partial_packets;
+      Outbound_Transfer& outbound_transfer;
+      Reliable_Stream& reliable_stream;
+  };
+
+  struct client_iterator_t
+  {
+      Server_Transport_Layer* server;
+      std::size_t index;
+
+      client_slot_t operator*() const
+      {
+        return {
+            index,
+            server->slot_occupied[index],
+            server->addresses[index],
+            server->byte_buffers[index],
+            server->latest_packet_tick[index],
+            server->partial_packets[index],
+            server->outbound_transfers[index],
+            server->reliable_streams[index],
+        };
+      }
+
+      client_iterator_t& operator++()
+      {
+          ++index;
+          return *this;
+      }
+
+      bool operator!=(const client_iterator_t& other) const
+      {
+          return index != other.index;
+      }
+  };
+
+  client_iterator_t begin()
+  {
+      return {this, 0};
+  }
+
+  client_iterator_t end()
+  {
+      return {this, sv_max_client_count};
+  }
+
   // things we thought about
   std::array<bool, sv_max_client_count> slot_occupied{};
   std::array<Address, sv_max_client_count> addresses{};

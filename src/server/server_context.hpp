@@ -214,7 +214,7 @@ struct server_context_t
   cvars::cvar_state_t last_broadcast_cvars;
 
 
-  network::Udp_Socket             socket;
+  network::Udp_Socket socket;
   network::Server_Transport_Layer transport_layer;
 
   uint32_t tick_number = 1;

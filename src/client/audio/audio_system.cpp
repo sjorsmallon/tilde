@@ -10,13 +10,16 @@
 #include <algorithm>
 #include <optional>
 
+//@TODO(SMIA): in all honesty, the asset system should not live here.
+// just hand the spans over (and a mapping name?)
+
 namespace client
 {
 
-// Distance attenuation tuning. The world is in Quake/Source-style units
-// (gravity 800, jumpspeed 270 ≈ 1 unit per inch), so a "room" spans hundreds
-// of units. miniaudio's defaults (minDistance=1, rolloff=1) assume ~meter-scale
-// and make everything past a few units silent - we need an adjustment.
+// distance attenuation tuning: te world is in Quake/Source-style units
+// += 1 unit per inch)
+// miniaudio's defaults (minDistance=1, rolloff=1) assume ~meter-scale
+// means we need to make an adjustment.
 
 // Inverse model (miniaudio default): gain = ref / (ref + rolloff*(d - ref)),
 // with d clamped to [ref, max]. So volume is full within sound_reference_distance and
@@ -45,7 +48,6 @@ struct voices_t
   return (uint32_t)std::countr_zero(voices.free_slots);
 }
 
-// Claimed only once the ma_sound is inited, so live implies inited.
 static void make_voice_live(voices_t& voices, uint32_t index)
 {
   voices.free_slots &= ~(1u << index);
@@ -66,9 +68,7 @@ struct audio_impl_t
 {
   ma_engine engine{};
   voices_t voices;
-
-  // One bit per id rather than a set of paths: the id space is closed, so
-  // "complain once" is an array index.
+  // just so we don't spam the log.
   Enum_Array<assets::sound_asset, bool> play_failure_reported;
 };
 
@@ -80,44 +80,30 @@ static const char* registered_path_for(assets::sound_asset sound)
   return assets::get(assets::get_sound(sound))->registered_path.c_str();
 }
 
-// Hand every enumerated sound's ENCODED bytes to miniaudio's resource manager
-// under its manifest path, once, at init. After this,
-// ma_sound_init_from_file(path) is served from memory and never touches the
-// filesystem -- which is the whole point, and why neither the call sites nor
-// the voice pool had to move.
-//
-// register_encoded_data DOES NOT COPY, so the bytes must outlive the engine.
-// assets::read_asset_bytes guarantees exactly that (see asset_source_t).
-//
-// There is no asset_exists probe here any more, and that is step 5 of
-// asset_pipeline_def.md landing: a sound is a manifest id, so there is no name
-// to misspell and no file that can be absent -- read_asset_bytes is fatal on a
-// broken install rather than a branch every caller writes.
 static void register_every_sound(audio_impl_t* impl)
 {
   ma_resource_manager* resource_manager = ma_engine_get_resource_manager(&impl->engine);
 
-  // Id 0 is Missing, which has no file: it is the declared absence of a sound,
-  // not a sound.
+  // skip 0 because it is a sentinel for "no sound".
   for (uint32_t which = 1; which < assets::sound_asset_COUNT; ++which)
   {
-    const char*               path  = registered_path_for((assets::sound_asset)which);
+    const char* path = registered_path_for((assets::sound_asset)which);
     const Span<const uint8_t> bytes = assets::read_asset_bytes(path);
 
     const ma_result result = ma_resource_manager_register_encoded_data(
         resource_manager, path, bytes.data, bytes.size());
     if (result != MA_SUCCESS)
     {
-      log_error("audio_system_t: could not register '{}' with the resource manager "
+      log_error("Audio_System: could not register '{}' with the resource manager "
                 "(ma_result {})",
                 path, static_cast<int>(result));
     }
   }
 }
 
-audio_system_t::~audio_system_t() { shutdown(); }
+Audio_System::~Audio_System() { shutdown(); }
 
-bool audio_system_t::init()
+bool Audio_System::init()
 {
   if (impl)
   {
@@ -131,7 +117,7 @@ bool audio_system_t::init()
   ma_result result = ma_engine_init(&config, &implementation->engine);
   if (result != MA_SUCCESS)
   {
-    log_error("audio_system_t: ma_engine_init failed (ma_result {}) — audio disabled",
+    log_error("Audio_System: ma_engine_init failed (ma_result {}) — audio disabled",
               static_cast<int>(result));
     delete implementation;
     return false;
@@ -148,12 +134,12 @@ bool audio_system_t::init()
   const char *device_name =
       (device && device->playback.name[0] != '\0') ? device->playback.name
                                                     : "<unknown>";
-  log_terminal("audio_system_t: miniaudio engine initialized — device '{}' ({} Hz)",
+  log_terminal("Audio_System: miniaudio engine initialized — device '{}' ({} Hz)",
                device_name, ma_engine_get_sample_rate(&impl->engine));
   return true;
 }
 
-void audio_system_t::shutdown()
+void Audio_System::shutdown()
 {
   if (!impl)
     return;
@@ -170,7 +156,7 @@ void audio_system_t::shutdown()
   impl = nullptr;
 }
 
-void audio_system_t::update(const linalg::vec3f& listener_position,
+void Audio_System::update(const linalg::vec3f& listener_position,
                             const linalg::vec3f& listener_forward,
                             const linalg::vec3f& listener_up,
                             const sound_attenuation_t &rhs_attenuation)
@@ -213,7 +199,7 @@ void audio_system_t::update(const linalg::vec3f& listener_position,
     if (reported != nullptr && !*reported)
     {
       *reported = true;
-      log_error("audio_system_t: '{}' has no file behind it — nothing to play",
+      log_error("Audio_System: '{}' has no file behind it — nothing to play",
                 assets::to_string(sound));
     }
     return std::nullopt;
@@ -222,7 +208,7 @@ void audio_system_t::update(const linalg::vec3f& listener_position,
   const std::optional<uint32_t> slot = try_find_free_voice(impl->voices);
   if (!slot)
   {
-    log_warning("audio_system_t: all {} voices are busy — dropping '{}'",
+    log_warning("Audio_System: all {} voices are busy — dropping '{}'",
                 MAX_VOICE_COUNT, path);
     return std::nullopt;
   }
@@ -235,7 +221,7 @@ void audio_system_t::update(const linalg::vec3f& listener_position,
     if (reported != nullptr && !*reported)
     {
       *reported = true;
-      log_error("audio_system_t: failed to load sound '{}' (ma_result {})", path,
+      log_error("Audio_System: failed to load sound '{}' (ma_result {})", path,
                 static_cast<int>(result));
     }
     return std::nullopt;
@@ -265,19 +251,19 @@ static void start_3d_voice(audio_impl_t* impl, const sound_attenuation_t& attenu
   ma_sound_start(voice);
 }
 
-void audio_system_t::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
+void Audio_System::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
                              float volume)
 {
   start_3d_voice(impl, attenuation, sound, position, attenuation.max_distance_cutoff, volume);
 }
 
-void audio_system_t::play_3d_within(assets::sound_asset sound, const linalg::vec3f& position,
+void Audio_System::play_3d_within(assets::sound_asset sound, const linalg::vec3f& position,
                                     float max_distance, float volume)
 {
   start_3d_voice(impl, attenuation, sound, position, max_distance, volume);
 }
 
-void audio_system_t::play_2d(assets::sound_asset sound, float volume)
+void Audio_System::play_2d(assets::sound_asset sound, float volume)
 {
   if (!impl)
     return;

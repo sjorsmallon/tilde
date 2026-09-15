@@ -85,7 +85,7 @@ static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 //
 // split_cvar_line is the one split the file writer, the file reader and the Map
 // Cvars panel all go through, so this cannot disagree with any of them about
-// where the name ends. Last line wins, matching apply_map_cvars: the map's list
+// where the name ends. Last line wins, matching apply_map_cvars_that_were_supplied_from_the_editor: the map's list
 // is executed in order, so a repeated name ends on its final value.
 static std::string skybox_name_of(const shared::map_t &map)
 {

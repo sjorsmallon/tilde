@@ -14,13 +14,13 @@ struct sound_attenuation_t
   float rolloff_factor      = 1.0f;
 };
 
-struct audio_system_t
+struct Audio_System
 {
-  audio_system_t() = default;
-  ~audio_system_t();
+  Audio_System() = default;
+  ~Audio_System();
 
-  audio_system_t(const audio_system_t &) = delete;
-  audio_system_t &operator=(const audio_system_t &) = delete;
+  Audio_System(const Audio_System &) = delete;
+  Audio_System &operator=(const Audio_System &) = delete;
 
   bool init();
   void shutdown();

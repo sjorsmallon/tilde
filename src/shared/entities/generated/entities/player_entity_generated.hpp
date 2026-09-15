@@ -24,7 +24,7 @@ struct Player_Entity : Entity
   float view_angle_yaw = {};
   float view_angle_pitch = {};
   float body_yaw = {};
-  Health health = {};
+  Health health = {.current_health = 100, .max_health = 100};
   uint32_t death_tick = {};
   uint32_t last_fire_tick = {};
   Weapon last_fire_weapon = Weapon::Knife;

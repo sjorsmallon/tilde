@@ -86,7 +86,7 @@ private:
   pass_builder_t scene;
 
   // The editor previews the OPEN MAP's sky, read straight out of its own cvars
-  // block -- apply_map_cvars runs on the server, and the editor has none, so
+  // block -- apply_map_cvars_that_were_supplied_from_the_editor runs on the server, and the editor has none, so
   // sv_skybox here would hold whatever the last session set rather than what
   // this map says. A READ, never an apply: nothing writes cvar state, so the
   // integrated server's values are untouched and there is no second applier to

@@ -259,7 +259,7 @@ void end_round(server_context_t &context,
               current_tick, tickrate_hz);
 }
 
-void apply_game_mode_cvar(server_context_t &context)
+void set_server_game_mode_from_cvar(server_context_t &context)
 {
   // A LATCH, not a parse. sv_gamemode is enum-typed, so a name this build does
   // not have was already refused by try_cvar_from_text -- at the console line or

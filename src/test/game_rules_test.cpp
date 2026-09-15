@@ -118,7 +118,7 @@ void stand_up(test_world_t& world, cvars::Game_Mode mode)
   // This order, because it is the map load's: reset_game_rules assigns
   // `rules = {}` and would undo the latch if it ran second.
   reset_game_rules(world.context, world.context.tick_number, tickrate);
-  apply_game_mode_cvar(world.context);
+  set_server_game_mode_from_cvar(world.context);
   check(world.context.world.rules.mode == mode, "sv_gamemode selects the mode");
 }
 

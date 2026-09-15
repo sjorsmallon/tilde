@@ -30,9 +30,6 @@ struct preview_model_t
   assets::pose_t sampled_pose;
   assets::posed_skeleton_t posed_skeleton;
   bool posed = false;
-
-  // Set pessimistically each attempt and cleared on success, so a run of
-  // failing frames logs once and the frame after a success logs again.
   bool failure_logged = false;
 };
 
@@ -46,7 +43,7 @@ struct pose_controls_t
 
 struct clip_playback_t
 {
-  // missing is used as a placeholder, I guess.
+  // missing is the placeholder.
   assets::animation_asset selected = assets::animation_asset::Missing;
   assets::asset_handle_t<assets::animation_asset_t> handle;
   float phase = 0.0f;
@@ -62,18 +59,17 @@ struct hitbox_workspace_t
   assets::hitbox_rig_t rig;
   // this is used as a base to actually create the hitbox rig from.
   std::vector<assets::guesstimated_hitbox_from_bone_t> guesstimated_hitboxes_from_bones;
-  std::vector<assets::posed_hitbox_t> posed_hitboxes; // refilled every frame from the live pose
+  // refilled every frame from the live pose
+  std::vector<assets::posed_hitbox_t> posed_hitboxes; 
 
   // coverage is a bind-pose property and is computed at load; excursion is
   // per-pose and is recomputed with the volumes.
-  assets::hitbox_coverage_t coverage;
-  assets::hull_excursion_t  excursion;
+  assets::hitbox_coverage_t coverage{};
+  assets::hull_excursion_t  excursion{};
 
   int selected_volume_index = NO_HITBOX_VOLUME_SELECTED;
 
-  // The rig is a cache of one skeleton's volumes, and this is the key it was
-  // filled for -- set even when the load finds nothing, so a skeleton with no
-  // rig file is not retried every frame.
+  // the skeleton the rig was built for, if any.
   const assets::skeleton_t* loaded_for_skeleton = nullptr;
 };
 
@@ -120,9 +116,7 @@ private:
   hitbox_workspace_t workspace;
   display_options_t display;
 
-  // Read once per frame in on_update rather than at each use, so the sliders,
-  // the blend readout and the pose the game would draw cannot be reading
-  // different cvars.
+  // used for pitch / yaw constraining and for computing the aim blend weights.
   aim_settings_t aim_settings;
 };
 

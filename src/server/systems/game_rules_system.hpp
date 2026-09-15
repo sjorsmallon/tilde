@@ -21,7 +21,7 @@ struct round_timing_t
 
 [[nodiscard]] const game_mode_settings_t &current_mode(const server_context_t &context);
 
-void apply_game_mode_cvar(server_context_t &context);
+void set_server_game_mode_from_cvar(server_context_t &context);
 
 void try_start_match_when_enough_players(server_context_t &context,
                                          uint32_t current_tick,

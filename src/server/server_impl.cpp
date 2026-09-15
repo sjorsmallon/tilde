@@ -26,6 +26,7 @@
 #include "../shared/weapons.hpp"
 #include "../shared/array.hpp"
 #include "../shared/network/subtick_codec.hpp"
+#include "../shared/network/packet.hpp"
 #include "../shared/subtick.hpp"
 #include "../shared/disabled_geometry.hpp"
 #include "../shared/movement_volumes.hpp"
@@ -58,43 +59,44 @@
 
 #include <fstream>
 
+namespace
+{
+
+// although it's not constrained, the packet_traits specialization trick here constrains the template.
+// @FIXME(SJM): this is a duplicate of a different thing that client
+  // also uses that we maybe need to unify.
+template <typename Type>
+inline void send_protobuf_message(server::server_context_t& context,const network::Address& sender, const Type &msg)
+{
+  auto buffer = std::vector<uint8_t>(msg.ByteSizeLong());
+  msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+
+  const std::vector<network::Packet> packets =
+      network::convert_to_packets(buffer, static_cast<uint8_t>(network::Packet_Traits<Type>::type), context.transport_layer.next_message_id);
+
+   for (const auto& packet : packets)
+   {
+      context.socket.send(packet, sender);
+   }
+}
+
+
+}
+
 namespace server
 {
 
 server_context_t g_server_context;
-
-static void send_message_to_reject_incoming_connection(server_context_t &context,
-                        const network::Address &sender, std::string_view reason,
-                        uint32_t server_schema_hash)
-{
-  game::S2C_Connection reply;
-  auto *reject = reply.mutable_reject();
-  reject->set_reason(std::string(reason));
-  reject->set_server_schema_hash(server_schema_hash);
-
-  std::vector<network::uint8> buffer(reply.ByteSizeLong());
-  reply.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-  auto packets = network::convert_to_packets(
-      buffer, static_cast<network::uint8>(network::Message_Type::S2C_Connection),
-      context.transport_layer.next_message_id);
-  // Straight to the socket rather than through send_packet_to_client: the
-  // recipient is being refused a slot, so there is no stream of theirs to ack
-  // and no index to stamp from.
-  for (const auto &p : packets)
-    context.socket.send(p, sender);
-}
-
-
 // little helper function to get a good location to spawn physics objects.
 static std::optional<vec3f>
 get_position_in_front_of(server_context_t &context, int32_t caller_slot)
 {
-  if (!is_valid_client_slot(caller_slot))
-    return std::nullopt;
+  if (!is_valid_client_slot(caller_slot)) return std::nullopt;
 
-  const entities::Player_Entity *player =
+  const entities::Player_Entity* player =
       context.world.session.entity_system.get<entities::Player_Entity>(
           context.clients[caller_slot].player_uid);
+
   if (!player) return std::nullopt;
 
   float yaw_rad   = linalg::to_radians(player->view_angle_yaw);
@@ -102,10 +104,26 @@ get_position_in_front_of(server_context_t &context, int32_t caller_slot)
   vec3f forward = {std::cos(yaw_rad) * std::cos(pitch_rad),
                    std::sin(pitch_rad),
                    std::sin(yaw_rad) * std::cos(pitch_rad)};
+
   constexpr float forward_offset = 80.f;
-  constexpr float eye_height     = 40.f;
+  constexpr float eye_height = 40.f;
   return player->position + vec3f{0, eye_height, 0} + forward * forward_offset;
 }
+
+static void send_message_to_reject_incoming_connection(
+  server_context_t &context,
+  const network::Address& sender,
+  std::string_view reason,
+  uint32_t server_schema_hash)
+{
+  game::S2C_Connection reply;
+  auto *reject = reply.mutable_reject();
+  reject->set_reason(std::string(reason));
+  reject->set_server_schema_hash(server_schema_hash);
+
+  ::send_protobuf_message(context, sender, reply);
+}
+
 
 
 static void return_client_to_spectate(server_context_t &context, int32_t slot)
@@ -150,49 +168,41 @@ void process_client_leave_message(server_context_t &context,
   disconnect_client(context, *sender_slot, "Left.");
 }
 
-
 static void drop_timed_out_clients(server_context_t &context)
 {
   const float timeout_seconds = context.cvars->sv_timeout;
-  if (timeout_seconds <= 0.0f)
-    return;
 
-  const uint32_t timeout_ticks = std::max(
+  // there's no timeout.
+  if (timeout_seconds <= 0.0f) return;
+
+  const uint32_t timeout_in_ticks = std::max(
       1u, static_cast<uint32_t>(timeout_seconds * context.cvars->sv_tickrate));
 
-  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
+  for (auto client_slot: context.transport_layer)
   {
-    if (!context.transport_layer.slot_occupied[slot])
-      continue;
+    if (!client_slot.occupied) continue;
 
     const uint32_t silent_ticks =
-        context.tick_number - context.transport_layer.latest_packet_tick[slot];
-    if (silent_ticks < timeout_ticks)
+        context.tick_number - client_slot.latest_packet_tick;
+    if (silent_ticks < timeout_in_ticks)
       continue;
 
     log_warning("Slot {} ({}) has been silent for {:.1f}s (sv_timeout {:.1f}s)",
-                slot, context.transport_layer.addresses[slot].to_string(),
+                client_slot.index, client_slot.address.to_string(),
                 static_cast<float>(silent_ticks) / context.cvars->sv_tickrate,
                 timeout_seconds);
-    disconnect_client(context, slot, "timed out.");
+    disconnect_client(context, client_slot.index, "timed out.");
   }
 }
 
-
-// The map's own settings (map_t::attached_cvars), run through the one console
-// dispatcher so a @Mirrored value replicates and a bad line reports itself.
-//
-// Applied BEFORE the session is built, so spawning reads the settings this map
-// asked for. Each cvar a line actually set is recorded on the world, which is
-// what lets unloading the map put it back -- see
-// reset_state_in_preparation_for_new_map_load. A line naming a COMMAND records
-// nothing: running one is not a value to restore.
-static void apply_map_cvars(server_context_t &context, const shared::map_t &map)
+// apply all the stored map cvars that are set in the editor.
+// this more or less just executes console lines.
+static void apply_map_cvars_that_were_supplied_from_the_editor(server_context_t &context, const shared::map_t &map)
 {
   for (const std::string &line : map.attached_cvars)
   {
     std::string reply;
-    const cvars::command_context_t command_context{};
+    const auto command_context = cvars::command_context_t{};
     const cvars::console_result_t result = cvars::execute_console_line(
         *context.cvars, *context.commands, line, command_context, &reply);
 
@@ -214,43 +224,37 @@ static void apply_map_cvars(server_context_t &context, const shared::map_t &map)
 static bool load_map_file_into_context(server_context_t &context,
                                 const std::string &map_path)
 {
-  // Loaded and checked BEFORE the wipe, so a refusal keeps the map that is
-  // running. The wipe used to come first, and "the map currently loaded stays"
-  // then named an empty session with no spawn markers, which the editor's play
-  // button dropped you into at the origin.
-  std::optional<shared::map_t> loaded;
+  auto loaded_map = std::optional<shared::map_t>{};
+
   if (map_path.empty())
-    log_terminal("load_map_file_into_context: empty path, leaving session empty.");
+    log_terminal("empty map path. leaving session empty.");
   else
   {
     log_terminal("Loading map '{}'...", map_path);
-    loaded = shared::try_load_map(map_path);
-    if (!loaded)
+    loaded_map = shared::try_load_map(map_path);
+    if (!loaded_map)
       log_error("Failed to load map '{}'. The map currently loaded stays.", map_path);
   }
 
-  // The wiring: this is the server's half of the one-check-two-policies split.
-  // build_session drops a bad row and carries on, which is what an editor
-  // needs; a server running a level whose wiring is half there is a level that
-  // plays wrong with nothing on screen to say so, so it refuses the map.
-  if (loaded)
+  // check if all the connections specified in the map are valid.
+  // @FIXME(SJM): why do this at map load and not at save? because we can save
+  // starved prefabs?
+  if (loaded_map)
   {
     const std::vector<shared::connection_refusal_t> refusals =
-        shared::validate_map_connections(*loaded);
+        shared::validate_map_connections(*loaded_map);
     if (!refusals.empty())
     {
       for (const shared::connection_refusal_t& refusal : refusals)
         log_error("Map '{}' connection {}: {}", map_path, refusal.index, refusal.reason);
-      log_error("Refusing map '{}': {} ill-typed connection(s). The map currently loaded stays.",
+      log_error("Refusing map '{}': {} ill-typed connection(s).\n The map currently loaded stays.",
                 map_path, refusals.size());
-      loaded.reset();
+      loaded_map.reset();
     }
   }
 
-  if (!loaded)
+  if (!loaded_map)
   {
-    // Boot has nothing to keep, and its empty session still needs its rules
-    // and a physics state to tick against. A switch keeps what it has.
     if (!context.world.physics)
     {
       reset_state_in_preparation_for_new_map_load(context);
@@ -264,49 +268,44 @@ static bool load_map_file_into_context(server_context_t &context,
 
   world_t& world = context.world;
 
-  world.current_map         = std::move(*loaded);
+  // steal the map from this function temporary.
+  world.current_map = std::move(*loaded_map);
   shared::map_t& server_map = world.current_map;
 
-  apply_map_cvars(context, server_map);
-
-  // AFTER the map's cvars, because sv_gamemode is one of the things a map is
-  // allowed to set. reset_game_rules has already put us in Warmup by this
-  // point, which is safe: Warmup's duration is mode-independent and it sits
-  // outside every mode's phase cycle, so nothing mode-dependent has happened
-  // yet. The first cycle transition reads the mode resolved here.
-  apply_game_mode_cvar(context);
+  apply_map_cvars_that_were_supplied_from_the_editor(context, server_map);
+  set_server_game_mode_from_cvar(context);
 
   world.session = shared::build_session(server_map);
   world.current_map_path  = map_path;
   world.map_content_hash = shared::compute_map_content_hash(server_map);
 
   shared::populate_static_physics_bodies(*world.physics, server_map);
+  
 
-  Span<entities::Player_Spawn_Entity> spawn_pool =
-      world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
-
+  // spawn players.
   int human_spawn_count = 0;
   int bot_spawn_count = 0;
-  for (const entities::Player_Spawn_Entity &sp : spawn_pool)
   {
-    if (sp.spawn_type == entities::Spawn_Type::Bot)
-    {
-      world.bots.push_back(spawn_bot(world.session, *world.physics, sp,
-                                     world.next_bot_slot++, bot_behavior_t::Regular));
-      ++bot_spawn_count;
-    }
-    else
-      ++human_spawn_count;
-  }
+    Span<entities::Player_Spawn_Entity> spawn_pool =
+        world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
 
-  // The authored health is in the map file; the runtime health is not, so a
-  // freshly loaded level needs it seeded. Same function the round boundary
-  // calls, because "a fresh level" and "a fresh round" mean the same thing to a
-  // crate.
-  seed_damageable_health(context.world.session);
+    for (const entities::Player_Spawn_Entity& player_spawn : spawn_pool)
+    {
+      if (player_spawn.spawn_type == entities::Spawn_Type::Bot)
+      {
+        world.bots.push_back(spawn_bot(world.session, *world.physics, player_spawn,
+                                       world.next_bot_slot, bot_behavior_t::Regular));
+        world.next_bot_slot += 1;
+        bot_spawn_count += 1;
+      }
+      else
+        human_spawn_count += 1;
+    }
+  }
 
   log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
                world.session.map_name, human_spawn_count, bot_spawn_count);
+
   return true;
 }
 
@@ -629,10 +628,11 @@ static target_shape_t target_shape_of(entities::entity_type type,
 }
 
 // Write one target's volumes into `slice`, and its pose if it has one.
-static void build_target_volumes(const entities::Entity &entity, const shared::player_rig_t &rig,
-                                 const aim_settings_t &settings,
-                                 Span<assets::posed_hitbox_t> slice,
-                                 std::vector<shared::player_pose_t> &poses)
+static void build_target_volumes(const entities::Entity &entity,
+  const shared::player_rig_t &rig,
+  const aim_settings_t &settings, 
+  Span<assets::posed_hitbox_t> slice, 
+  std::vector<shared::player_pose_t> &poses)
 {
   if (const entities::Player_Entity *player = entities::entity_as<entities::Player_Entity>(&entity))
   {
@@ -957,28 +957,11 @@ static void send_shot_debug(server_context_t &context, int32_t client_slot,
   else
     message.set_nearest_miss_distance(
         distance_to_nearest_target(eye, direction, targets, shooter_uid));
-
-  std::vector<network::uint8> buffer(message.ByteSizeLong());
-  message.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-  constexpr network::uint8 message_type =
-      static_cast<network::uint8>(network::Message_Type::S2C_ShotDebug);
-  const auto packets =
-      network::convert_to_packets(buffer, message_type, context.transport_layer.next_message_id);
-  for (const auto &packet : packets)
-    network::send_packet_to_client(context.transport_layer, context.socket,
-                                   client_slot, packet);
+  
+  const auto &client_address = context.transport_layer.addresses[client_slot];
+  ::send_protobuf_message(context, client_address, message);
 }
-
-// The three things a reload is, in one place so the step loop below reads as
-// intent rather than as bookkeeping.
-//
-// A reload is the one player action that OUTLIVES the input that started it: it
-// spans ~120 ticks, and the input for tick N carries nothing about a press at
-// tick N-120. So it is retained state -- but what is retained is the DEADLINE,
-// settled from the weapon in hand at the moment the press arrived, rather than
-// a start stamp the server would re-interpret every tick against whatever
-// weapon is held by then. See Player_Entity::reload_complete_time.
-static bool is_reloading(const entities::Player_Entity &player)
+static bool is_reloading(const entities::Player_Entity& player)
 {
   return player.reload_complete_time != 0;
 }

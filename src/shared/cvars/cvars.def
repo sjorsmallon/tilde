@@ -410,7 +410,7 @@ Time :: cvars {
 }
 
 // ---------------------------------------------------------------------------
-// Audio -- was audio_system_t.cpp (file-scope statics, so console-visible only in
+// Audio -- was Audio_System.cpp (file-scope statics, so console-visible only in
 // whichever module happened to link them)
 // ---------------------------------------------------------------------------
 //
@@ -466,7 +466,7 @@ Debugging :: cvars {
     // f32/i32/u32/bool/string/enum.)
     //
     // @Mirrored rather than @Client because a MAP is what picks a sky, and
-    // apply_map_cvars runs on the SERVER: a @Client cvar could never be set by
+    // apply_map_cvars_that_were_supplied_from_the_editor runs on the SERVER: a @Client cvar could never be set by
     // a map's cvars block at all. Mirrored, the server applies the map's line
     // and the existing memcmp broadcast replicates it to every client -- no new
     // message, and a late joiner gets it too.

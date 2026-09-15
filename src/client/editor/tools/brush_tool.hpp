@@ -15,7 +15,8 @@
 // points and vertices. points are points that occupy 3d space. nothing else.
 // vertices belong to a render mesh. they contain a normal, and whatever else.
 // it can be that a single point has multiple vertices because it is part of 
-// a set of faces, like the corner of a cube.
+// a set of faces, like the corner of a cube, where each vertex has a different 
+// normal because it is part of a different face.
 
 namespace client
 {
@@ -55,15 +56,15 @@ private:
   struct selection_t
   {
     shared::entity_uid_t uid = shared::invalid_entity_uid;
-    std::optional<linalg::vec3> face_normal;
-    std::vector<linalg::vec3> points;
+    std::optional<linalg::vec3> face_normal{};
+    std::vector<linalg::vec3> points{};
   };
 
   struct selection_geometry_t
   {
-    std::optional<shared::brush_polyhedron_t> hull;
     int face_idx = INVALID_FACE;
-    std::vector<linalg::vec3> vertex_handles;
+    std::optional<shared::brush_polyhedron_t> hull{};
+    std::vector<linalg::vec3> vertex_handles{};
 
     // A SUBDIVIDED face's handles are its grid vertices rather than its corners
     // and grid-line points, and they move a different thing: an offset on the
@@ -104,17 +105,17 @@ private:
     linalg::vec2 end{0, 0};
     bool adds_to_point_selection = false; // ctrl at arm time; releasing it mid-drag still adds
     shared::entity_uid_t        press_uid = shared::invalid_entity_uid;
-    std::optional<linalg::vec3> press_face_normal;
+    std::optional<linalg::vec3> press_face_normal{};
   };
 
   struct drag_t
   {
     Drag kind = Drag::None;
-    axis_drag_t axis; // Face, Vertices, Extrusion_Depth
-    band_t band;      // Band_Armed, Band_Sizing
+    axis_drag_t axis{}; // Face, Vertices, Extrusion_Depth
+    band_t band{};      // Band_Armed, Band_Sizing
 
-    std::optional<shared::geometry_value_t> geometry_at_the_start_of_drag;
-    std::vector<linalg::vec3> vertex_start_points; // Vertices
+    std::optional<shared::geometry_value_t> geometry_at_the_start_of_drag{};
+    std::vector<linalg::vec3> vertex_start_points{}; // Vertices
   };
 
   struct extrusion_t
