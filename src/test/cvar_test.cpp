@@ -203,6 +203,10 @@ void ent_fire(uint32_t, std::string_view, std::string_view, const command_contex
 void restart_round(const command_context_t&) {}
 void end_match(const command_context_t&) {}
 void ready(const command_context_t&) {}
+void sv_replay_record(std::string_view, const command_context_t&) {}
+void sv_replay_stop(const command_context_t&) {}
+void replay_record(std::string_view, const command_context_t&) {}
+void replay_stop(const command_context_t&) {}
 
 } // namespace cvars::commands
 

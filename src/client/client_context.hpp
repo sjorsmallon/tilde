@@ -9,7 +9,9 @@
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
+#include "../shared/map.hpp"
 #include "../shared/physics.hpp"
+#include "../shared/replay_recorder.hpp"
 #include "../shared/player_move.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "../shared/subtick.hpp"
@@ -145,6 +147,9 @@ struct explosion_effect_t
 struct local_world_t
 {
   shared::game_session_t session;
+
+  // The map the session was built from, kept for the replay recorder to embed.
+  shared::map_t map;
 
   // FNV-1a hash of the map the client loaded, via compute_map_content_hash().
   // Verified against the server's CmdAccept.content_hash to detect a
@@ -488,6 +493,10 @@ struct client_context_t
   //
   // Not in the connection group: it is set BEFORE on_enter, which resets that.
   bool requested_match_join = false;
+
+  // What THIS client receives, one file per map per connection. Outside the
+  // groups: both resets FINISH it rather than wipe it, so the index is written.
+  shared::replay_recorder_t replay_recorder;
 
   // --- Reset-scoped state ---
   local_world_t    world;

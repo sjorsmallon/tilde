@@ -231,6 +231,18 @@ static void apply_map_cvars_that_were_supplied_from_the_editor(server_context_t 
   }
 }
 
+static std::optional<std::string> start_server_replay_recording(server_context_t& context,
+                                                                const std::string& name)
+{
+  world_t& world = context.world;
+  std::optional<std::string> path = shared::try_start_replay_recording_of_map(
+      world.replay_recorder, world.current_map, world.session.map_name,
+      static_cast<uint32_t>(context.cvars->sv_tickrate), context.cvars->replay_keyframe_seconds, name);
+  if (path)
+    log_terminal("replay: recording '{}' to '{}'", world.session.map_name, *path);
+  return path;
+}
+
 static bool load_map_file_into_context(server_context_t &context,
                                 const std::string &map_path)
 {
@@ -324,6 +336,9 @@ static bool load_map_file_into_context(server_context_t &context,
 
   log_terminal("Loaded map='{}', {} human spawns, {} bot spawns",
                world.session.map_name, human_spawn_count, bot_spawn_count);
+
+  if (context.cvars->sv_replay_auto)
+    start_server_replay_recording(context, "");
 
   return true;
 }
@@ -1854,6 +1869,7 @@ bool Tick()
   }
 
   // send the effects in a batch.
+  std::vector<network::uint8> effect_batch_bytes;
   if (!context.outgoing.effects.empty())
   {
     //@NOTE(SJM): why is this finish necessary?
@@ -1869,11 +1885,15 @@ bool Tick()
       if (!row.client.map_ready) continue;
       ::send_protobuf_message(context, row.transport.address, batch);
     }
+
+    effect_batch_bytes.resize(batch.ByteSizeLong());
+    batch.SerializeToArray(effect_batch_bytes.data(), static_cast<int>(effect_batch_bytes.size()));
   }
 
   // send gameplay events in a batch. note that this is _reliable_ transfer
   // because events cause gameplay state to change. cosmetic events nobody 
-  // cares about. and entity updates send a full sync every N.
+  // cares about. entity updates need neither: each is a delta against a tick the client says it holds.
+  std::vector<network::uint8> event_batch_bytes;
   if (!context.outgoing.events.empty())
   {
   
@@ -1884,16 +1904,20 @@ bool Tick()
                          context.outgoing.events.writer.buffer.size());
     batch.set_server_tick(context.tick_number);
 
-    std::vector<network::uint8> batch_buffer(batch.ByteSizeLong());
-    batch.SerializeToArray(batch_buffer.data(),
-                           static_cast<int>(batch_buffer.size()));
+    event_batch_bytes.resize(batch.ByteSizeLong());
+    batch.SerializeToArray(event_batch_bytes.data(),
+                           static_cast<int>(event_batch_bytes.size()));
 
     for (connected_client_t row : connected_clients(context))
       network::queue_reliable_message(
           row.transport.reliable_stream,
           static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
-          batch_buffer);
+          event_batch_bytes);
   }
+
+  shared::record_replay_tick(context.world.replay_recorder, frame,
+                             Span<const uint8_t>(effect_batch_bytes),
+                             Span<const uint8_t>(event_batch_bytes), *context.cvars);
 
   // in theory redundant but just so we don't have stale shit to send.
   clear_outgoing(context);
@@ -2134,6 +2158,28 @@ void map(std::string_view requested_name, const command_context_t &)
   g_server_context.pending_map_change = *map_path;
 }
 
+
+void sv_replay_record(std::string_view name, const command_context_t &)
+{
+  using namespace server;
+  if (g_server_context.world.current_map_path.empty())
+  {
+    log_error("sv_replay_record: no map is running, so there is nothing to record");
+    return;
+  }
+  (void)start_server_replay_recording(g_server_context, std::string(name));
+}
+
+void sv_replay_stop(const command_context_t &)
+{
+  using namespace server;
+  if (!g_server_context.world.replay_recorder.active)
+  {
+    log_terminal("sv_replay_stop: not recording");
+    return;
+  }
+  shared::finish_replay_recording(g_server_context.world.replay_recorder);
+}
 
 void sv_mem_report(int32_t top, const command_context_t &)
 {

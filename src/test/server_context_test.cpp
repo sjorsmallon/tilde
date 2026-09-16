@@ -15,6 +15,8 @@
 
 #include <cassert>
 #include <cstdio>
+#include <filesystem>
+#include <string>
 
 using namespace server;
 
@@ -322,6 +324,52 @@ void test_clear_tick_groups()
   printf("  clear_incoming / clear_outgoing: ok\n");
 }
 
+// --- 4. A map load finishes the replay ---------------------------------------
+
+// One file is one map load. The index is written by the finish, so a reset that
+// dropped the recorder with the world would leave a file with no index and an
+// open handle.
+void test_map_load_finishes_the_replay()
+{
+  const std::string directory = "cmake_build/server_context_test_fixtures";
+  const std::string path      = directory + "/map_load.replay";
+  std::filesystem::create_directories(directory);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  context.cvars = &cvar_state;
+
+  shared::replay_header_t header;
+  header.schema_hash = entities::SCHEMA_HASH;
+  header.tickrate_hz = 60;
+  header.map_name    = "old_map";
+  const uint8_t package[] = {1, 2, 3};
+  assert(shared::try_start_replay_recording(context.world.replay_recorder, path, header,
+                                            Span<const uint8_t>(package), 120));
+
+  network::snapshot_frame_t frame;
+  frame.tick = 900;
+  frame.entities.spawn<entities::Game_Rules_Entity>();
+  shared::record_replay_tick(context.world.replay_recorder, frame, {}, {}, cvar_state);
+  frame.tick = 901;
+  shared::record_replay_tick(context.world.replay_recorder, frame, {}, {}, cvar_state);
+
+  reset_state_in_preparation_for_new_map_load(context);
+
+  assert(!context.world.replay_recorder.active);
+
+  std::string reason;
+  std::optional<shared::replay_t> replay =
+      shared::try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+  assert(replay.has_value());
+  assert(!replay->index_was_rebuilt);
+  assert(replay->index.first_tick == 900);
+  assert(replay->index.last_tick == 901);
+  assert(replay->index.keyframes.size() == 1);
+
+  std::filesystem::remove(path);
+}
+
 } // namespace
 
 int main()
@@ -330,6 +378,7 @@ int main()
   test_reset_state_in_preparation_for_new_map_load();
   test_reset_client_slot();
   test_clear_tick_groups();
+  test_map_load_finishes_the_replay();
   printf("server_context_test: all passed\n");
   return 0;
 }

@@ -15,6 +15,7 @@
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/network/udp_socket.hpp"
 #include "../shared/physics.hpp"
+#include "../shared/replay_recorder.hpp"
 #include "bot_state.hpp"
 #include "damage_types.hpp"
 #include "entity_io_queue.hpp"
@@ -170,6 +171,9 @@ struct world_t
   // the named few a map claimed -- see
   // reset_state_in_preparation_for_new_map_load.
   std::vector<cvars::cvar_id> cvars_applied_by_map;
+
+  // One file is one map load: finished BEFORE the wipe, so the index is written.
+  shared::replay_recorder_t replay_recorder;
 };
 
 

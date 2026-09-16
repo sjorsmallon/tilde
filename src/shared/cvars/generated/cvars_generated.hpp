@@ -198,6 +198,8 @@ struct cvar_state_t
   bool cl_event_debug = false;
   bool sv_reliable_debug = false;
   bool sv_io_debug = false;
+  float replay_keyframe_seconds = 2.0f;
+  bool sv_replay_auto = false;
 };
 
 // Load-bearing for mirroring: change detection is a member compare
@@ -318,11 +320,13 @@ enum class cvar_id : uint16_t
   cl_event_debug = 105,
   sv_reliable_debug = 106,
   sv_io_debug = 107,
+  replay_keyframe_seconds = 108,
+  sv_replay_auto = 109,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 108;
+constexpr uint32_t CVAR_COUNT = 110;
 
 enum class command_id : uint16_t
 {
@@ -340,19 +344,23 @@ enum class command_id : uint16_t
   restart_round = 11,
   end_match = 12,
   ready = 13,
-  bind = 14,
-  connect = 15,
-  announce = 16,
-  noclip = 17,
-  mem_report = 18,
-  mem_frame = 19,
-  mem_stacks = 20,
-  frame_report = 21,
-  frame_reset = 22,
-  hitch_report = 23,
+  sv_replay_record = 14,
+  sv_replay_stop = 15,
+  bind = 16,
+  connect = 17,
+  announce = 18,
+  noclip = 19,
+  mem_report = 20,
+  mem_frame = 21,
+  mem_stacks = 22,
+  frame_report = 23,
+  frame_reset = 24,
+  hitch_report = 25,
+  replay_record = 26,
+  replay_stop = 27,
 };
 
-constexpr uint32_t COMMAND_COUNT = 24;
+constexpr uint32_t COMMAND_COUNT = 28;
 
 enum cvar_type : uint8_t
 {
@@ -477,6 +485,12 @@ void end_match(const command_context_t& context);
 // @Server  Toggle your ready vote during warmup
 // usage: ready
 void ready(const command_context_t& context);
+// @Server  Record the running map to replays/<name>.replay
+// usage: sv_replay_record [name]
+void sv_replay_record(std::string_view name, const command_context_t& context);
+// @Server  Finish the server's replay recording
+// usage: sv_replay_stop
+void sv_replay_stop(const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
@@ -507,6 +521,12 @@ void frame_reset(const command_context_t& context);
 // @Client  What the worst frame allocated, by call site
 // usage: hitch_report [top]
 void hitch_report(int32_t top, const command_context_t& context);
+// @Client  Record what this client receives to replays/<name>.replay
+// usage: replay_record [name]
+void replay_record(std::string_view name, const command_context_t& context);
+// @Client  Finish this client's replay recording
+// usage: replay_stop
+void replay_stop(const command_context_t& context);
 } // namespace commands
 
 // The runtime dispatch surface. Each slot holds the command's generated

@@ -446,6 +446,10 @@ add_library(game_shared STATIC
     # A map's completed runs, one appended line each (run_times.hpp).
     src/shared/run_times.hpp
     src/shared/run_times.cpp
+    src/shared/replay_file.hpp
+    src/shared/replay_file.cpp
+    src/shared/replay_recorder.hpp
+    src/shared/replay_recorder.cpp
     src/shared/map_group.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
@@ -1119,6 +1123,11 @@ add_executable(run_times_test src/test/run_times_test.cpp)
 target_include_directories(run_times_test PRIVATE src src/shared)
 target_link_libraries(run_times_test PRIVATE game_shared)
 
+# The .replay container and the recorder's previous-frame deltas (replay_def.md §8 steps 1-2).
+add_executable(replay_test src/test/replay_test.cpp)
+target_include_directories(replay_test PRIVATE src src/shared)
+target_link_libraries(replay_test PRIVATE game_shared)
+
 # 23. Model format test — the .skeleton / .mesh readers against the REAL
 # exporter output in resources/models, plus malformed fixtures. This is where
 # blender_export.py's promises (parent-before-child, name hash, normalized
@@ -1376,6 +1385,7 @@ set(GAME_TESTS
     server_context_test
     game_rules_test
     run_times_test
+    replay_test
     match_announcement_test
     entity_io_test
     inventory_test

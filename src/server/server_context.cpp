@@ -35,6 +35,7 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
   // init. The map load calls make_physics_state() on the next line; keeping the
   // construction there is also what lets server_context_test assert the whole
   // reset without standing Jolt up.
+  shared::finish_replay_recording(context.world.replay_recorder);
   context.world = {};
   context.replication = {};
   clear_incoming(context);

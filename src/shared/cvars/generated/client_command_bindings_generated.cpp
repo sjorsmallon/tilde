@@ -261,6 +261,40 @@ bool invoke_hitch_report(Span<std::string_view> args, const command_context_t& c
   return true;
 }
 
+// replay_record [name]
+bool invoke_replay_record(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() > 1u)
+  {
+    usage_error(out_reply, command_id::replay_record, args.size());
+    return false;
+  }
+
+  std::string_view name = "";
+  if (args.size() > 0u)
+  {
+    name = args[0];
+  }
+
+  commands::replay_record(name, context);
+  return true;
+}
+
+// replay_stop
+bool invoke_replay_stop(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::replay_stop, args.size());
+    return false;
+  }
+
+  commands::replay_stop(context);
+  return true;
+}
+
 } // namespace
 
 void bind_client_commands(command_table_t& table)
@@ -275,6 +309,8 @@ void bind_client_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::frame_report] = &invoke_frame_report;
   table.binders[(uint32_t)command_id::frame_reset] = &invoke_frame_reset;
   table.binders[(uint32_t)command_id::hitch_report] = &invoke_hitch_report;
+  table.binders[(uint32_t)command_id::replay_record] = &invoke_replay_record;
+  table.binders[(uint32_t)command_id::replay_stop] = &invoke_replay_stop;
 }
 
 } // namespace cvars

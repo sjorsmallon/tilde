@@ -12,6 +12,7 @@ namespace client
 
 void reset_for_new_connection(client_context_t& context)
 {
+  shared::finish_replay_recording(context.replay_recorder);
   context.connection  = {};
   context.prediction  = {};
   context.replication = {};
@@ -32,6 +33,7 @@ void reset_for_new_connection(client_context_t& context)
 
 void reset_state_in_preparation_for_new_map_load(client_context_t& context)
 {
+  shared::finish_replay_recording(context.replay_recorder);
   context.replication = {};
   context.visuals     = {};
 }

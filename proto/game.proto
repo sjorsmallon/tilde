@@ -141,8 +141,8 @@ message C2S_ClientInput {
   // retransmit that existed for no other reason. A value that is continuously
   // true has nothing to lose: it self-corrects on the next input, one tick
   // later, with no retransmit anywhere. State that gates behavior is replicated
-  // as state, never delivered as an event -- the same rule that put round_phase
-  // on S2C_EntityPackage, applied in the other direction.
+  // as state, never delivered as an event -- the same rule that replicates the
+  // match phase, applied in the other direction.
   //
   // 0 means "no map", which never matches a loaded server map. A client that is
   // still downloading sends no input at all (prediction only runs Connected), so
@@ -186,34 +186,8 @@ message S2C_EntityPackage {
   // (network/entity_snapshot.hpp) so neither open-codes that.
   optional uint32 delta_from_tick = 7;
 
-  // THE MATCH-LEVEL STATE, replicated as STATE rather than delivered as an
-  // event, and the distinction is load-bearing.
-  //
-  // The client PREDICTS against the phase (shared/round_phase_rules.hpp): the
-  // Countdown freeze suppresses movement, so a client that does not know it is
-  // frozen predicts seconds of walking the server discards. A phase that
-  // arrived only as a reliable event would be a round trip behind the
-  // snapshots describing the world it governs -- the two channels are on
-  // different clocks, and a snapshot never waits.
-  //
-  // So the phase is IN the snapshot, which is what makes the skew
-  // unrepresentable rather than merely small: the gate reads state that
-  // self-heals every tick, and Round_Phase_Changed goes back to being purely
-  // the banner occurrence it should always have been. Same rule as
-  // held_snapshot_tick in the other direction -- state that gates behavior is
-  // replicated as state, never delivered as an event.
-  //
-  // Not an entity, so not in entity_data: this is per-tick SERVER state, and
-  // the client's session is reconstructed from entities alone.
-  //
-  // phase is shared::Round_Phase, whose enum lives in events.def because the
-  // banner event carries it too. A value the client's build does not know is
-  // out of range and the client keeps the phase it had -- SCHEMA_HASH already
-  // refuses a build that could disagree, so this is belt and braces.
-  optional uint32 round_phase = 8;
-  optional uint32 phase_end_tick = 9; // server tick; 0 = ends on a win condition
-  optional uint32 round_number = 10; // 1-based; 0 before the first round
-  optional uint32 phase_start_tick = 11; // server tick the current phase was entered on
+  // 8..11 were the match phase; it is Game_Rules_Entity's Match component now.
+  reserved 8, 9, 10, 11;
 }
 
 // --------------------------------------------- Network Negotiation

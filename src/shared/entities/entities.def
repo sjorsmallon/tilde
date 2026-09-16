@@ -127,6 +127,13 @@ Match :: component {
     requested:         Match_Request = .None
 }
 
+//smoothing_functions :: enum {Linear, Slerp, ...}
+//Base_Animation :: component {
+//  offsets: [] vec3
+//  orientations: [] vec3
+//  traversal_times: [] f32
+//  smoothing_functions: [] Smoothing_Functions
+//}
 
 // ---------------------------------------------------------------------------
 // TRAITS -- entity_io_def.md ss5

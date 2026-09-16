@@ -392,6 +392,7 @@ static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
   //
   reset_state_in_preparation_for_new_map_load(ctx);
 
+  ctx.world.map     = map;
   ctx.world.session = shared::build_session(map);
   ctx.world.session.map_name = map.name;
 
@@ -593,6 +594,7 @@ void Play_State::on_exit()
   jolt_debug_renderer.reset();
 #endif
 
+  shared::finish_replay_recording(ctx.replay_recorder);
   ctx.world = {};
 
   if (ctx.server_session == nullptr && ctx.cvars)
@@ -993,8 +995,29 @@ void Play_State::update(float dt)
     if (!decoded)
       continue;
 
+    shared::record_replay_tick(ctx.replay_recorder, decoded->frame, {}, {}, *ctx.cvars);
+
     // we have a complete new snapshot now, so we move the cursor to it.
     client::advance_newest_held_snapshot(ctx, std::move(*decoded));
+  }
+
+  if (ctx.replay_recorder.active)
+  {
+    std::vector<uint8_t> batch_bytes;
+    for (const auto &batch : inbox.effect_batches)
+    {
+      batch_bytes.resize(batch.ByteSizeLong());
+      batch.SerializeToArray(batch_bytes.data(), static_cast<int>(batch_bytes.size()));
+      shared::record_replay_batch(ctx.replay_recorder, shared::replay_record_kind_t::Effects,
+                                  Span<const uint8_t>(batch_bytes));
+    }
+    for (const auto &batch : inbox.game_event_batches)
+    {
+      batch_bytes.resize(batch.ByteSizeLong());
+      batch.SerializeToArray(batch_bytes.data(), static_cast<int>(batch_bytes.size()));
+      shared::record_replay_batch(ctx.replay_recorder, shared::replay_record_kind_t::Events,
+                                  Span<const uint8_t>(batch_bytes));
+    }
   }
 
 
@@ -2886,3 +2909,41 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 }
 
 } // namespace client
+
+namespace cvars::commands
+{
+
+void replay_record(std::string_view name, const command_context_t &)
+{
+  client::client_context_t &ctx = client::state_manager::get_client_context();
+  if (ctx.connection.phase != client::Connection_Phase::Connected || !ctx.world.ready)
+  {
+    client::console::get().print("replay_record: not connected to a running map");
+    return;
+  }
+
+  std::optional<std::string> path = shared::try_start_replay_recording_of_map(
+      ctx.replay_recorder, ctx.world.map, ctx.world.session.map_name, ctx.connection.server_tickrate,
+      ctx.cvars->replay_keyframe_seconds, std::string(name));
+  if (!path)
+  {
+    client::console::get().print("replay_record: could not start; see the terminal");
+    return;
+  }
+  client::console::get().print("replay_record: recording to %s", path->c_str());
+}
+
+void replay_stop(const command_context_t &)
+{
+  client::client_context_t &ctx = client::state_manager::get_client_context();
+  if (!ctx.replay_recorder.active)
+  {
+    client::console::get().print("replay_stop: not recording");
+    return;
+  }
+  const std::string path = ctx.replay_recorder.path;
+  shared::finish_replay_recording(ctx.replay_recorder);
+  client::console::get().print("replay_stop: wrote %s", path.c_str());
+}
+
+} // namespace cvars::commands

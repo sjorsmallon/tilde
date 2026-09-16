@@ -334,6 +334,40 @@ bool invoke_ready(Span<std::string_view> args, const command_context_t& context,
   return true;
 }
 
+// sv_replay_record [name]
+bool invoke_sv_replay_record(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() > 1u)
+  {
+    usage_error(out_reply, command_id::sv_replay_record, args.size());
+    return false;
+  }
+
+  std::string_view name = "";
+  if (args.size() > 0u)
+  {
+    name = args[0];
+  }
+
+  commands::sv_replay_record(name, context);
+  return true;
+}
+
+// sv_replay_stop
+bool invoke_sv_replay_stop(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::sv_replay_stop, args.size());
+    return false;
+  }
+
+  commands::sv_replay_stop(context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -352,6 +386,8 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::restart_round] = &invoke_restart_round;
   table.binders[(uint32_t)command_id::end_match] = &invoke_end_match;
   table.binders[(uint32_t)command_id::ready] = &invoke_ready;
+  table.binders[(uint32_t)command_id::sv_replay_record] = &invoke_sv_replay_record;
+  table.binders[(uint32_t)command_id::sv_replay_stop] = &invoke_sv_replay_stop;
 }
 
 } // namespace cvars
