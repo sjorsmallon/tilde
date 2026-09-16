@@ -247,6 +247,8 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
   if (ImGui::Button("Delete Emitter"))
   {
     ctx.map->remove_entity(selected_emitter_uid);
+    const shared::entity_uid_t removed[] = {selected_emitter_uid};
+    (void)shared::remove_connections_naming(ctx.map->connections, removed);
 
     selected_emitter_uid = shared::invalid_entity_uid;
     

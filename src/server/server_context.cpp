@@ -2,7 +2,6 @@
 
 #include "../shared/log.hpp"
 #include "../shared/network/cvar_mirror.hpp"
-#include "systems/game_rules_system.hpp"
 
 // The one place that answers "what resets when, and why". Each group's presence
 // or absence below carries its reason on the line that does it; if a group ever
@@ -41,9 +40,6 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
   clear_incoming(context);
   clear_outgoing(context);
 
-
-  reset_game_rules(context, context.tick_number,
-                   static_cast<uint32_t>(context.cvars->sv_tickrate));
 
   // Only the map-scoped COLUMNS of each slot. Not the whole entry: the command
   // stream describes the client's input, which survives a map change, and

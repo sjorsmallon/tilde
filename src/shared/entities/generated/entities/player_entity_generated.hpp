@@ -34,6 +34,7 @@ struct Player_Entity : Entity
   uint32_t last_hit_tick = {};
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
+  bool ready = {};
   network::pascal_string_t<32> display_name = {};
   int32_t kills = {};
   int32_t deaths = {};

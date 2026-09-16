@@ -42,9 +42,16 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   // sequence counter only orders records within one map's lifetime.
   context.world.pending_actions.push_back(pending_action_t{});
   context.world.next_action_sequence = 17;
-  context.world.rules.round_number   = 5;
-  context.world.rules.phase          = shared::Round_Phase::Live;
-  context.world.rules.phase_end_tick = 950;
+  // The match is an entity in the session, so the world's reset takes it too.
+  {
+    shared::entity_uid_t rules_uid =
+        context.world.session.entity_system.spawn<entities::Game_Rules_Entity>();
+    entities::Match& match =
+        context.world.session.entity_system.get<entities::Game_Rules_Entity>(rules_uid)->match;
+    match.round_number   = 5;
+    match.phase          = entities::Round_Phase::Live;
+    match.phase_end_tick = 950;
+  }
 
   context.replication.snapshot_history.slot_for(900).tick = 900;
 
@@ -82,12 +89,6 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
 
   // An operator setting, claimed by no map: the revert must leave it alone.
   cvar_state.sv_tickrate = 30.f;
-
-  // Non-zero on purpose: mp_warmup_seconds defaults to 0, meaning "no deadline,
-  // wait for start_match", and a phase with no deadline cannot demonstrate the
-  // thing the assert below exists for -- that a deadline is computed off the
-  // CURRENT tick rather than seeded from zero.
-  cvar_state.mp_warmup_seconds = 5.f;
 
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
@@ -163,29 +164,17 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
 
-  // A THIRD category, besides cleared and survives: PRODUCED by the reset.
-  // clear_outgoing runs first, then reset_game_rules restarts the match into
-  // Warmup — a real transition — so exactly the one Round_Phase_Changed it
-  // fires is left behind, and a client that stays connected across a map switch
-  // hears about the restart. The count pins that ordering; test_events covers
-  // the payload.
-  assert(context.outgoing.events.count == 1);
+  assert(context.outgoing.events.empty());
   // Damage resolved against the world we are leaving must not land in the one
   // we are entering — the victim uid may not even exist there.
   assert(context.outgoing.pending_hits.empty());
   assert(context.outgoing.pending_swaps.empty());
 
-  // Rules restart the match — by a CALL, so this is not `= {}`: Warmup for
-  // round 0 (entering the mode's first cycle phase takes it to 1) with a
-  // deadline computed off the CURRENT tick, not off zero. make_dirty set
-  // mp_warmup_seconds non-zero so there is a deadline to check at all.
-  assert(context.world.rules.phase == shared::Round_Phase::Warmup);
-  assert(context.world.rules.round_number == 0);
-  assert(context.world.rules.phase_end_tick > context.tick_number);
-  // The mode is reset state too, and it is what the phase cycle is read from.
-  assert(context.world.rules.mode == Game_Mode::deathmatch);
+  // The match went with the session; the next map load's install_match makes
+  // the next one.
+  assert(context.world.session.entity_system.entities_of<entities::Game_Rules_Entity>().empty());
 
-  // Survives: the tick clock. Absolute stamps (phase_end_tick above,
+  // Survives: the tick clock. Absolute stamps (a match's phase_end_tick,
   // last_fire_tick / death_tick on entities) and both snapshot rings are keyed
   // by it, so restarting it would collide a new frame with a retained one.
   assert(context.tick_number == 900);

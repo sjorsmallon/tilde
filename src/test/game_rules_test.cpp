@@ -1,37 +1,38 @@
 // The match FSM and the mode table — server/game_mode.hpp,
-// server/systems/game_rules_system.cpp, shared/round_phase_rules.hpp.
+// server/systems/game_rules_system.cpp, server/traits/match_control.cpp,
+// shared/round_phase_rules.hpp. match_def.md is the design.
 //
-// What it is here to catch, in the order the file walks it:
+// Every case stands up a small map: the spawn markers, the Game_Rules_Entity
+// carrying the mode, and a Logic_Counter_Entity each of the four match signals
+// is wired to with its own amount, so a queued action's amount says which
+// signal fired.
 //
-//   1. A mode row that is not playable. The static_assert on GAME_MODES catches
-//      a reorder or a short list; it cannot catch a row whose phase cycle is
-//      empty or whose max_rounds is 0, and next_phase's own error path is the
-//      only thing standing between those and a match that never starts.
-//   2. The cycle itself, walked tick by tick for BOTH modes. A deathmatch and a
-//      round mode differ by nothing but a row here, so the same driver runs
-//      both and the asserts are the only thing that differs -- which is the
-//      claim game_modes_def.md makes and the one worth a guard.
-//   3. Game_Over restarting the map. It is a request, not a call, precisely so
-//      that it can be asserted without a map on disk.
-//   4. The win conditions, including the two shapes Team_Elimination must NOT
-//      fire on: both teams alive, and only one team present at all.
-//
-// Jolt IS stood up here, unlike server_context_test: ending a round snaps every
-// player to a spawn marker, which moves their kinematic capsule. A test that
-// skipped that would exercise a code path the server never runs.
+// Jolt IS stood up here, unlike server_context_test: entering a round snaps
+// every player to a spawn marker, which moves their kinematic capsule.
 
+#include "server/entity_io_context.hpp"
+#include "server/entity_io_queue.hpp"
 #include "server/entity_lifecycle.hpp"
 #include "server/server_context.hpp"
 #include "server/systems/game_rules_system.hpp"
 #include "server/systems/respawn_system.hpp"
 
+#include "shared/entities/generated/entity_io_generated.hpp"
 #include "shared/player_constants.hpp"
 #include "shared/round_phase_rules.hpp"
 
 #include <cstdio>
 #include <string>
 
+namespace server
+{
+uint32_t get_tick_number() { return 0; }
+}
+
 using namespace server;
+using entities::Match_Request;
+using entities::Round_End_Reason;
+using entities::Round_Phase;
 
 namespace
 {
@@ -46,30 +47,69 @@ void check(bool condition, const std::string& what)
   ++failure_count;
 }
 
-void check_phase(const server_context_t& context, shared::Round_Phase expected,
-                 const std::string& what)
+constexpr uint32_t tickrate = 60;
+
+constexpr int32_t MATCH_STARTED_AMOUNT = 1000;
+constexpr int32_t ROUND_STARTED_AMOUNT = 100;
+constexpr int32_t ROUND_ENDED_AMOUNT   = 10;
+constexpr int32_t MATCH_ENDED_AMOUNT   = 1;
+
+entities::Match& match(server_context_t& context)
 {
-  check(context.world.rules.phase == expected,
-        what + " (phase is " + to_string(context.world.rules.phase) + ", expected " +
+  return match_of(context);
+}
+
+void check_phase(server_context_t& context, Round_Phase expected, const std::string& what)
+{
+  check(match(context).phase == expected,
+        what + " (phase is " + to_string(match(context).phase) + ", expected " +
             to_string(expected) + ")");
 }
 
-constexpr uint32_t tickrate = 60;
+void tick(server_context_t& context)
+{
+  ++context.tick_number;
+  update_match(context, context.tick_number, tickrate);
+}
 
-// Run ticks until the current phase's deadline fires, or give up. Returns the
-// number of ticks it took, so a caller can assert that a phase HAD a deadline
-// rather than having been advanced by something else.
+// Run ticks until the phase or the round moves, or give up. Returns the number of
+// ticks it took, so a caller can assert a phase HAD a deadline.
 uint32_t run_until_phase_changes(server_context_t& context, uint32_t tick_budget)
 {
-  const shared::Round_Phase before = context.world.rules.phase;
+  const Round_Phase before       = match(context).phase;
+  const uint32_t    before_round = match(context).round_number;
   for (uint32_t elapsed = 1; elapsed <= tick_budget; ++elapsed)
   {
-    ++context.tick_number;
-    update_game_rules(context, context.tick_number, tickrate);
-    if (context.world.rules.phase != before)
+    tick(context);
+    if (match(context).phase != before || match(context).round_number != before_round)
       return elapsed;
   }
   return 0;
+}
+
+// Through the handler, as a connection or the console would, and then the tick
+// that pays it.
+void request(server_context_t& context, entities::entity_action action)
+{
+  entities::action_data_t data;
+  data.tag = action;
+  input_context_t handler_context{context, shared::null_entity_uid, context.tick_number};
+  entities::send_action(*try_find_rules_entity(context), data, handler_context);
+}
+
+void request_and_tick(server_context_t& context, entities::entity_action action)
+{
+  request(context, action);
+  tick(context);
+}
+
+uint32_t queued_with_amount(const server_context_t& context, int32_t amount)
+{
+  uint32_t count = 0;
+  for (const pending_action_t& pending : context.world.pending_actions)
+    if (pending.data.tag == entities::entity_action::Add && pending.data.add.amount == amount)
+      ++count;
+  return count;
 }
 
 struct test_world_t
@@ -78,24 +118,39 @@ struct test_world_t
   cvars::cvar_state_t cvars;
 };
 
-// A context with a physics world, a map's worth of spawn markers and the timing
-// every case shares. Deliberately NOT reused across cases: the FSM is a state
-// machine and a case that inherited another's phase would pass for the wrong
-// reason.
-void stand_up(test_world_t& world, cvars::Game_Mode mode)
+shared::connection_t signal_to_counter(shared::entity_uid_t rules, shared::entity_uid_t counter,
+                                       entities::entity_signal signal, int32_t amount)
 {
-  world.context.cvars = &world.cvars;
+  shared::connection_t connection;
+  connection.sender          = rules;
+  connection.signal          = signal;
+  connection.target_kind     = shared::connection_target_t::Uid;
+  connection.target          = counter;
+  connection.data.tag        = entities::entity_action::Add;
+  connection.data.add.amount = amount;
+  connection.has_override    = true;
+  return connection;
+}
+
+// Deliberately NOT reused across cases: the FSM is a state machine and a case
+// that inherited another's phase would pass for the wrong reason.
+void stand_up(test_world_t& world, entities::Game_Mode mode)
+{
+  world.context.cvars       = &world.cvars;
   world.context.tick_number = 1000;
   world.context.world.physics = make_physics_state();
-  world.context.world.session.map_name = "game_rules_test";
 
-  world.cvars.sv_gamemode          = mode;
-  world.cvars.mp_warmup_seconds    = 0.f; // ends on start_match, never on a clock
-  world.cvars.mp_countdown_seconds = 1.f;
+  world.cvars.sv_tickrate          = (float)tickrate;
+  world.cvars.mp_warmup_seconds    = 0.f; // ends on a request, never on a clock
+  world.cvars.mp_players_to_start  = 0;
+  world.cvars.mp_freeze_seconds    = 1.f;
   world.cvars.mp_round_seconds     = 2.f;
   world.cvars.mp_round_end_seconds = 1.f;
   world.cvars.mp_game_over_seconds = 1.f;
   world.cvars.mp_frag_limit        = 3;
+
+  shared::map_t map;
+  map.name = "game_rules_test";
 
   // One marker per team plus a neutral one, so Team_Markers has something to
   // match and Rotate_Markers has something to rotate over.
@@ -105,30 +160,47 @@ void stand_up(test_world_t& world, cvars::Game_Mode mode)
   float offset = 0.f;
   for (const entities::Team_Allegiance team : teams)
   {
-    const shared::entity_uid_t uid =
-        world.context.world.session.entity_system.spawn<entities::Player_Spawn_Entity>();
-    entities::Player_Spawn_Entity* marker =
-        world.context.world.session.entity_system.get<entities::Player_Spawn_Entity>(uid);
+    auto marker             = std::make_shared<entities::Player_Spawn_Entity>();
     marker->spawn_type      = entities::Spawn_Type::Human;
     marker->team_allegiance = team;
     marker->position        = {offset, 0.f, 0.f};
+    map.add_entity(marker);
     offset += 100.f;
   }
 
-  // This order, because it is the map load's: reset_game_rules assigns
-  // `rules = {}` and would undo the latch if it ran second.
-  reset_game_rules(world.context, world.context.tick_number, tickrate);
-  set_server_game_mode_from_cvar(world.context);
-  check(world.context.world.rules.mode == mode, "sv_gamemode selects the mode");
+  auto rules        = std::make_shared<entities::Game_Rules_Entity>();
+  rules->match.mode = mode;
+  const shared::entity_uid_t rules_uid = map.add_entity(rules);
+
+  const shared::entity_uid_t counter_uid =
+      map.add_entity(std::make_shared<entities::Logic_Counter_Entity>());
+
+  map.connections.push_back(signal_to_counter(rules_uid, counter_uid,
+                                              entities::entity_signal::Match_Started,
+                                              MATCH_STARTED_AMOUNT));
+  map.connections.push_back(signal_to_counter(rules_uid, counter_uid,
+                                              entities::entity_signal::Round_Started,
+                                              ROUND_STARTED_AMOUNT));
+  map.connections.push_back(signal_to_counter(rules_uid, counter_uid,
+                                              entities::entity_signal::Round_Ended,
+                                              ROUND_ENDED_AMOUNT));
+  map.connections.push_back(signal_to_counter(rules_uid, counter_uid,
+                                              entities::entity_signal::Match_Ended,
+                                              MATCH_ENDED_AMOUNT));
+
+  check(shared::validate_map_connections(map).empty(), "the test map's wiring is well typed");
+
+  world.context.world.current_map      = map;
+  world.context.world.current_map_path = "maps/game_rules_test.source";
+  world.context.world.session          = shared::build_session(map);
+
+  install_match(world.context, world.context.tick_number, tickrate);
+  check(match(world.context).mode == mode, "the rules entity's mode is the match's");
+  check(world.context.world.pending_actions.empty(), "installing the match emits nothing");
 }
 
-// A body in the world, on a team, with a registered capsule so a round boundary
-// can move it.
-//
 // Hands back a UID, not a reference: the pool is one resized byte buffer, so the
-// next spawn moves every entity in it. A test holding a reference across a spawn
-// writes into freed storage and then asserts about what it reads back, which is
-// a test that fails for a reason that has nothing to do with the rules.
+// next spawn moves every entity in it.
 shared::entity_uid_t spawn_test_player(server_context_t& context,
                                        entities::Team_Allegiance team, int32_t health)
 {
@@ -152,6 +224,18 @@ entities::Player_Entity& player_of(server_context_t& context, shared::entity_uid
   return *context.world.session.entity_system.get<entities::Player_Entity>(uid);
 }
 
+void start_the_match(server_context_t& context)
+{
+  request_and_tick(context, entities::entity_action::Start_Match);
+}
+
+void run_until_live(server_context_t& context)
+{
+  for (uint32_t spent = 0; match(context).phase != Round_Phase::Live && spent < 10 * tickrate;
+       ++spent)
+    tick(context);
+}
+
 // --- 1. The table ----------------------------------------------------------
 
 void test_mode_table()
@@ -162,54 +246,44 @@ void test_mode_table()
   {
     const std::string name = to_string(row.key);
 
-    // next_phase has an error path for an empty cycle, and it is the only thing
-    // that path could ever report: a mode with nowhere to go never leaves
-    // Warmup, which reads as "the server is broken", not "the row is wrong".
     check(!row.phase_cycle.empty(), name + " declares a non-empty phase cycle");
 
-    // 0 would compare `round_number >= max_rounds` true on the first round, so
-    // the match would reach Game_Over the moment it started.
-    check(row.max_rounds >= 1, name + " plays at least one round");
+    // 0 is unbounded, and a one-element unbounded cycle would never end: its
+    // only phase rolls straight back into itself.
+    check(row.max_rounds >= 1 || row.phase_cycle.size() > 1,
+          name + " plays at least one round, or is unbounded over a cycle with a hold");
 
-    // Warmup and Game_Over bookend the match and are entered by name. A cycle
-    // containing either would enter it a second time, incrementing the round
-    // counter at Warmup or looping out of Game_Over.
-    for (const shared::Round_Phase phase : row.phase_cycle)
+    for (const Round_Phase phase : row.phase_cycle)
     {
-      check(phase != shared::Round_Phase::Warmup, name + "'s cycle excludes Warmup");
-      check(phase != shared::Round_Phase::Game_Over, name + "'s cycle excludes Game_Over");
+      check(phase != Round_Phase::Warmup, name + "'s cycle excludes Warmup");
+      check(phase != Round_Phase::Game_Over, name + "'s cycle excludes Game_Over");
     }
   }
 
-  // The two modes as they are meant to differ. Written out rather than derived,
-  // because this is the assertion that a row change was deliberate.
-  const game_mode_settings_t& deathmatch = GAME_MODES[cvars::Game_Mode::deathmatch];
+  const game_mode_settings_t& deathmatch = GAME_MODES[entities::Game_Mode::deathmatch];
   check(deathmatch.respawn_during_round, "a deathmatch respawns you mid-round");
   check(deathmatch.join_in_progress, "a deathmatch lets you join mid-round");
   check(!deathmatch.auto_assign_teams, "a deathmatch assigns no teams");
-  check(deathmatch.phase_cycle.size() == 1 &&
-            deathmatch.phase_cycle[0] == shared::Round_Phase::Live,
+  check(deathmatch.phase_cycle.size() == 1 && deathmatch.phase_cycle[0] == Round_Phase::Live,
         "a deathmatch is one Live phase");
 
-  const game_mode_settings_t& rounds = GAME_MODES[cvars::Game_Mode::rounds];
+  const game_mode_settings_t& rounds = GAME_MODES[entities::Game_Mode::rounds];
   check(!rounds.respawn_during_round, "an elimination round leaves you dead");
   check(!rounds.join_in_progress, "an elimination round makes a joiner wait");
   check(rounds.auto_assign_teams, "a round mode assigns teams");
   check(rounds.phase_cycle.size() == 3, "a round is freeze, play, settle");
 
-  // The third mode is a ROW, not a case: it recombines the two enums and adds
-  // no code of its own, which is the claim game_modes_def.md makes and the one
-  // generalization_def.md §5 was written to test.
-  const game_mode_settings_t& speedrun = GAME_MODES[cvars::Game_Mode::speedrun];
+  const game_mode_settings_t& speedrun = GAME_MODES[entities::Game_Mode::speedrun];
   check(speedrun.win_condition == Win_Condition::Objective_Reached,
         "a speedrun ends when the objective is reached");
   check(speedrun.spawn_policy == Spawn_Policy::Single_Fixed_Start,
         "a speedrun puts everyone on the start line");
   check(speedrun.respawn_during_round, "a speedrun respawns you mid-run");
   check(!speedrun.auto_assign_teams, "a speedrun assigns no teams");
-  check(speedrun.phase_cycle.size() == 1 &&
-            speedrun.phase_cycle[0] == shared::Round_Phase::Live,
-        "a speedrun is one Live phase");
+  check(speedrun.phase_cycle.size() == 2 && speedrun.phase_cycle[0] == Round_Phase::Live &&
+            speedrun.phase_cycle[1] == Round_Phase::Round_End,
+        "a speedrun is a Live run and a hold on the result");
+  check(speedrun.max_rounds == 0, "a speedrun restarts as often as it is asked to");
 }
 
 // --- 2. The gates ----------------------------------------------------------
@@ -218,30 +292,24 @@ void test_gates()
 {
   std::printf("[gates]\n");
 
-  // Freeze is the ONLY phase that takes movement away, and it is written as
-  // "everything except Countdown" so a phase added later defaults to letting
-  // people walk. Both halves are asserted: a new phase that silently froze
-  // players would pass a test that only checked Countdown.
-  check(!shared::is_movement_allowed(shared::Round_Phase::Countdown),
-        "the freeze stops movement");
-  check(shared::is_movement_allowed(shared::Round_Phase::Warmup),
-        "warmup allows movement");
-  check(shared::is_movement_allowed(shared::Round_Phase::Live), "live allows movement");
-  check(shared::is_movement_allowed(shared::Round_Phase::Round_End),
+  check(!shared::is_movement_allowed(Round_Phase::Freeze), "the freeze stops movement");
+  check(shared::is_movement_allowed(Round_Phase::Warmup), "warmup allows movement");
+  check(shared::is_movement_allowed(Round_Phase::Countdown), "the match countdown allows movement");
+  check(shared::can_take_damage(Round_Phase::Countdown), "the match countdown takes damage like warmup");
+  check(shared::is_before_match(Round_Phase::Countdown) && shared::is_before_match(Round_Phase::Warmup) &&
+            !shared::is_before_match(Round_Phase::Freeze),
+        "warmup and the countdown are before the match, the freeze is not");
+  check(shared::is_movement_allowed(Round_Phase::Live), "live allows movement");
+  check(shared::is_movement_allowed(Round_Phase::Round_End),
         "the post-round settle allows movement");
-  check(shared::is_movement_allowed(shared::Round_Phase::Game_Over),
-        "game over allows movement");
+  check(shared::is_movement_allowed(Round_Phase::Game_Over), "game over allows movement");
 
-  // Damage applies in warmup as well as the round: warmup is where people shoot
-  // each other while the server fills up. The two gates differing HERE and only
-  // here is the whole reason they are separate predicates -- warmup damage
-  // lands, warmup frags do not count.
-  check(shared::can_take_damage(shared::Round_Phase::Live), "live damage applies");
-  check(shared::can_take_damage(shared::Round_Phase::Warmup), "warmup damage applies");
-  check(!shared::is_round_live(shared::Round_Phase::Warmup), "...but warmup does not score");
-  check(!shared::can_take_damage(shared::Round_Phase::Countdown), "freeze damage does not");
-  check(!shared::can_take_damage(shared::Round_Phase::Round_End), "settle damage does not");
-  check(!shared::can_take_damage(shared::Round_Phase::Game_Over), "post-match damage does not");
+  check(shared::can_take_damage(Round_Phase::Live), "live damage applies");
+  check(shared::can_take_damage(Round_Phase::Warmup), "warmup damage applies");
+  check(!shared::is_round_live(Round_Phase::Warmup), "...but warmup does not score");
+  check(!shared::can_take_damage(Round_Phase::Freeze), "freeze damage does not");
+  check(!shared::can_take_damage(Round_Phase::Round_End), "settle damage does not");
+  check(!shared::can_take_damage(Round_Phase::Game_Over), "post-match damage does not");
 }
 
 // --- 3. The cycle ----------------------------------------------------------
@@ -251,27 +319,36 @@ void test_deathmatch_cycle()
   std::printf("[cycle: deathmatch]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::deathmatch);
+  stand_up(world, entities::Game_Mode::deathmatch);
 
-  check_phase(world.context, shared::Round_Phase::Warmup, "a fresh match starts in warmup");
-  check(world.context.world.rules.round_number == 0, "warmup is before round 1");
-  check(world.context.world.rules.phase_end_tick == 0,
+  check_phase(world.context, Round_Phase::Warmup, "a fresh match starts in warmup");
+  check(match(world.context).round_number == 0, "warmup is before round 1");
+  check(match(world.context).phase_end_tick == 0,
         "mp_warmup_seconds 0 means warmup has no deadline");
-
-  // ...and it must not advance on its own, however long it sits there.
   check(run_until_phase_changes(world.context, 5 * tickrate) == 0,
         "warmup with no deadline waits rather than expiring");
 
-  start_match(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Live, "a deathmatch starts at Live");
-  check(world.context.world.rules.round_number == 1, "starting the match enters round 1");
+  start_the_match(world.context);
+  check_phase(world.context, Round_Phase::Live, "a deathmatch starts at Live");
+  check(match(world.context).round_number == 1, "starting the match enters round 1");
+  check(queued_with_amount(world.context, MATCH_STARTED_AMOUNT) == 1,
+        "leaving Warmup emits Match_Started once");
+  check(queued_with_amount(world.context, ROUND_STARTED_AMOUNT) == 1,
+        "entering the cycle emits Round_Started once");
+  world.context.world.pending_actions.clear();
 
   // The whole cycle is one element, so the round ending IS the match ending.
-  // This is the case that would have gone to Round_End if end_round named a
-  // phase instead of stepping the cycle -- a phase a deathmatch does not have.
-  end_round(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Game_Over,
+  request_and_tick(world.context, entities::entity_action::End_Round);
+  check_phase(world.context, Round_Phase::Game_Over,
               "a deathmatch's one round ending ends the match");
+  check(match(world.context).end_reason == Round_End_Reason::Requested,
+        "a requested end says it was requested");
+  check(queued_with_amount(world.context, ROUND_ENDED_AMOUNT) == 1,
+        "leaving Live emits Round_Ended once");
+  check(queued_with_amount(world.context, MATCH_ENDED_AMOUNT) == 1,
+        "entering Game_Over emits Match_Ended once");
+  check(queued_with_amount(world.context, ROUND_STARTED_AMOUNT) == 0,
+        "and no round starts on the way out");
 }
 
 void test_rounds_cycle()
@@ -279,239 +356,451 @@ void test_rounds_cycle()
   std::printf("[cycle: rounds]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::rounds);
+  stand_up(world, entities::Game_Mode::rounds);
 
-  start_match(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Countdown, "a round mode starts frozen");
-  check(world.context.world.rules.round_number == 1, "the freeze is round 1");
+  start_the_match(world.context);
+  check_phase(world.context, Round_Phase::Freeze, "a round mode starts frozen");
+  check(match(world.context).round_number == 1, "the freeze is round 1");
 
-  // Countdown -> Live on the clock.
   check(run_until_phase_changes(world.context, 5 * tickrate) == tickrate,
-        "the freeze lasts mp_countdown_seconds");
-  check_phase(world.context, shared::Round_Phase::Live, "the freeze gives way to the round");
+        "the freeze lasts mp_freeze_seconds");
+  check_phase(world.context, Round_Phase::Live, "the freeze gives way to the round");
 
-  // Live -> Round_End on the clock, which is the timeout path rather than the
-  // win-condition one. Both land in the same phase.
+  world.context.world.pending_actions.clear();
   check(run_until_phase_changes(world.context, 5 * tickrate) == 2 * tickrate,
         "a round times out after mp_round_seconds");
-  check_phase(world.context, shared::Round_Phase::Round_End, "a timed-out round settles");
+  check_phase(world.context, Round_Phase::Round_End, "a timed-out round settles");
+  check(match(world.context).end_reason == Round_End_Reason::Timeout,
+        "a timed-out round says so");
+  check(queued_with_amount(world.context, ROUND_ENDED_AMOUNT) == 1,
+        "the timeout emits Round_Ended once");
 
-  // ...and back around to the next round.
   check(run_until_phase_changes(world.context, 5 * tickrate) == tickrate,
         "the settle lasts mp_round_end_seconds");
-  check_phase(world.context, shared::Round_Phase::Countdown, "the cycle repeats");
-  check(world.context.world.rules.round_number == 2, "the second round is round 2");
+  check_phase(world.context, Round_Phase::Freeze, "the cycle repeats");
+  check(match(world.context).round_number == 2, "the second round is round 2");
 
-  // The last round rolls out of the cycle instead of around it. Driven by
-  // end_round rather than by the clock, so the case is about max_rounds and not
-  // about the timing.
-  // Bounded, like every loop in this file: a rules bug that stops the cycle
-  // advancing should fail an assert, not hang the suite.
-  const uint32_t max_rounds = GAME_MODES[cvars::Game_Mode::rounds].max_rounds;
+  // Bounded, like every loop in this file: a rules bug should fail an assert,
+  // not hang the suite.
+  const uint32_t max_rounds  = GAME_MODES[entities::Game_Mode::rounds].max_rounds;
   const uint32_t tick_budget = max_rounds * 10 * tickrate;
 
   uint32_t spent = 0;
-  while (world.context.world.rules.round_number < max_rounds && spent < tick_budget)
+  while (match(world.context).round_number < max_rounds && spent < tick_budget)
   {
-    if (world.context.world.rules.phase == shared::Round_Phase::Live)
+    if (match(world.context).phase == Round_Phase::Live)
     {
-      end_round(world.context, world.context.tick_number, tickrate);
+      request_and_tick(world.context, entities::entity_action::End_Round);
       continue;
     }
-    ++world.context.tick_number;
     ++spent;
-    update_game_rules(world.context, world.context.tick_number, tickrate);
+    tick(world.context);
   }
+  check(match(world.context).round_number == max_rounds, "the match reaches its last round");
 
-  check(world.context.world.rules.round_number == max_rounds,
-        "the match reaches its last round");
-
-  // Walk that last round out: Countdown, Live, and then the end of it.
-  while (world.context.world.rules.phase != shared::Round_Phase::Live && spent < tick_budget)
+  while (match(world.context).phase != Round_Phase::Live && spent < tick_budget)
   {
-    ++world.context.tick_number;
     ++spent;
-    update_game_rules(world.context, world.context.tick_number, tickrate);
+    tick(world.context);
   }
-  end_round(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Round_End,
-              "even the last round gets its settle");
+  request_and_tick(world.context, entities::entity_action::End_Round);
+  check_phase(world.context, Round_Phase::Round_End, "even the last round gets its settle");
 
-  // ...and THAT is where the match ends: Game_Over is reached by stepping off
-  // the end of the cycle, not by the win condition, so the final scoreboard is
-  // shown for mp_round_end_seconds like every other round's.
   check(run_until_phase_changes(world.context, 5 * tickrate) == tickrate,
         "the last settle lasts mp_round_end_seconds");
-  check_phase(world.context, shared::Round_Phase::Game_Over,
-              "the last round's settle ends the match");
-  check(world.context.world.rules.round_number == max_rounds,
-        "game over does not open another round");
+  check_phase(world.context, Round_Phase::Game_Over, "the last round's settle ends the match");
+  check(match(world.context).round_number == max_rounds, "game over does not open another round");
 }
 
-// --- 4. Game over restarts the map -----------------------------------------
+// --- 4. Game over changes the map ------------------------------------------
 
-void test_game_over_restarts()
+void test_game_over_changes_the_map()
 {
   std::printf("[game over]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::deathmatch);
-  start_match(world.context, world.context.tick_number, tickrate);
-  end_round(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Game_Over, "the match is over");
-  check(!world.context.world.rules.map_restart_requested,
-        "the scoreboard is held before the restart, not skipped");
+  stand_up(world, entities::Game_Mode::deathmatch);
+  start_the_match(world.context);
+  request_and_tick(world.context, entities::entity_action::End_Round);
+  check_phase(world.context, Round_Phase::Game_Over, "the match is over");
+  check(world.context.pending_map_change.empty(),
+        "the scoreboard is held before the map changes, not skipped");
 
-  // mp_game_over_seconds elapses, and the FSM asks for a reload rather than
-  // stepping to a phase -- there is none after the last round.
   for (uint32_t elapsed = 0; elapsed <= tickrate; ++elapsed)
-  {
-    ++world.context.tick_number;
-    update_game_rules(world.context, world.context.tick_number, tickrate);
-  }
-  check(world.context.world.rules.map_restart_requested,
-        "game over expiring asks for a map restart");
-  check_phase(world.context, shared::Round_Phase::Game_Over,
-              "the request does not move the phase -- the reload does that");
+    tick(world.context);
+  check(world.context.pending_map_change == world.context.world.current_map_path,
+        "game over expiring with no next_map reloads the current map");
+  check_phase(world.context, Round_Phase::Game_Over,
+              "the request does not move the phase -- the load does that");
 
-  // 0 is the "hold it forever" case, which is what a server waiting on a map
-  // vote wants. It must not decay into a restart.
+  test_world_t next;
+  stand_up(next, entities::Game_Mode::deathmatch);
+  next.cvars.next_map.set("maps/after.source");
+  start_the_match(next.context);
+  request_and_tick(next.context, entities::entity_action::End_Match);
+  for (uint32_t elapsed = 0; elapsed <= tickrate; ++elapsed)
+    tick(next.context);
+  check(next.context.pending_map_change == "maps/after.source", "next_map is where it goes");
+
   test_world_t held;
-  stand_up(held, cvars::Game_Mode::deathmatch);
+  stand_up(held, entities::Game_Mode::deathmatch);
   held.cvars.mp_game_over_seconds = 0.f;
-  start_match(held.context, held.context.tick_number, tickrate);
-  end_round(held.context, held.context.tick_number, tickrate);
+  start_the_match(held.context);
+  request_and_tick(held.context, entities::entity_action::End_Round);
   for (uint32_t elapsed = 0; elapsed < 5 * tickrate; ++elapsed)
-  {
-    ++held.context.tick_number;
-    update_game_rules(held.context, held.context.tick_number, tickrate);
-  }
-  check(!held.context.world.rules.map_restart_requested,
+    tick(held.context);
+  check(held.context.pending_map_change.empty(),
         "mp_game_over_seconds 0 holds the final scoreboard");
 }
 
-// --- 5. Win conditions ------------------------------------------------------
+// --- 5. Requests -------------------------------------------------------------
+
+void test_requests_in_the_wrong_phase()
+{
+  std::printf("[requests: wrong phase]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::rounds);
+
+  std::printf("  (two 'refused during Warmup' warnings below are the case under test)\n");
+  request(world.context, entities::entity_action::Restart_Round);
+  request(world.context, entities::entity_action::End_Round);
+  check(match(world.context).requested == Match_Request::None,
+        "Warmup takes neither Restart_Round nor End_Round");
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup, "and a refused request moves nothing");
+
+  start_the_match(world.context);
+  check_phase(world.context, Round_Phase::Freeze, "Start_Match is what Warmup takes");
+
+  std::printf("  (one 'refused during Freeze' warning below is the case under test)\n");
+  request(world.context, entities::entity_action::Start_Match);
+  check(match(world.context).requested == Match_Request::None,
+        "a match that has started cannot be started again");
+
+  // A request written straight onto the component is checked again when paid.
+  std::printf("  (one 'dropping End_Round' warning below is the case under test)\n");
+  match(world.context).requested = Match_Request::End_Round;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Freeze, "a stale request is dropped when paid");
+  check(match(world.context).requested == Match_Request::None, "and it is consumed");
+}
+
+void test_action_beats_poll_beats_clock()
+{
+  std::printf("[requests: priority]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::deathmatch);
+  start_the_match(world.context);
+
+  const shared::entity_uid_t leader =
+      spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+
+  // All three true in one tick: the deadline passed, the frag limit is reached,
+  // and someone asked for a restart.
+  player_of(world.context, leader).kills = world.cvars.mp_frag_limit;
+  world.context.tick_number              = match(world.context).phase_end_tick;
+  request_and_tick(world.context, entities::entity_action::Restart_Round);
+  check_phase(world.context, Round_Phase::Live, "the request wins: the round restarts");
+  check(match(world.context).round_number == 2, "into round 2");
+  check(match(world.context).end_reason == Round_End_Reason::Requested,
+        "and the round that ended says it was asked to");
+
+  // Poll and clock, no request.
+  world.context.tick_number = match(world.context).phase_end_tick;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Game_Over, "the frag limit ends the match");
+  check(match(world.context).end_reason == Round_End_Reason::Frag_Limit,
+        "the poll beats the clock");
+}
+
+shared::entity_uid_t join_test_client(server_context_t& context, int32_t slot)
+{
+  const shared::entity_uid_t uid =
+      spawn_test_player(context, entities::Team_Allegiance::Free_For_All, 100);
+  context.transport_layer.clients[slot].occupied = true;
+  context.clients[slot].player_uid               = uid;
+  player_of(context, uid).client_slot_index      = slot;
+  return uid;
+}
+
+void test_warmup_vote()
+{
+  std::printf("[warmup vote]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::rounds);
+  world.cvars.mp_players_to_start  = 2;
+  world.cvars.mp_countdown_seconds = 0.f;
+
+  const shared::entity_uid_t first  = join_test_client(world.context, 0);
+  const shared::entity_uid_t second = join_test_client(world.context, 1);
+  spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup, "nobody ready holds warmup");
+  check(count_warmup_vote(world.context).joined == 2, "a bot is not a joined human");
+
+  player_of(world.context, first).ready = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup, "one of two ready holds warmup");
+
+  world.context.transport_layer.clients[1].occupied = false;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup,
+              "everyone ready but under mp_players_to_start holds warmup");
+  world.context.transport_layer.clients[1].occupied = true;
+
+  player_of(world.context, second).ready = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Freeze,
+              "every joined human ready starts the match, at once under mp_countdown_seconds 0");
+
+  install_match(world.context, world.context.tick_number, tickrate);
+  check(!player_of(world.context, first).ready && !player_of(world.context, second).ready,
+        "installing the match clears every vote");
+
+  test_world_t never;
+  stand_up(never, entities::Game_Mode::rounds);
+  player_of(never.context, join_test_client(never.context, 0)).ready = true;
+  tick(never.context);
+  check_phase(never.context, Round_Phase::Warmup, "mp_players_to_start 0 never starts from the vote");
+}
+
+void test_match_countdown()
+{
+  std::printf("[match countdown]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::rounds);
+  world.cvars.mp_players_to_start  = 1;
+  world.cvars.mp_countdown_seconds = 2.f;
+
+  const shared::entity_uid_t first  = join_test_client(world.context, 0);
+  const shared::entity_uid_t second = join_test_client(world.context, 1);
+
+  player_of(world.context, first).ready  = true;
+  player_of(world.context, second).ready = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Countdown, "an all-ready vote starts the countdown");
+  check(match(world.context).phase_end_tick == world.context.tick_number + 2 * tickrate,
+        "the countdown lasts mp_countdown_seconds");
+  check(match(world.context).round_number == 0, "the countdown is not a round");
+  check(queued_with_amount(world.context, MATCH_STARTED_AMOUNT) == 0,
+        "entering the countdown has not started the match");
+
+  player_of(world.context, second).ready = false;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup, "un-readying cancels the countdown");
+  check(player_of(world.context, first).ready, "a cancel keeps everyone else's vote");
+
+  player_of(world.context, second).ready = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Countdown, "readying again restarts the countdown");
+
+  const uint32_t ticks = run_until_phase_changes(world.context, 3 * tickrate);
+  check(ticks == 2 * tickrate, "the countdown runs out on its deadline");
+  check_phase(world.context, Round_Phase::Freeze, "and hands over to the mode's first phase");
+  check(match(world.context).round_number == 1, "which is round 1");
+  check(queued_with_amount(world.context, MATCH_STARTED_AMOUNT) == 1,
+        "Match_Started fires once, on leaving the countdown");
+
+  test_world_t skipped;
+  stand_up(skipped, entities::Game_Mode::rounds);
+  skipped.cvars.mp_players_to_start  = 1;
+  skipped.cvars.mp_countdown_seconds = 5.f;
+  player_of(skipped.context, join_test_client(skipped.context, 0)).ready = true;
+  tick(skipped.context);
+  check_phase(skipped.context, Round_Phase::Countdown, "the vote counts down");
+  start_the_match(skipped.context);
+  check_phase(skipped.context, Round_Phase::Freeze, "Start_Match skips the countdown");
+}
+
+void test_restart_round_resets_the_level()
+{
+  std::printf("[requests: restart round]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::speedrun);
+  const shared::entity_uid_t player_uid =
+      spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+  start_the_match(world.context);
+
+  const shared::entity_uid_t crate_uid =
+      world.context.world.session.entity_system.spawn<entities::Damageable_Entity>();
+  {
+    entities::Damageable_Entity* crate =
+        world.context.world.session.entity_system.get<entities::Damageable_Entity>(crate_uid);
+    crate->health.max_health     = 50;
+    crate->health.current_health = 0;
+  }
+
+  player_of(world.context, player_uid).position       = {700.f, 0.f, 0.f};
+  player_of(world.context, player_uid).checkpoint_uid = crate_uid;
+  match(world.context).objective_reached              = false;
+
+  world.context.world.pending_actions.clear();
+  request_and_tick(world.context, entities::entity_action::Restart_Round);
+
+  check_phase(world.context, Round_Phase::Live, "a restart re-enters Live");
+  check(match(world.context).round_number == 2, "as the next round");
+  check(player_of(world.context, player_uid).position.x == 0.f,
+        "everyone is back on the start line");
+  check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
+        "with their checkpoints dropped");
+  check(world.context.world.session.entity_system.get<entities::Damageable_Entity>(crate_uid)
+                ->health.current_health == 50,
+        "the damageables are back");
+  check(queued_with_amount(world.context, ROUND_ENDED_AMOUNT) == 1 &&
+            queued_with_amount(world.context, ROUND_STARTED_AMOUNT) == 1,
+        "a restart is one Round_Ended and one Round_Started");
+  check(queued_with_amount(world.context, MATCH_STARTED_AMOUNT) == 0,
+        "and not a new match");
+
+  request_and_tick(world.context, entities::entity_action::End_Match);
+  check_phase(world.context, Round_Phase::Game_Over, "End_Match from Live ends the match");
+}
+
+// --- 6. Win conditions ------------------------------------------------------
 
 void test_frag_limit()
 {
   std::printf("[win: frag limit]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::deathmatch);
-  start_match(world.context, world.context.tick_number, tickrate);
+  stand_up(world, entities::Game_Mode::deathmatch);
+  start_the_match(world.context);
 
   const shared::entity_uid_t leader =
       spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
   spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
 
   player_of(world.context, leader).kills = world.cvars.mp_frag_limit - 1;
-  check_win_condition(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Live, "one frag short is not a win");
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Live, "one frag short is not a win");
 
   ++player_of(world.context, leader).kills;
-  check_win_condition(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Game_Over, "the frag limit ends the match");
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Game_Over, "the frag limit ends the match");
+  check(match(world.context).end_reason == Round_End_Reason::Frag_Limit,
+        "and says it was the frag limit");
 
-  // 0 disables it, leaving the clock as the only thing that ends a deathmatch.
   test_world_t unlimited;
-  stand_up(unlimited, cvars::Game_Mode::deathmatch);
+  stand_up(unlimited, entities::Game_Mode::deathmatch);
   unlimited.cvars.mp_frag_limit = 0;
-  start_match(unlimited.context, unlimited.context.tick_number, tickrate);
+  start_the_match(unlimited.context);
   const shared::entity_uid_t scorer =
       spawn_test_player(unlimited.context, entities::Team_Allegiance::Free_For_All, 100);
   player_of(unlimited.context, scorer).kills = 999;
-  check_win_condition(unlimited.context, unlimited.context.tick_number, tickrate);
-  check_phase(unlimited.context, shared::Round_Phase::Live, "mp_frag_limit 0 never ends a round");
+  tick(unlimited.context);
+  check_phase(unlimited.context, Round_Phase::Live, "mp_frag_limit 0 never ends a round");
 }
 
 void test_team_elimination()
 {
   std::printf("[win: team elimination]\n");
 
-  // Both teams alive: not a win, and the case that fires every tick if the
-  // counting is inverted.
   {
     test_world_t world;
-    stand_up(world, cvars::Game_Mode::rounds);
-    start_match(world.context, world.context.tick_number, tickrate);
-    while (world.context.world.rules.phase != shared::Round_Phase::Live)
-    {
-      ++world.context.tick_number;
-      update_game_rules(world.context, world.context.tick_number, tickrate);
-    }
+    stand_up(world, entities::Game_Mode::rounds);
+    start_the_match(world.context);
+    run_until_live(world.context);
 
     spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
     const shared::entity_uid_t blu =
         spawn_test_player(world.context, entities::Team_Allegiance::Blu, 100);
 
-    check_win_condition(world.context, world.context.tick_number, tickrate);
-    check_phase(world.context, shared::Round_Phase::Live, "two live teams keep playing");
+    tick(world.context);
+    check_phase(world.context, Round_Phase::Live, "two live teams keep playing");
 
-    // ...and one team losing its last player ends it.
     player_of(world.context, blu).health.current_health = 0;
-    check_win_condition(world.context, world.context.tick_number, tickrate);
-    check_phase(world.context, shared::Round_Phase::Round_End,
-                "eliminating a team ends the round");
+    tick(world.context);
+    check_phase(world.context, Round_Phase::Round_End, "eliminating a team ends the round");
+    check(match(world.context).end_reason == Round_End_Reason::Team_Elimination,
+          "the round says it was an elimination");
+    check(match(world.context).winning_team == entities::Team_Allegiance::Red,
+          "and that the surviving team won it");
   }
 
-  // ONE team present is not a win either. This is the empty-server shape: with
-  // no opponent to eliminate, a naive "some team has no living player" test
-  // burns through every round of the match against nobody.
   {
     test_world_t world;
-    stand_up(world, cvars::Game_Mode::rounds);
-    start_match(world.context, world.context.tick_number, tickrate);
-    while (world.context.world.rules.phase != shared::Round_Phase::Live)
-    {
-      ++world.context.tick_number;
-      update_game_rules(world.context, world.context.tick_number, tickrate);
-    }
+    stand_up(world, entities::Game_Mode::rounds);
+    start_the_match(world.context);
+    run_until_live(world.context);
+
+    const shared::entity_uid_t red =
+        spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
+    const shared::entity_uid_t blu =
+        spawn_test_player(world.context, entities::Team_Allegiance::Blu, 100);
+    player_of(world.context, red).health.current_health = 0;
+    player_of(world.context, blu).health.current_health = 0;
+    tick(world.context);
+    check(match(world.context).winning_team == entities::Team_Allegiance::Free_For_All,
+          "a mutual elimination is a draw");
+  }
+
+  {
+    test_world_t world;
+    stand_up(world, entities::Game_Mode::rounds);
+    start_the_match(world.context);
+    run_until_live(world.context);
 
     spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
-    check_win_condition(world.context, world.context.tick_number, tickrate);
-    check_phase(world.context, shared::Round_Phase::Live, "one team alone wins nothing");
+    tick(world.context);
+    check_phase(world.context, Round_Phase::Live, "one team alone wins nothing");
 
-    // Nobody at all is the same non-answer.
     test_world_t empty;
-    stand_up(empty, cvars::Game_Mode::rounds);
-    start_match(empty.context, empty.context.tick_number, tickrate);
-    while (empty.context.world.rules.phase != shared::Round_Phase::Live)
-    {
-      ++empty.context.tick_number;
-      update_game_rules(empty.context, empty.context.tick_number, tickrate);
-    }
-    check_win_condition(empty.context, empty.context.tick_number, tickrate);
-    check_phase(empty.context, shared::Round_Phase::Live, "an empty server plays no rounds");
+    stand_up(empty, entities::Game_Mode::rounds);
+    start_the_match(empty.context);
+    run_until_live(empty.context);
+    tick(empty.context);
+    check_phase(empty.context, Round_Phase::Live, "an empty server plays no rounds");
   }
 }
 
-// --- 6. Teams and spawn markers ---------------------------------------------
+// --- 7. Speedrun -------------------------------------------------------------
 
-void test_objective_reached()
+void test_speedrun_walk()
 {
-  std::printf("[objective reached]\n");
+  std::printf("[speedrun]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::speedrun);
+  stand_up(world, entities::Game_Mode::speedrun);
+  world.cvars.mp_round_seconds     = 0.f;
+  world.cvars.mp_round_end_seconds = 0.f;
   spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
 
-  start_match(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Live, "a speedrun starts running");
+  start_the_match(world.context);
+  check_phase(world.context, Round_Phase::Live, "a speedrun starts running");
 
-  // The flag is what a Game_Rules_Entity's Complete_Level handler writes, and
-  // it is the only thing this condition reads: no volume, no player, no
-  // proximity.
-  check_win_condition(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Live,
-              "an unreached objective leaves the run going");
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Live, "an unreached objective leaves the run going");
 
-  world.context.world.rules.objective_reached = true;
-  check_win_condition(world.context, world.context.tick_number, tickrate);
-  check_phase(world.context, shared::Round_Phase::Game_Over,
-              "reaching the objective ends the one-round match");
+  // What Complete_Level writes.
+  match(world.context).objective_reached = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Round_End, "reaching the objective ends the run");
+  check(match(world.context).end_reason == Round_End_Reason::Objective,
+        "and says the objective ended it");
+
+  check(run_until_phase_changes(world.context, 5 * tickrate) == 0,
+        "the result holds with no deadline");
+
+  request_and_tick(world.context, entities::entity_action::Restart_Round);
+  check_phase(world.context, Round_Phase::Live, "a restart puts the run back at Live");
+  check(match(world.context).round_number == 2, "as round 2");
+  check(!match(world.context).objective_reached, "with the objective cleared");
+
+  request_and_tick(world.context, entities::entity_action::End_Match);
+  check_phase(world.context, Round_Phase::Game_Over, "End_Match ends it");
+
+  for (uint32_t elapsed = 0; elapsed <= tickrate; ++elapsed)
+    tick(world.context);
+  check(!world.context.pending_map_change.empty(), "and the map changes after the hold");
 }
 
-// --- 6. Checkpoints ---------------------------------------------------------
+// --- 8. Checkpoints ---------------------------------------------------------
 
 shared::entity_uid_t spawn_checkpoint(server_context_t& context, const vec3f& position)
 {
@@ -528,8 +817,8 @@ void test_checkpoint_respawn()
   std::printf("[checkpoints]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::speedrun);
-  start_match(world.context, world.context.tick_number, tickrate);
+  stand_up(world, entities::Game_Mode::speedrun);
+  start_the_match(world.context);
 
   const shared::entity_uid_t player_uid =
       spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
@@ -537,9 +826,6 @@ void test_checkpoint_respawn()
   const shared::entity_uid_t checkpoint_uid =
       spawn_checkpoint(world.context, checkpoint_position);
 
-  // A uid naming nothing is the one way a checkpoint fails now, and it is not
-  // the author's fault: Set_Respawn_Point takes any entity, so what used to be
-  // "that volume is not a checkpoint" is now only "that entity is gone".
   player_of(world.context, player_uid).checkpoint_uid = 9999;
   world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
   update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
@@ -556,8 +842,6 @@ void test_checkpoint_respawn()
   check(player_of(world.context, player_uid).health.current_health == 100,
         "the checkpoint respawn is a full respawn, not a teleport");
 
-  // A round boundary is the start line again -- one player must not be able to
-  // rewind three others into the middle of a level (generalization_def.md §5).
   respawn_all_players(world.context);
   check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
         "a round boundary drops every checkpoint");
@@ -565,15 +849,15 @@ void test_checkpoint_respawn()
         "...and puts the player back on the start line");
 }
 
+// --- 9. Teams and spawn markers ---------------------------------------------
+
 void test_team_assignment()
 {
   std::printf("[teams]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::rounds);
+  stand_up(world, entities::Game_Mode::rounds);
 
-  // The teams fill alternately, because the answer is a COUNT over the bodies
-  // that exist rather than a remembered tally: the second player sees the first.
   const entities::Team_Allegiance first = pick_team_for_new_player(world.context);
   check(first == entities::Team_Allegiance::Red, "the first player takes Red");
   spawn_test_player(world.context, first, 100);
@@ -585,15 +869,12 @@ void test_team_assignment()
   check(pick_team_for_new_player(world.context) == entities::Team_Allegiance::Red,
         "the third player evens Red up again");
 
-  // A player leaving is accounted for with no bookkeeping, which is the point of
-  // counting rather than tallying.
   player_of(world.context, blu_player).team_allegiance = entities::Team_Allegiance::Red;
   check(pick_team_for_new_player(world.context) == entities::Team_Allegiance::Blu,
         "the count follows the bodies");
 
-  // A mode that assigns no teams says so, rather than putting everyone on Red.
   test_world_t deathmatch;
-  stand_up(deathmatch, cvars::Game_Mode::deathmatch);
+  stand_up(deathmatch, entities::Game_Mode::deathmatch);
   check(pick_team_for_new_player(deathmatch.context) == entities::Team_Allegiance::Free_For_All,
         "a deathmatch player has no team");
 }
@@ -603,10 +884,8 @@ void test_spawn_policy()
   std::printf("[spawn markers]\n");
 
   test_world_t world;
-  stand_up(world, cvars::Game_Mode::rounds);
+  stand_up(world, entities::Game_Mode::rounds);
 
-  // Team_Markers picks by allegiance, and the rotation index must not walk it
-  // off its own team: every index has to land on the one Red marker.
   for (uint32_t rotation = 0; rotation < 4; ++rotation)
   {
     const entities::Player_Spawn_Entity* marker =
@@ -616,8 +895,6 @@ void test_spawn_policy()
           "Team_Markers stays on the player's own team");
   }
 
-  // Rotate_Markers ignores the team and cycles all three, which is what a
-  // deathmatch wants and why the policy is a value rather than a mode check.
   bool saw_every_marker = true;
   for (uint32_t rotation = 0; rotation < 3; ++rotation)
   {
@@ -629,7 +906,6 @@ void test_spawn_policy()
   }
   check(saw_every_marker, "Rotate_Markers cycles every human marker in order");
 
-  // Single_Fixed_Start ignores BOTH of the things the other two policies read.
   bool always_the_start_line = true;
   for (uint32_t rotation = 0; rotation < 4; ++rotation)
   {
@@ -645,8 +921,6 @@ void test_spawn_policy()
   }
   check(always_the_start_line, "Single_Fixed_Start ignores the team and the rotation");
 
-  // A map with no marker for a team still spawns the player -- loudly, on
-  // whatever it has. Standing there spectating your own match is worse.
   shared::game_session_t neutral_only;
   const shared::entity_uid_t uid =
       neutral_only.entity_system.spawn<entities::Player_Spawn_Entity>();
@@ -660,8 +934,6 @@ void test_spawn_policy()
                              entities::Team_Allegiance::Red, 0) == only_marker,
         "a missing team marker falls back to any human marker");
 
-  // No human marker at all is genuinely nothing to return, and the callers all
-  // have an origin fallback for it.
   shared::game_session_t no_markers;
   check(try_pick_human_spawn(no_markers, Spawn_Policy::Rotate_Markers,
                              entities::Team_Allegiance::Red, 0) == nullptr,
@@ -674,9 +946,6 @@ int main()
 {
   std::printf("=== game_rules_test ===\n");
 
-  // Unbuffered, so this file's own output interleaves correctly with the
-  // logger's -- several cases below deliberately provoke a log_error, and a
-  // buffered stdout would print them all at the end, next to no case at all.
   std::setvbuf(stdout, nullptr, _IONBF, 0);
   jolt_init();
 
@@ -684,12 +953,17 @@ int main()
   test_gates();
   test_deathmatch_cycle();
   test_rounds_cycle();
-  test_game_over_restarts();
+  test_game_over_changes_the_map();
+  test_requests_in_the_wrong_phase();
+  test_action_beats_poll_beats_clock();
+  test_warmup_vote();
+  test_match_countdown();
+  test_restart_round_resets_the_level();
   test_frag_limit();
   test_team_elimination();
+  test_speedrun_walk();
   test_team_assignment();
   test_spawn_policy();
-  test_objective_reached();
   test_checkpoint_respawn();
 
   if (failure_count != 0)

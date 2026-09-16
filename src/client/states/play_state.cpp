@@ -7,6 +7,7 @@
 #include "../hud/announcement.hpp"
 #include "../hud/crosshair.hpp"
 #include "../hud/deploy_timer.hpp"
+#include "../hud/ready_status.hpp"
 #include "../hud/run_timer.hpp"
 #include "../hud/weapon_name.hpp"
 #include "../weapon_fire_audio.hpp"
@@ -15,6 +16,7 @@
 #include "../../shared/cvars/cvar_console.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
+#include "../../shared/round_phase_rules.hpp"
 #include "../../shared/hit_region.hpp"
 #include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
@@ -59,55 +61,15 @@ namespace client
 {
 
 // Whether the local player may move itself right now, mirroring the server's
-// world_is_frozen. Answers TRUE until the first snapshot arrives:
-// client_context's default phase is a guess, and guessing "frozen" would pin a
-// joining player in place until the first packet lands.
+// gate. True while the world has no match yet.
 //
-// KNOWN LIMITATION, stated because it is invisible otherwise: this is the
-// CURRENT phase, while reconciliation replays inputs from up to
-// cl_max_unacked_inputs ticks ago. A replay straddling a freeze boundary
-// therefore applies the wrong gate for the few ticks on the far side of it. The
-// error is bounded by the replay window and only occurs at a transition. Fixing
-// it means keeping the phase per saved input rather than reading the live one --
-// which is worth doing when the freeze is actually used for something, and is
-// unrelated to how the phase gets here.
+// KNOWN LIMITATION: this is the CURRENT phase, while reconciliation replays
+// inputs from up to cl_max_unacked_inputs ticks ago, so a replay straddling a
+// freeze boundary applies the wrong gate for a few ticks.
 static bool local_movement_is_allowed(const client_context_t &ctx)
 {
-  if (!ctx.replication.round.received)
-    return true;
-
-  return shared::is_movement_allowed(ctx.replication.round.phase);
-}
-
-
-// The match-level state, off the snapshot rather than off the phase event.
-//
-// Wholesale and unconditional every tick, which is what makes it a MIRROR
-// rather than a second authority: nothing here is advanced locally, and a
-// dropped packet costs one tick of staleness instead of a whole phase of
-// mispredicted walking.
-//
-// An out-of-range phase means a server whose build declares a phase this one
-// does not. SCHEMA_HASH already refuses that connection, so this branch is belt
-// and braces -- but keeping the phase we had beats decoding a garbage enum into
-// the movement gate.
-static void apply_round_state(client_context_t &ctx,
-                              const game::S2C_EntityPackage &package)
-{
-  const uint32_t phase = package.round_phase();
-  if (phase >= static_cast<uint32_t>(shared::Round_Phase_COUNT))
-  {
-    log_error("snapshot carried round phase {}, which this build has no name "
-              "for; keeping the phase we had",
-              phase);
-    return;
-  }
-
-  ctx.replication.round.phase          = static_cast<shared::Round_Phase>(phase);
-  ctx.replication.round.phase_end_tick = package.phase_end_tick();
-  ctx.replication.round.phase_start_tick = package.phase_start_tick();
-  ctx.replication.round.round_number   = package.round_number();
-  ctx.replication.round.received       = true;
+  const entities::Match *match = client::try_find_match(ctx);
+  return match == nullptr || shared::is_movement_allowed(match->phase);
 }
 
 
@@ -1033,11 +995,6 @@ void Play_State::update(float dt)
 
     // we have a complete new snapshot now, so we move the cursor to it.
     client::advance_newest_held_snapshot(ctx, std::move(*decoded));
-
-    // Match state rides the same package, and is applied under the same
-    // staleness check: try_decode_snapshot already refused anything not newer
-    // than what we hold, so a reordered duplicate cannot roll the phase back.
-    apply_round_state(ctx, pkg);
   }
 
 
@@ -2861,19 +2818,54 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
   }
 
-  if (ctx.replication.round.phase == shared::Round_Phase::Live && !connection_ui.show_pause_menu)
+  const entities::Match *match = client::try_find_match(ctx);
+  if (match != nullptr && match->phase == entities::Round_Phase::Live && !connection_ui.show_pause_menu)
   {
     if (const ui::ui_font_t* font = ctx.font)
     {
       const float tick_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
       const int64_t ticks_elapsed = static_cast<int64_t>(ctx.replication.latest_processed_tick) -
-                                    static_cast<int64_t>(ctx.replication.round.phase_start_tick);
+                                    static_cast<int64_t>(match->phase_start_tick);
       hud::draw_run_timer(ui, *font, renderer::screen_size(), renderer::display_scale(),
                           static_cast<float>(ticks_elapsed) * tick_dt);
     }
     else
     {
       log_error("[hud] no UI font registered; the run timer cannot draw");
+    }
+  }
+
+  if (match != nullptr && shared::is_before_match(match->phase) && !connection_ui.show_pause_menu)
+  {
+    if (const ui::ui_font_t* font = ctx.font)
+    {
+      hud::warmup_vote_view_t vote;
+      if (match->phase == entities::Round_Phase::Countdown)
+      {
+        const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -
+                                   static_cast<int64_t>(ctx.replication.latest_processed_tick);
+        vote.seconds_until_start =
+            static_cast<float>(ticks_left) / static_cast<float>(ctx.connection.server_tickrate);
+      }
+      for (const entities::Player_Entity& player :
+           ctx.world.session.entity_system.entities_of<entities::Player_Entity>())
+      {
+        if (player.client_slot_index < 0 || player.client_slot_index >= network::sv_max_client_count)
+          continue;
+        ++vote.joined;
+        if (player.ready)
+          ++vote.ready;
+      }
+      if (const entities::Player_Entity* my_player = try_find_my_player(ctx))
+      {
+        vote.i_have_a_body = true;
+        vote.i_am_ready    = my_player->ready;
+      }
+      hud::draw_ready_status(ui, *font, renderer::screen_size(), renderer::display_scale(), vote);
+    }
+    else
+    {
+      log_error("[hud] no UI font registered; the warmup vote cannot draw");
     }
   }
 

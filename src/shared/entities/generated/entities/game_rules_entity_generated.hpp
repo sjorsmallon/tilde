@@ -8,6 +8,7 @@
 
 #include "../entities_core_generated.hpp"
 #include "../traits/objective_generated.hpp"
+#include "../traits/match_control_generated.hpp"
 
 namespace entities
 {
@@ -18,6 +19,7 @@ struct Game_Rules_Entity : Entity
 
   Game_Rules_Entity() { type = entity_type::Game_Rules_Entity; }
 
+  Match match = {};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no
@@ -36,10 +38,24 @@ static_assert(std::is_base_of_v<Entity, Game_Rules_Entity>,
 
 // --- what a Game_Rules_Entity accepts ---
 //
-// Its `is` list is: Objective.
+// Its `is` list is: Objective, Match_Control.
 // No handler for a verb this type does not accept EXISTS, so calling one
 // is "no matching function" rather than a runtime refusal; a declared
 // handler nobody defined is a LINK error naming the symbol.
 void complete_level(Game_Rules_Entity&, const Complete_Level_Data&, input_context_t&);   // Objective, this type's own: src/server/entities/game_rules_entity.cpp
+void start_match(Entity&, Match&, const Start_Match_Data&, input_context_t&);   // Match_Control, shared by every opting-in type: src/server/traits/match_control.cpp
+void end_round(Entity&, Match&, const End_Round_Data&, input_context_t&);   // Match_Control, shared by every opting-in type: src/server/traits/match_control.cpp
+void restart_round(Entity&, Match&, const Restart_Round_Data&, input_context_t&);   // Match_Control, shared by every opting-in type: src/server/traits/match_control.cpp
+void end_match(Entity&, Match&, const End_Match_Data&, input_context_t&);   // Match_Control, shared by every opting-in type: src/server/traits/match_control.cpp
+
+// --- what a Game_Rules_Entity announces ---
+//
+// Declared in the trait headers above and defined once in the
+// binder; repeated here so this file answers both halves. The
+// SYSTEM that writes the state change is what calls one.
+void emit_match_started(const Entity& sender, const Match_Started_Data& payload, input_context_t& context);   // Match_Control
+void emit_round_started(const Entity& sender, const Round_Started_Data& payload, input_context_t& context);   // Match_Control
+void emit_round_ended(const Entity& sender, const Round_Ended_Data& payload, input_context_t& context);   // Match_Control
+void emit_match_ended(const Entity& sender, const Match_Ended_Data& payload, input_context_t& context);   // Match_Control
 
 } // namespace entities

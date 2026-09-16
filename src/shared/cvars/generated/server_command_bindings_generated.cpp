@@ -292,6 +292,48 @@ bool invoke_ent_fire(Span<std::string_view> args, const command_context_t& conte
   return true;
 }
 
+// restart_round
+bool invoke_restart_round(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::restart_round, args.size());
+    return false;
+  }
+
+  commands::restart_round(context);
+  return true;
+}
+
+// end_match
+bool invoke_end_match(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::end_match, args.size());
+    return false;
+  }
+
+  commands::end_match(context);
+  return true;
+}
+
+// ready
+bool invoke_ready(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::ready, args.size());
+    return false;
+  }
+
+  commands::ready(context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -307,6 +349,9 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::sv_frame_report] = &invoke_sv_frame_report;
   table.binders[(uint32_t)command_id::sv_hitch_report] = &invoke_sv_hitch_report;
   table.binders[(uint32_t)command_id::ent_fire] = &invoke_ent_fire;
+  table.binders[(uint32_t)command_id::restart_round] = &invoke_restart_round;
+  table.binders[(uint32_t)command_id::end_match] = &invoke_end_match;
+  table.binders[(uint32_t)command_id::ready] = &invoke_ready;
 }
 
 } // namespace cvars

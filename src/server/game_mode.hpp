@@ -1,8 +1,7 @@
 #pragma once
 
 #include "../shared/array.hpp"
-#include "../shared/cvars/generated/cvars_generated.hpp"
-#include "../shared/events/generated/events_generated.hpp"
+#include "../shared/entities/generated/entities_core_generated.hpp"
 #include "../shared/span.hpp"
 
 #include <cstdint>
@@ -10,7 +9,7 @@
 namespace server
 {
 
-using Game_Mode = cvars::Game_Mode;
+using Game_Mode = entities::Game_Mode;
 enum class Win_Condition : uint8_t
 {
   Frag_Limit,
@@ -49,19 +48,25 @@ namespace server
 // round_number increments and where every player snaps to a spawn.
 //
 // A one-element cycle is the honest shape rather than a degenerate one: a
-// deathmatch is a single round that ends on a frag limit, and a speedrun a
-// single round that ends when the objective is reached.
-inline constexpr shared::Round_Phase SINGLE_ROUND_PHASE_CYCLE[] = {
-    shared::Round_Phase::Live,
+// deathmatch is a single round that ends on a frag limit.
+inline constexpr entities::Round_Phase SINGLE_ROUND_PHASE_CYCLE[] = {
+    entities::Round_Phase::Live,
 };
 
 // The three-phase round: freeze at the markers, play it out, settle, repeat.
 // Warmup and Game_Over bookend the whole match and are deliberately absent, the
 // same as above.
-inline constexpr shared::Round_Phase ROUNDS_PHASE_CYCLE[] = {
-    shared::Round_Phase::Countdown,
-    shared::Round_Phase::Live,
-    shared::Round_Phase::Round_End,
+// A level: play it, then hold on the result until someone restarts it or ends
+// the match. The hold is Round_End with no deadline (mp_round_end_seconds 0).
+inline constexpr entities::Round_Phase LEVEL_PHASE_CYCLE[] = {
+    entities::Round_Phase::Live,
+    entities::Round_Phase::Round_End,
+};
+
+inline constexpr entities::Round_Phase ROUNDS_PHASE_CYCLE[] = {
+    entities::Round_Phase::Freeze,
+    entities::Round_Phase::Live,
+    entities::Round_Phase::Round_End,
 };
 
 struct game_mode_settings_t
@@ -72,9 +77,10 @@ struct game_mode_settings_t
   bool respawn_during_round;
   bool auto_assign_teams;
   bool join_in_progress;
+  // 0 is unbounded: the cycle never reaches Game_Over on its own, only End_Match does.
   uint32_t max_rounds;
 
-  Span<const shared::Round_Phase> phase_cycle;
+  Span<const entities::Round_Phase> phase_cycle;
 };
 
 inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
@@ -105,8 +111,8 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .respawn_during_round = true,
         .auto_assign_teams    = false,
         .join_in_progress     = true,
-        .max_rounds           = 1,
-        .phase_cycle          = SINGLE_ROUND_PHASE_CYCLE,
+        .max_rounds           = 0,
+        .phase_cycle          = LEVEL_PHASE_CYCLE,
     },
 }};
 

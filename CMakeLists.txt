@@ -240,6 +240,7 @@ set(ENTITY_IO_HANDLERS
     src/server/traits/mortal.cpp
     src/server/traits/armable.cpp
     src/server/traits/timer.cpp
+    src/server/traits/match_control.cpp
     src/server/entities/point_light_entity.cpp
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
@@ -749,13 +750,14 @@ add_library(game_client SHARED
     src/client/game_events/rocket_detonated.cpp
     src/client/game_events/player_died.cpp
     src/client/game_events/player_spawned.cpp
-    src/client/game_events/round_phase_changed.cpp
     src/client/game_events/objective_reached.cpp
     src/client/hud/kill_feed.cpp
     src/client/hud/crosshair.cpp
     src/client/hud/announcement.cpp
+    src/client/hud/match_announcement.cpp
     src/client/hud/deploy_timer.cpp
     src/client/hud/run_timer.cpp
+    src/client/hud/ready_status.cpp
     src/client/hud/scoreboard.cpp
     src/client/hud/weapon_name.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
@@ -773,6 +775,7 @@ add_library(game_client SHARED
     src/client/ui/list_menu.cpp
     src/client/ui/ui_input.cpp
     src/client/console.cpp
+    src/client/key_names.cpp
     src/client/state_manager.cpp
     src/client/states/main_menu_state.cpp
     src/client/states/pause_menu.cpp
@@ -1005,6 +1008,12 @@ add_executable(ui_test
 target_include_directories(ui_test PRIVATE src src/client)
 target_link_libraries(ui_test PRIVATE game_shared Vulkan::Vulkan SDL2::SDL2-static)
 
+# 16b. Key names -- what `bind` reads and binds.cfg writes. The table is pure, so
+# the module compiles in directly with no SDL.
+add_executable(key_names_test src/test/key_names_test.cpp src/client/key_names.cpp)
+target_include_directories(key_names_test PRIVATE src src/client)
+target_link_libraries(key_names_test PRIVATE game_shared)
+
 # 16c. Editor tools must compile and LINK against pass_builder_t with no mock --
 # which is the whole argument for having deleted overlay_renderer_t rather than
 # reimplementing it. Built, but deliberately NOT in GAME_TESTS: see the file's
@@ -1181,14 +1190,7 @@ endif()
 # to the module by design. This also keeps the test from loading a DLL to check
 # what is really pure struct manipulation.
 add_executable(server_context_test src/test/server_context_test.cpp
-    src/server/server_context.cpp
-    src/server/systems/game_rules_system.cpp
-    # enter_phase snaps every player to a marker at a round boundary, so the
-    # rules FSM now references the respawn system, which in turn refills the
-    # inventory. Their physics half resolves through game_shared below.
-    src/server/systems/respawn_system.cpp
-    src/server/systems/inventory_system.cpp
-    src/server/entity_lifecycle.cpp)
+    src/server/server_context.cpp)
 target_include_directories(server_context_test PRIVATE src src/shared src/server)
 target_link_libraries(server_context_test PRIVATE game_shared)
 
@@ -1198,14 +1200,28 @@ target_link_libraries(server_context_test PRIVATE game_shared)
 # linking game_server: none of this is on the module's GAME_SERVER_API surface.
 # Unlike that test it DOES stand Jolt up, because a round boundary moves every
 # player's kinematic capsule.
-add_executable(game_rules_test src/test/game_rules_test.cpp
+# The rules FSM emits the match signals, so it links the queue and the generated
+# binder -- which references every handler, hence the whole handler list.
+set(MATCH_SERVER_SOURCES
+    src/server/entity_io_queue.cpp
+    src/server/server_messages.cpp
+    ${ENTITY_IO_GEN_BINDINGS}
+    ${ENTITY_IO_HANDLERS}
+    src/server/damage.cpp
     src/server/server_context.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/entity_lifecycle.cpp)
+add_executable(game_rules_test src/test/game_rules_test.cpp ${MATCH_SERVER_SOURCES})
 target_include_directories(game_rules_test PRIVATE src src/shared src/server)
 target_link_libraries(game_rules_test PRIVATE game_shared)
+target_compile_definitions(game_rules_test PRIVATE GAME_SERVER_EXPORTS)
+
+add_executable(match_announcement_test src/test/match_announcement_test.cpp
+    src/client/hud/match_announcement.cpp)
+target_include_directories(match_announcement_test PRIVATE src src/shared)
+target_link_libraries(match_announcement_test PRIVATE game_shared)
 
 # 26c. Entity I/O — connections as map data, the load check, and the queue.
 # entity_io_def.md ss11 step 3's pin. Compiles the server sources directly like
@@ -1232,14 +1248,10 @@ target_link_libraries(entity_io_test PRIVATE game_shared)
 # declaration from dllimport into something a local definition can satisfy.
 target_compile_definitions(entity_io_test PRIVATE GAME_SERVER_EXPORTS)
 
-add_executable(inventory_test src/test/inventory_test.cpp
-    src/server/systems/inventory_system.cpp
-    src/server/entity_lifecycle.cpp
-    src/server/server_context.cpp
-    src/server/systems/game_rules_system.cpp
-    src/server/systems/respawn_system.cpp)
+add_executable(inventory_test src/test/inventory_test.cpp ${MATCH_SERVER_SOURCES})
 target_include_directories(inventory_test PRIVATE src src/shared src/server)
 target_link_libraries(inventory_test PRIVATE game_shared)
+target_compile_definitions(inventory_test PRIVATE GAME_SERVER_EXPORTS)
 
 # 27. Player move step invariance — one tick of dt vs N sub-steps of dt/N.
 # Step 2 of subtick_plan.md, and the prerequisite for sub-tick rather than a
@@ -1364,11 +1376,13 @@ set(GAME_TESTS
     server_context_test
     game_rules_test
     run_times_test
+    match_announcement_test
     entity_io_test
     inventory_test
     events_test
     reliable_stream_test
     ui_test
+    key_names_test
     player_move_step_invariance_test
     projectile_step_test
     subtick_test

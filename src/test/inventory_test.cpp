@@ -16,6 +16,11 @@
 
 #include <cstdio>
 
+namespace server
+{
+uint32_t get_tick_number() { return 0; }
+}
+
 static int32_t failure_count = 0;
 
 static void check(bool condition, const char* description)

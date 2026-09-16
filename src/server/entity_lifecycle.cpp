@@ -93,7 +93,7 @@ void try_admit_player(server_context_t &context, int32_t slot)
   if (!current_mode(context).join_in_progress && is_round_live(context))
   {
     log_terminal("slot {} joined mid-round; spawning at the start of round {}",
-                 slot, context.world.rules.round_number + 1);
+                 slot, match_of(context).round_number + 1);
     return;
   }
 

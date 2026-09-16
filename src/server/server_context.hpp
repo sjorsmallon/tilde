@@ -18,7 +18,7 @@
 #include "bot_state.hpp"
 #include "damage_types.hpp"
 #include "entity_io_queue.hpp"
-#include "game_rules.hpp"
+#include "game_mode.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -150,7 +150,6 @@ struct world_t
   std::set<trigger_overlap_t> previous_tick_trigger_overlaps;
 
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
-  game_rules_state_t rules;
 
   // Entity I/O: every action a connection has requested and not yet delivered,
   // drained at the top of the tick. In `world` because rows are keyed by MAP
@@ -230,9 +229,9 @@ struct server_context_t
 
   // A `map` console line, resolved but not yet serviced. Outside the reset
   // scope because the request outlives the world it was made in: it is a
-  // REQUEST rather than a change for the same reason rules.map_restart_requested
-  // is -- the reload frees the world, the inbox and the console entry the
-  // handler is running inside. Serviced at the top of the next tick; empty
+  // REQUEST rather than a change -- the reload frees the world, the inbox and
+  // the console entry the handler is running inside. Game_Over's deadline
+  // writes it too. Serviced at the top of the next tick; empty
   // means nothing pending.
   std::string pending_map_change;
 

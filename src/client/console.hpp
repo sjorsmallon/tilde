@@ -34,8 +34,8 @@ public:
   // when it connects.
   void set_cvar_state(cvars::cvar_state_t *state, cvars::command_table_t *table);
 
-  // Bind a single ASCII key (a-z) to a command line. The bound command is
-  // executed via execute_command when the key transitions to pressed.
+  // Bind a key, by its key_names.hpp name, to a command line. The bound command
+  // is executed via execute_command when the key transitions to pressed.
   bool bind_key(std::string_view key, std::string command_line);
   void clear_bindings();
 

@@ -5,6 +5,8 @@
 #include "audio/audio_system.hpp"
 #include "client_context.hpp"
 #include "entity_type_audio.hpp"
+#include "hud/announcement.hpp"
+#include "hud/match_announcement.hpp"
 #include "weapon_fire_audio.hpp"
 
 #include <iterator>
@@ -158,13 +160,47 @@ void play_emitters(client_context_t& context, const ::network::snapshot_frame_t&
   }
 }
 
+// The phase banner. Silent on a round the objective or a request ended:
+// Objective_Reached already said it, or the player asked.
+void announce_match_edges(const ::network::snapshot_frame_t& previous,
+                          const ::network::snapshot_frame_t& current)
+{
+  Span<const entities::Game_Rules_Entity> before =
+      previous.entities.entities_of<entities::Game_Rules_Entity>();
+  Span<const entities::Game_Rules_Entity> after =
+      current.entities.entities_of<entities::Game_Rules_Entity>();
+  if (before.empty() || after.empty())
+    return;
+
+  std::string_view frag_leader_name;
+  int32_t most_kills = -1;
+  for (const entities::Player_Entity& player :
+       current.entities.entities_of<entities::Player_Entity>())
+  {
+    if (player.kills <= most_kills)
+      continue;
+    most_kills       = player.kills;
+    frag_leader_name = player.display_name.c_str();
+  }
+
+  const std::string text =
+      hud::match_announcement_for(before[0].match, after[0].match, frag_leader_name);
+  if (!text.empty())
+    hud::set_announcement(text);
+}
+
 } // namespace
 
-void play_snapshot_edge_audio(client_context_t& context,
-                              const ::network::snapshot_frame_t* previous,
-                              const ::network::snapshot_frame_t& current)
+void apply_snapshot_edges(client_context_t& context,
+                          const ::network::snapshot_frame_t* previous,
+                          const ::network::snapshot_frame_t& current)
 {
-  if (previous == nullptr || !context.audio)
+  if (previous == nullptr)
+    return;
+
+  announce_match_edges(*previous, current);
+
+  if (!context.audio)
     return;
 
   play_gunshots(context, *previous, current);

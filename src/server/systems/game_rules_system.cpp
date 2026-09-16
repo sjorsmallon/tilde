@@ -1,152 +1,173 @@
 #include "game_rules_system.hpp"
 
+#include "../../shared/entities/generated/entities/game_rules_entity_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/round_phase_rules.hpp"
+#include "../entity_io_context.hpp"
 #include "../entity_lifecycle.hpp"
 #include "respawn_system.hpp"
 
+#include <optional>
+
 namespace server
 {
+
+using entities::Match;
+using entities::Match_Request;
+using entities::Round_End_Reason;
+using entities::Round_Phase;
 
 round_timing_t round_timing_from_cvars(const cvars::cvar_state_t &cvars)
 {
   return round_timing_t{
       .warmup_seconds    = cvars.mp_warmup_seconds,
       .countdown_seconds = cvars.mp_countdown_seconds,
+      .freeze_seconds    = cvars.mp_freeze_seconds,
       .live_seconds      = cvars.mp_round_seconds,
       .round_end_seconds = cvars.mp_round_end_seconds,
       .game_over_seconds = cvars.mp_game_over_seconds,
   };
 }
 
-static float phase_duration_seconds(shared::Round_Phase phase, const round_timing_t &timing)
+static float phase_duration_seconds(Round_Phase phase, const round_timing_t &timing)
 {
   switch (phase)
   {
-    case shared::Round_Phase::Warmup:    return timing.warmup_seconds;
-    case shared::Round_Phase::Countdown: return timing.countdown_seconds;
-    case shared::Round_Phase::Live:      return timing.live_seconds;
-    case shared::Round_Phase::Round_End: return timing.round_end_seconds;
-    // Not a phase transition: see update_game_rules, where this deadline
-    // becomes a map reload.
-    case shared::Round_Phase::Game_Over: return timing.game_over_seconds;
+    case Round_Phase::Warmup:    return timing.warmup_seconds;
+    case Round_Phase::Countdown: return timing.countdown_seconds;
+    case Round_Phase::Freeze:    return timing.freeze_seconds;
+    case Round_Phase::Live:      return timing.live_seconds;
+    case Round_Phase::Round_End: return timing.round_end_seconds;
+    // Not a phase transition: update_match turns this deadline into a map change.
+    case Round_Phase::Game_Over: return timing.game_over_seconds;
   }
 
-  log_error("phase_duration_seconds: unknown round phase {}",
-            static_cast<int>(phase));
+  log_error("phase_duration_seconds: unknown round phase {}", static_cast<int>(phase));
   return 0.f;
 }
 
-// The row for the mode this match is running. One lookup site, so nothing else
-// indexes GAME_MODES directly.
+entities::Game_Rules_Entity *try_find_rules_entity(server_context_t &context)
+{
+  Span<entities::Game_Rules_Entity> pool =
+      context.world.session.entity_system.entities_of<entities::Game_Rules_Entity>();
+  return pool.empty() ? nullptr : &pool[0];
+}
+
+const entities::Game_Rules_Entity *try_find_rules_entity(const server_context_t &context)
+{
+  return try_find_rules_entity(const_cast<server_context_t &>(context));
+}
+
+Match &match_of(server_context_t &context)
+{
+  entities::Game_Rules_Entity *rules = try_find_rules_entity(context);
+  if (rules == nullptr)
+    fatal_error("match_of: the world has no Game_Rules_Entity; install_match did not run");
+  return rules->match;
+}
+
+const Match &match_of(const server_context_t &context)
+{
+  return match_of(const_cast<server_context_t &>(context));
+}
+
+// One lookup site, so nothing else indexes GAME_MODES directly.
 const game_mode_settings_t &current_mode(const server_context_t &context)
 {
-  return GAME_MODES[context.world.rules.mode];
+  return GAME_MODES[match_of(context).mode];
 }
 
-// The banner, and ONLY the banner. This used to be the client's sole source of
-// the phase, which meant a heartbeat had to re-send it once a second in case one
-// was dropped -- and that in turn made the event ambiguous, since a client could
-// not tell a transition from a re-announcement. The phase is replicated as state
-// on the snapshot now (S2C_EntityPackage), so this fires exactly once per real
-// transition and carries an OCCURRENCE rather than a fact.
-//
-// Both fields ride along anyway because the banner uses them: "ROUND 2" needs
-// the number, and a round timer needs the deadline at the moment it starts.
-static void broadcast_phase(server_context_t &context)
+uint32_t count_rules_entities(const shared::map_t &map)
 {
-  shared::Round_Phase_Changed changed;
-  changed.phase          = context.world.rules.phase;
-  changed.round_number   = context.world.rules.round_number;
-  changed.phase_end_tick = context.world.rules.phase_end_tick;
-  shared::fire_round_phase_changed(context.outgoing.events, changed);
+  uint32_t count = 0;
+  for (const shared::map_entity_t &entry : map.entities)
+    if (entry.entity && entry.entity->type == entities::entity_type::Game_Rules_Entity)
+      ++count;
+  return count;
 }
 
-// The one place `phase` is written. Everything else (the deadline drain,
-// end_round, reset) routes through here so the per-phase entry work — the
-// deadline, the round counter, the round-start respawn, the log line and the
-// Round_Phase_Changed event — has exactly one home.
+static void emit_transition_signals(server_context_t &context,
+                                    entities::Game_Rules_Entity &rules,
+                                    Round_Phase from,
+                                    Round_Phase to,
+                                    bool entered_round,
+                                    uint32_t current_tick)
+{
+  input_context_t emit_context{context, shared::null_entity_uid, current_tick};
+
+  if (from == Round_Phase::Live)
+    entities::emit_round_ended(rules, entities::Round_Ended_Data{.reason = rules.match.end_reason},
+                               emit_context);
+  if (shared::is_before_match(from) && !shared::is_before_match(to))
+    entities::emit_match_started(rules, entities::Match_Started_Data{}, emit_context);
+  if (entered_round)
+    entities::emit_round_started(rules, entities::Round_Started_Data{}, emit_context);
+  if (to == Round_Phase::Game_Over && from != Round_Phase::Game_Over)
+    entities::emit_match_ended(rules, entities::Match_Ended_Data{}, emit_context);
+}
+
+static void clear_ready_votes(server_context_t &context)
+{
+  for (entities::Player_Entity &player :
+       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+    player.ready = false;
+}
+
+// The one place `phase` is written, and the signals go out beside the write.
 static void enter_phase(server_context_t &context,
-                        shared::Round_Phase phase,
+                        Round_Phase phase,
                         uint32_t current_tick,
                         uint32_t tickrate_hz)
 {
+  entities::Game_Rules_Entity *rules = try_find_rules_entity(context);
+  if (rules == nullptr)
+    fatal_error("enter_phase: the world has no Game_Rules_Entity");
+  Match &match = rules->match;
+
+  const Round_Phase from = match.phase;
   const float duration =
       phase_duration_seconds(phase, round_timing_from_cvars(*context.cvars));
 
-  context.world.rules.phase = phase;
-  context.world.rules.phase_start_tick = current_tick;
-  context.world.rules.phase_end_tick =
+  match.phase            = phase;
+  match.phase_start_tick = current_tick;
+  match.phase_end_tick =
       duration > 0.f
-          ? current_tick +
-                static_cast<uint32_t>(duration * static_cast<float>(tickrate_hz))
+          ? current_tick + static_cast<uint32_t>(duration * static_cast<float>(tickrate_hz))
           : 0;
 
   // The round boundary is element 0 of the mode's cycle, not the literal
-  // Countdown: a deathmatch has no freeze, so its cycle starts at Live and that
-  // is where its one round begins. Warmup sits outside the cycle and happens
-  // once at match start, so counting there would leave round_number at 1.
+  // Freeze: a deathmatch has no freeze, so its cycle starts at Live.
   const game_mode_settings_t &mode = current_mode(context);
-  if (!mode.phase_cycle.empty() && phase == mode.phase_cycle[0])
+  const bool entered_round = !mode.phase_cycle.empty() && phase == mode.phase_cycle[0];
+  if (entered_round)
   {
-    ++context.world.rules.round_number;
+    ++match.round_number;
+    match.objective_reached = false;
 
     // Ahead of the respawn, so a player admitted here is placed by the same
-    // pass as everyone else rather than by a second spawn path that could put
-    // them somewhere else. This is where a mode with join_in_progress = false
-    // pays out: the body a mid-round join asked for appears at the boundary.
+    // pass as everyone else.
     admit_waiting_players(context);
-
-    // The one thing in this system that genuinely cannot be a gate: a gate is
-    // asked every tick and answers about the present, and "you are now at your
-    // spawn" is a change that has to be MADE once, at the boundary. Here rather
-    // than at the Countdown call sites because there are two of them
-    // (start_match and the Round_End rollover) and a round that snapped on only
-    // one path is the kind of bug that reads as a physics glitch.
     respawn_all_players(context);
-
-    // The other half of the world. A round that put the players back but left
-    // every target destroyed is a round only the first one of which is
-    // playable -- and this is the boundary, the one place a change like that
-    // is MADE rather than asked about.
     seed_damageable_health(context.world.session);
-
-    context.world.rules.objective_reached = false;
   }
 
-  log_terminal("Round {}: entering phase {} (ends tick {})",
-               context.world.rules.round_number, to_string(phase),
-               context.world.rules.phase_end_tick);
+  log_terminal("Round {}: entering phase {} (ends tick {})", match.round_number, to_string(phase),
+               match.phase_end_tick);
 
-  broadcast_phase(context);
+  // The respawn above spawns into pools, so the entity is found again.
+  emit_transition_signals(context, *try_find_rules_entity(context), from, phase, entered_round,
+                          current_tick);
 }
 
-// One step along the mode's phase cycle. Every TIMED transition is one call to
-// this, so there is no start_round()/start_countdown() pair: those would be
-// synonyms for enter_phase of a particular phase, and a second name for a
-// transition is how the entry work drifts into only one of them. Functions are
-// reserved for transitions with an outside CAUSE — end_round is the only one,
-// and it exists because a win condition carries a reason the clock doesn't.
-//
-// The three cases, and none of them names a phase:
-//
-//   OUTSIDE the cycle (Warmup)  -> its first element. Warmup is match-start
-//                                  only and is never returned to.
-//   NOT the last element        -> the next one.
-//   THE LAST element            -> back to the first for another round, or
-//                                  Game_Over once round_number has reached the
-//                                  mode's max_rounds.
-//
-// Game_Over is terminal and never steps anywhere: update_game_rules turns its
-// deadline into a map reload instead of asking this.
-static shared::Round_Phase next_phase(const game_rules_state_t &rules,
-                                      const game_mode_settings_t &mode,
-                                      shared::Round_Phase phase)
+// One step along the mode's cycle: out of Warmup to its first element, to the
+// next element, or from the last back to the first -- or to Game_Over once
+// round_number reaches a non-zero max_rounds.
+static Round_Phase next_phase(const Match &match, const game_mode_settings_t &mode, Round_Phase phase)
 {
   if (mode.phase_cycle.empty())
   {
     log_error("next_phase: mode '{}' declares an empty phase cycle", to_string(mode.key));
-    return shared::Round_Phase::Game_Over;
+    return Round_Phase::Game_Over;
   }
 
   for (uint32_t index = 0; index < mode.phase_cycle.size(); ++index)
@@ -157,141 +178,55 @@ static shared::Round_Phase next_phase(const game_rules_state_t &rules,
     if (index + 1 < mode.phase_cycle.size())
       return mode.phase_cycle[index + 1];
 
-    return rules.round_number >= mode.max_rounds ? shared::Round_Phase::Game_Over
-                                                 : mode.phase_cycle[0];
+    const bool rounds_exhausted = mode.max_rounds != 0 && match.round_number >= mode.max_rounds;
+    return rounds_exhausted ? Round_Phase::Game_Over : mode.phase_cycle[0];
   }
 
-  // Not in the cycle: Warmup on its way in, or Game_Over, which stays put.
-  if (phase == shared::Round_Phase::Game_Over)
-    return shared::Round_Phase::Game_Over;
+  if (phase == Round_Phase::Game_Over)
+    return Round_Phase::Game_Over;
 
   return mode.phase_cycle[0];
 }
 
-void reset_game_rules(server_context_t &context,
-                      uint32_t current_tick,
-                      uint32_t tickrate_hz)
+void install_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz)
 {
-  // Zero first so round_number restarts at 0; the first Countdown takes it to
-  // 1. Seeding phase_end_tick to `current_tick` instead would read as "already
-  // expired" and the first update_game_rules would promote immediately,
-  // skipping the match-start warmup entirely.
-  context.world.rules = {};
-  enter_phase(context, shared::Round_Phase::Warmup, current_tick, tickrate_hz);
-}
+  shared::Entity_System &entity_system = context.world.session.entity_system;
+  const size_t count = entity_system.entities_of<entities::Game_Rules_Entity>().size();
+  if (count > 1)
+    fatal_error("install_match: the world holds {} Game_Rules_Entity; the loader refuses a map "
+                "with more than one",
+                count);
 
-void update_game_rules(server_context_t &context,
-                       uint32_t current_tick,
-                       uint32_t tickrate_hz)
-{
-  // No deadline: this phase ends on a win condition (end_round), not a timer.
-  if (context.world.rules.phase_end_tick == 0)
-    return;
-
-  if (current_tick < context.world.rules.phase_end_tick)
-    return;
-
-  // Game_Over's deadline is the only one that does not name a phase. The match
-  // is over, so there is nothing left to advance TO: the whole map reloads and
-  // the next match starts at Warmup with the scores wiped, which is what makes
-  // the win condition worth reaching more than once per server lifetime.
-  //
-  // Requested, not done here -- the reload frees the session this tick is in
-  // the middle of. Idempotent, because the request survives until the top of
-  // the next tick and this branch runs every tick until then.
-  if (context.world.rules.phase == shared::Round_Phase::Game_Over)
+  if (count == 0)
   {
-    context.world.rules.map_restart_requested = true;
-    return;
+    const shared::entity_uid_t uid = entity_system.spawn<entities::Game_Rules_Entity>();
+    log_warning("map '{}' has no Game_Rules_Entity; minted {} with the default mode ({})",
+                context.world.current_map_path, uid, to_string(match_of(context).mode));
   }
 
-  if (context.world.rules.objective_reached == true)
+  Match &match = match_of(context);
+  const entities::Game_Mode mode = match.mode;
+  match = Match{};
+  match.mode = mode;
+  log_terminal("Game mode: {}", to_string(mode));
+
+  // Here and not on entering Warmup: a cancelled Countdown returns to Warmup
+  // and must keep everyone else's vote.
+  clear_ready_votes(context);
+  enter_phase(context, Round_Phase::Warmup, current_tick, tickrate_hz);
+}
+
+bool match_request_is_allowed(Round_Phase phase, Match_Request request)
+{
+  switch (request)
   {
-    
-    context.world.rules.map_restart_requested = true;
+    case Match_Request::None:          return false;
+    case Match_Request::Start_Match:   return shared::is_before_match(phase);
+    case Match_Request::End_Round:     return phase == Round_Phase::Live;
+    case Match_Request::Restart_Round: return phase == Round_Phase::Live || phase == Round_Phase::Round_End;
+    case Match_Request::End_Match:     return phase != Round_Phase::Game_Over;
   }
-
-  // Deadline reached. Live expiring here is the timeout path and lands on the
-  // same phase a win condition would; the two differ only in what the
-  // round-end event will eventually report as the reason.
-  //
-  // Nothing announces here: enter_phase fires Round_Phase_Changed, and the
-  // client decides the wording.
-  enter_phase(context,
-              next_phase(context.world.rules, current_mode(context),
-                         context.world.rules.phase),
-              current_tick, tickrate_hz);
-}
-
-void start_match(server_context_t &context,
-                 uint32_t current_tick,
-                 uint32_t tickrate_hz)
-{
-  if (context.world.rules.phase != shared::Round_Phase::Warmup)
-  {
-    log_error("start_match called during phase {} — only Warmup can start a "
-              "match. Ignoring.",
-              to_string(context.world.rules.phase));
-    return;
-  }
-
-  enter_phase(context, current_mode(context).phase_cycle[0], current_tick, tickrate_hz);
-}
-
-void end_round(server_context_t &context,
-               uint32_t current_tick,
-               uint32_t tickrate_hz)
-{
-  if (context.world.rules.phase != shared::Round_Phase::Live)
-  {
-    log_error("end_round called during phase {} — only Live can end. Ignoring.",
-              to_string(context.world.rules.phase));
-    return;
-  }
-
-  // Along the CYCLE, not to a named phase. A round mode's Live is followed by
-  // Round_End; a deathmatch's Live is the last element of a one-element cycle,
-  // so the same call ends the match. Hardcoding Round_End here would have put a
-  // deathmatch into a phase its own cycle does not contain.
-  enter_phase(context,
-              next_phase(context.world.rules, current_mode(context),
-                         shared::Round_Phase::Live),
-              current_tick, tickrate_hz);
-}
-
-void set_server_game_mode_from_cvar(server_context_t &context)
-{
-  // A LATCH, not a parse. sv_gamemode is enum-typed, so a name this build does
-  // not have was already refused by try_cvar_from_text -- at the console line or
-  // the map's attached_cvars line that wrote it, which is where the author can
-  // see it. What is left here is deciding WHEN the value takes hold: reading the
-  // cvar at every use site would let a mid-round `sv_gamemode` change the rules
-  // under a match in progress.
-  context.world.rules.mode = context.cvars->sv_gamemode;
-  log_terminal("Game mode: {}", to_string(context.world.rules.mode));
-}
-
-void try_start_match_when_enough_players(server_context_t &context,
-                                         uint32_t current_tick,
-                                         uint32_t tickrate_hz)
-{
-  if (context.world.rules.phase != shared::Round_Phase::Warmup)
-    return;
-
-  const int32_t required = context.cvars->mp_players_to_start;
-  if (required <= 0) // never auto-start; something else calls start_match
-    return;
-
-  int32_t joined = 0;
-  for (connected_client_t row : connected_clients(context))
-    if (row.client.player_uid != shared::null_entity_uid)
-      ++joined;
-
-  if (joined < required)
-    return;
-
-  log_terminal("{} players joined (need {}); starting the match", joined, required);
-  start_match(context, current_tick, tickrate_hz);
+  return false;
 }
 
 namespace
@@ -301,6 +236,12 @@ struct team_head_count_t
 {
   uint32_t total = 0;
   uint32_t alive = 0;
+};
+
+struct round_result_t
+{
+  Round_End_Reason reason = Round_End_Reason::None;
+  entities::Team_Allegiance winning_team = entities::Team_Allegiance::Free_For_All;
 };
 
 } // namespace
@@ -319,86 +260,95 @@ entities::Team_Allegiance pick_team_for_new_player(server_context_t &context)
     blu += player.team_allegiance == entities::Team_Allegiance::Blu ? 1 : 0;
   }
 
-  // Ties go to Red, which is what makes the first two joiners land on opposite
-  // teams rather than both on whichever the comparison happened to favour.
+  // Ties go to Red, so the first two joiners land on opposite teams.
   return blu < red ? entities::Team_Allegiance::Blu : entities::Team_Allegiance::Red;
 }
 
-void check_win_condition(server_context_t &context,
-                         uint32_t current_tick,
-                         uint32_t tickrate_hz)
+warmup_vote_t count_warmup_vote(server_context_t &context)
 {
-  // Only a Live phase can be won. Asked every tick, so this is the gate that
-  // keeps the caller from having to know the phase.
-  if (!is_round_live(context))
-    return;
+  warmup_vote_t vote;
+  for (connected_client_t row : connected_clients(context))
+  {
+    const entities::Player_Entity *player =
+        context.world.session.entity_system.get<entities::Player_Entity>(row.client.player_uid);
+    if (player == nullptr)
+      continue;
+    ++vote.joined;
+    if (player->ready)
+      ++vote.ready;
+  }
+  return vote;
+}
+
+static bool warmup_vote_holds(server_context_t &context)
+{
+  const int32_t required = context.cvars->mp_players_to_start;
+  if (required <= 0)
+    return false;
+
+  const warmup_vote_t vote = count_warmup_vote(context);
+  return vote.joined >= required && vote.ready == vote.joined;
+}
+
+// The mode's win condition, asked only in Live. A result means the round is over.
+static std::optional<round_result_t> poll_win_condition(server_context_t &context)
+{
+  const Match &match = match_of(context);
 
   switch (current_mode(context).win_condition)
   {
     case Win_Condition::Team_Elimination:
     {
-      // Counted over BODIES, not over client slots: a bot is a player with no
-      // client and belongs to the team its spawn marker declared, so counting
-      // slots would fight a round of bots forever.
+      // Counted over BODIES, not client slots: a bot belongs to a team too.
       Enum_Array<entities::Team_Allegiance, team_head_count_t> counts{};
       for (const entities::Player_Entity &player :
            context.world.session.entity_system.entities_of<entities::Player_Entity>())
       {
         team_head_count_t *count = counts.try_get(player.team_allegiance);
         if (count == nullptr)
-          continue; // a team the enum does not have; nothing to eliminate
+          continue;
 
         ++count->total;
-        count->alive += player.health.current_health> 0 ? 1 : 0;
+        count->alive += player.health.current_health > 0 ? 1 : 0;
       }
 
       const team_head_count_t &red = counts[entities::Team_Allegiance::Red];
       const team_head_count_t &blu = counts[entities::Team_Allegiance::Blu];
 
-      // Not a contest. An empty server sits in Live rather than burning through
-      // every round of the match against nobody, and a server where everyone
-      // landed on one team waits for an opponent instead of declaring a winner
-      // each tick.
+      // Not a contest until both teams have someone in it.
       if (red.total == 0 || blu.total == 0)
-        return;
+        return std::nullopt;
 
       if (red.alive > 0 && blu.alive > 0)
-        return;
+        return std::nullopt;
 
-      // Both empty is a draw -- a mutual kill inside one tick, which the
-      // deferred damage pass makes representable rather than resolving by
-      // whichever move sorted first.
+      round_result_t result{.reason = Round_End_Reason::Team_Elimination};
       if (red.alive == 0 && blu.alive == 0)
-        log_terminal("Round {}: both teams eliminated — a draw",
-                     context.world.rules.round_number);
+        log_terminal("Round {}: both teams eliminated — a draw", match.round_number);
       else
-        log_terminal("Round {}: {} eliminated — {} takes the round",
-                     context.world.rules.round_number,
-                     to_string(red.alive == 0 ? entities::Team_Allegiance::Red
-                                              : entities::Team_Allegiance::Blu),
-                     to_string(red.alive == 0 ? entities::Team_Allegiance::Blu
-                                              : entities::Team_Allegiance::Red));
-
-      end_round(context, current_tick, tickrate_hz);
-      return;
+      {
+        result.winning_team = red.alive == 0 ? entities::Team_Allegiance::Blu
+                                             : entities::Team_Allegiance::Red;
+        log_terminal("Round {}: {} takes the round", match.round_number,
+                     to_string(result.winning_team));
+      }
+      return result;
     }
 
     case Win_Condition::Objective_Reached:
     {
-      if (!context.world.rules.objective_reached)
-        return;
+      if (!match.objective_reached)
+        return std::nullopt;
 
-      log_terminal("Round {}: objective reached — ending the round",
-                   context.world.rules.round_number);
-      end_round(context, current_tick, tickrate_hz);
-      return;
+      log_terminal("Round {}: objective reached — ending the round", match.round_number);
+      return round_result_t{.reason = Round_End_Reason::Objective};
     }
 
     case Win_Condition::Frag_Limit:
     {
       const int32_t limit = context.cvars->mp_frag_limit;
-      if (limit <= 0) // disabled: the clock is the only thing that ends it
-        return;
+      if (limit <= 0)
+        return std::nullopt;
 
       for (const entities::Player_Entity &player :
            context.world.session.entity_system.entities_of<entities::Player_Entity>())
@@ -408,27 +358,117 @@ void check_win_condition(server_context_t &context,
 
         log_terminal("{} reached the frag limit ({}); ending the round",
                      player.display_name.c_str(), limit);
-        end_round(context, current_tick, tickrate_hz);
-        return;
+        return round_result_t{.reason = Round_End_Reason::Frag_Limit};
       }
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+static void end_live_round(Match &match, const round_result_t &result)
+{
+  match.end_reason   = result.reason;
+  match.winning_team = result.winning_team;
+}
+
+void update_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz)
+{
+  Match &match = match_of(context);
+  const game_mode_settings_t &mode = current_mode(context);
+
+  const Match_Request request = match.requested;
+  match.requested = Match_Request::None;
+
+  if (request != Match_Request::None)
+  {
+    if (match_request_is_allowed(match.phase, request))
+    {
+      if (match.phase == Round_Phase::Live)
+        end_live_round(match, round_result_t{.reason = Round_End_Reason::Requested});
+
+      Round_Phase target = Round_Phase::Game_Over;
+      switch (request)
+      {
+        case Match_Request::None:          return;
+        case Match_Request::Start_Match:   target = mode.phase_cycle[0]; break;
+        case Match_Request::End_Round:     target = next_phase(match, mode, match.phase); break;
+        case Match_Request::Restart_Round: target = mode.phase_cycle[0]; break;
+        case Match_Request::End_Match:     target = Round_Phase::Game_Over; break;
+      }
+      log_terminal("match: {} requested", to_string(request));
+      enter_phase(context, target, current_tick, tickrate_hz);
+      return;
+    }
+
+    log_warning("match: dropping {}, which {} cannot take", to_string(request), to_string(match.phase));
+  }
+
+  if (match.phase == Round_Phase::Warmup && warmup_vote_holds(context))
+  {
+    const bool counts_down = context.cvars->mp_countdown_seconds > 0.f;
+    log_terminal("match: every joined player is ready; {}",
+                 counts_down ? "counting down" : "starting");
+    enter_phase(context, counts_down ? Round_Phase::Countdown : mode.phase_cycle[0], current_tick,
+                tickrate_hz);
+    return;
+  }
+
+  if (match.phase == Round_Phase::Countdown && !warmup_vote_holds(context))
+  {
+    log_terminal("match: the vote no longer holds; countdown cancelled");
+    enter_phase(context, Round_Phase::Warmup, current_tick, tickrate_hz);
+    return;
+  }
+
+  if (match.phase == Round_Phase::Live)
+  {
+    if (std::optional<round_result_t> result = poll_win_condition(context))
+    {
+      end_live_round(match, *result);
+      enter_phase(context, next_phase(match, mode, Round_Phase::Live), current_tick, tickrate_hz);
       return;
     }
   }
+
+  if (match.phase_end_tick == 0 || current_tick < match.phase_end_tick)
+    return;
+
+  // Game_Over's deadline names no phase: the map changes, and the next match
+  // starts at Warmup on the map that loads. Asked once, since a load that fails
+  // keeps this world.
+  if (match.phase == Round_Phase::Game_Over)
+  {
+    match.phase_end_tick = 0;
+    context.pending_map_change = context.cvars->next_map.empty()
+                                     ? context.world.current_map_path
+                                     : std::string(context.cvars->next_map.c_str());
+    if (context.pending_map_change.empty())
+      log_error("the match ended but no map is loaded and next_map is empty; holding Game_Over");
+    else
+      log_terminal("--- Match over: changing to '{}' ---", context.pending_map_change);
+    return;
+  }
+
+  if (match.phase == Round_Phase::Live)
+    end_live_round(match, round_result_t{.reason = Round_End_Reason::Timeout});
+
+  enter_phase(context, next_phase(match, mode, match.phase), current_tick, tickrate_hz);
 }
 
 bool is_round_live(const server_context_t &context)
 {
-  return shared::is_round_live(context.world.rules.phase);
+  return shared::is_round_live(match_of(context).phase);
 }
 
 bool is_movement_allowed(const server_context_t &context)
 {
-  return shared::is_movement_allowed(context.world.rules.phase);
+  return shared::is_movement_allowed(match_of(context).phase);
 }
 
 bool can_take_damage(const server_context_t &context)
 {
-  return shared::can_take_damage(context.world.rules.phase);
+  return shared::can_take_damage(match_of(context).phase);
 }
 
 } // namespace server

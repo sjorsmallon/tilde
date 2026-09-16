@@ -312,12 +312,6 @@ void test_game_event_stream_round_trip()
   spawned.spawn_orientation = linalg::from_view_angles(90.0f, 30.0f);
   fire_player_spawned(stream, spawned);
 
-  Round_Phase_Changed phase_changed;
-  phase_changed.phase          = Round_Phase::Round_End;
-  phase_changed.round_number   = 4;
-  phase_changed.phase_end_tick = 900;
-  fire_round_phase_changed(stream, phase_changed);
-
   Objective_Reached reached;
   reached.completed_by = 88;
   fire_objective_reached(stream, reached);
@@ -360,16 +354,6 @@ void test_game_event_stream_round_trip()
   assert(read_spawned->spawn_orientation.y == expected_orientation.y);
   assert(read_spawned->spawn_orientation.z == expected_orientation.z);
   assert(read_spawned->spawn_orientation.w == expected_orientation.w);
-
-  assert(reader.read_bits(16) == (uint32_t)game_event_type::Round_Phase_Changed);
-  const std::optional<Round_Phase_Changed> read_phase = try_read_round_phase_changed(reader);
-  assert(read_phase);
-  // The enum survives the narrowing to its wire width. It is the first enum
-  // field on either channel, so this is the case that would catch the codec
-  // treating it as something wider.
-  assert(read_phase->phase == Round_Phase::Round_End);
-  assert(read_phase->round_number == 4);
-  assert(read_phase->phase_end_tick == 900);
 
   assert(reader.read_bits(16) == (uint32_t)game_event_type::Objective_Reached);
   const std::optional<Objective_Reached> read_reached = try_read_objective_reached(reader);

@@ -27,6 +27,15 @@ Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
+// The match -- match_def.md. Game_Mode is lowercase because it is typed in the
+// inspector by the same names the old sv_gamemode cvar took.
+// Countdown is the one between an all-ready vote and round 1; Freeze is the
+// per-round hold at the spawn markers.
+Round_Phase :: enum { Warmup, Countdown, Freeze, Live, Round_End, Game_Over }
+Game_Mode :: enum { deathmatch, rounds, speedrun }
+Round_End_Reason :: enum { None, Timeout, Frag_Limit, Team_Elimination, Objective, Requested }
+Match_Request :: enum { None, Start_Match, End_Round, Restart_Round, End_Match }
+
 // ---------------------------------------------------------------------------
 // COMPONENTS
 // ---------------------------------------------------------------------------
@@ -104,6 +113,20 @@ Timer_State :: component {
     deadline_tick: u32 = 0
 }
 
+// The match itself. `requested` is the one field a handler writes; the rules
+// system pays it at its own step, since a transition spawns and emits.
+Match :: component {
+    mode:              Game_Mode = .deathmatch          @Fully_Serializable
+    phase:             Round_Phase = .Warmup            @Networked
+    phase_start_tick:  u32 = 0                          @Networked
+    phase_end_tick:    u32 = 0                          @Networked
+    round_number:      u32 = 0                          @Networked
+    end_reason:        Round_End_Reason = .None         @Networked
+    winning_team:      Team_Allegiance = .Free_For_All  @Networked
+    objective_reached: bool = false                     @Networked
+    requested:         Match_Request = .None
+}
+
 
 // ---------------------------------------------------------------------------
 // TRAITS -- entity_io_def.md ss5
@@ -170,6 +193,11 @@ Timer :: trait requires Timer_State {
     emits   Elapsed()
 }
 
+Match_Control :: trait requires Match {
+    accepts Start_Match(), End_Round(), Restart_Round(), End_Match()
+    emits   Match_Started(), Round_Started(), Round_Ended(reason: Round_End_Reason), Match_Ended()
+}
+
 
 // ---------------------------------------------------------------------------
 // ENTITIES - note that declaration order is sacred. or: if you break it,
@@ -220,6 +248,9 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
 
+    // The warmup vote: every joined human ready starts the match.
+    ready: bool                         @Networked
+
     // Display name, sanitized from CmdConnect at the connect site. On the
     // ENTITY rather than in a message of its own so a late joiner gets every
     // name in its first full snapshot, with no backlog to replay -- and so a
@@ -231,9 +262,7 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     // always empty -- which is why these are two fields and not one.
     display_name: string<32>            @Networked
 
-    // The scoreboard, and the only score the wire carries: team score changes
-    // once per phase and rides Round_Phase_Changed instead. Awarded at the
-    // one health crossing in damage.cpp.
+    // The scoreboard. Awarded at the one health crossing in damage.cpp.
     kills:  i32                         @Networked
     deaths: i32                         @Networked
     // Feeds remote-player interpolation.
@@ -401,7 +430,8 @@ Reflection_Volume_Entity :: entity {
     volume: Box_Volume = { half_extents = {256, 256, 256} }
 }
 
-Game_Rules_Entity :: entity is Objective {
+Game_Rules_Entity :: entity is Objective, Match_Control {
+    match: Match
 }
 
 Logic_Counter_Entity :: entity is Counting {

@@ -12,6 +12,7 @@ struct round_timing_t
 {
   float warmup_seconds    = 0.0f;
   float countdown_seconds = 0.0f;
+  float freeze_seconds    = 0.0f;
   float live_seconds      = 0.0f;
   float round_end_seconds = 0.0f;
   float game_over_seconds = 0.0f;
@@ -19,38 +20,45 @@ struct round_timing_t
 
 [[nodiscard]] round_timing_t round_timing_from_cvars(const cvars::cvar_state_t &cvars);
 
+// The map's one Game_Rules_Entity. Null only before the first map load has run
+// install_match, which is the one state a context can be in without one.
+[[nodiscard]] entities::Game_Rules_Entity *try_find_rules_entity(server_context_t &context);
+[[nodiscard]] const entities::Game_Rules_Entity *try_find_rules_entity(const server_context_t &context);
+
+// The same, for a caller that runs inside a loaded world: none is a bug.
+[[nodiscard]] entities::Match &match_of(server_context_t &context);
+[[nodiscard]] const entities::Match &match_of(const server_context_t &context);
+
 [[nodiscard]] const game_mode_settings_t &current_mode(const server_context_t &context);
 
-void set_server_game_mode_from_cvar(server_context_t &context);
+// How many Game_Rules_Entity a map may carry is one; more is a refusal the
+// loader reports before the map replaces the running one.
+[[nodiscard]] uint32_t count_rules_entities(const shared::map_t &map);
 
-void try_start_match_when_enough_players(server_context_t &context,
-                                         uint32_t current_tick,
-                                         uint32_t tickrate_hz);
+// After build_session: mint the rules entity the map did not carry, and enter
+// Warmup once.
+void install_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz);
 
-void check_win_condition(server_context_t &context,
-                         uint32_t current_tick,
-                         uint32_t tickrate_hz);
+// Whether a phase can take a request. The handlers ask it before writing one and
+// update_match asks it again before paying one.
+[[nodiscard]] bool match_request_is_allowed(entities::Round_Phase phase,
+                                            entities::Match_Request request);
 
-// autoassign
+// Joined humans (a connected client with a body) and how many of them voted
+// ready. Bots have no client slot, so they neither count nor vote.
+struct warmup_vote_t
+{
+  int32_t joined = 0;
+  int32_t ready  = 0;
+};
+
+[[nodiscard]] warmup_vote_t count_warmup_vote(server_context_t &context);
+
+// The one step that changes the phase: a request, else the mode's poll, else the
+// deadline. Call once per server tick.
+void update_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz);
+
 [[nodiscard]] entities::Team_Allegiance pick_team_for_new_player(server_context_t &context);
-
-
-void reset_game_rules(server_context_t &context,
-                      uint32_t current_tick,
-                      uint32_t tickrate_hz);
-
-// call once per server tick.
-void update_game_rules(server_context_t &context,
-                       uint32_t current_tick,
-                       uint32_t tickrate_hz);
-
-void start_match(server_context_t &context,
-                 uint32_t current_tick,
-                 uint32_t tickrate_hz);
-
-void end_round(server_context_t &context,
-               uint32_t current_tick,
-               uint32_t tickrate_hz);
 
 bool is_round_live(const server_context_t &context);
 

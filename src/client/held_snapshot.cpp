@@ -154,7 +154,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   }
 
   // --- 3. The edge watchers: previous frame against this one ---
-  play_snapshot_edge_audio(context, previous, decoded.frame);
+  apply_snapshot_edges(context, previous, decoded.frame);
 
   // --- 4. The server's word on our input stream ---
   if (decoded.latest_processed_input_number.has_value())

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../shared/array.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/span.hpp"
 #include <cstdint>
@@ -17,7 +18,7 @@ namespace client::input
 enum class key_t : uint16_t
 {
   Unknown = 0,
-  // Letters (kept contiguous so key_t::A + (c - 'a') works for binds).
+  // Letters. A key's console name lives in key_names.cpp, one row per value.
   A, B, C, D, E, F, G, H, I, J, K, L, M,
   N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
   // Top-row digits (contiguous so key_t::Num_1 + index works).
@@ -43,6 +44,16 @@ enum class key_t : uint16_t
   Keypad_5, Keypad_6, Keypad_7, Keypad_8, Keypad_9,
   Count
 };
+
+} // namespace client::input
+
+template <> struct enum_traits<client::input::key_t>
+{
+  static constexpr uint32_t count = (uint32_t)client::input::key_t::Count;
+};
+
+namespace client::input
+{
 
 enum class mouse_button_t : uint8_t
 {

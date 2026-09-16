@@ -200,6 +200,9 @@ void sv_frame_report(const command_context_t&) {}
 void hitch_report(int32_t, const command_context_t&) {}
 void sv_hitch_report(int32_t, const command_context_t&) {}
 void ent_fire(uint32_t, std::string_view, std::string_view, const command_context_t&) {}
+void restart_round(const command_context_t&) {}
+void end_match(const command_context_t&) {}
+void ready(const command_context_t&) {}
 
 } // namespace cvars::commands
 
@@ -349,33 +352,31 @@ void test_text_conversion()
   check(state.debug_show_navmesh,
         "a rejected bool leaves the value alone -- it does not fall back to false");
 
-  // Enums convert by VALUE NAME in both directions, which is the whole reason
-  // sv_gamemode stopped being a string<24> resolved by hand at map load.
-  text = cvars::try_cvar_to_text(state, cvars::cvar_id::sv_gamemode);
+  // Enums convert by VALUE NAME in both directions.
+  text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_bunnyhop);
   check(text.has_value(), "try_cvar_to_text succeeds for an enum");
-  check_equal(*text, "deathmatch", "an enum formats as its value name");
+  check_equal(*text, "none", "an enum formats as its value name");
 
-  for (uint32_t value = 0; value < cvars::Game_Mode_COUNT; ++value)
+  for (uint32_t value = 0; value < cvars::Bunnyhop_Mode_COUNT; ++value)
   {
-    const cvars::Game_Mode mode = (cvars::Game_Mode)value;
-    check(cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, to_string(mode)),
-          "every declared mode name parses");
-    check(state.sv_gamemode == mode, "the parsed name landed as its own value");
-    text = cvars::try_cvar_to_text(state, cvars::cvar_id::sv_gamemode);
+    const cvars::Bunnyhop_Mode mode = (cvars::Bunnyhop_Mode)value;
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, to_string(mode)),
+          "every declared value name parses");
+    check(state.pm_bunnyhop == mode, "the parsed name landed as its own value");
+    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_bunnyhop);
     check(text.has_value() && *text == to_string(mode), "an enum round-trips through text");
   }
 
-  // A NUMBER is not a spelling of an enum value. Accepting one would let a map's
-  // attached_cvars block name a mode by index, which survives exactly until a
-  // value is inserted ahead of it -- and `sv_gamemode 7` would name none at all.
-  const cvars::Game_Mode before = state.sv_gamemode;
-  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, "0"),
+  // A NUMBER is not a spelling of an enum value: an index survives exactly until
+  // a value is inserted ahead of it.
+  const cvars::Bunnyhop_Mode before = state.pm_bunnyhop;
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "0"),
         "an enum rejects a numeric value");
-  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, "no_such_mode"),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "no_such_mode"),
         "an enum rejects an undeclared name");
-  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::sv_gamemode, "Deathmatch"),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "None"),
         "an enum name is case sensitive, like every other declared name");
-  check(state.sv_gamemode == before, "a rejected enum write leaves the value alone");
+  check(state.pm_bunnyhop == before, "a rejected enum write leaves the value alone");
 }
 
 // --- 3. The console dispatcher ----------------------------------------------

@@ -399,39 +399,10 @@ struct bot_debug_entry_t
 // Everything the server tells us about the world other than ourselves. Keyed by
 // entity uid / slot, both of which mean nothing in a different map or a
 // different connection -- which is why this is the one group BOTH resets clear.
-// What the server has told us about the match, as opposed to about the world.
-// The client holds this because it PREDICTS against it: the freeze suppresses
-// movement, and a client that does not know it is frozen predicts three seconds
-// of walking the server discards.
-//
-// A MIRROR, never a second authority -- nothing here is advanced locally. It is
-// rewritten wholesale from EVERY snapshot (S2C_EntityPackage carries the three
-// values), which is what makes a dropped packet cost one tick of staleness
-// instead of a whole phase of mispredicted walking. Round_Phase_Changed writes
-// nothing here: that event is the banner, and a banner is an occurrence.
-struct round_state_t
-{
-  shared::Round_Phase phase = shared::Round_Phase::Warmup;
-
-  // Server tick this phase ends on; 0 means it ends on a win condition. Carried
-  // so a round timer counts down against the tick the client already tracks,
-  // rather than costing per-tick traffic.
-  uint32_t phase_end_tick = 0;
-  uint32_t phase_start_tick = 0;
-  uint32_t round_number   = 0;
-
-  // Whether a snapshot has ever arrived. Until one has, the client must NOT gate
-  // its own movement: defaulting to Warmup above is a guess, and guessing
-  // "frozen" would lock a joining player in place until the first packet lands.
-  // Movement is gated only once this is true.
-  bool received = false;
-};
-
 struct replication_t
 {
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
 
-  round_state_t round;
 
   // WHERE ON THE SERVER'S TICK AXIS THE CLIENT IS DRAWING. One per connection:
   // every remote entity's ring is indexed by this same clock, which is what a
@@ -537,5 +508,8 @@ void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientatio
 [[nodiscard]] const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context,
                                                                     int32_t slot);
 [[nodiscard]] const entities::Player_Entity* try_find_my_player(const client_context_t& context);
+
+// The session's Game_Rules_Entity's match, or nullptr before the world has one.
+[[nodiscard]] const entities::Match* try_find_match(const client_context_t& context);
 
 } // namespace client

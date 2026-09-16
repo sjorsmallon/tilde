@@ -156,6 +156,62 @@ constexpr uint32_t Aim_Pose_COUNT = 5;
 const char* to_string(Aim_Pose value);
 template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view text);
 
+enum class Round_Phase : uint8_t
+{
+  Warmup = 0,
+  Countdown = 1,
+  Freeze = 2,
+  Live = 3,
+  Round_End = 4,
+  Game_Over = 5,
+};
+
+constexpr uint32_t Round_Phase_COUNT = 6;
+
+const char* to_string(Round_Phase value);
+template <> std::optional<Round_Phase> try_from_string<Round_Phase>(std::string_view text);
+
+enum class Game_Mode : uint8_t
+{
+  deathmatch = 0,
+  rounds = 1,
+  speedrun = 2,
+};
+
+constexpr uint32_t Game_Mode_COUNT = 3;
+
+const char* to_string(Game_Mode value);
+template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text);
+
+enum class Round_End_Reason : uint8_t
+{
+  None = 0,
+  Timeout = 1,
+  Frag_Limit = 2,
+  Team_Elimination = 3,
+  Objective = 4,
+  Requested = 5,
+};
+
+constexpr uint32_t Round_End_Reason_COUNT = 6;
+
+const char* to_string(Round_End_Reason value);
+template <> std::optional<Round_End_Reason> try_from_string<Round_End_Reason>(std::string_view text);
+
+enum class Match_Request : uint8_t
+{
+  None = 0,
+  Start_Match = 1,
+  End_Round = 2,
+  Restart_Round = 3,
+  End_Match = 4,
+};
+
+constexpr uint32_t Match_Request_COUNT = 5;
+
+const char* to_string(Match_Request value);
+template <> std::optional<Match_Request> try_from_string<Match_Request>(std::string_view text);
+
 enum class enum_type : uint16_t
 {
   Spawn_Type = 0,
@@ -168,9 +224,13 @@ enum class enum_type : uint16_t
   Shape_Kind = 7,
   Light_Mode = 8,
   Aim_Pose = 9,
+  Round_Phase = 10,
+  Game_Mode = 11,
+  Round_End_Reason = 12,
+  Match_Request = 13,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 10;
+constexpr uint32_t ENUM_TYPE_COUNT = 14;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -219,9 +279,10 @@ enum class component_type : uint16_t
   Movement = 8,
   Inventory = 9,
   Timer_State = 10,
+  Match = 11,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 11;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 12;
 
 } // namespace entities
 
@@ -292,6 +353,30 @@ template <> struct enum_traits<entities::Aim_Pose>
 {
   static constexpr uint32_t count = entities::Aim_Pose_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Aim_Pose;
+};
+
+template <> struct enum_traits<entities::Round_Phase>
+{
+  static constexpr uint32_t count = entities::Round_Phase_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Round_Phase;
+};
+
+template <> struct enum_traits<entities::Game_Mode>
+{
+  static constexpr uint32_t count = entities::Game_Mode_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Game_Mode;
+};
+
+template <> struct enum_traits<entities::Round_End_Reason>
+{
+  static constexpr uint32_t count = entities::Round_End_Reason_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Round_End_Reason;
+};
+
+template <> struct enum_traits<entities::Match_Request>
+{
+  static constexpr uint32_t count = entities::Match_Request_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Match_Request;
 };
 
 template <> struct enum_traits<entities::enum_type>
@@ -411,6 +496,21 @@ struct Timer_State
   bool repeat = false;
   bool running = false;
   uint32_t deadline_tick = 0;
+};
+
+struct Match
+{
+  static constexpr component_type static_component = component_type::Match;
+
+  Game_Mode mode = Game_Mode::deathmatch;
+  Round_Phase phase = Round_Phase::Warmup;
+  uint32_t phase_start_tick = 0;
+  uint32_t phase_end_tick = 0;
+  uint32_t round_number = 0;
+  Round_End_Reason end_reason = Round_End_Reason::None;
+  Team_Allegiance winning_team = Team_Allegiance::Free_For_All;
+  bool objective_reached = false;
+  Match_Request requested = Match_Request::None;
 };
 
 struct Entity

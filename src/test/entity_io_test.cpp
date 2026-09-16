@@ -24,6 +24,7 @@
 #include "server/damage.hpp"
 #include "server/entity_io_console.hpp"
 #include "server/entity_io_queue.hpp"
+#include "server/systems/game_rules_system.hpp"
 #include "server/systems/trigger_system.hpp"
 #include "server/server_api.hpp"
 #include "server/server_context.hpp"
@@ -324,6 +325,53 @@ void test_build_session_drops_what_the_check_named()
   check(wired.map.connections.size() == 3, "the map itself is not edited by building a session");
 }
 
+void test_deleting_an_entity_drops_the_rows_naming_it()
+{
+  std::printf("connections: deleting an entity drops every row naming it\n");
+
+  wired_map_t wired = make_wired_map();
+  auto other = std::make_shared<entities::Point_Light_Entity>();
+  const shared::entity_uid_t other_light = wired.map.add_entity(other);
+
+  wired.map.connections.push_back(touched_enables_the_light(wired));
+
+  shared::connection_t from_the_light;
+  from_the_light.sender      = wired.light;
+  from_the_light.signal      = entities::entity_signal::Color_Changed;
+  from_the_light.target_kind = shared::connection_target_t::Self;
+  from_the_light.data.tag    = entities::entity_action::Set_Color;
+  wired.map.connections.push_back(from_the_light);
+
+  shared::connection_t names_it_in_the_payload = touched_enables_the_light(wired);
+  names_it_in_the_payload.target_kind                     = shared::connection_target_t::Activator;
+  names_it_in_the_payload.data.tag                        = entities::entity_action::Set_Respawn_Point;
+  names_it_in_the_payload.has_override                    = true;
+  names_it_in_the_payload.data.set_respawn_point.location = wired.light;
+  wired.map.connections.push_back(names_it_in_the_payload);
+
+  shared::connection_t untouched = touched_enables_the_light(wired);
+  untouched.target               = other_light;
+  wired.map.connections.push_back(untouched);
+
+  shared::connection_t already_dangling = touched_enables_the_light(wired);
+  already_dangling.sender               = 999;
+  already_dangling.target               = other_light;
+  wired.map.connections.push_back(already_dangling);
+
+  check(wired.map.remove_object(wired.light), "the light is removed");
+  const shared::entity_uid_t removed[] = {wired.light};
+  const size_t dropped = shared::remove_connections_naming(wired.map.connections, removed);
+
+  check(dropped == 3, "the target row, the sender row and the payload row are dropped");
+  check(wired.map.connections.size() == 2, "two rows remain");
+  if (wired.map.connections.size() != 2)
+    return;
+  check(wired.map.connections[0].target == other_light && wired.map.connections[0].sender == wired.trigger,
+        "a row naming only survivors is kept");
+  check(wired.map.connections[1].sender == 999,
+        "a row already naming a missing uid is not the delete's to drop");
+}
+
 // --- 4. the queue -----------------------------------------------------------
 
 // A context standing on nothing but a map: no socket, no clients, no physics.
@@ -336,6 +384,7 @@ void install(server_context_t& context, cvars::cvar_state_t& cvar_state, const s
   context.tick_number         = 1;
   context.world.current_map   = map;
   context.world.session       = shared::build_session(map);
+  install_match(context, context.tick_number, tickrate);
 }
 
 const entities::Point_Light_Entity* light_in(const server_context_t& context,
@@ -858,7 +907,7 @@ void test_a_damageable_emits_died_and_health_changed()
   cvars::cvar_state_t cvar_state;
   server_context_t    context;
   install(context, cvar_state, wired.map);
-  context.world.rules.phase = shared::Round_Phase::Live;
+  match_of(context).phase = entities::Round_Phase::Live;
 
   const shared::entity_uid_t grazer =
       context.world.session.entity_system.spawn<entities::Player_Entity>();
@@ -1041,6 +1090,7 @@ int main()
   test_a_connection_survives_the_file();
   test_the_load_check_refuses_what_cannot_run();
   test_build_session_drops_what_the_check_named();
+  test_deleting_an_entity_drops_the_rows_naming_it();
   test_a_connection_is_queued_and_then_delivered();
   test_a_delay_is_counted_in_ticks();
   test_emit_order_breaks_a_tie_within_one_tick();

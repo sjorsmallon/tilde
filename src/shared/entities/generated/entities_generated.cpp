@@ -77,6 +77,38 @@ constexpr const char* Aim_Pose_VALUE_NAMES[] = {
   "Right",
 };
 
+constexpr const char* Round_Phase_VALUE_NAMES[] = {
+  "Warmup",
+  "Countdown",
+  "Freeze",
+  "Live",
+  "Round_End",
+  "Game_Over",
+};
+
+constexpr const char* Game_Mode_VALUE_NAMES[] = {
+  "deathmatch",
+  "rounds",
+  "speedrun",
+};
+
+constexpr const char* Round_End_Reason_VALUE_NAMES[] = {
+  "None",
+  "Timeout",
+  "Frag_Limit",
+  "Team_Elimination",
+  "Objective",
+  "Requested",
+};
+
+constexpr const char* Match_Request_VALUE_NAMES[] = {
+  "None",
+  "Start_Match",
+  "End_Round",
+  "Restart_Round",
+  "End_Match",
+};
+
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
@@ -88,6 +120,10 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 2}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
+  {"Round_Phase", {Round_Phase_VALUE_NAMES, 6}},
+  {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
+  {"Round_End_Reason", {Round_End_Reason_VALUE_NAMES, 6}},
+  {"Match_Request", {Match_Request_VALUE_NAMES, 5}},
 };
 
 namespace
@@ -477,6 +513,90 @@ constexpr field_info_t Timer_State_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Match_FIELDS[] = {
+  {.name = "mode",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Match, mode),
+   .size_in_bytes = (uint32_t)sizeof(Match::mode),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[11]},
+  {.name = "phase",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Match, phase),
+   .size_in_bytes = (uint32_t)sizeof(Match::phase),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[10]},
+  {.name = "phase_start_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Match, phase_start_tick),
+   .size_in_bytes = (uint32_t)sizeof(Match::phase_start_tick),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "phase_end_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Match, phase_end_tick),
+   .size_in_bytes = (uint32_t)sizeof(Match::phase_end_tick),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "round_number",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Match, round_number),
+   .size_in_bytes = (uint32_t)sizeof(Match::round_number),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "end_reason",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Match, end_reason),
+   .size_in_bytes = (uint32_t)sizeof(Match::end_reason),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[12]},
+  {.name = "winning_team",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Match, winning_team),
+   .size_in_bytes = (uint32_t)sizeof(Match::winning_team),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[1]},
+  {.name = "objective_reached",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Match, objective_reached),
+   .size_in_bytes = (uint32_t)sizeof(Match::objective_reached),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "requested",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Match, requested),
+   .size_in_bytes = (uint32_t)sizeof(Match::requested),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[13]},
+};
+
 constexpr field_info_t Player_Spawn_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
@@ -722,6 +842,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Player_Entity, client_slot_index),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::client_slot_index),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "ready",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Player_Entity, ready),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::ready),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1909,6 +2038,15 @@ constexpr field_info_t Game_Rules_Entity_FIELDS[] = {
    .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "match",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Game_Rules_Entity, match),
+   .size_in_bytes = (uint32_t)sizeof(Game_Rules_Entity::match),
+   .flags = 0u,
+   .component_id = 11,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Logic_Counter_Entity_FIELDS[] = {
@@ -2133,6 +2271,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Movement", {Movement_FIELDS, 6}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 4}, (uint32_t)sizeof(Timer_State)},
+  {"Match", {Match_FIELDS, 9}, (uint32_t)sizeof(Match)},
 };
 
 Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player_Spawn_Entity(); }
@@ -2181,7 +2320,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, false, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 25}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 840u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 26}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 840u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 64u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 13}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 64u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 64u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
@@ -2194,35 +2333,35 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, true, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"jump_pad_entity", "Jump Pad", {Jump_Pad_Entity_FIELDS, 8}, (uint32_t)sizeof(Jump_Pad_Entity), (uint32_t)alignof(Jump_Pad_Entity), 67u, false, true, true, construct_Jump_Pad_Entity, as_base_Jump_Pad_Entity},
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
-  {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 4}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 0u, false, false, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
+  {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 5}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 2048u, false, true, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 16u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
   {"brush_entity", "Brush", {Brush_Entity_FIELDS, 5}, (uint32_t)sizeof(Brush_Entity), (uint32_t)alignof(Brush_Entity), 2u, false, true, true, construct_Brush_Entity, as_base_Brush_Entity},
   {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 7}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 64u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 1024u, false, false, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
 };
 
-constexpr int32_t COMPONENT_OFFSETS[][11] = {
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Invalid
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
-  {-1, -1, -1, (int32_t)offsetof(Player_Entity, health), -1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory), -1}, // Player_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1, -1}, // Weapon_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1, -1}, // Rocket_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1, -1}, // Physics_Body_Entity
-  {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1, -1}, // Damageable_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
-  {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), (int32_t)offsetof(Sound_Emitter_Entity, playback), -1, -1, -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
-  {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1, -1}, // Point_Light_Entity
-  {-1, (int32_t)offsetof(Spot_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1, -1}, // Spot_Light_Entity
-  {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1, -1}, // Directional_Light_Entity
-  {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
-  {(int32_t)offsetof(Jump_Pad_Entity, volume), (int32_t)offsetof(Jump_Pad_Entity, switch_state), -1, -1, -1, -1, (int32_t)offsetof(Jump_Pad_Entity, render), -1, -1, -1, -1}, // Jump_Pad_Entity
-  {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Game_Rules_Entity
-  {-1, -1, -1, -1, (int32_t)offsetof(Logic_Counter_Entity, counter), -1, -1, -1, -1, -1, -1}, // Logic_Counter_Entity
-  {-1, (int32_t)offsetof(Brush_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Brush_Entity
-  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Ping_Marker_Entity, render), -1, -1, -1, -1}, // Ping_Marker_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Logic_Timer_Entity, timer)}, // Logic_Timer_Entity
+constexpr int32_t COMPONENT_OFFSETS[][12] = {
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Invalid
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spawn_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
+  {-1, -1, -1, (int32_t)offsetof(Player_Entity, health), -1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory), -1, -1}, // Player_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1, -1, -1}, // Weapon_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1, -1, -1}, // Rocket_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1, -1, -1}, // Physics_Body_Entity
+  {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1, -1, -1}, // Damageable_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
+  {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), (int32_t)offsetof(Sound_Emitter_Entity, playback), -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
+  {-1, (int32_t)offsetof(Point_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Point_Light_Entity, light), -1, -1, -1, -1}, // Point_Light_Entity
+  {-1, (int32_t)offsetof(Spot_Light_Entity, switch_state), -1, -1, -1, -1, -1, (int32_t)offsetof(Spot_Light_Entity, light), -1, -1, -1, -1}, // Spot_Light_Entity
+  {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Directional_Light_Entity, light), -1, -1, -1, -1}, // Directional_Light_Entity
+  {(int32_t)offsetof(Trigger_Volume_Entity, volume), (int32_t)offsetof(Trigger_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Trigger_Volume_Entity
+  {(int32_t)offsetof(Jump_Pad_Entity, volume), (int32_t)offsetof(Jump_Pad_Entity, switch_state), -1, -1, -1, -1, (int32_t)offsetof(Jump_Pad_Entity, render), -1, -1, -1, -1, -1}, // Jump_Pad_Entity
+  {(int32_t)offsetof(Reflection_Volume_Entity, volume), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Reflection_Volume_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Game_Rules_Entity, match)}, // Game_Rules_Entity
+  {-1, -1, -1, -1, (int32_t)offsetof(Logic_Counter_Entity, counter), -1, -1, -1, -1, -1, -1, -1}, // Logic_Counter_Entity
+  {-1, (int32_t)offsetof(Brush_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Brush_Entity
+  {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Ping_Marker_Entity, render), -1, -1, -1, -1, -1}, // Ping_Marker_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Logic_Timer_Entity, timer), -1}, // Logic_Timer_Entity
 };
 
 constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 17;
@@ -2246,7 +2385,7 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Logic_Timer_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 13;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 14;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -2259,6 +2398,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Directional_Light_Entity,
   entity_type::Trigger_Volume_Entity,
   entity_type::Jump_Pad_Entity,
+  entity_type::Game_Rules_Entity,
   entity_type::Brush_Entity,
   entity_type::Ping_Marker_Entity,
 };
@@ -2471,6 +2611,102 @@ template <> std::optional<Aim_Pose> try_from_string<Aim_Pose>(std::string_view t
   return std::nullopt;
 }
 
+const char* to_string(Round_Phase value)
+{
+  switch (value)
+  {
+    case Round_Phase::Warmup: return "Warmup";
+    case Round_Phase::Countdown: return "Countdown";
+    case Round_Phase::Freeze: return "Freeze";
+    case Round_Phase::Live: return "Live";
+    case Round_Phase::Round_End: return "Round_End";
+    case Round_Phase::Game_Over: return "Game_Over";
+  }
+  assert(false && "invalid Round_Phase");
+  return "";
+}
+
+template <> std::optional<Round_Phase> try_from_string<Round_Phase>(std::string_view text)
+{
+  if (text == "Warmup") return Round_Phase::Warmup;
+  if (text == "Countdown") return Round_Phase::Countdown;
+  if (text == "Freeze") return Round_Phase::Freeze;
+  if (text == "Live") return Round_Phase::Live;
+  if (text == "Round_End") return Round_Phase::Round_End;
+  if (text == "Game_Over") return Round_Phase::Game_Over;
+  return std::nullopt;
+}
+
+const char* to_string(Game_Mode value)
+{
+  switch (value)
+  {
+    case Game_Mode::deathmatch: return "deathmatch";
+    case Game_Mode::rounds: return "rounds";
+    case Game_Mode::speedrun: return "speedrun";
+  }
+  assert(false && "invalid Game_Mode");
+  return "";
+}
+
+template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text)
+{
+  if (text == "deathmatch") return Game_Mode::deathmatch;
+  if (text == "rounds") return Game_Mode::rounds;
+  if (text == "speedrun") return Game_Mode::speedrun;
+  return std::nullopt;
+}
+
+const char* to_string(Round_End_Reason value)
+{
+  switch (value)
+  {
+    case Round_End_Reason::None: return "None";
+    case Round_End_Reason::Timeout: return "Timeout";
+    case Round_End_Reason::Frag_Limit: return "Frag_Limit";
+    case Round_End_Reason::Team_Elimination: return "Team_Elimination";
+    case Round_End_Reason::Objective: return "Objective";
+    case Round_End_Reason::Requested: return "Requested";
+  }
+  assert(false && "invalid Round_End_Reason");
+  return "";
+}
+
+template <> std::optional<Round_End_Reason> try_from_string<Round_End_Reason>(std::string_view text)
+{
+  if (text == "None") return Round_End_Reason::None;
+  if (text == "Timeout") return Round_End_Reason::Timeout;
+  if (text == "Frag_Limit") return Round_End_Reason::Frag_Limit;
+  if (text == "Team_Elimination") return Round_End_Reason::Team_Elimination;
+  if (text == "Objective") return Round_End_Reason::Objective;
+  if (text == "Requested") return Round_End_Reason::Requested;
+  return std::nullopt;
+}
+
+const char* to_string(Match_Request value)
+{
+  switch (value)
+  {
+    case Match_Request::None: return "None";
+    case Match_Request::Start_Match: return "Start_Match";
+    case Match_Request::End_Round: return "End_Round";
+    case Match_Request::Restart_Round: return "Restart_Round";
+    case Match_Request::End_Match: return "End_Match";
+  }
+  assert(false && "invalid Match_Request");
+  return "";
+}
+
+template <> std::optional<Match_Request> try_from_string<Match_Request>(std::string_view text)
+{
+  if (text == "None") return Match_Request::None;
+  if (text == "Start_Match") return Match_Request::Start_Match;
+  if (text == "End_Round") return Match_Request::End_Round;
+  if (text == "Restart_Round") return Match_Request::Restart_Round;
+  if (text == "End_Match") return Match_Request::End_Match;
+  return std::nullopt;
+}
+
 const enum_type_info_t& enum_info(enum_type type)
 {
   assert((uint32_t)type < ENUM_TYPE_COUNT);
@@ -2591,6 +2827,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xa4b99b87u;
+const uint32_t SCHEMA_HASH = 0x2af31b3au;
 
 } // namespace entities

@@ -6,6 +6,7 @@
 #include "../shared/player_animator.hpp"
 #include "../shared/player_rig.hpp"
 #include "../shared/weapons.hpp"
+#include "../shared/round_phase_rules.hpp"
 #include "../shared/collision_detection.hpp"
 #include "damage.hpp"
 #include "../shared/entities/entity_reflection.hpp"
@@ -262,12 +263,21 @@ static bool load_map_file_into_context(server_context_t &context,
     }
   }
 
+  if (loaded_map && count_rules_entities(*loaded_map) > 1)
+  {
+    log_error("Refusing map '{}': {} Game_Rules_Entity, and a map runs one match. "
+              "The map currently loaded stays.",
+              map_path, count_rules_entities(*loaded_map));
+    loaded_map.reset();
+  }
+
   if (!loaded_map)
   {
     if (!context.world.physics)
     {
       reset_state_in_preparation_for_new_map_load(context);
       context.world.physics = make_physics_state();
+      install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
     }
     return false;
   }
@@ -282,11 +292,11 @@ static bool load_map_file_into_context(server_context_t &context,
   shared::map_t& server_map = world.current_map;
 
   apply_map_cvars_that_were_supplied_from_the_editor(context, server_map);
-  set_server_game_mode_from_cvar(context);
 
   world.session = shared::build_session(server_map);
   world.current_map_path  = map_path;
   world.map_content_hash = shared::compute_map_content_hash(server_map);
+  install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
 
   shared::populate_static_physics_bodies(*world.physics, server_map);
   
@@ -1121,45 +1131,12 @@ static void resolve_player_shot(
 
 static void check_if_there_is_a_pending_map_change(server_context_t &context)
 {
-
-  if (!context.pending_map_change.empty())
-  {
-    const std::string requested_map = std::move(context.pending_map_change);
-    context.pending_map_change.clear();
-    change_map_to(requested_map);
+  if (context.pending_map_change.empty())
     return;
-  }
 
-  if (!context.world.rules.map_restart_requested) return;
-
-  // this needs a copy because it is wiped.
-  const std::string map_path = context.world.current_map_path;
-
-  // this should not happen, I think.
-  if (map_path.empty())
-  {
-    log_error("the match ended but no new map path is recorded. The match will not restart.");
-    context.world.rules.map_restart_requested = false;
-    return;
-  }
-
-  // pending map change, but no next map specified : restart this one.
-  if (!context.cvars->next_map.empty())
-  {
-    const std::string next_map = context.cvars->next_map.c_str();
-    log_terminal("--- Match over: changing to next map '{}' ---", next_map);
-    if (change_map_to(next_map))
-      return;
-    log_error("next_map '{}' did not load, "
-              "restarting '{}' instead.",
-              next_map, map_path);
-  }
-  else
-  {
-    log_terminal("--- Match over: restarting '{}' ---", map_path);
-  }
-
-  change_map_to(map_path);
+  const std::string requested_map = std::move(context.pending_map_change);
+  context.pending_map_change.clear();
+  change_map_to(requested_map);
 }
 
 // actual entrypoint.
@@ -1795,17 +1772,7 @@ bool Tick()
   // ----- rule stuff.
 
 
-  try_start_match_when_enough_players(context, context.tick_number,
-                                      static_cast<uint32_t>(context.cvars->sv_tickrate));
-
-  // Before update_game_rules, so a frag limit reached this tick ends the round
-  // on this tick rather than one later. Both end up in enter_phase, and
-  // end_round's Live-only guard is what stops the two from double-advancing.
-  check_win_condition(context, context.tick_number,
-                      static_cast<uint32_t>(context.cvars->sv_tickrate));
-
-  update_game_rules(context, context.tick_number,
-                    static_cast<uint32_t>(context.cvars->sv_tickrate));
+  update_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
 
 
   step_physics(*context.world.physics, tick_dt);
@@ -1882,10 +1849,6 @@ bool Tick()
     package.set_latest_processed_input_number(context.clients[slot].latest_processed_input_number);
     network::set_snapshot_baseline(package, baseline);
 
-    package.set_round_phase(static_cast<uint32_t>(context.world.rules.phase));
-    package.set_phase_end_tick(context.world.rules.phase_end_tick);
-    package.set_phase_start_tick(context.world.rules.phase_start_tick);
-    package.set_round_number(context.world.rules.round_number);
     package.set_entity_data(writer.buffer.data(), writer.buffer.size());
     ::send_protobuf_message(context, row.transport.address, package);
   }
@@ -2188,6 +2151,81 @@ void sv_hitch_report(int32_t top, const command_context_t &)
   memory_audit::report_captured_frame(top <= 0 ? 15u : static_cast<uint32_t>(top));
 }
 
+// The caller's own body is the activator, which is what lets a console line
+// stand in for a trigger. A dedicated server's own console names nobody.
+static shared::entity_uid_t caller_body(const server::server_context_t &context,
+                                        const command_context_t &command_context)
+{
+  if (command_context.caller_slot >= 0 &&
+      command_context.caller_slot < (int)network::sv_max_client_count)
+    return context.clients[command_context.caller_slot].player_uid;
+  return shared::null_entity_uid;
+}
+
+static void send_to_rules_entity(entities::entity_action action,
+                                 const command_context_t &command_context)
+{
+  using namespace server;
+
+  server_context_t &context = g_server_context;
+  entities::Game_Rules_Entity *rules = try_find_rules_entity(context);
+  if (rules == nullptr)
+  {
+    log_error("{}: no map is loaded", entities::to_string(action));
+    return;
+  }
+
+  entities::action_data_t data;
+  data.tag = action;
+  input_context_t handler_context{context, caller_body(context, command_context),
+                                  context.tick_number};
+  entities::send_action(*rules, data, handler_context);
+}
+
+void restart_round(const command_context_t &command_context)
+{
+  send_to_rules_entity(entities::entity_action::Restart_Round, command_context);
+}
+
+void end_match(const command_context_t &command_context)
+{
+  send_to_rules_entity(entities::entity_action::End_Match, command_context);
+}
+
+void ready(const command_context_t &command_context)
+{
+  using namespace server;
+
+  server_context_t &context = g_server_context;
+  if (try_find_rules_entity(context) == nullptr)
+  {
+    log_error("ready: no map is loaded");
+    return;
+  }
+
+  const entities::Round_Phase phase = match_of(context).phase;
+  if (!shared::is_before_match(phase))
+  {
+    log_warning("ready: refused during {}, the match has started", entities::to_string(phase));
+    return;
+  }
+
+  entities::Player_Entity *player = context.world.session.entity_system.get<entities::Player_Entity>(
+      caller_body(context, command_context));
+  if (player == nullptr)
+  {
+    log_warning("ready: caller_slot {} has no body to vote with", command_context.caller_slot);
+    return;
+  }
+
+  player->ready = !player->ready;
+
+  const warmup_vote_t vote = count_warmup_vote(context);
+  broadcast_server_text_message(
+      context, std::format("{} is {} ({} of {} ready)", player->display_name.c_str(),
+                           player->ready ? "ready" : "not ready", vote.ready, vote.joined));
+}
+
 // fire a specific action on a target.
 void ent_fire(uint32_t target, std::string_view action_name, std::string_view parameters,
               const command_context_t &command_context)
@@ -2220,16 +2258,8 @@ void ent_fire(uint32_t target, std::string_view action_name, std::string_view pa
   for (const std::string &refusal : parse_action_parameters(data, parameters))
     log_error("ent_fire: {}", refusal);
 
-  // The caller's own body is the activator, which is what lets ent_fire stand
-  // in for a trigger the author would otherwise have to walk into. A line typed
-  // at a dedicated server's own console has no body and names nobody, which
-  // handlers already tolerate.
-  shared::entity_uid_t activator = shared::null_entity_uid;
-  if (command_context.caller_slot >= 0 &&
-      command_context.caller_slot < (int)network::sv_max_client_count)
-    activator = context.clients[command_context.caller_slot].player_uid;
-
-  input_context_t handler_context{context, activator, context.tick_number};
+  input_context_t handler_context{context, caller_body(context, command_context),
+                                  context.tick_number};
 
   // SYNCHRONOUS: everything from code is, and the console is code. A connection
   // queues because the action it delivers must not run under the system that

@@ -22,12 +22,6 @@ constexpr const char* Bunnyhop_Mode_VALUE_NAMES[] = {
   "cs",
 };
 
-constexpr const char* Game_Mode_VALUE_NAMES[] = {
-  "deathmatch",
-  "rounds",
-  "speedrun",
-};
-
 constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "off",
   "normals",
@@ -51,7 +45,6 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Bunnyhop_Mode", {Bunnyhop_Mode_VALUE_NAMES, 3}},
-  {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 12}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
@@ -193,14 +186,6 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::pm_air_speed_cap),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
-    {.name = "sv_gamemode",
-     .description = "Which game mode to run on the next map load",
-     .flags = CVAR_FLAG_SERVER,
-     .type = CVAR_TYPE_ENUM,
-     .offset = offsetof(cvar_state_t, sv_gamemode),
-     .size = sizeof(cvar_state_t::sv_gamemode),
-     .string_capacity = 0,
-     .enum_info = &ENUM_INFOS[1]},
     {.name = "mp_warmup_seconds",
      .description = "Warmup length before the match auto-starts (0 = wait for players)",
      .flags = CVAR_FLAG_SERVER,
@@ -210,11 +195,19 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "mp_countdown_seconds",
-     .description = "Per-round freeze length (unused by modes with no freeze phase)",
+     .description = "Countdown from an all-ready vote to round 1; un-readying cancels it (0 = start at once)",
      .flags = CVAR_FLAG_SERVER,
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, mp_countdown_seconds),
      .size = sizeof(cvar_state_t::mp_countdown_seconds),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "mp_freeze_seconds",
+     .description = "Per-round freeze length (unused by modes with no freeze phase)",
+     .flags = CVAR_FLAG_SERVER,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, mp_freeze_seconds),
+     .size = sizeof(cvar_state_t::mp_freeze_seconds),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "mp_round_seconds",
@@ -242,7 +235,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "mp_players_to_start",
-     .description = "Joined players needed to leave warmup (0 = never auto-start)",
+     .description = "Joined players needed before an all-ready vote leaves warmup (0 = never start from the vote)",
      .flags = CVAR_FLAG_SERVER,
      .type = CVAR_TYPE_I32,
      .offset = offsetof(cvar_state_t, mp_players_to_start),
@@ -800,7 +793,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, r_debug_channel),
      .size = sizeof(cvar_state_t::r_debug_channel),
      .string_capacity = 0,
-     .enum_info = &ENUM_INFOS[2]},
+     .enum_info = &ENUM_INFOS[1]},
     {.name = "r_exposure",
      .description = "Exposure multiplier applied before the tonemap curve",
      .flags = CVAR_FLAG_CLIENT,
@@ -967,6 +960,18 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
     {.name = "ent_fire",
      .description = "Send an action to one entity, as field=value pairs",
      .usage = "ent_fire <target> <action> [parameters...]",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "restart_round",
+     .description = "Restart the current round at the start line",
+     .usage = "restart_round",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "end_match",
+     .description = "End the match and go to next_map",
+     .usage = "end_match",
+     .flags = CVAR_FLAG_SERVER},
+    {.name = "ready",
+     .description = "Toggle your ready vote during warmup",
+     .usage = "ready",
      .flags = CVAR_FLAG_SERVER},
     {.name = "bind",
      .description = "Bind a key (a-z) to a command line",
@@ -1290,26 +1295,6 @@ template <> std::optional<Bunnyhop_Mode> try_from_string<Bunnyhop_Mode>(std::str
   if (text == "none") return Bunnyhop_Mode::none;
   if (text == "hl2") return Bunnyhop_Mode::hl2;
   if (text == "cs") return Bunnyhop_Mode::cs;
-  return std::nullopt;
-}
-
-const char* to_string(Game_Mode value)
-{
-  switch (value)
-  {
-    case Game_Mode::deathmatch: return "deathmatch";
-    case Game_Mode::rounds: return "rounds";
-    case Game_Mode::speedrun: return "speedrun";
-  }
-  assert(false && "invalid Game_Mode");
-  return "";
-}
-
-template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text)
-{
-  if (text == "deathmatch") return Game_Mode::deathmatch;
-  if (text == "rounds") return Game_Mode::rounds;
-  if (text == "speedrun") return Game_Mode::speedrun;
   return std::nullopt;
 }
 

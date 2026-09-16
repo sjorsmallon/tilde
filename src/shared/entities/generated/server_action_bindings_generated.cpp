@@ -244,6 +244,30 @@ void shim_logic_timer_entity_restart(Entity& entity, const action_data_t& data, 
   restart(self, self.timer, data.as_restart(), context);
 }
 
+void shim_game_rules_entity_start_match(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Game_Rules_Entity& self = *entity_as<Game_Rules_Entity>(&entity);
+  start_match(self, self.match, data.as_start_match(), context);
+}
+
+void shim_game_rules_entity_end_round(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Game_Rules_Entity& self = *entity_as<Game_Rules_Entity>(&entity);
+  end_round(self, self.match, data.as_end_round(), context);
+}
+
+void shim_game_rules_entity_restart_round(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Game_Rules_Entity& self = *entity_as<Game_Rules_Entity>(&entity);
+  restart_round(self, self.match, data.as_restart_round(), context);
+}
+
+void shim_game_rules_entity_end_match(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Game_Rules_Entity& self = *entity_as<Game_Rules_Entity>(&entity);
+  end_match(self, self.match, data.as_end_match(), context);
+}
+
 using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&);
 
 // A non-null cell means the type accepts the action. Rows are entity
@@ -272,6 +296,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {},   // Weapon_Entity
   {},   // Rocket_Entity
@@ -296,6 +324,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {},   // Particle_Emitter_Entity
   {   // Sound_Emitter_Entity
@@ -318,6 +350,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {   // Point_Light_Entity
     shim_point_light_entity_enable,
@@ -339,6 +375,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {   // Spot_Light_Entity
     shim_spot_light_entity_enable,
@@ -360,6 +400,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {},   // Directional_Light_Entity
   {   // Trigger_Volume_Entity
@@ -382,6 +426,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {   // Jump_Pad_Entity
     shim_jump_pad_entity_enable,
@@ -403,6 +451,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {},   // Reflection_Volume_Entity
   {   // Game_Rules_Entity
@@ -425,6 +477,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    shim_game_rules_entity_start_match,
+    shim_game_rules_entity_end_round,
+    shim_game_rules_entity_restart_round,
+    shim_game_rules_entity_end_match,
   },
   {   // Logic_Counter_Entity
     nullptr,   // Enable
@@ -446,6 +502,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {   // Brush_Entity
     shim_brush_entity_enable,
@@ -467,6 +527,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
   {},   // Ping_Marker_Entity
   {   // Logic_Timer_Entity
@@ -489,6 +553,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_logic_timer_entity_start,
     shim_logic_timer_entity_stop,
     shim_logic_timer_entity_restart,
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
   },
 };
 
@@ -837,6 +905,74 @@ void restart(Entity& entity, const Restart_Data& payload, input_context_t& conte
     fatal_error("{} does not accept Restart", entity_info(entity.type).classname);
 }
 
+bool try_start_match(Entity& entity, const Start_Match_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Start_Match];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void start_match(Entity& entity, const Start_Match_Data& payload, input_context_t& context)
+{
+  if (!try_start_match(entity, payload, context))
+    fatal_error("{} does not accept Start_Match", entity_info(entity.type).classname);
+}
+
+bool try_end_round(Entity& entity, const End_Round_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::End_Round];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void end_round(Entity& entity, const End_Round_Data& payload, input_context_t& context)
+{
+  if (!try_end_round(entity, payload, context))
+    fatal_error("{} does not accept End_Round", entity_info(entity.type).classname);
+}
+
+bool try_restart_round(Entity& entity, const Restart_Round_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Restart_Round];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void restart_round(Entity& entity, const Restart_Round_Data& payload, input_context_t& context)
+{
+  if (!try_restart_round(entity, payload, context))
+    fatal_error("{} does not accept Restart_Round", entity_info(entity.type).classname);
+}
+
+bool try_end_match(Entity& entity, const End_Match_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::End_Match];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void end_match(Entity& entity, const End_Match_Data& payload, input_context_t& context)
+{
+  if (!try_end_match(entity, payload, context))
+    fatal_error("{} does not accept End_Match", entity_info(entity.type).classname);
+}
+
 bool try_send_action(Entity& target, const action_data_t& data, input_context_t& context)
 {
   if (target.type <= entity_type::Invalid || (uint32_t)target.type >= ENTITY_TYPE_COUNT)
@@ -917,6 +1053,38 @@ void emit_elapsed(const Entity& sender, const Elapsed_Data& payload, input_conte
   if (!type_emits_signal(sender.type, entity_signal::Elapsed))
     fatal_error("{} does not emit Elapsed", entity_info(sender.type).classname);
   server::queue_signal_connections(context, sender, entity_signal::Elapsed,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_match_started(const Entity& sender, const Match_Started_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Match_Started))
+    fatal_error("{} does not emit Match_Started", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Match_Started,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_round_started(const Entity& sender, const Round_Started_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Round_Started))
+    fatal_error("{} does not emit Round_Started", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Round_Started,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_round_ended(const Entity& sender, const Round_Ended_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Round_Ended))
+    fatal_error("{} does not emit Round_Ended", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Round_Ended,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_match_ended(const Entity& sender, const Match_Ended_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Match_Ended))
+    fatal_error("{} does not emit Match_Ended", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Match_Ended,
                                    &payload, (uint32_t)sizeof(payload));
 }
 

@@ -210,6 +210,7 @@ int main()
         entity_type::Directional_Light_Entity,
         entity_type::Trigger_Volume_Entity,
         entity_type::Jump_Pad_Entity,
+        entity_type::Game_Rules_Entity,
         entity_type::Brush_Entity,
         // On the wire through Render alone: its lifetime countdown is the
         // server's bookkeeping, and the client only needs the duck to stand up.

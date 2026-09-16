@@ -2042,6 +2042,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
       // One transaction for the whole selection, so Ctrl+Z brings back every
       // deleted object at once.
       transaction_t transaction;
+      std::vector<shared::connection_t> connections_before = ctx.map->connections;
       for (auto uid : selected_uids)
       {
         if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
@@ -2072,6 +2073,8 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
           ctx.map->remove_entity(uid);
         }
       }
+      (void)shared::remove_connections_naming(ctx.map->connections, selected_uids);
+      transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
       ctx.transaction_system.push(std::move(transaction));
 
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)

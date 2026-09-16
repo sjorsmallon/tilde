@@ -2,6 +2,7 @@
 
 #include "entities/generated/entity_io_generated.hpp"
 #include "entity_uid.hpp"
+#include "span.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -100,6 +101,9 @@ struct connection_remap_result_t
 // came from, which is what the CSG bake did until it was deleted.
 [[nodiscard]] connection_remap_result_t remap_connection_uids(connection_t&      connection,
                                                               const uid_remap_t& remap);
+
+// Drops every row naming one of `removed` as sender, Uid target or override uid; returns the count.
+size_t remove_connections_naming(std::vector<connection_t>& connections, Span<const entity_uid_t> removed);
 
 // One reason one row cannot be run. The index is into map_t::connections, so
 // a caller can act on the ROW rather than parse the sentence back apart -- the

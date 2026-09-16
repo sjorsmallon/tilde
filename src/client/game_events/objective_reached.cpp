@@ -30,7 +30,6 @@ void on_objective_reached(client_context_t &context, const shared::Objective_Rea
       text += is_record ? std::format("\nNEW RECORD (was {})", best) : std::format("\nBEST {}", best);
     }
   }
-  hud::set_run_result(text);
   hud::set_announcement(text);
 
   if (context.audio)

@@ -31,13 +31,13 @@ std::string activator_name(server::server_context_t& server, shared::entity_uid_
 // The run is the current tick minus the tick Live began at, in ticks, so it
 // never rounds. Appended to the map's .times file, then the file is read
 // straight back and the top rows go out as console lines.
-void record_run(server::input_context_t& context, shared::Objective_Reached& reached)
+void record_run(const Match& match, server::input_context_t& context, shared::Objective_Reached& reached)
 {
   server::server_context_t& server = context.server;
-  if (server.world.rules.phase != shared::Round_Phase::Live)
+  if (match.phase != Round_Phase::Live)
   {
     log_terminal("objective reached outside Live ({}), no time recorded",
-                 to_string(server.world.rules.phase));
+                 to_string(match.phase));
     return;
   }
 
@@ -46,7 +46,7 @@ void record_run(server::input_context_t& context, shared::Objective_Reached& rea
   const std::vector<shared::run_time_record_t> best_before = shared::best_run_times(before, 1);
 
   shared::run_time_record_t record;
-  record.ticks       = context.tick - server.world.rules.phase_start_tick;
+  record.ticks       = context.tick - match.phase_start_tick;
   record.tickrate_hz = std::max(1u, static_cast<uint32_t>(server.cvars->sv_tickrate));
   record.date        = shared::current_date_text();
   record.name        = activator_name(server, context.activator);
@@ -85,16 +85,16 @@ void record_run(server::input_context_t& context, shared::Objective_Reached& rea
 
 // Idempotent on purpose: several goal volumes may be wired to one rules
 // entity, and a party crossing the line is several activators in one tick.
-void complete_level(Game_Rules_Entity&, const Complete_Level_Data&,
+void complete_level(Game_Rules_Entity& rules, const Complete_Level_Data&,
                     server::input_context_t& context)
 {
-  if (context.server.world.rules.objective_reached)
+  if (rules.match.objective_reached)
     return;
 
-  context.server.world.rules.objective_reached = true;
+  rules.match.objective_reached = true;
   shared::Objective_Reached reached{};
   reached.completed_by = context.activator;
-  record_run(context, reached);
+  record_run(rules.match, context, reached);
   shared::fire_objective_reached(context.server.outgoing.events, reached);
   log_terminal("objective reached, by {}", context.activator);
 }

@@ -22,7 +22,7 @@ cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in
 # OFF by default and never shipped -- it costs 100-500ns per allocation.
 cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
 
-# Run the whole test suite (~30s, all 47)
+# Run the whole test suite (~30s, all 49)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -412,7 +412,7 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 
 **A TRIGGER VOLUME SAYS WHEN, AND NOTHING ELSE.** `Trigger_Action`, `Fire_Mode`, the three `param_*` fields and `src/server/trigger_actions.{hpp,cpp}` are all deleted; `src/server/systems/trigger_system.cpp` is the overlap loop, out of `Tick()`, emitting `Touched` on the rising edge and `Left` on the falling one. `fire_trigger_action`'s exhaustive switch is gone with them, so CLAUDE.md's "handwritten exhaustive switch" list is one shorter.
 
-- **The nine actions became traits carved by CAPABILITY**: `Mortal` (`Kill`, `Set_Health`), `Mobile` (`Teleport`, `Set_Velocity`, `Add_Velocity`), `Armable requires Inventory` (`Grant_Weapon`), `Respawnable` (`Set_Respawn_Point`), `Objective` (`Complete_Level`). A `Racing` trait over the last two was rejected on that test: a game RULE is not a capability of the entity that trips it. Which is also why `Objective` sits on a new fieldless `Game_Rules_Entity` rather than on the player — `Complete_Level` writes `world.rules`, and aimed at a player it makes the player a handle for a global.
+- **The nine actions became traits carved by CAPABILITY**: `Mortal` (`Kill`, `Set_Health`), `Mobile` (`Teleport`, `Set_Velocity`, `Add_Velocity`), `Armable requires Inventory` (`Grant_Weapon`), `Respawnable` (`Set_Respawn_Point`), `Objective` (`Complete_Level`). A `Racing` trait over the last two was rejected on that test: a game RULE is not a capability of the entity that trips it. Which is also why `Objective` sits on `Game_Rules_Entity` (the match itself since 2026-09-16) rather than on the player — `Complete_Level` writes `world.rules`, and aimed at a player it makes the player a handle for a global.
 - **`Armable requires Inventory` is the answer to "why not a component and a system".** The state IS the component and the handler is written once against it; what a system cannot supply is the wiring, since granting runs on no clock and is not per-type behaviour. `try_grant_weapon` therefore takes `(Entity&, Inventory&)`, not a `Player_Entity&` — it never wanted the rest of a player.
 - **`Set_Respawn_Point(location: entity)` carries its target rather than reading the sender**, which is why Source's `!caller` is NOT on `input_context_t`: nothing needs it. `try_find_checkpoint` widened to `Entity*` with it — any entity is a legal respawn point, and the type test it used to do could only ask about the one kind that happened to exist.
 - **A DISABLED volume has no overlaps rather than merely no new ones**, so switching one off emits `Left` for whoever is inside. A `Touched` with no `Left` is a door that never closes, which is worse than one that closes early.
@@ -1317,7 +1317,7 @@ Because the refusals are fatal, they are not testable in-process — `test_model
 
 **A mode is a ROW OF VALUES, and nothing switches on the mode enum.**
 `server/game_mode.hpp` holds `GAME_MODES`, an `Enum_Array` keyed by
-`cvars::Game_Mode` with one `game_mode_settings_t` per mode; `game_modes_def.md`
+`entities::Game_Mode` with one `game_mode_settings_t` per mode; `game_modes_def.md`
 is the design and argues the shape against a vtable, virtuals, a bag of cvars
 and a scripting VM. The short version: there will be two or three modes ever,
 and decision points will keep being discovered, so the compiler must police the
@@ -1328,38 +1328,82 @@ The row's two enums (`Win_Condition`, `Spawn_Policy`) are deliberately NOT the
 mode enum, which is what lets a third mode recombine existing behaviors with no
 new code. They are the only two switches in the system.
 
-**`speedrun` is that third mode, and it is a row.** It recombines
-`Win_Condition::Objective_Reached` (a goal volume was touched and its connection
-delivered `Complete_Level` to the map's `Game_Rules_Entity` — one
-`game_rules_state_t::objective_reached` flag, not a per-player set, because a
-PARTY finishes a level) with `Spawn_Policy::Single_Fixed_Start` (the
-first `Spawn_Type::Human` marker for everyone, ignoring the team and the rotation:
-a level has one start line) over a one-element `{Live}` cycle. Nothing switches on
-`Game_Mode` for it; the only new code is the two arms the two new enum values earn
-in `check_win_condition` and `try_pick_human_spawn`.
+**THE MATCH IS THE `Game_Rules_Entity`** (`match_def.md`, built 2026-09-16; not
+yet looked at in game). Its `Match` component is the whole of the rules state:
+`mode` (`@Networked` and `@Editable` -- a map declares its mode on the thing that
+runs it, in the inspector; there is no `sv_gamemode`), `phase`,
+`phase_start_tick`, `phase_end_tick`, `round_number`, `end_reason`,
+`winning_team`, `objective_reached`, and the server-only `requested`. There is no
+`game_rules_state_t`. A map carries at most one (`count_rules_entities`, refused
+at load like a bad connection); `install_match` after `build_session` mints one
+with the default row when the map has none and enters Warmup once. Server code
+reaches it through `try_find_rules_entity` / `match_of` / `current_mode`, the
+client through `try_find_match`, both a walk of the one pool rather than a cached
+uid. `Round_Phase`, `Game_Mode`, `Round_End_Reason` and `Match_Request` live in
+`entities.def` because a component field must name an enum of its own family.
+The NUMBERS stay cvars (`mp_*`): an operator can type at a console and not at an
+entity field.
 
-The four Neon-White trigger actions landed with it — `Complete_Level`,
-`Checkpoint`, `Grant_Weapon`, `Set_Velocity` — and are **entity I/O actions
-now**, not `Trigger_Action` values (see "Entity I/O" above). A checkpoint is a
-**uid** (`Player_Entity::checkpoint_uid`, server-only), written by
-`Set_Respawn_Point` and resolved at the respawn rather than copied, so nothing
-can disagree with the entity the author moved; only the DEATH respawn honours
-it, and `respawn_all_players` clears it, because a round boundary is the start
-line. `Set_Velocity` carries its vector in the connection's override — the
-trigger's `orientation` aimed it before, and the legacy arm bakes
-`forward(orientation) * param_float` once — and it needs nothing from
-`Movement`, since `player_move`'s `grounded` is `has_ground && old_velocity.y <=
-0`, so a positive Y survives the next step by construction. `Grant_Weapon` is what
-made `try_grant_weapon` public, and it had to start destroying the weapon it
-displaces: writing the slot in place was a leak per pickup.
+**EVERY CAUSE OF A TRANSITION IS A REQUEST, AND `update_match` IS THE ONE PLACE
+THAT PERFORMS ONE.** A transition respawns, reseeds and emits, which a handler in
+the drain may not do. So the `Match_Control` actions (`Start_Match`,
+`End_Round`, `Restart_Round`, `End_Match`, in `server/traits/match_control.cpp`)
+only write `requested`, refusing by `match_request_is_allowed` -- the rule
+`update_match` asks again when it pays one. Once per tick, one transition, in
+priority order: a request, else the mode's poll (the warmup vote in Warmup, the
+win condition in Live, which carries the reason and the winner), else the
+component's own deadline. **The warmup vote is state, not a request**:
+`Player_Entity::ready` (`@Networked`, toggled by the `@Server` command `ready`,
+bound to F3) and the poll starts the match once at least `mp_players_to_start`
+clients have a body and every one of them is ready -- bots have no slot, so they
+neither count nor vote. A passed vote enters **`Countdown`**
+(`mp_countdown_seconds`, 0 skips it), the once-per-match phase between Warmup and
+round 1; a vote that stops holding during it returns to Warmup with every other
+vote KEPT, which is why votes are cleared in `install_match` rather than on
+entering Warmup. `Freeze` is the per-round hold at the spawn markers (it was
+`Countdown` until 2026-09-16; `mp_freeze_seconds`). `shared::is_before_match` is
+Warmup-or-Countdown: `ready`, `Start_Match` and warmup damage all ask it, and
+`Match_Started` fires on leaving it. A map that wants no vote (a speedrun) wires
+`Start_Match` itself, `fire_once`, from a volume around the spawn: a request
+outranks the poll, and skips the countdown. `enter_phase` is the one writer of `phase` and emits
+`Round_Ended(reason)` / `Match_Started` / `Round_Started` / `Match_Ended` beside
+the write, so a level can wire "when the round goes live, open the gates".
+Entering element 0 of the cycle is the round boundary: `round_number` bumps,
+waiting players are admitted, everyone respawns (checkpoints dropped), the
+damageables are reseeded and `objective_reached` clears -- which is what
+`Restart_Round` buys a speedrun. Game_Over's deadline writes
+`pending_map_change` (`next_map`, else the current map) once and holds; the load
+is serviced at the top of the next tick because it frees the world the FSM runs
+inside. `restart_round` / `end_match` are `@Server` commands that send the action
+with the caller's body as activator; `binds.cfg` puts R on the first.
 
-What is deliberately NOT built is the mode-owned state variant (an attempt clock,
-a bomb timer) — see the closing comment below and `generalization_def.md` §5.
+**`speedrun` is a row**: `Win_Condition::Objective_Reached` (a goal volume's
+connection delivered `Complete_Level`, which sets `objective_reached` on the
+entity -- one flag, because a PARTY finishes a level) with
+`Spawn_Policy::Single_Fixed_Start` over a `{Live, Round_End}` cycle with
+`max_rounds` 0, which is unbounded: the run ends in a Round_End that holds (the
+speedrun maps set `mp_round_end_seconds 0` and `mp_round_seconds 0`) until
+someone asks for `Restart_Round` or `End_Match`. A one-element cycle may not be
+unbounded, and `game_rules_test`'s table case says so.
+
+The four Neon-White trigger actions -- `Complete_Level`, `Set_Respawn_Point`,
+`Grant_Weapon`, `Set_Velocity` -- are entity I/O actions (see "Entity I/O"
+above). A checkpoint is a **uid** (`Player_Entity::checkpoint_uid`,
+server-only), resolved at the respawn rather than copied; only the DEATH respawn
+honours it, and `respawn_all_players` clears it, because a round boundary is the
+start line. `Set_Velocity` carries its vector in the connection's override and
+needs nothing from `Movement`, since `player_move`'s `grounded` is
+`has_ground && old_velocity.y <= 0`. `Grant_Weapon` destroys the weapon it
+displaces.
+
+What is deliberately NOT built is a per-mode state variant (an attempt clock, a
+bomb timer) -- `match_def.md` "What this does NOT do" and `generalization_def.md`
+§5.
 
 **A speedrun's time is ONE subtraction and ONE appended line.** `complete_level`
-(`server/entities/game_rules_entity.cpp`) takes the current tick minus
-`phase_start_tick` -- in ticks, exact, only while the phase is `Live` -- appends
-`<ticks> <tickrate_hz> <date> <name>` to `maps/<map>.times` beside the map
+(`server/entities/game_rules_entity.cpp`) takes the current tick minus the
+match's `phase_start_tick` -- in ticks, exact, only while the phase is `Live` --
+appends `<ticks> <tickrate_hz> <date> <name>` to `maps/<map>.times` beside the map
 (`shared/run_times.{hpp,cpp}`, grammar in the header, `run_times_test` the
 guard), reads the file straight back and broadcasts the top five as
 `S2C_ServerMessage` lines through `server_messages.hpp`. Append only, never
@@ -1367,45 +1411,27 @@ rewritten: sorting is the reader's job, by SECONDS so a line from another
 tickrate ranks honestly. `Objective_Reached` carries `attempt_ticks` and the
 map's `best_ticks` from BEFORE the run, so the client's banner says the time and
 "NEW BEST" without a second file read; `shared::format_run_time` is the one
-"mm:ss.cc" and the HUD run timer draws through it too. `timer_def.md` is the
-plan for the rest: the finish as a SLOT and the start as the first movement
-edge. The +1 tick every run used to pay went with B3 — the drain runs at the
-end of the tick and hands a handler the record's own `fire_tick`, so a row
-written before 2026-09-13 is one tick slow.
+"mm:ss.cc" and the HUD run timer draws through it too. `timer_def.md` is the plan
+for the rest. A row written before 2026-09-13 is one tick slow.
 
-**The key enum lives in `cvars.def`**, because `sv_gamemode` is typed by it —
-enum cvars convert by value name in both directions, so an undeclared mode is
-refused at the console line or the map's `attached_cvars` line that wrote it,
-and `apply_game_mode_cvar` is a LATCH (map load copies it into
-`game_rules_state_t::mode`) rather than a parse. A name with no row breaks the
-`rows_in_enum_order` static_assert, so the two halves cannot drift.
+The predicates are gates in `shared/round_phase_rules.hpp` -- pure functions of
+the phase, so the client's prediction and the server's simulation run one rule.
 
-The phase FSM (`server/systems/game_rules_system.cpp`) is mode-generic: a mode
-declares the per-round **cycle** it repeats (`{Live}` for a deathmatch,
-`{Countdown, Live, Round_End}` for rounds) and `next_phase` names no phase at
-all. Warmup and Game_Over bookend the match and sit outside every cycle.
-Game_Over's deadline is the one that names no transition — it REQUESTS a map
-reload (`map_restart_requested`), serviced at the top of the next tick by
-`service_pending_map_restart`, because the reload frees the world the FSM is
-running inside.
-
-The predicates are gates in `shared/round_phase_rules.hpp` — pure functions of
-the phase, so the client's prediction and the server's simulation run one rule
-rather than two that agree by inspection.
-
-**The phase reaches the client TWICE, and the split is the rule.** `round_phase`,
-`phase_end_tick` and `round_number` are replicated as **state on
-`S2C_EntityPackage`**, unconditionally every tick — it is per-tick server state,
-not an entity — because the client PREDICTS against the phase and **state that
-gates behavior is replicated as state, never delivered as an event**. Delivered
-only as an event it would be a round trip behind the snapshots describing the
-world it governs, since the two channels are on different clocks and a snapshot
-never waits; a dropped one cost a whole phase of mispredicted walking, which is
-what the once-a-second heartbeat re-send existed to bound. `Round_Phase_Changed`
-is now purely the **banner occurrence**, fired once per real transition — and the
-transition/re-send discriminator in `on_round_phase_changed` died with the
-heartbeat, because there is nothing left to discriminate. `game_rules_test` guards the table,
-both cycles, the restart and both win conditions.
+**The client learns the match from the SNAPSHOT, once, and the banner is an
+EDGE.** The entity replicates because its fields are `@Networked`, so
+`S2C_EntityPackage`'s old phase fields are reserved (8..11), `round_state_t` is
+gone, and the movement gate and the run timer read `try_find_match`.
+`Round_Phase_Changed` is deleted: the banner is `announce_match_edges` in
+`client/snapshot_edges.cpp` (whose entry point is `apply_snapshot_edges` now),
+comparing the previous held frame's match with the new one -- a phase change OR a
+round change, so a restart is an edge -- through the pure
+`hud::match_announcement_for`, which `match_announcement_test` pins row by row.
+It says nothing for a round the objective or a request ended: `Objective_Reached`
+stays an EVENT, because a recorded run's time is an occurrence no state holds,
+and nothing overwrites its banner any more, so the `run_result` latch is gone.
+`game_rules_test` guards the table, every cycle, the requests and their priority,
+the restart, the map change, the win conditions with their reasons, and that
+each signal queues once per transition.
 
 ### Client vs Player
 
@@ -1430,7 +1456,7 @@ An empty `try_find_client_slot` is **not** an error: `poll_network` asks it abou
 
 `src/server/server_context.cpp` holds the **only** four functions that clear anything: `reset_state_in_preparation_for_new_map_load`, `reset_client_slot`, `clear_incoming`, `clear_outgoing`. Read that file to answer "what resets when"; `server_context_test` asserts both halves of each — what is cleared *and* what deliberately survives. Don't open-code a field list at a call site again: if a group ever needs to be half-cleared, its boundary is drawn wrong.
 
-Two deliberate irregularities, both with the reason written at the site: `world.rules` is reset by a **call** (`reset_game_rules`) because a phase deadline is an absolute tick, and the two tick groups `clear()` per member rather than `= {}` so their vectors keep capacity at 60Hz. `outgoing.effects` and `outgoing.events` are the same intent in a different member: `event_stream_t::reset()` keeps the writer's buffer *and* re-reserves the count slot, so both streams come out of `clear_outgoing` ready to be fired into. That is also where `sv_event_debug` is latched onto them — the one place guaranteed to run exactly once before anything can fire, which keeps the generated fire helpers free of the cvar family.
+One deliberate irregularity, with the reason written at the site: the two tick groups `clear()` per member rather than `= {}` so their vectors keep capacity at 60Hz. (The match used to be a second, reset by a call; it is an entity in the session now and goes with `world = {}`.) `outgoing.effects` and `outgoing.events` are the same intent in a different member: `event_stream_t::reset()` keeps the writer's buffer *and* re-reserves the count slot, so both streams come out of `clear_outgoing` ready to be fired into. That is also where `sv_event_debug` is latched onto them — the one place guaranteed to run exactly once before anything can fire, which keeps the generated fire helpers free of the cvar family.
 
 `server_impl.cpp` has exactly **one** file-scope object, `g_server_context`; every helper in it takes `server_context_t&` as a parameter. The `cvars::commands::*` handlers at the bottom of that file are the one exception — the generated binder calls them with console arguments and nothing else, so there is no seam to thread a context through.
 

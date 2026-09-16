@@ -76,11 +76,8 @@ Gameplay :: cvars {
 // Match rules -- game_modes_def.md
 // ---------------------------------------------------------------------------
 
-Game_Mode :: enum { deathmatch, rounds, speedrun }
-
+// The mode itself is not a cvar: it is Game_Rules_Entity's `mode` field.
 Match :: cvars {
-    sv_gamemode:            Game_Mode = .deathmatch  @Server  "Which game mode to run on the next map load"
-
     // A phase whose duration is 0 has no deadline and ends only on a win
     // condition. Game_Over has no cvar at all: it is terminal.
     // 0 means warmup has NO deadline and ends only when start_match says enough
@@ -89,7 +86,8 @@ Match :: cvars {
     // not, and at the old default of 5 the match reliably began with an empty
     // server before the first player finished loading.
     mp_warmup_seconds:      f32 = 0.0     @Server  "Warmup length before the match auto-starts (0 = wait for players)"
-    mp_countdown_seconds:   f32 = 3.0     @Server  "Per-round freeze length (unused by modes with no freeze phase)"
+    mp_countdown_seconds:   f32 = 5.0     @Server  "Countdown from an all-ready vote to round 1; un-readying cancels it (0 = start at once)"
+    mp_freeze_seconds:      f32 = 3.0     @Server  "Per-round freeze length (unused by modes with no freeze phase)"
     mp_round_seconds:       f32 = 180.0   @Server  "Round time limit"
     mp_round_end_seconds:   f32 = 5.0     @Server  "Post-round settle length before the next round begins"
 
@@ -99,23 +97,18 @@ Match :: cvars {
     // vote or a rotation wants -- neither of which exists yet.
     mp_game_over_seconds:   f32 = 10.0    @Server  "How long the final scoreboard is held before the map restarts (0 = hold it forever)"
 
-    // How many CLIENTS WITH A BODY end warmup and start the match. Joined
-    // players, not connections: four people who are all spectating are not a
-    // match. Bots do not count -- they have no client slot at all -- or a map
-    // with bot spawns would start a match with nobody watching.
+    // The fewest CLIENTS WITH A BODY that can leave warmup, and then only once
+    // every one of them has voted `ready`. Joined players, not connections:
+    // four people who are all spectating are not a match. Bots neither count
+    // nor vote -- they have no client slot -- so one player and a
+    // console-spawned bot start the moment that player is ready.
     //
-    // 0 never auto-starts, which leaves start_match to something else entirely.
-    // Replaced a hardcoded `player_count == 4` in the connect handler.
-    //
-    // 1, so a server starts playing when someone shows up. At 2 the normal solo
-    // case -- one player and a console-spawned bot -- sat in warmup forever,
-    // where nothing scores and no win condition is tested, which reads as a
-    // broken game rather than as a lobby. Bots deliberately do not count toward
-    // this, so no value here would have fixed that.
+    // 0 never starts from the vote, which leaves Start_Match to the map's
+    // wiring, the console or mp_warmup_seconds.
     //
     // Raise it in a map's attached_cvars block for a match that should wait for
     // a full lobby.
-    mp_players_to_start:    i32 = 1       @Server  "Joined players needed to leave warmup (0 = never auto-start)"
+    mp_players_to_start:    i32 = 1       @Server  "Joined players needed before an all-ready vote leaves warmup (0 = never start from the vote)"
 
     // Win_Condition::Frag_Limit. 0 disables it, leaving mp_round_seconds as the
     // only thing that ends a deathmatch.
@@ -605,6 +598,15 @@ Server_Commands :: commands {
     // SYNCHRONOUS, unlike a connection: everything from code is, and the
     // console is code. See entity_io_def.md ss7.
     ent_fire(target: u32, action: string, parameters: string... = "")  @Server  "Send an action to one entity, as field=value pairs"
+
+    // The map's Game_Rules_Entity told Restart_Round / End_Match, the caller's
+    // body as activator. What a key binds to.
+    restart_round()                    @Server  "Restart the current round at the start line"
+    end_match()                        @Server  "End the match and go to next_map"
+
+    // Toggles the caller's warmup vote. Refused outside Warmup and for a
+    // spectator, who has no body to be ready with.
+    ready()                            @Server  "Toggle your ready vote during warmup"
 }
 
 Client_Commands :: commands {

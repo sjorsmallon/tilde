@@ -3,6 +3,7 @@
 #include "console.hpp"
 #include "cvars/cvar_console.hpp"
 #include "input.hpp"
+#include "key_names.hpp"
 #include "log.hpp"
 #include "state_manager.hpp"
 #include "hud/announcement.hpp"
@@ -61,21 +62,14 @@ void console::set_cvar_state(cvars::cvar_state_t *state,
 
 bool console::bind_key(std::string_view key, std::string command_line)
 {
-  if (key.size() != 1)
+  const std::optional<input::key_t> bound_key = input::try_key_from_name(key);
+  if (!bound_key)
   {
-    log_error("bind: only single ASCII keys (a-z) are supported, got '{}'",
-              std::string(key));
+    log_error("bind: no key is called '{}' (a-z, 0-9, f1-f12, space, lshift, "
+              "uparrow, pgup, kp_0-kp_9, ...)", key);
     return false;
   }
-  char c = key[0];
-  if (c < 'a' || c > 'z')
-  {
-    log_error("bind: only lowercase a-z keys are supported, got '{}'", c);
-    return false;
-  }
-  input::key_t bound_key = static_cast<input::key_t>(
-      static_cast<int>(input::key_t::A) + (c - 'a'));
-  bindings_[bound_key] = std::move(command_line);
+  bindings_[*bound_key] = std::move(command_line);
   save_bindings_to_file();
   return true;
 }
@@ -90,14 +84,10 @@ void console::clear_bindings()
 // binds.cfg is stable and a removed bind cannot linger.
 void console::save_bindings_to_file() const
 {
-  std::vector<std::pair<char, const std::string *>> sorted;
+  std::vector<std::pair<input::key_t, const std::string *>> sorted;
   sorted.reserve(bindings_.size());
   for (const auto &[key, line] : bindings_)
-  {
-    char c = static_cast<char>('a' + (static_cast<int>(key) -
-                                      static_cast<int>(input::key_t::A)));
-    sorted.push_back({c, &line});
-  }
+    sorted.push_back({key, &line});
   std::sort(sorted.begin(), sorted.end(),
             [](const auto &left, const auto &right) { return left.first < right.first; });
 
@@ -108,8 +98,8 @@ void console::save_bindings_to_file() const
               "not persist", BINDS_FILE_PATH);
     return;
   }
-  for (const auto &[key_character, line] : sorted)
-    file << "bind " << key_character << ' ' << *line << '\n';
+  for (const auto &[key, line] : sorted)
+    file << "bind " << input::key_name(key) << ' ' << *line << '\n';
 }
 
 // Console lines, not a bind-only format: the file is a tiny autoexec, so a

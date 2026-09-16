@@ -175,6 +175,18 @@ constexpr field_info_t HEALTH_CHANGED_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t ROUND_ENDED_FIELDS[] = {
+  {.name = "reason",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Round_Ended_Data, reason),
+   .size_in_bytes = (uint32_t)sizeof(Round_Ended_Data::reason),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[12]},
+};
+
 constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Enable
   {},   // Disable
@@ -195,6 +207,10 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Start
   {},   // Stop
   {},   // Restart
+  {},   // Start_Match
+  {},   // End_Round
+  {},   // Restart_Round
+  {},   // End_Match
 };
 
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
@@ -205,6 +221,10 @@ constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
   {DIED_FIELDS, 1},
   {HEALTH_CHANGED_FIELDS, 1},
   {},   // Elapsed
+  {},   // Match_Started
+  {},   // Round_Started
+  {ROUND_ENDED_FIELDS, 1},
+  {},   // Match_Ended
 };
 
 } // namespace
@@ -232,6 +252,10 @@ const char* to_string(entity_action value)
     case entity_action::Start: return "Start";
     case entity_action::Stop: return "Stop";
     case entity_action::Restart: return "Restart";
+    case entity_action::Start_Match: return "Start_Match";
+    case entity_action::End_Round: return "End_Round";
+    case entity_action::Restart_Round: return "Restart_Round";
+    case entity_action::End_Match: return "End_Match";
   }
   return "<unknown>";
 }
@@ -257,6 +281,10 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Start") return entity_action::Start;
   if (text == "Stop") return entity_action::Stop;
   if (text == "Restart") return entity_action::Restart;
+  if (text == "Start_Match") return entity_action::Start_Match;
+  if (text == "End_Round") return entity_action::End_Round;
+  if (text == "Restart_Round") return entity_action::Restart_Round;
+  if (text == "End_Match") return entity_action::End_Match;
   return std::nullopt;
 }
 
@@ -271,6 +299,10 @@ const char* to_string(entity_signal value)
     case entity_signal::Died: return "Died";
     case entity_signal::Health_Changed: return "Health_Changed";
     case entity_signal::Elapsed: return "Elapsed";
+    case entity_signal::Match_Started: return "Match_Started";
+    case entity_signal::Round_Started: return "Round_Started";
+    case entity_signal::Round_Ended: return "Round_Ended";
+    case entity_signal::Match_Ended: return "Match_Ended";
   }
   return "<unknown>";
 }
@@ -284,6 +316,10 @@ template <> std::optional<entity_signal> try_from_string<entity_signal>(std::str
   if (text == "Died") return entity_signal::Died;
   if (text == "Health_Changed") return entity_signal::Health_Changed;
   if (text == "Elapsed") return entity_signal::Elapsed;
+  if (text == "Match_Started") return entity_signal::Match_Started;
+  if (text == "Round_Started") return entity_signal::Round_Started;
+  if (text == "Round_Ended") return entity_signal::Round_Ended;
+  if (text == "Match_Ended") return entity_signal::Match_Ended;
   return std::nullopt;
 }
 
@@ -302,6 +338,7 @@ const char* to_string(entity_trait value)
     case entity_trait::Respawnable: return "Respawnable";
     case entity_trait::Objective: return "Objective";
     case entity_trait::Timer: return "Timer";
+    case entity_trait::Match_Control: return "Match_Control";
   }
   return "<unknown>";
 }
@@ -319,6 +356,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Respawnable") return entity_trait::Respawnable;
   if (text == "Objective") return entity_trait::Objective;
   if (text == "Timer") return entity_trait::Timer;
+  if (text == "Match_Control") return entity_trait::Match_Control;
   return std::nullopt;
 }
 
@@ -357,6 +395,10 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Start: return (uint32_t)sizeof(Start_Data);
     case entity_action::Stop: return (uint32_t)sizeof(Stop_Data);
     case entity_action::Restart: return (uint32_t)sizeof(Restart_Data);
+    case entity_action::Start_Match: return (uint32_t)sizeof(Start_Match_Data);
+    case entity_action::End_Round: return (uint32_t)sizeof(End_Round_Data);
+    case entity_action::Restart_Round: return (uint32_t)sizeof(Restart_Round_Data);
+    case entity_action::End_Match: return (uint32_t)sizeof(End_Match_Data);
   }
   return 0;
 }
@@ -372,6 +414,10 @@ uint32_t signal_payload_size(entity_signal signal)
     case entity_signal::Died: return (uint32_t)sizeof(Died_Data);
     case entity_signal::Health_Changed: return (uint32_t)sizeof(Health_Changed_Data);
     case entity_signal::Elapsed: return (uint32_t)sizeof(Elapsed_Data);
+    case entity_signal::Match_Started: return (uint32_t)sizeof(Match_Started_Data);
+    case entity_signal::Round_Started: return (uint32_t)sizeof(Round_Started_Data);
+    case entity_signal::Round_Ended: return (uint32_t)sizeof(Round_Ended_Data);
+    case entity_signal::Match_Ended: return (uint32_t)sizeof(Match_Ended_Data);
   }
   return 0;
 }
@@ -525,6 +571,38 @@ action_data_t erase(const Restart_Data& payload)
   action_data_t data;
   data.tag = entity_action::Restart;
   data.restart = payload;
+  return data;
+}
+
+action_data_t erase(const Start_Match_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Start_Match;
+  data.start_match = payload;
+  return data;
+}
+
+action_data_t erase(const End_Round_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::End_Round;
+  data.end_round = payload;
+  return data;
+}
+
+action_data_t erase(const Restart_Round_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Restart_Round;
+  data.restart_round = payload;
+  return data;
+}
+
+action_data_t erase(const End_Match_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::End_Match;
+  data.end_match = payload;
   return data;
 }
 

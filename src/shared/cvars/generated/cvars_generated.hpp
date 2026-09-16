@@ -45,18 +45,6 @@ constexpr uint32_t Bunnyhop_Mode_COUNT = 3;
 const char* to_string(Bunnyhop_Mode value);
 template <> std::optional<Bunnyhop_Mode> try_from_string<Bunnyhop_Mode>(std::string_view text);
 
-enum class Game_Mode : uint8_t
-{
-  deathmatch = 0,
-  rounds = 1,
-  speedrun = 2,
-};
-
-constexpr uint32_t Game_Mode_COUNT = 3;
-
-const char* to_string(Game_Mode value);
-template <> std::optional<Game_Mode> try_from_string<Game_Mode>(std::string_view text);
-
 enum class Debug_Channel : uint8_t
 {
   off = 0,
@@ -119,9 +107,9 @@ struct cvar_state_t
   float pm_jump_boost = 32.0f;
   float pm_jump_boost_max_speed = 480.0f;
   float pm_air_speed_cap = 30.0f;
-  Game_Mode sv_gamemode = Game_Mode::deathmatch;
   float mp_warmup_seconds = 0.0f;
-  float mp_countdown_seconds = 3.0f;
+  float mp_countdown_seconds = 5.0f;
+  float mp_freeze_seconds = 3.0f;
   float mp_round_seconds = 180.0f;
   float mp_round_end_seconds = 5.0f;
   float mp_game_over_seconds = 10.0f;
@@ -239,9 +227,9 @@ enum class cvar_id : uint16_t
   pm_jump_boost = 14,
   pm_jump_boost_max_speed = 15,
   pm_air_speed_cap = 16,
-  sv_gamemode = 17,
-  mp_warmup_seconds = 18,
-  mp_countdown_seconds = 19,
+  mp_warmup_seconds = 17,
+  mp_countdown_seconds = 18,
+  mp_freeze_seconds = 19,
   mp_round_seconds = 20,
   mp_round_end_seconds = 21,
   mp_game_over_seconds = 22,
@@ -349,19 +337,22 @@ enum class command_id : uint16_t
   sv_frame_report = 8,
   sv_hitch_report = 9,
   ent_fire = 10,
-  bind = 11,
-  connect = 12,
-  announce = 13,
-  noclip = 14,
-  mem_report = 15,
-  mem_frame = 16,
-  mem_stacks = 17,
-  frame_report = 18,
-  frame_reset = 19,
-  hitch_report = 20,
+  restart_round = 11,
+  end_match = 12,
+  ready = 13,
+  bind = 14,
+  connect = 15,
+  announce = 16,
+  noclip = 17,
+  mem_report = 18,
+  mem_frame = 19,
+  mem_stacks = 20,
+  frame_report = 21,
+  frame_reset = 22,
+  hitch_report = 23,
 };
 
-constexpr uint32_t COMMAND_COUNT = 21;
+constexpr uint32_t COMMAND_COUNT = 24;
 
 enum cvar_type : uint8_t
 {
@@ -477,6 +468,15 @@ void sv_hitch_report(int32_t top, const command_context_t& context);
 // @Server  Send an action to one entity, as field=value pairs
 // usage: ent_fire <target> <action> [parameters...]
 void ent_fire(uint32_t target, std::string_view action, std::string_view parameters, const command_context_t& context);
+// @Server  Restart the current round at the start line
+// usage: restart_round
+void restart_round(const command_context_t& context);
+// @Server  End the match and go to next_map
+// usage: end_match
+void end_match(const command_context_t& context);
+// @Server  Toggle your ready vote during warmup
+// usage: ready
+void ready(const command_context_t& context);
 // @Client  Bind a key (a-z) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
@@ -547,11 +547,6 @@ void bind_client_commands(command_table_t& table);
 template <> struct enum_traits<cvars::Bunnyhop_Mode>
 {
   static constexpr uint32_t count = cvars::Bunnyhop_Mode_COUNT;
-};
-
-template <> struct enum_traits<cvars::Game_Mode>
-{
-  static constexpr uint32_t count = cvars::Game_Mode_COUNT;
 };
 
 template <> struct enum_traits<cvars::Debug_Channel>

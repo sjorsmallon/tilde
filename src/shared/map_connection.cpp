@@ -1,5 +1,6 @@
 #include "map_connection.hpp"
 
+#include "log.hpp"
 #include "map.hpp"
 
 #include <cstring>
@@ -262,6 +263,44 @@ connection_remap_result_t remap_connection_uids(connection_t& connection, const 
 
   connection = rewritten;
   return {};
+}
+
+size_t remove_connections_naming(std::vector<connection_t>& connections, Span<const entity_uid_t> removed)
+{
+  const auto is_removed = [removed](entity_uid_t uid) -> bool
+  {
+    for (entity_uid_t candidate : removed)
+      if (candidate == uid)
+        return true;
+    return false;
+  };
+
+  uid_remap_t survivors;
+  size_t      dropped = 0;
+
+  std::erase_if(connections, [&](const connection_t& connection) -> bool
+  {
+    for (;;)
+    {
+      connection_t                    scratch = connection;
+      const connection_remap_result_t result  = remap_connection_uids(scratch, survivors);
+      if (result.ok)
+        return false;
+
+      if (!is_removed(result.unmapped))
+      {
+        survivors[result.unmapped] = result.unmapped;
+        continue;
+      }
+
+      log_warning("connections: dropped a {} row -- its {} (uid {}) was deleted",
+               entities::to_string(connection.signal), result.end, result.unmapped);
+      ++dropped;
+      return true;
+    }
+  });
+
+  return dropped;
 }
 
 } // namespace shared

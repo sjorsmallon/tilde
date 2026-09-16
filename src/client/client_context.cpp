@@ -50,6 +50,13 @@ const entities::Player_Entity* try_find_my_player(const client_context_t& contex
   return try_find_player_in_slot(context, context.connection.my_slot);
 }
 
+const entities::Match* try_find_match(const client_context_t& context)
+{
+  Span<const entities::Game_Rules_Entity> rules =
+      context.world.session.entity_system.entities_of<entities::Game_Rules_Entity>();
+  return rules.empty() ? nullptr : &rules[0].match;
+}
+
 void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientation)
 {
   const linalg::view_angles_t facing =
