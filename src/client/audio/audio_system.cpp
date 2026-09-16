@@ -156,6 +156,13 @@ void Audio_System::shutdown()
   impl = nullptr;
 }
 
+void Audio_System::set_muted(bool muted)
+{
+  if (!impl)
+    return;
+  ma_engine_set_volume(&impl->engine, muted ? 0.0f : 1.0f);
+}
+
 void Audio_System::update(const linalg::vec3f& listener_position,
                             const linalg::vec3f& listener_forward,
                             const linalg::vec3f& listener_up,

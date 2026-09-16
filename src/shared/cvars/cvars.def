@@ -509,7 +509,7 @@ Debugging :: cvars {
     // here is hand-written server code already holding the context.
     sv_io_debug:            bool = false    @Server     "Log every entity I/O emit, queued record and dispatch"
 
-    // replay_def.md §4. Unflagged: both recorders read it, each on its own side.
+    // replay_def.md ss4. Unflagged: both recorders read it, each on its own side.
     replay_keyframe_seconds: f32 = 2.0                  "Seconds between full keyframes in a replay recording"
     sv_replay_auto:          bool = false   @Server     "Start a replay recording on every map load"
 }
@@ -668,5 +668,10 @@ Client_Commands :: commands {
     // What THIS client received, gaps where packets were lost. Works against a
     // server you do not run.
     replay_record(name: string = "")       @Client  "Record what this client receives to replays/<name>.replay"
-    replay_stop()                          @Client  "Finish this client's replay recording"
+    replay_play(path: string)              @Client  "Play a .replay file in place of a server"
+    replay_stop()                          @Client  "Stop playing a replay, or finish this client's recording"
+    replay_pause()                         @Client  "Pause or resume the replay"
+    replay_speed(factor: f32)              @Client  "Play the replay at a speed (audio is muted away from 1)"
+    replay_seek(seconds: f32)              @Client  "Jump to a time, in seconds from the start of the replay"
+    replay_skip(seconds: f32)              @Client  "Jump forward, or back with a negative number of seconds"
 }

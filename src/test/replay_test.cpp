@@ -1,5 +1,5 @@
-// replay_def.md §8 steps 1 and 2: the .replay container, and the recorder that
-// deltas against the last frame it wrote.
+// replay_def.md §8 steps 1, 2 and 5: the .replay container, the recorder that
+// deltas against the last frame it wrote, and the seek that rebuilds a frame.
 
 #include "shared/entities/generated/entities_generated.hpp"
 #include "shared/network/cvar_mirror.hpp"
@@ -7,6 +7,7 @@
 #include "shared/network/snapshot_history.hpp"
 #include "shared/replay_file.hpp"
 #include "shared/replay_recorder.hpp"
+#include "shared/replay_seek.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -226,6 +227,41 @@ std::vector<uint8_t> full_update_bytes(const network::snapshot_frame_t& frame)
   return writer.buffer;
 }
 
+// Every seek lands on the last recorded tick at or before the target, rebuilds
+// exactly the frame recorded there, carries the cvar records up to it, and
+// resumes at the first record past it. Twice, the same.
+void test_seek_rebuilds_the_recorded_frame(const replay_t& replay, const std::vector<std::vector<uint8_t>>& expected)
+{
+  struct seek_case_t
+  {
+    uint32_t target;
+    uint32_t landed;
+    size_t   cvar_payloads;
+  };
+  const seek_case_t cases[] = {
+      {1, 1, 1},    {29, 29, 1},   {30, 30, 1},   {31, 31, 1},   {99, 99, 1},    {120, 99, 1},
+      {141, 141, 1}, {149, 149, 1}, {150, 150, 2}, {300, 300, 2}, {5000, 300, 2},
+  };
+
+  for (const seek_case_t& seek : cases)
+  {
+    std::optional<replay_position_t> first  = try_reconstruct_replay_at(replay, seek.target);
+    std::optional<replay_position_t> second = try_reconstruct_replay_at(replay, seek.target);
+    assert(first && second);
+    assert(first->frame.tick == seek.landed);
+    assert(full_update_bytes(first->frame) == expected[seek.landed]);
+    assert(full_update_bytes(second->frame) == full_update_bytes(first->frame));
+    assert(first->cvar_payloads.size() == seek.cvar_payloads);
+    assert(first->next_record_offset == second->next_record_offset);
+
+    const std::optional<replay_record_t> next = try_read_replay_record(replay, first->next_record_offset);
+    assert(!next || next->tick > seek.target || next->kind == replay_record_kind_t::Index);
+  }
+
+  assert(!try_reconstruct_replay_at(replay, 0));
+  std::printf("  seek: every target rebuilds the recorded frame, twice alike, gap included: ok\n");
+}
+
 void test_recorder_frames_decode_bit_exact_across_a_gap()
 {
   const std::string path = FIXTURE_DIRECTORY + "/recorder.replay";
@@ -313,6 +349,8 @@ void test_recorder_frames_decode_bit_exact_across_a_gap()
   assert(keyframes_seen == 10);
   assert(cvar_records == 2);
   std::printf("  recorder: 259 frames decode bit-exact across a 41-tick gap, 10 keyframes: ok\n");
+
+  test_seek_rebuilds_the_recorded_frame(*replay, expected);
 }
 
 void test_keyframe_interval_and_path()

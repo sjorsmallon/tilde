@@ -281,6 +281,22 @@ bool invoke_replay_record(Span<std::string_view> args, const command_context_t& 
   return true;
 }
 
+// replay_play <path>
+bool invoke_replay_play(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 1u)
+  {
+    usage_error(out_reply, command_id::replay_play, args.size());
+    return false;
+  }
+
+  std::string_view path = args[0];
+
+  commands::replay_play(path, context);
+  return true;
+}
+
 // replay_stop
 bool invoke_replay_stop(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -292,6 +308,89 @@ bool invoke_replay_stop(Span<std::string_view> args, const command_context_t& co
   }
 
   commands::replay_stop(context);
+  return true;
+}
+
+// replay_pause
+bool invoke_replay_pause(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::replay_pause, args.size());
+    return false;
+  }
+
+  commands::replay_pause(context);
+  return true;
+}
+
+// replay_speed <factor>
+bool invoke_replay_speed(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 1u)
+  {
+    usage_error(out_reply, command_id::replay_speed, args.size());
+    return false;
+  }
+
+  float factor = {};
+  const std::optional<float> parsed_factor = try_parse_whole<float>(args[0]);
+  if (!parsed_factor)
+  {
+    bad_argument(out_reply, command_id::replay_speed, "factor", args[0]);
+    return false;
+  }
+  factor = *parsed_factor;
+
+  commands::replay_speed(factor, context);
+  return true;
+}
+
+// replay_seek <seconds>
+bool invoke_replay_seek(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 1u)
+  {
+    usage_error(out_reply, command_id::replay_seek, args.size());
+    return false;
+  }
+
+  float seconds = {};
+  const std::optional<float> parsed_seconds = try_parse_whole<float>(args[0]);
+  if (!parsed_seconds)
+  {
+    bad_argument(out_reply, command_id::replay_seek, "seconds", args[0]);
+    return false;
+  }
+  seconds = *parsed_seconds;
+
+  commands::replay_seek(seconds, context);
+  return true;
+}
+
+// replay_skip <seconds>
+bool invoke_replay_skip(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 1u)
+  {
+    usage_error(out_reply, command_id::replay_skip, args.size());
+    return false;
+  }
+
+  float seconds = {};
+  const std::optional<float> parsed_seconds = try_parse_whole<float>(args[0]);
+  if (!parsed_seconds)
+  {
+    bad_argument(out_reply, command_id::replay_skip, "seconds", args[0]);
+    return false;
+  }
+  seconds = *parsed_seconds;
+
+  commands::replay_skip(seconds, context);
   return true;
 }
 
@@ -310,7 +409,12 @@ void bind_client_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::frame_reset] = &invoke_frame_reset;
   table.binders[(uint32_t)command_id::hitch_report] = &invoke_hitch_report;
   table.binders[(uint32_t)command_id::replay_record] = &invoke_replay_record;
+  table.binders[(uint32_t)command_id::replay_play] = &invoke_replay_play;
   table.binders[(uint32_t)command_id::replay_stop] = &invoke_replay_stop;
+  table.binders[(uint32_t)command_id::replay_pause] = &invoke_replay_pause;
+  table.binders[(uint32_t)command_id::replay_speed] = &invoke_replay_speed;
+  table.binders[(uint32_t)command_id::replay_seek] = &invoke_replay_seek;
+  table.binders[(uint32_t)command_id::replay_skip] = &invoke_replay_skip;
 }
 
 } // namespace cvars

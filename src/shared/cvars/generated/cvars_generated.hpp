@@ -357,10 +357,15 @@ enum class command_id : uint16_t
   frame_reset = 24,
   hitch_report = 25,
   replay_record = 26,
-  replay_stop = 27,
+  replay_play = 27,
+  replay_stop = 28,
+  replay_pause = 29,
+  replay_speed = 30,
+  replay_seek = 31,
+  replay_skip = 32,
 };
 
-constexpr uint32_t COMMAND_COUNT = 28;
+constexpr uint32_t COMMAND_COUNT = 33;
 
 enum cvar_type : uint8_t
 {
@@ -524,9 +529,24 @@ void hitch_report(int32_t top, const command_context_t& context);
 // @Client  Record what this client receives to replays/<name>.replay
 // usage: replay_record [name]
 void replay_record(std::string_view name, const command_context_t& context);
-// @Client  Finish this client's replay recording
+// @Client  Play a .replay file in place of a server
+// usage: replay_play <path>
+void replay_play(std::string_view path, const command_context_t& context);
+// @Client  Stop playing a replay, or finish this client's recording
 // usage: replay_stop
 void replay_stop(const command_context_t& context);
+// @Client  Pause or resume the replay
+// usage: replay_pause
+void replay_pause(const command_context_t& context);
+// @Client  Play the replay at a speed (audio is muted away from 1)
+// usage: replay_speed <factor>
+void replay_speed(float factor, const command_context_t& context);
+// @Client  Jump to a time, in seconds from the start of the replay
+// usage: replay_seek <seconds>
+void replay_seek(float seconds, const command_context_t& context);
+// @Client  Jump forward, or back with a negative number of seconds
+// usage: replay_skip <seconds>
+void replay_skip(float seconds, const command_context_t& context);
 } // namespace commands
 
 // The runtime dispatch surface. Each slot holds the command's generated

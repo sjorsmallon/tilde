@@ -36,6 +36,10 @@ struct replay_recorder_t
 // replays/<map>_<yyyy-mm-dd_hhmmss>.replay, or replays/<name>.replay when `name` is set.
 [[nodiscard]] std::string replay_path_for(const std::string& map_name, const std::string& name);
 
+// The inverse of the above for a typed name: `text` as given, then replays/<text>,
+// then replays/<text>.replay -- the first that exists.
+[[nodiscard]] std::optional<std::string> try_resolve_replay_path(const std::string& text);
+
 [[nodiscard]] bool try_start_replay_recording(replay_recorder_t&     recorder,
                                               const std::string&     path,
                                               const replay_header_t& header,

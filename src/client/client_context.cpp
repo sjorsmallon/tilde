@@ -38,6 +38,17 @@ void reset_state_in_preparation_for_new_map_load(client_context_t& context)
   context.visuals     = {};
 }
 
+void reset_state_for_replay_seek(client_context_t& context)
+{
+  // The snapshot ring and latest_processed_tick, so an older tick passes the
+  // staleness gate and the edge watchers see no previous frame; every remote
+  // ring and death timer; the interpolation cursor.
+  context.replication = {};
+  context.visuals     = {};
+  if (context.cvars != nullptr)
+    shared::copy_cvars_from(*context.cvars, context.replay.cvars_before_playback, cvars::mirrored_cvars());
+}
+
 const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context, int32_t slot)
 {
   for (const entities::Player_Entity& player :

@@ -52,6 +52,16 @@ std::string replay_path_for(const std::string& map_name, const std::string& name
                      local.tm_mon + 1, local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
 }
 
+std::optional<std::string> try_resolve_replay_path(const std::string& text)
+{
+  const std::string candidates[] = {text, "replays/" + text, "replays/" + text + ".replay"};
+  std::error_code   error;
+  for (const std::string& candidate : candidates)
+    if (std::filesystem::is_regular_file(candidate, error))
+      return candidate;
+  return std::nullopt;
+}
+
 bool try_start_replay_recording(replay_recorder_t& recorder, const std::string& path,
                                 const replay_header_t& header, Span<const uint8_t> map_package,
                                 uint32_t keyframe_interval_ticks)

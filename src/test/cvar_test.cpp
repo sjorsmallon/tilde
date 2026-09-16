@@ -207,6 +207,11 @@ void sv_replay_record(std::string_view, const command_context_t&) {}
 void sv_replay_stop(const command_context_t&) {}
 void replay_record(std::string_view, const command_context_t&) {}
 void replay_stop(const command_context_t&) {}
+void replay_play(std::string_view, const command_context_t&) {}
+void replay_pause(const command_context_t&) {}
+void replay_speed(float, const command_context_t&) {}
+void replay_seek(float, const command_context_t&) {}
+void replay_skip(float, const command_context_t&) {}
 
 } // namespace cvars::commands
 

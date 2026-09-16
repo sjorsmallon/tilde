@@ -450,6 +450,8 @@ add_library(game_shared STATIC
     src/shared/replay_file.cpp
     src/shared/replay_recorder.hpp
     src/shared/replay_recorder.cpp
+    src/shared/replay_seek.hpp
+    src/shared/replay_seek.cpp
     src/shared/map_group.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
@@ -749,6 +751,7 @@ add_library(game_client SHARED
     # TU so that second half cannot reach `dt` or the camera -- it runs once per
     # PACKET, not per frame.
     src/client/held_snapshot.cpp
+    src/client/replay_playback.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
     src/client/game_events/rocket_detonated.cpp
@@ -1123,7 +1126,7 @@ add_executable(run_times_test src/test/run_times_test.cpp)
 target_include_directories(run_times_test PRIVATE src src/shared)
 target_link_libraries(run_times_test PRIVATE game_shared)
 
-# The .replay container and the recorder's previous-frame deltas (replay_def.md §8 steps 1-2).
+# The .replay container, the recorder's previous-frame deltas and the seek (replay_def.md §8 steps 1, 2 and 5).
 add_executable(replay_test src/test/replay_test.cpp)
 target_include_directories(replay_test PRIVATE src src/shared)
 target_link_libraries(replay_test PRIVATE game_shared)

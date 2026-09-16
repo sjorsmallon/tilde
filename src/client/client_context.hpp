@@ -1,6 +1,7 @@
 #pragma once
 
 #include "remote_interpolation.hpp"
+#include "replay_playback.hpp"
 
 #include "../shared/array.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
@@ -17,6 +18,7 @@
 #include "../shared/subtick.hpp"
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -57,7 +59,10 @@ static constexpr int32_t invalid_slot_idx = -1;
 // until an input reports the hash it is running, so a Loading client -- which
 // sends no input at all -- receives no entity deltas. See play_state.cpp
 // update() and connection_t::awaiting_stream_content_hash.
-enum class Connection_Phase { Disconnected, Connecting, Loading, Connected };
+// Replaying has no peer at all: a file fills the inbox (replay_playback.hpp), so
+// every gate that assumes a server -- input, the reliable stream, the disconnect
+// message -- is off by being a different phase rather than a flag beside Connected.
+enum class Connection_Phase { Disconnected, Connecting, Loading, Connected, Replaying };
 
 // --- Client-side prediction ring buffer entry ---
 struct Saved_Input
@@ -498,6 +503,12 @@ struct client_context_t
   // groups: both resets FINISH it rather than wipe it, so the index is written.
   shared::replay_recorder_t replay_recorder;
 
+  // replay_def.md §5. `requested_replay` is the file `replay_play` opened, taken
+  // by Play_State::on_enter the way requested_server_address is; `replay` is the
+  // playback it became, ended by on_exit.
+  std::optional<shared::replay_t> requested_replay;
+  replay_playback_t               replay;
+
   // --- Reset-scoped state ---
   local_world_t    world;
   connection_t     connection;
@@ -508,6 +519,10 @@ struct client_context_t
 
 void reset_for_new_connection(client_context_t& context);
 void reset_state_in_preparation_for_new_map_load(client_context_t& context);
+// A replay jump: everything keyed to where playback was, and the @Mirrored cvars
+// back to their pre-playback values so the file's records up to the target
+// rebuild them.
+void reset_state_for_replay_seek(client_context_t& context);
 void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientation);
 
 // The Player_Entity a connection slot has a body for, or nullptr: a spectator,

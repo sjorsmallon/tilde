@@ -90,4 +90,10 @@ void revert_mirrored_cvars_to_defaults(cvars::cvar_state_t& state);
 void revert_cvars_to_defaults(cvars::cvar_state_t&      state,
                               Span<const cvars::cvar_id> ids);
 
+// The general form: those ids' values copied from `source`. A replay restores
+// the values it overwrote through this.
+void copy_cvars_from(cvars::cvar_state_t&       state,
+                     const cvars::cvar_state_t& source,
+                     Span<const cvars::cvar_id> ids);
+
 } // namespace shared

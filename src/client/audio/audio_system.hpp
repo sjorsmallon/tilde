@@ -41,6 +41,9 @@ struct Audio_System
    // play a non-spatialized one-shot (UI, announcer, 2D feedback).
   void play_2d(assets::sound_asset sound, const float volume = 1.0f);
 
+  // Silences every voice, playing or yet to start.
+  void set_muted(bool muted);
+
 private:
 
   struct audio_impl_t* impl = nullptr;

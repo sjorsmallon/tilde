@@ -51,6 +51,7 @@ private:
 
 
   void enter_connected_phase();
+  void enter_replay_playback(shared::replay_t&& replay);
 
   camera_t camera;
 

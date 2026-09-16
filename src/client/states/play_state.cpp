@@ -492,6 +492,39 @@ void Play_State::enter_connected_phase()
   }
 }
 
+void Play_State::enter_replay_playback(shared::replay_t&& replay)
+{
+  auto &ctx = state_manager::get_client_context();
+
+  shared::map_package_t package;
+  std::vector<uint8_t> package_bytes(replay.map_package.data,
+                                     replay.map_package.data + replay.map_package.size());
+  if (!shared::deserialize_map_package(package_bytes, package))
+  {
+    log_error("replay: the map package embedded in the replay of '{}' does not deserialize; not playing it",
+              replay.header.map_name);
+    hud::set_announcement("Replay map is unreadable");
+    return;
+  }
+
+  ctx.connection.server_tickrate = replay.header.tickrate_hz;
+  ctx.connection.my_slot         = invalid_slot_idx;
+  ctx.connection.spectating      = true;
+
+  if (!apply_map_package(package))
+    return;
+  if (ctx.world.map_content_hash != replay.header.map_content_hash)
+    log_warning("replay: the embedded map hashes to {:#x}, the header says {:#x}",
+                ctx.world.map_content_hash, replay.header.map_content_hash);
+
+  log_terminal("replay: playing '{}' recorded {}, ticks {}..{}", replay.header.map_name,
+               replay.header.date, replay.index.first_tick, replay.index.last_tick);
+  hud::set_announcement("Replay");
+
+  begin_replay_playback(ctx.replay, std::move(replay), *ctx.cvars);
+  ctx.connection.phase = Connection_Phase::Replaying;
+}
+
 void Play_State::on_enter()
 {
   auto &ctx = state_manager::get_client_context();
@@ -517,19 +550,29 @@ void Play_State::on_enter()
   #endif
 
 
-  // try to load a map from last_map.txt if that existed.
-  std::string last_map;
+  const bool replay_requested = ctx.requested_replay.has_value();
+  if (replay_requested)
   {
-    std::ifstream f("last_map.txt");
-    if (f.is_open())
-      std::getline(f, last_map);
+    shared::replay_t replay = std::move(*ctx.requested_replay);
+    ctx.requested_replay.reset();
+    enter_replay_playback(std::move(replay));
   }
-
-  std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
-  if (!load_client_map(map_path))
+  else
   {
-    log_terminal("No local map '{}' at boot; will request it from the server "
-                 "after connecting.", map_path);
+    // try to load a map from last_map.txt if that existed.
+    std::string last_map;
+    {
+      std::ifstream f("last_map.txt");
+      if (f.is_open())
+        std::getline(f, last_map);
+    }
+
+    std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
+    if (!load_client_map(map_path))
+    {
+      log_terminal("No local map '{}' at boot; will request it from the server "
+                   "after connecting.", map_path);
+    }
   }
 
   camera.yaw = ctx.prediction.player_yaw;
@@ -537,6 +580,10 @@ void Play_State::on_enter()
   camera.orthographic = false;
 
   input::set_relative_mouse_mode(true);
+
+  // A replay has no server, including one that failed to start.
+  if (replay_requested)
+    return;
 
   // --- Connect to server ---
   auto &transport = ctx.transport_layer;
@@ -574,7 +621,13 @@ void Play_State::on_exit()
   auto &ctx = state_manager::get_client_context();
   auto &transport = ctx.transport_layer;
 
-  if (ctx.connection.phase != Connection_Phase::Disconnected)
+  shared::finish_replay_recording(ctx.replay_recorder);
+  end_replay_playback(ctx.replay, *ctx.cvars);
+  if (ctx.audio)
+    ctx.audio->set_muted(false);
+
+  if (ctx.connection.phase != Connection_Phase::Disconnected &&
+      ctx.connection.phase != Connection_Phase::Replaying)
   {
     game::C2S_Connection disconnect_cmd;
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
@@ -594,7 +647,7 @@ void Play_State::on_exit()
   jolt_debug_renderer.reset();
 #endif
 
-  shared::finish_replay_recording(ctx.replay_recorder);
+  ctx.connection.phase = Connection_Phase::Disconnected;
   ctx.world = {};
 
   if (ctx.server_session == nullptr && ctx.cvars)
@@ -747,9 +800,29 @@ void Play_State::update(float dt)
   // while in that function. it's a cap. if it's more than that, something is flooding traffic.
   network::Client_Inbox& inbox = ctx.incoming;
   network::clear_client_inbox(inbox);
-  network::poll_client_network(transport,
-                               network::client_receive_drain_cap_in_datagrams,
-                               inbox);
+  if (ctx.connection.phase == Connection_Phase::Replaying)
+  {
+    if (ctx.replay.pending_seek_tick)
+    {
+      reset_state_for_replay_seek(ctx);
+      hud::current_announcement() = {};
+    }
+    feed_replay_into_inbox(ctx.replay, dt, inbox);
+  }
+  else
+  {
+    network::poll_client_network(transport,
+                                 network::client_receive_drain_cap_in_datagrams,
+                                 inbox);
+  }
+
+  // The world's clock: the replay's pause and speed, or the frame's dt.
+  const float world_dt = ctx.connection.phase == Connection_Phase::Replaying
+                             ? replay_world_dt(ctx.replay, dt)
+                             : dt;
+  if (ctx.audio)
+    ctx.audio->set_muted(ctx.connection.phase == Connection_Phase::Replaying &&
+                         !replay_plays_at_normal_speed(ctx.replay));
 
 
   // in case I forget again: poll_client_network already does all the reassembly for us.
@@ -929,7 +1002,8 @@ void Play_State::update(float dt)
   // rate to a server that is not listening. Connecting, Loading and Connected
   // are all live, and the one that matters is Loading -- no tick loop, no ready
   // world, and the request that gets it out of there is on this stream.
-  if (ctx.connection.phase != Connection_Phase::Disconnected)
+  if (ctx.connection.phase != Connection_Phase::Disconnected &&
+      ctx.connection.phase != Connection_Phase::Replaying)
     network::service_client_reliable_stream(transport);
 
   // messages from the server that are forwarded to the console (not announcements.)
@@ -1057,7 +1131,7 @@ void Play_State::update(float dt)
   }
   
   for (auto &fx : ctx.visuals.explosion_effects)
-    fx.time_remaining -= dt;
+    fx.time_remaining -= world_dt;
   std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
     return fx.time_remaining <= 0.f;
   });
@@ -2017,14 +2091,14 @@ void Play_State::update(float dt)
 
   // move the cursor between frames ahead by dt so we know where to interpolate to / where our input is coming from.
   client::advance_interpolation_cursor(
-      ctx.replication.interpolation_cursor, dt, static_cast<float>(ctx.connection.server_tickrate),
+      ctx.replication.interpolation_cursor, world_dt, static_cast<float>(ctx.connection.server_tickrate),
       client::interpolation_delay_in_ticks_from_cvar(ctx.cvars->cl_interpolation_delay_ticks));
 
   for (auto &[slot, remote_player] : ctx.replication.remote_players)
   {
 
     if (remote_player.death_tick != 0)
-      remote_player.death_animation_seconds += dt;
+      remote_player.death_animation_seconds += world_dt;
 
     if (!remote_player.active || remote_player.interpolation.pushed == 0)
       continue;
@@ -2098,7 +2172,8 @@ void Play_State::update(float dt)
       camera.pitch = spectated.render_pitch;
     }
   }
-  else if (ctx.connection.phase == Connection_Phase::Connected &&
+  else if ((ctx.connection.phase == Connection_Phase::Connected ||
+            ctx.connection.phase == Connection_Phase::Replaying) &&
            ctx.connection.spectating)
   {
 
@@ -2159,7 +2234,12 @@ void Play_State::draw_imgui_panels()
       conn_str = "Loading map...";
     else if (ctx.connection.phase == Connection_Phase::Connected)
       conn_str = "Connected";
+    else if (ctx.connection.phase == Connection_Phase::Replaying)
+      conn_str = "Replaying";
     ImGui::Text("net: %s (slot %d, cmd %d)", conn_str, ctx.connection.my_slot, ctx.prediction.input_number);
+    if (ctx.connection.phase == Connection_Phase::Replaying)
+      ImGui::Text("replay: %.1f / %.1f s, %.2fx%s", replay_seconds_elapsed(ctx.replay),
+                  replay_seconds_total(ctx.replay), ctx.replay.speed, ctx.replay.paused ? ", paused" : "");
 
     if (ctx.prediction.reconciliation_error_magnitude > 0.01f)
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "reconc err: %7.3f",
@@ -2345,6 +2425,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                              renderer::ui_draw_list_t &ui)
 {
   auto &ctx = state_manager::get_client_context();
+  const float world_delta_seconds = ctx.connection.phase == Connection_Phase::Replaying
+                                        ? replay_world_dt(ctx.replay, delta_seconds)
+                                        : delta_seconds;
 
   if (connection_ui.show_pause_menu)
   {
@@ -2770,11 +2853,11 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
   for (const entities::Particle_Emitter_Entity &emitter :
        entity_system.entities_of<entities::Particle_Emitter_Entity>())
-    scene.particles.push_back(emitter_parameters(emitter, delta_seconds));
+    scene.particles.push_back(emitter_parameters(emitter, world_delta_seconds));
 
   for (const auto &fx : ctx.visuals.explosion_effects)
     scene.particles.push_back(
-        explosion_parameters(fx.explosion_index, fx.position, fx.time_remaining, delta_seconds));
+        explosion_parameters(fx.explosion_index, fx.position, fx.time_remaining, world_delta_seconds));
 
   // Jolt physics debug overlay
 #ifdef JPH_DEBUG_RENDERER
@@ -2933,9 +3016,104 @@ void replay_record(std::string_view name, const command_context_t &)
   client::console::get().print("replay_record: recording to %s", path->c_str());
 }
 
+void replay_play(std::string_view path, const command_context_t &)
+{
+  client::client_context_t &ctx = client::state_manager::get_client_context();
+
+  const std::optional<std::string> resolved = shared::try_resolve_replay_path(std::string(path));
+  if (!resolved)
+  {
+    client::console::get().print("replay_play: '%.*s' not found (also tried replays/%.*s and replays/%.*s.replay)",
+                                 static_cast<int>(path.size()), path.data(), static_cast<int>(path.size()),
+                                 path.data(), static_cast<int>(path.size()), path.data());
+    return;
+  }
+
+  std::string reason;
+  std::optional<shared::replay_t> replay =
+      shared::try_read_replay_file(*resolved, entities::SCHEMA_HASH, reason);
+  if (!replay)
+  {
+    client::console::get().print("replay_play: '%s' %s", resolved->c_str(), reason.c_str());
+    return;
+  }
+  if (replay->header.tickrate_hz == 0)
+  {
+    client::console::get().print("replay_play: the header records a tickrate of 0");
+    return;
+  }
+
+  ctx.requested_replay = std::move(*replay);
+  client::state_manager::switch_to(client::game_state::play);
+}
+
+[[nodiscard]] static client::replay_playback_t *try_find_active_replay(const char *command)
+{
+  client::client_context_t &ctx = client::state_manager::get_client_context();
+  if (!ctx.replay.active)
+  {
+    client::console::get().print("%s: no replay is playing", command);
+    return nullptr;
+  }
+  return &ctx.replay;
+}
+
+void replay_pause(const command_context_t &)
+{
+  client::replay_playback_t *playback = try_find_active_replay("replay_pause");
+  if (playback == nullptr)
+    return;
+  playback->paused = !playback->paused;
+  client::hud::set_announcement(playback->paused ? "Replay paused" : "Replay playing");
+}
+
+void replay_speed(float factor, const command_context_t &)
+{
+  client::replay_playback_t *playback = try_find_active_replay("replay_speed");
+  if (playback == nullptr)
+    return;
+  if (!(factor > 0.0f))
+  {
+    client::console::get().print("replay_speed: %g is not a speed; replay_pause stops playback", factor);
+    return;
+  }
+  playback->speed = factor;
+  client::console::get().print("replay_speed: %gx", factor);
+}
+
+void replay_seek(float seconds, const command_context_t &)
+{
+  client::replay_playback_t *playback = try_find_active_replay("replay_seek");
+  if (playback == nullptr)
+    return;
+  const double target = std::clamp(static_cast<double>(seconds), 0.0, client::replay_seconds_total(*playback));
+  client::request_replay_seek(*playback, target);
+  client::console::get().print("replay_seek: %.1f / %.1f s", target, client::replay_seconds_total(*playback));
+}
+
+void replay_skip(float seconds, const command_context_t &)
+{
+  client::replay_playback_t *playback = try_find_active_replay("replay_skip");
+  if (playback == nullptr)
+    return;
+  const double from =
+      playback->pending_seek_tick
+          ? (static_cast<double>(*playback->pending_seek_tick) - playback->replay.index.first_tick) /
+                playback->replay.header.tickrate_hz
+          : client::replay_seconds_elapsed(*playback);
+  const double target = std::clamp(from + seconds, 0.0, client::replay_seconds_total(*playback));
+  client::request_replay_seek(*playback, target);
+  client::console::get().print("replay_skip: %.1f / %.1f s", target, client::replay_seconds_total(*playback));
+}
+
 void replay_stop(const command_context_t &)
 {
   client::client_context_t &ctx = client::state_manager::get_client_context();
+  if (ctx.replay.active)
+  {
+    client::state_manager::switch_to(client::game_state::main_menu);
+    return;
+  }
   if (!ctx.replay_recorder.active)
   {
     client::console::get().print("replay_stop: not recording");

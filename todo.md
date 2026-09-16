@@ -1380,8 +1380,12 @@ did not fix.
       owned state (an attempt clock, a bomb timer) deliberately NOT built — it
       arrives with the second mode that needs it. See `generalization_def.md` §5.
 
-- [ ] **The rules system reads as a band-aid across modes, and the round
-      banner is where it shows** (noted 2026-09-09). A speedrun finishing a level
+- [x] **The rules system reads as a band-aid across modes, and the round
+      banner is where it shows** (noted 2026-09-09). DONE 2026-09-16 by
+      `match_def.md`: the match is the `Game_Rules_Entity`, transitions are
+      requests, the banner is a snapshot edge worded by reason, speedrun's
+      cycle is `{Live, Round_End}` with R on `restart_round`. Not yet looked at
+      in game. A speedrun finishing a level
       runs through the deathmatch's shape: `end_round` -> Game_Over -> a 10 s
       `mp_game_over_seconds` scoreboard hold -> map restart, and the client
       announces it as "GAME OVER" (`round_phase_changed.cpp`'s `announcement_for`
@@ -1425,7 +1429,12 @@ did not fix.
       map-load reset runs, since that reset is what clears it. A sidecar /
       campaign list is the escalation and is not needed for sequencing.
 
-- [ ] **Quick reset: entities only, not a map reload** (noted 2026-09-10). Yes,
+- [ ] **Quick reset: entities only, not a map reload** (noted 2026-09-10).
+      PARTLY answered 2026-09-16: `Restart_Round` respawns the players at the
+      line, drops checkpoints, reseeds the damageables and clears the objective,
+      with no reload. It does NOT put back switches, counters, timers, spent
+      fire_once rows, pending actions or trigger overlaps -- that is still this
+      item. Original note: Yes,
       needed -- a speedrun restart on a key press cannot be `change_map_to`,
       which is parse + `build_session` + BVH + lightmap on the server and a
       `Loading` edge plus an excluded frame on every client. The server still
