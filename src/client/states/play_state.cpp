@@ -178,13 +178,12 @@ try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entit
 // both. It costs a dash taken within a round trip of a switch BETWEEN two
 // impulse weapons of different strengths, which is not a state that exists yet.
 static const shared::weapon_definition_t *
-try_find_local_weapon_definition(const client_context_t &ctx)
+try_find_weapon_definition_held_by(const client_context_t &ctx, const entities::Player_Entity* player)
 {
-  const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player == nullptr)
+  if (player == nullptr)
     return nullptr;
 
-  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *my_player);
+  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *player);
   if (held == nullptr)
     return nullptr;
 
@@ -193,13 +192,19 @@ try_find_local_weapon_definition(const client_context_t &ctx)
   // get_weapon_definition, which is nothing in a release build.
   if ((uint32_t)held->weapon_id >= shared::WEAPON_DEFINITIONS.size())
   {
-    log_error("try_find_local_weapon_definition: weapon id {} is outside the Weapon enum "
+    log_error("try_find_weapon_definition_held_by: weapon id {} is outside the Weapon enum "
               "(count {}) -- corrupt or hostile snapshot",
               (uint32_t)held->weapon_id, shared::WEAPON_DEFINITIONS.size());
     return nullptr;
   }
 
   return &shared::get_weapon_definition(held->weapon_id);
+}
+
+static const shared::weapon_definition_t *
+try_find_local_weapon_definition(const client_context_t &ctx)
+{
+  return try_find_weapon_definition_held_by(ctx, try_find_my_player(ctx));
 }
 
 static void play_predicted_local_gunshot(client_context_t &ctx)
@@ -2094,6 +2099,14 @@ void Play_State::update(float dt)
       ctx.replication.interpolation_cursor, world_dt, static_cast<float>(ctx.connection.server_tickrate),
       client::interpolation_delay_in_ticks_from_cvar(ctx.cvars->cl_interpolation_delay_ticks));
 
+  // replay_def.md §6: the spectated player at the cursor, everyone else where that player saw them.
+  const std::optional<int32_t> first_person_slot = try_replay_first_person_slot(ctx.replay, *ctx.cvars);
+  std::optional<shared::replay_view_sample_t> first_person_view;
+  if (first_person_slot)
+    first_person_view = shared::try_sample_replay_view(ctx.replay.replay, ctx.replay.view_tracks,
+                                                       *first_person_slot,
+                                                       ctx.replication.interpolation_cursor.tick);
+
   for (auto &[slot, remote_player] : ctx.replication.remote_players)
   {
 
@@ -2103,16 +2116,25 @@ void Play_State::update(float dt)
     if (!remote_player.active || remote_player.interpolation.pushed == 0)
       continue;
 
-    const client::interpolation_result_t interpolated = client::sample_interpolated_pose(
-        remote_player.interpolation, ctx.replication.interpolation_cursor.tick);
+    double sample_tick = ctx.replication.interpolation_cursor.tick;
+    if (first_person_view && first_person_view->seen_cursor_tick && slot != *first_person_slot)
+      sample_tick = *first_person_view->seen_cursor_tick;
+
+    const client::interpolation_result_t interpolated =
+        client::sample_interpolated_pose(remote_player.interpolation, sample_tick);
 
     if (interpolated.status == client::interpolation_status_t::dry &&
         ctx.cvars->cl_interpolation_debug)
     {
       log_warning("[CLIENT] interpolation buffer dry for slot {} at render tick {:.2f} "
                   "(newest held {}); frozen. raise cl_interpolation_delay_ticks if frequent",
-                  slot, ctx.replication.interpolation_cursor.tick,
-                  remote_player.interpolation.newest().server_tick);
+                  slot, sample_tick, remote_player.interpolation.newest().server_tick);
+    }
+    if (interpolated.status == client::interpolation_status_t::behind_ring &&
+        ctx.cvars->cl_interpolation_debug)
+    {
+      log_warning("[CLIENT] slot {} sampled at tick {:.2f}, older than the oldest pose held ({}); frozen",
+                  slot, sample_tick, remote_player.interpolation.oldest().server_tick);
     }
 
     remote_player.render_position = interpolated.pose.position;
@@ -2170,6 +2192,11 @@ void Play_State::update(float dt)
                         vec3f{0.f, shared::player_eye_height, 0.f};
       camera.yaw   = spectated.render_yaw;
       camera.pitch = spectated.render_pitch;
+      if (first_person_view)
+      {
+        camera.yaw   = first_person_view->view.yaw;
+        camera.pitch = first_person_view->view.pitch;
+      }
     }
   }
   else if ((ctx.connection.phase == Connection_Phase::Connected ||
@@ -2541,9 +2568,11 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 
   // Render remote players and bots: the model, then the debug volumes.
+  const std::optional<int32_t> first_person_slot = try_replay_first_person_slot(ctx.replay, *ctx.cvars);
   for (const auto &[slot, remote_player] : ctx.replication.remote_players)
   {
-    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot)
+    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot ||
+        remote_player.slot_index == first_person_slot)
       continue;
 
     // The player model. A bot IS a Player_Entity, so this draws bots too --
@@ -2910,11 +2939,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
   }
 
-  if (!connection_ui.show_pause_menu && try_find_my_player(ctx) != nullptr)
+  const entities::Player_Entity* viewed_player = try_find_viewed_player(ctx);
+  if (!connection_ui.show_pause_menu && viewed_player != nullptr)
   {
     if (const ui::ui_font_t* font = ctx.font)
     {
-      const shared::weapon_definition_t* held_weapon = try_find_local_weapon_definition(ctx);
+      const shared::weapon_definition_t* held_weapon = try_find_weapon_definition_held_by(ctx, viewed_player);
       hud::draw_weapon_name(ui, *font, renderer::screen_size(), renderer::display_scale(),
                             held_weapon != nullptr ? held_weapon->display_name : "Empty");
     }

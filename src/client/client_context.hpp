@@ -532,6 +532,8 @@ void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientatio
 [[nodiscard]] const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context,
                                                                     int32_t slot);
 [[nodiscard]] const entities::Player_Entity* try_find_my_player(const client_context_t& context);
+// Whose HUD is drawn: the cl_spectate_slot player in a replay, otherwise our own body.
+[[nodiscard]] const entities::Player_Entity* try_find_viewed_player(const client_context_t& context);
 
 // The session's Game_Rules_Entity's match, or nullptr before the world has one.
 [[nodiscard]] const entities::Match* try_find_match(const client_context_t& context);

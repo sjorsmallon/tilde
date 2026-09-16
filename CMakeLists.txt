@@ -452,6 +452,8 @@ add_library(game_shared STATIC
     src/shared/replay_recorder.cpp
     src/shared/replay_seek.hpp
     src/shared/replay_seek.cpp
+    src/shared/replay_player_view.hpp
+    src/shared/replay_player_view.cpp
     src/shared/map_group.cpp
     src/shared/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH

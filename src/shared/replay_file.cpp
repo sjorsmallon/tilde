@@ -115,7 +115,7 @@ void note_tick(replay_writer_t& writer, uint32_t tick)
 
 [[nodiscard]] bool is_known_kind(uint8_t kind)
 {
-  return kind >= (uint8_t)replay_record_kind_t::Header && kind <= (uint8_t)replay_record_kind_t::Index;
+  return kind >= (uint8_t)replay_record_kind_t::Header && kind <= (uint8_t)replay_record_kind_t::Player_View;
 }
 
 [[nodiscard]] std::optional<replay_index_t> try_parse_index(Span<const uint8_t> payload)

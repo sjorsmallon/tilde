@@ -2827,6 +2827,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x001b0bd1u;
+const uint32_t SCHEMA_HASH = 0x697c9e7du;
 
 } // namespace entities

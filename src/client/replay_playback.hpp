@@ -7,6 +7,7 @@
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/replay_file.hpp"
+#include "../shared/replay_player_view.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -18,7 +19,8 @@ struct replay_playback_t
 {
   bool             active             = false;
   shared::replay_t replay;
-  uint64_t         next_record_offset = 0;
+  shared::replay_view_tracks_t view_tracks;
+  uint64_t        next_record_offset = 0;
   double           clock_tick         = 0.0;
   bool             reached_end        = false;
   float            speed              = 1.0f;
@@ -50,6 +52,10 @@ void request_replay_seek(replay_playback_t& playback, double seconds_from_start)
 // Advances the clock and files every record due by it; a pending seek files the
 // rebuilt frame instead, as one full update.
 void feed_replay_into_inbox(replay_playback_t& playback, float dt, network::Client_Inbox& inbox);
+
+// cl_spectate_slot, when the replay rides that player's recorded screen (replay_def.md §6).
+[[nodiscard]] std::optional<int32_t> try_replay_first_person_slot(const replay_playback_t&  playback,
+                                                                  const cvars::cvar_state_t& cvars);
 
 // Puts the @Mirrored cvars back. An idle playback is left alone.
 void end_replay_playback(replay_playback_t& playback, cvars::cvar_state_t& cvars);

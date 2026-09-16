@@ -87,6 +87,7 @@ bool try_start_replay_recording(replay_recorder_t& recorder, const std::string& 
   recorder.has_written_cvars       = false;
   recorder.keyframe_count          = 0;
   recorder.snapshot_count          = 0;
+  recorder.pending_player_views.clear();
   return true;
 }
 
@@ -136,6 +137,15 @@ void record_replay_tick(replay_recorder_t& recorder, const network::snapshot_fra
   if (!events.empty())
     write_replay_record(recorder.writer, replay_record_kind_t::Events, frame.tick, events);
 
+  for (const replay_player_view_t& view : recorder.pending_player_views)
+  {
+    recorder.player_view_bytes.clear();
+    append_replay_player_view(recorder.player_view_bytes, view);
+    write_replay_record(recorder.writer, replay_record_kind_t::Player_View, frame.tick,
+                        Span<const uint8_t>(recorder.player_view_bytes));
+  }
+  recorder.pending_player_views.clear();
+
   if (keyframe)
   {
     recorder.last_keyframe_tick = frame.tick;
@@ -150,6 +160,13 @@ void record_replay_tick(replay_recorder_t& recorder, const network::snapshot_fra
     log_error("replay: the recording stopped at tick {} because the file could not be written", frame.tick);
     recorder.active = false;
   }
+}
+
+void queue_replay_player_view(replay_recorder_t& recorder, const replay_player_view_t& view)
+{
+  if (!recorder.active)
+    return;
+  recorder.pending_player_views.push_back(view);
 }
 
 void record_replay_batch(replay_recorder_t& recorder, replay_record_kind_t kind, Span<const uint8_t> payload)
@@ -169,6 +186,7 @@ void finish_replay_recording(replay_recorder_t& recorder)
   recorder.active       = false;
   recorder.has_previous = false;
   recorder.previous.clear();
+  recorder.pending_player_views.clear();
 }
 
 } // namespace shared

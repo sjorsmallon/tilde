@@ -6,6 +6,7 @@
 #include "shared/network/entity_snapshot.hpp"
 #include "shared/network/snapshot_history.hpp"
 #include "shared/replay_file.hpp"
+#include "shared/replay_player_view.hpp"
 #include "shared/replay_recorder.hpp"
 #include "shared/replay_seek.hpp"
 
@@ -363,6 +364,128 @@ void test_keyframe_interval_and_path()
   std::printf("  keyframe interval and path: ok\n");
 }
 
+replay_player_view_t make_player_view(uint8_t client_slot, uint32_t edge_count, float base)
+{
+  replay_player_view_t view;
+  view.client_slot   = client_slot;
+  view.bracket       = {.from_tick = 40, .towards_tick = 41, .fraction = 0.25f};
+  view.view_at_start = {base, -10.0f};
+  for (uint32_t edge_index = 0; edge_index < edge_count; ++edge_index)
+    view.edges[edge_index] = {(uint8_t)(3 + edge_index * 7), {base + 11.0f * (float)(edge_index + 1), 5.0f + (float)edge_index}};
+  view.edge_count  = edge_count;
+  view.view_at_end = {base + 120.0f, 20.0f};
+  return view;
+}
+
+bool views_equal(const subtick_view_t& a, const subtick_view_t& b)
+{
+  return a.yaw == b.yaw && a.pitch == b.pitch;
+}
+
+void test_player_view_round_trip_and_edge_aims()
+{
+  for (uint32_t edge_count : {0u, MAX_SUBTICK_EDGES})
+  {
+    const replay_player_view_t view = make_player_view(3, edge_count, 30.0f);
+    std::vector<uint8_t>       bytes;
+    append_replay_player_view(bytes, view);
+    assert(bytes.size() == 30 + 9 * edge_count);
+
+    std::optional<replay_player_view_t> parsed = try_parse_replay_player_view(Span<const uint8_t>(bytes));
+    assert(parsed);
+    assert(parsed->client_slot == 3 && parsed->edge_count == edge_count);
+    assert(parsed->bracket.from_tick == 40 && parsed->bracket.towards_tick == 41 && parsed->bracket.fraction == 0.25f);
+    assert(views_equal(parsed->view_at_start, view.view_at_start) && views_equal(parsed->view_at_end, view.view_at_end));
+    for (uint32_t edge_index = 0; edge_index < edge_count; ++edge_index)
+    {
+      assert(parsed->edges[edge_index].slot == view.edges[edge_index].slot);
+      assert(views_equal(parsed->edges[edge_index].view_after, view.edges[edge_index].view_after));
+      assert(views_equal(replay_view_at_slot(*parsed, (float)view.edges[edge_index].slot),
+                         view.edges[edge_index].view_after));
+    }
+    assert(views_equal(replay_view_at_slot(*parsed, 0.0f), view.view_at_start));
+    assert(views_equal(replay_view_at_slot(*parsed, (float)SUBTICK_SLOT_COUNT), view.view_at_end));
+
+    std::vector<uint8_t> cut = bytes;
+    cut.pop_back();
+    assert(!try_parse_replay_player_view(Span<const uint8_t>(cut)));
+  }
+
+  replay_player_view_t unordered = make_player_view(0, 2, 0.0f);
+  unordered.edges[1].slot        = unordered.edges[0].slot;
+  std::vector<uint8_t> bytes;
+  append_replay_player_view(bytes, unordered);
+  assert(!try_parse_replay_player_view(Span<const uint8_t>(bytes)));
+
+  replay_player_view_t one_edge = make_player_view(0, 1, 0.0f);
+  one_edge.edges[0].slot        = 32;
+  const subtick_view_t halfway  = replay_view_at_slot(one_edge, 16.0f);
+  assert(halfway.yaw == 5.5f && halfway.pitch == -2.5f);
+
+  std::printf("  player view: 0 and %u edges round trip, the aim at an edge's slot is its view_after: ok\n",
+              MAX_SUBTICK_EDGES);
+}
+
+void test_player_view_tracks_sample_the_recorded_aim()
+{
+  const std::string   path = FIXTURE_DIRECTORY + "/player_view.replay";
+  cvars::cvar_state_t cvars;
+
+  replay_recorder_t recorder;
+  assert(try_start_replay_recording(recorder, path, make_header(), Span<const uint8_t>(MAP_PACKAGE), 30));
+
+  replay_player_view_t tick_ten = make_player_view(2, 1, 0.0f);
+  tick_ten.edges[0].slot        = 32;
+  replay_player_view_t first_of_eleven  = make_player_view(2, 0, 200.0f);
+  replay_player_view_t second_of_eleven = make_player_view(2, 0, 400.0f);
+  second_of_eleven.bracket              = {.from_tick = 42, .towards_tick = 43, .fraction = 0.0f};
+
+  Entity_System world;
+  for (uint32_t tick = 10; tick <= 13; ++tick)
+  {
+    if (tick == 10)
+      queue_replay_player_view(recorder, tick_ten);
+    if (tick == 11)
+    {
+      queue_replay_player_view(recorder, first_of_eleven);
+      queue_replay_player_view(recorder, second_of_eleven);
+    }
+    build_world(world, tick);
+    network::snapshot_frame_t frame;
+    frame.tick = tick;
+    frame.copy_replicated_entities_from(world);
+    record_replay_tick(recorder, frame, {}, {}, cvars);
+  }
+  finish_replay_recording(recorder);
+
+  std::string             reason;
+  std::optional<replay_t> replay = try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+  assert(replay);
+
+  const replay_view_tracks_t tracks = build_replay_view_tracks(*replay);
+  assert(replay_has_view_track(tracks, 2));
+  assert(!replay_has_view_track(tracks, 0) && !replay_has_view_track(tracks, 3) && !replay_has_view_track(tracks, -1));
+  assert(tracks.by_slot[2].size() == 3);
+
+  assert(!try_sample_replay_view(*replay, tracks, 2, 8.99));
+
+  std::optional<replay_view_sample_t> at_start = try_sample_replay_view(*replay, tracks, 2, 9.0);
+  assert(at_start && views_equal(at_start->view, tick_ten.view_at_start));
+  assert(at_start->seen_cursor_tick && *at_start->seen_cursor_tick == 9.0 - (10.0 - 40.25));
+
+  std::optional<replay_view_sample_t> at_edge = try_sample_replay_view(*replay, tracks, 2, 9.5);
+  assert(at_edge && views_equal(at_edge->view, tick_ten.edges[0].view_after));
+
+  std::optional<replay_view_sample_t> second_half = try_sample_replay_view(*replay, tracks, 2, 10.5);
+  assert(second_half && views_equal(second_half->view, second_of_eleven.view_at_start));
+
+  std::optional<replay_view_sample_t> held = try_sample_replay_view(*replay, tracks, 2, 12.5);
+  assert(held && views_equal(held->view, second_of_eleven.view_at_end));
+  assert(held->seen_cursor_tick && *held->seen_cursor_tick == 12.5 - (11.0 - 42.0));
+
+  std::printf("  player view tracks: two inputs share a tick, the aim holds across a tick with none: ok\n");
+}
+
 } // namespace
 
 int main()
@@ -375,6 +498,8 @@ int main()
   test_refusals_are_named();
   test_recorder_frames_decode_bit_exact_across_a_gap();
   test_keyframe_interval_and_path();
+  test_player_view_round_trip_and_edge_aims();
+  test_player_view_tracks_sample_the_recorded_aim();
 
   std::printf("[TEST] replay_test passed\n");
   return 0;

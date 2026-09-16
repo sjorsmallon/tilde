@@ -56,6 +56,7 @@ void file_record(const shared::replay_record_t& record, network::Client_Inbox& i
   case shared::replay_record_kind_t::Cvar_Values:
     inbox.cvar_value_messages.emplace_back(record.payload.data, record.payload.data + record.payload.size());
     return;
+  case shared::replay_record_kind_t::Player_View:
   case shared::replay_record_kind_t::Header:
   case shared::replay_record_kind_t::Map_Package:
   case shared::replay_record_kind_t::Index:
@@ -74,6 +75,15 @@ void begin_replay_playback(replay_playback_t& playback, shared::replay_t&& repla
   playback.clock_tick            = playback.replay.index.first_tick;
   playback.reached_end           = false;
   playback.cvars_before_playback = cvars;
+  playback.view_tracks           = shared::build_replay_view_tracks(playback.replay);
+}
+
+std::optional<int32_t> try_replay_first_person_slot(const replay_playback_t& playback, const cvars::cvar_state_t& cvars)
+{
+  if (!playback.active || !cvars.cl_replay_player_view ||
+      !shared::replay_has_view_track(playback.view_tracks, cvars.cl_spectate_slot))
+    return std::nullopt;
+  return cvars.cl_spectate_slot;
 }
 
 float replay_world_dt(const replay_playback_t& playback, float dt)

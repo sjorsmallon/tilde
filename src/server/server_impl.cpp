@@ -1449,6 +1449,14 @@ bool Tick()
     }
     const shared::subtick_input_t& subtick_input = *decoded_input;
 
+    shared::queue_replay_player_view(
+        context.world.replay_recorder,
+        shared::replay_player_view_from_input(static_cast<uint8_t>(client_slot),
+                                              {.from_tick    = input.interpolated_from_tick(),
+                                               .towards_tick = input.interpolated_towards_tick(),
+                                               .fraction     = input.interpolation_fraction()},
+                                              subtick_input));
+
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
     client.latest_buttons_bitmap = subtick_input.buttons_at_end();
 

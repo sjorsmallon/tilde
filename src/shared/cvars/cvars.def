@@ -330,6 +330,9 @@ Client :: cvars {
     // judder. Bots occupy slots from sv_max_client_count (32) up.
     cl_spectate_slot:       i32 = -1         @Client    "Spectate a player slot through its eyes (-1 = off; bots start at 32)"
 
+    // replay_def.md ss6: off shows the server's truth for the same slot, for comparison.
+    cl_replay_player_view:  bool = true      @Client    "In a replay, spectate through the recorded aim and draw the others where that player saw them"
+
     // A free camera flown with the editor's controls, and NOTHING moves the
     // body: it stays where it stood, still simulated and still shootable, and
     // the view returns to its own aim when this goes off. A cvar rather than a

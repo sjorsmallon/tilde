@@ -23,6 +23,7 @@
 //                  | kind=Snapshot             payload = baseline_tick:u32 snapshot_bytes
 //                  | kind=Effects              payload = S2C_EffectBatch bytes
 //                  | kind=Events               payload = S2C_GameEventBatch bytes
+//                  | kind=Player_View          payload = a player_view, replay_player_view.hpp
 //
 //   index_record  -> kind=Index                payload = first_tick:u32 last_tick:u32
 //                                                        keyframe_count:u32 keyframe{keyframe_count}
@@ -58,6 +59,7 @@ enum class replay_record_kind_t : uint8_t
   Effects     = 5,
   Events      = 6,
   Index       = 7,
+  Player_View = 8,
 };
 
 struct replay_header_t

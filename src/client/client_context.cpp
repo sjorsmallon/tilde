@@ -63,6 +63,14 @@ const entities::Player_Entity* try_find_my_player(const client_context_t& contex
   return try_find_player_in_slot(context, context.connection.my_slot);
 }
 
+const entities::Player_Entity* try_find_viewed_player(const client_context_t& context)
+{
+  if (context.connection.phase == Connection_Phase::Replaying && context.cvars != nullptr &&
+      context.cvars->cl_spectate_slot >= 0)
+    return try_find_player_in_slot(context, context.cvars->cl_spectate_slot);
+  return try_find_my_player(context);
+}
+
 const entities::Match* try_find_match(const client_context_t& context)
 {
   Span<const entities::Game_Rules_Entity> rules =

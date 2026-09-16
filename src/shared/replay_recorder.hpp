@@ -7,9 +7,11 @@
 #include "cvars/generated/cvars_generated.hpp"
 #include "network/entity_snapshot.hpp"
 #include "replay_file.hpp"
+#include "replay_player_view.hpp"
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace shared
 {
@@ -29,6 +31,8 @@ struct replay_recorder_t
   cvars::cvar_state_t        last_written_cvars;
   uint32_t                   keyframe_count          = 0;
   uint32_t                   snapshot_count          = 0;
+  std::vector<replay_player_view_t> pending_player_views;
+  std::vector<uint8_t>              player_view_bytes;
 };
 
 [[nodiscard]] uint32_t replay_keyframe_interval_ticks(float keyframe_seconds, uint32_t tickrate_hz);
@@ -61,6 +65,9 @@ void record_replay_tick(replay_recorder_t&               recorder,
                         Span<const uint8_t>              effects,
                         Span<const uint8_t>              events,
                         const cvars::cvar_state_t&       cvars);
+
+// Held until this tick's record_replay_tick writes it after the snapshot. Idle recorders drop it.
+void queue_replay_player_view(replay_recorder_t& recorder, const replay_player_view_t& view);
 
 // A batch that arrived on its own clock, stamped with the last recorded tick: the
 // client dispatches a batch against the newest frame it holds, and a batch's own
