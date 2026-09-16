@@ -78,7 +78,7 @@ void test_receive_and_reassembly()
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
   // Server Receive
-  ServerInbox inbox;
+  Server_Inbox inbox;
   // The 50ms sleep above is what makes this deterministic: the datagrams are
   // already queued, so the drain finds them and stops. The cap is the livelock
   // guard, not a window to wait in.
@@ -90,7 +90,7 @@ void test_receive_and_reassembly()
   {
     std::cerr << "Failed to receive/reassemble moves!" << std::endl;
     // Debug
-    std::cerr << "Partial packets count: " << state.partial_packets[0].size()
+    std::cerr << "Partial packets count: " << state.clients[0].partial_packets.size()
               << std::endl;
     assert(false);
   }
@@ -113,11 +113,11 @@ void test_receive_and_reassembly()
   std::cout << "  -> Input batch reassembled and unpacked correctly!" << std::endl;
 
   // Arrival stamps the slot: this is what sv_timeout measures silence against.
-  assert(state.latest_packet_tick[0] == 140);
+  assert(state.clients[0].latest_packet_tick == 140);
 
   release_client_slot(state, 0);
-  assert(!state.slot_occupied[0]);
-  assert(state.latest_packet_tick[0] == 0);
+  assert(!state.clients[0].occupied);
+  assert(state.clients[0].latest_packet_tick == 0);
   std::cout << "  -> Slot liveness stamped and released!" << std::endl;
 }
 
@@ -157,13 +157,13 @@ void test_reliable_stream_round_trip()
   std::vector<uint8> payload(message.ByteSizeLong());
   message.SerializeToArray(payload.data(), static_cast<int>(payload.size()));
 
-  queue_reliable_message(server_state.reliable_streams[0],
+  queue_reliable_message(server_state.clients[0].reliable_stream,
                          static_cast<uint8>(Message_Type::S2C_ServerMessage),
                          payload);
 
   send_reliable_block(server_state, server_socket, 0);
-  assert(server_state.reliable_streams[0].block_number == 1);
-  assert(server_state.reliable_streams[0].block_length != 0);
+  assert(server_state.clients[0].reliable_stream.block_number == 1);
+  assert(server_state.clients[0].reliable_stream.block_length != 0);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
@@ -184,13 +184,13 @@ void test_reliable_stream_round_trip()
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  ServerInbox server_inbox;
+  Server_Inbox server_inbox;
   poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
                141, server_inbox);
 
-  assert(server_state.reliable_streams[0].block_length == 0 &&
+  assert(server_state.clients[0].reliable_stream.block_length == 0 &&
          "an ordinary datagram's header freed the block");
-  assert(server_state.reliable_streams[0].outbound.empty() &&
+  assert(server_state.clients[0].reliable_stream.outbound.empty() &&
          "and the drained stream reclaimed its buffer");
   std::cout << "  -> Ack rode an ordinary datagram and freed the block!" << std::endl;
 
@@ -248,7 +248,7 @@ void test_reliable_stream_round_trip_c2s()
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  ServerInbox inbox;
+  Server_Inbox inbox;
   poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
                301, inbox);
 
@@ -260,7 +260,7 @@ void test_reliable_stream_round_trip_c2s()
   assert(inbox.map_data_requests.size() == 1 &&
          "and so did the bitstream-native map request, still raw");
   assert(inbox.map_data_requests[0].second == request_payload);
-  assert(server_state.reliable_streams[0].received_through == 1);
+  assert(server_state.clients[0].reliable_stream.received_through == 1);
   std::cout << "  -> Both records delivered, in the order they were queued!"
             << std::endl;
 
@@ -331,7 +331,7 @@ void test_lossy_transfer_converges()
 
   begin_paced_transfer(server_state, 0, payload,
                        static_cast<uint8>(Message_Type::S2C_MapData));
-  const std::vector<Packet> fragments = server_state.outbound_transfers[0].fragments;
+  const std::vector<Packet> fragments = server_state.clients[0].outbound_transfer.fragments;
   assert(fragments.size() == 20);
 
   // Fragments 4 and 17 are lost.
@@ -347,17 +347,17 @@ void test_lossy_transfer_converges()
   report_transfer_progress(client_state);
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  ServerInbox server_inbox;
+  Server_Inbox server_inbox;
   poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
                201, server_inbox);
 
   size_t confirmed_count = 0;
-  for (bool confirmed : server_state.outbound_transfers[0].confirmed)
+  for (bool confirmed : server_state.clients[0].outbound_transfer.confirmed)
     if (confirmed)
       ++confirmed_count;
   assert(confirmed_count == 18 && "the bitmap named exactly what arrived");
-  assert(!server_state.outbound_transfers[0].confirmed[4]);
-  assert(!server_state.outbound_transfers[0].confirmed[17]);
+  assert(!server_state.clients[0].outbound_transfer.confirmed[4]);
+  assert(!server_state.clients[0].outbound_transfer.confirmed[17]);
   std::cout << "  -> Bitmap crossed the wire and named the two gaps!" << std::endl;
 
   // The repair pass, which must be two fragments and not a restart.
@@ -395,7 +395,7 @@ void test_lossy_transfer_converges()
 
   poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
                202, server_inbox);
-  assert(server_state.outbound_transfers[0].fragments.empty() &&
+  assert(server_state.clients[0].outbound_transfer.fragments.empty() &&
          "a completed bucket keeps confirming, which is what ends the transfer");
   std::cout << "  -> The completing report freed the transfer!" << std::endl;
 

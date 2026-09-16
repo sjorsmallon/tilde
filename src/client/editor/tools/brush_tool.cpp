@@ -20,8 +20,7 @@ constexpr float HANDLE_PICK_RADIUS = 14.0f;  // pixels
 constexpr float HANDLE_RADIUS = 5.0f;        // pixels
 constexpr float CORNER_HANDLE_RADIUS = 7.0f; // pixels
 
-// How far the cursor must travel before a press on empty face area becomes a
-// box selection rather than a click.
+// distance before a click held becomes a drag.
 constexpr float BAND_DRAG_THRESHOLD = 4.0f; // pixels
 
 constexpr float OVERLAY_DEPTH_BIAS = -200.0f;

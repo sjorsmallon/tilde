@@ -283,12 +283,9 @@ void try_start_match_when_enough_players(server_context_t &context,
     return;
 
   int32_t joined = 0;
-  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
-  {
-    if (context.transport_layer.slot_occupied[slot] &&
-        context.clients[slot].player_uid != shared::null_entity_uid)
+  for (connected_client_t row : connected_clients(context))
+    if (row.client.player_uid != shared::null_entity_uid)
       ++joined;
-  }
 
   if (joined < required)
     return;

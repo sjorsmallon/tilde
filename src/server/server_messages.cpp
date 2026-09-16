@@ -43,7 +43,7 @@ void send_text_message_to_a_specific_client(server_context_t &context,
   std::vector<network::uint8> buffer(msg.ByteSizeLong());
   msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
   network::queue_reliable_message(
-      context.transport_layer.reliable_streams[*slot],
+      context.transport_layer.clients[*slot].reliable_stream,
       static_cast<network::uint8>(network::Message_Type::S2C_ServerMessage),
       buffer);
 }
@@ -52,14 +52,10 @@ void broadcast_server_text_message(server_context_t &context,
                                    std::string_view text)
 {
   int recipient_count = 0;
-  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
+  for (connected_client_t row : connected_clients(context))
   {
-    if (context.transport_layer.slot_occupied[slot])
-    {
-      ++recipient_count;
-      send_text_message_to_a_specific_client(
-          context, context.transport_layer.addresses[slot], text);
-    }
+    ++recipient_count;
+    send_text_message_to_a_specific_client(context, row.transport.address, text);
   }
 
   log_terminal("[BROADCAST -> {} client(s)] {}", recipient_count, text);

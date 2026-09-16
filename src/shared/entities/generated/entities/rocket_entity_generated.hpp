@@ -17,6 +17,7 @@ struct Rocket_Entity : Entity
 
   Rocket_Entity() { type = entity_type::Rocket_Entity; }
 
+  Weapon weapon_id = Weapon::Rocket_Launcher;
   linalg::vec3f velocity = {};
   float lifetime = 5.0f;
   float damage_amount = 50.0f;

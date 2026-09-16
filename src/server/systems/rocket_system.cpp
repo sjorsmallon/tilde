@@ -3,6 +3,7 @@
 
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
+#include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 
@@ -105,7 +106,7 @@ static void detonate(const entities::Rocket_Entity &rocket,
   shared::Rocket_Detonated detonated{};
   detonated.attacker_id = rocket.owner_id;
   detonated.victim_id   = victim_id;
-  detonated.weapon_id   = 0; // rocket carries no weapon id yet
+  detonated.weapon_id   = static_cast<uint16_t>(rocket.weapon_id);
   shared::fire_rocket_detonated(context.outgoing.events, detonated);
 }
 
@@ -138,7 +139,12 @@ void update_rockets(server_context_t &context, float dt)
       continue;
     }
 
-    vec3f next_pos = rocket.position + rocket.velocity * dt;
+    const shared::projectile_t& projectile =
+        shared::get_weapon_definition(rocket.weapon_id).projectile;
+    const shared::projectile_step_t step = shared::advance_projectile(
+        projectile, context.cvars->g_gravity, rocket.position, rocket.velocity, dt);
+    const vec3f next_pos = step.position;
+    rocket.velocity      = step.velocity;
 
     hit_result_t hit;
     // Everything is a valid target except the player who fired: a rocket that

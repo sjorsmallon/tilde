@@ -22,7 +22,7 @@ cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in
 # OFF by default and never shipped -- it costs 100-500ns per allocation.
 cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
 
-# Run the whole test suite (~30s, all 46)
+# Run the whole test suite (~30s, all 47)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -1418,7 +1418,9 @@ The mapping is **0-or-1 in both directions**, which is what makes one word for b
 
 So `sv_max_client_count` counts **connection slots, not bodies** — it sizes the transport layer's parallel arrays and `server_context_t::clients`, and bots deliberately begin where it ends.
 
-`Server_Transport_Layer` is the layer with no players in it at all: it knows how bytes reach a peer and nothing about what they mean. Its members therefore drop the qualifier the struct name already supplies (`slot_occupied`, `addresses`, `byte_buffers`), while the **free functions beside it keep it**, since nothing at their call site says it otherwise (`try_find_client_slot`, `disconnect_client`). Its `addresses` are `Address` — host *and* port, never "ip".
+`Server_Transport_Layer` is the layer with no players in it at all: it knows how bytes reach a peer and nothing about what they mean. Its per-slot state is ONE value type, `network::client_transport_t` (`occupied`, `address`, `latest_packet_tick`, `partial_packets`, `outbound_transfer`, `reliable_stream`), in an `Array` indexed by slot — so occupying a slot is one designated initializer and releasing it is `= {}`, and a member added there is cleared by both edges without either being edited. Its members drop the qualifier the struct name already supplies, while the **free functions beside it keep it**, since nothing at their call site says it otherwise (`try_find_client_slot`, `disconnect_client`). Its `address` is an `Address` — host *and* port, never "ip".
+
+**A client's state is TWO PARALLEL ARRAYS split by STRATUM, and `connected_clients(context)` is the zip.** The transport's column above and the server's `client_slot_t` (`server_context_t::clients`) are indexed by the same slot and stay two arrays on purpose: the transport's whole-table functions (`poll_network`, `service_paced_transfers`) are shared code that walks every slot, and a gameplay struct wrapping the transport record would give them a stride they cannot see. What glues them is `connected_client_t {slot, transport, client}`, yielded for OCCUPIED slots only — every server loop over the slot table goes through it, so "occupied" and "has a meaningful gameplay record" are one test in one place rather than an `if` each loop remembers. Occupancy is the transport's bit (a slot is occupied when bytes can reach it), and the two lifetime edges are `connect_client` / `disconnect_client`, both through `reset_client_slot`, which clears BOTH columns. `server_context_test` asserts that.
 
 An empty `try_find_client_slot` is **not** an error: `poll_network` asks it about every datagram, and a sender with no slot is the routine "someone wants to join" case. Callers for whom it *is* an error log it themselves, with the context to say what they were attempting — which is why the lookup itself no longer logs.
 

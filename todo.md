@@ -503,6 +503,288 @@ waiting to happen — which is exactly why `Enum_Array::try_get` exists.
 
 ---
 
+# Design-doc audit (2026-09-15) -- what the `*_def.md` files still owe
+
+Every `*_def.md` in the root (plus `def_improvements.md`, `robustness.md`,
+`lightmap.md`) read against CLAUDE.md, `done.md`, this file and the code. Only
+what is NOT already tracked elsewhere in this file is listed; where an item
+is, the line is named instead of repeated. The `*_plan.md` files were NOT
+audited in this pass except where a def pointed into one (`timer_def.md`,
+`prefab_def.md`). Questions the audit could not settle are at the end.
+
+## Stale docs -- the status lines lie, fix the text
+
+- [ ] `lighting_def.md` is the worst offender and the most-cited: header and
+      §15 intro say only gates 1 and 3 landed; §6 heading "BUILT except 6.4"
+      and §6.4 "Not built" (gate 2 landed 2026-09-02); §8 "nothing gives a
+      reflection of the room" (gate 6 built); §12 K "built for spot lights"
+      (all three kinds); §12 L "PROPOSED, not built" and its distance blend
+      (landed as the trilinear lattice pick); gate 6 steps 1/2 "not yet in the
+      sidecar"; gate 6 step 1 names `compute_entity_bounds` (deleted
+      2026-09-14); gate 7's whole entry predates the build and says the pin is
+      a test where the landed rule is "editor command, never a ctest"; gate 9
+      heading "4 of 5"; gate 9's Settled list names `r_shadow_cube_size`
+      (deliberately does not exist), "four cascades at 2048" (3, pool 1024) and
+      ranks by intensity (radiance). §0's file map omits every gate-2-onward
+      file; §3 and §5.1/§5.3/§5.8 describe the two-binding pass set, four
+      material maps and four debug channels. The two Standalone questions at
+      the end are both answered (grid/blend DO read the analytic tail since
+      gate 9 step 1; gate 5 closed the Baked-lights-on-dynamic one) and should
+      be retired. Also stale HERE: line ~943 "should a BLOCKOUT face respond to
+      real lights? ... hardcoded sunDir" and line ~1009 "Irradiance map;
+      environment lighting" -- both built.
+- [ ] `prefab_def.md` status says "Step 6 is DECIDED and not yet built";
+      `connection_target_t::Unbound` exists, `map_piece.cpp` keeps the row,
+      `prefab_test` pins it and the selection tool arms the pick. Flip it, and
+      note `map_fragment.{hpp,cpp}` became `map_piece.{hpp,cpp}` (CLAUDE.md
+      still says `map_fragment`).
+- [ ] `entity_io_def.md` §13 step 8 lists relay/timer/counter as unbuilt;
+      `Logic_Counter_Entity` and `Logic_Timer_Entity` are in `entities.def`.
+      Step 8b says `map_t::groups` is unbuilt; `map_group_t` landed 2026-09-12
+      (the `Group` target/sender KIND has not). §7b's "prefabs" paragraph is
+      answered by `prefab_def.md`.
+- [ ] `entity_def.md` open questions 1 and 3: `placeable_entity_types()` exists
+      (q3 answered) and the generated enums carry `ENTITY_TYPE_COUNT` outside
+      the enum rather than a `Count` member (q1 answered by doing it). Mark
+      both.
+- [ ] `lag_compensation_def.md` §6 "docs to update when this lands": the file's
+      own status block is a bare `# done` line; `animation_def.md` §4 guarantee
+      2 was never marked landed for position / body_yaw / view angles.
+- [ ] `cvar_def.md`'s closing note names `trigger_action_registry` as the next
+      static-init victim; it is deleted (entity I/O step 4).
+- [ ] `lightmap.md` is a personal notes file, not a design; either fold its
+      SH-L1 pseudo code into `lighting_def.md` gate 2 or delete it.
+- [ ] `renderer_def.md`'s "Deferred / open" is fully superseded (PBR fields
+      landed with lighting, the migration order ran, `overlay_renderer_t` is
+      gone); only "unregistration: nothing unloads assets" is still true.
+
+## Open work the defs still name
+
+### entity_io_def.md §13
+- [ ] **Wire a real level.** Still the gate on everything below; nothing here
+      has met a map. What it decides: `logic_auto` on day one or thirty,
+      the panel at ten rows, `fire_once` count vs bool.
+- [ ] **6b, `Game_Rules_Entity`'s emitting half** (`Round_Started`,
+      `Round_Ended`, `Player_Died(victim, attacker)` from the sites that fire
+      the game events). PARKED behind 6c; `entities.def` has no such signal.
+- [ ] **6c, the queue OVERLAY**: pending queue + last N fired connections as
+      viewport lines. Console halves landed; this is the runtime twin of the
+      editor's connection lines.
+- [ ] **8, the rest of the logic batch**: `logic_relay` (fan-out) and
+      `logic_auto` emitting `Map_Started` on the first tick -- "when the level
+      begins" still has no sender. Counter and timer are in.
+- [ ] **8b, the `Group` sender/target kind** over `map_t::groups`, expanded at
+      `build_session`. Groups exist in the map; connections cannot name one.
+      This is also the only representable "affect all players".
+- [ ] **8c, templates**: a spawner's prototype uid whose rows are copied onto
+      each instance. Needs the session connection index to support insert and
+      remove, which §7 assumes it never does.
+- [ ] **9, the ctest**: button -> door -> delayed close through `Tick()`,
+      asserting state at ticks 0/1/181, plus a refused ill-typed row. Nothing
+      pins the queue, the drain or the delay ordering.
+- [ ] Editor leftovers (2026-09-09): `has_override` still the member and file
+      key (rename needs a legacy read arm); N rows between one pair draw on
+      top of each other; role stubs overlap; the map-wide list has no filter or
+      sort; no multi-row editing.
+- [ ] Generic user relays (`OnUser1..4`): one `Relaying` trait on the base.
+      Left out until a level wants it.
+
+### prediction_def.md Track E (NOT STARTED) and §7
+- [ ] **E1: field descriptions in the `.def`** -- optional `"text"` after the
+      flags, into `field_info_t`, drawn as the inspector tooltip. Cvars and
+      channel members already require one; entity fields cannot carry one.
+- [ ] **E2: `@Color` and `@Range(min, max)`** -- the first annotations with
+      arguments (`entities.def`'s header reserved the shape). A light has no
+      colour picker; the cone draw clamps at 89 while the inspector takes 120.
+- [ ] E4: fold `WEAPON_SOUNDS` into the weapon row (one table, one pin).
+- [ ] E5, each a line: `Health::current_health` is `@Fully_Serializable` (a map
+      stores runtime state beside the max that seeds it); `source_radius`
+      comment says "a sun"; the "hacky test" note on `Damage_Type`;
+      `def_gen.cpp`'s grammar header still documents `import`, the assets
+      family and `base` as the channel's; `ENTITY_DISPATCH` named in README.md
+      / CLAUDE.md no longer exists; a map-placed `Weapon_Entity` spawns with
+      `ammo` 0 until a refill -- seed from the row at `populate_from_map`.
+- [ ] T2.3: replicate a map-placed type only when it has connections
+      (threshold: a map with a few hundred lights).
+- [ ] §7's stated leftover: `@Networked` leaf under an unreplicated type as a
+      generator error waits on revisiting the base `Entity`'s flags.
+- [ ] B4 "owed a look in the editor: nothing has been tied to an entity in a
+      real map yet".
+
+### timer_def.md
+- [ ] **Step 0's look-then-commit checklist** (seven boxes: the `.times` file
+      appears, console top five, banner NEW BEST, Game_Over banner IS it,
+      HUD/banner agree, dedicated server writes beside ITS map, decide whether
+      `.times` is gitignored). None seen in game.
+- [ ] Steps 1-4: the finish as a SLOT (goal volumes tested in the step loop,
+      `input_context_t` gains `slot`, the file's rate becomes slots/s,
+      `attempt_ticks` -> `attempt_slots`, a `subtick_test` case); the start as
+      the first movement edge (`attempt_start` per player, server-only); the
+      client's predicted running clock. None started.
+
+### game_modes_def.md / generalization_def.md
+- [ ] Team score and teams on the scoreboard; team assignment beyond "the
+      smaller team"; after Game_Over anything but the same-map reload -- all
+      three already at lines ~403-405 above; listed so the def's "does not
+      decide" section maps to this file.
+- [ ] Spread and recoil must NOT be built on `shared/rng.hpp` (global mutable,
+      one copy per module): add a stateless `hash_to_float(seed_tuple)` first.
+      Nothing exists yet.
+- [ ] Neon White's fast restart is "a cheaper `enter_phase`", not a second
+      mechanism -- ties to the rules-system band-aid item above. Ghost replays
+      (input replay over `Saved_Input`) are cheap and double as a
+      prediction-divergence test; no replay code exists since 2026-09-11.
+- [ ] scoutzknivez content list: crouch, damage falloff, armor, friendly fire,
+      spectate-after-death, kill feed (still `log_terminal`), scoreboard.
+
+### lightmap_def.md §9
+- [ ] **A SCULPTED face's chart is bounded by its BASE polygon.** A lateral
+      sculpt takes a UV outside [0,1] and reads its neighbour's texels. Bound
+      the chart over `build_brush_face_grids`' output; must land before a
+      sculpted level is baked in anger. Not tracked anywhere else.
+- [ ] Emission (and ALBEDO) on a static mesh: `surface_at` answers grey for
+      any mesh, so a glTF prop with `emissive` draws bright and lights
+      nothing, and a textured prop bounces `UNTEXTURED_BOUNCE_ALBEDO`. Its
+      stated precondition (mesh charts) passed 2026-09-04. Line ~62 above
+      names half of this.
+- [ ] Incremental rebake and streaming pages: "nothing needs it yet".
+
+### lighting_def.md (beyond the Lighting block at the top of this file)
+- [ ] **The sky in the bake.** Sky cubemaps are built (2026-09-12, draw-only)
+      and `sv_skybox` names one, but `lightmap_trace.cpp`'s escape is still a
+      `break` collecting nothing, on CPU and in `lightmap_indirect.comp`. Three
+      pieces: the tracer's one line; gate 6's "sky cubemap as capture zero";
+      the sun's specular treated like a Mixed light. An outdoor map bakes
+      black.
+- [ ] Gate 6 step 7, a DISTANCE cube per capture, marched in
+      `reflection.glsl` -- the candidate fix the park waits on. Its text says
+      sidecar version 10; transparency took 10, so it is 11.
+- [ ] Gate 6: specular occlusion on `environment_specular` (ORM's R multiplies
+      the floor but not the reflection); per-capture resolution, a second
+      blend policy, a capture on an emitter's face -- all parked.
+- [ ] Gate 5: authored probe volumes (no `Probe_Volume` entity; the only knob
+      is global spacing); per-probe visibility against the one-cell leak; and
+      whether grid/blend should read PROBE indirect now that they read the
+      analytic tail (a chartless brush face has direct light and no indirect
+      through grid/blend, unlike through lit/pbr).
+- [ ] Gate 2 knobs waiting on a look: `UNTEXTURED_BOUNCE_ALBEDO` 0.5; the
+      shared-direction L1 halving; and the bake OFF the main thread (progress
+      is terminal-only; the doc never decides whether editing during a bake is
+      allowed).
+- [ ] Gate 9: `maps/first.source` still carries a `Dynamic` sun at intensity
+      0.005 (pre-`radiance_of` scale, ~1550x too dim); preshadows (parked
+      beside the Distance Shadowmask question); a fifth Mixed light is
+      unoccluded at probes (descriptor indexing is enabled now, so the stated
+      obstacle shrank).
+- [ ] Gate 7 leftover: the probe comparison re-press at 16 chains (two dim
+      slices at ~3.1 sigma on L0.b). Lives only in CLAUDE.md and memory.
+- [ ] Gate 3's reopen conditions have no owner: check whether the six maps
+      agree on `r_exposure 1.4`.
+- [ ] §3: the residual page set "disappears the day
+      `LIGHTMAP_LIGHTS_PER_CHART` rises"; still 4, nothing tracks raising it.
+- [ ] §2: moving or retuning a light silently stales the sidecar; nothing in
+      the editor says so (`geometry_id` covers charts, not lights). Wants the
+      inspector-line shape.
+- [ ] §13: a tangent vertex attribute "if the derivative TBN proves
+      insufficient" -- never tested up close on a normal-mapped surface.
+
+### events_def.md / reliable_stream_def.md / robustness.md
+- [ ] `Game_Event :: base` and `server_tick`: declare it when the first
+      consumer exists (still none).
+- [ ] Should the two channels merge now that they differ only in reliability
+      and wire path? Open; the payload-shape argument is gone.
+- [ ] Reliable stream, out deliberately: a packet sequence number for
+      ping/loss diagnostics (the net graph), when one is wanted.
+- [ ] robustness.md's closing note: C2S fragmentation is bounded only by
+      `cl_max_unacked_inputs` (8), a CLIENT cvar, and the comment pricing it
+      predates sub-tick edges widening each input. Re-measure an input's size.
+
+### ui_def.md "Deferred"
+- [ ] The HUD proper: kill feed rows (`hud/kill_feed.cpp` still
+      `log_terminal`s), health / ammo / weapon through `hud_state_t`.
+- [ ] Round timer (a local subtraction against `phase_end_tick`); scoreboard
+      (needs a score field on the wire -- kills/deaths are there now).
+- [ ] Gamepad (`SDL_GameController` in `gather_ui_input`, nothing else); text
+      wrapping; kerning; non-ASCII; a `hud_scale` cvar; clip rects; an R8
+      atlas path; `upload_texture`'s hardcoded sampler. Data-driven screens
+      wait on two or three hand-built ones.
+
+### animation_def.md "WHAT'S LEFT" (mostly already in §2 of this file)
+- [ ] Not in §2 above: `blend_additive` declared and unwritten;
+      `locomotion_phase` replicated + posed endpoints rewound in
+      `Snapshot_History`; crossfades + the locomotion blendspace; scrub /
+      layers / masks in the tool. All behind the walk cycle.
+- [ ] Open questions 1-3 still open: viewmodel skeleton (same or own),
+      clip discovery (manifest vs paths), where masks live.
+
+### asset_pipeline_def.md "Open decisions"
+- [ ] Asset hot reload (invalidation across three cache layers + a rule for
+      `Asset_Pool::get` pointers); `load_obj`'s 100-unit normalization (line
+      ~1472 above); whether `.hitboxes` stays a class for one file.
+
+### def_improvements.md (2026-08-18, nothing built)
+- [ ] **Delete `cvar_type`; route cvar text through `field_to_text` /
+      `field_from_text`.** `cvar_type_is_allowed` and
+      `emit_cvar_text_conversion` are still in `def_gen.cpp`; the narrow ints
+      are still refused for a reason the file shows is wrong. Enum cvars
+      arrived separately (`sv_gamemode`), so that motivation is spent.
+- [ ] Always derive emitted filenames from the `.def` stem (six literals
+      remain in `def_gen.cpp`); decide `command_bindings`' name under the rule.
+- [ ] `family_traits_t`, one row per family (allowed kinds, type mask, flag
+      mask, descriptions_mandatory, filenames). Depends on the first.
+
+### entity_system_def.md §6 / entity_storage_def.md
+- [ ] `map_entity_t::entity` is still a `shared_ptr<entities::Entity>` -- a
+      heap allocation per map entity over a type with no virtual destructor.
+      Ruled an editor refactor; untouched.
+- [ ] `Collision_Id::index` in the session BVH is still an array position, not
+      a uid (noted so it does not look missed).
+
+### vector_def.md stage 5
+- [ ] Stage 5 has not been run against a report: `std::string` (758 sites)
+      may outrank vectors; `snapshot_frame_t`'s `unordered_map` uid index,
+      refilled at tickrate in two 32-frame rings, may outrank both -- the fix
+      there is an open-addressed `Hash_Map`, not a `Vector`. Run `mem_report`
+      on a session and rank before building either.
+
+### geometry_def.md §8 / cvar_def.md "explicitly not building"
+- No open work; the "not yet" lists (a visibility solve, a third blend layer,
+  `@Archive`, `+set`, `@Cheat`) are doors with no trigger yet.
+
+## Questions the audit could not settle
+
+1. Gate 6: has the LOOK happened? The def says "the look happened, judged
+   wrong three times" AND "step 5's pin has not PASSED"; item 6 above says the
+   shader has never been looked at. Is item 6 still to be run, or does it wait
+   on step 7?
+2. Gate 9 step 3: the def says the point-light cube was "not yet looked at";
+   line ~46 above says the point light is the ONE thing that has been seen.
+   Were the face seams judged?
+3. The first whole GPU bake: CLAUDE.md says not yet looked at in a map; the
+   2026-09-06 session notes say a 12.7 s bake was looked at and liked. Which?
+4. Decision C (the ambient floor): gate 2's first look "resolved toward
+   keeping" it. Still open pending checklist item 4, or decided as keep?
+5. Gate 8 denoising: its precondition (gate 7 makes chains the knob) is met.
+   Askable now, or still "when bake time is the complaint"?
+6. §10 physical light units: still "the destination", or dropped after gate
+   3 found one global half-stop was enough?
+7. `maps/first.source`'s 0.005 `Dynamic` sun: a deliberately dim fill, or the
+   pre-fix tuning the def says wants retuning to ~1?
+8. `entity_io_def.md`: `fire_once` bool vs count, whether the client ever
+   needs connections, whether `by` should generate a typed activator
+   accessor -- the def defers all three to the first wired level. Confirm
+   that is still the plan rather than deciding them now.
+9. `events_def.md`: merge the two channels or keep them apart? The def leans
+   apart on reliability alone.
+10. `timer_def.md` step 0 asks whether `.times` files are committed or
+    gitignored.
+11. `def_improvements.md` is a month old and nothing in it moved: still
+    wanted, or drop the file?
+12. `animation_def.md` open questions 1-3 (viewmodel skeleton, clip
+    discovery, mask location): still open, or decided elsewhere?
+
+---
+
 # 1. Scope overlay  *(stage 2 of right-click zoom)*
 
 Stage 1 landed 2026-08-04: `Play_State::zoom_fraction` eases `r_fov` →

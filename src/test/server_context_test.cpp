@@ -104,7 +104,9 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
     // is the one piece of per-client state whose two resets DISAGREE on purpose:
     // it survives a map switch (the CmdChangeMap is a message riding it) and it
     // must not survive a change of occupant.
-    network::Reliable_Stream& stream = context.transport_layer.reliable_streams[slot];
+    network::client_transport_t& transport = context.transport_layer.clients[slot];
+    transport.occupied = true;
+    network::Reliable_Stream& stream = transport.reliable_stream;
     stream.outbound = {1, 2, 3};
     stream.block_length = 3;
     stream.block_number = static_cast<network::uint8>(5 + slot);
@@ -217,7 +219,8 @@ void test_reset_state_in_preparation_for_new_map_load()
     // transport_layer rather than on client_slot_t: the CmdChangeMap announcing
     // the new map is a message riding it, so a reset here would drop the very
     // bytes the switch depends on -- and any block already in flight with it.
-    const network::Reliable_Stream& stream = context.transport_layer.reliable_streams[slot];
+    const network::Reliable_Stream& stream =
+        context.transport_layer.clients[slot].reliable_stream;
     assert(stream.outbound.size() == 3);
     assert(stream.block_number == static_cast<network::uint8>(5 + slot));
     assert(stream.received_through == static_cast<network::uint8>(2 + slot));
@@ -255,12 +258,14 @@ void test_reset_client_slot()
   // A new occupant is a spectator until they ask, whatever the last one wanted.
   assert(!reset_client.wants_to_play);
 
-  // And the transport-layer half goes with it: a block number inherited from the
-  // previous occupant would make this client's first block look like a
-  // duplicate, and a half-reassembled inbound buffer would frame the first
-  // record it does take against the wrong bytes.
-  const network::Reliable_Stream& reset_stream =
-      context.transport_layer.reliable_streams[target_slot];
+  // And the transport-layer column goes with it: the slot is FREE, and a block
+  // number inherited from the previous occupant would make this client's first
+  // block look like a duplicate, and a half-reassembled inbound buffer would
+  // frame the first record it does take against the wrong bytes.
+  const network::client_transport_t& reset_transport =
+      context.transport_layer.clients[target_slot];
+  assert(!reset_transport.occupied);
+  const network::Reliable_Stream& reset_stream = reset_transport.reliable_stream;
   assert(reset_stream.outbound.empty());
   assert(reset_stream.inbound.empty());
   assert(reset_stream.block_length == 0);
@@ -273,7 +278,8 @@ void test_reset_client_slot()
     if (slot == target_slot) continue;
     assert(context.clients[slot].player_uid == static_cast<shared::entity_uid_t>(1000 + slot));
     assert(context.clients[slot].map_ready);
-    assert(context.transport_layer.reliable_streams[slot].block_number ==
+    assert(context.transport_layer.clients[slot].occupied);
+    assert(context.transport_layer.clients[slot].reliable_stream.block_number ==
            static_cast<network::uint8>(5 + slot));
   }
   assert(context.world.bots.size() == 2);

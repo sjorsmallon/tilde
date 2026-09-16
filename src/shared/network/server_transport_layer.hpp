@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../array.hpp"
 #include "../log.hpp"
 #include "game.pb.h"
 #include "network_types.hpp"
@@ -7,7 +8,6 @@
 #include "transfer_receipt.hpp"
 #include "udp_socket.hpp"
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -19,13 +19,7 @@
 namespace network
 {
 
-struct Byte_Buffer
-{
-  std::vector<uint8> data = std::vector<uint8>(2048 * 2048);
-  size_t cursor = 0; // byte_offset to insert at.
-};
-
-struct ServerInbox
+struct Server_Inbox
 {
   // Pair of client slot and move. These used to be wrapped in a TimestampedMove
   // carrying packet.header.timestamp, which NOTHING ever wrote -- the server
@@ -87,102 +81,58 @@ struct Outbound_Transfer
   }
 };
 
-struct Server_Transport_Layer
+// Everything the transport knows about ONE peer. A value, so occupying a slot
+// is one initializer and releasing it is `= {}` -- a member added here is
+// cleared by both edges without either being edited.
+//
+// This is the transport's COLUMN of a client's state; the server's gameplay
+// column (server::client_slot_t) sits in a parallel array indexed by the same
+// slot, and server::connected_clients is the zip over the two. They stay two
+// arrays because the whole-table functions below are shared code that has to
+// walk every slot, and a gameplay struct wrapping this one would give them a
+// stride they cannot see.
+struct client_transport_t
 {
-
-  //@NOTE(SJM): I think this is the better pattern over raw for loops.
-  // it's less volatile.
-  // additionally, I think actually sv_max_client_count needs to be a template argument.
-  struct client_slot_t
-  {
-      size_t index; // referential back so we can report which slot is doing something stinky
-      bool& occupied;
-      Address& address;
-      Byte_Buffer& byte_buffer;
-      uint32_t& latest_packet_tick;
-      std::map<uint8, Partial_Message>& partial_packets;
-      Outbound_Transfer& outbound_transfer;
-      Reliable_Stream& reliable_stream;
-  };
-
-  struct client_iterator_t
-  {
-      Server_Transport_Layer* server;
-      std::size_t index;
-
-      client_slot_t operator*() const
-      {
-        return {
-            index,
-            server->slot_occupied[index],
-            server->addresses[index],
-            server->byte_buffers[index],
-            server->latest_packet_tick[index],
-            server->partial_packets[index],
-            server->outbound_transfers[index],
-            server->reliable_streams[index],
-        };
-      }
-
-      client_iterator_t& operator++()
-      {
-          ++index;
-          return *this;
-      }
-
-      bool operator!=(const client_iterator_t& other) const
-      {
-          return index != other.index;
-      }
-  };
-
-  client_iterator_t begin()
-  {
-      return {this, 0};
-  }
-
-  client_iterator_t end()
-  {
-      return {this, sv_max_client_count};
-  }
-
-  // things we thought about
-  std::array<bool, sv_max_client_count> slot_occupied{};
-  std::array<Address, sv_max_client_count> addresses{};
-  std::array<Byte_Buffer, sv_max_client_count> byte_buffers{};
+  bool occupied = false;
+  Address address = {};
 
   // Server tick we last received ANY datagram from this slot's address --
-  // stamped below on arrival, before the packet's type or contents mean
-  // anything, so a peer that is only sending fragments of one big message still
-  // counts as alive. The policy that reads it (sv_timeout, dropping the client,
-  // destroying its body) is a stratum up in server_impl; this layer only records
-  // that bytes showed up.
-  std::array<uint32_t, sv_max_client_count> latest_packet_tick{};
+  // stamped in poll_network on arrival, before the packet's type or contents
+  // mean anything, so a peer that is only sending fragments of one big message
+  // still counts as alive. The policy that reads it (sv_timeout, dropping the
+  // client, destroying its body) is a stratum up in server_impl; this layer
+  // only records that bytes showed up.
+  uint32_t latest_packet_tick = 0;
 
   // Packet reassembly only. Buckets are expired by poll_network -- see
   // Partial_Message in packet.hpp for why that is mandatory rather than tidy.
-  std::array<std::map<uint8, Partial_Message>, sv_max_client_count>
-      partial_packets{};
+  std::map<uint8, Partial_Message> partial_packets;
 
-  // Bulk messages being fed to the socket a few fragments per tick instead of
+  // A bulk message being fed to the socket a few fragments per tick instead of
   // all at once. This is the flow control UDP does not have, and it is the
   // sender-side half of the problem: a whole map package is up to 255 datagrams,
   // and handing them to the socket in one loop overruns the receiver's kernel
   // queue -- most are discarded before its first recvfrom, and NO receive-side
   // change can recover them. Pacing is what makes a download converge.
-  std::array<Outbound_Transfer, sv_max_client_count> outbound_transfers{};
+  Outbound_Transfer outbound_transfer;
 
-  // The reliable S2C byte stream, one per slot. This is the right stratum, and
+  // The reliable S2C byte stream. This is the right stratum, and
   // Outbound_Transfer above is the sibling that proves it -- that one knows a
   // byte range and a rate, this one knows a byte range and an ack rule, and
   // neither has an opinion about whether the bytes are a death or a map switch.
   //
   // It SURVIVES reset_state_in_preparation_for_new_map_load (it lives here, in
   // the nothing-resets-these group -- the map switch is a message riding it)
-  // and it MUST be cleared by reset_client_slot, or the next client in this slot
+  // and it MUST go with a change of occupant, or the next client in this slot
   // inherits a block number and a half-reassembled inbound buffer from its
-  // predecessor. server_context_test asserts both halves.
-  std::array<Reliable_Stream, sv_max_client_count> reliable_streams{};
+  // predecessor. server::reset_client_slot is that edge, and
+  // server_context_test asserts both halves.
+  Reliable_Stream reliable_stream;
+};
+
+struct Server_Transport_Layer
+{
+  Array<client_transport_t, sv_max_client_count> clients;
 
   // Rolling counter passed to convert_to_packets() so each logical message the
   // server sends gets a distinct message_id (see packet.hpp). One counter for
@@ -201,8 +151,8 @@ try_find_client_slot(const Server_Transport_Layer &transport_layer,
 {
   for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
   {
-    if (transport_layer.slot_occupied[slot] &&
-        transport_layer.addresses[slot] == address)
+    const client_transport_t &client = transport_layer.clients[slot];
+    if (client.occupied && client.address == address)
       return slot;
   }
   return std::nullopt;
@@ -211,28 +161,22 @@ try_find_client_slot(const Server_Transport_Layer &transport_layer,
 inline void release_client_slot(Server_Transport_Layer &transport_layer,
                                 int32_t slot)
 {
-  transport_layer.addresses[slot] = {};
-  transport_layer.slot_occupied[slot] = false;
-  transport_layer.partial_packets[slot].clear();
-  transport_layer.outbound_transfers[slot] = {};
-  transport_layer.reliable_streams[slot] = {};
-  transport_layer.latest_packet_tick[slot] = 0;
+  transport_layer.clients[slot] = {};
 }
 
-// Stamps the slot as heard-from, which is what keeps it from timing out. Called
-// on arrival, and once at accept time -- a slot occupied at tick N with a
-// latest_packet_tick of 0 reads as N ticks of silence and is dropped immediately.
+// The whole entry, so nothing of a previous occupant survives. Stamped as
+// heard-from at accept time -- a slot occupied at tick N with a
+// latest_packet_tick of 0 reads as N ticks of silence and is dropped
+// immediately.
 inline void occupy_client_slot(Server_Transport_Layer &transport_layer,
                                int32_t slot, const Address &address,
                                uint32_t current_tick)
 {
-  transport_layer.slot_occupied[slot] = true;
-  transport_layer.addresses[slot] = address;
-  transport_layer.byte_buffers[slot] = {};
-  transport_layer.partial_packets[slot].clear();
-  transport_layer.outbound_transfers[slot] = {};
-  transport_layer.reliable_streams[slot] = {};
-  transport_layer.latest_packet_tick[slot] = current_tick;
+  transport_layer.clients[slot] = {
+      .occupied = true,
+      .address = address,
+      .latest_packet_tick = current_tick,
+  };
 }
 
 // THE one place a datagram leaves this server for a peer that HAS a slot, and
@@ -249,8 +193,8 @@ inline bool send_packet_to_client(Server_Transport_Layer &state,
                                   Packet packet)
 {
   packet.header.latest_reliable_block_received =
-      state.reliable_streams[slot].received_through;
-  return socket.send(packet, state.addresses[slot]);
+      state.clients[slot].reliable_stream.received_through;
+  return socket.send(packet, state.clients[slot].address);
 }
 
 // Fragments `payload` and queues it for paced delivery to one peer, REPLACING
@@ -264,7 +208,7 @@ inline void begin_paced_transfer(Server_Transport_Layer &state, int32_t slot,
                                  const std::vector<uint8> &payload,
                                  uint8 message_type)
 {
-  Outbound_Transfer &transfer = state.outbound_transfers[slot];
+  Outbound_Transfer &transfer = state.clients[slot].outbound_transfer;
 
   if (transfer.in_progress())
   {
@@ -294,7 +238,7 @@ inline void begin_paced_transfer(Server_Transport_Layer &state, int32_t slot,
 inline void apply_transfer_receipt(Server_Transport_Layer &state, int32_t slot,
                                    const transfer_receipt_t &receipt)
 {
-  Outbound_Transfer &transfer = state.outbound_transfers[slot];
+  Outbound_Transfer &transfer = state.clients[slot].outbound_transfer;
 
   if (transfer.fragments.empty() || receipt.message_id != transfer.message_id)
     return;
@@ -342,10 +286,11 @@ inline void service_paced_transfers(Server_Transport_Layer &state,
 {
   for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
   {
-    if (!state.slot_occupied[slot])
+    client_transport_t &client = state.clients[slot];
+    if (!client.occupied)
       continue;
 
-    Outbound_Transfer &transfer = state.outbound_transfers[slot];
+    Outbound_Transfer &transfer = client.outbound_transfer;
     if (!transfer.in_progress())
       continue;
 
@@ -390,7 +335,7 @@ inline void service_paced_transfers(Server_Transport_Layer &state,
 inline void send_reliable_block(Server_Transport_Layer &state,
                                 Udp_Socket &socket, int32_t slot)
 {
-  Reliable_Stream &stream = state.reliable_streams[slot];
+  Reliable_Stream &stream = state.clients[slot].reliable_stream;
 
   cut_reliable_block(stream);
   if (stream.block_length == 0)
@@ -416,7 +361,7 @@ inline void send_reliable_block(Server_Transport_Layer &state,
 // becoming a null table slot indistinguishable from a forgotten one.
 inline void deliver_client_message(int32_t client_slot, uint8 message_type,
                                    std::vector<uint8> &&payload,
-                                   ServerInbox &out_inbox)
+                                   Server_Inbox &out_inbox)
 {
   // The raw byte comes off the wire with no range validation -- garbage, or a
   // newer build's type. Checked before the cast, because casting it to the enum
@@ -515,11 +460,11 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
 // connection's, so its cap is derived from the larger server buffer.
 inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
                          size_t max_datagrams, uint32_t current_tick,
-                         ServerInbox &out_inbox)
+                         Server_Inbox &out_inbox)
 {
-  for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
-    if (state.slot_occupied[slot])
-      expire_stale_partial_messages(state.partial_packets[slot], "server");
+  for (client_transport_t &client : state.clients)
+    if (client.occupied)
+      expire_stale_partial_messages(client.partial_packets, "server");
 
   // Reused across iterations so a completed message costs at most one
   // allocation, and usually none.
@@ -558,13 +503,13 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
       continue;
     }
     const int32_t client_slot = *sender_slot;
-    state.latest_packet_tick[client_slot] = current_tick;
+    state.clients[client_slot].latest_packet_tick = current_tick;
 
     // Freeing is event-driven: the ack, and nothing else. Read off EVERY
     // datagram, before the packet's type or contents mean anything, because the
     // report rides Packet_Header rather than any message -- which is what makes
     // "the stream cannot get stuck while the connection is alive" true.
-    confirm_reliable_block(state.reliable_streams[client_slot],
+    confirm_reliable_block(state.clients[client_slot].reliable_stream,
                            packet.header.latest_reliable_block_received);
 
     // Intercepted BEFORE reassembly: a block is not a message and has no
@@ -575,7 +520,7 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
         static_cast<uint8>(Message_Type::Reliable))
     {
       accept_reliable_block(
-          state.reliable_streams[client_slot], packet.header.reliable_block_number,
+          state.clients[client_slot].reliable_stream, packet.header.reliable_block_number,
           Span<const uint8>{packet.buffer, packet.header.payload_size});
       continue;
     }
@@ -599,7 +544,7 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
     }
 
 
-    if (reassemble_fragment(state.partial_packets[client_slot], packet, payload))
+    if (reassemble_fragment(state.clients[client_slot].partial_packets, packet, payload))
       deliver_client_message(client_slot, packet.header.message_type,
                              std::move(payload), out_inbox);
     else if (packet.header.fragment_count == 1)
@@ -623,10 +568,11 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
   // delivered now rather than next tick.
   for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
   {
-    if (!state.slot_occupied[slot])
+    client_transport_t &client = state.clients[slot];
+    if (!client.occupied)
       continue;
 
-    drain_reliable_records(state.reliable_streams[slot],
+    drain_reliable_records(client.reliable_stream,
                            [slot, &out_inbox](uint8 message_type,
                                               std::vector<uint8> &&record) {
                              deliver_client_message(slot, message_type,

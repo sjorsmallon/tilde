@@ -81,7 +81,24 @@ struct hitscan_t
 struct projectile_t
 {
   float speed;
+  // Fraction of g_gravity acting on the projectile: 0 flies straight, 1 falls like a player.
+  float gravity_scale;
 };
+
+struct projectile_step_t
+{
+  vec3f position;
+  vec3f velocity;
+};
+
+// The closed form of constant acceleration, so advancing by dt twice is advancing by 2dt once.
+inline projectile_step_t advance_projectile(const projectile_t& projectile, float gravity,
+                                            vec3f position, vec3f velocity, float dt)
+{
+  const vec3f acceleration = {0.f, -gravity * projectile.gravity_scale, 0.f};
+  return {.position = position + velocity * dt + acceleration * (0.5f * dt * dt),
+          .velocity = velocity + acceleration * dt};
+}
 
 // What the weapon sounds like. Client-only facts, on the shared row (see
 // above). Missing is a declared absence, logged once per id by the audio
@@ -196,7 +213,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
      .fire_resolution         = entities::Fire_Resolution::Projectile,
-     .projectile              = {.speed = 600.f},
+     .projectile              = {.speed = 600.f, .gravity_scale = 0.f},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                        = entities::Weapon::Dash,
@@ -318,7 +335,7 @@ constexpr bool row_parameters_match_their_resolution()
                                  hitscan.range == 0.f &&
                                  hitscan.hit_effect == hit_effect_t::Damage &&
                                  !hitscan.leaves_bullet_impact;
-    const bool projectile_is_zero = projectile.speed == 0.f;
+    const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f;
     const bool impulse_is_zero    = definition.self_impulse.along_aim_speed == 0.f &&
                                  definition.self_impulse.upward_speed == 0.f;
 
@@ -329,7 +346,7 @@ constexpr bool row_parameters_match_their_resolution()
       if (!projectile_is_zero || !impulse_is_zero) return false;
       break;
     case entities::Fire_Resolution::Projectile:
-      if (projectile.speed <= 0.f) return false;
+      if (projectile.speed <= 0.f || projectile.gravity_scale < 0.f) return false;
       if (!hitscan_is_zero || !impulse_is_zero) return false;
       break;
     case entities::Fire_Resolution::Self_Impulse:

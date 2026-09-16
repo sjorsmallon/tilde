@@ -940,6 +940,15 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "weapon_id",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Rocket_Entity, weapon_id),
+   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::weapon_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[2]},
   {.name = "velocity",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Rocket_Entity, velocity),
@@ -2174,7 +2183,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 25}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 840u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 64u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
-  {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 12}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 64u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
+  {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 13}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 64u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 64u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 73u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 22}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, false, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
@@ -2582,6 +2591,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x33883a58u;
+const uint32_t SCHEMA_HASH = 0xa4b99b87u;
 
 } // namespace entities

@@ -102,16 +102,14 @@ void try_admit_player(server_context_t &context, int32_t slot)
 
 void admit_waiting_players(server_context_t &context)
 {
-  for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
+  for (connected_client_t row : connected_clients(context))
   {
-    if (!context.transport_layer.slot_occupied[slot])
+    if (!row.client.wants_to_play)
       continue;
-    if (!context.clients[slot].wants_to_play)
-      continue;
-    if (context.clients[slot].player_uid != shared::null_entity_uid)
+    if (row.client.player_uid != shared::null_entity_uid)
       continue;
 
-    spawn_player_entity_for_client_slot(context, slot);
+    spawn_player_entity_for_client_slot(context, row.slot);
   }
 }
 

@@ -85,26 +85,26 @@ static void test_transfer_is_paced()
   wire_t wire(9105, 9106);
 
   Server_Transport_Layer transport;
-  transport.slot_occupied[0] = true;
-  transport.addresses[0] = wire.receiver_address;
+  transport.clients[0].occupied = true;
+  transport.clients[0].address = wire.receiver_address;
 
   const std::vector<uint8> payload = make_payload(40 * MAX_PAYLOAD_SIZE_IN_BYTES);
   begin_paced_transfer(transport, 0, payload,
                        static_cast<uint8>(Message_Type::S2C_MapData));
 
-  const size_t fragment_count = transport.outbound_transfers[0].fragments.size();
+  const size_t fragment_count = transport.clients[0].outbound_transfer.fragments.size();
   assert(fragment_count == 40 && "payload should fragment into 40 packets");
 
   // Every fragment of one message shares an id -- that is what lets the receiver
   // group them, it is why one message never spans two buckets, and it is the
   // identity a receipt names.
-  const uint8 message_id = transport.outbound_transfers[0].message_id;
-  for (const Packet &fragment : transport.outbound_transfers[0].fragments)
+  const uint8 message_id = transport.clients[0].outbound_transfer.message_id;
+  for (const Packet &fragment : transport.clients[0].outbound_transfer.fragments)
     assert(fragment.header.message_id == message_id);
 
   size_t ticks = 0;
   size_t delivered = 0;
-  while (!transport.outbound_transfers[0].awaiting_receipt)
+  while (!transport.clients[0].outbound_transfer.awaiting_receipt)
   {
     service_paced_transfers(transport, wire.sender, 8);
     const size_t sent = wire.drain().size();
@@ -129,15 +129,15 @@ static void test_a_pass_waits_for_a_receipt()
   wire_t wire(9107, 9108);
 
   Server_Transport_Layer transport;
-  transport.slot_occupied[0] = true;
-  transport.addresses[0] = wire.receiver_address;
+  transport.clients[0].occupied = true;
+  transport.clients[0].address = wire.receiver_address;
 
   begin_paced_transfer(transport, 0, make_payload(4 * MAX_PAYLOAD_SIZE_IN_BYTES),
                        static_cast<uint8>(Message_Type::S2C_MapData));
 
   service_paced_transfers(transport, wire.sender, 8);
   assert(wire.drain().size() == 4);
-  assert(transport.outbound_transfers[0].awaiting_receipt);
+  assert(transport.clients[0].outbound_transfer.awaiting_receipt);
 
   // Ten ticks with nothing coming back: not one byte more goes out.
   for (int tick = 0; tick < 10; ++tick)
@@ -154,19 +154,19 @@ static void test_only_the_missing_fragments_are_resent()
   wire_t wire(9109, 9110);
 
   Server_Transport_Layer transport;
-  transport.slot_occupied[0] = true;
-  transport.addresses[0] = wire.receiver_address;
+  transport.clients[0].occupied = true;
+  transport.clients[0].address = wire.receiver_address;
 
   begin_paced_transfer(transport, 0, make_payload(40 * MAX_PAYLOAD_SIZE_IN_BYTES),
                        static_cast<uint8>(Message_Type::S2C_MapData));
 
-  while (!transport.outbound_transfers[0].awaiting_receipt)
+  while (!transport.clients[0].outbound_transfer.awaiting_receipt)
     service_paced_transfers(transport, wire.sender, 8);
   wire.drain();
 
   // The receiver got everything except fragments 3 and 31.
   transfer_receipt_t receipt;
-  receipt.message_id = transport.outbound_transfers[0].message_id;
+  receipt.message_id = transport.clients[0].outbound_transfer.message_id;
   receipt.fragment_count = 40;
   receipt.received_bits.assign(receipt_bitmap_size_in_bytes(40), 0);
   for (uint16 index = 0; index < 40; ++index)
@@ -174,9 +174,9 @@ static void test_only_the_missing_fragments_are_resent()
       receipt_mark_fragment(receipt, index);
 
   apply_transfer_receipt(transport, 0, receipt);
-  assert(!transport.outbound_transfers[0].awaiting_receipt &&
+  assert(!transport.clients[0].outbound_transfer.awaiting_receipt &&
          "a receipt is what releases the next pass");
-  assert(transport.outbound_transfers[0].in_progress());
+  assert(transport.clients[0].outbound_transfer.in_progress());
 
   service_paced_transfers(transport, wire.sender, 8);
   const std::vector<uint16> repaired = wire.drain();
@@ -190,11 +190,11 @@ static void test_only_the_missing_fragments_are_resent()
   for (uint16 index = 0; index < 40; ++index)
     receipt_mark_fragment(receipt, index);
   apply_transfer_receipt(transport, 0, receipt);
-  assert(!transport.outbound_transfers[0].in_progress());
+  assert(!transport.clients[0].outbound_transfer.in_progress());
 
   service_paced_transfers(transport, wire.sender, 8);
   assert(wire.drain().empty());
-  assert(transport.outbound_transfers[0].fragments.empty() &&
+  assert(transport.clients[0].outbound_transfer.fragments.empty() &&
          "a completed transfer frees itself");
 
   printf("  a receipt naming two gaps cost two fragments to repair\n");
@@ -244,24 +244,24 @@ static void test_receipt_round_trip_and_refusal()
 static void test_a_receipt_for_another_message_is_ignored()
 {
   Server_Transport_Layer transport;
-  transport.slot_occupied[0] = true;
+  transport.clients[0].occupied = true;
 
   begin_paced_transfer(transport, 0, make_payload(4 * MAX_PAYLOAD_SIZE_IN_BYTES),
                        static_cast<uint8>(Message_Type::S2C_MapData));
-  transport.outbound_transfers[0].awaiting_receipt = true;
+  transport.clients[0].outbound_transfer.awaiting_receipt = true;
 
   transfer_receipt_t stranger;
   stranger.message_id =
-      static_cast<uint8>(transport.outbound_transfers[0].message_id + 1);
+      static_cast<uint8>(transport.clients[0].outbound_transfer.message_id + 1);
   stranger.fragment_count = 2;
   stranger.received_bits.assign(receipt_bitmap_size_in_bytes(2), 0);
   receipt_mark_fragment(stranger, 0);
 
   apply_transfer_receipt(transport, 0, stranger);
 
-  assert(transport.outbound_transfers[0].awaiting_receipt &&
+  assert(transport.clients[0].outbound_transfer.awaiting_receipt &&
          "an unrelated receipt must not release our pass");
-  for (bool confirmed : transport.outbound_transfers[0].confirmed)
+  for (bool confirmed : transport.clients[0].outbound_transfer.confirmed)
     assert(!confirmed && "nor confirm any of our fragments");
 
   printf("  a receipt naming another message was ignored\n");
@@ -272,26 +272,26 @@ static void test_a_receipt_for_another_message_is_ignored()
 static void test_rerequest_replaces_transfer()
 {
   Server_Transport_Layer transport;
-  transport.slot_occupied[0] = true;
+  transport.clients[0].occupied = true;
 
   begin_paced_transfer(transport, 0, make_payload(40 * MAX_PAYLOAD_SIZE_IN_BYTES),
                        static_cast<uint8>(Message_Type::S2C_MapData));
-  transport.outbound_transfers[0].cursor = 12;
-  transport.outbound_transfers[0].confirmed[0] = true;
-  transport.outbound_transfers[0].awaiting_receipt = true;
+  transport.clients[0].outbound_transfer.cursor = 12;
+  transport.clients[0].outbound_transfer.confirmed[0] = true;
+  transport.clients[0].outbound_transfer.awaiting_receipt = true;
 
   begin_paced_transfer(transport, 0, make_payload(3 * MAX_PAYLOAD_SIZE_IN_BYTES),
                        static_cast<uint8>(Message_Type::S2C_MapData));
 
-  assert(transport.outbound_transfers[0].fragments.size() == 3 &&
+  assert(transport.clients[0].outbound_transfer.fragments.size() == 3 &&
          "the new payload must replace the old one, not append to it");
-  assert(transport.outbound_transfers[0].confirmed.size() == 3 &&
+  assert(transport.clients[0].outbound_transfer.confirmed.size() == 3 &&
          "the confirmed set must be resized with it");
-  assert(transport.outbound_transfers[0].cursor == 0 &&
+  assert(transport.clients[0].outbound_transfer.cursor == 0 &&
          "the cursor must restart, or the new transfer skips its first fragments");
-  assert(!transport.outbound_transfers[0].awaiting_receipt &&
+  assert(!transport.clients[0].outbound_transfer.awaiting_receipt &&
          "a fresh transfer has not completed a pass, so it is not waiting");
-  for (bool confirmed : transport.outbound_transfers[0].confirmed)
+  for (bool confirmed : transport.clients[0].outbound_transfer.confirmed)
     assert(!confirmed && "the previous transfer's confirmations mean nothing here");
 
   printf("  re-request replaced the in-flight transfer and reset its state\n");

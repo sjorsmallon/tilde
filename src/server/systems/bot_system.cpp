@@ -9,6 +9,7 @@
 #include "../../shared/log.hpp"
 #include "../../shared/pathfinding.hpp"
 #include "../../shared/player_move.hpp"
+#include "../../shared/weapons.hpp"
 
 #include <limits>
 
@@ -353,9 +354,12 @@ void update_bots(server_context_t &context,
             // A bot's rocket is a player's rocket. It used to restate lifetime,
             // damage, both radii and the hitbox here, which is how bot rockets
             // came to live 5 seconds while player rockets lived 20.
-            rocket->position = eye;
-            rocket->velocity = aim_dir * 600.f;
-            rocket->owner_id = bot_ent->entity_id;
+            const shared::weapon_definition_t& launcher =
+                shared::get_weapon_definition(entities::Weapon::Rocket_Launcher);
+            rocket->position  = eye;
+            rocket->velocity  = aim_dir * launcher.projectile.speed;
+            rocket->owner_id  = bot_ent->entity_id;
+            rocket->weapon_id = launcher.weapon;
           }
         }
         break;

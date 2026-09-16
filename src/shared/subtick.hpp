@@ -72,6 +72,13 @@ constexpr subtick_time_t subtick_time(uint32_t tick, uint32_t slot)
   return static_cast<subtick_time_t>(tick) * SUBTICK_SLOT_COUNT + slot;
 }
 
+// The slot half of a moment back out, for the one consumer that ships a slot
+// on its own (the shot debug message). The tick half is the caller's.
+constexpr uint32_t subtick_slot_of(subtick_time_t time)
+{
+  return static_cast<uint32_t>(time % SUBTICK_SLOT_COUNT);
+}
+
 // Zero is "never happened", which every gate wants to read as "long enough
 // ago": a fresh player has not fired, and their first shot must not be held by
 // an interval measured against the epoch.

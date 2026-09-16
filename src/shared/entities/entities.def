@@ -262,6 +262,8 @@ Weapon_Entity :: entity {
 }
 
 Rocket_Entity :: entity @runtime_only {
+    // The WEAPON_DEFINITIONS row that fired it: its projectile_t is how this flies.
+    weapon_id:       Weapon = .Rocket_Launcher @Networked
     velocity:        v3                 @Networked
     lifetime: f32 = 5.0
     damage_amount: f32 = 50.0

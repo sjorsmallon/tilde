@@ -74,14 +74,10 @@ void reset_client_slot(server_context_t& context, int32_t slot)
   // because the two sites happened to agree.
   context.clients[slot] = {};
 
-  // The reliable stream is the one piece of this client's state that lives a
-  // stratum down, in the transport layer, and it MUST go with the rest: the next
-  // occupant would otherwise inherit a block number and a half-reassembled
-  // inbound buffer from its predecessor. release_client_slot and
-  // occupy_client_slot clear it too -- both edges are already paired with one of
-  // them -- but this is what makes the guarantee unconditional rather than a
-  // fact about how the two call sites happen to be written.
-  context.transport_layer.reliable_streams[slot] = {};
+  // And the transport's column with it. The reliable stream in there MUST go
+  // with the rest: the next occupant would otherwise inherit a block number and
+  // a half-reassembled inbound buffer from its predecessor.
+  network::release_client_slot(context.transport_layer, slot);
 }
 
 // Both tick functions clear() per member rather than assigning `= {}` to the
@@ -102,8 +98,8 @@ void clear_incoming(server_context_t& context)
 // The client's clear_client_inbox carries the reasoning; this is the same
 // tripwire on the same silent failure, one connection over. An inbox member
 // nothing clears replays last tick's traffic every tick.
-static_assert(sizeof(network::ServerInbox) == 5 * sizeof(std::vector<int>),
-              "ServerInbox gained or lost a member. If you added one: clear it "
+static_assert(sizeof(network::Server_Inbox) == 5 * sizeof(std::vector<int>),
+              "Server_Inbox gained or lost a member. If you added one: clear it "
               "above AND drain it in server_impl.cpp's Tick(), then update this "
               "count");
 

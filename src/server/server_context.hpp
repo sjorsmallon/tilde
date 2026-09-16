@@ -34,8 +34,9 @@ namespace server
 static constexpr int32_t invalid_slot_idx = -1;
 
 // True for a slot that can be used to index `server_context_t::clients` and the
-// transport layer's parallel arrays. Says nothing about whether anyone is
-// connected there — `transport_layer.slot_occupied[slot]` is that question.
+// transport layer's parallel array. Says nothing about whether anyone is
+// connected there — `transport_layer.clients[slot].occupied` is that question,
+// and `connected_clients(context)` below is how a loop asks it.
 inline bool is_valid_client_slot(int32_t slot)
 {
   return slot >= 0 && slot < network::sv_max_client_count;
@@ -178,7 +179,7 @@ struct replication_t
   network::Snapshot_History<network::snapshot_frame_t> snapshot_history;
 };
 
-using tick_input_t = network::ServerInbox;
+using tick_input_t = network::Server_Inbox;
 
 // A hit that has been RESOLVED but not yet applied.
 struct pending_hit_t
@@ -243,8 +244,88 @@ struct server_context_t
   tick_output_t outgoing;
 };
 
+// One connected peer, seen across BOTH strata: the transport's column and the
+// server's. A client's state is two parallel arrays indexed by one slot (see
+// network::client_transport_t for why they are not one struct), and this row is
+// the only place the two are read side by side.
+struct connected_client_t
+{
+  int32_t slot;
+  network::client_transport_t& transport;
+  client_slot_t& client;
+};
+
+// The zip over the two arrays, yielding OCCUPIED slots only. Every loop over
+// the slot table goes through this, so "occupied" and "has a meaningful
+// gameplay record" are the same test in one place rather than an `if` each
+// loop has to remember. Disconnecting the row being visited is safe: it clears
+// that one slot and the increment skips forward from there.
+struct connected_clients_t
+{
+  server_context_t* context;
+
+  struct iterator_t
+  {
+    server_context_t* context;
+    int32_t slot;
+
+    void skip_unoccupied()
+    {
+      while (slot < network::sv_max_client_count &&
+             !context->transport_layer.clients[slot].occupied)
+        ++slot;
+    }
+
+    connected_client_t operator*() const
+    {
+      return {slot, context->transport_layer.clients[slot],
+              context->clients[slot]};
+    }
+
+    iterator_t& operator++()
+    {
+      ++slot;
+      skip_unoccupied();
+      return *this;
+    }
+
+    bool operator!=(const iterator_t& other) const
+    {
+      return slot != other.slot;
+    }
+  };
+
+  iterator_t begin() const
+  {
+    iterator_t first{context, 0};
+    first.skip_unoccupied();
+    return first;
+  }
+
+  iterator_t end() const { return {context, network::sv_max_client_count}; }
+};
+
+inline connected_clients_t connected_clients(server_context_t& context)
+{
+  return {&context};
+}
+
 void reset_state_in_preparation_for_new_map_load(server_context_t& context);
+
+// A slot changes occupant: the WHOLE entry in BOTH strata. connect_client and
+// disconnect_client are the two edges and both go through this, which is what
+// makes "nothing survives a change of occupant" a property of one function
+// rather than of how two call sites happen to be written.
 void reset_client_slot(server_context_t& context, int32_t slot);
+
+// The two lifetime edges. connect_client takes a FREE slot (the caller found
+// it); disconnect_client returns the body to spectate, tells everyone, and
+// frees the slot.
+void connect_client(server_context_t& context, int32_t slot,
+                    const network::Address& address,
+                    const network::pascal_string_t<32>& player_name);
+void disconnect_client(server_context_t& context, int32_t slot,
+                       std::string_view reason);
 void clear_incoming(server_context_t& context);
 void clear_outgoing(server_context_t& context);
 

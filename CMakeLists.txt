@@ -1254,6 +1254,10 @@ add_executable(player_move_step_invariance_test
 target_include_directories(player_move_step_invariance_test PRIVATE src src/shared)
 target_link_libraries(player_move_step_invariance_test PRIVATE game_shared)
 
+add_executable(projectile_step_test src/test/projectile_step_test.cpp)
+target_include_directories(projectile_step_test PRIVATE src src/shared)
+target_link_libraries(projectile_step_test PRIVATE game_shared)
+
 # 28b. Remote interpolation -- the render clock and the sample rings
 # (src/client/remote_interpolation.{hpp,cpp}). Compiles the module directly
 # rather than linking game_client: nothing about lerping two poses needs a
@@ -1366,6 +1370,7 @@ set(GAME_TESTS
     reliable_stream_test
     ui_test
     player_move_step_invariance_test
+    projectile_step_test
     subtick_test
     move_budget_test
     remote_interpolation_test)

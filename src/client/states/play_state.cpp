@@ -297,6 +297,12 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
   if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
     return;
 
+  // A self-impulse's one gate is the movement cooldown, which the server
+  // refuses on and the step loop below spends -- read here, before that step.
+  if (weapon.fire_resolution == entities::Fire_Resolution::Self_Impulse &&
+      ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
+    return;
+
   ctx.prediction.seconds_since_local_fire[my_weapon] = 0.f;
   ctx.audio->play_2d(*sound);
 }
@@ -944,7 +950,7 @@ void Play_State::update(float dt)
   // Directly after the inbox loops above, because they are what QUEUE onto this
   // stream -- a map request cut from this frame's CmdChangeMap or CmdAccept
   // rides this frame's block rather than waiting for the next one. The server's
-  // service_reliable_streams is the tick-clocked mirror and carries the same
+  // send_reliable_blocks_if_there_are_any is the tick-clocked mirror and carries the same
   // reasoning.
   //
   // Here and not at the end of update, which is where it belongs by that
@@ -1910,10 +1916,15 @@ void Play_State::update(float dt)
                 (void)shared::try_apply_self_impulse(
                     *held_definition, shared::fire_trigger_t::Primary, aim,
                     ctx.prediction.player_movement, ctx.prediction.player_velocity);
-              if (secondary_fire_pressed_in_this_step)
-                (void)shared::try_apply_self_impulse(
-                    *held_definition, shared::fire_trigger_t::Secondary, aim,
-                    ctx.prediction.player_movement, ctx.prediction.player_velocity);
+              // The secondary's sound rides the same gate as its impulse, here
+              // rather than in play_predicted_local_gunshot, which is the
+              // trigger's and re-runs the shot clocks this button never sees.
+              if (secondary_fire_pressed_in_this_step &&
+                  shared::try_apply_self_impulse(
+                      *held_definition, shared::fire_trigger_t::Secondary, aim,
+                      ctx.prediction.player_movement, ctx.prediction.player_velocity) &&
+                  ctx.audio && held_definition->sounds.fire != assets::sound_asset::Missing)
+                ctx.audio->play_2d(held_definition->sounds.fire);
             }
           }
 

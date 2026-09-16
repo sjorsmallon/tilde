@@ -305,8 +305,9 @@ message S2C_ShotDebug {
   // the input that fired it.
   uint32 input_number = 1;
   uint32 server_tick = 2;
-  // Which sub-tick slot the trigger went down in (shared/subtick.hpp).
-  uint32 fire_slot = 3;
+  // Which sub-tick slot of server_tick the trigger went down in
+  // (shared/subtick.hpp).
+  uint32 fire_subtick_slot = 3;
 
   // The ray as the server took it: post-move eye, along the aim in effect at
   // the step the press opened.

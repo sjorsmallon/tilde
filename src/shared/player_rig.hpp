@@ -88,6 +88,6 @@ struct player_pose_t
 // animation_def.md §4 for why caching it lost.
 void compute_player_hitboxes(const player_rig_t &rig, const player_pose_t &pose,
                              const aim_settings_t             &settings,
-                             Span<assets::posed_hitbox_t> out);
+                             const Span<assets::posed_hitbox_t> out);
 
 } // namespace shared
