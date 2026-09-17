@@ -10,6 +10,7 @@
 #include "../hud/ready_status.hpp"
 #include "../hud/run_timer.hpp"
 #include "../hud/weapon_name.hpp"
+#include "../replay_panel.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../held_snapshot.hpp"
 #include "../event_handlers.hpp"
@@ -2228,6 +2229,10 @@ void Play_State::update(float dt)
 void Play_State::draw_imgui_panels()
 {
   auto &ctx = state_manager::get_client_context();
+
+  // Before the pause-menu gate: scrubbing is exactly what the free cursor an
+  // open menu gives you is for.
+  draw_replay_panel(ctx);
 
   if (connection_ui.show_pause_menu)
     return;

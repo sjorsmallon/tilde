@@ -133,6 +133,7 @@ Match :: component {
 //  orientations: [] vec3
 //  traversal_times: [] f32
 //  smoothing_functions: [] Smoothing_Functions
+//  Looping: bool = false
 //}
 
 // ---------------------------------------------------------------------------
@@ -148,6 +149,25 @@ Match :: component {
 //
 // A verb belongs to exactly one trait, and the two kinds share one namespace:
 // each emits a `<Name>_Data` payload struct.
+
+// I was thinking about the emit syntax here. Accepts is simple: it's an interface definition.
+// the problem arises with emits: when do they emit? for some things like the counting, it's trivial
+// to do in the add. However, damage can optionally emit died, kill would emit died, and set_health and damage
+// could emit that. Additionally, this is all in the basic case: not in the per-entity case.
+//
+// IDEA, not built: an action names the signals it MAY cause, and the handler RETURNS them.
+//
+//     accepts Add(amount: i32) -> Limit_Reached
+//
+// generates `[[nodiscard]] std::optional<Limit_Reached_Data> add(...)`, and the generated
+// dispatcher emits whatever comes back, under the context the handler was called with. Several
+// signals (`-> Health_Changed, Died`) return a struct of optionals, emitted in declaration order.
+// The .def states a RELATION (this action can cause that signal), never a condition: WHEN stays
+// in C++, so there is no expression language to grow. A per-entity handler that never wants the
+// signal returns nullopt. An action with no `->` does not make its state true by returning (a
+// door is not open when Open() returns); a system emits for it later through emit_<signal>, as
+// Elapsed, Touched and the match signals do. Anything that fits neither is a hint that it is
+// due for something else.
 
 Switchable :: trait requires Enabled {
     accepts Enable(), Disable(), Toggle_Enabled()

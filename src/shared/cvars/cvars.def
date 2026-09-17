@@ -333,6 +333,10 @@ Client :: cvars {
     // replay_def.md ss6: off shows the server's truth for the same slot, for comparison.
     cl_replay_player_view:  bool = true      @Client    "In a replay, spectate through the recorded aim and draw the others where that player saw them"
 
+    // replay_def.md ss8. The window's close box writes this, the way the entity
+    // debug overlay's does.
+    cl_replay_panel:        bool = true      @Client    "Show the replay scrub panel while a replay is playing"
+
     // A free camera flown with the editor's controls, and NOTHING moves the
     // body: it stays where it stood, still simulated and still shootable, and
     // the view returns to its own aim when this goes off. A cvar rather than a
