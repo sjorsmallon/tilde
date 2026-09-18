@@ -3,6 +3,7 @@
 #include "collision_detection.hpp"
 #include "entity_system.hpp"
 #include "map.hpp"
+#include "movers.hpp"
 #include "navmesh.hpp"
 #include "physics.hpp"
 #include <string>
@@ -49,7 +50,7 @@ struct game_session_t
   std::vector<map_geometry_t> geometry;
 
   // The DERIVED direction of the tie, parallel to `geometry`: owner_of[i] is the
-  // Brush_Entity geometry[i] is switched by, or null_entity_uid. The file stores
+  // Brush_Entity or Mover_Entity geometry[i] belongs to, or null_entity_uid. The file stores
   // brush -> owner and only that, because both directions stored is two answers
   // that can disagree (prediction_def.md ss4.2); this is the one place the
   // reverse is materialised, and it is keyed by INDEX because that is what a BVH
@@ -59,6 +60,13 @@ struct game_session_t
   // instead of once per tick: an owner uid this session does not hold, or one
   // that is not a Brush_Entity, is reported by build_session and left null.
   std::vector<entity_uid_t> owner_of;
+
+  // A node's `next` is stored; its previous is derived here once per load (mover_def.md ss2).
+  path_links_t path_links;
+
+  // A mover's geometry is not in `bvh`: its rest frame, latched from the authored start node before
+  // anything advances, and its pieces at that pose, keyed by mover, cut per tick by collect_movers.
+  mover_rests_t mover_rests;
 
   // The map's material table, copied for the same reason the geometry is: a
   // brush face holds an INDEX into it, so the two have to travel together or the
@@ -108,6 +116,14 @@ struct game_session_t
 // survived the last map" is not a question this can raise. `map` is not
 // mutated -- the session stamps uids on its OWN copies (session_test guards it).
 [[nodiscard]] game_session_t build_session(const map_t &map);
+
+// The types a geometry's `owner` may name. The load check and the editor's tie both read it.
+inline constexpr entities::entity_type GEOMETRY_OWNER_TYPES[] = {
+    entities::entity_type::Brush_Entity,
+    entities::entity_type::Mover_Entity,
+};
+
+[[nodiscard]] bool entity_type_can_own_geometry(entities::entity_type type);
 
 // Register Jolt static bodies for the map's geometry (brushes,
 // both as their axis-aligned bound). Call after build_session on both

@@ -55,10 +55,11 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              const shared::lightmap_t &lightmap, bool collides);
 
 // Pulsating selection highlight, in lockstep with the entity one.
-// `grid_step` drives the grid lines drawn on a box's faces.
+// `grid_step` drives the grid lines drawn on a box's faces; when the outline already
+// traces the shape only that faint measuring grid is left.
 void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
                                        pass_builder_t &draws, float time,
-                                       float grid_step);
+                                       float grid_step, bool is_outlined);
 
 // ImGui property panel for one geometry object. Returns true if the user changed
 // anything, so the caller can rebuild the BVH and push a value-swap transaction.

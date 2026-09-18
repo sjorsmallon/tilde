@@ -181,6 +181,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       context.prediction.latest_server_position = player.position;
       context.prediction.latest_server_velocity = player.velocity;
       context.prediction.latest_server_movement = player.movement;
+      context.prediction.latest_server_tick = server_tick;
       context.prediction.received_server_update = true;
 
       if (!context.connection.logged_first_server_update)

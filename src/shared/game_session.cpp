@@ -7,6 +7,14 @@
 namespace shared
 {
 
+bool entity_type_can_own_geometry(entities::entity_type type)
+{
+  for (entities::entity_type owner_type : GEOMETRY_OWNER_TYPES)
+    if (owner_type == type)
+      return true;
+  return false;
+}
+
 game_session_t build_session(const map_t &map)
 {
   game_session_t session;
@@ -40,8 +48,17 @@ game_session_t build_session(const map_t &map)
     }
   }
 
+  session.path_links = derive_path_links(session.entity_system);
+  for (const path_refusal_t &refusal : validate_map_paths(map))
+    log_error("build_session: {}", refusal.reason);
+  for (entity_uid_t node : session.path_links.named_by_several)
+    log_warning("build_session: {} is the next of several path nodes, so it has no way back",
+                describe_map_entity(map, node));
+  for (const entities::Mover_Entity &mover : session.entity_system.entities_of<entities::Mover_Entity>())
+    session.mover_rests[mover.entity_id].frame = mover_rest_frame(session.entity_system, mover);
+
   // The tie, derived and checked ONCE. A geometry naming an owner that is not a
-  // live Brush_Entity keeps no entry, so the collect that runs every tick has
+  // live geometry owner keeps no entry, so the collect that runs every tick has
   // nothing left to refuse and the brush simply stays solid.
   session.owner_of.assign(session.geometry.size(), null_entity_uid);
   for (size_t index = 0; index < session.geometry.size(); ++index)
@@ -58,10 +75,10 @@ game_session_t build_session(const map_t &map)
                 session.geometry[index].uid, owner);
       continue;
     }
-    if (entity->type != entities::entity_type::Brush_Entity)
+    if (!entity_type_can_own_geometry(entity->type))
     {
-      log_error("build_session: geometry {} is tied to uid {}, which is a {} and not a "
-                "brush_entity — it stays solid",
+      log_error("build_session: geometry {} is tied to uid {}, which is a {} and neither a "
+                "brush_entity nor a mover_entity — it stays solid",
                 session.geometry[index].uid, owner,
                 entities::entity_info(entity->type).classname);
       continue;
@@ -86,6 +103,16 @@ game_session_t build_session(const map_t &map)
   {
     const map_geometry_t &entry = session.geometry[i];
 
+    const entities::Entity *owner = session.entity_system.try_find(session.owner_of[i]);
+    if (owner != nullptr && owner->type == entities::entity_type::Mover_Entity)
+    {
+      std::vector<collision_piece_t> pieces = get_collision_pieces(entry.value, entry.uid);
+      std::vector<collision_piece_t> &rest  = session.mover_rests[session.owner_of[i]].pieces;
+      rest.insert(rest.end(), std::make_move_iterator(pieces.begin()),
+                  std::make_move_iterator(pieces.end()));
+      continue;
+    }
+
     for (const collision_piece_t &piece : get_collision_pieces(entry.value, entry.uid))
     {
       BVH_Input input;
@@ -108,6 +135,10 @@ void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
 {
   for (const map_geometry_t &entry : map.geometry)
   {
+    const map_entity_t *owner = map.find_by_uid(get_owner_uid(entry.value));
+    if (owner != nullptr && entities::entity_as<entities::Mover_Entity>(owner->entity.get()))
+      continue;
+
     switch (get_kind(entry.value))
     {
     case geometry_kind_t::Static_Mesh:

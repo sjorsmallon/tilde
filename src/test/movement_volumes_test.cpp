@@ -19,6 +19,7 @@
 #include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 #include "movement_volumes.hpp"
+#include "movers.hpp"
 #include "shapes.hpp"
 
 #include <cstdio>
@@ -92,6 +93,17 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   // candidate in turn is the whole map this pin needs -- no map_t, no BVH.
   shared::disabled_geometry_t disabled;
   shared::collect_disabled_geometry(system, spawned_uids, disabled);
+
+  std::vector<shared::mover_t> movers;
+  shared::collect_movers(system, {}, {}, 1, 60.0f, movers);
+  std::set<entities::entity_type> types_that_produced_a_mover;
+  for (const shared::mover_t& mover : movers)
+  {
+    const entities::Entity* entity = system.try_find(mover.uid);
+    check(entity != nullptr, "every mover names an entity that exists");
+    if (entity != nullptr)
+      types_that_produced_a_mover.insert(entity->type);
+  }
   check(disabled.size() == spawned_uids.size(),
         "the bitset is sized to the geometry list it was cut for");
 
@@ -102,15 +114,16 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     const bool predicted = entities::entity_type_is_predicted(type);
     const bool volume    = types_that_produced_a_volume.count(type) > 0;
     const bool bit       = index < disabled.size() && disabled[index] != 0;
+    const bool mover     = types_that_produced_a_mover.count(type) > 0;
 
-    printf("    %-26s predicted=%s volume=%s disabled_bit=%s\n",
+    printf("    %-26s predicted=%s volume=%s disabled_bit=%s mover=%s\n",
            entities::entity_info(type).classname, predicted ? "yes" : "no ",
-           volume ? "yes" : "no ", bit ? "yes" : "no ");
+           volume ? "yes" : "no ", bit ? "yes" : "no ", mover ? "yes" : "no ");
 
-    check(predicted == (volume || bit),
-          predicted ? "a @predicted type feeds one of the two collects"
-                    : "a type that is not @predicted feeds neither");
-    check(!(volume && bit), "no type feeds both collects");
+    check(predicted == (volume || bit || mover),
+          predicted ? "a @predicted type feeds one of the three collects"
+                    : "a type that is not @predicted feeds none");
+    check((int)volume + (int)bit + (int)mover <= 1, "no type feeds two collects");
   }
 
   // Which one, for the two that exist -- the half the loop above cannot say,
@@ -119,6 +132,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a jump pad is a movement volume");
   check(!types_that_produced_a_volume.count(entities::entity_type::Brush_Entity),
         "a brush entity is not a movement volume");
+  check(types_that_produced_a_mover.count(entities::entity_type::Mover_Entity) > 0,
+        "a mover entity is a mover");
 
   // Not vacuous: if nothing is @predicted the loop above passes by saying
   // nothing, which is the one way this pin could quietly stop measuring.
@@ -197,11 +212,34 @@ static void test_a_switch_reaches_the_geometry_it_owns()
         "a destroyed owner leaves its geometry solid");
 }
 
+static void test_a_drawn_mover_carries_its_rider_by_the_same_fraction()
+{
+  const shared::path_pose_t at_tick   = {.position = {0, 0, 0}};
+  const shared::path_pose_t next_tick = {.position = {0, 10, 0},
+                                         .orientation = linalg::from_axis_angle({0, 1, 0}, 30.0f)};
+  const shared::path_pose_t drawn = shared::blend_path_poses(at_tick, next_tick, 0.5f);
+  check(linalg::length(drawn.position - linalg::vec3f{0, 5, 0}) < 1e-4f, "half a tick is half the travel");
+
+  const linalg::vec3f on_the_axis = {0, 3, 0};
+  check(linalg::length(shared::carry_point_between_poses(at_tick, drawn, on_the_axis) -
+                       linalg::vec3f{0, 8, 0}) < 1e-4f,
+        "a rider on the axis rises with the lift");
+  check(linalg::length(shared::carry_point_between_poses(at_tick, at_tick, {40, 0, 7}) -
+                       linalg::vec3f{40, 0, 7}) < 1e-4f,
+        "no fraction carries nothing");
+
+  const linalg::vec3f off_axis = {40, 0, 0};
+  const linalg::vec3f carried  = shared::carry_point_between_poses(at_tick, next_tick, off_axis);
+  check(std::abs(linalg::length(linalg::vec3f{carried.x, 0, carried.z}) - 40.0f) < 1e-3f,
+        "a turning lift swings its rider at the same radius");
+}
+
 int main()
 {
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
   test_a_switch_reaches_the_geometry_it_owns();
+  test_a_drawn_mover_carries_its_rider_by_the_same_fraction();
 
   printf("\nmovement_volumes_test %s (%d)\n", failure_count == 0 ? "PASSED" : "FAILED",
          failure_count);

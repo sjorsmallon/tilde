@@ -193,6 +193,77 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
   return true;
 }
 
+namespace
+{
+
+// The broad phase is the AABB, as in resolve_collisions; a primitive carrying
+// its hull is then clipped against it for the real hit. No planes means the
+// BVH was built to pick by bound (the editor's), so the AABB hit stands. A
+// negative t is an origin inside the solid: a hit at zero distance.
+bool intersect_ray_primitive(const BVH_Primitive &prim, const vec3f &origin, const vec3f &dir,
+                             float nearest_so_far, ray_hit_result_t &out_hit)
+{
+  float t_prim;
+  float t_exit_prim;
+  vec3f normal_prim;
+  if (!intersect_ray_aabb(origin, dir, prim.aabb.min, prim.aabb.max, t_prim, t_exit_prim,
+                          normal_prim))
+    return false;
+  if (t_prim > nearest_so_far)
+    return false;
+  if (!prim.collision_planes.empty() &&
+      !intersect_ray_convex_hull(prim.collision_planes, origin, dir, t_prim, t_exit_prim,
+                                 normal_prim))
+    return false;
+
+  out_hit.hit    = true;
+  out_hit.t      = std::max(t_prim, 0.0f);
+  out_hit.t_exit = t_exit_prim;
+  out_hit.id     = prim.id;
+  out_hit.normal = normal_prim;
+  return true;
+}
+
+// Every leaf primitive the ray reaches whose node entry is not past `cutoff()`.
+template <typename Cutoff_T, typename Visit_T>
+void walk_ray(const Bounding_Volume_Hierarchy &bvh, const vec3f &origin, const vec3f &dir,
+              Span<const uint8_t> disabled_geometry, Cutoff_T cutoff, Visit_T visit)
+{
+  std::vector<uint32_t> node_stack;
+  node_stack.reserve(64);
+  node_stack.push_back(bvh.root_node_idx);
+
+  while (!node_stack.empty())
+  {
+    const BVH_Node &node = bvh.nodes[node_stack.back()];
+    node_stack.pop_back();
+
+    float t_node_hit;
+    if (!intersect_ray_aabb(origin, dir, node.aabb.min, node.aabb.max, t_node_hit))
+      continue;
+    if (t_node_hit > cutoff())
+      continue;
+
+    if (!node.is_leaf())
+    {
+      if (node.right)
+        node_stack.push_back(node.right);
+      if (node.left)
+        node_stack.push_back(node.left);
+      continue;
+    }
+
+    for (uint32_t i = 0; i < node.entity_count; ++i)
+    {
+      const BVH_Primitive &prim = bvh.primitives[node.first_entity_index + i];
+      if (!collision_is_disabled(disabled_geometry, prim.id))
+        visit(prim);
+    }
+  }
+}
+
+} // namespace
+
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                        const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit,
                        Span<const uint8_t> disabled_geometry)
@@ -205,102 +276,45 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
   out_hit.t_exit = FLT_MAX;
   out_hit.normal = {0.f, 0.f, 0.f};
 
-  // Use a simple stack for traversal to avoid deep recursion overhead
-  // Stack stores node indices
-  // Estimate capacity: 64 should be plenty for balanced tree of depth 64 (2^64
-  // entities!)
-  std::vector<uint32_t> node_stack;
-  node_stack.clear();
-  node_stack.reserve(64);
+  walk_ray(bvh, origin, dir, disabled_geometry, [&] { return out_hit.t; },
+           [&](const BVH_Primitive &prim)
+           {
+             ray_hit_result_t candidate;
+             if (intersect_ray_primitive(prim, origin, dir, out_hit.t, candidate) &&
+                 candidate.t < out_hit.t)
+               out_hit = candidate;
+           });
+  return out_hit.hit;
+}
 
-  node_stack.push_back(bvh.root_node_idx);
+void bvh_intersect_ray_all(const Bounding_Volume_Hierarchy &bvh, const vec3f& origin,
+                           const vec3f& dir, std::vector<ray_hit_result_t> &out_hits,
+                           Span<const uint8_t> disabled_geometry)
+{
+  out_hits.clear();
+  if (bvh.nodes.empty())
+    return;
 
-  bool hit_anything = false;
+  walk_ray(bvh, origin, dir, disabled_geometry, [] { return FLT_MAX; },
+           [&](const BVH_Primitive &prim)
+           {
+             ray_hit_result_t candidate;
+             if (!intersect_ray_primitive(prim, origin, dir, FLT_MAX, candidate))
+               return;
+             for (ray_hit_result_t &existing : out_hits)
+             {
+               if (existing.id.type == candidate.id.type && existing.id.index == candidate.id.index)
+               {
+                 if (candidate.t < existing.t)
+                   existing = candidate;
+                 return;
+               }
+             }
+             out_hits.push_back(candidate);
+           });
 
-  while (!node_stack.empty())
-  {
-    uint32_t node_idx = node_stack.back();
-    node_stack.pop_back();
-
-    const BVH_Node &node = bvh.nodes[node_idx];
-
-    float t_node_hit;
-    if (!intersect_ray_aabb(origin, dir, node.aabb.min, node.aabb.max,
-                            t_node_hit))
-    {
-      continue;
-    }
-
-    // Optimization: if the closest hit so far is closer than this node, skip
-    // NOTE: This assumes t_node_hit is the entry point.
-    // intersect_ray_aabb returns the entry point even if negative (start
-    // inside). If we start inside, t_node_hit < 0. We should still check
-    // children. If t_node_hit > out_hit.t, then the box is further than our
-    // closest hit.
-    if (t_node_hit > out_hit.t)
-      continue;
-
-    if (node.is_leaf())
-    {
-      // Check primitives in leaf
-      for (uint32_t i = 0; i < node.entity_count; ++i)
-      {
-        const BVH_Primitive &prim = bvh.primitives[node.first_entity_index + i];
-
-        if (collision_is_disabled(disabled_geometry, prim.id))
-          continue;
-
-        // The AABB is the broad phase here exactly as it is in
-        // resolve_collisions: it rejects cheaply, and a primitive that carries
-        // its hull is then clipped against it for the real hit. Reporting the
-        // bound as the answer is what made a brush navmesh as its box -- the
-        // extruded shape was in the BVH the whole time, just never consulted.
-        float t_prim;
-        float t_exit_prim;
-        vec3f normal_prim;
-        if (!intersect_ray_aabb(origin, dir, prim.aabb.min, prim.aabb.max, t_prim,
-                                t_exit_prim, normal_prim))
-          continue;
-
-        if (t_prim > out_hit.t)
-          continue; // the bound alone is already further than the closest hit
-
-        // No planes means the caller built this BVH to pick by bound (the
-        // editor's does), so the AABB hit stands.
-        if (!prim.collision_planes.empty() &&
-            !intersect_ray_convex_hull(prim.collision_planes, origin, dir, t_prim,
-                                       t_exit_prim, normal_prim))
-          continue;
-
-        // A negative t is an origin inside the solid, which counts as a hit at
-        // zero distance -- that is what picking from inside a box means.
-        if (t_prim < 0.0f)
-          t_prim = 0.0f;
-
-        if (t_prim < out_hit.t)
-        {
-          out_hit.hit    = true;
-          out_hit.t      = t_prim;
-          out_hit.t_exit = t_exit_prim;
-          out_hit.id     = prim.id;
-          out_hit.normal = normal_prim;
-          hit_anything   = true;
-        }
-      }
-    }
-    else
-    {
-      // Internal Node: Push children
-      // Optimization: Sort children by distance?
-      // For simplest solution: just push both.
-      if (node.right)
-        node_stack.push_back(node.right);
-      if (node.left)
-        node_stack.push_back(node.left);
-    }
-  }
-
-  return hit_anything;
+  std::sort(out_hits.begin(), out_hits.end(),
+            [](const ray_hit_result_t &a, const ray_hit_result_t &b) { return a.t < b.t; });
 }
 
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const aabb_bounds_t &aabb,

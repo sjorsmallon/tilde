@@ -131,6 +131,14 @@ const uint32_t tonemap_frag_spv[] =
 #include "tonemap.frag.spv.h"
     ;
 
+const uint32_t outline_mask_frag_spv[] =
+#include "outline_mask.frag.spv.h"
+    ;
+
+const uint32_t outline_frag_spv[] =
+#include "outline.frag.spv.h"
+    ;
+
 const uint32_t skybox_vert_spv[] =
 #include "skybox.vert.spv.h"
     ;
@@ -797,6 +805,24 @@ static VkSampler      g_hdr_sampler                              = VK_NULL_HANDL
 static VkRenderPass g_scene_render_pass   = VK_NULL_HANDLE;
 static VkRenderPass g_present_render_pass = VK_NULL_HANDLE;
 
+// The selection outline: a per-frame mask the outlined draws render into after the
+// scene pass, against the scene's depth, and the present pass edge-detects it.
+constexpr VkFormat OUTLINE_MASK_FORMAT         = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr float    OUTLINE_SELECTED_RADIUS_PIXELS = 3.f;
+constexpr float    OUTLINE_HOVERED_RADIUS_PIXELS  = 3.f;
+constexpr float    OUTLINE_OCCLUDED_ALPHA      = 0.35f;
+static VkImage        g_outline_mask_image[MAX_FRAMES_IN_FLIGHT]        = {};
+static VkDeviceMemory g_outline_mask_memory[MAX_FRAMES_IN_FLIGHT]       = {};
+static VkImageView    g_outline_mask_view[MAX_FRAMES_IN_FLIGHT]         = {};
+static VkFramebuffer  g_outline_mask_framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
+static VkRenderPass   g_outline_mask_render_pass                        = VK_NULL_HANDLE;
+static VkPipeline     g_outline_mask_pipelines[2][2][2]                 = {}; // [skinned][hovered][visible]
+static VkDescriptorSetLayout g_outline_ds_layout                        = VK_NULL_HANDLE;
+static VkDescriptorPool      g_outline_pool                             = VK_NULL_HANDLE;
+static VkDescriptorSet       g_outline_sets[MAX_FRAMES_IN_FLIGHT]       = {};
+static VkPipelineLayout      g_outline_pipeline_layout                  = VK_NULL_HANDLE;
+static VkPipeline            g_outline_pipeline                         = VK_NULL_HANDLE;
+
 // --- Shadow maps (lighting_def.md gate 9) ---
 //
 // One D32 array image, every shadow map a layer of it, rendered through a
@@ -953,7 +979,9 @@ static QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
 // Forward declarations
 static void create_depth_resources();
 static void create_hdr_targets();
+static void create_outline_targets();
 static void write_tonemap_descriptor_sets();
+static void write_outline_descriptor_sets();
 
 static void cleanup_swapchain()
 {
@@ -972,6 +1000,20 @@ static void cleanup_swapchain()
     g_hdr_view[frame]           = VK_NULL_HANDLE;
     g_hdr_image[frame]          = VK_NULL_HANDLE;
     g_hdr_memory[frame]         = VK_NULL_HANDLE;
+
+    if (g_outline_mask_framebuffers[frame] != VK_NULL_HANDLE)
+      vkDestroyFramebuffer(g_device, g_outline_mask_framebuffers[frame], nullptr);
+    if (g_outline_mask_view[frame] != VK_NULL_HANDLE)
+      vkDestroyImageView(g_device, g_outline_mask_view[frame], nullptr);
+    if (g_outline_mask_image[frame] != VK_NULL_HANDLE)
+      vkDestroyImage(g_device, g_outline_mask_image[frame], nullptr);
+    if (g_outline_mask_memory[frame] != VK_NULL_HANDLE)
+      vkFreeMemory(g_device, g_outline_mask_memory[frame], nullptr);
+
+    g_outline_mask_framebuffers[frame] = VK_NULL_HANDLE;
+    g_outline_mask_view[frame]         = VK_NULL_HANDLE;
+    g_outline_mask_image[frame]        = VK_NULL_HANDLE;
+    g_outline_mask_memory[frame]       = VK_NULL_HANDLE;
   }
 
   // Destroy depth resources
@@ -1170,6 +1212,15 @@ static void create_framebuffers()
     {
       fatal_error("[renderer] could not create the scene framebuffer");
     }
+
+    VkImageView outline_attachments[] = {g_outline_mask_view[frame], g_depth_view};
+    framebuffer_info.renderPass       = g_outline_mask_render_pass;
+    framebuffer_info.pAttachments     = outline_attachments;
+    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr,
+                            &g_outline_mask_framebuffers[frame]) != VK_SUCCESS)
+    {
+      fatal_error("[renderer] could not create the outline mask framebuffer");
+    }
   }
 
   g_swapchain_framebuffers.resize(g_swapchain_image_views.size());
@@ -1204,8 +1255,10 @@ static void rebuild_swapchain()
   create_swapchain();
   create_depth_resources();
   create_hdr_targets();
+  create_outline_targets();
   create_framebuffers();
   write_tonemap_descriptor_sets();
+  write_outline_descriptor_sets();
 }
 
 // --- Internal AABB Functions ---
@@ -1367,6 +1420,49 @@ static void create_hdr_targets()
     view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     if (vkCreateImageView(g_device, &view_info, nullptr, &g_hdr_view[frame]) != VK_SUCCESS)
       fatal_error("[renderer] could not create the HDR scene target view");
+  }
+}
+
+static void create_outline_targets()
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType     = VK_IMAGE_TYPE_2D;
+    image_info.format        = OUTLINE_MASK_FORMAT;
+    image_info.extent        = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
+    image_info.mipLevels     = 1;
+    image_info.arrayLayers   = 1;
+    image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if (vkCreateImage(g_device, &image_info, nullptr, &g_outline_mask_image[frame]) != VK_SUCCESS)
+      fatal_error("[renderer] could not create the outline mask");
+
+    VkMemoryRequirements requirements;
+    vkGetImageMemoryRequirements(g_device, g_outline_mask_image[frame], &requirements);
+
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize  = requirements.size;
+    allocation.memoryTypeIndex =
+        find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(g_device, &allocation, nullptr, &g_outline_mask_memory[frame]) !=
+        VK_SUCCESS)
+      fatal_error("[renderer] could not allocate the outline mask");
+
+    vkBindImageMemory(g_device, g_outline_mask_image[frame], g_outline_mask_memory[frame], 0);
+
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image            = g_outline_mask_image[frame];
+    view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format           = OUTLINE_MASK_FORMAT;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vkCreateImageView(g_device, &view_info, nullptr, &g_outline_mask_view[frame]) !=
+        VK_SUCCESS)
+      fatal_error("[renderer] could not create the outline mask view");
   }
 }
 
@@ -2750,6 +2846,326 @@ static void destroy_tonemap_resources()
     vkDestroyDescriptorSetLayout(g_device, g_tonemap_ds_layout, nullptr);
   if (g_hdr_sampler)
     vkDestroySampler(g_device, g_hdr_sampler, nullptr);
+}
+
+// --- The selection outline ---
+
+struct outline_push_constants_t
+{
+  float selected_color[4];
+  float hovered_color[4];
+  float selected_radius;
+  float hovered_radius;
+  float occluded_alpha;
+};
+
+static void write_outline_descriptor_sets()
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    if (g_outline_sets[frame] == VK_NULL_HANDLE)
+      continue;
+
+    VkDescriptorImageInfo image{};
+    image.sampler     = g_hdr_sampler;
+    image.imageView   = g_outline_mask_view[frame];
+    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet          = g_outline_sets[frame];
+    write.dstBinding      = 0;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo      = &image;
+    vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+  }
+}
+
+static VkShaderModule create_shader_module_or_die(const uint32_t* code, size_t size,
+                                                  const char* what)
+{
+  VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  info.codeSize         = size;
+  info.pCode            = code;
+  VkShaderModule module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &info, nullptr, &module) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} shader module", what);
+  return module;
+}
+
+static VkPipeline create_outline_mask_pipeline(bool skinned, bool hovered, bool visible)
+{
+  const VkShaderModule vert_module =
+      skinned ? create_shader_module_or_die(mesh_skinned_vert_spv, sizeof(mesh_skinned_vert_spv),
+                                            "skinned outline mask vertex")
+              : create_shader_module_or_die(mesh_vert_spv, sizeof(mesh_vert_spv),
+                                            "outline mask vertex");
+  const VkShaderModule frag_module = create_shader_module_or_die(
+      outline_mask_frag_spv, sizeof(outline_mask_frag_spv), "outline mask fragment");
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+       vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+
+  VkVertexInputBindingDescription bindings[2]{};
+  bindings[0]            = {0, sizeof(vertex_xnu), VK_VERTEX_INPUT_RATE_VERTEX};
+  uint32_t binding_count = 1;
+
+  VkVertexInputAttributeDescription attributes[5]{};
+  attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, position)};
+  attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex_xnu, normal)};
+  attributes[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex_xnu, uv)};
+  uint32_t attribute_count = 3;
+  if (skinned)
+  {
+    bindings[binding_count++] = {1, sizeof(assets::vertex_skin_t), VK_VERTEX_INPUT_RATE_VERTEX};
+    attributes[attribute_count++] = {3, 1, VK_FORMAT_R8G8B8A8_UINT,
+                                     offsetof(assets::vertex_skin_t, bone_indices)};
+    attributes[attribute_count++] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                                     offsetof(assets::vertex_skin_t, bone_weights)};
+  }
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+  vertex_input.vertexBindingDescriptionCount   = binding_count;
+  vertex_input.pVertexBindingDescriptions      = bindings;
+  vertex_input.vertexAttributeDescriptionCount = attribute_count;
+  vertex_input.pVertexAttributeDescriptions    = attributes;
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth               = 1.0f;
+  rasterizer.cullMode                = VK_CULL_MODE_NONE;
+  rasterizer.frontFace               = HOUSE_FRONT_FACE;
+  rasterizer.depthBiasEnable         = visible ? VK_TRUE : VK_FALSE;
+  rasterizer.depthBiasConstantFactor = visible ? -2.0f : 0.0f;
+  rasterizer.depthBiasSlopeFactor    = visible ? -1.0f : 0.0f;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+  depth_stencil.depthTestEnable  = visible ? VK_TRUE : VK_FALSE;
+  depth_stencil.depthWriteEnable = VK_FALSE;
+  depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  if (hovered)
+    blend_attachment.colorWriteMask = visible ? VK_COLOR_COMPONENT_A_BIT : VK_COLOR_COMPONENT_B_BIT;
+  else
+    blend_attachment.colorWriteMask = visible ? VK_COLOR_COMPONENT_G_BIT : VK_COLOR_COMPONENT_R_BIT;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments    = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 2;
+  pipeline_info.pStages             = stages;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_mesh_pipeline_layout;
+  pipeline_info.renderPass          = g_outline_mask_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create an outline mask pipeline");
+
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
+static VkPipeline create_outline_pipeline()
+{
+  const VkShaderModule vert_module =
+      create_shader_module_or_die(tonemap_vert_spv, sizeof(tonemap_vert_spv), "outline vertex");
+  const VkShaderModule frag_module =
+      create_shader_module_or_die(outline_frag_spv, sizeof(outline_frag_spv), "outline fragment");
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+       vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth   = 1.0f;
+  rasterizer.cullMode    = VK_CULL_MODE_NONE;
+  rasterizer.frontFace   = HOUSE_FRONT_FACE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  blend_attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  blend_attachment.blendEnable         = VK_TRUE;
+  blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  blend_attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+  blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  blend_attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments    = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 2;
+  pipeline_info.pStages             = stages;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_outline_pipeline_layout;
+  pipeline_info.renderPass          = g_present_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the outline pipeline");
+
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
+static void create_outline_resources()
+{
+  VkDescriptorSetLayoutBinding binding{};
+  binding.binding         = 0;
+  binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  binding.descriptorCount = 1;
+  binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo ds_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  ds_layout_info.bindingCount = 1;
+  ds_layout_info.pBindings    = &binding;
+  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_outline_ds_layout) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the outline descriptor set layout");
+
+  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = MAX_FRAMES_IN_FLIGHT;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_outline_pool) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the outline descriptor pool");
+
+  VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+    layouts[frame] = g_outline_ds_layout;
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_outline_pool;
+  allocation.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+  allocation.pSetLayouts        = layouts;
+  if (vkAllocateDescriptorSets(g_device, &allocation, g_outline_sets) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the outline descriptor sets");
+
+  write_outline_descriptor_sets();
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(outline_push_constants_t);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = 1;
+  layout_info.pSetLayouts            = &g_outline_ds_layout;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_outline_pipeline_layout) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the outline pipeline layout");
+
+  g_outline_pipeline = create_outline_pipeline();
+  for (int skinned = 0; skinned < 2; ++skinned)
+    for (int hovered = 0; hovered < 2; ++hovered)
+      for (int visible = 0; visible < 2; ++visible)
+        g_outline_mask_pipelines[skinned][hovered][visible] =
+            create_outline_mask_pipeline(skinned != 0, hovered != 0, visible != 0);
+}
+
+static void destroy_outline_resources()
+{
+  for (int skinned = 0; skinned < 2; ++skinned)
+    for (int hovered = 0; hovered < 2; ++hovered)
+      for (int visible = 0; visible < 2; ++visible)
+        if (g_outline_mask_pipelines[skinned][hovered][visible])
+          vkDestroyPipeline(g_device, g_outline_mask_pipelines[skinned][hovered][visible],
+                            nullptr);
+  if (g_outline_pipeline)
+    vkDestroyPipeline(g_device, g_outline_pipeline, nullptr);
+  if (g_outline_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_outline_pipeline_layout, nullptr);
+  if (g_outline_pool)
+    vkDestroyDescriptorPool(g_device, g_outline_pool, nullptr);
+  if (g_outline_ds_layout)
+    vkDestroyDescriptorSetLayout(g_device, g_outline_ds_layout, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -6595,6 +7011,84 @@ static void apply_viewport(VkCommandBuffer cmd, const viewport_t &viewport)
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
+static bool pass_has_outlined_draws(const view_pass_t& pass)
+{
+  for (const mesh_draw_t& draw : pass.draws)
+    if (draw.outline != outline_t::none)
+      return true;
+  return false;
+}
+
+static void record_outline_mask_draws(VkCommandBuffer cmd, const view_pass_t& pass,
+                                      uint32_t scene_block_offset,
+                                      Span<const frame_uniform_allocation_t> skinning)
+{
+  const VkDescriptorSet pass_set = resolve_pass_set(pass.lightmap);
+  if (pass_set == VK_NULL_HANDLE)
+    return;
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout,
+                          PASS_DESCRIPTOR_SET, 1, &pass_set, 1, &scene_block_offset);
+
+  for (int visible = 0; visible < 2; ++visible)
+  {
+    for (uint32_t draw_index = 0; draw_index < pass.draws.size(); ++draw_index)
+    {
+      const mesh_draw_t& draw = pass.draws[draw_index];
+      if (draw.outline == outline_t::none || !draw.mesh.valid() ||
+          draw.mesh.index >= g_meshes.size())
+        continue;
+
+      const gpu_mesh_t& mesh    = g_meshes[draw.mesh.index];
+      const bool        skinned = has_layout(mesh.layout, vertex_layout_t::skinned);
+      const bool        hovered = draw.outline == outline_t::hovered;
+      if (skinned && !skinning[draw_index].valid())
+        continue;
+
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        g_outline_mask_pipelines[skinned ? 1 : 0][hovered ? 1 : 0][visible]);
+
+      const VkDeviceSize offsets[1] = {0};
+      vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer, offsets);
+      if (skinned)
+      {
+        vkCmdBindVertexBuffers(cmd, 1, 1, &mesh.skin_buffer, offsets);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mesh_pipeline_layout, 1, 1,
+                                &skinning[draw_index].set, 1, &skinning[draw_index].dynamic_offset);
+      }
+      vkCmdBindIndexBuffer(cmd, mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+      mesh_push_constants_t push{};
+      memcpy(push.model, &draw.transform, sizeof(push.model));
+      pack_normal_matrix(draw.transform, push);
+      vkCmdPushConstants(cmd, g_mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                         &push);
+
+      for (const gpu_submesh_t& submesh : mesh.submeshes)
+        vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);
+    }
+  }
+}
+
+static void record_outline_composite(VkCommandBuffer cmd, const view_pass_t& pass)
+{
+  apply_viewport(cmd, pass.view.viewport);
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_outline_pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_outline_pipeline_layout, 0, 1,
+                          &g_outline_sets[g_current_frame_idx_in_swapchain], 0, nullptr);
+
+  const color_t selected = pass.selected_outline_color;
+  const color_t hovered  = pass.hovered_outline_color;
+  const outline_push_constants_t push{
+      {selected.r / 255.0f, selected.g / 255.0f, selected.b / 255.0f, selected.a / 255.0f},
+      {hovered.r / 255.0f, hovered.g / 255.0f, hovered.b / 255.0f, hovered.a / 255.0f},
+      OUTLINE_SELECTED_RADIUS_PIXELS * std::max(1.0f, display_scale()),
+      OUTLINE_HOVERED_RADIUS_PIXELS * std::max(1.0f, display_scale()),
+      OUTLINE_OCCLUDED_ALPHA};
+  vkCmdPushConstants(cmd, g_outline_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
+                     &push);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
 view_matrices_t view_matrices(const render_view_t &view)
 {
   float aspect = view.viewport.dimensions.x * g_swapchain_extent.width /
@@ -6994,8 +7488,16 @@ static void project_debug_texts(const render_view_t &view, const debug_draw_list
         screen->y > io.DisplaySize.y)
       continue;
 
-    ImGui::GetBackgroundDrawList()->AddText(ImVec2(screen->x, screen->y), to_abgr(entry.color),
-                                            entry.text.c_str());
+    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
+    if (entry.backed)
+    {
+      const ImVec2 text_size = ImGui::CalcTextSize(entry.text.c_str());
+      const float  pad       = 4.0f;
+      draw_list->AddRectFilled(ImVec2(screen->x - pad, screen->y - pad),
+                               ImVec2(screen->x + text_size.x + pad, screen->y + text_size.y + pad),
+                               IM_COL32(0, 0, 0, 200), 3.0f);
+    }
+    draw_list->AddText(ImVec2(screen->x, screen->y), to_abgr(entry.color), entry.text.c_str());
   }
 }
 
@@ -7321,7 +7823,7 @@ bool init(SDL_Window *window)
   attachments[1].format = g_depth_format;
   attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE; // the outline mask pass tests against it
   attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -7349,6 +7851,7 @@ bool init(SDL_Window *window)
   dependencies[0].dstSubpass = 0;
   dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                                  VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
   dependencies[0].srcAccessMask = 0;
   dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
@@ -7424,8 +7927,74 @@ bool init(SDL_Window *window)
     return false;
   }
 
+  {
+    VkAttachmentDescription outline_attachments[2] = {};
+    outline_attachments[0].format         = OUTLINE_MASK_FORMAT;
+    outline_attachments[0].samples        = VK_SAMPLE_COUNT_1_BIT;
+    outline_attachments[0].loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    outline_attachments[0].storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    outline_attachments[0].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    outline_attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    outline_attachments[0].initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    outline_attachments[0].finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    outline_attachments[1].format         = g_depth_format;
+    outline_attachments[1].samples        = VK_SAMPLE_COUNT_1_BIT;
+    outline_attachments[1].loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
+    outline_attachments[1].storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    outline_attachments[1].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    outline_attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    outline_attachments[1].initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    outline_attachments[1].finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference outline_color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference outline_depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+    VkSubpassDescription outline_subpass{};
+    outline_subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    outline_subpass.colorAttachmentCount    = 1;
+    outline_subpass.pColorAttachments       = &outline_color_ref;
+    outline_subpass.pDepthStencilAttachment = &outline_depth_ref;
+
+    VkSubpassDependency outline_dependencies[2] = {};
+    outline_dependencies[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+    outline_dependencies[0].dstSubpass    = 0;
+    outline_dependencies[0].srcStageMask  = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    outline_dependencies[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    outline_dependencies[0].dstStageMask  = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    outline_dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    outline_dependencies[1].srcSubpass    = 0;
+    outline_dependencies[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+    outline_dependencies[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    outline_dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    outline_dependencies[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    outline_dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo outline_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    outline_pass_info.attachmentCount = 2;
+    outline_pass_info.pAttachments    = outline_attachments;
+    outline_pass_info.subpassCount    = 1;
+    outline_pass_info.pSubpasses      = &outline_subpass;
+    outline_pass_info.dependencyCount = 2;
+    outline_pass_info.pDependencies   = outline_dependencies;
+
+    if (vkCreateRenderPass(g_device, &outline_pass_info, nullptr, &g_outline_mask_render_pass) !=
+        VK_SUCCESS)
+    {
+      log_error("Failed to create the outline mask render pass!");
+      return false;
+    }
+  }
+
   create_depth_resources();
   create_hdr_targets();
+  create_outline_targets();
   create_framebuffers();
 
   // Command Pool
@@ -7447,6 +8016,7 @@ bool init(SDL_Window *window)
   create_mesh_resources();
   create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
   create_tonemap_resources();
+  create_outline_resources(); // borrows the mesh pipeline layout and the HDR sampler
   create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
   create_default_resources();
@@ -7585,6 +8155,7 @@ void shutdown()
   destroy_debug_resources();
   destroy_ui_resources();
   destroy_tonemap_resources();
+  destroy_outline_resources();
   destroy_skybox_resources();
   destroy_shadow_resources();
   cleanup_registered_resources();
@@ -7594,6 +8165,7 @@ void shutdown()
 
   vkDestroyRenderPass(g_device, g_scene_render_pass, nullptr);
   vkDestroyRenderPass(g_device, g_present_render_pass, nullptr);
+  vkDestroyRenderPass(g_device, g_outline_mask_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);
 
   if (g_surface)
@@ -7823,6 +8395,38 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   vkCmdEndRenderPass(cmd);
 
+  // 5b. The selection outline's mask, against the depth the scene pass just wrote.
+  bool any_outlined = false;
+  for (const view_pass_t& pass : passes)
+    any_outlined = any_outlined || pass_has_outlined_draws(pass);
+
+  if (any_outlined)
+  {
+    VkRenderPassBeginInfo outline_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    outline_pass_info.renderPass        = g_outline_mask_render_pass;
+    outline_pass_info.framebuffer       = g_outline_mask_framebuffers[g_current_frame_idx_in_swapchain];
+    outline_pass_info.renderArea.extent = g_swapchain_extent;
+
+    VkClearValue outline_clear{};
+    outline_pass_info.clearValueCount = 1;
+    outline_pass_info.pClearValues    = &outline_clear;
+
+    vkCmdBeginRenderPass(cmd, &outline_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+    for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index)
+    {
+      const view_pass_t& pass = passes[pass_index];
+      if (!pass_has_outlined_draws(pass))
+        continue;
+      const prepared_pass_t& prepared = g_prepared_passes[pass_index];
+      apply_viewport(cmd, pass.view.viewport);
+      record_outline_mask_draws(cmd, pass, prepared.scene_block_offset,
+                                Span<const frame_uniform_allocation_t>(
+                                    g_draw_skinning.data() + prepared.skinning_base,
+                                    pass.draws.size()));
+    }
+    vkCmdEndRenderPass(cmd);
+  }
+
   // 6. The PRESENT pass. The tonemap draw is first and covers every pixel, which
   //    is why the attachment needs no clear.
   VkRenderPassBeginInfo present_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -7853,6 +8457,12 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   vkCmdPushConstants(cmd, g_tonemap_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                      sizeof(tonemap_push), &tonemap_push);
   vkCmdDraw(cmd, 3, 1, 0, 0);
+
+  // Past the curve for the UI's reason: the outline colour is authored in display space.
+  if (any_outlined)
+    for (const view_pass_t& pass : passes)
+      if (pass_has_outlined_draws(pass))
+        record_outline_composite(cmd, pass);
 
   // 7. The screen-space UI, over the tonemapped image and UNDER ImGui. On the
   //    FAR side of the curve on purpose: UI colour is authored in display space,

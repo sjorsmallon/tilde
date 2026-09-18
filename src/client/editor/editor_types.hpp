@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace client
 {
@@ -108,6 +109,11 @@ struct editor_context_t
   editor::grid_settings_t *grid = nullptr;
 
   entity_draw_settings_t entity_draw_settings;
+
+  float tickrate = 60.0f;
+
+  // What the tool being left had selected, so the next one can start from it.
+  std::vector<shared::entity_uid_t> selection_handed_over;
 
   // A panel OUTSIDE the tools asking for an object to be selected -- the Map
   // Info panel's connection list is the one caller, and clicking a row there has

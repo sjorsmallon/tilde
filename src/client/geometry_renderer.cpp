@@ -308,7 +308,8 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
 // Draw a surface's mesh if it resolves. False means "no mesh — use the kind's
 // own primitive".
 bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
-                       renderer::mesh_handle_t mesh, const linalg::mat4f &transform)
+                       renderer::mesh_handle_t mesh, const linalg::mat4f &transform,
+                       const linalg::mat4f* moved_by)
 {
   if (!surface.visible)
     return true; // resolved to "draw nothing", which is not a fallback case
@@ -318,8 +319,9 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 
   renderer::mesh_draw_t draw{};
   draw.mesh          = mesh;
-  draw.transform     = transform;
-  draw.shadow_caster = renderer::shadow_caster_t::static_geometry;
+  draw.transform     = moved_by != nullptr ? *moved_by * transform : transform;
+  draw.shadow_caster = moved_by != nullptr ? renderer::shadow_caster_t::dynamic_object
+                                           : renderer::shadow_caster_t::static_geometry;
 
   if (surface.is_wireframe)
   {
@@ -339,7 +341,7 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
-                   const shared::lightmap_t &lightmap)
+                   const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by)
 {
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
 
@@ -363,12 +365,12 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
       char                   cache_key_buffer[48];
       const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
       if (draw_surface_mesh(draws, surface, get_render_mesh(assets::find_mesh_in_cache(cache_key)),
-                            linalg::mat4f::identity()))
+                            linalg::mat4f::identity(), moved_by))
         return;
     }
     else if (draw_surface_mesh(draws, surface,
                                get_render_mesh(shared::resolve_surface_mesh(surface)),
-                               shared::static_mesh_transform(static_mesh)))
+                               shared::static_mesh_transform(static_mesh), moved_by))
       return;
 
     // A static mesh with no resolvable mesh has nothing to draw but its bound —
@@ -386,7 +388,8 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
         draw_surface_mesh(draws, surface,
                           get_render_mesh(shared::resolve_surface_mesh(surface)),
                           linalg::compose_transform(shared::get_position(geometry), {0, 0, 0, 1},
-                                                    {1, 1, 1})))
+                                                    {1, 1, 1}),
+                          moved_by))
       return;
 
     if (!surface.visible)
@@ -412,8 +415,9 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     // put in one, which is the whole point: the vertices ARE the position.
     renderer::mesh_draw_t draw{};
     draw.mesh          = mesh;
-    draw.transform     = linalg::mat4f::identity();
-    draw.shadow_caster = renderer::shadow_caster_t::static_geometry;
+    draw.transform     = moved_by != nullptr ? *moved_by : linalg::mat4f::identity();
+    draw.shadow_caster = moved_by != nullptr ? renderer::shadow_caster_t::dynamic_object
+                                             : renderer::shadow_caster_t::static_geometry;
 
     const auto source = g_generated_mesh_sources.find(uid);
     if (source != g_generated_mesh_sources.end())

@@ -7,6 +7,9 @@
 
 #include "scene.glsl"
 
+// The selection outline's mask pass re-draws with mesh.vert and depth-tests against this.
+invariant gl_Position;
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;

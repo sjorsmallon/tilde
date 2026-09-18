@@ -30,6 +30,8 @@
 #include "entities/brush_entity_generated.hpp"
 #include "entities/ping_marker_entity_generated.hpp"
 #include "entities/logic_timer_entity_generated.hpp"
+#include "entities/path_node_entity_generated.hpp"
+#include "entities/mover_entity_generated.hpp"
 
 namespace entities
 {

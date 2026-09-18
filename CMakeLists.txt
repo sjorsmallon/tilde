@@ -241,6 +241,7 @@ set(ENTITY_IO_HANDLERS
     src/server/traits/armable.cpp
     src/server/traits/timer.cpp
     src/server/traits/match_control.cpp
+    src/server/traits/path_following.cpp
     src/server/entities/point_light_entity.cpp
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
@@ -513,6 +514,8 @@ add_library(game_shared STATIC
     src/shared/player_move.cpp
     src/shared/movement_volumes.cpp
     src/shared/disabled_geometry.cpp
+    src/shared/mover_path.cpp
+    src/shared/movers.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
@@ -637,6 +640,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/ui.frag
     ${SHADER_SRC_DIR}/tonemap.vert
     ${SHADER_SRC_DIR}/tonemap.frag
+    ${SHADER_SRC_DIR}/outline_mask.frag
+    ${SHADER_SRC_DIR}/outline.frag
     ${SHADER_SRC_DIR}/skybox.vert
     ${SHADER_SRC_DIR}/skybox.frag
 )
@@ -806,6 +811,8 @@ add_library(game_client SHARED
     src/client/editor/tools/animation_tool.cpp
     src/client/editor/tools/brush_tool.cpp
     src/client/editor/tools/lightmap_tool.cpp
+    src/client/editor/tools/path_tool.cpp
+    src/client/editor/path_editing.cpp
     src/client/editor/entity_inspector.cpp
     src/client/editor/entity_editor_traits.cpp
     src/client/editor/entity_icons.cpp
@@ -894,6 +901,7 @@ add_library(game_server SHARED
     src/server/systems/ping_system.cpp
     src/server/systems/trigger_system.cpp
     src/server/systems/timer_system.cpp
+    src/server/systems/mover_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/physics_body_system.cpp
@@ -1111,6 +1119,11 @@ target_include_directories(entity_layout_test PRIVATE src/shared)
 add_executable(map_migration_test src/test/map_migration_test.cpp)
 target_include_directories(map_migration_test PRIVATE src src/shared)
 target_link_libraries(map_migration_test PRIVATE game_shared)
+
+# A mover's pose as a pure function of its trajectory and the node chain: mover_def.md ss9 step 1.
+add_executable(mover_path_test src/test/mover_path_test.cpp)
+target_include_directories(mover_path_test PRIVATE src src/shared)
+target_link_libraries(mover_path_test PRIVATE game_shared)
 
 # The @predicted flag against collect_movement_volumes' switch: prediction_def.md ss1.9 pin 2.
 add_executable(movement_volumes_test src/test/movement_volumes_test.cpp)
@@ -1383,6 +1396,7 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     movement_volumes_test
+    mover_path_test
     prefab_test
     map_group_test
     navmesh_test

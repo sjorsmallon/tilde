@@ -215,6 +215,8 @@ int main()
         // On the wire through Render alone: its lifetime countdown is the
         // server's bookkeeping, and the client only needs the duck to stand up.
         entity_type::Ping_Marker_Entity,
+        // Through Path_Follow and Enabled; a Path_Node_Entity is all @Editable and rides nothing.
+        entity_type::Mover_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 
@@ -240,8 +242,9 @@ int main()
           "a type whose own fields are all @Editable does not ride the snapshot");
     check(entity_type_is_predicted(entity_type::Jump_Pad_Entity) &&
               entity_type_is_predicted(entity_type::Brush_Entity) &&
+              entity_type_is_predicted(entity_type::Mover_Entity) &&
               !entity_type_is_predicted(entity_type::Point_Light_Entity),
-          "@predicted is the jump pad and the brush entity, and not the light");
+          "@predicted is the jump pad, the brush entity and the mover, and not the light");
   }
 
   // --- placeable types ---

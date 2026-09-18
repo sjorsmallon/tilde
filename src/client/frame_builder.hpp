@@ -29,6 +29,38 @@ struct pass_builder_t
 
   cvars::Debug_Channel debug_channel = cvars::Debug_Channel::off;
 
+  color_t selected_outline_color = colors::white;
+  color_t hovered_outline_color  = colors::yellow;
+
+  // Which `meshes` each map object produced, so an overlay can outline it by uid.
+  struct object_meshes_t
+  {
+    shared::entity_uid_t uid;
+    uint32_t             first;
+    uint32_t             count;
+  };
+  std::vector<object_meshes_t> object_meshes;
+
+  void record_object_meshes(shared::entity_uid_t uid, size_t first)
+  {
+    if (meshes.size() > first)
+      object_meshes.push_back({uid, (uint32_t)first, (uint32_t)(meshes.size() - first)});
+  }
+
+  [[nodiscard]] bool outline_object(shared::entity_uid_t uid, renderer::outline_t outline)
+  {
+    bool outlined = false;
+    for (const object_meshes_t& range : object_meshes)
+    {
+      if (range.uid != uid)
+        continue;
+      for (uint32_t index = range.first; index < range.first + range.count; ++index)
+        meshes[index].outline = outline;
+      outlined = true;
+    }
+    return outlined;
+  }
+
   // Once per frame, before anything is appended. Note what is NOT cleared:
   // `debug` is RETIRED instead, because entries appended with a lifetime are
   // meant to outlive the frame that made them -- a hitscan trace fires in a
@@ -37,6 +69,7 @@ struct pass_builder_t
   void begin_frame(float delta_seconds)
   {
     meshes.clear();
+    object_meshes.clear();
     particles.clear();
     lights.entries.clear();
     lights.baked_count = 0;
@@ -57,6 +90,8 @@ struct pass_builder_t
     pass.custom    = custom;
     pass.lightmap  = lightmap;
     pass.sky       = sky;
+    pass.selected_outline_color = selected_outline_color;
+    pass.hovered_outline_color  = hovered_outline_color;
     return pass;
   }
 };

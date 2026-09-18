@@ -14,6 +14,7 @@
 #include "server_api.hpp"
 #include "systems/ping_system.hpp"
 #include "systems/timer_system.hpp"
+#include "systems/mover_system.hpp"
 #include "systems/trigger_system.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/game_rules_system.hpp"
@@ -275,6 +276,19 @@ static bool load_map_file_into_context(server_context_t &context,
     }
   }
 
+  if (loaded_map)
+  {
+    const std::vector<shared::path_refusal_t> refusals = shared::validate_map_paths(*loaded_map);
+    if (!refusals.empty())
+    {
+      for (const shared::path_refusal_t& refusal : refusals)
+        log_error("Map '{}': {}", map_path, refusal.reason);
+      log_error("Refusing map '{}': {} broken path link(s). The map currently loaded stays.",
+                map_path, refusals.size());
+      loaded_map.reset();
+    }
+  }
+
   if (loaded_map && count_rules_entities(*loaded_map) > 1)
   {
     log_error("Refusing map '{}': {} Game_Rules_Entity, and a map runs one match. "
@@ -309,6 +323,7 @@ static bool load_map_file_into_context(server_context_t &context,
   world.current_map_path  = map_path;
   world.map_content_hash = shared::compute_map_content_hash(server_map);
   install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
+  install_movers(context);
 
   shared::populate_static_physics_bodies(*world.physics, server_map);
   
@@ -593,6 +608,8 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Brush_Entity:
   case entities::entity_type::Ping_Marker_Entity:
   case entities::entity_type::Logic_Timer_Entity:
+  case entities::entity_type::Path_Node_Entity:
+  case entities::entity_type::Mover_Entity:
     break;
   }
 
@@ -634,6 +651,34 @@ static void build_target_volumes(const entities::Entity &entity,
               entities::entity_info(entity.type).classname);
 }
 
+
+// Once per tick, however many inputs each client sent: mover_def.md ss12.
+static void push_players_by_movers(server_context_t &context,
+                                   Span<const uint8_t> disabled_geometry,
+                                   Span<const shared::mover_t> movers)
+{
+  if (movers.empty())
+    return;
+
+  for (entities::Player_Entity &player :
+       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+  {
+    const mover_push_t push =
+        push_player_by_movers(context.world.session.bvh, disabled_geometry, movers,
+                              player.movement, player.position, shared::player_half_width,
+                              shared::player_half_height);
+    player.position = push.feet;
+
+    if (push.crushed_by != shared::null_entity_uid && player.health.current_health > 0)
+    {
+      damage_info_t crush;
+      crush.victim_uid   = player.entity_id;
+      crush.attacker_uid = push.crushed_by;
+      crush.amount       = (float)player.health.current_health;
+      inflict_damage(context, crush);
+    }
+  }
+}
 
 static void pose_all_targets(server_context_t &context)
 {
@@ -1371,6 +1416,17 @@ bool Tick()
                                     context.world.session.owner_of, disabled_geometry);
   const Span<const uint8_t> disabled_geometry_span{disabled_geometry};
 
+  std::vector<shared::mover_t> movers;
+  shared::collect_movers(context.world.session.entity_system, context.world.session.path_links,
+                         context.world.session.mover_rests, context.tick_number,
+                         context.cvars->sv_tickrate, movers);
+  const Span<const shared::mover_t> mover_span{movers};
+  push_players_by_movers(context, disabled_geometry_span, mover_span);
+
+  // After the cut: collect_movers read T-1 and T from the follow as it stood, so a
+  // segment boundary costs a rider no travel (mover_def.md ss13).
+  advance_movers(context);
+
   // since the server is in lockstep, pose all players once before handling moves:
   // internalize:
   // posing after the move would test a world no client has ever been shown,
@@ -1578,6 +1634,7 @@ bool Tick()
             context.world.session.bvh,
             disabled_geometry_span,
             movement_volume_span,
+            mover_span,
             player->position,
             player->velocity,
             front,
@@ -1770,7 +1827,8 @@ bool Tick()
 
 
   // bots need an update because they are a complex system, I guess.
-  update_bots(context, movement_volume_span, disabled_geometry_span, context.tick_number, tick_dt);
+  update_bots(context, movement_volume_span, disabled_geometry_span, mover_span,
+              context.tick_number, tick_dt);
 
   //@NOTE(SJM): why does this happen? repoint the orientation?
   {
@@ -1823,6 +1881,7 @@ bool Tick()
   // one hop per tick later. Handlers still never run under an emitting system
   // -- the reentrancy guard is the hop, not the tick (entity_io_queue.hpp).
   drain_pending_entity_actions(context);
+  latch_mover_switches(context);
 
   // debug
   {

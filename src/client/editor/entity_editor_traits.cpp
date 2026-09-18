@@ -475,6 +475,8 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Brush_Entity, .icon = assets::texture_asset::wall_hammer},
     {.type = entity_type::Ping_Marker_Entity}, // runtime only; the render component draws it
     {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::timer},
+    {.type = entity_type::Path_Node_Entity, .color = colors::green},
+    {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = assets::texture_asset::move},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),
@@ -615,8 +617,8 @@ void draw_shape_wire_box(const entities::Entity* e, pass_builder_t& draws,
                   renderer::fill_mode_t::wireframe, depth_bias);
 }
 
-// The art ladder. `box_when_bare` is false for the in-editor pass, where a
-// point type with nothing to draw is what the icon pass exists for.
+// The art ladder. `box_when_bare` is false in the editor pass only for a type
+// the icon pass or a diagram already shows.
 void draw_art(const entities::Entity* e, const editor_data_per_entity_type_t& row,
               pass_builder_t& draws, const linalg::vec3& origin, color_t color,
               renderer::fill_mode_t fill, bool box_when_bare,
@@ -656,7 +658,9 @@ void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws,
                            const entity_draw_settings_t& settings)
 {
   const editor_data_per_entity_type_t& row = editor_data_for(e);
-  draw_art(e, row, draws, e->position, row.color, renderer::fill_mode_t::solid, false, settings);
+  const bool box_when_bare = !row.icon && !row.draw_diagram;
+  draw_art(e, row, draws, e->position, row.color, renderer::fill_mode_t::solid, box_when_bare,
+           settings);
   if (row.draw_diagram)
     row.draw_diagram(e, draws, e->position, row.color, settings);
 }
@@ -682,7 +686,8 @@ color_t compute_selection_pulse_color(float time)
 }
 
 void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, float time,
-                              float, const entity_draw_settings_t& settings)
+                              float, const entity_draw_settings_t& settings,
+                              bool art_is_outlined)
 {
   const color_t color = compute_selection_pulse_color(time);
 
@@ -690,8 +695,9 @@ void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, 
   constexpr float highlight_bias = -200.0f;
 
   const editor_data_per_entity_type_t& row = editor_data_for(e);
-  draw_art(e, row, draws, e->position, color, renderer::fill_mode_t::wireframe, true, settings,
-           highlight_bias);
+  if (!art_is_outlined)
+    draw_art(e, row, draws, e->position, color, renderer::fill_mode_t::wireframe, true, settings,
+             highlight_bias);
   if (row.draw_diagram)
     row.draw_diagram(e, draws, e->position, color, settings);
   if (row.draw_reach)

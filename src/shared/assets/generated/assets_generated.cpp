@@ -32,6 +32,8 @@ constexpr asset_info_t texture_asset_MANIFEST[] = {
   {"directional_light", "resources/icons/directional_light.png"},
   {"game_rules", "resources/icons/game_rules.png"},
   {"hammer", "resources/icons/hammer.png"},
+  {"move", "resources/icons/move.png"},
+  {"mover", "resources/icons/mover.png"},
   {"point_light", "resources/icons/point_light.png"},
   {"replay_advance", "resources/icons/replay_advance.png"},
   {"replay_go_back", "resources/icons/replay_go_back.png"},

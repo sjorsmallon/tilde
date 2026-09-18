@@ -83,8 +83,9 @@ linalg::vec3 compute_placement_origin(const entities::Entity* e,
 // geometry highlight pulses in lockstep with the entity one.
 color_t compute_selection_pulse_color(float time);
 
-// The three layers in the pulse colour.
+// The three layers in the pulse colour; the art is skipped when the outline already traces it.
 void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, float time,
-                              float grid_step, const entity_draw_settings_t& settings);
+                              float grid_step, const entity_draw_settings_t& settings,
+                              bool art_is_outlined);
 
 } // namespace client

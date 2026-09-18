@@ -384,6 +384,10 @@ struct prediction_t
   // inputs too, every tick, as prediction. Everything at or below it is done, so
   // it both trims unacked_inputs and is where reconciliation starts replaying.
   int latest_input_number_processed_by_server = -1;
+  // The tick of the snapshot that carried latest_server_position. Input N is
+  // predicted to run at latest_server_tick + (N - the processed number above),
+  // which is where a mover is for it (mover_def.md ss12).
+  uint32_t latest_server_tick = 0;
   bool received_server_update = false;
   vec3f visual_error_offset = {0, 0, 0};
   vec3f reconciliation_error = {0, 0, 0};      // HUD readout only

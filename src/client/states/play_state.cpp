@@ -62,6 +62,60 @@
 namespace client
 {
 
+// The mover's half of a moving platform for input N, at the tick the server is
+// predicted to run it: the snapshot's tick plus the inputs since the one it acked.
+// Once per INPUT, before its steps, which is once per tick (mover_def.md ss12).
+static uint32_t predicted_tick_of_input(const client_context_t &ctx, int input_number)
+{
+  return ctx.prediction.latest_server_tick +
+         static_cast<uint32_t>(input_number - ctx.prediction.latest_input_number_processed_by_server);
+}
+
+// A mover is drawn between the tick the camera rides and the next one, by the
+// accumulator's fraction -- the same fraction the rider's camera is carried by.
+struct drawn_mover_poses_t
+{
+  shared::path_pose_t at_tick;
+  shared::path_pose_t drawn;
+};
+
+static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const entities::Mover_Entity &mover)
+{
+  const auto found = ctx.world.session.mover_rests.find(mover.entity_id);
+  return found != ctx.world.session.mover_rests.end()
+             ? found->second.frame
+             : shared::mover_rest_frame(ctx.world.session.entity_system, mover);
+}
+
+static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const entities::Mover_Entity &mover)
+{
+  const float    tickrate = static_cast<float>(ctx.connection.server_tickrate);
+  const uint32_t tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1);
+  const float    fraction = ctx.connection.phase == Connection_Phase::Connected
+                                ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
+                                : 0.0f;
+
+  const shared::Entity_System &system = ctx.world.session.entity_system;
+  const shared::path_links_t  &links  = ctx.world.session.path_links;
+  const shared::path_pose_t rest      = rest_frame_of(ctx, mover);
+  const shared::path_pose_t at_tick   = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
+  const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
+  return {.at_tick = at_tick, .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)};
+}
+
+static vec3f predict_mover_push(client_context_t &ctx, Span<const uint8_t> disabled_geometry,
+                                int input_number, const entities::Movement &movement,
+                                const vec3f &feet, std::vector<shared::mover_t> &movers)
+{
+  const uint32_t predicted_tick = predicted_tick_of_input(ctx, input_number);
+  shared::collect_movers(ctx.world.session.entity_system, ctx.world.session.path_links,
+                         ctx.world.session.mover_rests, predicted_tick,
+                         static_cast<float>(ctx.connection.server_tickrate), movers);
+  return push_player_by_movers(ctx.world.session.bvh, disabled_geometry, movers, movement, feet,
+                               shared::player_half_width, shared::player_half_height)
+      .feet;
+}
+
 // Whether the local player may move itself right now, mirroring the server's
 // gate. True while the world has no match yet.
 //
@@ -1161,6 +1215,10 @@ void Play_State::update(float dt)
                                     ctx.world.session.owner_of, disabled_geometry);
   const Span<const uint8_t> disabled_geometry_span{disabled_geometry};
 
+  // Cut per INPUT rather than per frame, unlike the two above: a mover's pose is
+  // the tick's, and the replay and the live step each run at their own ticks.
+  std::vector<shared::mover_t> movers;
+
   // reconcile our locally predicted position with the server's simulated position of us.
   if (ctx.prediction.received_server_update &&
       ctx.connection.phase == Connection_Phase::Connected)
@@ -1206,6 +1264,9 @@ void Play_State::update(float dt)
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
+      reconciled_position = predict_mover_push(ctx, disabled_geometry_span, replayed,
+                                               reconciled_movement, reconciled_position, movers);
+
       for (const shared::subtick_step_t& step : subtick_steps)
       {
         // per-step aim because that's just correct.
@@ -1226,7 +1287,7 @@ void Play_State::update(float dt)
 
         std::tie(reconciled_position, reconciled_velocity) = player_move(
             *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
-            ctx.world.session.bvh, disabled_geometry_span, movement_volume_span,
+            ctx.world.session.bvh, disabled_geometry_span, movement_volume_span, movers,
             reconciled_position, reconciled_velocity, step_basis.forward,
             step_basis.right, aim_sweep_of(step), player_half_width, player_half_height,
             step.dt, nullptr,
@@ -1845,6 +1906,10 @@ void Play_State::update(float dt)
 
         uint64_t buttons_entering_step = buttons_before_tick;
 
+        ctx.prediction.player_position = predict_mover_push(
+            ctx, disabled_geometry_span, ctx.prediction.input_number,
+            ctx.prediction.player_movement, ctx.prediction.player_position, movers);
+
         for (const shared::subtick_step_t& step : steps)
         {
           const uint64_t pressed_in_this_step = step.buttons & ~buttons_entering_step;
@@ -1940,7 +2005,7 @@ void Play_State::update(float dt)
             auto [new_position, new_velocity] = player_move(
                 *ctx.cvars, move_input_from_buttons(step.buttons),
                 ctx.prediction.player_movement, ctx.world.session.bvh,
-                disabled_geometry_span, movement_volume_span,
+                disabled_geometry_span, movement_volume_span, movers,
                 ctx.prediction.player_position, ctx.prediction.player_velocity,
                 step_basis.forward, step_basis.right, aim_sweep_of(step), player_half_width,
                 player_half_height, step.dt, &step_events, &ctx.visuals.debug_collision_faces);
@@ -2168,6 +2233,19 @@ void Play_State::update(float dt)
                     ctx.prediction.player_velocity * extrapolation_factor +
                     ctx.prediction.visual_error_offset +
                     vec3f{0.f, shared::player_eye_height, 0.f};
+
+  // A rider's push lands once per tick and is in no velocity, so the lift carries the camera here.
+  if (ctx.world.ready)
+  {
+    if (const entities::Mover_Entity *ridden = ctx.world.session.entity_system.get<entities::Mover_Entity>(
+            ctx.prediction.player_movement.ground_mover_uid))
+    {
+      const drawn_mover_poses_t poses = drawn_mover_poses(ctx, *ridden);
+      const vec3f feet = ctx.prediction.player_position;
+      camera.position = camera.position +
+                        (shared::carry_point_between_poses(poses.at_tick, poses.drawn, feet) - feet);
+    }
+  }
 
   if (noclip_active)
   {
@@ -2496,14 +2574,23 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     shared::collect_disabled_geometry(ctx.world.session.entity_system,
                                       ctx.world.session.owner_of, hidden);
 
+    std::unordered_map<shared::entity_uid_t, linalg::mat4f> mover_matrices;
+    for (const entities::Mover_Entity &mover : entity_system.entities_of<entities::Mover_Entity>())
+      mover_matrices[mover.entity_id] =
+          shared::mover_model_matrix(rest_frame_of(ctx, mover), drawn_mover_poses(ctx, mover).drawn);
+
     for (uint32_t index = 0; index < ctx.world.session.geometry.size(); ++index)
     {
       if (index < hidden.size() && hidden[index] != 0)
         continue;
 
+      const auto moved = index < ctx.world.session.owner_of.size()
+                             ? mover_matrices.find(ctx.world.session.owner_of[index])
+                             : mover_matrices.end();
       const shared::map_geometry_t &entry = ctx.world.session.geometry[index];
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
-                    ctx.world.session.lightmap);
+                    ctx.world.session.lightmap,
+                    moved != mover_matrices.end() ? &moved->second : nullptr);
     }
   }
 

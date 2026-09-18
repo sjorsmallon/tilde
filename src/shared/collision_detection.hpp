@@ -136,6 +136,12 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                        const vec3f& origin, const vec3f& dir, ray_hit_result_t &out_hit,
                        Span<const uint8_t> disabled_geometry = {});
 
+// Every OBJECT the ray passes through, nearest first, each once at its nearest
+// entry: the editor's click cycle walks what is behind the first answer.
+void bvh_intersect_ray_all(const Bounding_Volume_Hierarchy &bvh, const vec3f& origin,
+                           const vec3f& dir, std::vector<ray_hit_result_t> &out_hits,
+                           Span<const uint8_t> disabled_geometry = {});
+
 void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb_bounds_t &aabb,
                         std::vector<const BVH_Primitive *> &out_primitives,
                         Span<const uint8_t> disabled_geometry = {});

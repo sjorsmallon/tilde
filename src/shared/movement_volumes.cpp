@@ -41,6 +41,10 @@ void collect_movement_volumes(Entity_System& system, std::vector<movement_volume
       case entities::entity_type::Brush_Entity:
         break;
 
+      // @predicted, and feeds collect_movers: its geometry moves, it is not a box tested after the step.
+      case entities::entity_type::Mover_Entity:
+        break;
+
       // Every type that is not @predicted. Adding one makes this a compile
       // error, which is the point.
       case entities::entity_type::Invalid:
@@ -62,6 +66,7 @@ void collect_movement_volumes(Entity_System& system, std::vector<movement_volume
       case entities::entity_type::Logic_Counter_Entity:
       case entities::entity_type::Ping_Marker_Entity:
       case entities::entity_type::Logic_Timer_Entity:
+      case entities::entity_type::Path_Node_Entity:
         break;
     }
   }

@@ -148,6 +148,14 @@ enum class fill_mode_t : uint8_t
   wireframe
 };
 
+// Which outline a draw joins; each has its own mask channels, so the two never merge.
+enum class outline_t : uint8_t
+{
+  none,
+  selected,
+  hovered
+};
+
 // Which vertex buffers a pipeline reads, as FLAGS. Fixed per MESH at
 // register_mesh time from mesh_asset_t::is_skinned() / is_blended() /
 // is_lightmapped(), and part of the pipeline cache key -- it is not a per-draw
@@ -357,6 +365,8 @@ struct mesh_draw_t
   // Dynamic by default: the one static site is draw_geometry, and a forgotten
   // classification double-shadows rather than shining through a wall.
   shadow_caster_t shadow_caster = shadow_caster_t::dynamic_object;
+  // Drawn as usual AND into one of the pass's outlines, in its view_pass_t colour.
+  outline_t outline = outline_t::none;
 };
 
 // --- Debug drawing ---
@@ -429,6 +439,7 @@ struct debug_text_t
   std::string   text;
   color_t       color;
   float         remaining_seconds;
+  bool          backed = false;
 };
 
 struct debug_draw_list_t
@@ -490,6 +501,9 @@ struct debug_draw_list_t
   // Off-screen labels are dropped.
   void text(const linalg::vec3f& world_position, const char *text, color_t color,
             float seconds = 0.0f);
+  // On a dark plate, for a warning that has to read over whatever the map is.
+  void backed_text(const linalg::vec3f& world_position, const char *text, color_t color,
+                   float seconds = 0.0f);
 };
 
 // --- Screen-space UI ---
@@ -616,6 +630,8 @@ struct view_pass_t
   cvars::Debug_Channel                      debug_channel = cvars::Debug_Channel::off;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
+  color_t                                   selected_outline_color = colors::white;
+  color_t                                   hovered_outline_color  = colors::yellow;
 };
 
 struct tonemap_settings_t

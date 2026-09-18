@@ -251,9 +251,22 @@ void draw_box_face_grid(pass_builder_t &draws, const linalg::vec3 &position,
 
 void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
                                        pass_builder_t &draws, float time,
-                                       float grid_step)
+                                       float grid_step, bool is_outlined)
 {
   const color_t color = compute_selection_pulse_color(time);
+
+  if (is_outlined)
+  {
+    const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&geometry);
+    if (brush && shared::brush_is_axis_aligned_box(brush->hull_points))
+    {
+      const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
+      draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
+                         (bounds.max - bounds.min) * 0.5f, with_alpha(color, 0x50), grid_step,
+                         -200.0f);
+    }
+    return;
+  }
 
   // Strong bias so the highlight renders in FRONT of the solid surface it
   // traces. It rides each line rather than being set and restored around the

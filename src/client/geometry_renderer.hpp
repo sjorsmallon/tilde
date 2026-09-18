@@ -25,9 +25,12 @@ namespace client
 // the call site rather than held here, because module state that must be set
 // before the first draw is one more thing to forget; the caller holding the
 // geometry already holds the table it belongs to.
+//
+// `moved_by` is a mover's world-from-rest matrix for geometry a mover owns, null for everything else;
+// moved geometry casts into the dynamic shadow maps, since its baked shadow stayed at rest.
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
-                   const shared::lightmap_t &lightmap);
+                   const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by = nullptr);
 
 // Rebuild the cached mesh for an object whose GENERATED form just changed -- a
 // brush point set or one of its face grids -- and re-upload it. Registers the

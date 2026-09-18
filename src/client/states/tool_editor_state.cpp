@@ -15,6 +15,8 @@
 #include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/brush_tool.hpp"
 #include "../editor/tools/lightmap_tool.hpp"
+#include "../editor/tools/path_tool.hpp"
+#include "../editor/path_editing.hpp"
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
@@ -65,6 +67,7 @@ constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
     {editor_tool_t::animation,   "Animation"},
     {editor_tool_t::brush,       "Brush"},
     {editor_tool_t::lightmap,    "Lightmap"},
+    {editor_tool_t::path,        "Path"},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
@@ -310,6 +313,7 @@ void Tool_Editor_State::on_enter()
     tools[editor_tool_t::animation]   = std::make_unique<Animation_Tool>();
     tools[editor_tool_t::brush]       = std::make_unique<Brush_Tool>();
     tools[editor_tool_t::lightmap]    = std::make_unique<Lightmap_Tool>();
+    tools[editor_tool_t::path]        = std::make_unique<Path_Tool>();
   }
 
   // Enable first tool
@@ -419,8 +423,11 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   if (active_tool == tool)
     return;
 
+  context.selection_handed_over.clear();
   if (active_tool)
   {
+    const Span<const shared::entity_uid_t> leaving = tools[*active_tool]->selected_objects();
+    context.selection_handed_over.assign(leaving.begin(), leaving.end());
     tools[*active_tool]->on_disable(context);
   }
 
@@ -436,6 +443,7 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.grid = &grid_settings;
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
+  context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
   entity_visibility.refresh(map);
   context.hidden_objects = entity_visibility.hidden_this_frame;
   // context.time is NOT reset here -- it is seconds since the editor opened,
@@ -494,6 +502,9 @@ void Tool_Editor_State::update(float dt)
     state_manager::switch_to(game_state::main_menu);
     return;
   }
+
+  if (input::is_key_pressed(input::key_t::F1))
+    play_was_requested_by_key = true;
 
   // Update Camera
   if (!input::imgui_wants_mouse())
@@ -736,6 +747,7 @@ void Tool_Editor_State::update(float dt)
   context.grid = &grid_settings;
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
+  context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
 
   // Flattened out of the one pass that knows both the per-entity set and the
   // per-type mask, the way objects_without_collision is.
@@ -1105,23 +1117,41 @@ void Tool_Editor_State::draw_imgui_panels()
     ImGui::EndPopup();
   }
 
-  ImGui::Begin("Toolbox", nullptr, ImGuiWindowFlags_NoNav);
-
-  for (uint32_t row = 0; row < EDITOR_TOOL_COUNT; ++row)
+  const bool toolbar_is_open = ImGui::BeginMainMenuBar();
+  bool       play_was_clicked = play_was_requested_by_key;
+  play_was_requested_by_key   = false;
+  bool       back_to_menu_was_clicked = false;
+  if (toolbar_is_open)
   {
-    const toolbox_row_t &entry = TOOLBOX_ROWS.values[row];
-    char                 label[64];
-    snprintf(label, sizeof(label), "%s (Ctrl+%u)", entry.label, row + 1);
-    if (ImGui::Button(label))
-      switch_tool(entry.tool);
+    for (uint32_t row = 0; row < EDITOR_TOOL_COUNT; ++row)
+    {
+      const toolbox_row_t& entry = TOOLBOX_ROWS.values[row];
+      const bool           is_active = active_tool && *active_tool == entry.tool;
+      if (is_active)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+      if (ImGui::Button(entry.label))
+        switch_tool(entry.tool);
+      if (is_active)
+        ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Ctrl+%u", row + 1);
+    }
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float right_side_width = ImGui::CalcTextSize("play").x + ImGui::CalcTextSize("Back to Menu").x +
+                                   style.FramePadding.x * 4.0f + style.ItemSpacing.x + style.WindowPadding.x;
+    const float right_side_start = ImGui::GetWindowWidth() - right_side_width;
+    if (right_side_start > ImGui::GetCursorPosX())
+      ImGui::SetCursorPosX(right_side_start);
+
+    play_was_clicked |= ImGui::Button("play");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("F1");
+    back_to_menu_was_clicked = ImGui::Button("Back to Menu");
+    ImGui::EndMainMenuBar();
   }
 
-  ImGui::Separator();
-  ImGui::Text("Active Tool: %s",
-              active_tool ? TOOLBOX_ROWS[*active_tool].label : "none");
-
-  ImGui::Separator();
-  if (ImGui::Button("play"))
+  if (play_was_clicked)
   {
     // Commit current edits to disk before switching. The same funnel as
     // Ctrl+S, so Play_State's last_map.txt reload and the server's
@@ -1149,12 +1179,10 @@ void Tool_Editor_State::draw_imgui_panels()
     }
   }
 
-  if (ImGui::Button("Back to Menu"))
+  if (back_to_menu_was_clicked)
   {
     state_manager::switch_to(game_state::main_menu);
   }
-
-  ImGui::End();
 
   // Its own window rather than a Map Info section, unlike Connections: an
   // outliner is exactly the thing you keep open while working. "Map" is not
@@ -1318,9 +1346,13 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   if (!hide_geometry)
   {
     for (const shared::map_geometry_t &entry : map.geometry)
+    {
+      const size_t first_mesh = scene.meshes.size();
       draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid,
                               map.materials, map.lightmap,
                               context.object_collides(entry.uid));
+      scene.record_object_meshes(entry.uid, first_mesh);
+    }
 
     const bool show_hitboxes =
         state_manager::get_client_context().cvars->debug_show_hitboxes;
@@ -1337,12 +1369,16 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       // is what makes a bake previewed here the bake that ships.
       shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
 
+      const size_t first_mesh = scene.meshes.size();
       draw_entity_in_editor(entry.entity.get(), scene, context.entity_draw_settings);
+      scene.record_object_meshes(entry.uid, first_mesh);
       // ALONGSIDE the model, never instead of it: a hit volume lives inside the
       // model it belongs to.
       if (show_hitboxes)
         draw_entity_hitbox_overlay(entry.entity.get(), scene);
     }
+
+    draw_path_links(map, context, scene);
   }
 
   // Draw navmesh triangle wireframes, colored by island ID.

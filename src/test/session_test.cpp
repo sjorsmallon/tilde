@@ -4,6 +4,7 @@
 #include "log.hpp"
 #include "map.hpp" // shared::create_entity_by_classname
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <utility>
 #include <vector>
@@ -689,6 +690,126 @@ int main()
         bvh_point_is_inside_solid(tie_session.bvh, {0.f, 0.f, 0.f}, disabled))
     {
       log_error("bvh_point_is_inside_solid does not honour the disabled set");
+      return 1;
+    }
+  }
+
+  // A mover's geometry is in the per-tick cut and not in the tree (mover_def.md ss9 step 2).
+  {
+    map_t mover_map;
+    const entity_uid_t platform = mover_map.add_geometry(make_box_brush({0, 0, 0}, {16, 4, 16}));
+    const entity_uid_t wall     = mover_map.add_geometry(make_box_brush({0, 0, 200}, {16, 16, 4}));
+
+    auto [start_uid, start_entity] = spawn_entity(mover_map, entities::entity_type::Path_Node_Entity);
+    auto [end_uid, end_entity]     = spawn_entity(mover_map, entities::entity_type::Path_Node_Entity);
+    auto [mover_uid, mover_entity] = spawn_entity(mover_map, entities::entity_type::Mover_Entity);
+
+    entities::Path_Node_Entity* start = entities::entity_as<entities::Path_Node_Entity>(start_entity.get());
+    entities::Path_Node_Entity* end   = entities::entity_as<entities::Path_Node_Entity>(end_entity.get());
+    entities::Mover_Entity*     mover = entities::entity_as<entities::Mover_Entity>(mover_entity.get());
+    start->position    = {0, 0, 0};
+    start->next        = end_uid;
+    end->position      = {0, 100, 0};
+    mover->position    = {300, 40, -300}; // an icon handle, off the lift: it must move nothing
+    mover->follow.from = start_uid;
+    mover->follow.segment_start_tick = 1;
+    set_owner_uid(mover_map.find_geometry_by_uid(platform)->value, mover_uid);
+
+    if (!validate_map_paths(mover_map).empty())
+    {
+      log_error("a well-formed chain was refused");
+      return 1;
+    }
+
+    const game_session_t mover_session = build_session(mover_map);
+    if (mover_session.owner_of.size() != 2 || mover_session.owner_of[0] != mover_uid)
+    {
+      log_error("build_session did not accept a mover as a brush's owner");
+      return 1;
+    }
+
+    const auto rest = mover_session.mover_rests.find(mover_uid);
+    if (rest == mover_session.mover_rests.end() || rest->second.pieces.empty())
+    {
+      log_error("the mover's brush did not reach mover_rests");
+      return 1;
+    }
+    if (linalg::length(rest->second.frame.position - start->position) > 1e-6f)
+    {
+      log_error("the rest frame is not the authored start node");
+      return 1;
+    }
+
+    ray_hit_result_t hit;
+    if (bvh_intersect_ray(mover_session.bvh, {0.f, 50.f, 0.f}, {0.f, -1.f, 0.f}, hit))
+    {
+      log_error("a ray down onto the mover's brush hit the tree, which should not hold it");
+      return 1;
+    }
+    hit = {};
+    if (!bvh_intersect_ray(mover_session.bvh, {0.f, 0.f, 100.f}, {0.f, 0.f, 1.f}, hit) ||
+        mover_session.geometry[hit.id.index].uid != wall)
+    {
+      log_error("the plain wall beside the mover left the tree too");
+      return 1;
+    }
+
+    std::vector<mover_t> movers;
+    collect_movers(mover_session.entity_system, mover_session.path_links, mover_session.mover_rests,
+                   31, 60.0f, movers);
+    if (movers.size() != 1 || movers[0].uid != mover_uid || movers[0].pieces.size() != rest->second.pieces.size())
+    {
+      log_error("collect_movers did not cut the mover with its pieces");
+      return 1;
+    }
+    const aabb_bounds_t moved = movers[0].pieces[0].bounds;
+    if (std::fabs(moved.min.y - 46.f) > 1e-3f || std::fabs(moved.max.y - 54.f) > 1e-3f)
+    {
+      log_error("halfway along a 100-unit rise the platform spans y [{}, {}], not [46, 54]",
+                moved.min.y, moved.max.y);
+      return 1;
+    }
+    if (std::fabs(movers[0].swept_bounds.min.y - (100.f * 29.f / 60.f - 4.f)) > 1e-3f ||
+        std::fabs(movers[0].swept_bounds.max.y - 54.f) > 1e-3f)
+    {
+      log_error("the swept bounds do not cover both ends of the tick");
+      return 1;
+    }
+
+    map_t broken_chain = mover_map;
+    entities::entity_as<entities::Path_Node_Entity>(broken_chain.find_by_uid(start_uid)->entity.get())->next = wall;
+    entities::entity_as<entities::Mover_Entity>(broken_chain.find_by_uid(mover_uid)->entity.get())->follow.from = 4242;
+    if (validate_map_paths(broken_chain).size() != 2)
+    {
+      log_error("a next naming a brush and a mover starting from nothing were not both refused");
+      return 1;
+    }
+  }
+
+  // Every object along a ray, nearest first, once each: the editor's click cycle.
+  {
+    map_t stacked_map;
+    const entity_uid_t near_box   = stacked_map.add_geometry(make_box_brush({0, 0, 0}, {8, 8, 8}));
+    const entity_uid_t far_box    = stacked_map.add_geometry(make_box_brush({0, 0, 200}, {8, 8, 8}));
+    const entity_uid_t middle_box = stacked_map.add_geometry(make_box_brush({0, 0, 100}, {8, 8, 8}));
+    (void)stacked_map.add_geometry(make_box_brush({100, 0, 100}, {8, 8, 8}));
+    const game_session_t stacked = build_session(stacked_map);
+
+    std::vector<ray_hit_result_t> hits;
+    bvh_intersect_ray_all(stacked.bvh, {0.f, 0.f, -100.f}, {0.f, 0.f, 1.f}, hits);
+    const auto uid_of = [&](const ray_hit_result_t& hit) { return stacked.geometry[hit.id.index].uid; };
+    if (hits.size() != 3 || uid_of(hits[0]) != near_box || uid_of(hits[1]) != middle_box ||
+        uid_of(hits[2]) != far_box)
+    {
+      log_error("bvh_intersect_ray_all did not answer the three stacked boxes nearest first");
+      return 1;
+    }
+
+    ray_hit_result_t nearest;
+    if (!bvh_intersect_ray(stacked.bvh, {0.f, 0.f, -100.f}, {0.f, 0.f, 1.f}, nearest) ||
+        nearest.id.index != hits[0].id.index || nearest.t != hits[0].t)
+    {
+      log_error("bvh_intersect_ray and the first of bvh_intersect_ray_all disagree");
       return 1;
     }
   }

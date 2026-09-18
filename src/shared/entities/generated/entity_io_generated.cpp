@@ -139,6 +139,18 @@ constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t GO_TO_FIELDS[] = {
+  {.name = "node",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Go_To_Data, node),
+   .size_in_bytes = (uint32_t)sizeof(Go_To_Data::node),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t COLOR_CHANGED_FIELDS[] = {
   {.name = "color",
    .type = FIELD_TYPE_V3,
@@ -187,6 +199,18 @@ constexpr field_info_t ROUND_ENDED_FIELDS[] = {
    .enum_info = &ENUM_INFOS[12]},
 };
 
+constexpr field_info_t NODE_REACHED_FIELDS[] = {
+  {.name = "node",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Node_Reached_Data, node),
+   .size_in_bytes = (uint32_t)sizeof(Node_Reached_Data::node),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Enable
   {},   // Disable
@@ -211,6 +235,8 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // End_Round
   {},   // Restart_Round
   {},   // End_Match
+  {},   // Reverse
+  {GO_TO_FIELDS, 1},
 };
 
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
@@ -225,6 +251,7 @@ constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
   {},   // Round_Started
   {ROUND_ENDED_FIELDS, 1},
   {},   // Match_Ended
+  {NODE_REACHED_FIELDS, 1},
 };
 
 } // namespace
@@ -256,6 +283,8 @@ const char* to_string(entity_action value)
     case entity_action::End_Round: return "End_Round";
     case entity_action::Restart_Round: return "Restart_Round";
     case entity_action::End_Match: return "End_Match";
+    case entity_action::Reverse: return "Reverse";
+    case entity_action::Go_To: return "Go_To";
   }
   return "<unknown>";
 }
@@ -285,6 +314,8 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "End_Round") return entity_action::End_Round;
   if (text == "Restart_Round") return entity_action::Restart_Round;
   if (text == "End_Match") return entity_action::End_Match;
+  if (text == "Reverse") return entity_action::Reverse;
+  if (text == "Go_To") return entity_action::Go_To;
   return std::nullopt;
 }
 
@@ -303,6 +334,7 @@ const char* to_string(entity_signal value)
     case entity_signal::Round_Started: return "Round_Started";
     case entity_signal::Round_Ended: return "Round_Ended";
     case entity_signal::Match_Ended: return "Match_Ended";
+    case entity_signal::Node_Reached: return "Node_Reached";
   }
   return "<unknown>";
 }
@@ -320,6 +352,7 @@ template <> std::optional<entity_signal> try_from_string<entity_signal>(std::str
   if (text == "Round_Started") return entity_signal::Round_Started;
   if (text == "Round_Ended") return entity_signal::Round_Ended;
   if (text == "Match_Ended") return entity_signal::Match_Ended;
+  if (text == "Node_Reached") return entity_signal::Node_Reached;
   return std::nullopt;
 }
 
@@ -339,6 +372,7 @@ const char* to_string(entity_trait value)
     case entity_trait::Objective: return "Objective";
     case entity_trait::Timer: return "Timer";
     case entity_trait::Match_Control: return "Match_Control";
+    case entity_trait::Path_Following: return "Path_Following";
   }
   return "<unknown>";
 }
@@ -357,6 +391,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Objective") return entity_trait::Objective;
   if (text == "Timer") return entity_trait::Timer;
   if (text == "Match_Control") return entity_trait::Match_Control;
+  if (text == "Path_Following") return entity_trait::Path_Following;
   return std::nullopt;
 }
 
@@ -399,6 +434,8 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::End_Round: return (uint32_t)sizeof(End_Round_Data);
     case entity_action::Restart_Round: return (uint32_t)sizeof(Restart_Round_Data);
     case entity_action::End_Match: return (uint32_t)sizeof(End_Match_Data);
+    case entity_action::Reverse: return (uint32_t)sizeof(Reverse_Data);
+    case entity_action::Go_To: return (uint32_t)sizeof(Go_To_Data);
   }
   return 0;
 }
@@ -418,6 +455,7 @@ uint32_t signal_payload_size(entity_signal signal)
     case entity_signal::Round_Started: return (uint32_t)sizeof(Round_Started_Data);
     case entity_signal::Round_Ended: return (uint32_t)sizeof(Round_Ended_Data);
     case entity_signal::Match_Ended: return (uint32_t)sizeof(Match_Ended_Data);
+    case entity_signal::Node_Reached: return (uint32_t)sizeof(Node_Reached_Data);
   }
   return 0;
 }
@@ -603,6 +641,22 @@ action_data_t erase(const End_Match_Data& payload)
   action_data_t data;
   data.tag = entity_action::End_Match;
   data.end_match = payload;
+  return data;
+}
+
+action_data_t erase(const Reverse_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Reverse;
+  data.reverse = payload;
+  return data;
+}
+
+action_data_t erase(const Go_To_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Go_To;
+  data.go_to = payload;
   return data;
 }
 

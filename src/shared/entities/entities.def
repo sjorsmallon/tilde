@@ -36,6 +36,9 @@ Game_Mode :: enum { deathmatch, rounds, speedrun }
 Round_End_Reason :: enum { None, Timeout, Frag_Limit, Team_Elimination, Objective, Requested }
 Match_Request :: enum { None, Start_Match, End_Round, Restart_Round, End_Match }
 
+// mover_def.md ss2. Orientation always slerps; this is t alone.
+Easing :: enum { Linear, Smooth }
+
 // ---------------------------------------------------------------------------
 // COMPONENTS
 // ---------------------------------------------------------------------------
@@ -98,6 +101,7 @@ Movement :: component {
     seconds_until_impulse_ready: f32    @Networked
 
     pad_contact_uid: u32                @Networked
+    ground_mover_uid: entity            @Networked
 }
 
 Inventory :: component {
@@ -127,14 +131,13 @@ Match :: component {
     requested:         Match_Request = .None
 }
 
-//smoothing_functions :: enum {Linear, Slerp, ...}
-//Base_Animation :: component {
-//  offsets: [] vec3
-//  orientations: [] vec3
-//  traversal_times: [] f32
-//  smoothing_functions: [] Smoothing_Functions
-//  Looping: bool = false
-//}
+// A trajectory, never a position: the node last left and when (mover_def.md ss3).
+Path_Follow :: component {
+    from:               entity      @Fully_Serializable
+    segment_start_tick: u32 = 0     @Networked
+    direction:          i32 = 1     @Networked
+    frozen_at_tick:     u32 = 0     @Networked
+}
 
 // ---------------------------------------------------------------------------
 // TRAITS -- entity_io_def.md ss5
@@ -223,6 +226,11 @@ Timer :: trait requires Timer_State {
 Match_Control :: trait requires Match {
     accepts Start_Match(), End_Round(), Restart_Round(), End_Match()
     emits   Match_Started(), Round_Started(), Round_Ended(reason: Round_End_Reason), Match_Ended()
+}
+
+Path_Following :: trait requires Path_Follow {
+    accepts Reverse(), Go_To(node: entity)
+    emits   Node_Reached(node: entity)
 }
 
 
@@ -489,4 +497,17 @@ Ping_Marker_Entity :: entity @runtime_only {
 
 Logic_Timer_Entity :: entity is Timer {
     timer: Timer_State
+}
+
+// A path is what `next` looks like from above; previous is derived (mover_def.md ss2).
+Path_Node_Entity :: entity {
+    next:              entity               @Editable
+    traversal_seconds: f32 = 1.0            @Editable
+    wait_seconds:      f32 = 0.0            @Editable
+    easing:            Easing = .Linear     @Editable
+}
+
+Mover_Entity :: entity @predicted is Switchable, Path_Following {
+    switch_state: Enabled
+    follow:       Path_Follow
 }

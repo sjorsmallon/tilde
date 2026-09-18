@@ -57,6 +57,11 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       case entities::entity_type::Logic_Counter_Entity:
       case entities::entity_type::Ping_Marker_Entity:
       case entities::entity_type::Logic_Timer_Entity:
+      case entities::entity_type::Path_Node_Entity:
+        break;
+
+      // A mover's switch freezes it rather than removing it, and its pieces are not in the tree anyway.
+      case entities::entity_type::Mover_Entity:
         break;
     }
   }

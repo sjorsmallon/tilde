@@ -155,7 +155,8 @@ static move_result_t run_split(const cvar_state_t& cvars,
                                entities::Movement* movement = nullptr,
                                Span<const shared::movement_volume_t> volumes = {},
                                pad_probe_t* out_pad = nullptr,
-                               Span<const uint8_t> disabled_geometry = {})
+                               Span<const uint8_t> disabled_geometry = {},
+                               Span<const shared::mover_t> movers = {})
 {
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
@@ -165,7 +166,7 @@ static move_result_t run_split(const cvar_state_t& cvars,
   {
     Move_Events events{};
     std::tie(position, velocity) =
-        player_move(cvars, input, state, bvh, disabled_geometry, volumes, position, velocity,
+        player_move(cvars, input, state, bvh, disabled_geometry, volumes, movers, position, velocity,
                     look_front,
                     look_right, aim_sweep_t{}, half_width, half_height, step_dt, &events);
     if (out_pad != nullptr && events.launched_by_pad)
@@ -1121,7 +1122,7 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
                       : aim_sweep_t{};
     const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
 
-    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, {}, position,
+    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, {}, {}, position,
                                                velocity, front, right, sweep, half_width,
                                                half_height, step_dt);
     step_start = step_end;
@@ -1164,6 +1165,125 @@ static void test_air_push_ignores_edges_on_a_steady_turn(const cvar_state_t& cva
         "one aim per step: the same edge buys speed, which is what the sweep removes");
 }
 
+// --- 16. a mover carries its rider the same under any step count ---
+//
+// mover_def.md ss12: the push is the mover's, once per tick, before the steps,
+// and the steps collide with the mover's end-of-tick pose. So a rider's tick is
+// push-then-steps, and the steps must not care how many of them there are.
+constexpr shared::entity_uid_t platform_uid = 77;
+const vec3 platform_half_extents{128.f, 8.f, 128.f};
+const vec3 platform_start{0.f, 100.f, 0.f};
+const vec3 platform_velocity{120.f, 60.f, 0.f};
+
+static vec3 platform_center_at(uint32_t tick)
+{
+  return platform_start + platform_velocity * (tick_dt * static_cast<float>(tick));
+}
+
+static shared::mover_t platform_at(uint32_t tick)
+{
+  shared::mover_t mover;
+  mover.uid                         = platform_uid;
+  mover.pose_at_tick_start.position = platform_center_at(tick - 1);
+  mover.pose_at_tick_end.position   = platform_center_at(tick);
+  mover.pieces = shared::get_collision_pieces(
+      shared::make_box_brush(platform_center_at(tick), platform_half_extents), platform_uid);
+  mover.swept_bounds = mover.pieces.front().bounds;
+  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(
+           shared::make_box_brush(platform_center_at(tick - 1), platform_half_extents),
+           platform_uid))
+    mover.swept_bounds = shared::union_aabb(mover.swept_bounds, piece.bounds);
+  return mover;
+}
+
+struct ride_result_t
+{
+  vec3                 feet;
+  shared::entity_uid_t ground_mover_uid = shared::null_entity_uid;
+  shared::entity_uid_t crushed_by       = shared::null_entity_uid;
+  uint32_t             crushed_at_tick  = 0;
+};
+
+static ride_result_t ride_platform(const cvar_state_t& cvars, const Bounding_Volume_Hierarchy& bvh,
+                                   uint32_t ticks, int sub_steps)
+{
+  entities::Movement movement{};
+  vec3 feet = platform_center_at(0) + vec3{0.f, platform_half_extents.y - 0.02f, 0.f};
+  vec3 velocity{};
+  ride_result_t result;
+
+  for (uint32_t tick = 1; tick <= ticks; ++tick)
+  {
+    const shared::mover_t movers[] = {platform_at(tick)};
+    const mover_push_t push =
+        push_player_by_movers(bvh, {}, movers, movement, feet, half_width, half_height);
+    feet = push.feet;
+    if (push.crushed_by != shared::null_entity_uid && result.crushed_by == shared::null_entity_uid)
+    {
+      result.crushed_by      = push.crushed_by;
+      result.crushed_at_tick = tick;
+    }
+
+    const move_result_t moved = run_split(cvars, bvh, Move_Input{}, feet, velocity, tick_dt,
+                                          sub_steps, &movement, {}, nullptr, {}, movers);
+    feet     = moved.position;
+    velocity = moved.velocity;
+  }
+  result.feet             = feet;
+  result.ground_mover_uid = movement.ground_mover_uid;
+  return result;
+}
+
+static void test_a_mover_carries_its_rider(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] mover: a rider arrives with the platform under 1 step and under 16\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  constexpr uint32_t ticks = 60;
+
+  const ride_result_t one     = ride_platform(cvars, bvh, ticks, 1);
+  const ride_result_t sixteen = ride_platform(cvars, bvh, ticks, 16);
+  const vec3 top = platform_center_at(ticks) + vec3{0.f, platform_half_extents.y, 0.f};
+
+  printf("    platform top (%.4f, %.4f, %.4f)\n", top.x, top.y, top.z);
+  printf("    N=1  feet (%.4f, %.4f, %.4f)\n", one.feet.x, one.feet.y, one.feet.z);
+  printf("    N=16 feet (%.4f, %.4f, %.4f)\n", sixteen.feet.x, sixteen.feet.y, sixteen.feet.z);
+
+  check(one.feet.x == sixteen.feet.x && one.feet.y == sixteen.feet.y &&
+            one.feet.z == sixteen.feet.z,
+        "the rider's feet agree bit for bit under 1 step and 16");
+  check_near(one.feet.x, top.x, 1e-2f, "carried along x with the platform");
+  check_near(one.feet.y, top.y, 0.1f, "standing on the platform's top");
+  check(one.ground_mover_uid == platform_uid, "Movement::ground_mover_uid names the platform");
+  check(one.crushed_by == shared::null_entity_uid, "an open sky crushes nobody");
+}
+
+static void test_a_mover_crushes_against_a_ceiling(const cvar_state_t& cvars)
+{
+  printf("\n[DELIBERATE] mover: a platform rising into a ceiling crushes its rider\n");
+
+  const float ceiling_bottom = platform_start.y + platform_half_extents.y + 2.f * half_height + 20.f;
+  const shared::geometry_value_t ceiling = shared::make_box_brush(
+      {0.f, ceiling_bottom + 64.f, 0.f}, {4096.f, 64.f, 4096.f});
+  std::vector<BVH_Input> inputs;
+  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(ceiling, 1))
+  {
+    BVH_Input input;
+    input.aabb             = piece.bounds;
+    input.id               = {Collision_Id::Type::Static_Geometry, 0};
+    input.collision_planes = piece.planes;
+    input.face_polygons    = piece.face_polygons;
+    inputs.push_back(std::move(input));
+  }
+  const Bounding_Volume_Hierarchy bvh = build_bvh(inputs);
+
+  const ride_result_t ride = ride_platform(cvars, bvh, 60, 1);
+  printf("    crushed at tick %u (the gap closes after ~20 ticks)\n", ride.crushed_at_tick);
+  check(ride.crushed_by == platform_uid, "the platform is named as the crusher");
+  check(ride.crushed_at_tick > 15 && ride.crushed_at_tick < 30,
+        "not before the gap closes, and not long after");
+}
+
 int main()
 {
   printf("player_move_step_invariance_test\n");
@@ -1196,6 +1316,8 @@ int main()
   test_a_jump_pad_fires_once_per_contact(cvars);
   test_a_disabled_jump_pad_is_passed_through(cvars);
   test_a_disabled_brush_is_walked_through(cvars);
+  test_a_mover_carries_its_rider(cvars);
+  test_a_mover_crushes_against_a_ceiling(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

@@ -35,6 +35,7 @@
 #include "tools/animation_tool.hpp"
 #include "tools/lightmap_tool.hpp"
 #include "tools/particle_editor_tool.hpp"
+#include "tools/path_tool.hpp"
 #include "tools/pathfinding_test_tool.hpp"
 #include "tools/placement_tool.hpp"
 #include "tools/sculpting_tool.hpp"
@@ -74,6 +75,7 @@ int main()
   tools.push_back(std::make_unique<client::Particle_Editor_Tool>());
   tools.push_back(std::make_unique<client::Animation_Tool>());
   tools.push_back(std::make_unique<client::Lightmap_Tool>());
+  tools.push_back(std::make_unique<client::Path_Tool>());
 
   for (const std::unique_ptr<client::Editor_Tool> &tool : tools)
   {

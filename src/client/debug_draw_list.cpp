@@ -209,5 +209,11 @@ void debug_draw_list_t::text(const linalg::vec3f& world_position, const char *te
   texts.push_back({world_position, text, color, seconds});
 }
 
+void debug_draw_list_t::backed_text(const linalg::vec3f& world_position, const char *text,
+                                    color_t color, float seconds)
+{
+  texts.push_back({world_position, text, color, seconds, true});
+}
+
 } // namespace renderer
 } // namespace client

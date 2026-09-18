@@ -55,9 +55,11 @@ enum class entity_action : uint16_t
   End_Round = 20,   // Match_Control
   Restart_Round = 21,   // Match_Control
   End_Match = 22,   // Match_Control
+  Reverse = 23,   // Path_Following
+  Go_To = 24,   // Path_Following
 };
 
-constexpr uint32_t ENTITY_ACTION_COUNT = 23;
+constexpr uint32_t ENTITY_ACTION_COUNT = 25;
 
 enum class entity_signal : uint16_t
 {
@@ -72,9 +74,10 @@ enum class entity_signal : uint16_t
   Round_Started = 8,   // Match_Control
   Round_Ended = 9,   // Match_Control
   Match_Ended = 10,   // Match_Control
+  Node_Reached = 11,   // Path_Following
 };
 
-constexpr uint32_t ENTITY_SIGNAL_COUNT = 11;
+constexpr uint32_t ENTITY_SIGNAL_COUNT = 12;
 
 enum class entity_trait : uint16_t
 {
@@ -90,9 +93,10 @@ enum class entity_trait : uint16_t
   Objective = 9,
   Timer = 10,
   Match_Control = 11,
+  Path_Following = 12,
 };
 
-constexpr uint32_t ENTITY_TRAIT_COUNT = 12;
+constexpr uint32_t ENTITY_TRAIT_COUNT = 13;
 
 const char* to_string(entity_action value);
 const char* to_string(entity_signal value);

@@ -212,6 +212,17 @@ constexpr uint32_t Match_Request_COUNT = 5;
 const char* to_string(Match_Request value);
 template <> std::optional<Match_Request> try_from_string<Match_Request>(std::string_view text);
 
+enum class Easing : uint8_t
+{
+  Linear = 0,
+  Smooth = 1,
+};
+
+constexpr uint32_t Easing_COUNT = 2;
+
+const char* to_string(Easing value);
+template <> std::optional<Easing> try_from_string<Easing>(std::string_view text);
+
 enum class enum_type : uint16_t
 {
   Spawn_Type = 0,
@@ -228,9 +239,10 @@ enum class enum_type : uint16_t
   Game_Mode = 11,
   Round_End_Reason = 12,
   Match_Request = 13,
+  Easing = 14,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 14;
+constexpr uint32_t ENUM_TYPE_COUNT = 15;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -260,11 +272,13 @@ enum class entity_type : uint16_t
   Brush_Entity = 18,
   Ping_Marker_Entity = 19,
   Logic_Timer_Entity = 20,
+  Path_Node_Entity = 21,
+  Mover_Entity = 22,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 21;
+constexpr uint32_t ENTITY_TYPE_COUNT = 23;
 
 enum class component_type : uint16_t
 {
@@ -280,9 +294,10 @@ enum class component_type : uint16_t
   Inventory = 9,
   Timer_State = 10,
   Match = 11,
+  Path_Follow = 12,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 12;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 13;
 
 } // namespace entities
 
@@ -377,6 +392,12 @@ template <> struct enum_traits<entities::Match_Request>
 {
   static constexpr uint32_t count = entities::Match_Request_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Match_Request;
+};
+
+template <> struct enum_traits<entities::Easing>
+{
+  static constexpr uint32_t count = entities::Easing_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Easing;
 };
 
 template <> struct enum_traits<entities::enum_type>
@@ -477,6 +498,7 @@ struct Movement
   bool jump_was_held = {};
   float seconds_until_impulse_ready = {};
   uint32_t pad_contact_uid = {};
+  shared::entity_uid_t ground_mover_uid = {};
 };
 
 struct Inventory
@@ -511,6 +533,16 @@ struct Match
   Team_Allegiance winning_team = Team_Allegiance::Free_For_All;
   bool objective_reached = false;
   Match_Request requested = Match_Request::None;
+};
+
+struct Path_Follow
+{
+  static constexpr component_type static_component = component_type::Path_Follow;
+
+  shared::entity_uid_t from = {};
+  uint32_t segment_start_tick = 0;
+  int32_t direction = 1;
+  uint32_t frozen_at_tick = 0;
 };
 
 struct Entity

@@ -4,6 +4,7 @@
 #include "debug_collision.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "movement_volumes.hpp"
+#include "movers.hpp"
 #include "plane.hpp"
 #include "span.hpp"
 #include "subtick.hpp"
@@ -15,6 +16,7 @@ struct Collider_Planes
   std::vector<Plane> ground_planes;
   std::vector<Plane> ceiling_planes;
   std::vector<Plane> wall_planes;
+  shared::entity_uid_t ground_mover_uid = shared::null_entity_uid;
 };
 
 // Button bitfield constants — shared between client and server.
@@ -188,6 +190,11 @@ struct Move_Events
 // POSITION differs between ticks -- is still a wall (movers,
 // prediction_def.md §4).
 //
+// `movers` IS such a collider, and it is collided with at its pose at the END
+// of the tick. What keeps prediction honest is that the pose is a pure function
+// of the tick and the replicated Path_Follow, and that the push is not in here:
+// see push_player_by_movers below and mover_def.md ss12.
+//
 // `cvars` is the process's one cvar_state_t (the launcher's), passed by
 // reference rather than read from a global: the pm_* tunables are @Mirrored, so
 // the client's prediction and the server's authoritative run must feed the SAME
@@ -218,7 +225,29 @@ std::tuple<vec3, vec3> player_move(
     const Bounding_Volume_Hierarchy &bvh,
     Span<const uint8_t> disabled_geometry,
     Span<const shared::movement_volume_t> movement_volumes,
+    Span<const shared::mover_t> movers,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events = nullptr,
     debug_collision::Face_Bucket *debug_faces = nullptr);
+
+// A mover strikes a hull it penetrates deeper than this; the skin a resting
+// contact leaves (0.01) must not count, or a lift drags whoever leans on it.
+constexpr float MOVER_STRIKE_DEPTH = 0.1f;
+constexpr float MOVER_CRUSH_DEPTH  = 1.f;
+
+struct mover_push_t
+{
+  vec3                 feet       = {};
+  shared::entity_uid_t crushed_by = shared::null_entity_uid;
+};
+
+// The mover's half of a moving platform, once per TICK and never per input:
+// carries a rider (Movement::ground_mover_uid) or a hull the end pose strikes
+// from the start pose into the end pose. mover_def.md ss12.
+[[nodiscard]] mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
+                                                 Span<const uint8_t> disabled_geometry,
+                                                 Span<const shared::mover_t> movers,
+                                                 const entities::Movement& movement,
+                                                 const vec3& feet, float half_width,
+                                                 float half_height);

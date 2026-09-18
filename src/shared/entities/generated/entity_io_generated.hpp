@@ -26,6 +26,7 @@
 #include "traits/objective_generated.hpp"
 #include "traits/timer_generated.hpp"
 #include "traits/match_control_generated.hpp"
+#include "traits/path_following_generated.hpp"
 #include <cassert>
 #include <cstdint>
 #include <type_traits>
@@ -75,6 +76,8 @@ struct action_data_t
     End_Round_Data end_round;
     Restart_Round_Data restart_round;
     End_Match_Data end_match;
+    Reverse_Data reverse;
+    Go_To_Data go_to;
   };
 
   const Enable_Data& as_enable() const { assert(tag == entity_action::Enable); return enable; }
@@ -100,6 +103,8 @@ struct action_data_t
   const End_Round_Data& as_end_round() const { assert(tag == entity_action::End_Round); return end_round; }
   const Restart_Round_Data& as_restart_round() const { assert(tag == entity_action::Restart_Round); return restart_round; }
   const End_Match_Data& as_end_match() const { assert(tag == entity_action::End_Match); return end_match; }
+  const Reverse_Data& as_reverse() const { assert(tag == entity_action::Reverse); return reverse; }
+  const Go_To_Data& as_go_to() const { assert(tag == entity_action::Go_To); return go_to; }
 };
 static_assert(std::is_trivially_copyable_v<action_data_t>,
               "a connection row and a queued record hold one by value");
@@ -127,6 +132,8 @@ action_data_t erase(const Start_Match_Data& payload);
 action_data_t erase(const End_Round_Data& payload);
 action_data_t erase(const Restart_Round_Data& payload);
 action_data_t erase(const End_Match_Data& payload);
+action_data_t erase(const Reverse_Data& payload);
+action_data_t erase(const Go_To_Data& payload);
 
 // --- the trait table --------------------------------------------------
 //
@@ -161,6 +168,8 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Switchable),   // Brush_Entity
   0u,   // Ping_Marker_Entity
   trait_bit(entity_trait::Timer),   // Logic_Timer_Entity
+  0u,   // Path_Node_Entity
+  trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Path_Following),   // Mover_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -210,6 +219,8 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Brush_Entity
   0u,   // Ping_Marker_Entity
   action_bit(entity_action::Start) | action_bit(entity_action::Stop) | action_bit(entity_action::Restart),   // Logic_Timer_Entity
+  0u,   // Path_Node_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Reverse) | action_bit(entity_action::Go_To),   // Mover_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -251,6 +262,8 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Brush_Entity
   0u,   // Ping_Marker_Entity
   signal_bit(entity_signal::Elapsed),   // Logic_Timer_Entity
+  0u,   // Path_Node_Entity
+  signal_bit(entity_signal::Node_Reached),   // Mover_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)
@@ -286,6 +299,7 @@ inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
   0u,   // Round_Started
   0u,   // Round_Ended
   0u,   // Match_Ended
+  0u,   // Node_Reached
 };
 
 // --- the payload, erased ----------------------------------------------

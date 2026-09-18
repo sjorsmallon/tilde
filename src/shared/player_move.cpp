@@ -534,8 +534,60 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
 // client-side, so both the flag and the destination have to arrive from
 // whichever side is simulating rather than from a global. Null means the caller
 // has no reader for them (the server, every time) -- see debug_collision.hpp.
+struct collision_candidate_t
+{
+  const std::vector<Plane>*              collision_planes;
+  const std::vector<std::vector<vec3f>>* face_polygons;
+  shared::entity_uid_t                   mover_uid = shared::null_entity_uid;
+};
+
+shared::aabb_bounds_t hull_aabb(const vec3& center, float half_width, float half_height)
+{
+  return {center - vec3{half_width, half_height, half_width},
+          center + vec3{half_width, half_height, half_width}};
+}
+
+void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
+                                  Span<const uint8_t> disabled_geometry,
+                                  Span<const shared::mover_t> movers,
+                                  const shared::aabb_bounds_t& bounds,
+                                  std::vector<collision_candidate_t>& out)
+{
+  std::vector<const BVH_Primitive*> overlapping;
+  bvh_intersect_aabb(bvh, bounds, overlapping, disabled_geometry);
+  for (const BVH_Primitive* primitive : overlapping)
+    out.push_back({&primitive->collision_planes, &primitive->face_polygons});
+
+  for (const shared::mover_t& mover : movers)
+  {
+    if (!shared::aabbs_intersect(bounds, mover.swept_bounds))
+      continue;
+    for (const shared::collision_piece_t& piece : mover.pieces)
+      if (shared::aabbs_intersect(bounds, piece.bounds))
+        out.push_back({&piece.planes, &piece.face_polygons, mover.uid});
+  }
+}
+
+float hull_penetration_depth(const std::vector<Plane>& planes, const vec3& center,
+                             float half_width, float half_height)
+{
+  if (planes.empty())
+    return 0.f;
+
+  float depth = std::numeric_limits<float>::infinity();
+  for (const Plane& plane : planes)
+  {
+    const float support_radius = half_width * fabsf(plane.normal.x) +
+                                 half_height * fabsf(plane.normal.y) +
+                                 half_width * fabsf(plane.normal.z);
+    depth = std::min(depth, support_radius - dot(center - plane.point, plane.normal));
+  }
+  return depth;
+}
+
 Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
                                    Span<const uint8_t> disabled_geometry,
+                                   Span<const shared::mover_t> movers,
                                    vec3 &player_pos,
                                    float half_width, float half_height,
                                    debug_collision::Face_Bucket *debug_faces)
@@ -543,22 +595,19 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
   Collider_Planes result;
   constexpr float cos_45 = 0.707f;
 
-  shared::aabb_bounds_t player_aabb;
-  player_aabb.min = player_pos - vec3{half_width, half_height, half_width};
-  player_aabb.max = player_pos + vec3{half_width, half_height, half_width};
+  shared::aabb_bounds_t player_aabb = hull_aabb(player_pos, half_width, half_height);
 
+  std::vector<collision_candidate_t> overlapping;
+  collect_collision_candidates(bvh, disabled_geometry, movers, player_aabb, overlapping);
 
-  std::vector<const BVH_Primitive *> overlapping;
-  bvh_intersect_aabb(bvh, player_aabb, overlapping, disabled_geometry);
-
-  for (const auto *prim : overlapping)
+  for (const collision_candidate_t& candidate : overlapping)
   {
-    if (prim->collision_planes.empty())
+    const std::vector<Plane>& collision_planes = *candidate.collision_planes;
+    if (collision_planes.empty())
       continue;
 
     // Rebuild player AABB from (potentially updated) player_pos each iteration
-    player_aabb.min = player_pos - vec3{half_width, half_height, half_width};
-    player_aabb.max = player_pos + vec3{half_width, half_height, half_width};
+    player_aabb = hull_aabb(player_pos, half_width, half_height);
 
     // Hull-plane penetration test:
     // For each plane of the convex hull, compute how far the player AABB
@@ -569,9 +618,9 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
     vec3 push_normal = {0, 0, 0};
     bool outside = false;
 
-    for (int pi = 0; pi < (int)prim->collision_planes.size(); ++pi)
+    for (int pi = 0; pi < (int)collision_planes.size(); ++pi)
     {
-      const auto &plane = prim->collision_planes[pi];
+      const auto &plane = collision_planes[pi];
       float signed_dist = dot(player_pos - plane.point, plane.normal);
       // Support radius: how far the AABB extends along the plane normal direction
       float support_radius = half_width * fabsf(plane.normal.x) +
@@ -624,14 +673,16 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
 
     // Record collision for debug visualization
     if (debug_faces && min_plane_idx >= 0 &&
-        min_plane_idx < (int)prim->face_polygons.size())
+        min_plane_idx < (int)candidate.face_polygons->size())
       debug_collision::record_collision(*debug_faces, p,
-                                        prim->face_polygons[min_plane_idx]);
+                                        (*candidate.face_polygons)[min_plane_idx]);
 
     // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
     if (push_normal.y > cos_45)
     {
       result.ground_planes.push_back(p);
+      if (result.ground_mover_uid == shared::null_entity_uid)
+        result.ground_mover_uid = candidate.mover_uid;
     }
     else if (push_normal.y < -cos_45)
     {
@@ -657,6 +708,7 @@ std::tuple<vec3, vec3> player_move(
     const Bounding_Volume_Hierarchy &bvh,
     Span<const uint8_t> disabled_geometry,
     Span<const shared::movement_volume_t> movement_volumes,
+    Span<const shared::mover_t> movers,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events,
@@ -679,7 +731,7 @@ std::tuple<vec3, vec3> player_move(
   const vec3 hull_center_offset{0.f, half_height, 0.f};
   vec3 player_pos = old_position + hull_center_offset;
   Collider_Planes collider_planes =
-      resolve_collisions(bvh, disabled_geometry, player_pos, half_width, half_height,
+      resolve_collisions(bvh, disabled_geometry, movers, player_pos, half_width, half_height,
                          recording_bucket);
 
   bool has_ground = !collider_planes.ground_planes.empty();
@@ -776,7 +828,7 @@ std::tuple<vec3, vec3> player_move(
       const float step_height = cvars.pm_step_height;
       vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
       Collider_Planes raised_planes =
-          resolve_collisions(bvh, disabled_geometry, raised_pos, half_width, half_height,
+          resolve_collisions(bvh, disabled_geometry, movers, raised_pos, half_width, half_height,
                              recording_bucket);
 
       // Only abort if a raised wall specifically blocks our wish direction.
@@ -826,7 +878,7 @@ std::tuple<vec3, vec3> player_move(
         drop_pos.z += wish_dir_xz.z * step_height;
         drop_pos.y -= step_height;
         Collider_Planes drop_planes =
-            resolve_collisions(bvh, disabled_geometry, drop_pos, half_width, half_height,
+            resolve_collisions(bvh, disabled_geometry, movers, drop_pos, half_width, half_height,
                                recording_bucket);
 
         // Reject the step if a wall still blocks the wish direction at the
@@ -888,7 +940,7 @@ std::tuple<vec3, vec3> player_move(
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
   Collider_Planes post_planes =
-      resolve_collisions(bvh, disabled_geometry, new_pos, half_width, half_height,
+      resolve_collisions(bvh, disabled_geometry, movers, new_pos, half_width, half_height,
                          recording_bucket);
 
   const float overbounce = cvars.pm_overbounce;
@@ -952,6 +1004,7 @@ std::tuple<vec3, vec3> player_move(
   }
 
   movement.is_grounded = grounded_after_move;
+  movement.ground_mover_uid = post_planes.ground_mover_uid;
 
   // Counted down HERE rather than at the fire site for the same reason
   // time_since_grounded_seconds is accumulated here: N sub-steps summing to one
@@ -1020,4 +1073,61 @@ std::tuple<vec3, vec3> player_move(
   }
 
   return {feet_after_move, new_vel};
+}
+
+mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
+                                   Span<const uint8_t> disabled_geometry,
+                                   Span<const shared::mover_t> movers,
+                                   const entities::Movement& movement, const vec3& feet,
+                                   float half_width, float half_height)
+{
+  const vec3 hull_center_offset{0.f, half_height, 0.f};
+  mover_push_t result{.feet = feet};
+  std::vector<shared::entity_uid_t> pushers;
+
+  for (const shared::mover_t& mover : movers)
+  {
+    if (mover.pieces.empty())
+      continue;
+
+    if (movement.ground_mover_uid != mover.uid)
+    {
+      const vec3 center = result.feet + hull_center_offset;
+      if (!shared::aabbs_intersect(hull_aabb(center, half_width, half_height), mover.swept_bounds))
+        continue;
+
+      bool struck = false;
+      for (const shared::collision_piece_t& piece : mover.pieces)
+        struck = struck || hull_penetration_depth(piece.planes, center, half_width, half_height) >
+                               MOVER_STRIKE_DEPTH;
+      if (!struck)
+        continue;
+    }
+
+    const vec3 local = linalg::rotate(linalg::inverse(mover.pose_at_tick_start.orientation),
+                                      result.feet - mover.pose_at_tick_start.position);
+    result.feet = mover.pose_at_tick_end.position +
+                  linalg::rotate(mover.pose_at_tick_end.orientation, local);
+    pushers.push_back(mover.uid);
+  }
+
+  if (pushers.empty())
+    return result;
+
+  const vec3 center = result.feet + hull_center_offset;
+  std::vector<collision_candidate_t> overlapping;
+  collect_collision_candidates(bvh, disabled_geometry, movers,
+                               hull_aabb(center, half_width, half_height), overlapping);
+  for (const collision_candidate_t& candidate : overlapping)
+  {
+    if (std::find(pushers.begin(), pushers.end(), candidate.mover_uid) != pushers.end())
+      continue;
+    if (hull_penetration_depth(*candidate.collision_planes, center, half_width, half_height) >
+        MOVER_CRUSH_DEPTH)
+    {
+      result.crushed_by = pushers.back();
+      break;
+    }
+  }
+  return result;
 }

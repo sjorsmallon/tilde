@@ -22,7 +22,7 @@ cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in
 # OFF by default and never shipped -- it costs 100-500ns per allocation.
 cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
 
-# Run the whole test suite (~30s, all 51)
+# Run the whole test suite (~30s, all 52)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex
@@ -613,6 +613,8 @@ The remaining hand-written per-type switches are deliberately **not** generated:
 ### Editor
 
 Tool pattern: `Tool_Editor_State` dispatches to the active tool (Selection, Placement, Sculpting, Particle, Pathfinding, Animation, Brush). Each tool handles mouse/key events and overlay drawing.
+
+**A plain click in the same place CYCLES** (`Selection_Tool::collect_click_cycle`): everything under the cursor -- the hovered answer first, then every ray hit (`bvh_intersect_ray_all`) and every entity icon in reach, by depth -- each as its group and then as itself. The next click takes the entry after the selection and wraps; the HUD says `k/n`. Group click-through is the cycle's first step, not a separate rule.
 
 The Animation tool is the odd one — it edits no map, it looks at the skinned player: a pose picker over bind and the five aim poses through the *real* `compute_aim_blend` / `sample_aim_pose` path, the skeleton, and the `rig.hitboxes` capsules posed under it with their derived-radius seed and the coverage / hull-excursion readouts. `shared/hitbox_rig.hpp` is the shared half (both sides evaluate the volumes; only the tool derives radii, since derivation needs the mesh). See `animation_def.md` §4.
 

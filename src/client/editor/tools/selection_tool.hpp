@@ -50,6 +50,17 @@ private:
   shared::entity_uid_t hovered_uid = 0;
   std::vector<shared::entity_uid_t> selected_uids;
 
+  // The CLICK CYCLE: everything under the cursor, nearest first, each as its
+  // group and then as itself. A plain click in the same place takes the entry
+  // after the current selection, so what is behind is one more click away.
+  struct click_cycle_entry_t
+  {
+    shared::entity_uid_t              uid = 0;
+    std::vector<shared::entity_uid_t> members;
+  };
+  [[nodiscard]] std::vector<click_cycle_entry_t> collect_click_cycle(const editor_context_t& ctx) const;
+  linalg::vec2i last_plain_click_position = {-1000000, -1000000};
+
   // "Target by click": the Connections panel arms it, the next viewport click
   // resolves the hovered uid into the row and is SWALLOWED -- letting it through
   // would reselect, and the panel the author was editing would be gone before
@@ -211,11 +222,16 @@ private:
   //
   // Source's "tie to entity" with the storage direction turned around: the
   // brush names its owner and nothing names the brush (prediction_def.md ss4.2).
-  // Tying spawns a Brush_Entity at the selection centroid and writes owner_uid
-  // on every selected object; untying clears it, whether the selection is the
-  // objects or the entity. One transaction per gesture -- the entity half as a
-  // created/removed snapshot, the geometry half as value swaps.
-  void tie_selection_to_entity(editor_context_t& ctx);
+  // Tying writes owner_uid on every selected object: to the ONE geometry owner
+  // in the selection, else to a new owner of a GEOMETRY_OWNER_TYPES type spawned
+  // at the selection centroid. Untying clears it, whether the selection is the
+  // objects or the entity. One transaction per gesture.
+  void tie_selection_to_existing_entity(editor_context_t& ctx);
+  void tie_selection_to_new_entity(editor_context_t& ctx, entities::entity_type type);
+  void tie_selection_to_owner(editor_context_t& ctx, shared::entity_uid_t owner_uid,
+                              transaction_t transaction);
+  void collect_selected_geometry_owners(const editor_context_t&            ctx,
+                                        std::vector<shared::entity_uid_t>& out) const;
   void untie_selection(editor_context_t& ctx);
 
   // Every geometry uid `owner` switches, walked on demand. No cached list on

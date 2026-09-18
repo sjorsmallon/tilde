@@ -9,7 +9,10 @@
 #include "../entity_inspector.hpp"
 #include "../entity_outliner.hpp"
 #include "../geometry_editor.hpp"
+#include "../path_editing.hpp"
 #include "../transaction_system.hpp"
+#include "../../../shared/game_session.hpp"
+#include "../../../shared/game_session.hpp"
 #include "../../../shared/map_connection.hpp"
 #include "../../../shared/map_piece.hpp"
 #include "../../../shared/map_group.hpp"
@@ -47,6 +50,8 @@ constexpr float ENTITY_PICK_RADIUS_IN_EMPTY_SPACE  = 40.0f;
 // A press that never moved this far in pixels is a CLICK, whatever gesture it
 // started. Squared, so no square root is taken to answer a yes/no.
 constexpr int CLICK_MOVEMENT_THRESHOLD_SQUARED = 25;
+
+constexpr float OWNER_ICON_CLEARANCE = 32.0f;
 
 // What the click would take, drawn before it is taken: a ring on the target, a
 // leader line to it, and its label at the cursor. Built for the connection pick
@@ -663,59 +668,107 @@ void Selection_Tool::collect_owned_geometry(const editor_context_t&  ctx,
       out.push_back(entry.uid);
 }
 
-void Selection_Tool::tie_selection_to_entity(editor_context_t& ctx)
+void Selection_Tool::collect_selected_geometry_owners(const editor_context_t&  ctx,
+                                                      std::vector<shared::entity_uid_t>& out) const
 {
+  out.clear();
   if (!ctx.map)
     return;
 
-  std::vector<shared::entity_uid_t> objects;
   for (shared::entity_uid_t uid : selected_uids)
-    if (ctx.map->find_geometry_by_uid(uid) != nullptr)
-      objects.push_back(uid);
-
-  if (objects.empty())
   {
-    hud::set_announcement("Select at least one brush to tie to an entity");
-    return;
+    const shared::map_entity_t* entry = ctx.map->find_by_uid(uid);
+    if (entry && entry->entity && shared::entity_type_can_own_geometry(entry->entity->type))
+      out.push_back(uid);
   }
+}
 
-  const std::optional<shared::aabb_bounds_t> bounds = try_compute_selection_bounds(ctx);
+void Selection_Tool::tie_selection_to_owner(editor_context_t& ctx, shared::entity_uid_t owner_uid,
+                                            transaction_t transaction)
+{
+  const shared::map_entity_t* owner = ctx.map->find_by_uid(owner_uid);
+  const char* classname = entities::entity_info(owner->entity->type).classname;
 
-  auto [owner_uid, owner] = shared::spawn_entity(*ctx.map, entities::entity_type::Brush_Entity);
-  if (!owner)
-  {
-    log_error("selection tool: a brush_entity would not spawn -- nothing was tied");
-    return;
-  }
-
-  // The tie-time centroid, and it means nothing until a mover makes the
-  // entity's position live (prediction_def.md ss4.2). It is here so the icon
-  // sits on what it owns rather than at the world origin.
-  if (bounds)
-    owner->position = (bounds->min + bounds->max) * 0.5f;
-
-  transaction_t transaction;
-  transaction.add_created(owner_uid, snapshot_entity(owner.get()));
-
-  for (shared::entity_uid_t uid : objects)
+  size_t tied = 0;
+  for (shared::entity_uid_t uid : selected_uids)
   {
     shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(uid);
-    const shared::geometry_value_t before = entry->value;
+    if (entry == nullptr)
+      continue;
 
-    // A brush already tied is RE-tied, not refused: the second gesture is what
-    // an author means by it, and the old owner is left standing rather than
-    // reaped -- it may still own others, and deleting it here would be an edit
-    // nobody asked for.
+    // A brush already tied is RE-tied, not refused, and its old owner is left standing.
+    const shared::geometry_value_t before = entry->value;
     shared::set_owner_uid(entry->value, owner_uid);
     transaction.add_geometry_modified(uid, before, entry->value);
+    ++tied;
   }
 
   ctx.transaction_system.push(std::move(transaction));
 
   selected_uids.clear();
   selected_uids.push_back(owner_uid);
-  hud::set_announcement(std::format("Tied {} object(s) to brush_entity {}", objects.size(),
-                                    owner_uid));
+  hud::set_announcement(std::format("Tied {} object(s) to {} {}", tied, classname, owner_uid));
+}
+
+void Selection_Tool::tie_selection_to_existing_entity(editor_context_t& ctx)
+{
+  if (!ctx.map)
+    return;
+
+  std::vector<shared::entity_uid_t> owners;
+  collect_selected_geometry_owners(ctx, owners);
+  if (owners.size() != 1)
+  {
+    hud::set_announcement(std::format("Select exactly one owner to tie to ({} selected)",
+                                      owners.size()));
+    return;
+  }
+
+  tie_selection_to_owner(ctx, owners[0], transaction_t{});
+}
+
+void Selection_Tool::tie_selection_to_new_entity(editor_context_t& ctx, entities::entity_type type)
+{
+  if (!ctx.map)
+    return;
+
+  if (!shared::entity_type_can_own_geometry(type))
+  {
+    log_error("selection tool: {} cannot own geometry -- nothing was tied",
+              entities::entity_info(type).classname);
+    return;
+  }
+
+  const std::optional<shared::aabb_bounds_t> bounds = try_compute_selection_bounds(ctx);
+
+  auto [owner_uid, owner] = shared::spawn_entity(*ctx.map, type);
+  if (!owner)
+  {
+    log_error("selection tool: a {} would not spawn -- nothing was tied",
+              entities::entity_info(type).classname);
+    return;
+  }
+
+  // Above what it owns: the icon is a handle, and on the brushes it would sit inside them.
+  if (bounds)
+    owner->position = {(bounds->min.x + bounds->max.x) * 0.5f, bounds->max.y + OWNER_ICON_CLEARANCE,
+                       (bounds->min.z + bounds->max.z) * 0.5f};
+
+  transaction_t transaction;
+  transaction.add_created(owner_uid, snapshot_entity(owner.get()));
+
+  std::vector<shared::entity_uid_t> members = {owner_uid};
+  for (shared::entity_uid_t uid : selected_uids)
+    if (ctx.map->find_geometry_by_uid(uid) != nullptr)
+      members.push_back(uid);
+
+  std::vector<shared::map_group_t> groups_before = ctx.map->groups;
+  (void)shared::group_objects(*ctx.map, members,
+                              std::format("{} {}", entities::entity_info(type).classname, owner_uid));
+  transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
+
+  tie_selection_to_owner(ctx, owner_uid, std::move(transaction));
+  selected_uids = members;
 }
 
 void Selection_Tool::untie_selection(editor_context_t& ctx)
@@ -964,6 +1017,69 @@ Selection_Tool::try_pick_entity_within(const editor_context_t &ctx, linalg::vec2
   return nearest;
 }
 
+std::vector<Selection_Tool::click_cycle_entry_t>
+Selection_Tool::collect_click_cycle(const editor_context_t& ctx) const
+{
+  std::vector<click_cycle_entry_t> cycle;
+  if (!ctx.map || hovered_uid == 0)
+    return cycle;
+
+  struct candidate_t
+  {
+    shared::entity_uid_t uid;
+    float                depth;
+  };
+  std::vector<candidate_t> candidates;
+
+  const linalg::vec3 origin    = cached_viewport.mouse_ray.origin;
+  const linalg::vec3 direction = cached_viewport.mouse_ray.direction;
+
+  if (ctx.bvh)
+  {
+    std::vector<ray_hit_result_t> hits;
+    bvh_intersect_ray_all(*ctx.bvh, origin, direction, hits);
+    for (const ray_hit_result_t& hit : hits)
+      if (hit.id.type == Collision_Id::Type::Static_Geometry && ctx.map->has_object(hit.id.index) &&
+          ctx.object_is_visible(hit.id.index))
+        candidates.push_back({hit.id.index, hit.t});
+  }
+
+  const linalg::vec2i pixel = input::mouse_position();
+  for (const shared::map_entity_t& entry : ctx.map->entities)
+  {
+    if (!entry.entity || !ctx.object_is_visible(entry.uid))
+      continue;
+    const std::optional<linalg::vec2> screen = try_project_to_screen(cached_viewport, entry.entity->position);
+    if (!screen)
+      continue;
+    const float dx = screen->x - (float)pixel.x;
+    const float dy = screen->y - (float)pixel.y;
+    if (dx * dx + dy * dy < ENTITY_PICK_RADIUS_OVER_GEOMETRY * ENTITY_PICK_RADIUS_OVER_GEOMETRY)
+      candidates.push_back({entry.uid, linalg::dot(entry.entity->position - origin, direction)});
+  }
+
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [](const candidate_t& a, const candidate_t& b) { return a.depth < b.depth; });
+  candidates.insert(candidates.begin(), {hovered_uid, 0.0f});
+
+  const auto already_in_cycle = [&](const std::vector<shared::entity_uid_t>& members)
+  {
+    return std::any_of(cycle.begin(), cycle.end(), [&](const click_cycle_entry_t& entry)
+                       { return shared::uid_sets_equal(entry.members, members); });
+  };
+
+  for (const candidate_t& candidate : candidates)
+  {
+    std::vector<shared::entity_uid_t> group;
+    shared::expand_to_group(*ctx.map, candidate.uid, group);
+    if (!already_in_cycle(group))
+      cycle.push_back({candidate.uid, group});
+    if (group.size() > 1 && !already_in_cycle({candidate.uid}))
+      cycle.push_back({candidate.uid, {candidate.uid}});
+  }
+  return cycle;
+}
+
 void Selection_Tool::on_enable(editor_context_t& ctx)
 {
   hovered_uid = 0;
@@ -1130,12 +1246,39 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
         if (!owned.empty())
           ImGui::Text("Switches %zu object(s)", owned.size());
 
-        if (untied_objects + tied_objects > 0 && ImGui::Button("Tie to entity"))
-          tie_selection_to_entity(ctx);
+        if (untied_objects + tied_objects > 0)
+        {
+          std::vector<shared::entity_uid_t> owners;
+          collect_selected_geometry_owners(ctx, owners);
+          if (owners.size() == 1)
+          {
+            const shared::map_entity_t* owner = ctx.map->find_by_uid(owners[0]);
+            const std::string label =
+                std::format("Tie to {} {}", entities::entity_info(owner->entity->type).classname,
+                            owners[0]);
+            if (ImGui::Button(label.c_str()))
+              tie_selection_to_existing_entity(ctx);
+          }
+          else if (owners.size() > 1)
+          {
+            ImGui::TextDisabled("%zu owners selected -- keep one to tie to it", owners.size());
+          }
+          else
+          {
+            for (size_t index = 0; index < std::size(shared::GEOMETRY_OWNER_TYPES); ++index)
+            {
+              const entities::entity_type type = shared::GEOMETRY_OWNER_TYPES[index];
+              if (index > 0)
+                ImGui::SameLine();
+              const std::string label =
+                  std::format("Tie to new {}", entities::entity_info(type).classname);
+              if (ImGui::Button(label.c_str()))
+                tie_selection_to_new_entity(ctx, type);
+            }
+          }
+        }
         if (tied_objects > 0 || !owned.empty())
         {
-          if (untied_objects + tied_objects > 0)
-            ImGui::SameLine();
           if (ImGui::Button("Untie"))
             untie_selection(ctx);
         }
@@ -1966,17 +2109,42 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
                 selected_uids.push_back(uid);
           }
         }
-        // CLICK THROUGH: a plain click on a member of the group that IS the
-        // selection narrows to that member. First click the group, second
-        // click the thing -- the gesture for picking inside a group, with no
-        // modifier to find, since both of them already mean add.
-        else if (picked.size() > 1 && shared::uid_sets_equal(selected_uids, picked))
-        {
-          selected_uids = {hovered_uid};
-        }
+        // A plain click walks the click cycle. In the same place it takes the
+        // entry after the selection -- the group, then the thing, then what is
+        // behind, wrapping. Elsewhere it takes the first, except that a click
+        // on a member of the group that IS the selection narrows to the member.
         else
         {
-          selected_uids = std::move(picked);
+          const std::vector<click_cycle_entry_t> cycle = collect_click_cycle(ctx);
+          const int  click_dx   = e.position.x - last_plain_click_position.x;
+          const int  click_dy   = e.position.y - last_plain_click_position.y;
+          const bool same_place = click_dx * click_dx + click_dy * click_dy <= CLICK_MOVEMENT_THRESHOLD_SQUARED;
+          last_plain_click_position = e.position;
+
+          const auto current = std::find_if(cycle.begin(), cycle.end(), [&](const click_cycle_entry_t& entry)
+                                            { return shared::uid_sets_equal(entry.members, selected_uids); });
+          size_t next = 0;
+          if (current != cycle.end() && same_place)
+            next = (size_t)(current - cycle.begin() + 1) % cycle.size();
+          else if (current == cycle.begin() && cycle.size() > 1 && cycle[1].members.size() == 1 &&
+                   cycle[0].members.size() > 1)
+            next = 1;
+
+          if (cycle.empty())
+            selected_uids = std::move(picked);
+          else
+          {
+            selected_uids = cycle[next].members;
+            if (cycle.size() > 1)
+            {
+              const click_cycle_entry_t& taken = cycle[next];
+              const shared::map_geometry_t* geometry = ctx.map->find_geometry_by_uid(taken.uid);
+              const std::string name =
+                  geometry != nullptr
+                      ? std::format("{} uid {}", shared::get_kind_name(shared::get_kind(geometry->value)), taken.uid)
+                      : shared::describe_map_entity(*ctx.map, taken.uid);
+            }
+          }
         }
       }
       else
@@ -2043,6 +2211,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
       // deleted object at once.
       transaction_t transaction;
       std::vector<shared::connection_t> connections_before = ctx.map->connections;
+      relink_paths_around_removed_nodes(*ctx.map, selected_uids, transaction);
       for (auto uid : selected_uids)
       {
         if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
@@ -2128,23 +2297,30 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
     }
   }
 
-  // Hover / box-select preview only ever needs the bound, so it works off the
-  // uniform bounds accessor and doesn't care which regime an object is in.
+  // Hover / box-select preview: the hovered outline where the object drew a mesh, its
+  // bound where it did not.
+  draws.hovered_outline_color = colors::yellow;
   auto draw_bounds_highlight = [&](shared::entity_uid_t uid, color_t color)
   {
+    if (draws.outline_object(uid, renderer::outline_t::hovered))
+      return;
     const shared::aabb_bounds_t bounds = editor_object_bounds(*ctx.map, uid);
     draws.debug.box((bounds.min + bounds.max) * 0.5f,
                            (bounds.max - bounds.min) * 0.5f, color);
   };
 
-  // 1. Draw selected items with pulsating pink/white wireframe
+  // 1. Selected items: a silhouette outline where they drew a mesh, the pulsing wireframe
+  // where they did not.
   float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+  draws.selected_outline_color = compute_selection_pulse_color(ctx.time);
   for (auto uid : selected_uids)
   {
+    const bool outlined = draws.outline_object(uid, renderer::outline_t::selected);
     if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
-      draw_geometry_selection_highlight(geometry->value, draws, ctx.time, grid_step);
+      draw_geometry_selection_highlight(geometry->value, draws, ctx.time, grid_step, outlined);
     else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step, draw_settings);
+      draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step, draw_settings,
+                               outlined);
   }
 
   // 1b. What a selected Brush_Entity SWITCHES. Nothing in the viewport says

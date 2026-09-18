@@ -38,10 +38,11 @@ enum class editor_tool_t : uint8_t
   particles,
   animation,
   brush,
-  lightmap
+  lightmap,
+  path
 };
 
-inline constexpr uint32_t EDITOR_TOOL_COUNT = 8;
+inline constexpr uint32_t EDITOR_TOOL_COUNT = 9;
 
 } // namespace client
 
@@ -75,6 +76,8 @@ private:
   // but every dispatch site has to answer the question anyway, and an optional
   // is that question rather than a -1 every reader has to remember to check.
   std::optional<editor_tool_t> active_tool;
+
+  bool play_was_requested_by_key = false;
 
   // Own state
   shared::map_t map;
