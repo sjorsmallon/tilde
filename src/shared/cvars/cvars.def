@@ -337,6 +337,8 @@ Client :: cvars {
     // debug overlay's does.
     cl_replay_panel:        bool = true      @Client    "Show the replay scrub panel while a replay is playing"
 
+    cl_ghost_show:          bool = true      @Client    "Draw the map's fastest-run ghost while a timed run is live"
+
     // A free camera flown with the editor's controls, and NOTHING moves the
     // body: it stays where it stood, still simulated and still shootable, and
     // the view returns to its own aim when this goes off. A cvar rather than a
@@ -519,6 +521,7 @@ Debugging :: cvars {
     // replay_def.md ss4. Unflagged: both recorders read it, each on its own side.
     replay_keyframe_seconds: f32 = 2.0                  "Seconds between full keyframes in a replay recording"
     sv_replay_auto:          bool = false   @Server     "Start a replay recording on every map load"
+    sv_ghost_record:         bool = true    @Server     "Capture every player's run and write maps/<map>.ghost when it is the fastest"
 }
 
 // ---------------------------------------------------------------------------

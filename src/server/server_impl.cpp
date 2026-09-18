@@ -1806,6 +1806,16 @@ bool Tick()
   update_triggers(context);
   update_timers(context);
 
+  // Before the drain, so the tick a goal volume fires Complete_Level has its pose.
+  {
+    const entities::Match& match = match_of(context);
+    if (context.cvars->sv_ghost_record && match.phase == entities::Round_Phase::Live &&
+        current_mode(context).win_condition == Win_Condition::Objective_Reached)
+      shared::capture_ghost_poses(
+          context.world.ghost_capture, match.phase_start_tick, context.tick_number,
+          context.world.session.entity_system.entities_of<entities::Player_Entity>());
+  }
+
   // Every connection this tick emitted, delivered before the snapshot is built,
   // looping until the chain settles. Here rather than at the top of the tick so
   // a zero-delay chain completes inside the tick that started it: the door a

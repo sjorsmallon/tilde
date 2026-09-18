@@ -1,6 +1,7 @@
 // Game_Rules_Entity's own handlers -- the verbs only this type can answer.
 #include "../../shared/entities/generated/entities/game_rules_entity_generated.hpp"
 #include "../../shared/events/generated/events_generated.hpp"
+#include "../../shared/ghost.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/run_times.hpp"
 #include "../entity_io_context.hpp"
@@ -26,6 +27,34 @@ std::string activator_name(server::server_context_t& server, shared::entity_uid_
   if (const Player_Entity* player = entity_as<Player_Entity>(entity))
     return player->display_name.c_str();
   return activator == shared::null_entity_uid ? "nobody" : std::format("uid {}", activator);
+}
+
+// Ranked against the ghost on file, not the .times file: a best set before ghosts existed has none to beat.
+void write_ghost_if_fastest(server::server_context_t& server, shared::entity_uid_t activator,
+                            const shared::run_time_record_t& record)
+{
+  if (!server.cvars->sv_ghost_record)
+    return;
+
+  std::optional<shared::ghost_t> ghost =
+      shared::try_extract_ghost(server.world.ghost_capture, activator, record.ticks);
+  if (!ghost)
+  {
+    log_error("ghost: no capture of {} covering {} ticks, so no ghost is written", activator,
+              record.ticks);
+    return;
+  }
+  ghost->tickrate_hz      = record.tickrate_hz;
+  ghost->map_content_hash = server.world.map_content_hash;
+  ghost->name             = record.name;
+
+  const std::string                    path    = shared::ghost_path_for(server.world.current_map_path);
+  const std::optional<shared::ghost_t> on_file = shared::try_read_ghost_file(path);
+  if (on_file && shared::ghost_run_seconds(*on_file) <= shared::ghost_run_seconds(*ghost))
+    return;
+
+  shared::write_ghost_file(path, *ghost);
+  log_terminal("ghost: wrote {} ({} ticks)", path, record.ticks);
 }
 
 // The run is the current tick minus the tick Live began at, in ticks, so it
@@ -61,6 +90,8 @@ void record_run(const Match& match, server::input_context_t& context, shared::Ob
           ? 0
           : static_cast<uint32_t>(std::lround(shared::run_time_seconds(best_before.front()) *
                                               static_cast<float>(record.tickrate_hz)));
+
+  write_ghost_if_fastest(server, context.activator, record);
 
   const std::string map_name =
       std::filesystem::path(server.world.current_map_path).stem().generic_string();

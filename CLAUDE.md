@@ -22,7 +22,7 @@ cmake -S . -B cmake_build_embed -DTILDE_ASSET_SOURCE=embed # the same package in
 # OFF by default and never shipped -- it costs 100-500ns per allocation.
 cmake -S . -B cmake_build_audit -DTILDE_MEMORY_AUDIT=ON
 
-# Run the whole test suite (~30s, all 50)
+# Run the whole test suite (~30s, all 51)
 ctest --test-dir cmake_build -j8
 
 # Run one test, or a subset by regex

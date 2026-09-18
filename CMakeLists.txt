@@ -446,6 +446,9 @@ add_library(game_shared STATIC
     # A map's completed runs, one appended line each (run_times.hpp).
     src/shared/run_times.hpp
     src/shared/run_times.cpp
+    # A speedrun ghost: one player's pose per tick of a run (ghost.hpp).
+    src/shared/ghost.hpp
+    src/shared/ghost.cpp
     src/shared/replay_file.hpp
     src/shared/replay_file.cpp
     src/shared/replay_recorder.hpp
@@ -754,6 +757,8 @@ add_library(game_client SHARED
     # PACKET, not per frame.
     src/client/held_snapshot.cpp
     src/client/replay_playback.cpp
+    src/client/replay_panel.cpp
+    src/client/ghost_playback.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
     src/client/game_events/rocket_detonated.cpp
@@ -1128,6 +1133,11 @@ add_executable(run_times_test src/test/run_times_test.cpp)
 target_include_directories(run_times_test PRIVATE src src/shared)
 target_link_libraries(run_times_test PRIVATE game_shared)
 
+# The .ghost file, the always-on capture and the sampler (replay_def.md §6).
+add_executable(ghost_test src/test/ghost_test.cpp)
+target_include_directories(ghost_test PRIVATE src src/shared)
+target_link_libraries(ghost_test PRIVATE game_shared)
+
 # The .replay container, the recorder's previous-frame deltas and the seek (replay_def.md §8 steps 1, 2 and 5).
 add_executable(replay_test src/test/replay_test.cpp)
 target_include_directories(replay_test PRIVATE src src/shared)
@@ -1390,6 +1400,7 @@ set(GAME_TESTS
     server_context_test
     game_rules_test
     run_times_test
+    ghost_test
     replay_test
     match_announcement_test
     entity_io_test

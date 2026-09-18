@@ -10,6 +10,7 @@
 #include "../hud/ready_status.hpp"
 #include "../hud/run_timer.hpp"
 #include "../hud/weapon_name.hpp"
+#include "../ghost_playback.hpp"
 #include "../replay_panel.hpp"
 #include "../weapon_fire_audio.hpp"
 #include "../held_snapshot.hpp"
@@ -294,15 +295,6 @@ static void forward_console_line_to_server(std::string_view line)
   network::queue_reliable_protobuf_message(ctx.transport_layer, cmd);
 }
 
-// default maps directory where the client tries to find maps.
-// if MAP_DIR is set in env, that's taken. it is a hacky thing
-// to test locally if map transfer works. 
-static std::string client_maps_directory()
-{
-  const char *env = std::getenv("MAPS_DIR");
-  return (env && *env) ? std::string(env) : std::string("maps");
-}
-
 // message to the server we need the map data for the map name they just sent us to switch to.
 //
 // Reliably, and this is the request that closed the design out: a lost one left
@@ -410,6 +402,8 @@ static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
 
   ctx.world.physics_state = make_physics_state();
   shared::populate_static_physics_bodies(*ctx.world.physics_state, map);
+
+  reload_map_ghost(ctx);
 }
 
 // Where we stand until the first snapshot says otherwise; the server overwrites all of it.
@@ -2570,6 +2564,39 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       draw.material_overrides = material_variant(mesh, state_for(render.material));
     }
     scene.meshes.push_back(draw);
+  }
+
+  if (const std::optional<shared::ghost_pose_t> ghost = try_sample_map_ghost(ctx))
+  {
+    static const entities::Render ghost_render = entities::Player_Entity{}.render;
+    const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset = assets::get_mesh(ghost_render.mesh);
+    const renderer::mesh_handle_t                      mesh       = get_render_mesh(mesh_asset);
+    if (mesh.valid())
+    {
+      if (pose_count == pose_storage.size())
+        pose_storage.emplace_back();
+      assets::posed_skeleton_t& posed = pose_storage[pose_count++];
+      posed.clear();
+
+      const assets::mesh_asset_t* mesh_asset_data = assets::get(mesh_asset);
+      if (mesh_asset_data && mesh_asset_data->is_skinned())
+        if (const assets::skeleton_t* skeleton = assets::get(mesh_asset_data->skeleton))
+          compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, ghost->view_pitch,
+                                     linalg::wrap_degrees(ghost->view_yaw - ghost->body_yaw),
+                                     aim_settings_from(*ctx.cvars), posed);
+
+      renderer::mesh_draw_t draw{};
+      draw.mesh      = mesh;
+      draw.transform = linalg::compose_transform(
+          ghost->position + ghost_render.offset,
+          linalg::compose_model_rotation(linalg::from_view_angles(ghost->body_yaw, 0.f), ghost_render.rotation),
+          ghost_render.scale);
+      draw.pose               = posed.skinning;
+      draw.tint               = color_from_vec3({0.35f, 0.8f, 1.0f});
+      draw.material_overrides = material_variant(mesh, {.shader = renderer::shader_t::unlit});
+      draw.shadow_caster      = renderer::shadow_caster_t::none;
+      scene.meshes.push_back(draw);
+    }
   }
 
   // Render remote players and bots: the model, then the debug volumes.

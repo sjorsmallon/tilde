@@ -15,6 +15,7 @@
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/network/udp_socket.hpp"
 #include "../shared/physics.hpp"
+#include "../shared/ghost.hpp"
 #include "../shared/replay_recorder.hpp"
 #include "bot_state.hpp"
 #include "damage_types.hpp"
@@ -174,6 +175,9 @@ struct world_t
 
   // One file is one map load: finished BEFORE the wipe, so the index is written.
   shared::replay_recorder_t replay_recorder;
+
+  // Always on while a run can be timed, replay or not: the ghost is cut from this.
+  shared::ghost_capture_t ghost_capture;
 };
 
 

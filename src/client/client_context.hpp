@@ -7,6 +7,7 @@
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/game_session.hpp"
+#include "../shared/ghost.hpp"
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
@@ -170,6 +171,9 @@ struct local_world_t
   // to null the borrow before dropping the owner, or a late effect dispatch
   // would cast against a freed world.
   std::unique_ptr<physics_state_t> physics_state;
+
+  // maps/<map>.ghost as of the map load or the last new record; empty when the map has none.
+  std::optional<shared::ghost_t> ghost;
 
   // Session and physics are built; the world can be simulated and drawn. Was
   // Play_State::session_ready_for_simulation_and_rendering -- a fact ABOUT this
@@ -465,6 +469,12 @@ struct visual_effects_t
   // Client only, since the server cannot visualize. Filled by player_move
   // during prediction, drawn and cleared in build_frame.
   debug_collision::Face_Bucket debug_collision_faces;
+
+  // Which local input number the run's pose 0 is, latched once per Live phase so the ghost
+  // advances with our own input counter rather than with snapshot arrival.
+  bool     ghost_clock_latched          = false;
+  uint32_t ghost_clock_phase_start_tick = 0;
+  int      ghost_clock_first_input      = 0;
 };
 
 struct client_context_t
@@ -537,5 +547,8 @@ void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientatio
 
 // The session's Game_Rules_Entity's match, or nullptr before the world has one.
 [[nodiscard]] const entities::Match* try_find_match(const client_context_t& context);
+
+// "maps", or MAPS_DIR when set (the cold-client streaming test).
+[[nodiscard]] std::string client_maps_directory();
 
 } // namespace client

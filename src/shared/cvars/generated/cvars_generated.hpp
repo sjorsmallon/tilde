@@ -159,6 +159,7 @@ struct cvar_state_t
   int32_t cl_spectate_slot = -1;
   bool cl_replay_player_view = true;
   bool cl_replay_panel = true;
+  bool cl_ghost_show = true;
   bool cl_noclip = false;
   bool cl_player_unlit = false;
   bool cl_aim_debug = false;
@@ -202,6 +203,7 @@ struct cvar_state_t
   bool sv_io_debug = false;
   float replay_keyframe_seconds = 2.0f;
   bool sv_replay_auto = false;
+  bool sv_ghost_record = true;
 };
 
 // Load-bearing for mirroring: change detection is a member compare
@@ -283,54 +285,56 @@ enum class cvar_id : uint16_t
   cl_spectate_slot = 66,
   cl_replay_player_view = 67,
   cl_replay_panel = 68,
-  cl_noclip = 69,
-  cl_player_unlit = 70,
-  cl_aim_debug = 71,
-  cl_aim_debug_pitch = 72,
-  cl_aim_debug_yaw = 73,
-  cl_show_deploy_timer = 74,
-  cl_crosshair = 75,
-  cl_crosshair_dot = 76,
-  cl_crosshair_size = 77,
-  cl_crosshair_gap = 78,
-  cl_crosshair_thickness = 79,
-  cl_crosshair_r = 80,
-  cl_crosshair_g = 81,
-  cl_crosshair_b = 82,
-  cl_crosshair_a = 83,
-  editor_speed = 84,
-  cl_timescale = 85,
-  sound_reference_distance = 86,
-  sound_max_distance_cutoff = 87,
-  sound_rolloff_factor = 88,
-  map_respawn_delay_seconds = 89,
-  map_kill_limit = 90,
-  map_round_time_limit_seconds = 91,
-  next_map = 92,
-  pin_main_thread = 93,
-  r_debug_channel = 94,
-  r_exposure = 95,
-  sv_skybox = 96,
-  debug_show_collisions = 97,
-  debug_show_hitboxes = 98,
-  debug_show_navmesh = 99,
-  debug_show_box_volumes = 100,
-  debug_hide_geometry = 101,
-  cl_shot_debug_seconds = 102,
-  debug_show_entity_counts = 103,
-  debug_show_physics_bodies = 104,
-  net_snapshot_debug = 105,
-  sv_event_debug = 106,
-  cl_event_debug = 107,
-  sv_reliable_debug = 108,
-  sv_io_debug = 109,
-  replay_keyframe_seconds = 110,
-  sv_replay_auto = 111,
+  cl_ghost_show = 69,
+  cl_noclip = 70,
+  cl_player_unlit = 71,
+  cl_aim_debug = 72,
+  cl_aim_debug_pitch = 73,
+  cl_aim_debug_yaw = 74,
+  cl_show_deploy_timer = 75,
+  cl_crosshair = 76,
+  cl_crosshair_dot = 77,
+  cl_crosshair_size = 78,
+  cl_crosshair_gap = 79,
+  cl_crosshair_thickness = 80,
+  cl_crosshair_r = 81,
+  cl_crosshair_g = 82,
+  cl_crosshair_b = 83,
+  cl_crosshair_a = 84,
+  editor_speed = 85,
+  cl_timescale = 86,
+  sound_reference_distance = 87,
+  sound_max_distance_cutoff = 88,
+  sound_rolloff_factor = 89,
+  map_respawn_delay_seconds = 90,
+  map_kill_limit = 91,
+  map_round_time_limit_seconds = 92,
+  next_map = 93,
+  pin_main_thread = 94,
+  r_debug_channel = 95,
+  r_exposure = 96,
+  sv_skybox = 97,
+  debug_show_collisions = 98,
+  debug_show_hitboxes = 99,
+  debug_show_navmesh = 100,
+  debug_show_box_volumes = 101,
+  debug_hide_geometry = 102,
+  cl_shot_debug_seconds = 103,
+  debug_show_entity_counts = 104,
+  debug_show_physics_bodies = 105,
+  net_snapshot_debug = 106,
+  sv_event_debug = 107,
+  cl_event_debug = 108,
+  sv_reliable_debug = 109,
+  sv_io_debug = 110,
+  replay_keyframe_seconds = 111,
+  sv_replay_auto = 112,
+  sv_ghost_record = 113,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 112;
+constexpr uint32_t CVAR_COUNT = 114;
 
 enum class command_id : uint16_t
 {

@@ -2,6 +2,8 @@
 
 #include "../shared/network/cvar_mirror.hpp"
 
+#include <cstdlib>
+
 // The one place that answers "what resets when, and why". Each group's presence
 // or absence below carries its reason on the line that does it; if a group ever
 // needs to be half-cleared, that is the signal its boundary is drawn wrong, not
@@ -47,6 +49,12 @@ void reset_state_for_replay_seek(client_context_t& context)
   context.visuals     = {};
   if (context.cvars != nullptr)
     shared::copy_cvars_from(*context.cvars, context.replay.cvars_before_playback, cvars::mirrored_cvars());
+}
+
+std::string client_maps_directory()
+{
+  const char* env = std::getenv("MAPS_DIR");
+  return (env && *env) ? std::string(env) : std::string("maps");
 }
 
 const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context, int32_t slot)
