@@ -80,11 +80,14 @@ material_variant(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t 
     material.pipeline_state = state;
     material.parameters     = renderer::material_parameters(source);
 
-    // The caller's state shades; the alpha class is the submesh's own.
+    // The caller's state shades; the alpha class is the submesh's own unless the caller asks to blend.
     const renderer::pipeline_state_t registered = renderer::material_pipeline_state(source);
-    material.pipeline_state.blend_mode   = registered.blend_mode;
-    material.pipeline_state.alpha_cutoff = registered.alpha_cutoff;
-    if (registered.blend_mode == renderer::blend_mode_t::alpha)
+    if (state.blend_mode != renderer::blend_mode_t::alpha)
+    {
+      material.pipeline_state.blend_mode   = registered.blend_mode;
+      material.pipeline_state.alpha_cutoff = registered.alpha_cutoff;
+    }
+    if (material.pipeline_state.blend_mode == renderer::blend_mode_t::alpha)
       material.pipeline_state.depth_write = false;
 
     variant.push_back(renderer::register_material(material));

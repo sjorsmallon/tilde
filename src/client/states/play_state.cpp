@@ -2593,7 +2593,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
           ghost_render.scale);
       draw.pose               = posed.skinning;
       draw.tint               = color_from_vec3({0.35f, 0.8f, 1.0f});
-      draw.material_overrides = material_variant(mesh, {.shader = renderer::shader_t::unlit});
+      draw.material_overrides = material_variant(mesh, {.shader     = renderer::shader_t::ghost,
+                                                        .blend_mode = renderer::blend_mode_t::alpha});
       draw.shadow_caster      = renderer::shadow_caster_t::none;
       scene.meshes.push_back(draw);
     }

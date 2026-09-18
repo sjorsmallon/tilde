@@ -627,6 +627,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_lit.frag
     ${SHADER_SRC_DIR}/mesh_blend.frag
     ${SHADER_SRC_DIR}/mesh_unlit.frag
+    ${SHADER_SRC_DIR}/mesh_ghost.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/shadow_cutout.frag
     ${SHADER_SRC_DIR}/particle.comp

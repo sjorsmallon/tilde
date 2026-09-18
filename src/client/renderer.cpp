@@ -91,6 +91,10 @@ const uint32_t mesh_unlit_frag_spv[] =
 #include "mesh_unlit.frag.spv.h"
     ;
 
+const uint32_t mesh_ghost_frag_spv[] =
+#include "mesh_ghost.frag.spv.h"
+    ;
+
 const uint32_t mesh_grid_frag_spv[] =
 #include "mesh_grid.frag.spv.h"
     ;
@@ -1850,6 +1854,10 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
     // for a lightmap to replace and no variant to build.
     frag_spv  = mesh_unlit_frag_spv;
     frag_size = sizeof(mesh_unlit_frag_spv);
+    break;
+  case shader_t::ghost:
+    frag_spv  = mesh_ghost_frag_spv;
+    frag_size = sizeof(mesh_ghost_frag_spv);
     break;
   case shader_t::grid:
     frag_spv  = lightmapped ? mesh_grid_lightmapped_frag_spv : mesh_grid_frag_spv;

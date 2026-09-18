@@ -122,7 +122,9 @@ enum class shader_t : uint8_t
   // none is a mismatch the pipeline factory refuses loudly.
   blend,
   // Cook-Torrance over the pass's real lights and all four of the material's maps.
-  pbr
+  pbr,
+  // Unlit tint with a fresnel-rim alpha; pair with blend_mode_t::alpha.
+  ghost
 };
 
 // The renderer's copy of assets::alpha_mode_t; fixed per material at
