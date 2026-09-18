@@ -1284,6 +1284,151 @@ static void test_a_mover_crushes_against_a_ceiling(const cvar_state_t& cvars)
         "not before the gap closes, and not long after");
 }
 
+// --- 17. pm_acceleration instant: the velocity IS the input, ground and air --
+static cvar_state_t instant_cvars(const cvar_state_t& cvars)
+{
+  cvar_state_t instant = cvars;
+  instant.pm_acceleration = cvars::Acceleration_Mode::instant;
+  return instant;
+}
+
+static void test_instant_velocity_is_the_input(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_acceleration instant: one step to top speed, one step to a stop\n");
+
+  const cvar_state_t instant = instant_cvars(cvars);
+  const Bounding_Volume_Hierarchy empty_bvh = empty_world();
+  const Bounding_Volume_Hierarchy floor_bvh = floor_world();
+
+  Move_Input forward;
+  forward.forward_pressed = true;
+  Move_Input right;
+  right.right_pressed = true;
+  const Move_Input no_input;
+
+  const vec3 grounded_position{0.f, -0.02f, 0.f};
+  const vec3 airborne_position{0.f, 1000.f, 0.f};
+  const vec3 running{instant.pm_maxspeed, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8, 64})
+  {
+    const move_result_t started = run_split(instant, floor_bvh, forward, grounded_position,
+                                            {10.f, 0.f, 0.f}, tick_dt, sub_steps);
+    const move_result_t turned_on_ground = run_split(instant, floor_bvh, right, grounded_position,
+                                                     running, tick_dt, sub_steps);
+    const move_result_t turned_in_air = run_split(instant, empty_bvh, right, airborne_position,
+                                                  running, tick_dt, sub_steps);
+    const move_result_t stopped_on_ground = run_split(instant, floor_bvh, no_input,
+                                                      grounded_position, running, tick_dt, sub_steps);
+    const move_result_t stopped_in_air = run_split(instant, empty_bvh, no_input,
+                                                   airborne_position, running, tick_dt, sub_steps);
+
+    printf("    N=%-2d  started %.6f  turned ground (%.3f, %.3f)  air (%.3f, %.3f)  stopped %.6f / %.6f\n",
+           sub_steps, horizontal_speed(started.velocity), turned_on_ground.velocity.x,
+           turned_on_ground.velocity.z, turned_in_air.velocity.x, turned_in_air.velocity.z,
+           horizontal_speed(stopped_on_ground.velocity), horizontal_speed(stopped_in_air.velocity));
+
+    check_near(started.velocity.x, instant.pm_maxspeed, 1e-3f,
+               "a press from nearly standing still is top speed within the tick");
+    check_near(turned_on_ground.velocity.x, 0.f, 1e-3f, "ground: turning keeps nothing of the old direction");
+    check_near(turned_on_ground.velocity.z, instant.pm_maxspeed, 1e-3f,
+               "ground: turning is top speed along the new one");
+    check_near(turned_in_air.velocity.x, 0.f, 1e-3f, "air: steering is the same as on the ground");
+    check_near(turned_in_air.velocity.z, instant.pm_maxspeed, 1e-3f,
+               "air: top speed along the new direction");
+    check_near(horizontal_speed(stopped_on_ground.velocity), 0.f, 1e-3f,
+               "ground: no input is no velocity");
+    check_near(horizontal_speed(stopped_in_air.velocity), 0.f, 1e-3f,
+               "air: no input is no velocity, there is no air momentum");
+  }
+}
+
+// --- 18. borrowed speed keeps its size while the input steers it ------------
+static void test_instant_borrowed_speed_is_steered(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_acceleration instant: borrowed speed is steered, then returned\n");
+
+  const cvar_state_t instant = instant_cvars(cvars);
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+
+  Move_Input right;
+  right.right_pressed = true;
+  const Move_Input no_input;
+
+  const vec3 airborne_position{0.f, 1000.f, 0.f};
+  const vec3 dashing{900.f, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8, 64})
+  {
+    entities::Movement steered_movement{};
+    steered_movement.seconds_until_speed_returns_to_base_speed = 1.f;
+    const move_result_t steered = run_split(instant, bvh, right, airborne_position, dashing,
+                                            tick_dt, sub_steps, &steered_movement);
+
+    entities::Movement coasting_movement{};
+    coasting_movement.seconds_until_speed_returns_to_base_speed = 1.f;
+    const move_result_t coasting = run_split(instant, bvh, no_input, airborne_position, dashing,
+                                             tick_dt, sub_steps, &coasting_movement);
+
+    printf("    N=%-2d  steered (%.3f, %.3f)  coasting %.6f  remaining %.6f\n", sub_steps,
+           steered.velocity.x, steered.velocity.z, coasting.velocity.x,
+           steered_movement.seconds_until_speed_returns_to_base_speed);
+
+    check_near(steered.velocity.x, 0.f, 1e-3f, "the input picks the direction instantly");
+    check_near(steered.velocity.z, 900.f, 1e-3f, "and the borrowed speed keeps its size");
+    check_near(coasting.velocity.x, 900.f, 1e-3f, "no input keeps the borrowed velocity as it was");
+    check_near(steered_movement.seconds_until_speed_returns_to_base_speed, 1.f - tick_dt, 1e-5f,
+               "the timer spends one tick however that tick was split");
+  }
+
+  entities::Movement expiring{};
+  expiring.seconds_until_speed_returns_to_base_speed = 0.1f;
+  move_result_t result{airborne_position, dashing};
+  for (int tick = 0; tick < 10; ++tick)
+    result = run_split(instant, bvh, no_input, result.position, result.velocity, tick_dt, 4,
+                       &expiring);
+  check(expiring.seconds_until_speed_returns_to_base_speed == 0.f, "the timer clamps at zero");
+  check_near(horizontal_speed(result.velocity), 0.f, 1e-3f,
+             "once it runs out, no input is no velocity again");
+}
+
+// --- 19. a pad launch borrows its speed for the whole flight ----------------
+static void test_instant_pad_launch_is_borrowed(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_acceleration instant: a pad's arc survives an idle input\n");
+
+  const cvar_state_t instant = instant_cvars(cvars);
+  const Bounding_Volume_Hierarchy bvh = floor_world();
+  const vec3 launch{300.f, 900.f, 0.f};
+  const std::vector<shared::movement_volume_t> volumes = {
+      pad_at({0.f, 8.f, 0.f}, {32.f, 8.f, 32.f}, launch, true)};
+  const float flight_seconds = 2.f * launch.y / instant.g_gravity;
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    pad_probe_t        pad{};
+    move_result_t result = run_split(instant, bvh, Move_Input{}, {0.f, 0.f, 0.f},
+                                     {0.f, 0.f, 0.f}, tick_dt, sub_steps, &movement,
+                                     Span<const shared::movement_volume_t>(volumes), &pad);
+    const float remaining_after_launch = movement.seconds_until_speed_returns_to_base_speed;
+
+    for (int tick = 0; tick < 10; ++tick)
+      result = run_split(instant, bvh, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &movement);
+
+    printf("    N=%-2d  launches %d  remaining %.6f  x speed ten ticks later %.6f\n", sub_steps,
+           pad.launches, remaining_after_launch, result.velocity.x);
+
+    check(pad.launches == 1, "the pad fires once");
+    check(remaining_after_launch > flight_seconds - tick_dt &&
+              remaining_after_launch <= flight_seconds,
+          "the launch borrows its speed for the time it takes to fall back to launch height");
+    check_near(result.velocity.x, launch.x, 1e-3f,
+               "the horizontal half of the launch survives an idle input");
+  }
+}
+
 int main()
 {
   printf("player_move_step_invariance_test\n");
@@ -1318,6 +1463,9 @@ int main()
   test_a_disabled_brush_is_walked_through(cvars);
   test_a_mover_carries_its_rider(cvars);
   test_a_mover_crushes_against_a_ceiling(cvars);
+  test_instant_velocity_is_the_input(cvars);
+  test_instant_borrowed_speed_is_steered(cvars);
+  test_instant_pad_launch_is_borrowed(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

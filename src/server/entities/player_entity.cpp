@@ -4,6 +4,7 @@
 #include "../../shared/entity_system.hpp"
 #include "../../shared/game_session.hpp"
 #include "../../shared/log.hpp"
+#include "../../shared/player_move.hpp"
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"
 
@@ -28,15 +29,17 @@ void teleport(Player_Entity& player, const Teleport_Data& payload,
 }
 
 void set_velocity(Player_Entity& player, const Set_Velocity_Data& payload,
-                  server::input_context_t&)
+                  server::input_context_t& context)
 {
   player.velocity = payload.velocity;
+  borrow_speed(player.movement, context.server.cvars->pm_speed_return_seconds);
 }
 
 void add_velocity(Player_Entity& player, const Add_Velocity_Data& payload,
-                  server::input_context_t&)
+                  server::input_context_t& context)
 {
   player.velocity = player.velocity + payload.velocity;
+  borrow_speed(player.movement, context.server.cvars->pm_speed_return_seconds);
 }
 
 // Stored as a uid and resolved at the respawn rather than copied as a

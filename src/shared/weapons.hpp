@@ -51,6 +51,8 @@ struct self_impulse_t
   impulse_mode_t mode;
   float          along_aim_speed;
   float          upward_speed;
+  // pm_acceleration instant: how long the dash's speed outlasts the input.
+  float          speed_return_seconds;
 };
 
 // Which button the impulse came off. Primary is the trigger, Secondary the
@@ -224,16 +226,18 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size                 = 0,
      .reload_duration_seconds       = 0.f,
      .fire_resolution               = entities::Fire_Resolution::Self_Impulse,
-     .self_impulse                  = {.mode            = impulse_mode_t::Add,
-                                       .along_aim_speed = 900.f,
-                                       .upward_speed    = 150.f},
+     .self_impulse                  = {.mode                 = impulse_mode_t::Add,
+                                       .along_aim_speed      = 900.f,
+                                       .upward_speed         = 150.f,
+                                       .speed_return_seconds = 0.5f},
      .self_impulse_cooldown_seconds = 1.5f,
      // The right mouse button is the same dash with the velocity REPLACED
      // rather than added, so the two can be felt side by side on one key each.
      .secondary_fire                = secondary_fire_t::Self_Impulse,
-     .secondary_self_impulse        = {.mode            = impulse_mode_t::Set,
-                                       .along_aim_speed = 900.f,
-                                       .upward_speed    = 0.f},
+     .secondary_self_impulse        = {.mode                 = impulse_mode_t::Set,
+                                       .along_aim_speed      = 900.f,
+                                       .upward_speed         = 0.f,
+                                       .speed_return_seconds = 0.5f},
      .sounds                        = {.fire         = assets::sound_asset::gust_of_wind,
                                        .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Swapper,
@@ -433,6 +437,8 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
   }
 
   movement.seconds_until_impulse_ready = weapon.self_impulse_cooldown_seconds;
+  movement.seconds_until_speed_returns_to_base_speed =
+      std::max(movement.seconds_until_speed_returns_to_base_speed, impulse->speed_return_seconds);
   return true;
 }
 

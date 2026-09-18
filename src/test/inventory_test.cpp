@@ -310,6 +310,10 @@ int main()
           "the upward half cancels a fall rather than being eaten by it");
     check(movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
           "firing charges the cooldown, which is the only gate there is");
+    check(dash.self_impulse.speed_return_seconds > 0.f &&
+              movement.seconds_until_speed_returns_to_base_speed ==
+                  dash.self_impulse.speed_return_seconds,
+          "firing borrows the dash's speed, or pm_acceleration instant erases it next step");
 
     vec3f      second_velocity{0.f, 0.f, 0.f};
     const bool fired_again = shared::try_apply_self_impulse(
@@ -341,6 +345,9 @@ int main()
           "a Set-mode impulse replaces the velocity rather than joining it");
     check(secondary_movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
           "the secondary charges the shared cooldown");
+    check(secondary_movement.seconds_until_speed_returns_to_base_speed ==
+              dash.secondary_self_impulse.speed_return_seconds,
+          "the secondary borrows its speed too");
 
     // Nothing else in the table is one, and asking is the arm's own job rather
     // than the caller's -- the client calls this straight off whatever is in

@@ -22,6 +22,11 @@ constexpr const char* Bunnyhop_Mode_VALUE_NAMES[] = {
   "cs",
 };
 
+constexpr const char* Acceleration_Mode_VALUE_NAMES[] = {
+  "quake",
+  "instant",
+};
+
 constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "off",
   "normals",
@@ -45,6 +50,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Bunnyhop_Mode", {Bunnyhop_Mode_VALUE_NAMES, 3}},
+  {"Acceleration_Mode", {Acceleration_Mode_VALUE_NAMES, 2}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 12}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
@@ -184,6 +190,22 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, pm_air_speed_cap),
      .size = sizeof(cvar_state_t::pm_air_speed_cap),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_acceleration",
+     .description = "quake: accelerate against friction; instant: horizontal velocity IS the input, ground and air alike",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_ENUM,
+     .offset = offsetof(cvar_state_t, pm_acceleration),
+     .size = sizeof(cvar_state_t::pm_acceleration),
+     .string_capacity = 0,
+     .enum_info = &ENUM_INFOS[1]},
+    {.name = "pm_speed_return_seconds",
+     .description = "pm_acceleration instant: how long speed from a pad, Set_Velocity, Add_Velocity or knockback outlasts your input",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_speed_return_seconds),
+     .size = sizeof(cvar_state_t::pm_speed_return_seconds),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "mp_warmup_seconds",
@@ -817,7 +839,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, r_debug_channel),
      .size = sizeof(cvar_state_t::r_debug_channel),
      .string_capacity = 0,
-     .enum_info = &ENUM_INFOS[1]},
+     .enum_info = &ENUM_INFOS[2]},
     {.name = "r_exposure",
      .description = "Exposure multiplier applied before the tonemap curve",
      .flags = CVAR_FLAG_CLIENT,
@@ -1099,7 +1121,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[24] = {
+const cvar_id MIRRORED_CVAR_TABLE[26] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -1117,6 +1139,8 @@ const cvar_id MIRRORED_CVAR_TABLE[24] = {
     cvar_id::pm_jump_boost,
     cvar_id::pm_jump_boost_max_speed,
     cvar_id::pm_air_speed_cap,
+    cvar_id::pm_acceleration,
+    cvar_id::pm_speed_return_seconds,
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
     cvar_id::sv_aim_body_turn_rate,
@@ -1185,7 +1209,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 24};
+  return {MIRRORED_CVAR_TABLE, 26};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)
@@ -1379,6 +1403,24 @@ template <> std::optional<Bunnyhop_Mode> try_from_string<Bunnyhop_Mode>(std::str
   if (text == "none") return Bunnyhop_Mode::none;
   if (text == "hl2") return Bunnyhop_Mode::hl2;
   if (text == "cs") return Bunnyhop_Mode::cs;
+  return std::nullopt;
+}
+
+const char* to_string(Acceleration_Mode value)
+{
+  switch (value)
+  {
+    case Acceleration_Mode::quake: return "quake";
+    case Acceleration_Mode::instant: return "instant";
+  }
+  assert(false && "invalid Acceleration_Mode");
+  return "";
+}
+
+template <> std::optional<Acceleration_Mode> try_from_string<Acceleration_Mode>(std::string_view text)
+{
+  if (text == "quake") return Acceleration_Mode::quake;
+  if (text == "instant") return Acceleration_Mode::instant;
   return std::nullopt;
 }
 

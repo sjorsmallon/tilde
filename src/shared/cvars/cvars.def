@@ -44,6 +44,7 @@
 // until 2026-08-26.
 
 Bunnyhop_Mode :: enum { none, hl2, cs }
+Acceleration_Mode :: enum { quake, instant }
 
 Player_Movement :: cvars {
     pm_maxspeed:            f32 = 320.0       @Mirrored  "Run speed: the most your own acceleration pushes you to"
@@ -67,6 +68,9 @@ Player_Movement :: cvars {
     pm_jump_boost:          f32 = 32.0       @Mirrored  "pm_bunnyhop hl2: speed a ground jump adds along the held direction"
     pm_jump_boost_max_speed: f32 = 480.0     @Mirrored  "pm_bunnyhop hl2: horizontal speed a jump boost stops at"
     pm_air_speed_cap:       f32 = 30.0       @Mirrored  "pm_bunnyhop cs: speed an air push stops adding at, along its own direction"
+
+    pm_acceleration:        Acceleration_Mode = .quake  @Mirrored  "quake: accelerate against friction; instant: horizontal velocity IS the input, ground and air alike"
+    pm_speed_return_seconds: f32 = 0.5       @Mirrored  "pm_acceleration instant: how long speed from a pad, Set_Velocity, Add_Velocity or knockback outlasts your input"
 }
 
 Gameplay :: cvars {

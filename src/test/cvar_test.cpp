@@ -386,6 +386,18 @@ void test_text_conversion()
   check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "None"),
         "an enum name is case sensitive, like every other declared name");
   check(state.pm_bunnyhop == before, "a rejected enum write leaves the value alone");
+
+  check(state.pm_acceleration == cvars::Acceleration_Mode::quake,
+        "pm_acceleration defaults to quake, so existing movement is untouched");
+  for (uint32_t value = 0; value < cvars::Acceleration_Mode_COUNT; ++value)
+  {
+    const cvars::Acceleration_Mode mode = (cvars::Acceleration_Mode)value;
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_acceleration, to_string(mode)),
+          "every acceleration mode name parses");
+    check(state.pm_acceleration == mode, "the parsed acceleration mode landed as its own value");
+    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_acceleration);
+    check(text.has_value() && *text == to_string(mode), "pm_acceleration round-trips through text");
+  }
 }
 
 // --- 3. The console dispatcher ----------------------------------------------

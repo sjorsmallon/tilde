@@ -59,18 +59,22 @@ vec3 rotate_about_y(const vec3& vector, const float radians)
   return vec3{vector.x * cosine - vector.z * sine, vector.y, vector.x * sine + vector.z * cosine};
 }
 
-struct bunnyhop_rules_t
+struct movement_rules_t
 {
   bool  clip_air_speed       = true;
   float air_target_speed     = std::numeric_limits<float>::infinity();
   float jump_boost_speed     = 0.f;
   float jump_boost_max_speed = 0.f;
+  bool  instant_velocity     = false;
+  bool  speed_is_borrowed    = false;
 };
 
 [[nodiscard]]
-bunnyhop_rules_t bunnyhop_rules_for(const cvar_state_t& cvars)
+movement_rules_t movement_rules_for(const cvar_state_t& cvars, const entities::Movement& movement)
 {
-  bunnyhop_rules_t rules;
+  movement_rules_t rules;
+  rules.instant_velocity  = cvars.pm_acceleration == cvars::Acceleration_Mode::instant;
+  rules.speed_is_borrowed = movement.seconds_until_speed_returns_to_base_speed > 0.f;
   switch (cvars.pm_bunnyhop)
   {
     case cvars::Bunnyhop_Mode::none:
@@ -85,6 +89,27 @@ bunnyhop_rules_t bunnyhop_rules_for(const cvar_state_t& cvars)
       break;
   }
   return rules;
+}
+
+// Borrowed speed (a dash, a pad) keeps its size while the input picks its direction.
+[[nodiscard]]
+vec3 instant_velocity(const vec3& old_velocity, const vec3& wish_direction, float wish_speed,
+                      bool speed_is_borrowed)
+{
+  if (!speed_is_borrowed)
+    return wish_direction * wish_speed;
+  if (wish_speed < 0.0000001f)
+    return old_velocity;
+  return wish_direction * std::max(length(old_velocity), wish_speed);
+}
+
+// Time to fall back to launch height, never shorter than a flat shove's.
+[[nodiscard]]
+float pad_flight_seconds(const cvar_state_t& cvars, const vec3& launch_velocity)
+{
+  const float flight_seconds =
+      cvars.g_gravity > 0.f ? 2.f * std::max(launch_velocity.y, 0.f) / cvars.g_gravity : 0.f;
+  return std::max(flight_seconds, cvars.pm_speed_return_seconds);
 }
 
 [[nodiscard]]
@@ -238,6 +263,7 @@ vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
 
 std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
                                     const Move_Input &input,
+                                    const movement_rules_t &rules,
                                     bool has_ground, const vec3 &ground_normal,
                                     const Collider_Planes &collider_planes,
                                     const vec3 old_position,
@@ -248,8 +274,10 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
   const float overbounce = cvars.pm_overbounce;
 
   // apply friction. this does not fully 'nullify' the velocity (or does it?).
-  const friction_step_t friction = apply_friction(
-      cvars, old_velocity, dt); // at this point, y velocity is already gone.
+  const friction_step_t friction =
+      rules.instant_velocity
+          ? friction_step_t{vec3{old_velocity.x, 0.f, old_velocity.z}, dt}
+          : apply_friction(cvars, old_velocity, dt); // at this point, y velocity is already gone.
   const vec3  old_velocity_with_friction_applied = friction.velocity;
   const float acceleration_duration              = friction.acceleration_duration;
 
@@ -306,7 +334,12 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
 
   vec3 new_velocity{};
 
-  if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
+  if (rules.instant_velocity)
+  {
+    new_velocity = instant_velocity(old_velocity_with_friction_applied, normalized_wish_direction,
+                                    wish_speed, rules.speed_is_borrowed);
+  }
+  else if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
   {
     new_velocity = old_velocity_with_friction_applied;
   }
@@ -367,7 +400,7 @@ std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
 }
 
 auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
-                 const bunnyhop_rules_t& rules, const aim_sweep_t& aim_sweep,
+                 const movement_rules_t& rules, const aim_sweep_t& aim_sweep,
                  bool has_ground, const vec3 &ground_normal,
                  bool has_ceiling, const vec3 &ceiling_normal,
                  Collider_Planes &collider_planes, const vec3 &old_position,
@@ -428,7 +461,18 @@ auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
 
   vec3 new_velocity{};
 
-  if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
+  if (rules.instant_velocity)
+  {
+    // Only the sweep's LAST push counts under a set, and it names the same slot however the tick was split.
+    const float pushes_in_step = static_cast<float>(aim_sweep.push_count);
+    const vec3  last_push_direction =
+        rotate_about_y(normalized_wish_direction,
+                       linalg::to_radians(aim_sweep.yaw_change_degrees) *
+                           (pushes_in_step - 0.5f) / pushes_in_step);
+    new_velocity = instant_velocity(old_velocity_without_y, last_push_direction, wish_speed,
+                                    rules.speed_is_borrowed);
+  }
+  else if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
   {
     // FIX #1: was `old_velocity`, which includes Y. When the code below does
     // new_speed = length(new_velocity), that 3D length is dominated by the Y
@@ -744,7 +788,7 @@ std::tuple<vec3, vec3> player_move(
   // - y velocity is going down. (at least not going up.)
   bool grounded = has_ground && (old_velocity.y <= 0.0f);
 
-  const bunnyhop_rules_t rules = bunnyhop_rules_for(cvars);
+  const movement_rules_t rules = movement_rules_for(cvars, movement);
 
   // --- ABILITIES: the only place per-player movement state is read ---
   //
@@ -859,7 +903,7 @@ std::tuple<vec3, vec3> player_move(
           old_vel_xz = wish_dir_xz * cvars.pm_maxspeed;
         vec3 step_pos, step_vel;
         std::tie(step_pos, step_vel) =
-            my_walk_move(cvars, input, true, raised_ground_normal, raised_planes,
+            my_walk_move(cvars, input, rules, true, raised_ground_normal, raised_planes,
                          raised_pos, old_vel_xz, front, right, dt);
 
         // Drop back down by step_height. resolve_collisions will push the
@@ -919,7 +963,7 @@ std::tuple<vec3, vec3> player_move(
       // I do not really like that.
       vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
       std::tie(new_pos, new_vel) =
-          my_walk_move(cvars, input, has_ground, ground_normal, collider_planes,
+          my_walk_move(cvars, input, rules, has_ground, ground_normal, collider_planes,
                        player_pos, old_velocity_without_y, front, right, dt);
     }
     else
@@ -1017,6 +1061,8 @@ std::tuple<vec3, vec3> player_move(
   // value and not any of them.
   movement.seconds_until_impulse_ready =
       std::max(0.f, movement.seconds_until_impulse_ready - dt);
+  movement.seconds_until_speed_returns_to_base_speed =
+      std::max(0.f, movement.seconds_until_speed_returns_to_base_speed - dt);
 
   // The edge's other half, written last so the next step compares against what
   // this one actually saw.
@@ -1054,6 +1100,9 @@ std::tuple<vec3, vec3> player_move(
       continue;
 
     new_vel                    = volume.launch_velocity;
+    movement.seconds_until_speed_returns_to_base_speed =
+        std::max(movement.seconds_until_speed_returns_to_base_speed,
+                 pad_flight_seconds(cvars, volume.launch_velocity));
     movement.pad_contact_uid   = volume.uid;
     launched_by_pad            = true;
     launched_by                = volume.uid;

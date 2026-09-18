@@ -403,6 +403,15 @@ constexpr field_info_t Movement_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "seconds_until_speed_returns_to_base_speed",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Movement, seconds_until_speed_returns_to_base_speed),
+   .size_in_bytes = (uint32_t)sizeof(Movement::seconds_until_speed_returns_to_base_speed),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "pad_contact_uid",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Movement, pad_contact_uid),
@@ -2454,7 +2463,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Material", {Material_FIELDS, 2}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
   {"Light", {Light_FIELDS, 5}, (uint32_t)sizeof(Light)},
-  {"Movement", {Movement_FIELDS, 7}, (uint32_t)sizeof(Movement)},
+  {"Movement", {Movement_FIELDS, 8}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 4}, (uint32_t)sizeof(Timer_State)},
   {"Match", {Match_FIELDS, 9}, (uint32_t)sizeof(Match)},
@@ -3047,6 +3056,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x32dd6bf0u;
+const uint32_t SCHEMA_HASH = 0x4a412a5au;
 
 } // namespace entities

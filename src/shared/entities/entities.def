@@ -99,6 +99,7 @@ Movement :: component {
     time_since_grounded_seconds: f32    @Networked
     jump_was_held: bool                 @Networked
     seconds_until_impulse_ready: f32    @Networked
+    seconds_until_speed_returns_to_base_speed: f32  @Networked
 
     pad_contact_uid: u32                @Networked
     ground_mover_uid: entity            @Networked

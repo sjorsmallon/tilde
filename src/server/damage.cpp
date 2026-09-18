@@ -4,6 +4,7 @@
 #include "../shared/entities/generated/entities/damageable_entity_generated.hpp"
 #include "../shared/entities/generated/entities/player_entity_generated.hpp"
 #include "../shared/log.hpp"
+#include "../shared/player_move.hpp"
 #include "entity_io_context.hpp"
 #include "server_api.hpp"
 #include "systems/game_rules_system.hpp"
@@ -57,6 +58,8 @@ static void apply_player_damage_total(server_context_t &context,
                                       const damage_info_t &credited)
 {
   player.velocity = player.velocity + knockback_velocity;
+  if (knockback_velocity.x != 0.f || knockback_velocity.y != 0.f || knockback_velocity.z != 0.f)
+    borrow_speed(player.movement, context.cvars->pm_speed_return_seconds);
 
   // Knockback is deliberately ABOVE the gate and health is below it: a shove is
   // not damage, so a frozen player can still be rocket-jumped by someone whose

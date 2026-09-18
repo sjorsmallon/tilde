@@ -8,6 +8,7 @@
 #include "plane.hpp"
 #include "span.hpp"
 #include "subtick.hpp"
+#include <algorithm>
 #include <tuple>
 #include <vector>
 
@@ -230,6 +231,13 @@ std::tuple<vec3, vec3> player_move(
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events = nullptr,
     debug_collision::Face_Bucket *debug_faces = nullptr);
+
+// Every velocity write from outside player_move calls this, or pm_acceleration instant erases it next step.
+inline void borrow_speed(entities::Movement& movement, float seconds)
+{
+  movement.seconds_until_speed_returns_to_base_speed =
+      std::max(movement.seconds_until_speed_returns_to_base_speed, seconds);
+}
 
 // A mover strikes a hull it penetrates deeper than this; the skin a resting
 // contact leaves (0.01) must not count, or a lift drags whoever leans on it.
