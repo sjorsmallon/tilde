@@ -30,6 +30,34 @@ static void check(bool condition, const char* description)
     ++failure_count;
 }
 
+// One weapon per slot, the hand starting on the knife: a player spawns empty-handed.
+static constexpr Array<entities::Weapon, 5> TEST_LOADOUT = {{
+    entities::Weapon::Knife,
+    entities::Weapon::Scout,
+    entities::Weapon::Rocket_Launcher,
+    entities::Weapon::Dash,
+    entities::Weapon::Swapper,
+}};
+
+static void grant_test_loadout(shared::game_session_t& session, shared::entity_uid_t player_uid)
+{
+  for (const entities::Weapon weapon : TEST_LOADOUT)
+  {
+    const shared::weapon_definition_t& definition = shared::get_weapon_definition(weapon);
+    const shared::entity_uid_t weapon_uid = session.entity_system.spawn<entities::Weapon_Entity>();
+
+    entities::Weapon_Entity* weapon_entity =
+        session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
+    weapon_entity->weapon_id = weapon;
+    weapon_entity->ammo      = definition.magazine_size;
+    weapon_entity->owner_uid = player_uid;
+
+    entities::Player_Entity* player = session.entity_system.get<entities::Player_Entity>(player_uid);
+    player->inventory.weapons[definition.slot] = weapon_uid;
+    player->inventory.active_slot              = entities::Inventory_Slot::Melee;
+  }
+}
+
 // What resolve_player_shot's gate does, in the two clocks it is: the weapon's
 // own interval, which runs while holstered, and the PLAYER's deploy deadline,
 // which blocks every weapon at once. Both, because the whole point is that they
@@ -47,8 +75,8 @@ static bool weapon_may_fire_at(shared::game_session_t&         session,
 
 // Put a named weapon in hand by selecting the slot its definition declares.
 // The inventory is keyed by SLOT and this test is about per-weapon clocks, so
-// this is the one place the two vocabularies meet -- the default loadout puts
-// exactly one weapon in each of the three slots it uses, which is what makes
+// this is the one place the two vocabularies meet -- the test loadout puts
+// exactly one weapon in each slot, which is what makes
 // naming a weapon here unambiguous.
 static void equip(entities::Player_Entity& player, entities::Weapon weapon)
 {
@@ -81,7 +109,7 @@ int main()
 
   const shared::entity_uid_t player_uid =
       session.entity_system.spawn<entities::Player_Entity>();
-  server::grant_default_inventory(session, player_uid);
+  grant_test_loadout(session, player_uid);
 
   entities::Player_Entity* player =
       session.entity_system.get<entities::Player_Entity>(player_uid);
@@ -95,9 +123,8 @@ int main()
   {
     bool every_weapon_carried = true;
     bool every_entity_agrees  = true;
-    for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
+    for (const entities::Weapon weapon : TEST_LOADOUT)
     {
-      const entities::Weapon     weapon = (entities::Weapon)index;
       const shared::entity_uid_t uid =
           player->inventory.weapons[shared::get_weapon_definition(weapon).slot];
       if (uid == shared::null_entity_uid)
@@ -113,7 +140,7 @@ int main()
         every_entity_agrees = false;
     }
     check(every_weapon_carried,
-          "the default inventory puts each weapon in the slot its definition names");
+          "a granted weapon sits in the slot its definition names");
     check(every_entity_agrees,
           "each weapon entity knows its own type, owner and magazine");
   }
@@ -387,7 +414,7 @@ int main()
 
     const shared::entity_uid_t owner_uid =
         context.world.session.entity_system.spawn<entities::Player_Entity>();
-    server::grant_default_inventory(context.world.session, owner_uid);
+    grant_test_loadout(context.world.session, owner_uid);
 
     entities::Player_Entity* owner =
         context.world.session.entity_system.get<entities::Player_Entity>(owner_uid);

@@ -13,12 +13,14 @@
 layout(location = 1) in vec3       fragColor;
 layout(location = 2) in vec2       fragUV;
 layout(location = 3) in flat float fragAlpha;
+layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
 #include "alpha_cutout.glsl"
+#include "clock_wipe.glsl"
 
 void main() {
     // Same tint semantics as the lit path -- the material's base colour
@@ -26,6 +28,7 @@ void main() {
     vec4  sampled      = texture(albedo, fragUV);
     float surfaceAlpha = fragAlpha * sampled.a;
     discard_below_alpha_cutoff(surfaceAlpha);
+    discard_inside_clock_wipe(fragWorldPosition);
 
     outColor = vec4(sampled.rgb * fragColor, surfaceAlpha);
 }

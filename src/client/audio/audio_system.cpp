@@ -34,6 +34,7 @@ struct voices_t
   static_assert(MAX_VOICE_COUNT <= 32, "free_slots is a uint32_t bitmask");
 
   Array<ma_sound, MAX_VOICE_COUNT> sounds;
+  Array<uint32_t, MAX_VOICE_COUNT> generations;
 
   // bit N set = slot N is free. All free at construction. The shift is 64-bit
   // so that the count==32 case is not UB.
@@ -51,6 +52,12 @@ struct voices_t
 static void make_voice_live(voices_t& voices, uint32_t index)
 {
   voices.free_slots &= ~(1u << index);
+  ++voices.generations[index];
+}
+
+static voice_handle_t handle_of(const voices_t& voices, uint32_t index)
+{
+  return {index, voices.generations[index]};
 }
 
 static void release_voice(voices_t& voices, uint32_t index)
@@ -238,15 +245,15 @@ void Audio_System::update(const linalg::vec3f& listener_position,
   return slot;
 }
 
-static void start_3d_voice(audio_impl_t* impl, const sound_attenuation_t& attenuation,
-                           assets::sound_asset sound, const linalg::vec3f& position,
-                           float max_distance, float volume)
+static voice_handle_t start_3d_voice(audio_impl_t* impl, const sound_attenuation_t& attenuation,
+                                     assets::sound_asset sound, const linalg::vec3f& position,
+                                     float max_distance, float volume)
 {
-  if (!impl) return;
+  if (!impl) return {};
 
   // no free slots means no play. this will be addressed somewhere later.
   const std::optional<uint32_t> slot = try_start_voice(impl, sound, MA_SOUND_FLAG_DECODE);
-  if (!slot) return;
+  if (!slot) return {};
 
   ma_sound* voice = &impl->voices.sounds[*slot];
   ma_sound_set_spatialization_enabled(voice, MA_TRUE);
@@ -256,33 +263,69 @@ static void start_3d_voice(audio_impl_t* impl, const sound_attenuation_t& attenu
   ma_sound_set_position(voice, position.x, position.y, position.z);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);
+  return handle_of(impl->voices, *slot);
 }
 
-void Audio_System::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
-                             float volume)
+voice_handle_t Audio_System::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
+                                     float volume)
 {
-  start_3d_voice(impl, attenuation, sound, position, attenuation.max_distance_cutoff, volume);
+  return start_3d_voice(impl, attenuation, sound, position, attenuation.max_distance_cutoff,
+                        volume);
 }
 
-void Audio_System::play_3d_within(assets::sound_asset sound, const linalg::vec3f& position,
-                                    float max_distance, float volume)
+voice_handle_t Audio_System::play_3d_within(assets::sound_asset sound,
+                                            const linalg::vec3f& position, float max_distance,
+                                            float volume)
 {
-  start_3d_voice(impl, attenuation, sound, position, max_distance, volume);
+  return start_3d_voice(impl, attenuation, sound, position, max_distance, volume);
 }
 
-void Audio_System::play_2d(assets::sound_asset sound, float volume)
+voice_handle_t Audio_System::play_2d(assets::sound_asset sound, float volume)
 {
   if (!impl)
-    return;
+    return {};
 
   const std::optional<uint32_t> slot = try_start_voice(impl, sound, MA_SOUND_FLAG_DECODE);
   if (!slot)
-    return;
+    return {};
 
   ma_sound* voice = &impl->voices.sounds[*slot];
   ma_sound_set_spatialization_enabled(voice, MA_FALSE);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);
+  return handle_of(impl->voices, *slot);
+}
+
+void Audio_System::stop_all()
+{
+  if (!impl)
+    return;
+
+  for (uint32_t index = 0; index < MAX_VOICE_COUNT; ++index)
+  {
+    if (!is_voice_live(impl->voices, index))
+      continue;
+    ma_sound_stop(&impl->voices.sounds[index]);
+    release_voice(impl->voices, index);
+  }
+}
+
+bool Audio_System::is_playing(voice_handle_t voice) const
+{
+  if (!impl || voice.generation == 0 || voice.slot >= MAX_VOICE_COUNT)
+    return false;
+  return is_voice_live(impl->voices, voice.slot) &&
+         impl->voices.generations[voice.slot] == voice.generation &&
+         !ma_sound_at_end(&impl->voices.sounds[voice.slot]);
+}
+
+void Audio_System::stop(voice_handle_t voice)
+{
+  if (!is_playing(voice))
+    return;
+
+  ma_sound_stop(&impl->voices.sounds[voice.slot]);
+  release_voice(impl->voices, voice.slot);
 }
 
 } // namespace client

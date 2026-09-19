@@ -104,9 +104,9 @@ static void detonate(const entities::Rocket_Entity &rocket,
   // Encoded straight into the outgoing stream: no value survives the call, so
   // a kind can never disagree with its payload.
   shared::Rocket_Detonated detonated{};
-  detonated.attacker_id = rocket.owner_id;
+  detonated.attacker_id = rocket.projectile.owner_uid;
   detonated.victim_id   = victim_id;
-  detonated.weapon_id   = static_cast<uint16_t>(rocket.weapon_id);
+  detonated.weapon_id   = static_cast<uint16_t>(rocket.projectile.weapon_id);
   shared::fire_rocket_detonated(context.outgoing.events, detonated);
 }
 
@@ -140,11 +140,11 @@ void update_rockets(server_context_t &context, float dt)
     }
 
     const shared::projectile_t& projectile =
-        shared::get_weapon_definition(rocket.weapon_id).projectile;
+        shared::get_weapon_definition(rocket.projectile.weapon_id).projectile;
     const shared::projectile_step_t step = shared::advance_projectile(
-        projectile, context.cvars->g_gravity, rocket.position, rocket.velocity, dt);
+        projectile, context.cvars->g_gravity, rocket.position, rocket.projectile.velocity, dt);
     const vec3f next_pos = step.position;
-    rocket.velocity      = step.velocity;
+    rocket.projectile.velocity      = step.velocity;
 
     hit_result_t hit;
     // Everything is a valid target except the player who fired: a rocket that
@@ -152,7 +152,7 @@ void update_rockets(server_context_t &context, float dt)
     // face. Back faces collide so a rocket spawned barely inside geometry
     // still stops rather than sailing through it.
     const query_filter_t filter{.layers     = query_layers_t::All,
-                                .ignore_uid = rocket.owner_id,
+                                .ignore_uid = rocket.projectile.owner_uid,
                                 .back_faces = back_face_mode_t::Collide};
 
     if (cast_sphere(physics, rocket.position, next_pos,

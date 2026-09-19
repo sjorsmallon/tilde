@@ -453,7 +453,7 @@ entity
 }
 entity
 {
-  "classname" "brush_entity"
+  "classname" "geometry_owner_entity"
   "_uid" "9"
   "position" "2347.1694 520.8174 88.397766"
   "orientation" "0 0 0 1"
@@ -504,7 +504,7 @@ entity
 }
 entity
 {
-  "classname" "brush_entity"
+  "classname" "geometry_owner_entity"
   "_uid" "16"
   "position" "2849.8726 520.8174 152.98831"
   "orientation" "0 0 0 1"

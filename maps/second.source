@@ -5,8 +5,9 @@ entity
 }
 cvars
 {
+  "mp_round_end_seconds" "0"
+  "mp_round_seconds" "0"
   "next_map" "first"
-  "sv_gamemode" "speedrun"
 }
 connections
 {
@@ -83,7 +84,7 @@ entity
   "orientation" "0 1 0 -4.371139e-08"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Red"
 }
 entity
 {
@@ -120,6 +121,7 @@ entity
   "position" "512 64 384"
   "orientation" "0 0 0 1"
   "name" ""
+  "match.mode" "speedrun"
 }
 entity
 {

@@ -9,6 +9,7 @@ cvars
   "pm_air_acceleration" "7"
   "pm_friction" "5"
   "pm_maxspeed" "500"
+  "sv_skybox" "night_sky"
 }
 connections
 {
@@ -435,4 +436,13 @@ entity
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "4637.054 298.0061 4846.442"
+}
+entity
+{
+  "classname" "game_rules_entity"
+  "_uid" "50"
+  "position" "768 144 384"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "match.mode" "deathmatch"
 }

@@ -14,6 +14,14 @@ struct sound_attenuation_t
   float rolloff_factor      = 1.0f;
 };
 
+// Names one started voice. generation 0 names nothing, and a handle whose voice
+// already ended names nothing either, so stop() on one is a no-op.
+struct voice_handle_t
+{
+  uint32_t slot       = 0;
+  uint32_t generation = 0;
+};
+
 struct Audio_System
 {
   Audio_System() = default;
@@ -34,12 +42,17 @@ struct Audio_System
 
   // play a spatialized one-shot at a world-space position. `volume` is linear
   // (1.0 = unattenuated source)
-  void play_3d(assets::sound_asset sound, const linalg::vec3f& position, const float volume = 1.0f);
+  voice_handle_t play_3d(assets::sound_asset sound, const linalg::vec3f& position,
+                         const float volume = 1.0f);
   // the same, but inaudible past `max_distance` instead of past the sound_* cvars' cutoff
-  void play_3d_within(assets::sound_asset sound, const linalg::vec3f& position,
-                      float max_distance, float volume = 1.0f);
+  voice_handle_t play_3d_within(assets::sound_asset sound, const linalg::vec3f& position,
+                                float max_distance, float volume = 1.0f);
    // play a non-spatialized one-shot (UI, announcer, 2D feedback).
-  void play_2d(assets::sound_asset sound, const float volume = 1.0f);
+  voice_handle_t play_2d(assets::sound_asset sound, const float volume = 1.0f);
+
+  void stop(voice_handle_t voice);
+  void stop_all();
+  bool is_playing(voice_handle_t voice) const;
 
   // Silences every voice, playing or yet to start.
   void set_muted(bool muted);

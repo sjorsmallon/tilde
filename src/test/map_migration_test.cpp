@@ -266,6 +266,60 @@ int main()
                   "rotation it named");
   }
 
+  // A static mesh collides as a box that TURNS with it, and can switch that box
+  // off. No mesh path, so the box is the 32-unit fallback and no asset is needed.
+  {
+    static_mesh_geometry_t mesh;
+    mesh.orientation = linalg::from_axis_angle({0.f, 1.f, 0.f}, 45.f);
+
+    const std::vector<collision_piece_t> pieces = get_collision_pieces(geometry_value_t{mesh}, 1);
+    if (pieces.size() != 1 || pieces[0].planes.size() != 6)
+      return fail("mesh collision: a static mesh is not one six-plane piece");
+
+    auto is_inside = [&](const linalg::vec3 &point)
+    {
+      for (const Plane &plane : pieces[0].planes)
+        if (linalg::dot(point - plane.point, plane.normal) > 0.f)
+          return false;
+      return true;
+    };
+
+    if (is_inside({30.f, 0.f, 30.f}))
+      return fail("mesh collision: the box did not turn -- its unrotated corner still collides");
+    if (!is_inside({44.f, 0.f, 0.f}))
+      return fail("mesh collision: the turned box does not reach where its corner now is");
+
+    const aabb_bounds_t bounds = get_bounds(geometry_value_t{mesh});
+    if (std::abs(bounds.max.x - 45.2548f) > 0.01f || std::abs(bounds.max.y - 32.f) > 0.01f)
+      return fail("mesh collision: the bound does not enclose the turned box");
+
+    mesh.scale = {-1.f, 1.f, 1.f};
+    const aabb_bounds_t mirrored = get_bounds(geometry_value_t{mesh});
+    if (mirrored.min.x >= mirrored.max.x)
+      return fail("mesh collision: a negative scale inverted the bound");
+    mesh.scale = {1.f, 1.f, 1.f};
+
+    map_t colliding;
+    colliding.add_geometry(mesh);
+    if (serialize_map_to_string(colliding).find("\"collides\"") != std::string::npos)
+      return fail("mesh collision: a colliding mesh writes a key it does not need");
+
+    mesh.collides = false;
+    if (!get_collision_pieces(geometry_value_t{mesh}, 1).empty())
+      return fail("mesh collision: a mesh with collision off still collides");
+    if (static_mesh_collision_box(mesh).planes.size() != 6)
+      return fail("mesh collision: the editor's box went away with the flag");
+
+    map_t silent;
+    silent.add_geometry(mesh);
+    const map_t reloaded = parse_map_from_string(serialize_map_to_string(silent));
+    const auto *reloaded_mesh = std::get_if<static_mesh_geometry_t>(&reloaded.geometry[0].value);
+    if (!reloaded_mesh || reloaded_mesh->collides)
+      return fail("mesh collision: collides = false did not survive the file");
+    if (!geometry_values_equal(reloaded.geometry[0].value, silent.geometry[0].value))
+      return fail("mesh collision: a reloaded non-colliding mesh compares unequal to itself");
+  }
+
   // --- 5. Trigger volume round-trip (the "is save losing it?" check) -----
   // Build a tiny map with one trigger volume programmatically, save, reload,
   // and assert every editable field survives. This is independent of the
@@ -911,9 +965,9 @@ int main()
     map_t tie_map;
     const entity_uid_t tied   = tie_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
     const entity_uid_t loose  = tie_map.add_geometry(make_box_brush({64, 0, 0}, {16, 16, 16}));
-    auto [owner_uid, owner]   = spawn_entity(tie_map, entities::entity_type::Brush_Entity);
+    auto [owner_uid, owner]   = spawn_entity(tie_map, entities::entity_type::Geometry_Owner_Entity);
     if (!owner)
-      return fail("tie: a brush_entity would not spawn");
+      return fail("tie: a geometry_owner_entity would not spawn");
     set_owner_uid(tie_map.find_geometry_by_uid(tied)->value, owner_uid);
 
     const std::string  text     = serialize_map_to_string(tie_map);

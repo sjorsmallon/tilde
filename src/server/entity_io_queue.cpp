@@ -263,12 +263,16 @@ void dispatch_the_due_actions(server_context_t& context)
       // none of its own: a separator split between the format string and the
       // clause reads fine while both clauses are present and doubles up the
       // moment neither is, which is the common case.
-      log_terminal("[io] dispatch {}{}{} to {}, activator {}",
-                   entities::to_string(record.data.tag),
-                   parameters.empty() ? "" : std::format(" ({})", parameters),
-                   record.target_resolved_from_activator ? " [from !activator]" : "",
-                   entity_io_label(context, record.target),
-                   entity_io_label(context, record.activator));
+      // debug
+      {
+        log_terminal("[io] dispatch {}{}{} to {}, activator {}",
+                           entities::to_string(record.data.tag),
+                           parameters.empty() ? "" : std::format(" ({})", parameters),
+                           record.target_resolved_from_activator ? " [from !activator]" : "",
+                           entity_io_label(context, record.target),
+                           entity_io_label(context, record.activator));
+      }
+      
     }
 
     // A Uid or Self target was checked against ONE type at load, so a null

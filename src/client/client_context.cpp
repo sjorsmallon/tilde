@@ -12,9 +12,23 @@
 namespace client
 {
 
+namespace
+{
+
+// Every voice belongs to the world being left: an emitter's long clip would
+// otherwise play on into the next map with nothing left holding its handle.
+void silence(client_context_t& context)
+{
+  if (context.audio != nullptr)
+    context.audio->stop_all();
+}
+
+} // namespace
+
 void reset_for_new_connection(client_context_t& context)
 {
   shared::finish_replay_recording(context.replay_recorder);
+  silence(context);
   context.connection  = {};
   context.prediction  = {};
   context.replication = {};
@@ -36,6 +50,7 @@ void reset_for_new_connection(client_context_t& context)
 void reset_state_in_preparation_for_new_map_load(client_context_t& context)
 {
   shared::finish_replay_recording(context.replay_recorder);
+  silence(context);
   context.replication = {};
   context.visuals     = {};
 }
@@ -45,6 +60,7 @@ void reset_state_for_replay_seek(client_context_t& context)
   // The snapshot ring and latest_processed_tick, so an older tick passes the
   // staleness gate and the edge watchers see no previous frame; every remote
   // ring and death timer; the interpolation cursor.
+  silence(context);
   context.replication = {};
   context.visuals     = {};
   if (context.cvars != nullptr)

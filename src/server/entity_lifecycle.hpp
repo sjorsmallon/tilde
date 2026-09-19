@@ -32,4 +32,7 @@ void try_admit_player(server_context_t &context, int32_t slot);
 // as everyone else.
 void admit_waiting_players(server_context_t &context);
 
+// Every entity but the players, their carried weapons and the match goes, and the map's own come back as the map has them.
+void restore_level_from_map(server_context_t &context);
+
 } // namespace server

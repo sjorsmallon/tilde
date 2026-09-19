@@ -22,12 +22,16 @@
 #include "movers.hpp"
 #include "shapes.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <set>
 #include <vector>
 
 static int failure_count = 0;
+
+static constexpr shared::movement_volume_settings_t SIXTY_HERTZ_AT_TICK_ONE{
+    .tick = 1, .tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
 
 static void check(bool condition, const char* what)
 {
@@ -77,7 +81,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   }
 
   std::vector<shared::movement_volume_t> volumes;
-  shared::collect_movement_volumes(system, volumes);
+  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
 
   std::set<entities::entity_type> types_that_produced_a_volume;
   for (const shared::movement_volume_t& volume : volumes)
@@ -130,7 +134,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   // since it only asks that ONE of them answered.
   check(types_that_produced_a_volume.count(entities::entity_type::Jump_Pad_Entity) > 0,
         "a jump pad is a movement volume");
-  check(!types_that_produced_a_volume.count(entities::entity_type::Brush_Entity),
+  check(!types_that_produced_a_volume.count(entities::entity_type::Geometry_Owner_Entity),
         "a brush entity is not a movement volume");
   check(types_that_produced_a_mover.count(entities::entity_type::Mover_Entity) > 0,
         "a mover entity is a mover");
@@ -155,7 +159,7 @@ static void test_a_pad_is_flattened_into_what_the_step_reads()
   pad->switch_state.value = true;
 
   std::vector<shared::movement_volume_t> volumes;
-  shared::collect_movement_volumes(system, volumes);
+  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
   check(volumes.size() == 1, "one pad, one volume");
 
   const shared::movement_volume_t& volume = volumes[0];
@@ -177,7 +181,7 @@ static void test_a_pad_is_flattened_into_what_the_step_reads()
   // The switch is replicated state, so it has to survive the flattening rather
   // than being filtered out: the step is what honours it.
   pad->switch_state.value = false;
-  shared::collect_movement_volumes(system, volumes);
+  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
   check(volumes.size() == 1 && !volumes[0].enabled,
         "a disabled pad is still collected, and says so");
 }
@@ -187,7 +191,7 @@ static void test_a_switch_reaches_the_geometry_it_owns()
   printf("\n[pin] the bit follows the owner's switch, and an untied object has none\n");
 
   shared::Entity_System system;
-  const shared::entity_uid_t owner = system.spawn(entities::entity_type::Brush_Entity);
+  const shared::entity_uid_t owner = system.spawn(entities::entity_type::Geometry_Owner_Entity);
 
   // Three objects: one untied, two tied to the same owner -- N brushes per
   // entity is what the tie is FOR, so one switch has to reach both.
@@ -198,7 +202,7 @@ static void test_a_switch_reaches_the_geometry_it_owns()
   check(disabled.size() == 3 && !disabled[0] && !disabled[1] && !disabled[2],
         "an enabled owner disables nothing");
 
-  system.get<entities::Brush_Entity>(owner)->switch_state.value = false;
+  system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
   shared::collect_disabled_geometry(system, owner_of, disabled);
   check(disabled.size() == 3 && !disabled[0] && disabled[1] && disabled[2],
         "switching the owner off takes out every object tied to it and nothing else");
@@ -234,10 +238,59 @@ static void test_a_drawn_mover_carries_its_rider_by_the_same_fraction()
         "a turning lift swings its rider at the same radius");
 }
 
+static void test_a_bubble_is_placed_by_the_tick_it_is_cut_for()
+{
+  printf("\n[pin] a bubble's volume is a function of the tick, armed late and stopped on time\n");
+
+  shared::Entity_System      system;
+  const shared::entity_uid_t uid    = system.spawn(entities::entity_type::Bubble_Entity);
+  entities::Bubble_Entity*   bubble = system.get<entities::Bubble_Entity>(uid);
+
+  std::vector<shared::movement_volume_t> volumes;
+  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
+  check(volumes.size() == 1 && !volumes[0].enabled,
+        "a bubble whose launch is not latched yet bounces nobody");
+
+  bubble->launch_position     = {0.f, 100.f, 0.f};
+  bubble->projectile.velocity = {600.f, 0.f, 0.f};
+  bubble->launch_tick         = 10;
+  bubble->flight_ticks        = 60;
+
+  const auto volume_at = [&](uint32_t tick)
+  {
+    shared::movement_volume_settings_t settings = SIXTY_HERTZ_AT_TICK_ONE;
+    settings.tick                               = tick;
+    shared::collect_movement_volumes(system, settings, volumes);
+    return volumes[0];
+  };
+  const auto center_x = [](const shared::movement_volume_t& volume)
+  { return (volume.bounds.min.x + volume.bounds.max.x) * 0.5f; };
+
+  check(volume_at(10).kind == shared::movement_volume_kind_t::Bounce,
+        "a bubble is a Bounce, which keeps the horizontal speed");
+  check(!volume_at(11).enabled, "it is not armed at the muzzle");
+  check(volume_at(10 + 12).enabled, "it is armed once arm_seconds have passed");
+
+  check(std::fabs(center_x(volume_at(10 + 30)) - 300.f) < 0.01f,
+        "half a second at 600 units a second is 300 units out");
+  check(std::fabs(center_x(volume_at(10 + 60)) - 600.f) < 0.01f &&
+            center_x(volume_at(10 + 60)) == center_x(volume_at(10 + 600)),
+        "it stops at flight_ticks and stays there");
+
+  const float rise_at_rest =
+      (volume_at(10 + 60).bounds.min.y + volume_at(10 + 60).bounds.max.y) * 0.5f - 100.f;
+  check(rise_at_rest > 0.f, "the Bubble row's negative gravity scale lifts it");
+
+  check(volume_at(10 + 30).launch_velocity.y == bubble->bounce_speed &&
+            volume_at(10 + 30).launch_velocity.x == 0.f,
+        "the bounce is the bubble's own upward speed");
+}
+
 int main()
 {
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
+  test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_switch_reaches_the_geometry_it_owns();
   test_a_drawn_mover_carries_its_rider_by_the_same_fraction();
 

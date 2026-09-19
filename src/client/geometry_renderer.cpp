@@ -307,9 +307,27 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
 
 // Draw a surface's mesh if it resolves. False means "no mesh — use the kind's
 // own primitive".
+renderer::clock_wipe_t moved_clock_wipe(const renderer::clock_wipe_t& clock_wipe,
+                                        const linalg::mat4f* moved_by)
+{
+  if (moved_by == nullptr || !clock_wipe.armed)
+    return clock_wipe;
+
+  const auto moved = [&](const linalg::vec3f& value, float w)
+  {
+    const linalg::vec4 result = *moved_by * linalg::vec4{value.x, value.y, value.z, w};
+    return linalg::vec3f{result.x, result.y, result.z};
+  };
+  return {.center = moved(clock_wipe.center, 1.0f),
+          .axis_x = moved(clock_wipe.axis_x, 0.0f),
+          .axis_y = moved(clock_wipe.axis_y, 0.0f),
+          .wiped  = clock_wipe.wiped,
+          .armed  = true};
+}
+
 bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
                        renderer::mesh_handle_t mesh, const linalg::mat4f &transform,
-                       const linalg::mat4f* moved_by)
+                       const linalg::mat4f* moved_by, const renderer::clock_wipe_t& clock_wipe)
 {
   if (!surface.visible)
     return true; // resolved to "draw nothing", which is not a fallback case
@@ -322,6 +340,7 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
   draw.transform     = moved_by != nullptr ? *moved_by * transform : transform;
   draw.shadow_caster = moved_by != nullptr ? renderer::shadow_caster_t::dynamic_object
                                            : renderer::shadow_caster_t::static_geometry;
+  draw.clock_wipe    = moved_clock_wipe(clock_wipe, moved_by);
 
   if (surface.is_wireframe)
   {
@@ -341,7 +360,8 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
-                   const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by)
+                   const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by,
+                   const renderer::clock_wipe_t& clock_wipe)
 {
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
 
@@ -365,12 +385,12 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
       char                   cache_key_buffer[48];
       const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
       if (draw_surface_mesh(draws, surface, get_render_mesh(assets::find_mesh_in_cache(cache_key)),
-                            linalg::mat4f::identity(), moved_by))
+                            linalg::mat4f::identity(), moved_by, clock_wipe))
         return;
     }
     else if (draw_surface_mesh(draws, surface,
                                get_render_mesh(shared::resolve_surface_mesh(surface)),
-                               shared::static_mesh_transform(static_mesh), moved_by))
+                               shared::static_mesh_transform(static_mesh), moved_by, clock_wipe))
       return;
 
     // A static mesh with no resolvable mesh has nothing to draw but its bound —
@@ -389,7 +409,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                           get_render_mesh(shared::resolve_surface_mesh(surface)),
                           linalg::compose_transform(shared::get_position(geometry), {0, 0, 0, 1},
                                                     {1, 1, 1}),
-                          moved_by))
+                          moved_by, clock_wipe))
       return;
 
     if (!surface.visible)
@@ -418,6 +438,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     draw.transform     = moved_by != nullptr ? *moved_by : linalg::mat4f::identity();
     draw.shadow_caster = moved_by != nullptr ? renderer::shadow_caster_t::dynamic_object
                                              : renderer::shadow_caster_t::static_geometry;
+    draw.clock_wipe    = moved_clock_wipe(clock_wipe, moved_by);
 
     const auto source = g_generated_mesh_sources.find(uid);
     if (source != g_generated_mesh_sources.end())

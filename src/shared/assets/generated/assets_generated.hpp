@@ -24,16 +24,17 @@ enum class mesh_asset : uint16_t
   damaged_helmet = 3,
   rocket = 4,
   shattered_glass = 5,
-  target = 6,
-  Box = 7,
-  Leet_Full = 8,
-  Sphere = 9,
-  Error = 10,
-  Isosphere = 11,
-  Pyramid = 12,
+  stopwatch = 6,
+  target = 7,
+  Box = 8,
+  Leet_Full = 9,
+  Sphere = 10,
+  Error = 11,
+  Isosphere = 12,
+  Pyramid = 13,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 13;
+constexpr uint32_t mesh_asset_COUNT = 14;
 
 const char* to_string(mesh_asset value);
 template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);
@@ -50,31 +51,32 @@ enum class texture_asset : uint16_t
   directional_light = 3,
   game_rules = 4,
   hammer = 5,
-  move = 6,
-  mover = 7,
-  point_light = 8,
-  replay_advance = 9,
-  replay_go_back = 10,
-  replay_pause = 11,
-  replay_play = 12,
-  replay_restart = 13,
-  replay_speed_down = 14,
-  replay_speed_up = 15,
-  spot_light = 16,
-  timer = 17,
-  wall = 18,
-  wall_hammer = 19,
-  glasses = 20,
-  glasses_material = 21,
-  leet_hands = 22,
-  leet_hands_material = 23,
-  leet_skin = 24,
-  leet_skin_material = 25,
-  Smoke = 26,
-  dev_128x128 = 27,
+  icon_timer = 6,
+  move = 7,
+  mover = 8,
+  point_light = 9,
+  replay_advance = 10,
+  replay_go_back = 11,
+  replay_pause = 12,
+  replay_play = 13,
+  replay_restart = 14,
+  replay_speed_down = 15,
+  replay_speed_up = 16,
+  spot_light = 17,
+  timer = 18,
+  wall = 19,
+  wall_hammer = 20,
+  glasses = 21,
+  glasses_material = 22,
+  leet_hands = 23,
+  leet_hands_material = 24,
+  leet_skin = 25,
+  leet_skin_material = 26,
+  Smoke = 27,
+  dev_128x128 = 28,
 };
 
-constexpr uint32_t texture_asset_COUNT = 28;
+constexpr uint32_t texture_asset_COUNT = 29;
 
 const char* to_string(texture_asset value);
 template <> std::optional<texture_asset> try_from_string<texture_asset>(std::string_view text);
@@ -101,23 +103,27 @@ enum class sound_asset : uint16_t
   knife_slash1 = 13,
   knife_slash2 = 14,
   knife_stab = 15,
-  player_jump = 16,
-  player_land = 17,
-  press_click = 18,
-  rocket_explosion = 19,
-  scout_bolt = 20,
-  scout_clipin = 21,
-  scout_clipout = 22,
-  scout_fire_1 = 23,
-  success = 24,
-  target_break = 25,
-  twang = 26,
-  ui_ping = 27,
-  wow_incredible = 28,
-  zoom = 29,
+  level_complete_beat = 16,
+  player_jump = 17,
+  player_land = 18,
+  player_land_new = 19,
+  press_click = 20,
+  rocket_explosion = 21,
+  scout_bolt = 22,
+  scout_clipin = 23,
+  scout_clipout = 24,
+  scout_fire_1 = 25,
+  success = 26,
+  target_break = 27,
+  timer_egg_timer = 28,
+  timer_over_ding = 29,
+  twang = 30,
+  ui_ping = 31,
+  wow_incredible = 32,
+  zoom = 33,
 };
 
-constexpr uint32_t sound_asset_COUNT = 30;
+constexpr uint32_t sound_asset_COUNT = 34;
 
 const char* to_string(sound_asset value);
 template <> std::optional<sound_asset> try_from_string<sound_asset>(std::string_view text);
@@ -193,14 +199,18 @@ enum class pbr_material : uint16_t
   fence_grate = 2,
   glass_amber = 3,
   glass_blue = 4,
-  harsh_bricks = 5,
-  scuffed_plastic = 6,
-  sloppy_mortar_stone = 7,
-  stringy_marble = 8,
-  titanium_scuffed = 9,
+  glass_green = 5,
+  glass_pink = 6,
+  glass_teal = 7,
+  glass_white = 8,
+  harsh_bricks = 9,
+  scuffed_plastic = 10,
+  sloppy_mortar_stone = 11,
+  stringy_marble = 12,
+  titanium_scuffed = 13,
 };
 
-constexpr uint32_t pbr_material_COUNT = 10;
+constexpr uint32_t pbr_material_COUNT = 14;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

@@ -33,7 +33,7 @@ enum class key_t : uint16_t
   // Arrows, and the two keys that go with them: editors nudge a selection
   // horizontally with the arrows and vertically with Page Up / Page Down.
   Arrow_Left, Arrow_Right, Arrow_Up, Arrow_Down,
-  Page_Up, Page_Down, End,
+  Page_Up, Page_Down, End, Home,
   // Punctuation.
   Left_Bracket, Right_Bracket, Tilde,
   // Keypad digits, contiguous like the top row so key_t::Keypad_0 + digit

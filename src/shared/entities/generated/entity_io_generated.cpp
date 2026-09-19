@@ -216,6 +216,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Disable
   {},   // Toggle_Enabled
   {},   // Play
+  {},   // Stop_Playing
   {SET_COLOR_FIELDS, 1},
   {ADD_FIELDS, 1},
   {},   // Reset
@@ -231,6 +232,8 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Start
   {},   // Stop
   {},   // Restart
+  {},   // Pause
+  {},   // Resume
   {},   // Start_Match
   {},   // End_Round
   {},   // Restart_Round
@@ -242,6 +245,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
   {COLOR_CHANGED_FIELDS, 1},
   {},   // Limit_Reached
+  {},   // Fell_Below_Limit
   {},   // Touched
   {},   // Left
   {DIED_FIELDS, 1},
@@ -264,6 +268,7 @@ const char* to_string(entity_action value)
     case entity_action::Disable: return "Disable";
     case entity_action::Toggle_Enabled: return "Toggle_Enabled";
     case entity_action::Play: return "Play";
+    case entity_action::Stop_Playing: return "Stop_Playing";
     case entity_action::Set_Color: return "Set_Color";
     case entity_action::Add: return "Add";
     case entity_action::Reset: return "Reset";
@@ -279,6 +284,8 @@ const char* to_string(entity_action value)
     case entity_action::Start: return "Start";
     case entity_action::Stop: return "Stop";
     case entity_action::Restart: return "Restart";
+    case entity_action::Pause: return "Pause";
+    case entity_action::Resume: return "Resume";
     case entity_action::Start_Match: return "Start_Match";
     case entity_action::End_Round: return "End_Round";
     case entity_action::Restart_Round: return "Restart_Round";
@@ -295,6 +302,7 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Disable") return entity_action::Disable;
   if (text == "Toggle_Enabled") return entity_action::Toggle_Enabled;
   if (text == "Play") return entity_action::Play;
+  if (text == "Stop_Playing") return entity_action::Stop_Playing;
   if (text == "Set_Color") return entity_action::Set_Color;
   if (text == "Add") return entity_action::Add;
   if (text == "Reset") return entity_action::Reset;
@@ -310,6 +318,8 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Start") return entity_action::Start;
   if (text == "Stop") return entity_action::Stop;
   if (text == "Restart") return entity_action::Restart;
+  if (text == "Pause") return entity_action::Pause;
+  if (text == "Resume") return entity_action::Resume;
   if (text == "Start_Match") return entity_action::Start_Match;
   if (text == "End_Round") return entity_action::End_Round;
   if (text == "Restart_Round") return entity_action::Restart_Round;
@@ -325,6 +335,7 @@ const char* to_string(entity_signal value)
   {
     case entity_signal::Color_Changed: return "Color_Changed";
     case entity_signal::Limit_Reached: return "Limit_Reached";
+    case entity_signal::Fell_Below_Limit: return "Fell_Below_Limit";
     case entity_signal::Touched: return "Touched";
     case entity_signal::Left: return "Left";
     case entity_signal::Died: return "Died";
@@ -343,6 +354,7 @@ template <> std::optional<entity_signal> try_from_string<entity_signal>(std::str
 {
   if (text == "Color_Changed") return entity_signal::Color_Changed;
   if (text == "Limit_Reached") return entity_signal::Limit_Reached;
+  if (text == "Fell_Below_Limit") return entity_signal::Fell_Below_Limit;
   if (text == "Touched") return entity_signal::Touched;
   if (text == "Left") return entity_signal::Left;
   if (text == "Died") return entity_signal::Died;
@@ -415,6 +427,7 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Disable: return (uint32_t)sizeof(Disable_Data);
     case entity_action::Toggle_Enabled: return (uint32_t)sizeof(Toggle_Enabled_Data);
     case entity_action::Play: return (uint32_t)sizeof(Play_Data);
+    case entity_action::Stop_Playing: return (uint32_t)sizeof(Stop_Playing_Data);
     case entity_action::Set_Color: return (uint32_t)sizeof(Set_Color_Data);
     case entity_action::Add: return (uint32_t)sizeof(Add_Data);
     case entity_action::Reset: return (uint32_t)sizeof(Reset_Data);
@@ -430,6 +443,8 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Start: return (uint32_t)sizeof(Start_Data);
     case entity_action::Stop: return (uint32_t)sizeof(Stop_Data);
     case entity_action::Restart: return (uint32_t)sizeof(Restart_Data);
+    case entity_action::Pause: return (uint32_t)sizeof(Pause_Data);
+    case entity_action::Resume: return (uint32_t)sizeof(Resume_Data);
     case entity_action::Start_Match: return (uint32_t)sizeof(Start_Match_Data);
     case entity_action::End_Round: return (uint32_t)sizeof(End_Round_Data);
     case entity_action::Restart_Round: return (uint32_t)sizeof(Restart_Round_Data);
@@ -446,6 +461,7 @@ uint32_t signal_payload_size(entity_signal signal)
   {
     case entity_signal::Color_Changed: return (uint32_t)sizeof(Color_Changed_Data);
     case entity_signal::Limit_Reached: return (uint32_t)sizeof(Limit_Reached_Data);
+    case entity_signal::Fell_Below_Limit: return (uint32_t)sizeof(Fell_Below_Limit_Data);
     case entity_signal::Touched: return (uint32_t)sizeof(Touched_Data);
     case entity_signal::Left: return (uint32_t)sizeof(Left_Data);
     case entity_signal::Died: return (uint32_t)sizeof(Died_Data);
@@ -489,6 +505,14 @@ action_data_t erase(const Play_Data& payload)
   action_data_t data;
   data.tag = entity_action::Play;
   data.play = payload;
+  return data;
+}
+
+action_data_t erase(const Stop_Playing_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Stop_Playing;
+  data.stop_playing = payload;
   return data;
 }
 
@@ -609,6 +633,22 @@ action_data_t erase(const Restart_Data& payload)
   action_data_t data;
   data.tag = entity_action::Restart;
   data.restart = payload;
+  return data;
+}
+
+action_data_t erase(const Pause_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Pause;
+  data.pause = payload;
+  return data;
+}
+
+action_data_t erase(const Resume_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Resume;
+  data.resume = payload;
   return data;
 }
 

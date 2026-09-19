@@ -48,6 +48,12 @@ struct Limit_Reached_Data
 static_assert(std::is_trivially_copyable_v<Limit_Reached_Data>,
               "a verb payload rides a union in a map row and a queue record");
 
+struct Fell_Below_Limit_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<Fell_Below_Limit_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
 // --- the handlers, written ONCE -------------------------------------
 //
 // `requires` is what buys this: one handler for every opting-in type
@@ -81,5 +87,6 @@ void reset(Entity&, const Reset_Data&, input_context_t&);
 // Defined in server_action_bindings_generated.cpp, because the queue
 // is world_t's -- the same reason the shims live there.
 void emit_limit_reached(const Entity& sender, const Limit_Reached_Data& payload, input_context_t& context);
+void emit_fell_below_limit(const Entity& sender, const Fell_Below_Limit_Data& payload, input_context_t& context);
 
 } // namespace entities

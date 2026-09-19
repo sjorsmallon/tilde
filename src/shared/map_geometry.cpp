@@ -214,7 +214,12 @@ bool compute_static_mesh_extents(const static_mesh_geometry_t &static_mesh,
                                  linalg::vec3 &out_center_offset,
                                  linalg::vec3 &out_half_extents)
 {
-  const assets::mesh_asset_t *mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
+  const assets::asset_handle_t<assets::mesh_asset_t> handle =
+      resolve_surface_mesh(static_mesh.surface);
+  if (!handle.valid())
+    return false;
+
+  const assets::mesh_asset_t *mesh = assets::get(handle);
   if (!mesh || mesh->vertices.empty())
     return false;
 
@@ -225,15 +230,46 @@ bool compute_static_mesh_extents(const static_mesh_geometry_t &static_mesh,
 
   out_center_offset = {mesh_center.x * scale.x, mesh_center.y * scale.y,
                        mesh_center.z * scale.z};
-  out_half_extents = {mesh_half.x * scale.x, mesh_half.y * scale.y,
-                      mesh_half.z * scale.z};
+  out_half_extents = {std::abs(mesh_half.x * scale.x), std::abs(mesh_half.y * scale.y),
+                      std::abs(mesh_half.z * scale.z)};
   return true;
 }
 
-// Fallback half-extents for a static mesh whose asset hasn't resolved. Matches
-// what the editor used to hand back for an unresolved Static_Mesh_Entity, so
-// picking a just-placed mesh still works.
-constexpr float static_mesh_fallback_half_extent = 32.f;
+// A static mesh's box in its own frame: where its centre sits in the world, and
+// the half-extents along its own (rotated) axes.
+struct static_mesh_box_t
+{
+  linalg::vec3 center;
+  linalg::vec3 half_extents;
+};
+
+static_mesh_box_t static_mesh_box_of(const static_mesh_geometry_t &static_mesh)
+{
+  constexpr float fallback_half_extent = 32.f;
+
+  linalg::vec3 center_offset{0.f, 0.f, 0.f};
+  linalg::vec3 half_extents{fallback_half_extent, fallback_half_extent, fallback_half_extent};
+  compute_static_mesh_extents(static_mesh, center_offset, half_extents);
+
+  return {static_mesh.position + linalg::rotate(static_mesh.orientation, center_offset),
+          half_extents};
+}
+
+// The world-axis half-extents of that box once turned.
+linalg::vec3 static_mesh_world_half_extents(const static_mesh_geometry_t &static_mesh,
+                                            const linalg::vec3 &half_extents)
+{
+  linalg::vec3 reach{0.f, 0.f, 0.f};
+  const linalg::vec3 axes[3] = {{half_extents.x, 0.f, 0.f},
+                                {0.f, half_extents.y, 0.f},
+                                {0.f, 0.f, half_extents.z}};
+  for (const linalg::vec3 &axis : axes)
+  {
+    const linalg::vec3 turned = linalg::rotate(static_mesh.orientation, axis);
+    reach = reach + linalg::vec3{std::abs(turned.x), std::abs(turned.y), std::abs(turned.z)};
+  }
+  return reach;
+}
 
 // Convert local box geometry to the world-space aabb_t the shapes.hpp helpers
 // (collision planes, face polygons) already know how to chew on.
@@ -255,11 +291,8 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry)
   case geometry_kind_t::Static_Mesh:
   {
     const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    linalg::vec3 center_offset, half_extents;
-    if (compute_static_mesh_extents(static_mesh, center_offset, half_extents))
-      return half_extents;
-    return {static_mesh_fallback_half_extent, static_mesh_fallback_half_extent,
-            static_mesh_fallback_half_extent};
+    return static_mesh_world_half_extents(static_mesh,
+                                          static_mesh_box_of(static_mesh).half_extents);
   }
 
   case geometry_kind_t::Brush:
@@ -308,17 +341,9 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
   case geometry_kind_t::Static_Mesh:
   {
     const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    linalg::vec3 center_offset, half_extents;
-    if (compute_static_mesh_extents(static_mesh, center_offset, half_extents))
-    {
-      const linalg::vec3 world_center = static_mesh.position + center_offset;
-      return {world_center - half_extents, world_center + half_extents};
-    }
-
-    const linalg::vec3 fallback{static_mesh_fallback_half_extent,
-                                static_mesh_fallback_half_extent,
-                                static_mesh_fallback_half_extent};
-    return {static_mesh.position - fallback, static_mesh.position + fallback};
+    const static_mesh_box_t box = static_mesh_box_of(static_mesh);
+    const linalg::vec3 reach = static_mesh_world_half_extents(static_mesh, box.half_extents);
+    return {box.center - reach, box.center + reach};
   }
   }
 
@@ -639,6 +664,27 @@ try_build_boundary_pyramids(const brush_polyhedron_t &displaced,
 
 } // namespace
 
+collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh)
+{
+  const static_mesh_box_t box = static_mesh_box_of(static_mesh);
+
+  collision_piece_t piece = piece_from_aabb(to_world_aabb({0.f, 0.f, 0.f}, box.half_extents));
+
+  for (Plane &plane : piece.planes)
+  {
+    plane.point  = box.center + linalg::rotate(static_mesh.orientation, plane.point);
+    plane.normal = linalg::rotate(static_mesh.orientation, plane.normal);
+  }
+
+  for (std::vector<linalg::vec3> &polygon : piece.face_polygons)
+    for (linalg::vec3 &corner : polygon)
+      corner = box.center + linalg::rotate(static_mesh.orientation, corner);
+
+  const linalg::vec3 reach = static_mesh_world_half_extents(static_mesh, box.half_extents);
+  piece.bounds = {box.center - reach, box.center + reach};
+  return piece;
+}
+
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid)
 {
@@ -646,9 +692,10 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
   {
   case geometry_kind_t::Static_Mesh:
   {
-    const aabb_bounds_t bounds = get_bounds(geometry);
-    return {piece_from_aabb(to_world_aabb((bounds.min + bounds.max) * 0.5f,
-                                          (bounds.max - bounds.min) * 0.5f))};
+    const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
+    if (!static_mesh.collides)
+      return {};
+    return {static_mesh_collision_box(static_mesh)};
   }
 
   case geometry_kind_t::Brush:
@@ -841,7 +888,7 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
     const static_mesh_geometry_t &b = std::get<static_mesh_geometry_t>(rhs);
     return vec3_equal(a.position, b.position) && quat_equal(a.orientation, b.orientation) &&
            vec3_equal(a.scale, b.scale) && surfaces_equal(a.surface, b.surface) &&
-           a.owner_uid == b.owner_uid;
+           a.collides == b.collides && a.owner_uid == b.owner_uid;
   }
 
   case geometry_kind_t::Brush:
@@ -2526,7 +2573,13 @@ void read_rotation(const std::map<std::string, std::string> &properties,
     std::istringstream stream(*raw);
     linalg::quatf parsed;
     if (stream >> parsed.x >> parsed.y >> parsed.z >> parsed.w)
-      out = linalg::normalize(parsed);
+    {
+      // Only a hand-edited value: renormalizing one we wrote moves its last bit,
+      // and geometry_values_equal is bit-exact.
+      const float length_squared = parsed.x * parsed.x + parsed.y * parsed.y +
+                                   parsed.z * parsed.z + parsed.w * parsed.w;
+      out = std::abs(length_squared - 1.f) > 1e-5f ? linalg::normalize(parsed) : parsed;
+    }
     else
       log_error("geometry property \"rotation\": \"{}\" is not four floats — keeping "
                 "{} {} {} {}",
@@ -2862,6 +2915,8 @@ void serialize_geometry(const geometry_value_t &geometry,
     out_properties.emplace_back("rotation", format_quat_exact(static_mesh.orientation));
     out_properties.emplace_back("scale", format_vec3(static_mesh.scale));
     write_surface(static_mesh.surface, out_properties);
+    if (!static_mesh.collides)
+      out_properties.emplace_back("collides", format_bool(static_mesh.collides));
     write_owner(static_mesh.owner_uid, out_properties);
     return;
   }
@@ -2921,6 +2976,7 @@ bool parse_geometry(const std::string &keyword,
     read_rotation(properties, static_mesh.orientation);
     read_vec3(properties, "scale", static_mesh.scale);
     read_surface(properties, static_mesh.surface);
+    read_bool(properties, "collides", static_mesh.collides);
     read_owner(properties, static_mesh.owner_uid);
     out_geometry = std::move(static_mesh);
     return true;

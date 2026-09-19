@@ -63,9 +63,11 @@ enum class Weapon : uint8_t
   Rocket_Launcher = 2,
   Dash = 3,
   Swapper = 4,
+  Hook = 5,
+  Bubble = 6,
 };
 
-constexpr uint32_t Weapon_COUNT = 5;
+constexpr uint32_t Weapon_COUNT = 7;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -257,47 +259,49 @@ enum class entity_type : uint16_t
   Player_Entity = 3,
   Weapon_Entity = 4,
   Rocket_Entity = 5,
-  Physics_Body_Entity = 6,
-  Damageable_Entity = 7,
-  Particle_Emitter_Entity = 8,
-  Sound_Emitter_Entity = 9,
-  Point_Light_Entity = 10,
-  Spot_Light_Entity = 11,
-  Directional_Light_Entity = 12,
-  Trigger_Volume_Entity = 13,
-  Jump_Pad_Entity = 14,
-  Reflection_Volume_Entity = 15,
-  Game_Rules_Entity = 16,
-  Logic_Counter_Entity = 17,
-  Brush_Entity = 18,
-  Ping_Marker_Entity = 19,
-  Logic_Timer_Entity = 20,
-  Path_Node_Entity = 21,
-  Mover_Entity = 22,
+  Bubble_Entity = 6,
+  Physics_Body_Entity = 7,
+  Damageable_Entity = 8,
+  Particle_Emitter_Entity = 9,
+  Sound_Emitter_Entity = 10,
+  Point_Light_Entity = 11,
+  Spot_Light_Entity = 12,
+  Directional_Light_Entity = 13,
+  Trigger_Volume_Entity = 14,
+  Jump_Pad_Entity = 15,
+  Reflection_Volume_Entity = 16,
+  Game_Rules_Entity = 17,
+  Logic_Counter_Entity = 18,
+  Geometry_Owner_Entity = 19,
+  Ping_Marker_Entity = 20,
+  Logic_Timer_Entity = 21,
+  Path_Node_Entity = 22,
+  Mover_Entity = 23,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 23;
+constexpr uint32_t ENTITY_TYPE_COUNT = 24;
 
 enum class component_type : uint16_t
 {
   Box_Volume = 0,
   Enabled = 1,
   Playback = 2,
-  Health = 3,
-  Counter = 4,
-  Material = 5,
-  Render = 6,
-  Light = 7,
-  Movement = 8,
-  Inventory = 9,
-  Timer_State = 10,
-  Match = 11,
-  Path_Follow = 12,
+  Projectile = 3,
+  Health = 4,
+  Counter = 5,
+  Material = 6,
+  Render = 7,
+  Light = 8,
+  Movement = 9,
+  Inventory = 10,
+  Timer_State = 11,
+  Match = 12,
+  Path_Follow = 13,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 13;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 14;
 
 } // namespace entities
 
@@ -438,6 +442,16 @@ struct Playback
   static constexpr component_type static_component = component_type::Playback;
 
   uint32_t play_count = 0;
+  uint32_t stop_count = 0;
+};
+
+struct Projectile
+{
+  static constexpr component_type static_component = component_type::Projectile;
+
+  Weapon weapon_id = Weapon::Rocket_Launcher;
+  linalg::vec3f velocity = {};
+  shared::entity_uid_t owner_uid = {};
 };
 
 struct Health
@@ -519,6 +533,7 @@ struct Timer_State
   bool repeat = false;
   bool running = false;
   uint32_t deadline_tick = 0;
+  uint32_t paused_remaining_ticks = 0;
 };
 
 struct Match

@@ -68,7 +68,7 @@ struct geometry_surface_t
 };
 
 // A reference to a mesh asset placed in the world. Collision is its bounding
-// box; no shape is derived from the triangles (same as before the exit).
+// box, turned with it; no shape is derived from the triangles.
 struct static_mesh_geometry_t
 {
   linalg::vec3 position{0.f, 0.f, 0.f};
@@ -76,7 +76,10 @@ struct static_mesh_geometry_t
   linalg::vec3 scale{1.f, 1.f, 1.f};
   geometry_surface_t surface;
 
-  // The Brush_Entity this object is tied to, or null_entity_uid for plain world
+  // Off for a prop whose collision is authored as clip brushes around it.
+  bool collides = true;
+
+  // The Geometry_Owner_Entity this object is tied to, or null_entity_uid for plain world
   // geometry. See brush_geometry_t::owner_uid -- the argument is the same and
   // is written there.
   entity_uid_t owner_uid = null_entity_uid;
@@ -281,7 +284,7 @@ struct brush_geometry_t
   // mesh_path override.
   geometry_surface_t surface;
 
-  // The Brush_Entity this brush is tied to, or null_entity_uid for plain world
+  // The Geometry_Owner_Entity this brush is tied to, or null_entity_uid for plain world
   // geometry. THE BRUSH NAMES ITS OWNER and nothing names the brush: Source
   // nests the solids inside the entity block, we keep a flat geometry list with
   // uids, so the pointer runs this way and N brushes per entity costs no array.
@@ -373,8 +376,8 @@ struct collision_piece_t
   std::vector<std::vector<linalg::vec3>> face_polygons;
 };
 
-// The collision solids of one object. A static mesh collides as its
-// axis-aligned bound and yields exactly one; a brush collides as its real
+// The collision solids of one object. A static mesh collides as its oriented
+// box and yields exactly one, or none with `collides` off; a brush collides as its real
 // DISPLACED surface, is DECOMPOSED, and yields N, all of which the caller
 // registers under ONE Collision_Id — see geometry_def.md §5 and
 // convex_decomposition.hpp.
@@ -388,6 +391,11 @@ struct collision_piece_t
 // bigger than the brush it came from, which is a wall the player cannot see.
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid);
+
+// The box a static mesh collides as: its mesh bounds under its scale, turned by
+// its orientation. Answered whether or not `collides` is set, so the editor can
+// pick and draw the box of a mesh that has its collision switched off.
+collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh);
 
 // How an object stops light, which is the ONE question that partitions the map
 // into the bake's three occluder sets. Both the CPU's BVHs and the GPU's

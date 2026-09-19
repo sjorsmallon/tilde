@@ -39,6 +39,7 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     {entities::entity_type::Player_Entity, FLESH_IMPACT_SOUNDS, assets::sound_asset::Missing},
     {entities::entity_type::Weapon_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Rocket_Entity, {}, assets::sound_asset::Missing},
+    {entities::entity_type::Bubble_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Physics_Body_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
     {entities::entity_type::Damageable_Entity, TARGET_BREAK_SOUNDS, assets::sound_asset::target_break},
     {entities::entity_type::Particle_Emitter_Entity, {}, assets::sound_asset::Missing},
@@ -53,13 +54,13 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     {entities::entity_type::Logic_Counter_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
     // A shot lands on the BRUSH, which is world geometry and has its own impact
     // sound; the entity behind it is never what a ray reports.
-    {entities::entity_type::Brush_Entity, {}, assets::sound_asset::Missing},
+    {entities::entity_type::Geometry_Owner_Entity, {}, assets::sound_asset::Missing},
     // A ping marker is scenery: no shot is tested against it, so no shot can
     // land on it.
     {entities::entity_type::Ping_Marker_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Logic_Timer_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Path_Node_Entity, {}, assets::sound_asset::Missing},
-    // A shot lands on the mover's brush, as with Brush_Entity.
+    // A shot lands on the mover's brush, as with Geometry_Owner_Entity.
     {entities::entity_type::Mover_Entity, {}, assets::sound_asset::Missing},
 }};
 

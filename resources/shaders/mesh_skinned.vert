@@ -27,11 +27,7 @@ layout(location = 2) out vec2       fragUV;
 layout(location = 3) out flat float fragAlpha;
 layout(location = 6) out vec3       fragWorldPosition;
 
-layout(push_constant) uniform PushConstants {
-    mat4 model;
-    vec4 color;
-    mat3 normalMatrix;  // 3 columns, each padded to vec4 = 48 bytes
-} pc;
+#include "mesh_push.glsl"
 
 // MAX_BONES, and it is chosen together with the uint8_t bone indices in
 // skeleton.hpp. Dynamic offset: one block per skinned draw this frame.
@@ -59,7 +55,7 @@ void main() {
 
     gl_Position       = scene.view_projection * worldPosition;
     fragWorldPosition = worldPosition.xyz;
-    fragWorldNormal   = normalize(pc.normalMatrix * skinnedNormal);
+    fragWorldNormal   = normalize(mesh_normal_matrix() * skinnedNormal);
     fragColor         = pc.color.rgb;
     fragUV            = inUV;
     fragAlpha         = pc.color.a;

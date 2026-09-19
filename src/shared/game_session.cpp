@@ -15,6 +15,49 @@ bool entity_type_can_own_geometry(entities::entity_type type)
   return false;
 }
 
+// The wiring, checked and then indexed. ONE check, two policies: here every
+// refused row is logged and DROPPED, so the drain can keep treating a null
+// dispatch cell as a generator bug rather than a map's; the server's map
+// load asks validate_map_connections itself and refuses the whole map, which
+// is what stops a broken level going live. An editor that could not open a
+// map with one bad row could not repair it either.
+static void index_connections(game_session_t &session, const map_t &map)
+{
+  session.connections_by_sender.clear();
+
+  std::vector<bool> refused(map.connections.size(), false);
+  for (const connection_refusal_t &refusal : validate_map_connections(map))
+  {
+    log_error("build_session: connection {} dropped — {}", refusal.index, refusal.reason);
+    refused[refusal.index] = true;
+  }
+
+  for (size_t index = 0; index < map.connections.size(); ++index)
+  {
+    if (refused[index])
+      continue;
+    session.connections_by_sender[map.connections[index].sender].push_back(
+        {map.connections[index], false});
+  }
+}
+
+static void derive_mover_rest_frames(game_session_t &session)
+{
+  for (const entities::Mover_Entity &mover : session.entity_system.entities_of<entities::Mover_Entity>())
+    session.mover_rests[mover.entity_id].frame = mover_rest_frame(session.entity_system, mover);
+}
+
+void restore_map_entities(game_session_t &session, const map_t &map)
+{
+  for (const map_entity_t &entry : map.entities)
+    if (entry.entity && session.entity_system.try_find(entry.uid) == nullptr)
+      session.entity_system.add_entity(entry.uid, entry.entity.get());
+
+  index_connections(session, map);
+  session.path_links = derive_path_links(session.entity_system);
+  derive_mover_rest_frames(session);
+}
+
 game_session_t build_session(const map_t &map)
 {
   game_session_t session;
@@ -25,28 +68,7 @@ game_session_t build_session(const map_t &map)
   session.materials = map.materials;
   session.lightmap  = map.lightmap;
 
-  // The wiring, checked and then indexed. ONE check, two policies: here every
-  // refused row is logged and DROPPED, so the drain can keep treating a null
-  // dispatch cell as a generator bug rather than a map's; the server's map
-  // load asks validate_map_connections itself and refuses the whole map, which
-  // is what stops a broken level going live. An editor that could not open a
-  // map with one bad row could not repair it either.
-  {
-    std::vector<bool> refused(map.connections.size(), false);
-    for (const connection_refusal_t &refusal : validate_map_connections(map))
-    {
-      log_error("build_session: connection {} dropped — {}", refusal.index, refusal.reason);
-      refused[refusal.index] = true;
-    }
-
-    for (size_t index = 0; index < map.connections.size(); ++index)
-    {
-      if (refused[index])
-        continue;
-      session.connections_by_sender[map.connections[index].sender].push_back(
-          {map.connections[index], false});
-    }
-  }
+  index_connections(session, map);
 
   session.path_links = derive_path_links(session.entity_system);
   for (const path_refusal_t &refusal : validate_map_paths(map))
@@ -54,8 +76,7 @@ game_session_t build_session(const map_t &map)
   for (entity_uid_t node : session.path_links.named_by_several)
     log_warning("build_session: {} is the next of several path nodes, so it has no way back",
                 describe_map_entity(map, node));
-  for (const entities::Mover_Entity &mover : session.entity_system.entities_of<entities::Mover_Entity>())
-    session.mover_rests[mover.entity_id].frame = mover_rest_frame(session.entity_system, mover);
+  derive_mover_rest_frames(session);
 
   // The tie, derived and checked ONCE. A geometry naming an owner that is not a
   // live geometry owner keeps no entry, so the collect that runs every tick has
@@ -78,7 +99,7 @@ game_session_t build_session(const map_t &map)
     if (!entity_type_can_own_geometry(entity->type))
     {
       log_error("build_session: geometry {} is tied to uid {}, which is a {} and neither a "
-                "brush_entity nor a mover_entity — it stays solid",
+                "geometry_owner_entity nor a mover_entity — it stays solid",
                 session.geometry[index].uid, owner,
                 entities::entity_info(entity->type).classname);
       continue;

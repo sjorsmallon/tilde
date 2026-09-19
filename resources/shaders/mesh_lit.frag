@@ -10,6 +10,7 @@
 #include "direct_light.glsl"
 #include "reflection.glsl"
 #include "alpha_cutout.glsl"
+#include "clock_wipe.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -42,6 +43,10 @@ layout(set = 0, binding = 3) uniform sampler2D heightMap;
 void main() {
     float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
     discard_below_alpha_cutoff(surfaceAlpha);
+    discard_inside_clock_wipe(fragWorldPosition);
+
+    // A double-sided material draws unculled; its back is lit along the flipped normal.
+    vec3 facing_normal = normalize(fragWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
 
     vec3 ambient = scene.ambient.rgb;
 
@@ -49,14 +54,14 @@ void main() {
     // that is wrong, and this is how the two are told apart.
     if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
     {
-        outColor = shadow_visibility_debug_color(fragWorldPosition, normalize(fragWorldNormal));
+        outColor = shadow_visibility_debug_color(fragWorldPosition, facing_normal);
         return;
     }
     // The two halves of the lighting, each alone and before albedo, so "too
     // bright" can be blamed on the analytic lights or on the bake.
     if ((scene.debug_flags & DEBUG_FLAG_RENDER_DIRECT_LIGHT) != 0)
     {
-        vec3 geometric_normal = normalize(fragWorldNormal);
+        vec3 geometric_normal = facing_normal;
         vec3 direct           = analytic_tail_diffuse(geometric_normal, fragWorldPosition);
 #ifdef LIGHTMAP
         direct += lightmap_direct_diffuse(geometric_normal, fragWorldPosition);
@@ -66,7 +71,7 @@ void main() {
     }
     if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
     {
-        vec3 geometric_normal = normalize(fragWorldNormal);
+        vec3 geometric_normal = facing_normal;
 #ifdef LIGHTMAP
         vec3 baked = lightmap_residual_diffuse() + lightmap_indirect_diffuse(geometric_normal);
 #else
@@ -77,7 +82,7 @@ void main() {
     }
 
 #ifdef PBR
-    vec3 N = normalize(fragWorldNormal);
+    vec3 N = facing_normal;
     vec3 V = normalize(scene.camera_position.xyz - fragWorldPosition);
 
     mat3 tangent_frame = cotangent_frame(N, fragWorldPosition, fragUV);
@@ -215,7 +220,7 @@ void main() {
     // lighting model (ss11) -- and the one every physics body and untextured
     // prop drew through, so gate 5's probes landed under a sun that ignored
     // them.
-    vec3 N = normalize(fragWorldNormal);
+    vec3 N = facing_normal;
 
     // No roughness on this arm, so the channel shows the captures as a MIRROR
     // off the geometric normal: the parallax is judged on a blockout face too.

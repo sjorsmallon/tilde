@@ -144,11 +144,12 @@ static void enter_phase(server_context_t &context,
     ++match.round_number;
     match.objective_reached = false;
 
+    restore_level_from_map(context);
+
     // Ahead of the respawn, so a player admitted here is placed by the same
     // pass as everyone else.
     admit_waiting_players(context);
     respawn_all_players(context);
-    seed_damageable_health(context.world.session);
   }
 
   log_terminal("Round {}: entering phase {} (ends tick {})", match.round_number, to_string(phase),
@@ -223,7 +224,7 @@ bool match_request_is_allowed(Round_Phase phase, Match_Request request)
     case Match_Request::None:          return false;
     case Match_Request::Start_Match:   return shared::is_before_match(phase);
     case Match_Request::End_Round:     return phase == Round_Phase::Live;
-    case Match_Request::Restart_Round: return phase == Round_Phase::Live || phase == Round_Phase::Round_End;
+    case Match_Request::Restart_Round: return phase == Round_Phase::Freeze || phase == Round_Phase::Live || phase == Round_Phase::Round_End;
     case Match_Request::End_Match:     return phase != Round_Phase::Game_Over;
   }
   return false;

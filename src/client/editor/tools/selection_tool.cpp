@@ -871,6 +871,18 @@ void Selection_Tool::ungroup_selection(editor_context_t& ctx)
                             : std::format("Ungrouped {} groups", group_uids.size()));
 }
 
+void Selection_Tool::append_pick(const editor_context_t& ctx, shared::entity_uid_t uid,
+                                 std::vector<shared::entity_uid_t>& out) const
+{
+  if (!ignoring_groups)
+  {
+    shared::expand_to_group(*ctx.map, uid, out);
+    return;
+  }
+  if (std::find(out.begin(), out.end(), uid) == out.end())
+    out.push_back(uid);
+}
+
 void Selection_Tool::ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid)
 {
   if (!ctx.map)
@@ -1071,7 +1083,7 @@ Selection_Tool::collect_click_cycle(const editor_context_t& ctx) const
   for (const candidate_t& candidate : candidates)
   {
     std::vector<shared::entity_uid_t> group;
-    shared::expand_to_group(*ctx.map, candidate.uid, group);
+    append_pick(ctx, candidate.uid, group);
     if (!already_in_cycle(group))
       cycle.push_back({candidate.uid, group});
     if (group.size() > 1 && !already_in_cycle({candidate.uid}))
@@ -1117,6 +1129,16 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
       draw_list->AddRect(p1, p2, IM_COL32(0, 255, 0, 255));
       draw_list->AddRectFilled(p1, p2, IM_COL32(0, 255, 0, 50));
     }
+  }
+
+  if (ignoring_groups)
+  {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const char*          notice   = "IGNORING GROUPS (Ctrl+W)";
+    const ImVec2         size     = ImGui::CalcTextSize(notice);
+    ImGui::GetForegroundDrawList()->AddText(
+        ImVec2(viewport->Pos.x + (viewport->Size.x - size.x) * 0.5f, viewport->Pos.y + 40.0f),
+        IM_COL32(255, 160, 0, 255), notice);
   }
 
   // Inspector — geometry gets its handwritten panel, entities the schema-driven
@@ -1168,6 +1190,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
         }
         if (!touched.empty() && ImGui::Button("Ungroup (Ctrl+Shift+G)"))
           ungroup_selection(ctx);
+        ImGui::Checkbox("Ignore groups (Ctrl+W)", &ignoring_groups);
 
         // The members, one row each, a click narrowing the selection to that
         // one: the outliner's pick-inside-a-group, in the panel already on
@@ -1186,9 +1209,8 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
           ImGui::Separator();
           ImGui::Text("Members (%zu)", members.size());
           const float row_height = ImGui::GetTextLineHeightWithSpacing();
-          const float list_height =
-              row_height * static_cast<float>(std::min<size_t>(members.size(), 8)) +
-              ImGui::GetStyle().FramePadding.y * 2.f;
+          const float list_height = row_height * static_cast<float>(members.size()) +
+                                    ImGui::GetStyle().FramePadding.y * 2.f;
           if (ImGui::BeginListBox("##members", ImVec2(-FLT_MIN, list_height)))
           {
             for (shared::entity_uid_t member : members)
@@ -1787,22 +1809,10 @@ void Selection_Tool::on_update(editor_context_t& ctx,
 
     if (!hit_bvh)
     {
-      linalg::vec3 plane_point = {0, -2.0f, 0};
-      linalg::vec3 plane_normal = {0, 1.0f, 0};
-      float t = 0.0f;
-      if (linalg::intersect_ray_plane(view.mouse_ray.origin, view.mouse_ray.direction,
-                                      plane_point, plane_normal, t))
-      {
-        grid_hover_position = view.mouse_ray.origin + view.mouse_ray.direction * t;
-        float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
-        grid_hover_position.x = editor::snap(grid_hover_position.x, step);
-        grid_hover_position.z = editor::snap(grid_hover_position.z, step);
-        grid_hover_valid = true;
-      }
-      else
-      {
-        grid_hover_valid = false;
-      }
+      const std::optional<linalg::vec3> point = try_pick_work_plane_point(ctx, view);
+      grid_hover_valid                        = point.has_value();
+      if (point)
+        grid_hover_position = *point;
     }
     else
     {
@@ -1911,7 +1921,8 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
         {
           drag_plane_hit_start = cached_viewport.mouse_ray.origin +
                                  cached_viewport.mouse_ray.direction * t;
-          is_dragging_object = true;
+          is_dragging_object            = true;
+          object_drag_left_click_radius = false;
           return;
         }
 
@@ -1944,6 +1955,18 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
 {
   if (is_dragging_object && !drag_origins.empty() && ctx.map)
   {
+    // A ctrl+CLICK must move nothing: until the mouse leaves the click radius
+    // this press may still be an add-to-selection, and a zero delta would
+    // still snap a lone off-grid object onto the grid.
+    if (!object_drag_left_click_radius)
+    {
+      const int drag_dx = e.position.x - drag_start_position.x;
+      const int drag_dy = e.position.y - drag_start_position.y;
+      if (drag_dx * drag_dx + drag_dy * drag_dy <= CLICK_MOVEMENT_THRESHOLD_SQUARED)
+        return;
+      object_drag_left_click_radius = true;
+    }
+
     // Use the first object's start position as the plane reference point
     linalg::vec3 plane_point = drag_origins[0].position;
     float t = 0.0f;
@@ -2027,9 +2050,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       // The two are one gesture until the mouse moves, so a press that never
       // did falls through to the selection branch below -- the commit above is
       // a no-op when nothing moved, so nothing lands on the undo stack.
-      const int drag_dx = e.position.x - drag_start_position.x;
-      const int drag_dy = e.position.y - drag_start_position.y;
-      if (drag_dx * drag_dx + drag_dy * drag_dy > CLICK_MOVEMENT_THRESHOLD_SQUARED)
+      if (object_drag_left_click_radius)
         return;
     }
 
@@ -2074,7 +2095,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
         // agree on what a grouped object is. Appends without duplicates.
         if (screen_pos->x >= x_min && screen_pos->x <= x_max &&
             screen_pos->y >= y_min && screen_pos->y <= y_max)
-          shared::expand_to_group(*ctx.map, uid, selected_uids);
+          append_pick(ctx, uid, selected_uids);
       }
     }
     else
@@ -2085,7 +2106,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
         // one, the object alone when it does not. The BVH answered a uid and
         // the group is applied to that answer, nowhere earlier.
         std::vector<shared::entity_uid_t> picked;
-        shared::expand_to_group(*ctx.map, hovered_uid, picked);
+        append_pick(ctx, hovered_uid, picked);
 
         const auto is_selected = [&](shared::entity_uid_t uid)
         { return std::find(selected_uids.begin(), selected_uids.end(), uid) != selected_uids.end(); };
@@ -2172,6 +2193,13 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
     return;
   }
 
+  if (e.key == input::key_t::W && e.mods.ctrl)
+  {
+    ignoring_groups = !ignoring_groups;
+    hud::set_announcement(ignoring_groups ? "Ignoring groups" : "Groups respected");
+    return;
+  }
+
   if (e.key == input::key_t::G && e.mods.ctrl)
   {
     if (e.mods.shift)
@@ -2223,7 +2251,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 
         if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
         {
-          // Deleting a Brush_Entity UNTIES its objects rather than deleting
+          // Deleting a Geometry_Owner_Entity UNTIES its objects rather than deleting
           // them: a brush is world geometry with a pointer, not a member of the
           // entity, and a level losing its walls because a switch was removed
           // is not what the gesture means. Left tied they would name a uid
@@ -2323,7 +2351,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
                                outlined);
   }
 
-  // 1b. What a selected Brush_Entity SWITCHES. Nothing in the viewport says
+  // 1b. What a selected Geometry_Owner_Entity SWITCHES. Nothing in the viewport says
   // which brushes a switch reaches otherwise -- the tie is one key in a file --
   // and picking the entity is the moment the author is asking. Magenta, the
   // entity's own colour, and bounds rather than hulls: this is "these ones",
@@ -2367,7 +2395,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   if (!is_dragging_significantly && hovered_uid != 0 && ctx.map->has_object(hovered_uid))
   {
     std::vector<shared::entity_uid_t> would_pick;
-    shared::expand_to_group(*ctx.map, hovered_uid, would_pick);
+    append_pick(ctx, hovered_uid, would_pick);
     for (shared::entity_uid_t uid : would_pick)
       if (std::find(selected_uids.begin(), selected_uids.end(), uid) == selected_uids.end())
         draw_bounds_highlight(uid, colors::yellow);
@@ -2383,8 +2411,12 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
 
     const auto &view = cached_viewport;
 
+    std::vector<shared::entity_uid_t> would_pick;
     for (const auto &[uid, bounds] : collect_editor_object_bounds(*ctx.map))
     {
+      if (!ctx.object_is_visible(uid))
+        continue;
+
       linalg::vec3 p = shared::try_get_object_position(*ctx.map, uid)
                            .value_or((bounds.min + bounds.max) * 0.5f);
 
@@ -2394,16 +2426,11 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
 
       if (screen_pos->x >= x_min && screen_pos->x <= x_max &&
           screen_pos->y >= y_min && screen_pos->y <= y_max)
-      {
-        bool already_selected = false;
-        for (auto selected : selected_uids)
-          if (selected == uid)
-            already_selected = true;
-
-        if (!already_selected)
-          draw_bounds_highlight(uid, colors::yellow);
-      }
+        append_pick(ctx, uid, would_pick);
     }
+    for (shared::entity_uid_t uid : would_pick)
+      if (std::find(selected_uids.begin(), selected_uids.end(), uid) == selected_uids.end())
+        draw_bounds_highlight(uid, colors::yellow);
   }
 
   // 4. Grid Indication
@@ -2411,6 +2438,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
       !is_dragging_significantly && !editor_gizmo.is_dragging())
   {
     linalg::vec3 center = grid_hover_position;
+    center.y -= 2.0f * editor::GRID_INDICATOR_HALF_H;
     linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
                                   editor::GRID_INDICATOR_HALF_H,
                                   editor::GRID_INDICATOR_HALF_W};

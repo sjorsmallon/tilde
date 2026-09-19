@@ -25,6 +25,7 @@
 #include "server/entity_io_console.hpp"
 #include "server/entity_io_queue.hpp"
 #include "server/systems/game_rules_system.hpp"
+#include "server/systems/timer_system.hpp"
 #include "server/systems/trigger_system.hpp"
 #include "server/server_api.hpp"
 #include "server/server_context.hpp"
@@ -748,6 +749,104 @@ void test_the_trigger_system_emits_edges()
   check(context.world.pending_actions.empty(), "and staying out emits nothing");
 }
 
+shared::connection_t wire(shared::entity_uid_t sender, entities::entity_signal signal,
+                          shared::entity_uid_t target, entities::entity_action action)
+{
+  shared::connection_t connection;
+  connection.sender      = sender;
+  connection.signal      = signal;
+  connection.target_kind = shared::connection_target_t::Uid;
+  connection.target      = target;
+  connection.data.tag    = action;
+  return connection;
+}
+
+void run_one_tick(server_context_t& context)
+{
+  ++context.tick_number;
+  update_triggers(context);
+  update_timers(context);
+  drain_pending_entity_actions(context);
+}
+
+void test_a_platform_crumbles_under_one_and_holds_under_two()
+{
+  std::printf("connections: a counter's falling edge resumes a paused timer\n");
+
+  wired_map_t wired = make_wired_map();
+
+  const shared::entity_uid_t occupancy = add_counter_to(wired.map, "occupancy", 2);
+
+  auto timer_entity = std::make_shared<entities::Logic_Timer_Entity>();
+  timer_entity->name.set("crumble");
+  timer_entity->timer.duration_seconds = 1.0f;
+  const shared::entity_uid_t timer = wired.map.add_entity(timer_entity);
+
+  shared::connection_t entered = wire(wired.trigger, entities::entity_signal::Touched, occupancy,
+                                      entities::entity_action::Add);
+  entered.data.add.amount = 1;
+  entered.has_override    = true;
+  wired.map.connections.push_back(entered);
+
+  shared::connection_t left = wire(wired.trigger, entities::entity_signal::Left, occupancy,
+                                   entities::entity_action::Add);
+  left.data.add.amount = -1;
+  left.has_override    = true;
+  wired.map.connections.push_back(left);
+
+  wired.map.connections.push_back(wire(wired.trigger, entities::entity_signal::Touched, timer,
+                                       entities::entity_action::Start));
+  wired.map.connections.push_back(wire(occupancy, entities::entity_signal::Limit_Reached, timer,
+                                       entities::entity_action::Pause));
+  wired.map.connections.push_back(wire(occupancy, entities::entity_signal::Fell_Below_Limit, timer,
+                                       entities::entity_action::Resume));
+  wired.map.connections.push_back(wire(timer, entities::entity_signal::Elapsed, wired.light,
+                                       entities::entity_action::Enable));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  const entities::Logic_Timer_Entity* crumble =
+      context.world.session.entity_system.get<entities::Logic_Timer_Entity>(timer);
+
+  const shared::entity_uid_t first = place_player_in(context, {0.f, 0.f, 0.f});
+  run_one_tick(context);
+  check(crumble->timer.running, "the first touch starts the timer");
+
+  for (uint32_t tick = 0; tick < 29; ++tick)
+    run_one_tick(context);
+
+  const shared::entity_uid_t second = place_player_in(context, {0.f, 0.f, 0.f});
+  run_one_tick(context);
+  check(counter_value_in(context, occupancy) == 2, "the second touch is counted");
+  check(!crumble->timer.running && crumble->timer.paused_remaining_ticks > 0,
+        "and pauses the timer rather than restarting it");
+  const uint32_t remaining_when_paused = crumble->timer.paused_remaining_ticks;
+
+  for (uint32_t tick = 0; tick < 120; ++tick)
+    run_one_tick(context);
+  check(!light_in(context, wired.light)->switch_state.value,
+        "two players can stand there for as long as they like");
+  check(crumble->timer.paused_remaining_ticks == remaining_when_paused,
+        "and the clock does not move while they do");
+
+  move_player(context, second, {500.f, 0.f, 0.f});
+  run_one_tick(context);
+  check(crumble->timer.running, "the second leaving resumes it");
+
+  for (uint32_t tick = 0; tick + 2 < remaining_when_paused; ++tick)
+    run_one_tick(context);
+  check(!light_in(context, wired.light)->switch_state.value,
+        "with what was left, not a fresh duration");
+
+  for (uint32_t tick = 0; tick < 4; ++tick)
+    run_one_tick(context);
+  check(light_in(context, wired.light)->switch_state.value, "and then it elapses");
+
+  (void)first;
+}
+
 void test_a_disabled_trigger_releases_whoever_is_inside()
 {
   std::printf("connections: switching a trigger off is a Left, not a freeze\n");
@@ -1100,6 +1199,7 @@ int main()
   test_a_wiring_loop_is_capped_and_dropped();
   test_the_trigger_system_emits_edges();
   test_a_disabled_trigger_releases_whoever_is_inside();
+  test_a_platform_crumbles_under_one_and_holds_under_two();
   test_the_toucher_is_the_activator();
   test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();

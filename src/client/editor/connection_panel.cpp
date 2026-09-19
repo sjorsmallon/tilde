@@ -538,7 +538,8 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
     }
     else
     {
-      if (ImGui::BeginChild("##outbound", ImVec2(0, 110), true))
+      if (ImGui::BeginChild("##outbound", ImVec2(0, 110),
+                            ImGuiChildFlags_Border | ImGuiChildFlags_ResizeY))
       {
         for (size_t index : outbound)
         {

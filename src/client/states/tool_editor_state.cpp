@@ -630,19 +630,66 @@ void Tool_Editor_State::update(float dt)
         camera.yaw = fmodf(camera.yaw - 90.0f + 360.0f, 360.0f);
     }
 
+    const auto announce_work_plane = [&]()
+    {
+      char buffer[64];
+      snprintf(buffer, sizeof(buffer), "Work plane: y = %.0f", context.work_plane_height);
+      hud::set_announcement(buffer);
+    };
+
     if (input::is_key_pressed(input::key_t::Right_Bracket))
     {
-      grid_settings.increase();
-      char buffer[64];
-      snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
-      hud::set_announcement(buffer);
+      if (mods.shift)
+      {
+        context.work_plane_height += grid_settings.step();
+        announce_work_plane();
+      }
+      else
+      {
+        grid_settings.increase();
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+        hud::set_announcement(buffer);
+      }
     }
     if (input::is_key_pressed(input::key_t::Left_Bracket))
     {
-      grid_settings.decrease();
-      char buffer[64];
-      snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
-      hud::set_announcement(buffer);
+      if (mods.shift)
+      {
+        context.work_plane_height -= grid_settings.step();
+        announce_work_plane();
+      }
+      else
+      {
+        grid_settings.decrease();
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+        hud::set_announcement(buffer);
+      }
+    }
+
+    if (input::is_key_pressed(input::key_t::Home))
+    {
+      if (mods.shift)
+      {
+        context.work_plane_height = 0.0f;
+        announce_work_plane();
+      }
+      else
+      {
+        context.bvh  = &editor_bvh.bvh;
+        context.grid = &grid_settings;
+        if (const std::optional<linalg::vec3> surface =
+                try_pick_surface_point(context, transform_viewport_state()))
+        {
+          context.work_plane_height = surface->y;
+          announce_work_plane();
+        }
+        else
+        {
+          hud::set_announcement("Work plane: no surface under the cursor");
+        }
+      }
     }
 
     const bool console_open = console::get().is_open();
@@ -745,6 +792,7 @@ void Tool_Editor_State::update(float dt)
   context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
+  context.placement_prefers_surface = input::current_modifiers().shift;
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
   context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
@@ -1291,14 +1339,14 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       switch (plane) {
       case 1: return {{-ext, p, 0}, {ext, p, 0}};  // XY: horizontal lines (along X, stepping Y)
       case 2: return {{0, -ext, p}, {0, ext, p}};   // YZ: lines along Y, stepping Z
-      default: return {{-ext, 0, p}, {ext, 0, p}};  // XZ: lines along X, stepping Z
+      default: return {{-ext, context.work_plane_height, p}, {ext, context.work_plane_height, p}};
       }
     };
     auto make_line_b = [&](float p, float ext, int plane) -> std::pair<linalg::vec3, linalg::vec3> {
       switch (plane) {
       case 1: return {{p, -ext, 0}, {p, ext, 0}};  // XY: vertical lines (along Y, stepping X)
       case 2: return {{0, p, -ext}, {0, p, ext}};   // YZ: lines along Z, stepping Y
-      default: return {{p, 0, -ext}, {p, 0, ext}};  // XZ: lines along Z, stepping X
+      default: return {{p, context.work_plane_height, -ext}, {p, context.work_plane_height, ext}};
       }
     };
 
@@ -1335,8 +1383,9 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     }
 
     // Axes - always draw all relevant axis lines
-    scene.debug.line({-extent, 0, 0}, {extent, 0, 0}, axis_color_x);
-    scene.debug.line({0, 0, -extent}, {0, 0, extent}, axis_color_z);
+    const float axis_height = grid_plane == 0 ? context.work_plane_height : 0.0f;
+    scene.debug.line({-extent, axis_height, 0}, {extent, axis_height, 0}, axis_color_x);
+    scene.debug.line({0, axis_height, -extent}, {0, axis_height, extent}, axis_color_z);
     if (grid_plane != 0) // Also draw Y axis for non-XZ planes
       scene.debug.line({0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }

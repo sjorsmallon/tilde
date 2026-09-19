@@ -1099,10 +1099,18 @@ std::tuple<vec3, vec3> player_move(
     if (volume.uid == movement.pad_contact_uid)
       continue;
 
-    new_vel                    = volume.launch_velocity;
-    movement.seconds_until_speed_returns_to_base_speed =
-        std::max(movement.seconds_until_speed_returns_to_base_speed,
-                 pad_flight_seconds(cvars, volume.launch_velocity));
+    switch (volume.kind)
+    {
+      case shared::movement_volume_kind_t::Jump_Pad:
+        new_vel = volume.launch_velocity;
+        movement.seconds_until_speed_returns_to_base_speed =
+            std::max(movement.seconds_until_speed_returns_to_base_speed,
+                     pad_flight_seconds(cvars, volume.launch_velocity));
+        break;
+      case shared::movement_volume_kind_t::Bounce:
+        new_vel.y = volume.launch_velocity.y;
+        break;
+    }
     movement.pad_contact_uid   = volume.uid;
     launched_by_pad            = true;
     launched_by                = volume.uid;

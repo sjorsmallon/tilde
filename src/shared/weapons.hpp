@@ -85,6 +85,8 @@ struct projectile_t
   float speed;
   // Fraction of g_gravity acting on the projectile: 0 flies straight, 1 falls like a player.
   float gravity_scale;
+  // The entity type a shot becomes; it must carry the Projectile component.
+  entities::entity_type spawns;
 };
 
 struct projectile_step_t
@@ -215,7 +217,9 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
      .fire_resolution         = entities::Fire_Resolution::Projectile,
-     .projectile              = {.speed = 600.f, .gravity_scale = 0.f},
+     .projectile              = {.speed         = 600.f,
+                                 .gravity_scale = 0.f,
+                                 .spawns        = entities::entity_type::Rocket_Entity},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                        = entities::Weapon::Dash,
@@ -255,6 +259,32 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .leaves_bullet_impact = false},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Hook,
+     .display_name            = "Hook",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 0.1f,
+     .deploy_duration_seconds = 0.9f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 2.5f,
+     .fire_resolution         = entities::Fire_Resolution::Projectile,
+     .projectile              = {.speed         = 600.f,
+                                 .gravity_scale = 0.f,
+                                 .spawns        = entities::entity_type::Rocket_Entity},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Bubble,
+     .display_name            = "Bubble",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 0.1f,
+     .deploy_duration_seconds = 0.9f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 2.5f,
+     .fire_resolution         = entities::Fire_Resolution::Projectile,
+     .projectile              = {.speed         = 500.f,
+                                 .gravity_scale = -0.5f,
+                                 .spawns        = entities::entity_type::Bubble_Entity},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -292,10 +322,11 @@ static_assert(rows_in_enum_order<&weapon_definition_t::weapon>(WEAPON_DEFINITION
 //
 // The day a self-impulse genuinely wants a raise time, what earns it is a
 // PREDICTED deploy clock in the replay, not a second gate here.
-constexpr bool self_impulse_rows_are_gated_only_by_movement()
+constexpr uint32_t first_self_impulse_row_gated_by_more_than_movement()
 {
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
+    const uint32_t row = static_cast<uint32_t>(definition.weapon);
     const bool primary_is_impulse =
         definition.fire_resolution == entities::Fire_Resolution::Self_Impulse;
     const bool secondary_is_impulse =
@@ -305,19 +336,20 @@ constexpr bool self_impulse_rows_are_gated_only_by_movement()
       continue;
 
     if (definition.self_impulse_cooldown_seconds <= 0.f)
-      return false;
+      return row;
 
     // The secondary never passes through the shot clocks, so only a primary
     // impulse has weapon-side clocks that could stand beside the movement one.
     if (primary_is_impulse &&
         (definition.fire_interval_seconds != 0.f || definition.deploy_duration_seconds != 0.f ||
          definition.magazine_size != 0))
-      return false;
+      return row;
   }
-  return true;
+  return entities::Weapon_COUNT;
 }
 
-static_assert(self_impulse_rows_are_gated_only_by_movement(),
+static_assert(first_self_impulse_row_gated_by_more_than_movement() == entities::Weapon_COUNT,
+              "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "a Fire_Resolution::Self_Impulse row must carry zero fire_interval_seconds, "
               "zero deploy_duration_seconds and no magazine, and any row firing a "
               "self-impulse on either button a positive self_impulse_cooldown_seconds: the "
@@ -329,41 +361,46 @@ static_assert(self_impulse_rows_are_gated_only_by_movement(),
 // resolution reads must be filled and the two it does not read must be zero
 // -- a Swap on a Projectile row or a range on a Self_Impulse row is a number
 // nothing reads, which is the same silence as an unfilled row.
-constexpr bool row_parameters_match_their_resolution()
+constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
 {
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
+    const uint32_t      row        = static_cast<uint32_t>(definition.weapon);
     const hitscan_t&    hitscan    = definition.hitscan;
     const projectile_t& projectile = definition.projectile;
     const bool hitscan_is_zero = hitscan.damage == 0.f && hitscan.headshot_multiplier == 0.f &&
                                  hitscan.range == 0.f &&
                                  hitscan.hit_effect == hit_effect_t::Damage &&
                                  !hitscan.leaves_bullet_impact;
-    const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f;
+    const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
+                                    projectile.spawns == entities::entity_type::Invalid;
     const bool impulse_is_zero    = definition.self_impulse.along_aim_speed == 0.f &&
                                  definition.self_impulse.upward_speed == 0.f;
 
     switch (definition.fire_resolution)
     {
     case entities::Fire_Resolution::Hitscan:
-      if (hitscan.range <= 0.f || hitscan.headshot_multiplier <= 0.f) return false;
-      if (!projectile_is_zero || !impulse_is_zero) return false;
+      if (hitscan.range <= 0.f || hitscan.headshot_multiplier <= 0.f) return row;
+      if (!projectile_is_zero || !impulse_is_zero) return row;
       break;
     case entities::Fire_Resolution::Projectile:
-      if (projectile.speed <= 0.f || projectile.gravity_scale < 0.f) return false;
-      if (!hitscan_is_zero || !impulse_is_zero) return false;
+      if (projectile.speed <= 0.f) return row;
+      if (projectile.spawns == entities::entity_type::Invalid) return row;
+      if (!hitscan_is_zero || !impulse_is_zero) return row;
       break;
     case entities::Fire_Resolution::Self_Impulse:
-      if (!hitscan_is_zero || !projectile_is_zero) return false;
+      if (!hitscan_is_zero || !projectile_is_zero) return row;
       break;
     }
   }
-  return true;
+  return entities::Weapon_COUNT;
 }
 
-static_assert(row_parameters_match_their_resolution(),
+static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::Weapon_COUNT,
+              "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "a WEAPON_DEFINITIONS row fills the parameter struct of its own Fire_Resolution "
-              "(hitscan: positive range and headshot_multiplier; projectile: positive speed) "
+              "(hitscan: positive range and headshot_multiplier; projectile: positive speed and "
+              "a spawned entity type) "
               "and leaves the other two zero: resolve_player_shot reads exactly one of them, "
               "so a value in another is a number nothing reads.");
 

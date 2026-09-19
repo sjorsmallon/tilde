@@ -18,20 +18,9 @@ namespace server
 // The list is STORED, not derived: Weapon_Entity::owner_uid is a back-reference
 // for teardown, never the thing consulted to answer "what am I carrying".
 
-// Spawn one Weapon_Entity per weapon type, each into the slot its definition
-// names, and record their uids on the player.
-//
-// MUST run in the same tick the player entity is spawned. A snapshot frame is
-// atomic with respect to loss -- a fragmented message reassembles or is dropped
-// whole, and a client that cannot apply a delta does not advance the tick it
-// says it holds -- so a player and its weapons that spawn together arrive
-// together, and inventory.weapons can never name a weapon the receiver lacks.
-// Split them across ticks and that guarantee is gone.
-void grant_default_inventory(shared::game_session_t& session, shared::entity_uid_t player_uid);
-
 // Put one weapon in the slot its definition names, destroying whatever the slot
-// held. The pickup / card-draw door, and the one the default grant above goes
-// through internally.
+// held. The pickup / card-draw door, and the only way a weapon reaches a hand: a
+// player spawns empty-handed.
 //
 // Fallible because the spawn is: a full pool is a real outcome and the caller
 // gets no uid. Displacing is NOT a failure -- it is what taking a second rifle

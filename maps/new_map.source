@@ -7,32 +7,188 @@ connections
 {
   connection
   {
-    "sender" "5"
-    "signal" "Elapsed"
+    "sender" "9"
+    "signal" "Touched"
     "target_kind" "Uid"
-    "target" "4"
-    "action" "Disable"
+    "target" "8"
+    "action" "Set_Color"
+    override
+    {
+      "color" "0 1 0"
+    }
   }
   connection
   {
-    "sender" "6"
+    "sender" "9"
     "signal" "Touched"
     "target_kind" "Uid"
-    "target" "5"
-    "action" "Start"
+    "target" "3"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "9"
+    "signal" "Touched"
+    "target_kind" "Unbound"
+    "target" "62"
+    "action" "Play"
+    "fire_once" "1"
+  }
+  connection
+  {
+    "sender" "9"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "10"
+    "action" "Disable"
+  }
+}
+groups
+{
+  group
+  {
+    "_uid" "13"
+    "name" "dissolving_platformsd"
+    member
+    {
+      "uid" "8"
+    }
+    member
+    {
+      "uid" "9"
+    }
+    member
+    {
+      "uid" "10"
+    }
+    member
+    {
+      "uid" "11"
+    }
   }
 }
 brush
 {
   "_uid" "1"
-  "vertices" "-640 -192 -640, -640 -192 640, -640 -64 -640, -640 -64 640, 640 -192 -640, 640 -192 640, 640 -64 -640, 640 -64 640"
+  "vertices" "-640 -128 -640, -640 -128 640, -640 0 -640, -640 0 640, 640 -128 -640, 640 -128 640, 640 0 -640, 640 0 640"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
-  "owner" "4"
+}
+brush
+{
+  "_uid" "11"
+  "vertices" "640 41.7511063 -1791.05664, 640 41.7511063 -1216.74414, 640 169.751099 -1791.05664, 640 169.751099 -1216.74414, 1095.84375 41.7511063 -1791.05664, 1095.84375 41.7511063 -1216.74414, 1095.84375 169.751099 -1791.05664, 1095.84375 169.751099 -1216.74414"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  "owner" "10"
+  face
+  {
+    "normal" "-1 0 0"
+    "distance" "-640"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "2459.86914"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -1 -0"
+    "distance" "-41.7511063"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "250.588257"
+    "v_shift" "2459.86914"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 -0.99999994"
+    "distance" "1791.05652"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "250.588257"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0 0.99999994"
+    "distance" "-1216.74414"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "250.588257"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 1 0"
+    "distance" "169.751099"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "250.588257"
+    "v_shift" "2459.86914"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 -0 -0"
+    "distance" "1095.84375"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "2459.86914"
+    "v_shift" "-105.751106"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
 }
 entity
 {
@@ -46,31 +202,73 @@ entity
 }
 entity
 {
-  "classname" "brush_entity"
-  "_uid" "4"
-  "position" "0 384 0"
-  "orientation" "0 0 0 1"
-  "name" ""
-  "switch_state.value" "true"
-}
-entity
-{
-  "classname" "logic_timer_entity"
-  "_uid" "5"
-  "position" "-128 256 384"
-  "orientation" "0 0 0 1"
-  "name" ""
-  "timer.duration_seconds" "5"
-  "timer.repeat" "false"
-}
-entity
-{
   "classname" "trigger_volume_entity"
-  "_uid" "6"
-  "position" "0 64 0"
+  "_uid" "3"
+  "position" "0 -496.5551 0"
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
   "volume.position" "0 0 0"
-  "volume.half_extents" "64 64 64"
+  "volume.half_extents" "640 335.44525 640"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "8"
+  "position" "867.975 745.7511 -1503.9004"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 0 0"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "2056"
+  "inner_degrees" "31"
+  "outer_degrees" "35"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "9"
+  "position" "870.28345 105.75111 -1510.687"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "220.98656 105.75111 281.31293"
+}
+entity
+{
+  "classname" "geometry_owner_entity"
+  "_uid" "10"
+  "position" "1123.9219 520.8174 -1512.4207"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+}
+entity
+{
+  "classname" "logic_counter_entity"
+  "_uid" "14"
+  "position" "640 272 -128"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "counter.value" "0"
+  "counter.limit" "0"
+}
+entity
+{
+  "classname" "sound_emitter_entity"
+  "_uid" "15"
+  "position" "640 272 -256"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "sound" "Missing"
+  "volume" "1"
+  "loop" "false"
+  "spatial" "true"
+  "range" "1024"
 }

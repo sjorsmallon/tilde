@@ -326,7 +326,7 @@ paste_result_t paste_map_piece(map_t& destination, const map_t& source, const li
     // and every entity is already placed -- and because by the time that pass
     // runs this value has been moved into the destination.
     //
-    // A brush tied to a Brush_Entity OUTSIDE the piece names an end outside the
+    // A brush tied to a Geometry_Owner_Entity OUTSIDE the piece names an end outside the
     // selection too, and is the one kind the connection walk still does not
     // report -- so the author hears about it here: cleared loudly, never left
     // naming whatever happens to hold that uid in the destination.

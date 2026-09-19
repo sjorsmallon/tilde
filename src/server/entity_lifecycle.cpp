@@ -4,7 +4,12 @@
 #include "../shared/player_constants.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/inventory_system.hpp"
+#include "systems/mover_system.hpp"
 #include "systems/respawn_system.hpp"
+
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace server
 {
@@ -30,11 +35,6 @@ shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &conte
   }
 
   context.clients[slot].player_uid = player_uid;
-
-  // Same tick as the player, so the two ride one snapshot frame -- see
-  // grant_default_inventory for why that is load-bearing rather than tidy.
-  // It spawns into the Weapon_Entity pool, which cannot move `player`.
-  grant_default_inventory(context.world.session, player_uid);
 
   player->client_slot_index = slot;
   player->display_name      = context.clients[slot].player_name;
@@ -133,6 +133,58 @@ bool destroy_entity(server_context_t &context, shared::entity_uid_t uid)
   context.world.death_tick_by_player_uid.erase(uid);
 
   return context.world.session.entity_system.destroy(uid);
+}
+
+static bool survives_the_round(const entities::Entity &entity,
+                               const std::unordered_set<shared::entity_uid_t> &carried_weapons)
+{
+  switch (entity.type)
+  {
+    case entities::entity_type::Player_Entity:     return true;
+    case entities::entity_type::Game_Rules_Entity: return true;
+    case entities::entity_type::Weapon_Entity:     return carried_weapons.contains(entity.entity_id);
+    default:                                       return false;
+  }
+}
+
+void restore_level_from_map(server_context_t &context)
+{
+  shared::Entity_System &entity_system = context.world.session.entity_system;
+
+  std::unordered_set<shared::entity_uid_t> carried_weapons;
+  for (const entities::Player_Entity &player : entity_system.entities_of<entities::Player_Entity>())
+    for (const uint32_t weapon_uid : player.inventory.weapons.values)
+      if (weapon_uid != shared::null_entity_uid)
+        carried_weapons.insert(weapon_uid);
+
+  std::unordered_map<shared::entity_uid_t, entities::Playback> playback_before_restore;
+  for (auto [emitter, playback] : entity_system.entities_with_trait<entities::Playable>())
+    playback_before_restore.emplace(emitter.entity_id, playback);
+
+  std::vector<shared::entity_uid_t> discarded;
+  for (const shared::Entity_Pool &pool : entity_system.pools)
+    for (uint32_t slot = 0; slot < pool.count; ++slot)
+      if (!survives_the_round(*pool.at(slot), carried_weapons))
+        discarded.push_back(pool.at(slot)->entity_id);
+
+  for (const shared::entity_uid_t uid : discarded)
+    destroy_entity(context, uid);
+
+  shared::restore_map_entities(context.world.session, context.world.current_map);
+
+  // play_count and stop_count are edges the client diffs, so a restore carries them and stops.
+  for (auto [emitter, playback] : entity_system.entities_with_trait<entities::Playable>())
+  {
+    const auto before = playback_before_restore.find(emitter.entity_id);
+    if (before == playback_before_restore.end())
+      continue;
+    playback.play_count = before->second.play_count;
+    playback.stop_count = before->second.stop_count + 1;
+  }
+
+  context.world.pending_actions.clear();
+  context.world.previous_tick_trigger_overlaps.clear();
+  install_movers(context);
 }
 
 } // namespace server

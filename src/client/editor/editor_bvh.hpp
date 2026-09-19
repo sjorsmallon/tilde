@@ -52,6 +52,17 @@ build_editor_bvh(const shared::map_t &map)
   // the notch of a concave brush now correctly falls through to what is behind.
   for (const shared::map_geometry_t &entry : map.geometry)
   {
+    // A mesh with its collision switched off is still clicked as its box, and
+    // is not a brush that failed: nothing about it is reported.
+    const shared::static_mesh_geometry_t* static_mesh =
+        std::get_if<shared::static_mesh_geometry_t>(&entry.value);
+    if (static_mesh != nullptr && !static_mesh->collides)
+    {
+      const shared::collision_piece_t box = shared::static_mesh_collision_box(*static_mesh);
+      add_leaf(entry.uid, box.bounds, box.planes);
+      continue;
+    }
+
     const std::vector<shared::collision_piece_t> pieces =
         shared::get_collision_pieces(entry.value, entry.uid);
     if (pieces.empty())

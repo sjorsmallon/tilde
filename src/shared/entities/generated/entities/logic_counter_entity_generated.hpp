@@ -50,5 +50,6 @@ void reset(Entity&, Counter&, const Reset_Data&, input_context_t&);   // Countin
 // binder; repeated here so this file answers both halves. The
 // SYSTEM that writes the state change is what calls one.
 void emit_limit_reached(const Entity& sender, const Limit_Reached_Data& payload, input_context_t& context);   // Counting
+void emit_fell_below_limit(const Entity& sender, const Fell_Below_Limit_Data& payload, input_context_t& context);   // Counting
 
 } // namespace entities

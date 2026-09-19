@@ -618,10 +618,10 @@ int main()
     const entity_uid_t near_wall = tie_map.add_geometry(make_box_brush({0, 0, 0}, {4, 64, 64}));
     const entity_uid_t far_wall  = tie_map.add_geometry(make_box_brush({40, 0, 0}, {4, 64, 64}));
 
-    auto [owner_uid, owner] = spawn_entity(tie_map, entities::entity_type::Brush_Entity);
+    auto [owner_uid, owner] = spawn_entity(tie_map, entities::entity_type::Geometry_Owner_Entity);
     if (!owner)
     {
-      log_error("a brush_entity would not spawn");
+      log_error("a geometry_owner_entity would not spawn");
       return 1;
     }
     set_owner_uid(tie_map.find_geometry_by_uid(near_wall)->value, owner_uid);
@@ -656,7 +656,7 @@ int main()
       return 1;
     }
 
-    tie_session.entity_system.get<entities::Brush_Entity>(owner_uid)->switch_state.value = false;
+    tie_session.entity_system.get<entities::Geometry_Owner_Entity>(owner_uid)->switch_state.value = false;
     collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of, disabled);
     if (disabled.size() != 2 || disabled[0] == 0 || disabled[1] != 0)
     {

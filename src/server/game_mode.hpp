@@ -21,7 +21,6 @@ enum class Spawn_Policy : uint8_t
 {
   Rotate_Markers,
   Team_Markers,
-  Single_Fixed_Start,
 };
 
 } // namespace server
@@ -33,7 +32,7 @@ template <> struct enum_traits<server::Win_Condition>
 
 template <> struct enum_traits<server::Spawn_Policy>
 {
-  static constexpr uint32_t count = 3;
+  static constexpr uint32_t count = 2;
 };
 
 namespace server
@@ -56,9 +55,11 @@ inline constexpr entities::Round_Phase SINGLE_ROUND_PHASE_CYCLE[] = {
 // The three-phase round: freeze at the markers, play it out, settle, repeat.
 // Warmup and Game_Over bookend the whole match and are deliberately absent, the
 // same as above.
-// A level: play it, then hold on the result until someone restarts it or ends
-// the match. The hold is Round_End with no deadline (mp_round_end_seconds 0).
+// A level: count down at the start line, play it, then hold on the result until
+// someone restarts it or ends the match. The hold is Round_End with no deadline
+// (mp_round_end_seconds 0).
 inline constexpr entities::Round_Phase LEVEL_PHASE_CYCLE[] = {
+    entities::Round_Phase::Freeze,
     entities::Round_Phase::Live,
     entities::Round_Phase::Round_End,
 };
@@ -107,9 +108,9 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
     {
         .key                  = Game_Mode::speedrun,
         .win_condition        = Win_Condition::Objective_Reached,
-        .spawn_policy         = Spawn_Policy::Single_Fixed_Start,
+        .spawn_policy         = Spawn_Policy::Team_Markers,
         .respawn_during_round = true,
-        .auto_assign_teams    = false,
+        .auto_assign_teams    = true,
         .join_in_progress     = true,
         .max_rounds           = 0,
         .phase_cycle          = LEVEL_PHASE_CYCLE,

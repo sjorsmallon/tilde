@@ -50,7 +50,7 @@ struct game_session_t
   std::vector<map_geometry_t> geometry;
 
   // The DERIVED direction of the tie, parallel to `geometry`: owner_of[i] is the
-  // Brush_Entity or Mover_Entity geometry[i] belongs to, or null_entity_uid. The file stores
+  // Geometry_Owner_Entity or Mover_Entity geometry[i] belongs to, or null_entity_uid. The file stores
   // brush -> owner and only that, because both directions stored is two answers
   // that can disagree (prediction_def.md ss4.2); this is the one place the
   // reverse is materialised, and it is keyed by INDEX because that is what a BVH
@@ -58,7 +58,7 @@ struct game_session_t
   //
   // Filled here rather than in the collect so the tie is CHECKED once per load
   // instead of once per tick: an owner uid this session does not hold, or one
-  // that is not a Brush_Entity, is reported by build_session and left null.
+  // that is not a Geometry_Owner_Entity, is reported by build_session and left null.
   std::vector<entity_uid_t> owner_of;
 
   // A node's `next` is stored; its previous is derived here once per load (mover_def.md ss2).
@@ -117,9 +117,12 @@ struct game_session_t
 // mutated -- the session stamps uids on its OWN copies (session_test guards it).
 [[nodiscard]] game_session_t build_session(const map_t &map);
 
+// The round boundary: adds back every map entity the session no longer holds, as the map has it, then rebuilds the wiring, the path links and the mover rests from them.
+void restore_map_entities(game_session_t &session, const map_t &map);
+
 // The types a geometry's `owner` may name. The load check and the editor's tie both read it.
 inline constexpr entities::entity_type GEOMETRY_OWNER_TYPES[] = {
-    entities::entity_type::Brush_Entity,
+    entities::entity_type::Geometry_Owner_Entity,
     entities::entity_type::Mover_Entity,
 };
 

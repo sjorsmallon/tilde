@@ -105,6 +105,7 @@ private:
 
   // Direct object drag (Ctrl+LMB to move in camera view plane)
   bool         is_dragging_object = false;
+  bool         object_drag_left_click_radius = false;
   linalg::vec3 drag_plane_hit_start;
   linalg::vec3 drag_plane_normal;
 
@@ -217,6 +218,12 @@ private:
   void ungroup_selection(editor_context_t& ctx);
   void ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid);
   void select_group(editor_context_t& ctx, shared::entity_uid_t group_uid);
+
+  // Hammer's "Ignore Groups" (Ctrl+W): picks take the object alone. Editor
+  // state, never map data, and it survives switching tools.
+  bool ignoring_groups = false;
+  void append_pick(const editor_context_t& ctx, shared::entity_uid_t uid,
+                   std::vector<shared::entity_uid_t>& out) const;
 
   // --- The tie ------------------------------------------------------------------
   //

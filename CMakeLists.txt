@@ -667,7 +667,9 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/lightmap_bake.glsl
                     ${SHADER_SRC_DIR}/lightmap_scene.glsl
                     ${SHADER_SRC_DIR}/lightmap_shadow.glsl
-                    ${SHADER_SRC_DIR}/alpha_cutout.glsl)
+                    ${SHADER_SRC_DIR}/alpha_cutout.glsl
+                    ${SHADER_SRC_DIR}/mesh_push.glsl
+                    ${SHADER_SRC_DIR}/clock_wipe.glsl)
 
 set(SHADER_HEADERS "")
 
@@ -756,6 +758,7 @@ add_library(game_client SHARED
     src/client/shot_debug.cpp
     src/client/fly_camera.cpp
     src/client/shadow_debug_draw.cpp
+    src/client/blob_shadow.cpp
     src/client/skybox_selection.cpp
     src/client/lightmap_gpu_vulkan.cpp
     # Decode one entity snapshot, then advance the newest held snapshot to it. Its own
@@ -777,6 +780,7 @@ add_library(game_client SHARED
     src/client/hud/match_announcement.cpp
     src/client/hud/deploy_timer.cpp
     src/client/hud/run_timer.cpp
+    src/client/hud/freeze_countdown.cpp
     src/client/hud/ready_status.cpp
     src/client/hud/scoreboard.cpp
     src/client/hud/weapon_name.cpp
@@ -897,7 +901,9 @@ add_library(game_server SHARED
     src/server/entity_io_console.cpp
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
+    src/server/weapon_fire.cpp
     src/server/systems/rocket_system.cpp
+    src/server/systems/bubble_system.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/trigger_system.cpp
     src/server/systems/timer_system.cpp
@@ -1250,6 +1256,7 @@ set(MATCH_SERVER_SOURCES
     src/server/systems/game_rules_system.cpp
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
+    src/server/systems/mover_system.cpp
     src/server/entity_lifecycle.cpp)
 add_executable(game_rules_test src/test/game_rules_test.cpp ${MATCH_SERVER_SOURCES})
 target_include_directories(game_rules_test PRIVATE src src/shared src/server)
@@ -1270,6 +1277,7 @@ add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/server_messages.cpp
     src/server/entity_io_console.cpp
     src/server/systems/trigger_system.cpp
+    src/server/systems/timer_system.cpp
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/damage.cpp
@@ -1277,6 +1285,7 @@ add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
+    src/server/systems/mover_system.cpp
     src/server/entity_lifecycle.cpp)
 target_include_directories(entity_io_test PRIVATE src src/shared src/server)
 target_link_libraries(entity_io_test PRIVATE game_shared)

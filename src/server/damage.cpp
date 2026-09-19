@@ -186,7 +186,7 @@ static float damage_scale_against(const entities::Damageable_Entity &damageable,
 // of a world the client loaded from the same map, so the two would then
 // disagree about what exists -- and a round reset has nothing to put back. A
 // dead damageable is a damageable with no health, which pose_all_targets
-// already skips and seed_damageable_health puts back at the round boundary.
+// already skips and restore_level_from_map puts back at the round boundary.
 //
 // Takes a TOTAL rather than one hit, for the reason the player path above does:
 // the single-hit and batched paths must not disagree about what being destroyed

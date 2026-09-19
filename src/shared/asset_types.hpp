@@ -89,11 +89,15 @@ struct material_maps_t
   // The albedo's class, or a .glb's declaration; read on layer 0 only.
   alpha_mode_t alpha_mode = alpha_mode_t::opaque;
   float alpha_cutoff = DEFAULT_ALPHA_CUTOFF;
+
+  // A .glb's declaration: drawn unculled, the back lit along the flipped normal.
+  bool double_sided = false;
 };
 
 struct material_t
 {
   vec3f diffuse_color = {1, 1, 1};
+  float opacity = 1.0f;
   std::string name;
   std::string texture_path;
   material_maps_t maps;

@@ -57,6 +57,7 @@ struct action_data_t
     Disable_Data disable;
     Toggle_Enabled_Data toggle_enabled;
     Play_Data play;
+    Stop_Playing_Data stop_playing;
     Set_Color_Data set_color;
     Add_Data add;
     Reset_Data reset;
@@ -72,6 +73,8 @@ struct action_data_t
     Start_Data start;
     Stop_Data stop;
     Restart_Data restart;
+    Pause_Data pause;
+    Resume_Data resume;
     Start_Match_Data start_match;
     End_Round_Data end_round;
     Restart_Round_Data restart_round;
@@ -84,6 +87,7 @@ struct action_data_t
   const Disable_Data& as_disable() const { assert(tag == entity_action::Disable); return disable; }
   const Toggle_Enabled_Data& as_toggle_enabled() const { assert(tag == entity_action::Toggle_Enabled); return toggle_enabled; }
   const Play_Data& as_play() const { assert(tag == entity_action::Play); return play; }
+  const Stop_Playing_Data& as_stop_playing() const { assert(tag == entity_action::Stop_Playing); return stop_playing; }
   const Set_Color_Data& as_set_color() const { assert(tag == entity_action::Set_Color); return set_color; }
   const Add_Data& as_add() const { assert(tag == entity_action::Add); return add; }
   const Reset_Data& as_reset() const { assert(tag == entity_action::Reset); return reset; }
@@ -99,6 +103,8 @@ struct action_data_t
   const Start_Data& as_start() const { assert(tag == entity_action::Start); return start; }
   const Stop_Data& as_stop() const { assert(tag == entity_action::Stop); return stop; }
   const Restart_Data& as_restart() const { assert(tag == entity_action::Restart); return restart; }
+  const Pause_Data& as_pause() const { assert(tag == entity_action::Pause); return pause; }
+  const Resume_Data& as_resume() const { assert(tag == entity_action::Resume); return resume; }
   const Start_Match_Data& as_start_match() const { assert(tag == entity_action::Start_Match); return start_match; }
   const End_Round_Data& as_end_round() const { assert(tag == entity_action::End_Round); return end_round; }
   const Restart_Round_Data& as_restart_round() const { assert(tag == entity_action::Restart_Round); return restart_round; }
@@ -113,6 +119,7 @@ action_data_t erase(const Enable_Data& payload);
 action_data_t erase(const Disable_Data& payload);
 action_data_t erase(const Toggle_Enabled_Data& payload);
 action_data_t erase(const Play_Data& payload);
+action_data_t erase(const Stop_Playing_Data& payload);
 action_data_t erase(const Set_Color_Data& payload);
 action_data_t erase(const Add_Data& payload);
 action_data_t erase(const Reset_Data& payload);
@@ -128,6 +135,8 @@ action_data_t erase(const Complete_Level_Data& payload);
 action_data_t erase(const Start_Data& payload);
 action_data_t erase(const Stop_Data& payload);
 action_data_t erase(const Restart_Data& payload);
+action_data_t erase(const Pause_Data& payload);
+action_data_t erase(const Resume_Data& payload);
 action_data_t erase(const Start_Match_Data& payload);
 action_data_t erase(const End_Round_Data& payload);
 action_data_t erase(const Restart_Round_Data& payload);
@@ -153,6 +162,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Mortal) | trait_bit(entity_trait::Mobile) | trait_bit(entity_trait::Armable) | trait_bit(entity_trait::Respawnable),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
+  0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
   0u,   // Particle_Emitter_Entity
@@ -165,7 +175,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   trait_bit(entity_trait::Objective) | trait_bit(entity_trait::Match_Control),   // Game_Rules_Entity
   trait_bit(entity_trait::Counting),   // Logic_Counter_Entity
-  trait_bit(entity_trait::Switchable),   // Brush_Entity
+  trait_bit(entity_trait::Switchable),   // Geometry_Owner_Entity
   0u,   // Ping_Marker_Entity
   trait_bit(entity_trait::Timer),   // Logic_Timer_Entity
   0u,   // Path_Node_Entity
@@ -204,10 +214,11 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
+  0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
   0u,   // Particle_Emitter_Entity
-  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Play),   // Sound_Emitter_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Play) | action_bit(entity_action::Stop_Playing),   // Sound_Emitter_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Point_Light_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Spot_Light_Entity
   0u,   // Directional_Light_Entity
@@ -216,9 +227,9 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Reflection_Volume_Entity
   action_bit(entity_action::Complete_Level) | action_bit(entity_action::Start_Match) | action_bit(entity_action::End_Round) | action_bit(entity_action::Restart_Round) | action_bit(entity_action::End_Match),   // Game_Rules_Entity
   action_bit(entity_action::Add) | action_bit(entity_action::Reset),   // Logic_Counter_Entity
-  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Brush_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Geometry_Owner_Entity
   0u,   // Ping_Marker_Entity
-  action_bit(entity_action::Start) | action_bit(entity_action::Stop) | action_bit(entity_action::Restart),   // Logic_Timer_Entity
+  action_bit(entity_action::Start) | action_bit(entity_action::Stop) | action_bit(entity_action::Restart) | action_bit(entity_action::Pause) | action_bit(entity_action::Resume),   // Logic_Timer_Entity
   0u,   // Path_Node_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Reverse) | action_bit(entity_action::Go_To),   // Mover_Entity
 };
@@ -247,6 +258,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
+  0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity
   0u,   // Particle_Emitter_Entity
@@ -258,8 +270,8 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Jump_Pad_Entity
   0u,   // Reflection_Volume_Entity
   signal_bit(entity_signal::Match_Started) | signal_bit(entity_signal::Round_Started) | signal_bit(entity_signal::Round_Ended) | signal_bit(entity_signal::Match_Ended),   // Game_Rules_Entity
-  signal_bit(entity_signal::Limit_Reached),   // Logic_Counter_Entity
-  0u,   // Brush_Entity
+  signal_bit(entity_signal::Limit_Reached) | signal_bit(entity_signal::Fell_Below_Limit),   // Logic_Counter_Entity
+  0u,   // Geometry_Owner_Entity
   0u,   // Ping_Marker_Entity
   signal_bit(entity_signal::Elapsed),   // Logic_Timer_Entity
   0u,   // Path_Node_Entity
@@ -290,6 +302,7 @@ constexpr uint64_t entity_type_bit(entity_type type) { return 1ull << (uint32_t)
 inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
   0u,   // Color_Changed
   0u,   // Limit_Reached
+  0u,   // Fell_Below_Limit
   entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Touched
   entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Physics_Body_Entity),   // Left
   0u,   // Died

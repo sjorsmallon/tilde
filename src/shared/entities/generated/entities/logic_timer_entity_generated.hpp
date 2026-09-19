@@ -44,6 +44,8 @@ static_assert(std::is_base_of_v<Entity, Logic_Timer_Entity>,
 void start(Entity&, Timer_State&, const Start_Data&, input_context_t&);   // Timer, shared by every opting-in type: src/server/traits/timer.cpp
 void stop(Entity&, Timer_State&, const Stop_Data&, input_context_t&);   // Timer, shared by every opting-in type: src/server/traits/timer.cpp
 void restart(Entity&, Timer_State&, const Restart_Data&, input_context_t&);   // Timer, shared by every opting-in type: src/server/traits/timer.cpp
+void pause(Entity&, Timer_State&, const Pause_Data&, input_context_t&);   // Timer, shared by every opting-in type: src/server/traits/timer.cpp
+void resume(Entity&, Timer_State&, const Resume_Data&, input_context_t&);   // Timer, shared by every opting-in type: src/server/traits/timer.cpp
 
 // --- what a Logic_Timer_Entity announces ---
 //

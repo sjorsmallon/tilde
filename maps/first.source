@@ -6,10 +6,11 @@ entity
 cvars
 {
   "g_gravity" "500"
+  "mp_round_end_seconds" "0"
+  "mp_round_seconds" "0"
   "next_map" "second"
   "pm_air_acceleration" "7"
   "pm_maxspeed" "1000"
-  "sv_gamemode" "speedrun"
   "sv_skybox" "night_sky"
 }
 materials
@@ -230,7 +231,7 @@ brush
 brush
 {
   "_uid" "17"
-  "vertices" "-1724.56787 -64 -1536, -1724.56787 -64 -1024, -1724.56787 61.9661407 -1536, -1724.56787 61.9661407 -1024, 646.112793 -64 -1536, 646.112793 -64 -1024, 646.112793 61.9661407 -1536, 646.112793 61.9661407 -1024"
+  "vertices" "-1724.56775 -64 -1536, -1724.56775 -64 -1024, -1724.56775 61.9661407 -1536, -1724.56775 61.9661407 -1024, 1080.8844 -64 -1536, 1080.8844 -64 -1024, 1080.8844 61.9661407 -1536, 1080.8844 61.9661407 -1024"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -239,12 +240,12 @@ brush
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "1536"
+    "normal" "-1 0 0"
+    "distance" "1724.56775"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
-    "u_axis" "1 0 0"
+    "u_axis" "0 0 1"
     "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "0"
@@ -255,7 +256,7 @@ brush
   }
   face
   {
-    "normal" "0 -1 0"
+    "normal" "-0 -1 -0"
     "distance" "64"
     "material" "1"
     "blend_material" "0"
@@ -271,12 +272,12 @@ brush
   }
   face
   {
-    "normal" "-1 -0 -0"
-    "distance" "1724.56787"
+    "normal" "0 0 -1"
+    "distance" "1536"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
-    "u_axis" "0 0 1"
+    "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "0"
@@ -287,12 +288,12 @@ brush
   }
   face
   {
-    "normal" "1 0 0"
-    "distance" "646.112793"
+    "normal" "-0 -0 1"
+    "distance" "-1024"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
-    "u_axis" "0 0 1"
+    "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "0"
@@ -303,7 +304,7 @@ brush
   }
   face
   {
-    "normal" "-0 1 -0"
+    "normal" "0 1 0"
     "distance" "61.9661407"
     "material" "1"
     "blend_material" "0"
@@ -319,12 +320,12 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "-1024"
+    "normal" "1 -0 -0"
+    "distance" "1080.8844"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
-    "u_axis" "1 0 0"
+    "u_axis" "0 0 1"
     "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "0"
@@ -509,7 +510,7 @@ entity
   "switch_state.value" "true"
   "light.color" "1 6.3 8.3"
   "light.intensity" "441"
-  "light.mode" "Dynamic"
+  "light.mode" "Baked"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "range" "552"
@@ -566,6 +567,7 @@ entity
   "position" "256 1408 -1408"
   "orientation" "0 0 0 1"
   "name" ""
+  "match.mode" "speedrun"
 }
 entity
 {
@@ -582,16 +584,16 @@ entity
 {
   "classname" "spot_light_entity"
   "_uid" "23"
-  "position" "128 384 -1408"
-  "orientation" "0 0 -0.5 0.8660254"
+  "position" "128 184.90268 -1408"
+  "orientation" "-0.113039 -0.0652631 -4.5199844e-09 0.99144495"
   "name" ""
   "switch_state.value" "true"
   "light.color" "1 1 1"
-  "light.intensity" "1024"
-  "light.mode" "Dynamic"
+  "light.intensity" "1055.3"
+  "light.mode" "Mixed"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
-  "range" "512"
+  "range" "649.4"
   "inner_degrees" "20"
   "outer_degrees" "35"
 }
@@ -616,7 +618,7 @@ entity
   "switch_state.value" "true"
   "light.color" "1 1 1"
   "light.intensity" "1024"
-  "light.mode" "Dynamic"
+  "light.mode" "Baked"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "range" "512"

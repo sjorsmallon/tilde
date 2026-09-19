@@ -26,10 +26,10 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
     // a type added with no arm.
     switch (entity->type)
     {
-      case entities::entity_type::Brush_Entity:
+      case entities::entity_type::Geometry_Owner_Entity:
       {
-        const entities::Brush_Entity* owner =
-            entities::entity_as<entities::Brush_Entity>(entity);
+        const entities::Geometry_Owner_Entity* owner =
+            entities::entity_as<entities::Geometry_Owner_Entity>(entity);
         out[index] = owner->switch_state.value ? 0 : 1;
         break;
       }
@@ -43,6 +43,7 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       case entities::entity_type::Player_Entity:
       case entities::entity_type::Weapon_Entity:
       case entities::entity_type::Rocket_Entity:
+      case entities::entity_type::Bubble_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:
       case entities::entity_type::Particle_Emitter_Entity:

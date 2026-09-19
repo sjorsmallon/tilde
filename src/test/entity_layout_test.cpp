@@ -202,6 +202,7 @@ int main()
         entity_type::Player_Entity,
         entity_type::Weapon_Entity,
         entity_type::Rocket_Entity,
+        entity_type::Bubble_Entity,
         entity_type::Physics_Body_Entity,
         entity_type::Damageable_Entity,
         entity_type::Sound_Emitter_Entity,
@@ -211,10 +212,12 @@ int main()
         entity_type::Trigger_Volume_Entity,
         entity_type::Jump_Pad_Entity,
         entity_type::Game_Rules_Entity,
-        entity_type::Brush_Entity,
+        entity_type::Geometry_Owner_Entity,
         // On the wire through Render alone: its lifetime countdown is the
         // server's bookkeeping, and the client only needs the duck to stand up.
         entity_type::Ping_Marker_Entity,
+        // Through Timer_State's deadline, which is what a clock wipe is drawn from.
+        entity_type::Logic_Timer_Entity,
         // Through Path_Follow and Enabled; a Path_Node_Entity is all @Editable and rides nothing.
         entity_type::Mover_Entity,
     };
@@ -241,10 +244,11 @@ int main()
               !entity_type_is_replicated(entity_type::Logic_Counter_Entity),
           "a type whose own fields are all @Editable does not ride the snapshot");
     check(entity_type_is_predicted(entity_type::Jump_Pad_Entity) &&
-              entity_type_is_predicted(entity_type::Brush_Entity) &&
+              entity_type_is_predicted(entity_type::Geometry_Owner_Entity) &&
               entity_type_is_predicted(entity_type::Mover_Entity) &&
+              entity_type_is_predicted(entity_type::Bubble_Entity) &&
               !entity_type_is_predicted(entity_type::Point_Light_Entity),
-          "@predicted is the jump pad, the brush entity and the mover, and not the light");
+          "@predicted is the jump pad, the brush entity, the mover and the bubble, and not the light");
   }
 
   // --- placeable types ---

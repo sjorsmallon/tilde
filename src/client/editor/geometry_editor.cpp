@@ -45,6 +45,11 @@ constexpr color_t BRUSH_CONTOUR_COLOR{30, 32, 38};
 // have changed at all.
 constexpr color_t NO_COLLISION_CONTOUR_COLOR{230, 40, 40};
 
+// The box a selected static mesh collides as, and the same box when its
+// collision is switched off and clip brushes are expected to stand in for it.
+constexpr color_t STATIC_MESH_COLLISION_BOX_COLOR{60, 220, 120};
+constexpr color_t STATIC_MESH_NO_COLLISION_BOX_COLOR{120, 120, 120};
+
 // Build the hull, then trace it. The callers here all draw a brush the user is
 // editing, so the hull has to be rebuilt anyway; a caller holding a brush that
 // is NOT changing should hoist the build and call draw_brush_hull_wireframe.
@@ -247,6 +252,8 @@ void draw_box_face_grid(pass_builder_t &draws, const linalg::vec3 &position,
   draw_grid_xy(z1, x0, x1, y0, y1);
 }
 
+constexpr bool DRAW_BOX_BRUSH_FACE_GRID = false;
+
 } // namespace
 
 void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
@@ -258,7 +265,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
   if (is_outlined)
   {
     const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&geometry);
-    if (brush && shared::brush_is_axis_aligned_box(brush->hull_points))
+    if (DRAW_BOX_BRUSH_FACE_GRID && brush && shared::brush_is_axis_aligned_box(brush->hull_points))
     {
       const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
       draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
@@ -282,13 +289,18 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
         std::get<shared::static_mesh_geometry_t>(geometry);
     const assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
         shared::resolve_surface_mesh(static_mesh.surface);
-    if (push_wireframe_mesh(draws, mesh_handle, static_mesh.position,
-                            static_mesh.orientation, static_mesh.scale, color))
-      break;
+    push_wireframe_mesh(draws, mesh_handle, static_mesh.position, static_mesh.orientation,
+                        static_mesh.scale, color);
 
-    const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-    draws.debug.box((bounds.min + bounds.max) * 0.5f, (bounds.max - bounds.min) * 0.5f, color,
-                    renderer::fill_mode_t::wireframe, highlight_bias);
+    const color_t box_color =
+        static_mesh.collides ? STATIC_MESH_COLLISION_BOX_COLOR : STATIC_MESH_NO_COLLISION_BOX_COLOR;
+    for (const std::vector<linalg::vec3>& polygon :
+         shared::static_mesh_collision_box(static_mesh).face_polygons)
+    {
+      for (size_t corner = 0; corner < polygon.size(); ++corner)
+        draws.debug.line(polygon[corner], polygon[(corner + 1) % polygon.size()], box_color,
+                         highlight_bias);
+    }
     break;
   }
 
@@ -300,7 +312,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     // showed back when Box was its own kind, and a hull outline around it would
     // be strictly less information.
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
-    if (shared::brush_is_axis_aligned_box(brush.hull_points))
+    if (DRAW_BOX_BRUSH_FACE_GRID && shared::brush_is_axis_aligned_box(brush.hull_points))
     {
       const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
       draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
@@ -405,6 +417,9 @@ bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
   changed |= ImGui::DragFloat3("position", &static_mesh.position.x, 0.5f);
   changed |= edit_rotation_as_euler("rotation", static_mesh.orientation);
   changed |= ImGui::DragFloat3("scale", &static_mesh.scale.x, 0.01f);
+  changed |= ImGui::Checkbox("collides as its box", &static_mesh.collides);
+  if (!static_mesh.collides)
+    ImGui::TextDisabled("no collision of its own: block it out with clip brushes");
   changed |= draw_surface_inspector(static_mesh.surface);
   return changed;
 }

@@ -365,6 +365,11 @@ Client :: cvars {
     // ambient is the wrong light to judge a pose by.
     cl_player_unlit:        bool = false     @Client    "Draw player models unlit -- easier to read a pose than under the sun"
 
+    cl_blob_shadow:            bool = true   @Client    "Draw a soft blob under every player where a straight-down ray hits the ground"
+    cl_blob_shadow_radius:     f32 = 20.0    @Client    "Blob shadow radius at the feet, world units"
+    cl_blob_shadow_opacity:    f32 = 0.6     @Client    "Blob shadow opacity at the feet"
+    cl_blob_shadow_max_distance: f32 = 1024.0 @Client   "How far below the feet the blob still draws; it shrinks and fades toward this"
+
     cl_aim_debug:           bool = false     @Client    "Force every remote player's aim blend to cl_aim_debug_pitch/_yaw and show the scrub panel"
     cl_aim_debug_pitch:     f32 = 0.0        @Client    "Aim blend pitch forced while cl_aim_debug is on, degrees"
     cl_aim_debug_yaw:       f32 = 0.0        @Client    "Aim blend yaw DEVIATION forced while cl_aim_debug is on, degrees"

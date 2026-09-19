@@ -29,6 +29,7 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     // A player's volumes come off a posed rig, not off fields -- see the header.
     case entities::entity_type::Player_Entity:
     case entities::entity_type::Rocket_Entity:
+    case entities::entity_type::Bubble_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Spectate_Entity:
     case entities::entity_type::Weapon_Entity:
@@ -43,7 +44,7 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     case entities::entity_type::Physics_Body_Entity:
     case entities::entity_type::Logic_Counter_Entity:
     case entities::entity_type::Jump_Pad_Entity:
-    case entities::entity_type::Brush_Entity:
+    case entities::entity_type::Geometry_Owner_Entity:
     case entities::entity_type::Ping_Marker_Entity:
     case entities::entity_type::Logic_Timer_Entity:
     case entities::entity_type::Path_Node_Entity:

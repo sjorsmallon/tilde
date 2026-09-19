@@ -7,6 +7,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../../shared/stb_truetype.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -82,6 +83,21 @@ void fill_metrics(font_metrics_t &out, const stbtt_packedchar *packed, float pix
     glyph.v0 = (float)source.y0 * inverse_height;
     glyph.u1 = (float)source.x1 * inverse_width;
     glyph.v1 = (float)source.y1 * inverse_height;
+  }
+
+  // TABULAR FIGURES: every digit takes the widest digit's advance, centred in it.
+  float widest_digit_advance = 0.0f;
+  for (char digit = '0'; digit <= '9'; ++digit)
+    widest_digit_advance =
+        std::max(widest_digit_advance, out.glyphs[(uint32_t)digit - FIRST_PRINTABLE_ASCII].x_advance);
+
+  for (char digit = '0'; digit <= '9'; ++digit)
+  {
+    glyph_t    &glyph = out.glyphs[(uint32_t)digit - FIRST_PRINTABLE_ASCII];
+    const float shift = std::round((widest_digit_advance - glyph.x_advance) * 0.5f);
+    glyph.x_offset += shift;
+    glyph.x_offset2 += shift;
+    glyph.x_advance = widest_digit_advance;
   }
 }
 

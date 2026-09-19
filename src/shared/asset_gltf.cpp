@@ -539,8 +539,11 @@ void import_materials(glb_import_t& import)
     material_t material;
     material.name = source.name.empty() ? "material" + std::to_string(material_index) : source.name;
     if (pbr.baseColorFactor.size() == 4)
+    {
       material.diffuse_color = {(float)pbr.baseColorFactor[0], (float)pbr.baseColorFactor[1],
                                 (float)pbr.baseColorFactor[2]};
+      material.opacity       = (float)pbr.baseColorFactor[3];
+    }
 
     material.maps.albedo = texture_handle(import, pbr.baseColorTexture.index, pbr.baseColorTexture.texCoord);
     material.maps.normal = texture_handle(import, source.normalTexture.index, source.normalTexture.texCoord);
@@ -558,11 +561,13 @@ void import_materials(glb_import_t& import)
       material.maps.alpha_mode = alpha_mode_t::opaque;
     }
     material.maps.alpha_cutoff = (float)source.alphaCutoff;
+    // The spec: an OPAQUE material's alpha is ignored.
+    if (material.maps.alpha_mode == alpha_mode_t::opaque)
+      material.opacity = 1.0f;
     if (material.maps.alpha_mode != alpha_mode_t::opaque)
       log_terminal("[glb] {}: material '{}' is {}, cutoff {}", import.key, material.name,
                    source.alphaMode, material.maps.alpha_cutoff);
-    if (source.doubleSided)
-      note_ignored(import, "double-sided materials");
+    material.maps.double_sided = source.doubleSided;
     if (source.normalTexture.index >= 0 && source.normalTexture.scale != 1.0)
       note_ignored(import, "normal map scale");
 

@@ -52,5 +52,6 @@ void enable(Entity&, Enabled&, const Enable_Data&, input_context_t&);   // Switc
 void disable(Entity&, Enabled&, const Disable_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
 void toggle_enabled(Entity&, Enabled&, const Toggle_Enabled_Data&, input_context_t&);   // Switchable, shared by every opting-in type: src/server/traits/switchable.cpp
 void play(Entity&, Playback&, const Play_Data&, input_context_t&);   // Playable, shared by every opting-in type: src/server/traits/playable.cpp
+void stop_playing(Entity&, Playback&, const Stop_Playing_Data&, input_context_t&);   // Playable, shared by every opting-in type: src/server/traits/playable.cpp
 
 } // namespace entities

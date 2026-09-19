@@ -276,13 +276,14 @@ void test_mode_table()
   const game_mode_settings_t& speedrun = GAME_MODES[entities::Game_Mode::speedrun];
   check(speedrun.win_condition == Win_Condition::Objective_Reached,
         "a speedrun ends when the objective is reached");
-  check(speedrun.spawn_policy == Spawn_Policy::Single_Fixed_Start,
-        "a speedrun puts everyone on the start line");
+  check(speedrun.spawn_policy == Spawn_Policy::Team_Markers,
+        "a speedrun gives each runner their own start marker");
   check(speedrun.respawn_during_round, "a speedrun respawns you mid-run");
-  check(!speedrun.auto_assign_teams, "a speedrun assigns no teams");
-  check(speedrun.phase_cycle.size() == 2 && speedrun.phase_cycle[0] == Round_Phase::Live &&
-            speedrun.phase_cycle[1] == Round_Phase::Round_End,
-        "a speedrun is a Live run and a hold on the result");
+  check(speedrun.auto_assign_teams, "a speedrun assigns a team, which is what names the marker");
+  check(speedrun.phase_cycle.size() == 3 && speedrun.phase_cycle[0] == Round_Phase::Freeze &&
+            speedrun.phase_cycle[1] == Round_Phase::Live &&
+            speedrun.phase_cycle[2] == Round_Phase::Round_End,
+        "a speedrun counts down at the start line, runs, and holds on the result");
   check(speedrun.max_rounds == 0, "a speedrun restarts as often as it is asked to");
 }
 
@@ -623,41 +624,83 @@ void test_restart_round_resets_the_level()
 
   test_world_t world;
   stand_up(world, entities::Game_Mode::speedrun);
+
+  shared::map_t& map = world.context.world.current_map;
+  auto crate_template               = std::make_shared<entities::Damageable_Entity>();
+  crate_template->health.max_health = 50;
+  crate_template->health.current_health = 50;
+  const shared::entity_uid_t crate_uid = map.add_entity(crate_template);
+  const shared::entity_uid_t lamp_uid  = map.add_entity(std::make_shared<entities::Point_Light_Entity>());
+  const shared::entity_uid_t emitter_uid =
+      map.add_entity(std::make_shared<entities::Sound_Emitter_Entity>());
+  const shared::entity_uid_t rules_uid = try_find_rules_entity(world.context)->entity_id;
+  world.context.world.session          = shared::build_session(map);
+  install_match(world.context, world.context.tick_number, tickrate);
+
+  shared::Entity_System& entity_system = world.context.world.session.entity_system;
   const shared::entity_uid_t player_uid =
-      spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+      spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
+  const shared::entity_uid_t carried_uid = entity_system.spawn<entities::Weapon_Entity>();
+  const shared::entity_uid_t loose_uid   = entity_system.spawn<entities::Weapon_Entity>();
+  const shared::entity_uid_t rocket_uid  = entity_system.spawn<entities::Rocket_Entity>();
+  player_of(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
+
   start_the_match(world.context);
+  run_until_live(world.context);
 
-  const shared::entity_uid_t crate_uid =
-      world.context.world.session.entity_system.spawn<entities::Damageable_Entity>();
-  {
-    entities::Damageable_Entity* crate =
-        world.context.world.session.entity_system.get<entities::Damageable_Entity>(crate_uid);
-    crate->health.max_health     = 50;
-    crate->health.current_health = 0;
-  }
-
+  entity_system.get<entities::Damageable_Entity>(crate_uid)->health.current_health = 0;
+  entity_system.get<entities::Point_Light_Entity>(lamp_uid)->switch_state.value     = false;
+  entity_system.get<entities::Sound_Emitter_Entity>(emitter_uid)->playback = {.play_count = 3,
+                                                                              .stop_count = 1};
+  world.context.world.session.connections_by_sender[rules_uid].front().spent  = true;
   player_of(world.context, player_uid).position       = {700.f, 0.f, 0.f};
   player_of(world.context, player_uid).checkpoint_uid = crate_uid;
-  match(world.context).objective_reached              = false;
 
+  constexpr int32_t STALE_AMOUNT = 7;
   world.context.world.pending_actions.clear();
+  pending_action_t stale;
+  stale.fire_tick           = world.context.tick_number + 100;
+  stale.data.tag            = entities::entity_action::Add;
+  stale.data.add.amount     = STALE_AMOUNT;
+  world.context.world.pending_actions.push_back(stale);
+
   request_and_tick(world.context, entities::entity_action::Restart_Round);
 
-  check_phase(world.context, Round_Phase::Live, "a restart re-enters Live");
+  check_phase(world.context, Round_Phase::Freeze, "a restart counts down again");
   check(match(world.context).round_number == 2, "as the next round");
   check(player_of(world.context, player_uid).position.x == 0.f,
         "everyone is back on the start line");
   check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
         "with their checkpoints dropped");
-  check(world.context.world.session.entity_system.get<entities::Damageable_Entity>(crate_uid)
-                ->health.current_health == 50,
+  check(entity_system.get<entities::Damageable_Entity>(crate_uid)->health.current_health == 50,
         "the damageables are back");
+  check(entity_system.get<entities::Point_Light_Entity>(lamp_uid)->switch_state.value,
+        "a switched light is back as the map has it");
+  check(entity_system.get<entities::Sound_Emitter_Entity>(emitter_uid)->playback.play_count == 3,
+        "an emitter's play edge is not rewound, so the client plays nothing");
+  check(entity_system.get<entities::Sound_Emitter_Entity>(emitter_uid)->playback.stop_count == 2,
+        "and its stop edge is bumped, so what it was playing is silenced");
+  check(!world.context.world.session.connections_by_sender[rules_uid].front().spent,
+        "a spent fire_once row can fire again");
+  check(queued_with_amount(world.context, STALE_AMOUNT) == 0,
+        "an action queued by the last round is dropped");
+  check(entity_system.get<entities::Weapon_Entity>(carried_uid) != nullptr,
+        "a carried weapon stays with its player");
+  check(entity_system.get<entities::Weapon_Entity>(loose_uid) == nullptr &&
+            entity_system.try_find(rocket_uid) == nullptr,
+        "what the last round spawned into the world is gone");
+  check(entity_system.validate_locations(), "and the entity index agrees with the pools");
   check(queued_with_amount(world.context, ROUND_ENDED_AMOUNT) == 1 &&
             queued_with_amount(world.context, ROUND_STARTED_AMOUNT) == 1,
         "a restart is one Round_Ended and one Round_Started");
   check(queued_with_amount(world.context, MATCH_STARTED_AMOUNT) == 0,
         "and not a new match");
 
+  request_and_tick(world.context, entities::entity_action::Restart_Round);
+  check_phase(world.context, Round_Phase::Freeze, "the countdown can itself be restarted");
+  check(match(world.context).round_number == 3, "as the round after");
+
+  run_until_live(world.context);
   request_and_tick(world.context, entities::entity_action::End_Match);
   check_phase(world.context, Round_Phase::Game_Over, "End_Match from Live ends the match");
 }
@@ -772,7 +815,9 @@ void test_speedrun_walk()
   spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
 
   start_the_match(world.context);
-  check_phase(world.context, Round_Phase::Live, "a speedrun starts running");
+  check_phase(world.context, Round_Phase::Freeze, "a speedrun counts down at the start line");
+  run_until_live(world.context);
+  check_phase(world.context, Round_Phase::Live, "and then starts running");
 
   tick(world.context);
   check_phase(world.context, Round_Phase::Live, "an unreached objective leaves the run going");
@@ -788,7 +833,7 @@ void test_speedrun_walk()
         "the result holds with no deadline");
 
   request_and_tick(world.context, entities::entity_action::Restart_Round);
-  check_phase(world.context, Round_Phase::Live, "a restart puts the run back at Live");
+  check_phase(world.context, Round_Phase::Freeze, "a restart counts the run down again");
   check(match(world.context).round_number == 2, "as round 2");
   check(!match(world.context).objective_reached, "with the objective cleared");
 
@@ -821,7 +866,9 @@ void test_checkpoint_respawn()
   start_the_match(world.context);
 
   const shared::entity_uid_t player_uid =
-      spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
+      spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
+  const shared::entity_uid_t second_runner_uid =
+      spawn_test_player(world.context, entities::Team_Allegiance::Blu, 100);
   const vec3f checkpoint_position{500.f, 0.f, 250.f};
   const shared::entity_uid_t checkpoint_uid =
       spawn_checkpoint(world.context, checkpoint_position);
@@ -831,6 +878,11 @@ void test_checkpoint_respawn()
   update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
   check(player_of(world.context, player_uid).position.x == 0.f,
         "a uid naming nothing respawns you at the start line");
+
+  world.context.world.death_tick_by_player_uid[second_runner_uid] = world.context.tick_number;
+  update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
+  check(player_of(world.context, second_runner_uid).position.x == 100.f,
+        "the second runner dies back to their own marker, not the first runner's");
 
   player_of(world.context, player_uid).checkpoint_uid = checkpoint_uid;
   world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
@@ -847,6 +899,8 @@ void test_checkpoint_respawn()
         "a round boundary drops every checkpoint");
   check(player_of(world.context, player_uid).position.x == 0.f,
         "...and puts the player back on the start line");
+  check(player_of(world.context, second_runner_uid).position.x == 100.f,
+        "...each on their own marker");
 }
 
 // --- 9. Teams and spawn markers ---------------------------------------------
@@ -905,21 +959,6 @@ void test_spawn_policy()
                        marker->position.x == static_cast<float>(rotation) * 100.f;
   }
   check(saw_every_marker, "Rotate_Markers cycles every human marker in order");
-
-  bool always_the_start_line = true;
-  for (uint32_t rotation = 0; rotation < 4; ++rotation)
-  {
-    for (const entities::Team_Allegiance team :
-         {entities::Team_Allegiance::Red, entities::Team_Allegiance::Blu})
-    {
-      const entities::Player_Spawn_Entity* marker =
-          try_pick_human_spawn(world.context.world.session, Spawn_Policy::Single_Fixed_Start,
-                               team, rotation);
-      always_the_start_line =
-          always_the_start_line && marker != nullptr && marker->position.x == 0.f;
-    }
-  }
-  check(always_the_start_line, "Single_Fixed_Start ignores the team and the rotation");
 
   shared::game_session_t neutral_only;
   const shared::entity_uid_t uid =

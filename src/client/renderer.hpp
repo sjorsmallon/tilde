@@ -352,6 +352,17 @@ enum class shadow_caster_t : uint8_t
   dynamic_object
 };
 
+// A radial discard about `center`, world space: the angle runs from axis_x toward axis_y.
+struct clock_wipe_t
+{
+  linalg::vec3f center = {0.0f, 0.0f, 0.0f};
+  linalg::vec3f axis_x = {1.0f, 0.0f, 0.0f};
+  linalg::vec3f axis_y = {0.0f, 0.0f, 1.0f};
+  float         wiped  = 0.0f; // fraction of the turn removed
+  // Picks the pipeline, and stays set while idle so no wipe compiles one mid-game.
+  bool armed = false;
+};
+
 struct mesh_draw_t
 {
   mesh_handle_t                 mesh;
@@ -367,6 +378,7 @@ struct mesh_draw_t
   shadow_caster_t shadow_caster = shadow_caster_t::dynamic_object;
   // Drawn as usual AND into one of the pass's outlines, in its view_pass_t colour.
   outline_t outline = outline_t::none;
+  clock_wipe_t clock_wipe = {};
 };
 
 // --- Debug drawing ---

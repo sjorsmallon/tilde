@@ -36,48 +36,52 @@ enum class entity_action : uint16_t
   Disable = 1,   // Switchable
   Toggle_Enabled = 2,   // Switchable
   Play = 3,   // Playable
-  Set_Color = 4,   // Colorable
-  Add = 5,   // Counting
-  Reset = 6,   // Counting
-  Kill = 7,   // Mortal
-  Set_Health = 8,   // Mortal
-  Damage = 9,   // Mortal
-  Teleport = 10,   // Mobile
-  Set_Velocity = 11,   // Mobile
-  Add_Velocity = 12,   // Mobile
-  Grant_Weapon = 13,   // Armable
-  Set_Respawn_Point = 14,   // Respawnable
-  Complete_Level = 15,   // Objective
-  Start = 16,   // Timer
-  Stop = 17,   // Timer
-  Restart = 18,   // Timer
-  Start_Match = 19,   // Match_Control
-  End_Round = 20,   // Match_Control
-  Restart_Round = 21,   // Match_Control
-  End_Match = 22,   // Match_Control
-  Reverse = 23,   // Path_Following
-  Go_To = 24,   // Path_Following
+  Stop_Playing = 4,   // Playable
+  Set_Color = 5,   // Colorable
+  Add = 6,   // Counting
+  Reset = 7,   // Counting
+  Kill = 8,   // Mortal
+  Set_Health = 9,   // Mortal
+  Damage = 10,   // Mortal
+  Teleport = 11,   // Mobile
+  Set_Velocity = 12,   // Mobile
+  Add_Velocity = 13,   // Mobile
+  Grant_Weapon = 14,   // Armable
+  Set_Respawn_Point = 15,   // Respawnable
+  Complete_Level = 16,   // Objective
+  Start = 17,   // Timer
+  Stop = 18,   // Timer
+  Restart = 19,   // Timer
+  Pause = 20,   // Timer
+  Resume = 21,   // Timer
+  Start_Match = 22,   // Match_Control
+  End_Round = 23,   // Match_Control
+  Restart_Round = 24,   // Match_Control
+  End_Match = 25,   // Match_Control
+  Reverse = 26,   // Path_Following
+  Go_To = 27,   // Path_Following
 };
 
-constexpr uint32_t ENTITY_ACTION_COUNT = 25;
+constexpr uint32_t ENTITY_ACTION_COUNT = 28;
 
 enum class entity_signal : uint16_t
 {
   Color_Changed = 0,   // Colorable
   Limit_Reached = 1,   // Counting
-  Touched = 2,   // Touchable
-  Left = 3,   // Touchable
-  Died = 4,   // Mortal
-  Health_Changed = 5,   // Mortal
-  Elapsed = 6,   // Timer
-  Match_Started = 7,   // Match_Control
-  Round_Started = 8,   // Match_Control
-  Round_Ended = 9,   // Match_Control
-  Match_Ended = 10,   // Match_Control
-  Node_Reached = 11,   // Path_Following
+  Fell_Below_Limit = 2,   // Counting
+  Touched = 3,   // Touchable
+  Left = 4,   // Touchable
+  Died = 5,   // Mortal
+  Health_Changed = 6,   // Mortal
+  Elapsed = 7,   // Timer
+  Match_Started = 8,   // Match_Control
+  Round_Started = 9,   // Match_Control
+  Round_Ended = 10,   // Match_Control
+  Match_Ended = 11,   // Match_Control
+  Node_Reached = 12,   // Path_Following
 };
 
-constexpr uint32_t ENTITY_SIGNAL_COUNT = 12;
+constexpr uint32_t ENTITY_SIGNAL_COUNT = 13;
 
 enum class entity_trait : uint16_t
 {

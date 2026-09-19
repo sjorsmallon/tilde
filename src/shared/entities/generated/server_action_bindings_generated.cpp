@@ -46,9 +46,9 @@ void shim_jump_pad_entity_enable(Entity& entity, const action_data_t& data, inpu
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
-void shim_brush_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
+void shim_geometry_owner_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  Brush_Entity& self = *entity_as<Brush_Entity>(&entity);
+  Geometry_Owner_Entity& self = *entity_as<Geometry_Owner_Entity>(&entity);
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
@@ -88,9 +88,9 @@ void shim_jump_pad_entity_disable(Entity& entity, const action_data_t& data, inp
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
-void shim_brush_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
+void shim_geometry_owner_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  Brush_Entity& self = *entity_as<Brush_Entity>(&entity);
+  Geometry_Owner_Entity& self = *entity_as<Geometry_Owner_Entity>(&entity);
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
@@ -130,9 +130,9 @@ void shim_jump_pad_entity_toggle_enabled(Entity& entity, const action_data_t& da
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
-void shim_brush_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
+void shim_geometry_owner_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
-  Brush_Entity& self = *entity_as<Brush_Entity>(&entity);
+  Geometry_Owner_Entity& self = *entity_as<Geometry_Owner_Entity>(&entity);
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
@@ -146,6 +146,12 @@ void shim_sound_emitter_entity_play(Entity& entity, const action_data_t& data, i
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
   play(self, self.playback, data.as_play(), context);
+}
+
+void shim_sound_emitter_entity_stop_playing(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
+  stop_playing(self, self.playback, data.as_stop_playing(), context);
 }
 
 void shim_point_light_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
@@ -262,6 +268,18 @@ void shim_logic_timer_entity_restart(Entity& entity, const action_data_t& data, 
   restart(self, self.timer, data.as_restart(), context);
 }
 
+void shim_logic_timer_entity_pause(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Timer_Entity& self = *entity_as<Logic_Timer_Entity>(&entity);
+  pause(self, self.timer, data.as_pause(), context);
+}
+
+void shim_logic_timer_entity_resume(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Logic_Timer_Entity& self = *entity_as<Logic_Timer_Entity>(&entity);
+  resume(self, self.timer, data.as_resume(), context);
+}
+
 void shim_game_rules_entity_start_match(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Game_Rules_Entity& self = *entity_as<Game_Rules_Entity>(&entity);
@@ -311,6 +329,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -326,6 +345,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -335,12 +356,14 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   },
   {},   // Weapon_Entity
   {},   // Rocket_Entity
+  {},   // Bubble_Entity
   {},   // Physics_Body_Entity
   {   // Damageable_Entity
     nullptr,   // Enable
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -356,6 +379,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -369,6 +394,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_sound_emitter_entity_disable,
     shim_sound_emitter_entity_toggle_enabled,
     shim_sound_emitter_entity_play,
+    shim_sound_emitter_entity_stop_playing,
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -384,6 +410,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -396,6 +424,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_point_light_entity_disable,
     shim_point_light_entity_toggle_enabled,
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     shim_point_light_entity_set_color,
     nullptr,   // Add
     nullptr,   // Reset
@@ -411,6 +440,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -423,6 +454,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_spot_light_entity_disable,
     shim_spot_light_entity_toggle_enabled,
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     shim_spot_light_entity_set_color,
     nullptr,   // Add
     nullptr,   // Reset
@@ -438,6 +470,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -451,6 +485,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_trigger_volume_entity_disable,
     shim_trigger_volume_entity_toggle_enabled,
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -466,6 +501,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -478,6 +515,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_jump_pad_entity_disable,
     shim_jump_pad_entity_toggle_enabled,
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -493,6 +531,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -506,6 +546,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -521,6 +562,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     shim_game_rules_entity_start_match,
     shim_game_rules_entity_end_round,
     shim_game_rules_entity_restart_round,
@@ -533,6 +576,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     shim_logic_counter_entity_add,
     shim_logic_counter_entity_reset,
@@ -548,6 +592,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -555,11 +601,12 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Reverse
     nullptr,   // Go_To
   },
-  {   // Brush_Entity
-    shim_brush_entity_enable,
-    shim_brush_entity_disable,
-    shim_brush_entity_toggle_enabled,
+  {   // Geometry_Owner_Entity
+    shim_geometry_owner_entity_enable,
+    shim_geometry_owner_entity_disable,
+    shim_geometry_owner_entity_toggle_enabled,
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -575,6 +622,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -588,6 +637,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Disable
     nullptr,   // Toggle_Enabled
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -603,6 +653,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_logic_timer_entity_start,
     shim_logic_timer_entity_stop,
     shim_logic_timer_entity_restart,
+    shim_logic_timer_entity_pause,
+    shim_logic_timer_entity_resume,
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -616,6 +668,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_mover_entity_disable,
     shim_mover_entity_toggle_enabled,
     nullptr,   // Play
+    nullptr,   // Stop_Playing
     nullptr,   // Set_Color
     nullptr,   // Add
     nullptr,   // Reset
@@ -631,6 +684,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Start
     nullptr,   // Stop
     nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
     nullptr,   // Start_Match
     nullptr,   // End_Round
     nullptr,   // Restart_Round
@@ -728,6 +783,23 @@ void play(Entity& entity, const Play_Data& payload, input_context_t& context)
 {
   if (!try_play(entity, payload, context))
     fatal_error("{} does not accept Play", entity_info(entity.type).classname);
+}
+
+bool try_stop_playing(Entity& entity, const Stop_Playing_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Stop_Playing];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void stop_playing(Entity& entity, const Stop_Playing_Data& payload, input_context_t& context)
+{
+  if (!try_stop_playing(entity, payload, context))
+    fatal_error("{} does not accept Stop_Playing", entity_info(entity.type).classname);
 }
 
 bool try_set_color(Entity& entity, const Set_Color_Data& payload, input_context_t& context)
@@ -985,6 +1057,40 @@ void restart(Entity& entity, const Restart_Data& payload, input_context_t& conte
     fatal_error("{} does not accept Restart", entity_info(entity.type).classname);
 }
 
+bool try_pause(Entity& entity, const Pause_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Pause];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void pause(Entity& entity, const Pause_Data& payload, input_context_t& context)
+{
+  if (!try_pause(entity, payload, context))
+    fatal_error("{} does not accept Pause", entity_info(entity.type).classname);
+}
+
+bool try_resume(Entity& entity, const Resume_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Resume];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void resume(Entity& entity, const Resume_Data& payload, input_context_t& context)
+{
+  if (!try_resume(entity, payload, context))
+    fatal_error("{} does not accept Resume", entity_info(entity.type).classname);
+}
+
 bool try_start_match(Entity& entity, const Start_Match_Data& payload, input_context_t& context)
 {
   if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
@@ -1127,6 +1233,14 @@ void emit_limit_reached(const Entity& sender, const Limit_Reached_Data& payload,
   if (!type_emits_signal(sender.type, entity_signal::Limit_Reached))
     fatal_error("{} does not emit Limit_Reached", entity_info(sender.type).classname);
   server::queue_signal_connections(context, sender, entity_signal::Limit_Reached,
+                                   &payload, (uint32_t)sizeof(payload));
+}
+
+void emit_fell_below_limit(const Entity& sender, const Fell_Below_Limit_Data& payload, input_context_t& context)
+{
+  if (!type_emits_signal(sender.type, entity_signal::Fell_Below_Limit))
+    fatal_error("{} does not emit Fell_Below_Limit", entity_info(sender.type).classname);
+  server::queue_signal_connections(context, sender, entity_signal::Fell_Below_Limit,
                                    &payload, (uint32_t)sizeof(payload));
 }
 

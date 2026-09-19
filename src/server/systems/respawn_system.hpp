@@ -35,19 +35,6 @@ void update_respawns(server_context_t &context,
                      uint32_t tickrate_hz,
                      const float respawn_delay_seconds);
 
-
-
-
-// Put every Damageable_Entity back to its AUTHORED state: full health, visible
-// again. The counterpart to respawn_all_players for the half of the world that
-// is not a player, and it lives here for the same reason that one does -- this
-// is the system that puts things back.
-//
-// Also the map-load seed, and deliberately the same function: "a fresh level"
-// and "a fresh round" are the same statement about a crate, and two functions
-// saying it would be two places for the authored value to be read wrong.
-void seed_damageable_health(shared::game_session_t &session);
-
 // Put EVERY player back on a spawn marker, alive, right now — the round-start
 // reset. Called from enter_phase, which is the one writer of the phase, so a
 // round boundary and the snap that goes with it cannot come apart.

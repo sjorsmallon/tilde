@@ -90,6 +90,10 @@ material_variant(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t 
     if (material.pipeline_state.blend_mode == renderer::blend_mode_t::alpha)
       material.pipeline_state.depth_write = false;
 
+    // Double-sidedness is the submesh's own too; a caller may only widen it.
+    if (registered.cull_mode == renderer::cull_mode_t::none)
+      material.pipeline_state.cull_mode = renderer::cull_mode_t::none;
+
     variant.push_back(renderer::register_material(material));
   }
 

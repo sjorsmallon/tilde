@@ -118,14 +118,6 @@ try_pick_human_spawn(shared::game_session_t &session, Spawn_Policy policy,
   // Two passes rather than a collected vector: this runs on player join and on
   // every respawn, and the pool is small enough that counting is cheaper than
   // allocating.
-  if (policy == Spawn_Policy::Single_Fixed_Start)
-  {
-    for (const entities::Player_Spawn_Entity &spawn : spawns)
-      if (spawn.spawn_type == entities::Spawn_Type::Human)
-        return &spawn;
-    return nullptr;
-  }
-
   bool honor_team = policy == Spawn_Policy::Team_Markers;
 
   uint32_t candidate_count = 0;
@@ -161,16 +153,6 @@ try_pick_human_spawn(shared::game_session_t &session, Spawn_Policy policy,
   fatal_error("try_pick_human_spawn: counted %u eligible spawns then failed to "
               "reach index %u — the pool changed under us",
               candidate_count, wanted);
-}
-
-void seed_damageable_health(shared::game_session_t &session)
-{
-  for (entities::Damageable_Entity &damageable :
-       session.entity_system.entities_of<entities::Damageable_Entity>())
-  {
-    damageable.health.current_health = damageable.health.max_health;
-    damageable.render.visible        = true;
-  }
 }
 
 void respawn_all_players(server_context_t &context)

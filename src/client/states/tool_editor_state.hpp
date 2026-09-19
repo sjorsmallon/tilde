@@ -141,7 +141,7 @@ private:
   bool draw_entities_solid = true;
 
   // When true, the editor ground grid is drawn.
-  bool show_grid = true;
+  bool show_grid = false;
 
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;

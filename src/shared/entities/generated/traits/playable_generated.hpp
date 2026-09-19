@@ -35,6 +35,12 @@ struct Play_Data
 static_assert(std::is_trivially_copyable_v<Play_Data>,
               "a verb payload rides a union in a map row and a queue record");
 
+struct Stop_Playing_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<Stop_Playing_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
 // --- the handlers, written ONCE -------------------------------------
 //
 // `requires` is what buys this: one handler for every opting-in type
@@ -44,6 +50,7 @@ static_assert(std::is_trivially_copyable_v<Play_Data>,
 // Defined in src/server/traits/playable.cpp; a declared handler nobody defined
 // is a LINK error naming the symbol.
 void play(Entity&, Playback&, const Play_Data&, input_context_t&);
+void stop_playing(Entity&, Playback&, const Stop_Playing_Data&, input_context_t&);
 
 // --- the dynamic half -----------------------------------------------
 //
@@ -53,5 +60,7 @@ void play(Entity&, Playback&, const Play_Data&, input_context_t&);
 // you need its fields, ask for the TRAIT when you need a verb.
 void play(Entity&, const Play_Data&, input_context_t&);
 [[nodiscard]] bool try_play(Entity&, const Play_Data&, input_context_t&);
+void stop_playing(Entity&, const Stop_Playing_Data&, input_context_t&);
+[[nodiscard]] bool try_stop_playing(Entity&, const Stop_Playing_Data&, input_context_t&);
 
 } // namespace entities

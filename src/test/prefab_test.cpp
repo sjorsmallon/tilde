@@ -405,7 +405,7 @@ int main()
   //
   // A brush names its owner (prediction_def.md §4.2), so a paste has to rewrite
   // that the way it rewrites a row and an entity field: the copy's brush must
-  // name the COPY's Brush_Entity, not the piece's, and not the other paste's.
+  // name the COPY's Geometry_Owner_Entity, not the piece's, and not the other paste's.
   // A brush tied outside the piece is the field-that-crosses case, and it is
   // cleared loudly rather than left naming whatever holds that number here.
   {
@@ -413,9 +413,9 @@ int main()
     tie_source.name = "tie.source";
 
     auto [inside_owner, owner_entity] =
-        spawn_entity(tie_source, entities::entity_type::Brush_Entity);
+        spawn_entity(tie_source, entities::entity_type::Geometry_Owner_Entity);
     if (!owner_entity)
-      return fail("a brush_entity would not spawn");
+      return fail("a geometry_owner_entity would not spawn");
 
     const entity_uid_t tied_brush =
         tie_source.add_geometry(make_box_brush({0.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));

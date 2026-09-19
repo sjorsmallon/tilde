@@ -152,7 +152,7 @@ brush
 }
 entity
 {
-  "classname" "brush_entity"
+  "classname" "geometry_owner_entity"
   "_uid" "2"
   "position" "128 384 768"
   "orientation" "0 0 0 1"

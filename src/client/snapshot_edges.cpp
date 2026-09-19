@@ -150,13 +150,27 @@ void play_emitters(client_context_t& context, const ::network::snapshot_frame_t&
         previous.entities.get<entities::Sound_Emitter_Entity>(emitter.entity_id);
     if (before == nullptr)
       continue;
+
+    std::vector<voice_handle_t>& voices = context.replication.emitter_voices[emitter.entity_id];
+
+    // Stop before play, so a Stop_Playing and a Play in one tick is a restart.
+    const bool switched_off = before->switch_state.value && !emitter.switch_state.value;
+    if (emitter.playback.stop_count != before->playback.stop_count || switched_off)
+    {
+      for (const voice_handle_t voice : voices)
+        context.audio->stop(voice);
+      voices.clear();
+    }
+
     if (emitter.playback.play_count == before->playback.play_count || !emitter.switch_state.value)
       continue;
 
-    if (local->spatial)
-      context.audio->play_3d_within(local->sound, local->position, local->range, local->volume);
-    else
-      context.audio->play_2d(local->sound, local->volume);
+    std::erase_if(voices,
+                  [&](const voice_handle_t voice) { return !context.audio->is_playing(voice); });
+    voices.push_back(local->spatial
+                         ? context.audio->play_3d_within(local->sound, local->position,
+                                                         local->range, local->volume)
+                         : context.audio->play_2d(local->sound, local->volume));
   }
 }
 

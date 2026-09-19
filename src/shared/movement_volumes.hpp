@@ -29,6 +29,16 @@ struct Entity_System;
 enum class movement_volume_kind_t : uint8_t
 {
   Jump_Pad,
+  // Sets the vertical speed and keeps the horizontal one.
+  Bounce,
+};
+
+// The tick the list is cut FOR: a bubble's bounds are a function of it.
+struct movement_volume_settings_t
+{
+  uint32_t tick                  = 0;
+  float    tick_interval_seconds = 0.f;
+  float    gravity               = 0.f;
 };
 
 struct movement_volume_t
@@ -50,8 +60,9 @@ struct movement_volume_t
 // polices it. The generator cannot write this -- flattening a pad into a launch
 // velocity is per-type logic -- which is why @predicted is a flag with one rule
 // rather than an emitter.
-void collect_movement_volumes(Entity_System&                  system,
-                              std::vector<movement_volume_t>& out);
+void collect_movement_volumes(Entity_System&                    system,
+                              const movement_volume_settings_t& settings,
+                              std::vector<movement_volume_t>&   out);
 
 // Where a cosmetic produced by a launch should play: the volume's own centre,
 // read out of the list the step used rather than re-resolved through the entity

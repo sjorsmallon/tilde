@@ -9,6 +9,7 @@
 #include "../hud/deploy_timer.hpp"
 #include "../hud/ready_status.hpp"
 #include "../hud/run_timer.hpp"
+#include "../hud/freeze_countdown.hpp"
 #include "../hud/weapon_name.hpp"
 #include "../ghost_playback.hpp"
 #include "../replay_panel.hpp"
@@ -23,6 +24,8 @@
 #include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
 #include "../../shared/disabled_geometry.hpp"
+#include "../../shared/timer_fraction.hpp"
+#include "../../shared/bubble_flight.hpp"
 #include "../../shared/movement_volumes.hpp"
 #include "../../shared/weapons.hpp"
 #ifdef JPH_DEBUG_RENDERER
@@ -47,6 +50,7 @@
 #include "../entity_hitbox_overlay.hpp"
 #include "../hitbox_debug_draw.hpp"
 #include "../shadow_debug_draw.hpp"
+#include "../blob_shadow.hpp"
 #include "../fly_camera.hpp"
 #include "../input.hpp"
 #include "../../shared/player_animator.hpp"
@@ -79,6 +83,22 @@ struct drawn_mover_poses_t
   shared::path_pose_t drawn;
 };
 
+// Drawn where the predicted step tests it, never at the snapshot's position a round trip behind.
+static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
+{
+  const float    tickrate = static_cast<float>(ctx.connection.server_tickrate);
+  const uint32_t tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1);
+  const float    fraction = ctx.connection.phase == Connection_Phase::Connected
+                                ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
+                                : 0.0f;
+
+  const shared::bubble_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
+                                                .gravity               = ctx.cvars->g_gravity};
+  const vec3f at_tick = shared::bubble_position_at(bubble, tick, flight);
+  const vec3f at_next = shared::bubble_position_at(bubble, tick + 1, flight);
+  return at_tick + (at_next - at_tick) * fraction;
+}
+
 static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const entities::Mover_Entity &mover)
 {
   const auto found = ctx.world.session.mover_rests.find(mover.entity_id);
@@ -101,6 +121,35 @@ static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const 
   const shared::path_pose_t at_tick   = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
   const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
   return {.at_tick = at_tick, .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)};
+}
+
+// The same clock the movers are drawn on, so a wipe and a lift agree about now.
+static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared::entity_uid_t owner_uid,
+                                            const shared::geometry_value_t &geometry)
+{
+  const shared::Entity_System &system = ctx.world.session.entity_system;
+  const entities::Geometry_Owner_Entity *owner = system.get<entities::Geometry_Owner_Entity>(owner_uid);
+  if (owner == nullptr || owner->wipe_timer == shared::null_entity_uid)
+    return {};
+
+  const entities::Entity *timer = system.try_find(owner->wipe_timer);
+  const entities::Timer_State *timer_state =
+      timer != nullptr ? entities::get_component<entities::Timer_State>(timer) : nullptr;
+  if (timer_state == nullptr)
+    return {};
+
+  const float    tickrate = static_cast<float>(ctx.connection.server_tickrate);
+  const uint32_t tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1);
+  const float    fraction = ctx.connection.phase == Connection_Phase::Connected
+                                ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
+                                : 0.0f;
+
+  const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
+  return {.center = (bounds.min + bounds.max) * 0.5f,
+          .axis_x = linalg::rotate(owner->orientation, vec3f{1.0f, 0.0f, 0.0f}),
+          .axis_y = linalg::rotate(owner->orientation, vec3f{0.0f, 0.0f, 1.0f}),
+          .wiped  = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate),
+          .armed  = true};
 }
 
 static vec3f predict_mover_push(client_context_t &ctx, Span<const uint8_t> disabled_geometry,
@@ -1202,9 +1251,21 @@ void Play_State::update(float dt)
   // that flipped inside the unacked window mispredicts for that window and is
   // corrected, which is what makes the list need no history (prediction_def.md
   // ss1.4).
+  //
+  // Re-cut per INPUT all the same, since a bubble's BOUNDS are a function of the tick.
   std::vector<shared::movement_volume_t> movement_volumes;
-  shared::collect_movement_volumes(ctx.world.session.entity_system, movement_volumes);
-  const Span<const shared::movement_volume_t> movement_volume_span{movement_volumes};
+  Span<const shared::movement_volume_t>  movement_volume_span;
+  const auto cut_movement_volumes_for_input = [&](int input_number)
+  {
+    shared::collect_movement_volumes(
+        ctx.world.session.entity_system,
+        {.tick                  = predicted_tick_of_input(ctx, input_number),
+         .tick_interval_seconds = 1.0f / static_cast<float>(ctx.connection.server_tickrate),
+         .gravity               = ctx.cvars->g_gravity},
+        movement_volumes);
+    movement_volume_span = Span<const shared::movement_volume_t>{movement_volumes};
+  };
+  cut_movement_volumes_for_input(ctx.prediction.input_number);
 
   // The geometry half of the same cut, for the same reason and with the same
   // staleness rule: a brush's SHAPE is our own map load, its SWITCH rides the
@@ -1264,6 +1325,7 @@ void Play_State::update(float dt)
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
+      cut_movement_volumes_for_input(replayed);
       reconciled_position = predict_mover_push(ctx, disabled_geometry_span, replayed,
                                                reconciled_movement, reconciled_position, movers);
 
@@ -1906,6 +1968,7 @@ void Play_State::update(float dt)
 
         uint64_t buttons_entering_step = buttons_before_tick;
 
+        cut_movement_volumes_for_input(ctx.prediction.input_number);
         ctx.prediction.player_position = predict_mover_push(
             ctx, disabled_geometry_span, ctx.prediction.input_number,
             ctx.prediction.player_movement, ctx.prediction.player_position, movers);
@@ -2102,7 +2165,7 @@ void Play_State::update(float dt)
       if (tick_events.landed &&
           tick_events.land_impact_speed > frame_move_events.land_impact_speed)
       {
-        frame_move_events.landed            = true;
+        frame_move_events.landed = true;
         frame_move_events.land_impact_speed = tick_events.land_impact_speed;
       }
       if (tick_events.launched_by_pad)
@@ -2129,12 +2192,8 @@ void Play_State::update(float dt)
     if (frame_move_events.landed &&
         frame_move_events.land_impact_speed >
             ctx.cvars->pm_minimum_land_impact_speed)
-      ctx.audio->play_2d(assets::sound_asset::player_land);
+      ctx.audio->play_2d(assets::sound_asset::player_land_new);
 
-    // Our OWN launch, fired from the step that predicted it -- a round trip
-    // before the server's copy of it arrives, which on_jump_pad_launch then
-    // drops by attached_entity. Spatialized rather than 2D because the sound
-    // belongs to the PAD, not to us (prediction_def.md ss1.7).
     if (frame_move_events.launched_by_pad)
       ctx.audio->play_3d(assets::sound_asset::twang,
                          shared::movement_volume_origin(movement_volume_span,
@@ -2563,18 +2622,35 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // Render the session's geometry. One call per object — the mesh-path /
   // primitive / generated-mesh decision lives in draw_geometry, shared with
   // the editor, instead of being spelled out twice.
+  // The draw follows the same bit the sweep does, resolved through the same
+  // table, so what you walk through is what you cannot see. Cut here rather
+  // than reused from the prediction cut above: this runs on the frame clock
+  // and that one on the tick clock, and a set held across the gap would draw
+  // a gate one frame behind the wall you can already pass.
+  shared::disabled_geometry_t hidden;
+  shared::collect_disabled_geometry(ctx.world.session.entity_system,
+                                    ctx.world.session.owner_of, hidden);
+
+  const blob_shadow_settings_t blob_shadow_settings = {
+      .radius       = ctx.cvars->cl_blob_shadow_radius,
+      .opacity      = ctx.cvars->cl_blob_shadow_opacity,
+      .max_distance = ctx.cvars->cl_blob_shadow_max_distance};
+  const auto draw_player_blob_shadow = [&](const vec3f& feet)
+  {
+    if (ctx.cvars->cl_blob_shadow)
+      draw_blob_shadow(scene, ctx.world.session.bvh, Span<const uint8_t>{hidden}, feet,
+                       blob_shadow_settings);
+  };
+
+  const bool camera_is_my_eye = ctx.connection.phase == Connection_Phase::Connected &&
+                                !ctx.connection.spectating && !ctx.cvars->cl_noclip &&
+                                ctx.cvars->cl_spectate_slot < 0;
+  if (camera_is_my_eye)
+    draw_player_blob_shadow(camera.position - vec3f{0.f, shared::player_eye_height, 0.f});
+
   if (!ctx.cvars->debug_hide_geometry)
   {
-    // The draw follows the same bit the sweep does, resolved through the same
-    // table, so what you walk through is what you cannot see. Cut here rather
-    // than reused from the prediction cut above: this runs on the frame clock
-    // and that one on the tick clock, and a set held across the gap would draw
-    // a gate one frame behind the wall you can already pass.
-    shared::disabled_geometry_t hidden;
-    shared::collect_disabled_geometry(ctx.world.session.entity_system,
-                                      ctx.world.session.owner_of, hidden);
-
-    std::unordered_map<shared::entity_uid_t, linalg::mat4f> mover_matrices;
+    auto mover_matrices  = std::unordered_map<shared::entity_uid_t, linalg::mat4f>{};
     for (const entities::Mover_Entity &mover : entity_system.entities_of<entities::Mover_Entity>())
       mover_matrices[mover.entity_id] =
           shared::mover_model_matrix(rest_frame_of(ctx, mover), drawn_mover_poses(ctx, mover).drawn);
@@ -2584,13 +2660,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       if (index < hidden.size() && hidden[index] != 0)
         continue;
 
-      const auto moved = index < ctx.world.session.owner_of.size()
-                             ? mover_matrices.find(ctx.world.session.owner_of[index])
-                             : mover_matrices.end();
+      const shared::entity_uid_t owner_uid = index < ctx.world.session.owner_of.size()
+                                                 ? ctx.world.session.owner_of[index]
+                                                 : shared::null_entity_uid;
+      const auto moved = mover_matrices.find(owner_uid);
       const shared::map_geometry_t &entry = ctx.world.session.geometry[index];
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
-                    moved != mover_matrices.end() ? &moved->second : nullptr);
+                    moved != mover_matrices.end() ? &moved->second : nullptr,
+                    clock_wipe_of(ctx, owner_uid, entry.value));
     }
   }
 
@@ -2632,10 +2710,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (!mesh.valid())
       continue;
 
+    const vec3f drawn_position =
+        entity.type == entities::entity_type::Bubble_Entity
+            ? drawn_bubble_position(ctx, static_cast<const entities::Bubble_Entity&>(entity))
+            : entity.position;
+
     renderer::mesh_draw_t draw{};
     draw.mesh      = mesh;
     draw.transform = linalg::compose_transform(
-        entity.position, linalg::compose_model_rotation(entity.orientation, render.rotation),
+        drawn_position, linalg::compose_model_rotation(entity.orientation, render.rotation),
         render.scale);
 
     // Same split the geometry surface path makes, and the editor preview with
@@ -2694,6 +2777,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot ||
         remote_player.slot_index == first_person_slot)
       continue;
+
+    draw_player_blob_shadow(remote_player.render_position);
 
     // The player model. A bot IS a Player_Entity, so this draws bots too --
     // which is the only way to see a third-person model without a second
@@ -3088,6 +3173,22 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     else
     {
       log_error("[hud] no UI font registered; the run timer cannot draw");
+    }
+  }
+
+  if (match != nullptr && match->phase == entities::Round_Phase::Freeze && !connection_ui.show_pause_menu)
+  {
+    if (const ui::ui_font_t* font = ctx.font)
+    {
+      const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -
+                                 static_cast<int64_t>(ctx.replication.latest_processed_tick);
+      hud::draw_freeze_countdown(ui, *font, renderer::screen_size(), renderer::display_scale(),
+                                 static_cast<float>(ticks_left) /
+                                     static_cast<float>(ctx.connection.server_tickrate));
+    }
+    else
+    {
+      log_error("[hud] no UI font registered; the freeze countdown cannot draw");
     }
   }
 

@@ -96,6 +96,7 @@ constexpr key_mapping_t key_mappings[] = {
     {key_t::Page_Up, SDL_SCANCODE_PAGEUP},
     {key_t::Page_Down, SDL_SCANCODE_PAGEDOWN},
     {key_t::End, SDL_SCANCODE_END},
+    {key_t::Home, SDL_SCANCODE_HOME},
 
     // Punctuation
     {key_t::Left_Bracket, SDL_SCANCODE_LEFTBRACKET},

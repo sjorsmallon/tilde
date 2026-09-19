@@ -38,7 +38,7 @@ using disabled_geometry_t = std::vector<uint8_t>;
 
 // Rebuilt every tick, on both sides, at the same sites that collect the volumes.
 // `owner_of` is game_session_t::owner_of -- already checked at load, so an entry
-// here is a uid that WAS a Brush_Entity when the map loaded. One that the system
+// here is a uid that WAS a Geometry_Owner_Entity when the map loaded. One that the system
 // no longer holds sets no bit and the object stays solid; there is nothing to
 // report, because a runtime-destroyed owner is not an authoring mistake.
 //

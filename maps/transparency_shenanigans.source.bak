@@ -1,7 +1,7 @@
 entity
 {
   "classname" "worldspawn"
-  "name" "transparency_shenanigans"
+  "name" "transparency_shenanigans.source"
 }
 cvars
 {
@@ -11,7 +11,7 @@ materials
 {
   "0" ""
   "1" "resources/textures/glass_blue"
-  "2" "resources/textures/glass_amber"
+  "2" "resources/textures/fence_grate"
 }
 brush
 {

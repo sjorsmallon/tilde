@@ -43,7 +43,7 @@ constexpr Enum_Array<key_t, key_name_row_t> KEY_NAMES = {{
     {key_t::Arrow_Left, "leftarrow"}, {key_t::Arrow_Right, "rightarrow"},
     {key_t::Arrow_Up, "uparrow"},     {key_t::Arrow_Down, "downarrow"},
     {key_t::Page_Up, "pgup"},         {key_t::Page_Down, "pgdn"},
-    {key_t::End, "end"},
+    {key_t::End, "end"},              {key_t::Home, "home"},
 
     {key_t::Left_Bracket, "["}, {key_t::Right_Bracket, "]"}, {key_t::Tilde, "`"},
 

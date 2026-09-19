@@ -20,11 +20,16 @@ void add(struct entities::Entity& entity,
     entities::emit_limit_reached(entity, Limit_Reached_Data{}, context);
     log_terminal("limit reached for counter {} (uid {})", entity.name.c_str(), entity.entity_id);
   }
+  if (!was_below_limit && counter.value < counter.limit)
+    entities::emit_fell_below_limit(entity, Fell_Below_Limit_Data{}, context);
 }
 
-void reset(Entity&, Counter& state, const Reset_Data&, server::input_context_t&)
+void reset(Entity& entity, Counter& state, const Reset_Data&, server::input_context_t& context)
 {
+  const bool was_below_limit = state.value < state.limit;
   state.value = 0;
+  if (!was_below_limit && state.value < state.limit)
+    entities::emit_fell_below_limit(entity, Fell_Below_Limit_Data{}, context);
 }
 
 } // namespace entities

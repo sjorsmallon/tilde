@@ -127,6 +127,8 @@ per-object clipboard silently dropped.
 - `entities` — `map_entity_t{uid, shared_ptr<entities::Entity>}`, generated from `entities.def` (see below).
 - `geometry` — plain C++ values: `static_mesh_geometry_t` and `brush_geometry_t` in a `std::variant` (`shared/map_geometry.hpp`). Geometry is **not** an entity and has no schema: it is never networked, so it doesn't pay the schema system's blittable/fixed-size/memcmp constraints, and a subdivided face's grid is a `std::vector` with no subdivision cap. Two kinds is the end state — see "Map geometry" below.
 
+**A static mesh collides as ONE ORIENTED BOX, or as nothing.** `static_mesh_collision_box` is the one answer — the mesh asset's bounds under `scale` (absolute, so a mirror does not invert it), turned by `orientation` — and `get_bounds` is that box's world bound, so the BVH leaf, the pick and the collision cannot disagree. It was an axis-aligned box that ignored the rotation. `static_mesh_geometry_t::collides` (written as `collides` only when false) switches it off for a prop whose collision is authored as clip brushes (`emits_geometry` off) around it: a clip brush can only ADD, so without the flag an arch stays solid through its opening. `get_collision_pieces` answers none for such a mesh, which takes it out of the session BVH and the navmesh bake; the lightmap bake shadows by triangles and never asked. The editor still picks it as its box (`build_editor_bvh` asks for the box directly and does not report it as an object without collision), and a selected mesh draws the box — green when it collides, grey when it does not.
+
 The session copies the geometry list (`game_session_t::geometry`), so map and session never alias the same object. `Collision_Id.index` in the session BVH is an index into that copy.
 
 `map_t::attached_cvars` is the third thing a map holds: console lines the **server** runs when it loads the map (`apply_map_cvars`, before `build_session`), so game settings can be per-map. They are written as a `cvars` block whose properties are cvar name -> value, so one name appears at most once and file order is not preserved. They go through `execute_console_line`, which means a `@Mirrored` value replicates to clients for free and a bad line reports itself instead of being dropped. A map's settings are the MAP's for as long as it is loaded: `apply_map_cvars` records the id of every cvar a line actually set (`world_t::cvars_applied_by_map`), and `reset_state_in_preparation_for_new_map_load` puts exactly those back to their `cvars.def` defaults before the incoming map's list runs. It is a **named subset, not a group reset** — an operator's console and config settings are not the map's to undo — which is the one exception to "nothing resets the cvars at the top of `server_context_t`". `shared::revert_cvars_to_defaults(state, ids)` is the one byte-copy that does it; `revert_mirrored_cvars_to_defaults` is that same function over `cvars::mirrored_cvars()`, and the client's disconnect revert is the other caller.
@@ -377,12 +379,17 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 - **A SOUND EMITTER IS THE THIRD RECEIVER, and a one-shot is an EDGE.**
   `Sound_Emitter_Entity is Switchable, Playable`; `Play` bumps a `@Networked`
   `Playback::play_count` and the client plays once per change (the
-  `last_fire_tick` rule, seeded by the first snapshot). The switch is a mute
-  for a one-shot. `spatial` off is everyone's ears, never one player's.
+  `last_fire_tick` rule, seeded by the first snapshot). `Stop_Playing` is the
+  same edge on `stop_count` (`Stop` is the timer's; verbs share one namespace)
+  and silences every voice the emitter started, as does switching it off -- the
+  switch is a mute, of what is playing and of what would. Stop is applied before
+  play, so both in one tick is a restart. `Audio_System::play_*` return a
+  `voice_handle_t` of slot plus GENERATION, so a handle whose voice ended or
+  whose slot was recycled names nothing and `stop` on it is a no-op.
+  `spatial` off is everyone's ears, never one player's.
   Replicated exactly as the lights are, through its `@Networked` fields.
-  **Loops are not built**: the voice pool is fire-and-forget, a held voice
-  needs a handle it will not recycle; a `loop = true` emitter warns once and is
-  silent. `impact_sound_plan.md` §1 is the three-kinds rule and §6 the record.
+  **Loops are not built**, though the handle they were waiting on now exists; a
+  `loop = true` emitter warns once and is silent. `impact_sound_plan.md` §1 is the three-kinds rule and §6 the record.
 - **`sv_io_debug` AND `ent_fire` come BEFORE the first wired level, not after.** `sv_io_debug` exists for one line in particular — an emit whose sender has NO connections. "I walked into the trigger and nothing happened" has three causes (the signal never fired; it fired and nothing was wired; it was wired and the action was refused) and they are one symptom in the viewport, so the four states get four DIFFERENT lines: no bucket, a bucket with no row for that signal, a spent `fire_once` row, and the queue/dispatch pair for a row that ran. It is read DIRECTLY rather than latched the way `sv_event_debug` is — that latch exists because the GENERATED fire helpers must stay free of the cvar family, and every site here is hand-written server code already holding the context. `entity_io_label` prints the author's label AND the uid, always: a uid is what a row stores, so a line naming only a label names something no connection can be edited by.
 - **`ent_fire <uid> <Action> [field=value ...]` is SYNCHRONOUS, and the caller's body is the ACTIVATOR** — everything from code is synchronous, the console is code, and there is no emitting system for it to reenter. The action is a `string` parameter because `entity_action` is in the ENTITY family and a cvar may not reference one; the fence is what forces the `try_from_string` resolve. **The parameter tail is split by the ACTION'S FIELD TABLE, never by whitespace**: a `v3` writes as `"1 0 0"`, so whitespace cuts one value into three. A `name=` is a boundary only when `name` is a field the action declares, so `velocity=0 0 400 keep_velocity=true` is two pairs and needs no quoting. That parser is `src/server/entity_io_console.{hpp,cpp}` rather than the handler because getting it wrong sends the field's DEFAULT rather than failing — the silent kind of wrong — so it has to be pinnable with no server. `ent_fire` is also what earned `def_gen` an OPTIONAL rest parameter, whose only legal default is the empty string: a rest is a view into the console line, so any other default is text with nowhere to live.
 - `Entity_System::try_find(uid)` is the untyped resolve the drain needs; `get<T>` is the typed one.
@@ -992,7 +999,19 @@ aim turning from the step's open to its close** (`aim_sweep_of`,
 `subtick_step_t::view_at_end`), so an extra edge changes where the mouse is known
 to have been, never how many pushes the tick got: with one aim per step, `cs`
 gained ~40% more in any tick with one extra edge. Shots and every other use of
-the aim still take the step's opening aim. **A ground jump flies its step through
+the aim still take the step's opening aim.
+
+**`pm_acceleration instant` is Neon White's model, and speed from outside is BORROWED.**
+Under it the horizontal velocity IS the input, on the ground and in the air alike: one
+step to `pm_maxspeed`, no input is no velocity, no friction (`apply_friction` is skipped,
+not zeroed). Anything that writes a velocity from outside `player_move` -- the Dash, a
+pad, `Set_Velocity`, `Add_Velocity`, knockback -- calls `borrow_speed`, which arms
+`Movement::seconds_until_speed_returns_to_base_speed` (`@Networked`, so the replay restarts
+it; Quake 3's `PMF_TIME_KNOCKBACK`). While it runs the input steers the DIRECTION instantly
+and the speed is `max(current, pm_maxspeed)`; no input keeps the velocity as it was. A
+writer that forgets is erased the next step. A pad borrows for its flight time back to
+launch height, the dash for its row's `speed_return_seconds`, the rest for
+`pm_speed_return_seconds`. `quake` (the default) ignores the timer, so nothing else moved. **A ground jump flies its step through
 `my_air_move`** exactly as an air jump does, so gravity starts at the impulse:
 through `my_walk_move` it started a step late, and jump height depended on where
 in the tick the press landed. Invariance tests 8 and 11 to 15 guard all of it.
@@ -1079,7 +1098,7 @@ toggle lands where movers cannot.
   `SetCollisionEnabled`); refit and rebuild are for geometry that MOVES.
 - **THE BRUSH NAMES ITS OWNER and nothing names the brush.** `brush_geometry_t`
   and `static_mesh_geometry_t` carry an `owner_uid` written as an `owner` key
-  only when set; `Brush_Entity` (`@predicted is Switchable`) carries nothing but
+  only when set; `Geometry_Owner_Entity` (`@predicted is Switchable`) carries nothing but
   the switch. Source nests the solids inside the entity block, we keep a flat
   geometry list with uids, so the pointer runs this way and N brushes per entity
   costs no array. **Store one direction, derive the other**:
@@ -1102,7 +1121,7 @@ toggle lands where movers cannot.
   the atlas leaves its shadow when it disappears — and so does Jolt, so a physics
   crate still rests on a gate the player walks through.
 - **Editor: "Tie to entity" / "Untie" in the inspector**, either end untying it,
-  and deleting a `Brush_Entity` UNTIES rather than deletes: a brush is world
+  and deleting a `Geometry_Owner_Entity` UNTIES rather than deletes: a brush is world
   geometry with a pointer, not part of the entity. `bake_map_csg` and `stamp_map`
   remap the key through the same uid table as everything else; a brush tied
   outside a prefab is the "field that crosses" case and is cleared loudly.
@@ -1371,9 +1390,15 @@ outranks the poll, and skips the countdown. `enter_phase` is the one writer of `
 `Round_Ended(reason)` / `Match_Started` / `Round_Started` / `Match_Ended` beside
 the write, so a level can wire "when the round goes live, open the gates".
 Entering element 0 of the cycle is the round boundary: `round_number` bumps,
-waiting players are admitted, everyone respawns (checkpoints dropped), the
-damageables are reseeded and `objective_reached` clears -- which is what
-`Restart_Round` buys a speedrun. Game_Over's deadline writes
+`objective_reached` clears, the LEVEL IS RESTORED FROM THE MAP
+(`restore_level_from_map`: every entity but the players, their carried weapons and
+the rules entity is destroyed, the map's own come back under their map uids, and
+the wiring, `fire_once` spends, the action queue, trigger overlaps and movers are
+rebuilt -- replication needs nothing new, since a uid the frame keeps is a field
+write and one it drops is a destroy), then waiting players are admitted and
+everyone respawns (checkpoints dropped). That is what `Restart_Round` buys a
+speedrun, and it is deliberately not a map reload, which would reset the match to
+Warmup and put every client through a load. Game_Over's deadline writes
 `pending_map_change` (`next_map`, else the current map) once and holds; the load
 is serviced at the top of the next tick because it frees the world the FSM runs
 inside. `restart_round` / `end_match` are `@Server` commands that send the action
@@ -1382,7 +1407,12 @@ with the caller's body as activator; `binds.cfg` puts R on the first.
 **`speedrun` is a row**: `Win_Condition::Objective_Reached` (a goal volume's
 connection delivered `Complete_Level`, which sets `objective_reached` on the
 entity -- one flag, because a PARTY finishes a level) with
-`Spawn_Policy::Single_Fixed_Start` over a `{Live, Round_End}` cycle with
+`Spawn_Policy::Team_Markers` and `auto_assign_teams` (a runner's TEAM is what names
+their start marker -- the Red spawner is the first runner's and the Blu one the
+second's, at the join, the round boundary and the death respawn alike; team has no
+other reader in this mode, and `Single_Fixed_Start` is deleted, 2026-09-19) over a
+`{Freeze, Live, Round_End}` cycle (the
+freeze is the countdown at the start line; `Restart_Round` is also taken in it) with
 `max_rounds` 0, which is unbounded: the run ends in a Round_End that holds (the
 speedrun maps set `mp_round_end_seconds 0` and `mp_round_seconds 0`) until
 someone asks for `Restart_Round` or `End_Match`. A one-element cycle may not be

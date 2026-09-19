@@ -255,6 +255,7 @@ struct pipeline_key_t
   pipeline_state_t state;
   vertex_layout_t  vertex_layout = vertex_layout_t::static_mesh;
   fill_mode_t      fill          = fill_mode_t::solid;
+  bool             clock_wiped   = false;
 
   bool operator==(const pipeline_key_t &) const = default;
 };
@@ -268,7 +269,8 @@ struct pipeline_key_hash_t
     return (size_t)key.state.shader | ((size_t)key.state.blend_mode << 3) |
            ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 6) |
            ((size_t)key.state.depth_write << 7) | ((size_t)key.vertex_layout << 8) |
-           ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12);
+           ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12) |
+           ((size_t)key.clock_wiped << 20);
   }
 };
 
@@ -646,12 +648,15 @@ struct debug_push_constants_t
 // bytes exactly -- the guaranteed Vulkan minimum, with no headroom left.
 struct mesh_push_constants_t
 {
-  float model[16];        // 64 bytes
-  float color[4];         // 16 bytes -- material base colour * draw tint, a = alpha
-  float normal_mat_c0[4]; // 16 bytes (column 0 of the 3x3 normal matrix, w = 0)
-  float normal_mat_c1[4]; // 16 bytes
-  float normal_mat_c2[4]; // 16 bytes
-};                        // = 128 bytes total
+  float model[16];            // 64 bytes; the vertex shader derives the normal matrix from it
+  float color[4];             // 16 bytes -- material base colour * draw tint, a = alpha
+  float clock_wipe_center[4]; // 16 bytes -- xyz world, w = fraction wiped
+  float clock_wipe_axis_x[4]; // 16 bytes
+  float clock_wipe_axis_y[4]; // 16 bytes
+};                            // = 128 bytes total
+
+constexpr VkShaderStageFlags MESH_PUSH_STAGES =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
 static_assert(sizeof(mesh_push_constants_t) == 128,
               "the mesh push block is at the guaranteed Vulkan minimum; it cannot grow");
@@ -864,6 +869,8 @@ static VkPipeline            g_shadow_pipelines[2][2][2] = {}; // [skinned][cull
 // Where shadow_cutout.frag reads its threshold: past the model matrix, which is
 // all the shadow pass ever pushes.
 static constexpr uint32_t    SHADOW_CUTOFF_PUSH_OFFSET      = 64;
+static constexpr VkShaderStageFlags SHADOW_PUSH_STAGES =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 static VkDescriptorPool g_descriptor_pool = VK_NULL_HANDLE;
 static VkCommandPool g_command_pool = VK_NULL_HANDLE;
 static std::vector<VkFramebuffer> g_swapchain_framebuffers;
@@ -1890,6 +1897,7 @@ static VkPipeline create_ui_pipeline()
 
 static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
 {
+  FRAME_ZONE("create_mesh_pipeline");
   const bool skinned   = has_layout(key.vertex_layout, vertex_layout_t::skinned);
   const bool wireframe = key.fill == fill_mode_t::wireframe;
 
@@ -1998,15 +2006,17 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   {
     VkBool32 cutout;
     float    cutoff;
+    VkBool32 clock_wiped;
   } alpha_specialization{key.state.blend_mode == blend_mode_t::cutout ? VK_TRUE : VK_FALSE,
-                         key.state.alpha_cutoff / 255.0f};
+                         key.state.alpha_cutoff / 255.0f, key.clock_wiped ? VK_TRUE : VK_FALSE};
 
-  const VkSpecializationMapEntry alpha_entries[2] = {
+  const VkSpecializationMapEntry alpha_entries[3] = {
       {0, offsetof(alpha_specialization_t, cutout), sizeof(VkBool32)},
-      {1, offsetof(alpha_specialization_t, cutoff), sizeof(float)}};
+      {1, offsetof(alpha_specialization_t, cutoff), sizeof(float)},
+      {2, offsetof(alpha_specialization_t, clock_wiped), sizeof(VkBool32)}};
 
   VkSpecializationInfo alpha_info{};
-  alpha_info.mapEntryCount = 2;
+  alpha_info.mapEntryCount = 3;
   alpha_info.pMapEntries   = alpha_entries;
   alpha_info.dataSize      = sizeof(alpha_specialization);
   alpha_info.pData         = &alpha_specialization;
@@ -2561,7 +2571,7 @@ static void create_mesh_resources()
   set_layouts[PASS_DESCRIPTOR_SET] = g_pass_ds_layout;
 
   VkPushConstantRange push_range{};
-  push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_range.stageFlags = MESH_PUSH_STAGES;
   push_range.offset     = 0;
   push_range.size       = sizeof(mesh_push_constants_t);
 
@@ -4901,7 +4911,7 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
   {
     material_t material{};
     material.parameters.base_color = {source.diffuse_color.x, source.diffuse_color.y,
-                                      source.diffuse_color.z, 1.0f};
+                                      source.diffuse_color.z, source.opacity};
     material.parameters.maps = register_material_maps(source.maps, source.texture_path);
 
     // The same rule geometry_renderer.cpp applies to a brush face.
@@ -4920,6 +4930,8 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
       material.pipeline_state.shader = shader_t::blend;
 
     apply_alpha_mode(material.pipeline_state, source.maps.alpha_mode, source.maps.alpha_cutoff);
+    if (source.maps.double_sided)
+      material.pipeline_state.cull_mode = cull_mode_t::none;
 
     gpu_mesh.default_materials.push_back(register_material(material));
   }
@@ -5443,22 +5455,18 @@ static void create_shadow_resources()
     set_layouts[1 + layer] = g_material_ds_layout;
   set_layouts[PASS_DESCRIPTOR_SET] = g_shadow_pass_ds_layout;
 
-  // The vertex range is the mesh block; the cutout fragment stage reads the
-  // threshold out of bytes 64..68, which the shadow pass never pushes a model
-  // matrix over.
-  VkPushConstantRange push_ranges[2]{};
-  push_ranges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-  push_ranges[0].offset     = 0;
-  push_ranges[0].size       = sizeof(mesh_push_constants_t);
-  push_ranges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  push_ranges[1].offset     = SHADOW_CUTOFF_PUSH_OFFSET;
-  push_ranges[1].size       = sizeof(float);
+  // ONE range for both stages: the cutoff at bytes 64..68 sits inside the mesh
+  // block, and Vulkan requires every push over shared bytes to name every stage.
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = SHADOW_PUSH_STAGES;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(mesh_push_constants_t);
 
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
   layout_info.setLayoutCount         = PASS_DESCRIPTOR_SET + 1;
   layout_info.pSetLayouts            = set_layouts;
-  layout_info.pushConstantRangeCount = 2;
-  layout_info.pPushConstantRanges    = push_ranges;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
   if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_shadow_pipeline_layout) !=
       VK_SUCCESS)
   {
@@ -6202,22 +6210,18 @@ struct mesh_draw_item_t
 static std::vector<mesh_draw_item_t>           g_draw_items;
 static std::vector<frame_uniform_allocation_t> g_draw_skinning;
 
-// The inverse transpose of the transform's upper 3x3, which for a rotation plus
-// (possibly non-uniform) scale is the rotation with the scale divided out.
-// Normals are re-normalized in the shader, so per-column normalization is
-// enough and costs three square roots instead of a 3x3 inverse.
-static void pack_normal_matrix(const linalg::mat4f &transform, mesh_push_constants_t &out)
+static void pack_clock_wipe(const clock_wipe_t& clock_wipe, mesh_push_constants_t& out)
 {
-  float *columns[3] = {out.normal_mat_c0, out.normal_mat_c1, out.normal_mat_c2};
-  for (int column = 0; column < 3; ++column)
+  const linalg::vec3f* sources[3] = {&clock_wipe.center, &clock_wipe.axis_x, &clock_wipe.axis_y};
+  float* targets[3] = {out.clock_wipe_center, out.clock_wipe_axis_x, out.clock_wipe_axis_y};
+  for (int row = 0; row < 3; ++row)
   {
-    const linalg::vec3f axis = {transform[column].x, transform[column].y, transform[column].z};
-    const linalg::vec3f unit = linalg::normalize(axis);
-    columns[column][0]       = unit.x;
-    columns[column][1]       = unit.y;
-    columns[column][2]       = unit.z;
-    columns[column][3]       = 0.0f;
+    targets[row][0] = sources[row]->x;
+    targets[row][1] = sources[row]->y;
+    targets[row][2] = sources[row]->z;
+    targets[row][3] = 0.0f;
   }
+  out.clock_wipe_center[3] = clock_wipe.wiped;
 }
 
 // Per pass, so a second viewport with its own camera gets its own block for free.
@@ -6739,7 +6743,7 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
                               &skinning[draw_index].dynamic_offset);
     }
     vkCmdBindIndexBuffer(cmd, mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdPushConstants(cmd, g_shadow_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+    vkCmdPushConstants(cmd, g_shadow_pipeline_layout, SHADOW_PUSH_STAGES, 0,
                        sizeof(draw.transform), &draw.transform);
 
     for (const gpu_submesh_t &submesh : mesh.submeshes)
@@ -6773,7 +6777,7 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout, 0,
                                 1, &gpu_material.material_set, 0, nullptr);
         const float cutoff = state.alpha_cutoff / 255.0f;
-        vkCmdPushConstants(cmd, g_shadow_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+        vkCmdPushConstants(cmd, g_shadow_pipeline_layout, SHADOW_PUSH_STAGES,
                            SHADOW_CUTOFF_PUSH_OFFSET, sizeof(cutoff), &cutoff);
       }
       vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);
@@ -6827,7 +6831,8 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
         material = g_default_material;
 
       const uint32_t pipeline_id = resolve_pipeline_id(
-          {g_materials[material.index].pipeline_state, mesh.layout, draw.fill});
+          {g_materials[material.index].pipeline_state, mesh.layout, draw.fill,
+           draw.clock_wipe.armed});
       if (pipeline_id == UINT32_MAX)
         continue;
 
@@ -6932,10 +6937,9 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
     push.color[1] = base.y * (draw.tint.g / 255.0f);
     push.color[2] = base.z * (draw.tint.b / 255.0f);
     push.color[3] = base.w * (draw.tint.a / 255.0f);
-    pack_normal_matrix(draw.transform, push);
+    pack_clock_wipe(draw.clock_wipe, push);
 
-    vkCmdPushConstants(cmd, g_mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
-                       &push);
+    vkCmdPushConstants(cmd, g_mesh_pipeline_layout, MESH_PUSH_STAGES, 0, sizeof(push), &push);
     vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);
   }
 }
@@ -7059,9 +7063,7 @@ static void record_outline_mask_draws(VkCommandBuffer cmd, const view_pass_t& pa
 
       mesh_push_constants_t push{};
       memcpy(push.model, &draw.transform, sizeof(push.model));
-      pack_normal_matrix(draw.transform, push);
-      vkCmdPushConstants(cmd, g_mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
-                         &push);
+      vkCmdPushConstants(cmd, g_mesh_pipeline_layout, MESH_PUSH_STAGES, 0, sizeof(push), &push);
 
       for (const gpu_submesh_t& submesh : mesh.submeshes)
         vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);

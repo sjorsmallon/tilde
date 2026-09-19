@@ -17,13 +17,11 @@ struct Rocket_Entity : Entity
 
   Rocket_Entity() { type = entity_type::Rocket_Entity; }
 
-  Weapon weapon_id = Weapon::Rocket_Launcher;
-  linalg::vec3f velocity = {};
+  Projectile projectile = {.weapon_id = Weapon::Rocket_Launcher};
   float lifetime = 5.0f;
   float damage_amount = 50.0f;
   float damage_radius = 120.0f;
   float knockback_force = 600.0f;
-  shared::entity_uid_t owner_id = {};
   float collision_radius = 12.0f;
   Render render = {.mesh = assets::mesh_asset::rocket};
 };

@@ -351,21 +351,23 @@ int main()
     shooter.client_slot_index            = 0;
     shooter.inventory.active_slot = entities::Inventory_Slot::Primary;
 
-    // One uid per WEAPON, placed in the slot its definition names -- the same
-    // route grant_default_inventory takes, so adding a weapon to the .def
-    // extends this rather than leaving a slot holding uid 0.
-    for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
-      shooter.inventory.weapons[shared::get_weapon_definition((entities::Weapon)index).slot] =
-          20 + index;
+    // One weapon per slot: several weapons may name one slot, and a slot holds one.
+    constexpr Array<entities::Weapon, 5> carried_weapons = {{
+        entities::Weapon::Knife,
+        entities::Weapon::Scout,
+        entities::Weapon::Rocket_Launcher,
+        entities::Weapon::Dash,
+        entities::Weapon::Swapper,
+    }};
+    for (const entities::Weapon weapon : carried_weapons)
+      shooter.inventory.weapons[shared::get_weapon_definition(weapon).slot] =
+          20 + (uint32_t)weapon;
 
     network::snapshot_frame_t server_frame;
     server_frame.tick = 1;
     put(server_frame, shooter);
-    // Walked by WEAPON, placed by SLOT: each definition names where it is held,
-    // which is the same route grant_default_inventory takes.
-    for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
+    for (const entities::Weapon weapon : carried_weapons)
     {
-      const entities::Weapon             weapon     = (entities::Weapon)index;
       const shared::weapon_definition_t& definition = shared::get_weapon_definition(weapon);
 
       entities::Weapon_Entity carried;
@@ -380,8 +382,8 @@ int main()
     transmit_snapshot(server_frame, nullptr, client_frame, &record_count);
 
     // The player plus one entity per carried weapon.
-    assert(record_count == 1 + enum_traits<entities::Weapon>::count);
-    assert(count_of<entities::Weapon_Entity>(client_frame) == enum_traits<entities::Weapon>::count);
+    assert(record_count == 1 + carried_weapons.size());
+    assert(count_of<entities::Weapon_Entity>(client_frame) == carried_weapons.size());
 
     // The client resolves the same way the server does: one index into the
     // replicated forward list, never a scan for a weapon claiming this owner.

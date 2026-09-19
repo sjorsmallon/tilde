@@ -1,0 +1,297 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "needy_timed_platform.prefab"
+}
+materials
+{
+  "0" ""
+  "1" "resources/textures/glass_pink"
+}
+connections
+{
+  connection
+  {
+    "sender" "55"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "62"
+    "action" "Play"
+  }
+  connection
+  {
+    "sender" "55"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "63"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "64"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "55"
+    "action" "Disable"
+  }
+  connection
+  {
+    "sender" "64"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "56"
+    "action" "Disable"
+  }
+  connection
+  {
+    "sender" "55"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "64"
+    "action" "Start"
+  }
+  connection
+  {
+    "sender" "63"
+    "signal" "Fell_Below_Limit"
+    "target_kind" "Uid"
+    "target" "64"
+    "action" "Resume"
+  }
+  connection
+  {
+    "sender" "64"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "66"
+    "action" "Play"
+  }
+  connection
+  {
+    "sender" "55"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "63"
+    "action" "Add"
+    override
+    {
+      "amount" "-1"
+    }
+  }
+  connection
+  {
+    "sender" "63"
+    "signal" "Limit_Reached"
+    "target_kind" "Uid"
+    "target" "64"
+    "action" "Pause"
+  }
+  connection
+  {
+    "sender" "64"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "62"
+    "action" "Disable"
+  }
+}
+groups
+{
+  group
+  {
+    "_uid" "59"
+    "name" "disappearing_platform_without_light"
+    member
+    {
+      "uid" "55"
+    }
+    member
+    {
+      "uid" "56"
+    }
+    member
+    {
+      "uid" "57"
+    }
+  }
+}
+brush
+{
+  "_uid" "57"
+  "vertices" "11.59375 0 -308.286255, 11.59375 0 266.024658, 11.59375 128 -308.286255, 11.59375 128 266.024658, 467.4375 0 -308.286255, 467.4375 0 266.024658, 467.4375 128 -308.286255, 467.4375 128 266.024658"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  "owner" "56"
+  face
+  {
+    "normal" "-1 0 0"
+    "distance" "-11.59375"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1987.94324"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0.99999994 -0"
+    "distance" "0"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "3970.98584"
+    "v_shift" "-2071.41357"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 -0.99999994"
+    "distance" "308.286133"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "3970.98584"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0 0.99999994"
+    "distance" "266.024658"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "3970.98584"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0.99999994 0"
+    "distance" "128"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "3970.98584"
+    "v_shift" "-2071.41357"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 -0 -0"
+    "distance" "467.4375"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1987.94324"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "55"
+  "position" "240.39258 68.38855 -40.586548"
+  "orientation" "0.1305262 0 0 0.9914449"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "227.92188 64 287.15625"
+}
+entity
+{
+  "classname" "geometry_owner_entity"
+  "_uid" "56"
+  "position" "495.51562 479.06628 -29.650757"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+}
+entity
+{
+  "classname" "sound_emitter_entity"
+  "_uid" "62"
+  "position" "-495.51562 1468.2627 292.92725"
+  "orientation" "0 0 0 1"
+  "name" "Ticker"
+  "switch_state.value" "true"
+  "sound" "timer_egg_timer"
+  "volume" "1"
+  "loop" "false"
+  "spatial" "false"
+  "range" "1024"
+}
+entity
+{
+  "classname" "logic_counter_entity"
+  "_uid" "63"
+  "position" "144.48438 1024 87.41345"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "counter.value" "2"
+  "counter.limit" "0"
+}
+entity
+{
+  "classname" "logic_timer_entity"
+  "_uid" "64"
+  "position" "16.484375 1152 215.41345"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "timer.duration_seconds" "2"
+  "timer.repeat" "false"
+}
+entity
+{
+  "classname" "sound_emitter_entity"
+  "_uid" "66"
+  "position" "-111.515625 1174.9751 327.2428"
+  "orientation" "0 0 0 1"
+  "name" "Ding"
+  "switch_state.value" "true"
+  "sound" "timer_over_ding"
+  "volume" "1"
+  "loop" "false"
+  "spatial" "false"
+  "range" "1024"
+}

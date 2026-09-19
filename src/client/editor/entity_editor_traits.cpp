@@ -433,6 +433,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type = entity_type::Weapon_Entity}, // the render component draws it
     {.type = entity_type::Rocket_Entity}, // runtime only
+    {.type = entity_type::Bubble_Entity}, // runtime only
     {.type = entity_type::Physics_Body_Entity},
 
     {.type = entity_type::Damageable_Entity, .draw_diagram = &box_volume_diagram},
@@ -472,9 +473,9 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type = entity_type::Game_Rules_Entity, .icon = assets::texture_asset::game_rules},
     {.type = entity_type::Logic_Counter_Entity, .icon = assets::texture_asset::counter},
-    {.type = entity_type::Brush_Entity, .icon = assets::texture_asset::wall_hammer},
+    {.type = entity_type::Geometry_Owner_Entity, .icon = assets::texture_asset::wall_hammer},
     {.type = entity_type::Ping_Marker_Entity}, // runtime only; the render component draws it
-    {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::timer},
+    {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::icon_timer},
     {.type = entity_type::Path_Node_Entity, .color = colors::green},
     {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = assets::texture_asset::move},
 }};

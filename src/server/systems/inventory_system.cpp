@@ -21,8 +21,7 @@ static constexpr float THROW_SPEED                  = 400.f;
 static constexpr float THROW_UPWARD_SPEED           = 150.f;
 static constexpr float THROW_PICKUP_DELAY_SECONDS   = 0.75f;
 
-// The one place a weapon enters a hand. Everything else -- the default grant
-// below, and every pickup or card-draw that follows it -- goes through here, so
+// The one place a weapon enters a hand. Every pickup or card-draw goes through here, so
 // "which slot does this land in" is answered from the weapon's own definition
 // once rather than at each site that hands one out.
 //
@@ -60,38 +59,6 @@ static constexpr float THROW_PICKUP_DELAY_SECONDS   = 0.75f;
 
   inventory.weapons[definition.slot] = weapon_uid;
   return weapon_uid;
-}
-
-void grant_default_inventory(shared::game_session_t& session, shared::entity_uid_t player_uid)
-{
-  // Resolved BEFORE the spawns now, which is safe for the same reason the old
-  // comment said it was not worth relying on -- and it is relied on here
-  // deliberately, because try_grant_weapon has to write the slot as it goes.
-  // The pools are per type, so pushing Weapon_Entity values cannot move a
-  // Player_Entity; entity_system_def.md is where that is guaranteed rather than
-  // incidental.
-  entities::Player_Entity* player = session.entity_system.get<entities::Player_Entity>(player_uid);
-  if (player == nullptr)
-  {
-    log_error("grant_default_inventory: no player entity {} to give an inventory to", player_uid);
-    return;
-  }
-
-  // Every weapon type, because there is no buy phase and no pickup path yet:
-  // "what a player carries" is currently a constant. When that stops being
-  // true this is the one function that changes -- try_grant_weapon above is
-  // already the shape a pickup wants.
-  //
-  // Each lands in the slot its definition names, so this loop no longer decides
-  // anything about placement. Two weapons naming one slot would leave the later
-  // one holding it, which is a loadout statement rather than a bug.
-  for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
-    (void)spawn_weapon_into_slot(session, *player, player->inventory, (entities::Weapon)index,
-                                 entities::Damage_Type::Normal);
-
-  // The hand a player comes up in. Named rather than left at the field default
-  // so a change to the .def default cannot silently re-arm every spawn.
-  player->inventory.active_slot = entities::Inventory_Slot::Melee;
 }
 
 shared::entity_uid_t try_grant_weapon(server_context_t&     context,

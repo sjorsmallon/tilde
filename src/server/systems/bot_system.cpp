@@ -1,9 +1,11 @@
 #include "../../shared/player_constants.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "bot_system.hpp"
+#include "bubble_system.hpp"
 #include "inventory_system.hpp"
 
 #include "../entity_lifecycle.hpp"
+#include "../weapon_fire.hpp"
 #include "respawn_system.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
@@ -36,7 +38,6 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->client_slot_index = slot;
     bot->team_allegiance = marker.team_allegiance;
     bot->display_name.set(std::format("Bot {}", slot).c_str());
-    grant_default_inventory(session, bot_uid);
     place_player_at_spawn(session, *bot, marker);
 
     register_kinematic_capsule(physics,
@@ -146,6 +147,7 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
     fx.normal          = linalg::normalize(new_vel);
     fx.attached_entity = bot_ent.entity_id;
     shared::fire_jump_pad_launch(context.outgoing.effects, fx);
+    pop_bubble(context, move_events.pad_uid);
   }
 
   set_kinematic_pose(physics, bot_ent.entity_id,
@@ -347,22 +349,9 @@ void update_bots(server_context_t &context,
 
           // bot_ent and target stay valid across this spawn: it lands in the
           // Rocket_Entity pool, not the Player_Entity one they point into.
-          const shared::entity_uid_t rocket_uid =
-              session.entity_system.spawn<entities::Rocket_Entity>();
-          entities::Rocket_Entity *rocket =
-              session.entity_system.get<entities::Rocket_Entity>(rocket_uid);
-          if (rocket)
-          {
-            // A bot's rocket is a player's rocket. It used to restate lifetime,
-            // damage, both radii and the hitbox here, which is how bot rockets
-            // came to live 5 seconds while player rockets lived 20.
-            const shared::weapon_definition_t& launcher =
-                shared::get_weapon_definition(entities::Weapon::Rocket_Launcher);
-            rocket->position  = eye;
-            rocket->velocity  = aim_dir * launcher.projectile.speed;
-            rocket->owner_id  = bot_ent->entity_id;
-            rocket->weapon_id = launcher.weapon;
-          }
+          spawn_projectile(context, bot_ent->entity_id,
+                           shared::get_weapon_definition(entities::Weapon::Rocket_Launcher), eye,
+                           aim_dir);
         }
         break;
       }

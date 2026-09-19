@@ -14,7 +14,7 @@ Entity :: base {
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum { Red, Blu, Free_For_All }
 
-Weapon :: enum { Knife, Scout, Rocket_Launcher, Dash, Swapper }
+Weapon :: enum { Knife, Scout, Rocket_Launcher, Dash, Swapper, Hook, Bubble}
 Fire_Resolution :: enum { Hitscan, Projectile, Self_Impulse }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -54,6 +54,15 @@ Enabled :: component {
 
 Playback :: component {
     play_count: u32 = 0                 @Networked
+    stop_count: u32 = 0                 @Networked
+}
+
+// The flight every fired entity shares; what happens on contact is the type's own system.
+Projectile :: component {
+    // The WEAPON_DEFINITIONS row that fired it: its projectile_t is how this flies.
+    weapon_id: Weapon = .Rocket_Launcher @Networked
+    velocity:  v3                        @Networked
+    owner_uid: entity
 }
 
 Health :: component {
@@ -114,8 +123,9 @@ Inventory :: component {
 Timer_State :: component {
     duration_seconds: f32 = 1.0   @Editable
     repeat: bool = false          @Editable
-    running: bool = false
-    deadline_tick: u32 = 0
+    running: bool = false                 @Networked
+    deadline_tick: u32 = 0                @Networked
+    paused_remaining_ticks: u32 = 0       @Networked
 }
 
 // The match itself. `requested` is the one field a handler writes; the rules
@@ -178,7 +188,7 @@ Switchable :: trait requires Enabled {
 }
 
 Playable :: trait requires Playback {
-    accepts Play()
+    accepts Play(), Stop_Playing()
 }
 
 Colorable :: trait {
@@ -188,7 +198,7 @@ Colorable :: trait {
 
 Counting :: trait requires Counter {
     accepts Add(amount: i32), Reset()
-    emits Limit_Reached()
+    emits Limit_Reached(), Fell_Below_Limit()
 }
 
 Touchable :: trait requires Box_Volume, Enabled {
@@ -220,7 +230,7 @@ Objective :: trait {
 }
 
 Timer :: trait requires Timer_State {
-    accepts Start(), Stop(), Restart()
+    accepts Start(), Stop(), Restart(), Pause(), Resume()
     emits   Elapsed()
 }
 
@@ -327,16 +337,30 @@ Weapon_Entity :: entity {
 }
 
 Rocket_Entity :: entity @runtime_only {
-    // The WEAPON_DEFINITIONS row that fired it: its projectile_t is how this flies.
-    weapon_id:       Weapon = .Rocket_Launcher @Networked
-    velocity:        v3                 @Networked
+    projectile: Projectile = { weapon_id = .Rocket_Launcher }
     lifetime: f32 = 5.0
     damage_amount: f32 = 50.0
     damage_radius: f32 = 120.0
     knockback_force: f32 = 600.0
-    owner_id:        entity
     collision_radius: f32 = 12.0        @Networked
     render:          Render = { mesh = .rocket}
+}
+
+// Its position is a pure function of the tick (shared/bubble_flight.hpp), so a bounce is predicted in flight too.
+Bubble_Entity :: entity @runtime_only @predicted {
+    // projectile.velocity is the LAUNCH velocity and never changes.
+    projectile:      Projectile = { weapon_id = .Bubble }
+    launch_position: v3                 @Networked
+    // 0 until the bubble system latches the launch, in the tick it was fired.
+    launch_tick:     u32                @Networked
+    flight_ticks:    u32                @Networked
+    flight_seconds:  f32 = 1.0
+    rest_seconds:    f32 = 8.0
+    // Bounces nobody until it is clear of the muzzle, or the shooter pops it at once.
+    arm_seconds:     f32 = 0.2
+    radius:          f32 = 32.0
+    bounce_speed:    f32 = 700.0
+    render:          Render = { mesh = .Sphere, scale = {64, 64, 64} }
 }
 
 // Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
@@ -481,8 +505,11 @@ Logic_Counter_Entity :: entity is Counting {
 // step -- every leaf test consults it -- rather than after it, which is what
 // separates this from a jump pad and why it feeds the disabled set rather than
 // the volume list.
-Brush_Entity :: entity @predicted is Switchable {
+// `wipe_timer` set means the tied brushes clock-wipe as that timer runs, about
+// their own bounds centre, in this entity's orientation.
+Geometry_Owner_Entity :: entity @predicted is Switchable {
     switch_state: Enabled
+    wipe_timer: entity              @Editable
 }
 
 // A placeholder ping marker: middle mouse raycasts, this lands where the ray

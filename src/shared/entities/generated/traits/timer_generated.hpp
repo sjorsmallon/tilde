@@ -47,6 +47,18 @@ struct Restart_Data
 static_assert(std::is_trivially_copyable_v<Restart_Data>,
               "a verb payload rides a union in a map row and a queue record");
 
+struct Pause_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<Pause_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
+struct Resume_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<Resume_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
 struct Elapsed_Data
 {
 };
@@ -64,6 +76,8 @@ static_assert(std::is_trivially_copyable_v<Elapsed_Data>,
 void start(Entity&, Timer_State&, const Start_Data&, input_context_t&);
 void stop(Entity&, Timer_State&, const Stop_Data&, input_context_t&);
 void restart(Entity&, Timer_State&, const Restart_Data&, input_context_t&);
+void pause(Entity&, Timer_State&, const Pause_Data&, input_context_t&);
+void resume(Entity&, Timer_State&, const Resume_Data&, input_context_t&);
 
 // --- the dynamic half -----------------------------------------------
 //
@@ -77,6 +91,10 @@ void stop(Entity&, const Stop_Data&, input_context_t&);
 [[nodiscard]] bool try_stop(Entity&, const Stop_Data&, input_context_t&);
 void restart(Entity&, const Restart_Data&, input_context_t&);
 [[nodiscard]] bool try_restart(Entity&, const Restart_Data&, input_context_t&);
+void pause(Entity&, const Pause_Data&, input_context_t&);
+[[nodiscard]] bool try_pause(Entity&, const Pause_Data&, input_context_t&);
+void resume(Entity&, const Resume_Data&, input_context_t&);
+[[nodiscard]] bool try_resume(Entity&, const Resume_Data&, input_context_t&);
 
 // --- what it ANNOUNCES ----------------------------------------------
 //

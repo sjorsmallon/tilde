@@ -9,6 +9,7 @@
 #include "direct_light.glsl"
 #include "reflection.glsl"
 #include "alpha_cutout.glsl"
+#include "clock_wipe.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -38,6 +39,7 @@ layout(set = 2, binding = 0) uniform sampler2D blendAlbedo1;
 void main() {
     float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
     discard_below_alpha_cutoff(surfaceAlpha);
+    discard_inside_clock_wipe(fragWorldPosition);
 
     vec3 N = normalize(fragWorldNormal);
 

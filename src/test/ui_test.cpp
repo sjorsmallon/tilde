@@ -206,6 +206,10 @@ void test_measure_text()
   // Unbaked bytes contribute nothing rather than tripping an out-of-range read.
   assert(measure_text(font, font_size_t::medium, "a\tb").x == measured.x);
 
+  // Digits are tabular: a ticking timer keeps its width.
+  assert(measure_text(font, font_size_t::medium, "11:11.11").x ==
+         measure_text(font, font_size_t::medium, "08:40.88").x);
+
   std::cout << "test_measure_text passed" << std::endl;
 }
 

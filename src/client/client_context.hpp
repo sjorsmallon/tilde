@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/audio_system.hpp"
 #include "remote_interpolation.hpp"
 #include "replay_playback.hpp"
 
@@ -458,6 +459,9 @@ struct replication_t
 
   // Looping emitters are not built; said once per connection rather than per tick.
   bool loop_emitters_unbuilt_reported = false;
+
+  // The voices each emitter started, so Stop_Playing has something to name.
+  std::unordered_map<shared::entity_uid_t, std::vector<client::voice_handle_t>> emitter_voices;
 
   // Replaced wholesale by each S2C_BotDebug packet.
   std::vector<bot_debug_entry_t> bot_debug_entries;
