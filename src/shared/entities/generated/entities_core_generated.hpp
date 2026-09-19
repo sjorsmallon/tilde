@@ -259,29 +259,30 @@ enum class entity_type : uint16_t
   Player_Entity = 3,
   Weapon_Entity = 4,
   Rocket_Entity = 5,
-  Bubble_Entity = 6,
-  Physics_Body_Entity = 7,
-  Damageable_Entity = 8,
-  Particle_Emitter_Entity = 9,
-  Sound_Emitter_Entity = 10,
-  Point_Light_Entity = 11,
-  Spot_Light_Entity = 12,
-  Directional_Light_Entity = 13,
-  Trigger_Volume_Entity = 14,
-  Jump_Pad_Entity = 15,
-  Reflection_Volume_Entity = 16,
-  Game_Rules_Entity = 17,
-  Logic_Counter_Entity = 18,
-  Geometry_Owner_Entity = 19,
-  Ping_Marker_Entity = 20,
-  Logic_Timer_Entity = 21,
-  Path_Node_Entity = 22,
-  Mover_Entity = 23,
+  Hook_Entity = 6,
+  Bubble_Entity = 7,
+  Physics_Body_Entity = 8,
+  Damageable_Entity = 9,
+  Particle_Emitter_Entity = 10,
+  Sound_Emitter_Entity = 11,
+  Point_Light_Entity = 12,
+  Spot_Light_Entity = 13,
+  Directional_Light_Entity = 14,
+  Trigger_Volume_Entity = 15,
+  Jump_Pad_Entity = 16,
+  Reflection_Volume_Entity = 17,
+  Game_Rules_Entity = 18,
+  Logic_Counter_Entity = 19,
+  Geometry_Owner_Entity = 20,
+  Ping_Marker_Entity = 21,
+  Logic_Timer_Entity = 22,
+  Path_Node_Entity = 23,
+  Mover_Entity = 24,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 24;
+constexpr uint32_t ENTITY_TYPE_COUNT = 25;
 
 enum class component_type : uint16_t
 {

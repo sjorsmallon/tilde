@@ -65,7 +65,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
               .uid             = bubble.entity_id,
               .kind            = movement_volume_kind_t::Bounce,
               .bounds          = {.min = center - reach, .max = center + reach},
-              .enabled         = bubble.launch_tick != 0 &&
+              .enabled         = bubble.launch_tick != 0 && bubble.popped_tick == 0 &&
                                  settings.tick >= bubble.launch_tick + arm_ticks,
               .launch_velocity = {0.f, bubble.bounce_speed, 0.f},
           });
@@ -85,6 +85,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Player_Entity:
       case entities::entity_type::Weapon_Entity:
       case entities::entity_type::Rocket_Entity:
+      case entities::entity_type::Hook_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:
       case entities::entity_type::Particle_Emitter_Entity:

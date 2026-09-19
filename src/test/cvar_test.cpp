@@ -497,12 +497,17 @@ void test_console_forwarding()
               "the command line forwards untokenized");
   check(g_spawn_bot.count == 0, "a forwarded command runs nothing locally");
 
-  // A READ is still local: both sides compile the same table, so printing the
-  // local value costs no round trip. Only a WRITE has to respect ownership.
+  // A @Mirrored READ is local, since the mirror keeps the copy fresh.
   g_forward_count = 0;
   check(run(state, table, "pm_maxspeed", &reply) == cvars::console_result_t::ok,
-        "a bare read of a server-owned cvar stays local");
+        "a bare read of a @Mirrored cvar stays local");
   check(g_forward_count == 0, "the bare read forwarded nothing");
+
+  // A @Server VALUE lives in the server's process alone: a local read answers with this
+  // process's own untouched default, which is how next_map read back empty after a set.
+  check(run(state, table, "next_map", &reply) == cvars::console_result_t::forwarded,
+        "a bare read of a @Server cvar asks the server");
+  check_equal(g_forwarded_line, "next_map", "the bare name is the line that goes upstream");
 
   // @Client and unflagged names are ours even while connected.
   check(run(state, table, "cl_timescale 2", &reply) == cvars::console_result_t::ok,

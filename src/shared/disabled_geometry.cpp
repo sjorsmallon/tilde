@@ -43,6 +43,7 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       case entities::entity_type::Player_Entity:
       case entities::entity_type::Weapon_Entity:
       case entities::entity_type::Rocket_Entity:
+      case entities::entity_type::Hook_Entity:
       case entities::entity_type::Bubble_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:

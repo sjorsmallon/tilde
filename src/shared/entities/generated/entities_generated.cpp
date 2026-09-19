@@ -1247,6 +1247,90 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Hook_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Hook_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Hook_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Hook_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Hook_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "projectile",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Hook_Entity, projectile),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::projectile),
+   .flags = 0u,
+   .component_id = 3,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "lifetime",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Hook_Entity, lifetime),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::lifetime),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "collision_radius",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Hook_Entity, collision_radius),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::collision_radius),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "pull_speed",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Hook_Entity, pull_speed),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::pull_speed),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Hook_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::render),
+   .flags = 0u,
+   .component_id = 7,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t Bubble_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
@@ -1316,6 +1400,33 @@ constexpr field_info_t Bubble_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Bubble_Entity, flight_ticks),
    .size_in_bytes = (uint32_t)sizeof(Bubble_Entity::flight_ticks),
    .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "popped_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Bubble_Entity, popped_tick),
+   .size_in_bytes = (uint32_t)sizeof(Bubble_Entity::popped_tick),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "popped_by",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Bubble_Entity, popped_by),
+   .size_in_bytes = (uint32_t)sizeof(Bubble_Entity::popped_by),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "linger_seconds",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Bubble_Entity, linger_seconds),
+   .size_in_bytes = (uint32_t)sizeof(Bubble_Entity::linger_seconds),
+   .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -2646,6 +2757,7 @@ Entity* construct_Player_Spectate_Entity(void* memory) { return new (memory) Pla
 Entity* construct_Player_Entity(void* memory) { return new (memory) Player_Entity(); }
 Entity* construct_Weapon_Entity(void* memory) { return new (memory) Weapon_Entity(); }
 Entity* construct_Rocket_Entity(void* memory) { return new (memory) Rocket_Entity(); }
+Entity* construct_Hook_Entity(void* memory) { return new (memory) Hook_Entity(); }
 Entity* construct_Bubble_Entity(void* memory) { return new (memory) Bubble_Entity(); }
 Entity* construct_Physics_Body_Entity(void* memory) { return new (memory) Physics_Body_Entity(); }
 Entity* construct_Damageable_Entity(void* memory) { return new (memory) Damageable_Entity(); }
@@ -2670,6 +2782,7 @@ Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity
 Entity* as_base_Player_Entity(void* memory) { return static_cast<Entity*>((Player_Entity*)memory); }
 Entity* as_base_Weapon_Entity(void* memory) { return static_cast<Entity*>((Weapon_Entity*)memory); }
 Entity* as_base_Rocket_Entity(void* memory) { return static_cast<Entity*>((Rocket_Entity*)memory); }
+Entity* as_base_Hook_Entity(void* memory) { return static_cast<Entity*>((Hook_Entity*)memory); }
 Entity* as_base_Bubble_Entity(void* memory) { return static_cast<Entity*>((Bubble_Entity*)memory); }
 Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>((Physics_Body_Entity*)memory); }
 Entity* as_base_Damageable_Entity(void* memory) { return static_cast<Entity*>((Damageable_Entity*)memory); }
@@ -2696,7 +2809,8 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_entity", "Player", {Player_Entity_FIELDS, 26}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 1680u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 128u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 136u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
-  {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 14}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 136u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
+  {"hook_entity", "Hook", {Hook_Entity_FIELDS, 9}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 136u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
+  {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 17}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 136u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 128u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 145u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 22}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, false, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
@@ -2723,6 +2837,7 @@ constexpr int32_t COMPONENT_OFFSETS[][14] = {
   {-1, -1, -1, -1, (int32_t)offsetof(Player_Entity, health), -1, -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory), -1, -1, -1}, // Player_Entity
   {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1, -1, -1, -1}, // Weapon_Entity
   {-1, -1, -1, (int32_t)offsetof(Rocket_Entity, projectile), -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1, -1, -1, -1}, // Rocket_Entity
+  {-1, -1, -1, (int32_t)offsetof(Hook_Entity, projectile), -1, -1, -1, (int32_t)offsetof(Hook_Entity, render), -1, -1, -1, -1, -1, -1}, // Hook_Entity
   {-1, -1, -1, (int32_t)offsetof(Bubble_Entity, projectile), -1, -1, -1, (int32_t)offsetof(Bubble_Entity, render), -1, -1, -1, -1, -1, -1}, // Bubble_Entity
   {-1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1, -1, -1, -1}, // Physics_Body_Entity
   {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1, -1, -1, -1}, // Damageable_Entity
@@ -2766,11 +2881,12 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Mover_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 17;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 18;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
   entity_type::Rocket_Entity,
+  entity_type::Hook_Entity,
   entity_type::Bubble_Entity,
   entity_type::Physics_Body_Entity,
   entity_type::Damageable_Entity,
@@ -3163,6 +3279,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Player_Entity: return new Player_Entity();
     case entity_type::Weapon_Entity: return new Weapon_Entity();
     case entity_type::Rocket_Entity: return new Rocket_Entity();
+    case entity_type::Hook_Entity: return new Hook_Entity();
     case entity_type::Bubble_Entity: return new Bubble_Entity();
     case entity_type::Physics_Body_Entity: return new Physics_Body_Entity();
     case entity_type::Damageable_Entity: return new Damageable_Entity();
@@ -3207,6 +3324,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Player_Entity: delete static_cast<Player_Entity*>(entity); return;
     case entity_type::Weapon_Entity: delete static_cast<Weapon_Entity*>(entity); return;
     case entity_type::Rocket_Entity: delete static_cast<Rocket_Entity*>(entity); return;
+    case entity_type::Hook_Entity: delete static_cast<Hook_Entity*>(entity); return;
     case entity_type::Bubble_Entity: delete static_cast<Bubble_Entity*>(entity); return;
     case entity_type::Physics_Body_Entity: delete static_cast<Physics_Body_Entity*>(entity); return;
     case entity_type::Damageable_Entity: delete static_cast<Damageable_Entity*>(entity); return;
@@ -3239,6 +3357,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xb5d8f055u;
+const uint32_t SCHEMA_HASH = 0xd1be9e2bu;
 
 } // namespace entities

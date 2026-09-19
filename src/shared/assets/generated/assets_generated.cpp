@@ -14,6 +14,8 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Duck", "resources/glb/Duck.glb"},
   {"GlassBrokenWindow", "resources/glb/GlassBrokenWindow.glb"},
   {"damaged_helmet", "resources/glb/damaged_helmet.glb"},
+  {"meat_hook_1k", "resources/glb/meat_hook_1k.glb"},
+  {"meat_hook_4k", "resources/glb/meat_hook_4k.glb"},
   {"rocket", "resources/glb/rocket.glb"},
   {"shattered_glass", "resources/glb/shattered_glass.glb"},
   {"stopwatch", "resources/glb/stopwatch.glb"},
@@ -61,6 +63,7 @@ constexpr asset_info_t texture_asset_MANIFEST[] = {
 constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"Missing", nullptr},
   {"a_new_record", "resources/sounds/a_new_record.wav"},
+  {"bubble_pop", "resources/sounds/bubble_pop.wav"},
   {"congratulations", "resources/sounds/congratulations.wav"},
   {"gust_of_wind", "resources/sounds/gust_of_wind.wav"},
   {"headshot1", "resources/sounds/headshot1.wav"},

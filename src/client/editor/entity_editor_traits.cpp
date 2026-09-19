@@ -433,6 +433,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type = entity_type::Weapon_Entity}, // the render component draws it
     {.type = entity_type::Rocket_Entity}, // runtime only
+    {.type = entity_type::Hook_Entity}, // runtime only
     {.type = entity_type::Bubble_Entity}, // runtime only
     {.type = entity_type::Physics_Body_Entity},
 

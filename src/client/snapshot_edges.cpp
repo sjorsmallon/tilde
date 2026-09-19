@@ -118,6 +118,27 @@ void play_breaks(client_context_t& context, const ::network::snapshot_frame_t& p
   }
 }
 
+// Whoever bounced on it already heard the pop off their own predicted step.
+void play_bubble_pops(client_context_t& context, const ::network::snapshot_frame_t& previous,
+                      const ::network::snapshot_frame_t& current)
+{
+  for (const entities::Bubble_Entity& bubble :
+       current.entities.entities_of<entities::Bubble_Entity>())
+  {
+    const entities::Bubble_Entity* before =
+        previous.entities.get<entities::Bubble_Entity>(bubble.entity_id);
+    const bool was_whole = before == nullptr || before->popped_tick == 0;
+    if (!was_whole || bubble.popped_tick == 0)
+      continue;
+    if (!stamp_is_recent(bubble.popped_tick, current.tick))
+      continue;
+    if (bubble.popped_by == context.connection.my_entity_uid)
+      continue;
+
+    context.audio->play_3d(assets::sound_asset::bubble_pop, bubble.position);
+  }
+}
+
 // A change in play_count means Play ran on the server, and the client plays
 // once per change. The switch is a mute for a one-shot, so a Play on a
 // disabled emitter bumps the counter and plays nothing here. The sound, the
@@ -220,6 +241,7 @@ void apply_snapshot_edges(client_context_t& context,
   play_gunshots(context, *previous, current);
   play_hitmarker(context, *previous, current);
   play_breaks(context, *previous, current);
+  play_bubble_pops(context, *previous, current);
   play_emitters(context, *previous, current);
 }
 

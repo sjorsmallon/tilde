@@ -123,9 +123,16 @@ console_result_t execute_console_line(cvar_state_t&            state,
     const cvar_id      id   = *found_cvar;
     const cvar_info_t& info = cvar_info(id);
 
-    // A bare read is always local, even for a @Server cvar: the client's copy
-    // of the table is compile-time identical to the server's, so printing the
-    // local value costs no round trip. Only a WRITE has to respect ownership.
+    // A @Server VALUE lives in the server's process alone, so a networked client asks for it.
+    // A @Mirrored one is kept fresh locally and is read here.
+    const bool value_lives_only_on_the_server =
+        (info.flags & CVAR_FLAG_SERVER) && !(info.flags & CVAR_FLAG_MIRRORED);
+    if (tokens.size() == 1 && value_lives_only_on_the_server && may_forward)
+    {
+      table.forward_to_server(line);
+      return console_result_t::forwarded;
+    }
+
     if (tokens.size() == 1)
     {
       // try_cvar_to_text only fails on a corrupted type tag, which it treats as

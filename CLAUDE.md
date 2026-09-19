@@ -1079,6 +1079,17 @@ run inside the client's prediction step.
   produces. `movement_volume_origin(volumes, uid, fallback)` is where both sides
   get the sound's position — the centre of the bounds the step used, never
   re-resolved through the entity.
+- **A THING THAT DIES AUDIBLY DOES NOT VANISH THE SAME TICK** (2026-09-19, Quake
+  3's event-on-entity rule; never heard in game). A removal carries no REASON, so
+  a sound keyed on "the entity is gone" also fires on a round restore, a map
+  change and a replay seek. `pop_bubble` therefore writes `Bubble_Entity::popped_tick`
+  / `popped_by` (`@Networked`) and hides the mesh; `update_bubbles` reaps it
+  `linger_seconds` later and pops a timed-out bubble the same way. The client
+  plays the 0-to-set edge (`play_bubble_pops`, `snapshot_edges.cpp`), skipping
+  `popped_by == me`, who heard it off the predicted step: `Move_Events::pad_kind`
+  says `Bounce`, so that step plays `bubble_pop` and the server fires no
+  `Jump_Pad_Launch` for it. It is `death_tick` and the crate's health crossing
+  again. There is still no generic sound event.
 
 ### A brush can be switched off — the second predicted cut
 
@@ -1391,8 +1402,15 @@ outranks the poll, and skips the countdown. `enter_phase` is the one writer of `
 the write, so a level can wire "when the round goes live, open the gates".
 Entering element 0 of the cycle is the round boundary: `round_number` bumps,
 `objective_reached` clears, the LEVEL IS RESTORED FROM THE MAP
-(`restore_level_from_map`: every entity but the players, their carried weapons and
-the rules entity is destroyed, the map's own come back under their map uids, and
+(`restore_level_from_map`: every entity but the players and the rules entity is
+destroyed, CARRIED WEAPONS INCLUDED -- a weapon comes from the level now, and a
+picked-up map weapon that survived kept its uid alive, so the restore skipped
+re-placing it -- the map's own come back under their map uids, and **a player is
+REBUILT FROM CONSTRUCTION** (`reset_player_to_construction`: `Player_Entity{}` plus
+a named keep list -- the base, slot, name, team, ready, score -- so a new member
+resets by default; the hand-picked reset list this replaced is how the inventory
+and `Movement` were forgotten. The client's edge watchers compare with `<=`, so a
+stamp going back to 0 plays nothing), and
 the wiring, `fire_once` spends, the action queue, trigger overlaps and movers are
 rebuilt -- replication needs nothing new, since a uid the frame keeps is a field
 write and one it drops is a destroy), then waiting players are admitted and
@@ -1413,17 +1431,22 @@ second's, at the join, the round boundary and the death respawn alike; team has 
 other reader in this mode, and `Single_Fixed_Start` is deleted, 2026-09-19) over a
 `{Freeze, Live, Round_End}` cycle (the
 freeze is the countdown at the start line; `Restart_Round` is also taken in it) with
-`max_rounds` 0, which is unbounded: the run ends in a Round_End that holds (the
-speedrun maps set `mp_round_end_seconds 0` and `mp_round_seconds 0`) until
-someone asks for `Restart_Round` or `End_Match`. A one-element cycle may not be
-unbounded, and `game_rules_test`'s table case says so.
+`max_rounds` 0, which is unbounded: the run ends in a Round_End that holds until
+someone asks for `Restart_Round` or `End_Match`. The hold and the untimed run are
+the ROW's (`round_end_holds`, `live_is_timed`), not the map's: they were two cvars
+every speedrun map had to remember, and `maps/1.source` forgot them and cycled
+rounds. A one-element cycle may not be
+unbounded, and `game_rules_test`'s table case says so. **`admit_on_connect` is the
+row's too** (2026-09-19): a speedrun connect calls `try_admit_player` at accept, so
+`wants_to_play` STARTS true and nobody types `join_game`; `join_game` / `spectate`
+still change the answer, and the shooter rows still connect you as a spectator.
 
 The four Neon-White trigger actions -- `Complete_Level`, `Set_Respawn_Point`,
 `Grant_Weapon`, `Set_Velocity` -- are entity I/O actions (see "Entity I/O"
 above). A checkpoint is a **uid** (`Player_Entity::checkpoint_uid`,
 server-only), resolved at the respawn rather than copied; only the DEATH respawn
-honours it, and `respawn_all_players` clears it, because a round boundary is the
-start line. `Set_Velocity` carries its vector in the connection's override and
+honours it, and the round boundary's player reset clears it, because a round
+boundary is the start line. `Set_Velocity` carries its vector in the connection's override and
 needs nothing from `Movement`, since `player_move`'s `grounded` is
 `has_ground && old_velocity.y <= 0`. `Grant_Weapon` destroys the weapon it
 displaces.
@@ -1506,7 +1529,7 @@ The cadence is the one thing the two sides spell differently: the server sends o
 
 Recovery is **sender-driven**. The receiver never asks for anything; its only utterance is `latest_reliable_block_received`, which rides `Packet_Header` on every datagram it was sending anyway. A receiver-requests-missing scheme cannot detect tail loss, doubles recovery latency, saves no retention, and is an unsolicited request from a peer.
 
-The two header fields **consumed the padding exactly**: the header was `1+1+1+1+2 = 6` bytes padded to 8 by a `uint16` that carried nothing, so `Packet::payload_alignment_padding` is gone and `PACKET_PAYLOAD_OFFSET_IN_BYTES` is unchanged. `reliable_block_number` describes MY outbound stream, `latest_reliable_block_received` describes YOURS — they look like a matched pair and are not. Blocks are numbered 1..255 and wrap skipping 0, so 0 means "no block attached" with no extra flag.
+The header is **10 bytes with no padding** (`PACKET_PAYLOAD_OFFSET_IN_BYTES`, static-asserted): `fragment_count` and `fragment_index` are `uint16` since 2026-09-19. At 8 bits a message stopped at 255 fragments (~304KB), which a lit map package outgrew, and `convert_to_packets` TRUNCATED it; past `MAX_FRAGMENTS_PER_MESSAGE` it now refuses the whole message, naming its type and size, because a message cut short reassembles into bytes nothing can parse. `reliable_block_number` describes MY outbound stream, `latest_reliable_block_received` describes YOURS — they look like a matched pair and are not. Blocks are numbered 1..255 and wrap skipping 0, so 0 means "no block attached" with no extra flag.
 
 The stream is **bytes, framed** — `[message_type: u8][length: u32][payload]`, records concatenated — so a record larger than a datagram simply takes several blocks. The buffer is **self-describing**, which is why there is deliberately no `{type, offset, length}` index beside it (`sv_reliable_debug` walks the records instead). Blocks are the **sender's** units: the receiver appends and never reassembles by block number. It uses the number for exactly one thing, spotting a **duplicate** — the sender had not yet seen our ack — which must be discarded, not re-delivered. Exactly-once is the stream's job, not the consumer's, which is what lets the handlers stop caring that a re-delivered `Player_Died` would be a second kill-feed row.
 

@@ -167,8 +167,6 @@ void respawn_all_players(server_context_t &context)
   for (entities::Player_Entity &player :
        context.world.session.entity_system.entities_of<entities::Player_Entity>())
   {
-    player.checkpoint_uid = shared::null_entity_uid;
-
     const entities::Player_Spawn_Entity *marker =
         try_pick_human_spawn(context.world.session, policy, player.team_allegiance,
                              rotation_index);

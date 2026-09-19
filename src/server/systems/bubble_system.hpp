@@ -9,10 +9,11 @@
 namespace server
 {
 
-// Latches a fresh bubble's launch, writes every bubble's position for this tick, and expires the old.
+// Latches a fresh bubble's launch, writes every bubble's position, pops the timed-out and reaps the popped.
 void update_bubbles(server_context_t& context, Span<const uint8_t> disabled_geometry);
 
-// A bubble pops under whoever bounced on it; any other uid is ignored.
-void pop_bubble(server_context_t& context, shared::entity_uid_t volume_uid);
+// Marks it popped; the client plays the edge and update_bubbles reaps it after its linger. Not a bubble: ignored.
+void pop_bubble(server_context_t& context, shared::entity_uid_t bubble_uid,
+                shared::entity_uid_t popped_by);
 
 } // namespace server

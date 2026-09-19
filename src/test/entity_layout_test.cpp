@@ -202,6 +202,7 @@ int main()
         entity_type::Player_Entity,
         entity_type::Weapon_Entity,
         entity_type::Rocket_Entity,
+        entity_type::Hook_Entity,
         entity_type::Bubble_Entity,
         entity_type::Physics_Body_Entity,
         entity_type::Damageable_Entity,

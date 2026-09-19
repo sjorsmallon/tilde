@@ -29,15 +29,16 @@ round_timing_t round_timing_from_cvars(const cvars::cvar_state_t &cvars)
   };
 }
 
-static float phase_duration_seconds(Round_Phase phase, const round_timing_t &timing)
+static float phase_duration_seconds(Round_Phase phase, const round_timing_t &timing,
+                                    const game_mode_settings_t &mode)
 {
   switch (phase)
   {
     case Round_Phase::Warmup:    return timing.warmup_seconds;
     case Round_Phase::Countdown: return timing.countdown_seconds;
     case Round_Phase::Freeze:    return timing.freeze_seconds;
-    case Round_Phase::Live:      return timing.live_seconds;
-    case Round_Phase::Round_End: return timing.round_end_seconds;
+    case Round_Phase::Live:      return mode.live_is_timed ? timing.live_seconds : 0.f;
+    case Round_Phase::Round_End: return mode.round_end_holds ? 0.f : timing.round_end_seconds;
     // Not a phase transition: update_match turns this deadline into a map change.
     case Round_Phase::Game_Over: return timing.game_over_seconds;
   }
@@ -125,8 +126,9 @@ static void enter_phase(server_context_t &context,
   Match &match = rules->match;
 
   const Round_Phase from = match.phase;
+  const game_mode_settings_t &mode = current_mode(context);
   const float duration =
-      phase_duration_seconds(phase, round_timing_from_cvars(*context.cvars));
+      phase_duration_seconds(phase, round_timing_from_cvars(*context.cvars), mode);
 
   match.phase            = phase;
   match.phase_start_tick = current_tick;
@@ -137,7 +139,6 @@ static void enter_phase(server_context_t &context,
 
   // The round boundary is element 0 of the mode's cycle, not the literal
   // Freeze: a deathmatch has no freeze, so its cycle starts at Live.
-  const game_mode_settings_t &mode = current_mode(context);
   const bool entered_round = !mode.phase_cycle.empty() && phase == mode.phase_cycle[0];
   if (entered_round)
   {

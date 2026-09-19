@@ -1085,6 +1085,7 @@ std::tuple<vec3, vec3> player_move(
 
   bool                 launched_by_pad = false;
   shared::entity_uid_t launched_by     = shared::null_entity_uid;
+  shared::movement_volume_kind_t launched_by_kind = shared::movement_volume_kind_t::Jump_Pad;
   bool                 touching_a_volume = false;
 
   for (const shared::movement_volume_t &volume : movement_volumes)
@@ -1114,6 +1115,7 @@ std::tuple<vec3, vec3> player_move(
     movement.pad_contact_uid   = volume.uid;
     launched_by_pad            = true;
     launched_by                = volume.uid;
+    launched_by_kind           = volume.kind;
     break;
   }
 
@@ -1127,6 +1129,7 @@ std::tuple<vec3, vec3> player_move(
     out_events->land_impact_speed = land_impact_speed;
     out_events->launched_by_pad   = launched_by_pad;
     out_events->pad_uid           = launched_by;
+    out_events->pad_kind          = launched_by_kind;
   }
 
   return {feet_after_move, new_vel};

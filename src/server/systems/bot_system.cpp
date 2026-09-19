@@ -142,12 +142,21 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   }
   if (move_events.launched_by_pad)
   {
-    shared::Jump_Pad_Launch fx{};
-    fx.origin = shared::movement_volume_origin(movement_volumes, move_events.pad_uid, new_pos);
-    fx.normal          = linalg::normalize(new_vel);
-    fx.attached_entity = bot_ent.entity_id;
-    shared::fire_jump_pad_launch(context.outgoing.effects, fx);
-    pop_bubble(context, move_events.pad_uid);
+    switch (move_events.pad_kind)
+    {
+      case shared::movement_volume_kind_t::Jump_Pad:
+      {
+        shared::Jump_Pad_Launch fx{};
+        fx.origin = shared::movement_volume_origin(movement_volumes, move_events.pad_uid, new_pos);
+        fx.normal          = linalg::normalize(new_vel);
+        fx.attached_entity = bot_ent.entity_id;
+        shared::fire_jump_pad_launch(context.outgoing.effects, fx);
+        break;
+      }
+      case shared::movement_volume_kind_t::Bounce:
+        pop_bubble(context, move_events.pad_uid, bot_ent.entity_id);
+        break;
+    }
   }
 
   set_kinematic_pose(physics, bot_ent.entity_id,

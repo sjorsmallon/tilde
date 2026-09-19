@@ -198,9 +198,10 @@ struct Packet_Header
   // ("sequence" is deliberately avoided here — that word is reserved for the
   // future packet-level ack layer; this axis is message/fragment, not packet.)
   uint8 message_id;      // which message this fragment belongs to (NOT message_type)
-  uint8 fragment_count;  // how many fragments the message was split into
-  uint8 fragment_index;  // this fragment's index within the message
   uint8 message_type;    // what KIND of message this is (enum)
+  // 16 bits: at 8 a message stopped at 255 fragments (~304KB), which a lit map package outgrew.
+  uint16 fragment_count; // how many fragments the message was split into
+  uint16 fragment_index; // this fragment's index within the message
   uint16 payload_size;   // how big is the payload?
 
   // The reliable stream, carried by EVERY datagram. They look like a matched
@@ -233,7 +234,7 @@ constexpr size_t MAX_PACKET_SIZE_IN_BYTES = 1200;
 // `buffer` two bytes, and every send then shipped the payload from an offset the
 // arithmetic no longer named. The static_assert below is what makes that a build
 // failure instead of a corrupted wire.
-constexpr size_t PACKET_PAYLOAD_OFFSET_IN_BYTES = 8;
+constexpr size_t PACKET_PAYLOAD_OFFSET_IN_BYTES = 10;
 constexpr size_t MAX_PAYLOAD_SIZE_IN_BYTES =
     MAX_PACKET_SIZE_IN_BYTES - PACKET_PAYLOAD_OFFSET_IN_BYTES;
 
@@ -267,16 +268,13 @@ constexpr size_t server_receive_drain_cap_in_datagrams =
 
 struct Packet
 {
-  // No padding member any more: the header was 6 bytes padded to 8 by a
-  // uint16 that carried nothing, and the reliable stream's two uint8s consume
-  // exactly it. The header is 8 bytes, the payload offset is unchanged, and the
-  // static_assert below is what says so.
+  // The header is 10 bytes with no padding, and the static_assert below is what says so.
   Packet_Header header;
   uint8  buffer[MAX_PAYLOAD_SIZE_IN_BYTES];
 };
 
 static_assert(sizeof(Packet_Header) == PACKET_PAYLOAD_OFFSET_IN_BYTES,
-              "the two reliable-stream fields must consume the old padding exactly");
+              "the header must carry no padding: the payload offset is the header's size");
 static_assert(offsetof(Packet, buffer) == PACKET_PAYLOAD_OFFSET_IN_BYTES,
               "the payload offset both ends serialize against must match the struct");
 static_assert(sizeof(Packet) <= MAX_PACKET_SIZE_IN_BYTES,
@@ -515,6 +513,8 @@ inline bool reassemble_fragment(std::map<uint8, Partial_Message> &partial_packet
 // optional: a message that loses a fragment never completes, and a bucket left
 // open forever eats the message that reuses its id 256 sends later. See
 // expire_stale_partial_messages below.
+constexpr size_t MAX_FRAGMENTS_PER_MESSAGE = 65535;
+
 inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
                                               uint8 message_type,
                                               uint8 &next_message_id)
@@ -526,13 +526,13 @@ inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
   size_t packet_count =
       (total_size + MAX_PAYLOAD_SIZE_IN_BYTES - 1) / MAX_PAYLOAD_SIZE_IN_BYTES;
 
-  if (packet_count > 255)
+  // Refused whole, never truncated: a message cut short reassembles into bytes nothing can parse.
+  if (packet_count > MAX_FRAGMENTS_PER_MESSAGE)
   {
-    // Warning: fragment_count is uint8. This simplistic function only supports
-    // 255 fragments. In production, we'd need a wider count or flow control.
-    // For now, capping.
-    log_error("Message too large to fragment, capping at 255 fragments");
-    packet_count = 255;
+    log_error("message of type {} is {} bytes, which is {} fragments and more than the {} one "
+              "message may have; NOT SENT",
+              message_type, total_size, packet_count, MAX_FRAGMENTS_PER_MESSAGE);
+    return packets;
   }
 
   packets.reserve(packet_count);
@@ -544,8 +544,8 @@ inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
     Packet packet = {};
     packet.header.message_type = message_type;
     packet.header.message_id = message_id;
-    packet.header.fragment_count = static_cast<uint8>(packet_count);
-    packet.header.fragment_index = static_cast<uint8>(i);
+    packet.header.fragment_count = static_cast<uint16>(packet_count);
+    packet.header.fragment_index = static_cast<uint16>(i);
     // Timestamp should be set by sender just before sending
 
     size_t offset = i * MAX_PAYLOAD_SIZE_IN_BYTES;

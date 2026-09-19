@@ -285,6 +285,9 @@ void test_mode_table()
             speedrun.phase_cycle[2] == Round_Phase::Round_End,
         "a speedrun counts down at the start line, runs, and holds on the result");
   check(speedrun.max_rounds == 0, "a speedrun restarts as often as it is asked to");
+  check(speedrun.admit_on_connect, "a speedrun gives a connecting client a body with no join_game");
+  check(!deathmatch.admit_on_connect && !rounds.admit_on_connect,
+        "the shooter modes connect you as a spectator");
 }
 
 // --- 2. The gates ----------------------------------------------------------
@@ -633,6 +636,8 @@ void test_restart_round_resets_the_level()
   const shared::entity_uid_t lamp_uid  = map.add_entity(std::make_shared<entities::Point_Light_Entity>());
   const shared::entity_uid_t emitter_uid =
       map.add_entity(std::make_shared<entities::Sound_Emitter_Entity>());
+  const shared::entity_uid_t placed_weapon_uid =
+      map.add_entity(std::make_shared<entities::Weapon_Entity>());
   const shared::entity_uid_t rules_uid = try_find_rules_entity(world.context)->entity_id;
   world.context.world.session          = shared::build_session(map);
   install_match(world.context, world.context.tick_number, tickrate);
@@ -655,6 +660,12 @@ void test_restart_round_resets_the_level()
   world.context.world.session.connections_by_sender[rules_uid].front().spent  = true;
   player_of(world.context, player_uid).position       = {700.f, 0.f, 0.f};
   player_of(world.context, player_uid).checkpoint_uid = crate_uid;
+  player_of(world.context, player_uid).kills          = 4;
+  player_of(world.context, player_uid).movement.seconds_until_impulse_ready = 2.f;
+  player_of(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
+  player_of(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Secondary] =
+      placed_weapon_uid;
+  entity_system.get<entities::Weapon_Entity>(placed_weapon_uid)->owner_uid = player_uid;
 
   constexpr int32_t STALE_AMOUNT = 7;
   world.context.world.pending_actions.clear();
@@ -684,8 +695,19 @@ void test_restart_round_resets_the_level()
         "a spent fire_once row can fire again");
   check(queued_with_amount(world.context, STALE_AMOUNT) == 0,
         "an action queued by the last round is dropped");
-  check(entity_system.get<entities::Weapon_Entity>(carried_uid) != nullptr,
-        "a carried weapon stays with its player");
+  check(entity_system.get<entities::Weapon_Entity>(carried_uid) == nullptr,
+        "a carried weapon does not outlive the round");
+  for (const uint32_t weapon_uid : player_of(world.context, player_uid).inventory.weapons.values)
+    check(weapon_uid == shared::null_entity_uid, "and the inventory that named it is empty");
+  check(entity_system.get<entities::Weapon_Entity>(placed_weapon_uid) != nullptr &&
+            entity_system.get<entities::Weapon_Entity>(placed_weapon_uid)->owner_uid ==
+                shared::null_entity_uid,
+        "a weapon the map placed is back where the map has it, owned by nobody");
+  check(player_of(world.context, player_uid).movement.seconds_until_impulse_ready == 0.f,
+        "a player's movement state is back at construction");
+  check(player_of(world.context, player_uid).kills == 4 &&
+            player_of(world.context, player_uid).team_allegiance == entities::Team_Allegiance::Red,
+        "but their score and their team are who they are, and stay");
   check(entity_system.get<entities::Weapon_Entity>(loose_uid) == nullptr &&
             entity_system.try_find(rocket_uid) == nullptr,
         "what the last round spawned into the world is gone");
@@ -809,9 +831,8 @@ void test_speedrun_walk()
   std::printf("[speedrun]\n");
 
   test_world_t world;
+  // Left at the values stand_up gave them: the hold is the MODE's, not a cvar a map must remember.
   stand_up(world, entities::Game_Mode::speedrun);
-  world.cvars.mp_round_seconds     = 0.f;
-  world.cvars.mp_round_end_seconds = 0.f;
   spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
 
   start_the_match(world.context);
@@ -821,6 +842,8 @@ void test_speedrun_walk()
 
   tick(world.context);
   check_phase(world.context, Round_Phase::Live, "an unreached objective leaves the run going");
+  check(run_until_phase_changes(world.context, 5 * tickrate) == 0,
+        "a run has no time limit, though mp_round_seconds is 2");
 
   // What Complete_Level writes.
   match(world.context).objective_reached = true;
@@ -894,6 +917,7 @@ void test_checkpoint_respawn()
   check(player_of(world.context, player_uid).health.current_health == 100,
         "the checkpoint respawn is a full respawn, not a teleport");
 
+  restore_level_from_map(world.context);
   respawn_all_players(world.context);
   check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
         "a round boundary drops every checkpoint");

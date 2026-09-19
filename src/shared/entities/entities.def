@@ -346,6 +346,15 @@ Rocket_Entity :: entity @runtime_only {
     render:          Render = { mesh = .rocket}
 }
 
+// Flies like a rocket; a player it hits is thrown at the shooter in one arc, anything else is a miss.
+Hook_Entity :: entity @runtime_only {
+    projectile:       Projectile = { weapon_id = .Hook }
+    lifetime:         f32 = 4
+    collision_radius: f32 = 10.0
+    pull_speed:       f32 = 900.0
+    render:           Render = { mesh = .meat_hook_1k }
+}
+
 // Its position is a pure function of the tick (shared/bubble_flight.hpp), so a bounce is predicted in flight too.
 Bubble_Entity :: entity @runtime_only @predicted {
     // projectile.velocity is the LAUNCH velocity and never changes.
@@ -354,6 +363,11 @@ Bubble_Entity :: entity @runtime_only @predicted {
     // 0 until the bubble system latches the launch, in the tick it was fired.
     launch_tick:     u32                @Networked
     flight_ticks:    u32                @Networked
+    // 0 while whole. A popped bubble bounces nobody, draws nothing, and is reaped linger_seconds later.
+    popped_tick:     u32                @Networked
+    // Whoever bounced on it, who heard the pop off their own predicted step; null when it timed out.
+    popped_by:       entity             @Networked
+    linger_seconds:  f32 = 0.25
     flight_seconds:  f32 = 1.0
     rest_seconds:    f32 = 8.0
     // Bounces nobody until it is clear of the muzzle, or the shooter pops it at once.

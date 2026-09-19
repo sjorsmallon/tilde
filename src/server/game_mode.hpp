@@ -78,8 +78,14 @@ struct game_mode_settings_t
   bool respawn_during_round;
   bool auto_assign_teams;
   bool join_in_progress;
+  // On: a connecting client's wants_to_play starts true, with no join_game.
+  bool admit_on_connect;
   // 0 is unbounded: the cycle never reaches Game_Over on its own, only End_Match does.
   uint32_t max_rounds;
+  // Off: Live has no deadline, whatever mp_round_seconds says.
+  bool live_is_timed;
+  // On: Round_End waits for a request, whatever mp_round_end_seconds says.
+  bool round_end_holds;
 
   Span<const entities::Round_Phase> phase_cycle;
 };
@@ -92,7 +98,10 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .respawn_during_round = true,
         .auto_assign_teams    = false,
         .join_in_progress     = true,
+        .admit_on_connect     = false,
         .max_rounds           = 1,
+        .live_is_timed        = true,
+        .round_end_holds      = false,
         .phase_cycle          = SINGLE_ROUND_PHASE_CYCLE,
     },
     {
@@ -102,7 +111,10 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .respawn_during_round = false,
         .auto_assign_teams    = true,
         .join_in_progress     = false,
+        .admit_on_connect     = false,
         .max_rounds           = 15,
+        .live_is_timed        = true,
+        .round_end_holds      = false,
         .phase_cycle          = ROUNDS_PHASE_CYCLE,
     },
     {
@@ -112,7 +124,10 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .respawn_during_round = true,
         .auto_assign_teams    = true,
         .join_in_progress     = true,
+        .admit_on_connect     = true,
         .max_rounds           = 0,
+        .live_is_timed        = false,
+        .round_end_holds      = true,
         .phase_cycle          = LEVEL_PHASE_CYCLE,
     },
 }};

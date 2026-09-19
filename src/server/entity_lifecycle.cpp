@@ -8,7 +8,6 @@
 #include "systems/respawn_system.hpp"
 
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace server
@@ -135,27 +134,36 @@ bool destroy_entity(server_context_t &context, shared::entity_uid_t uid)
   return context.world.session.entity_system.destroy(uid);
 }
 
-static bool survives_the_round(const entities::Entity &entity,
-                               const std::unordered_set<shared::entity_uid_t> &carried_weapons)
+static bool survives_the_round(const entities::Entity &entity)
 {
   switch (entity.type)
   {
     case entities::entity_type::Player_Entity:     return true;
     case entities::entity_type::Game_Rules_Entity: return true;
-    case entities::entity_type::Weapon_Entity:     return carried_weapons.contains(entity.entity_id);
     default:                                       return false;
   }
+}
+
+// What is listed is what a player KEEPS across a round; any other member is back at its entities.def default.
+static void reset_player_to_construction(entities::Player_Entity &player)
+{
+  entities::Player_Entity fresh{};
+  static_cast<entities::Entity &>(fresh) = player;
+  fresh.client_slot_index = player.client_slot_index;
+  fresh.display_name      = player.display_name;
+  fresh.team_allegiance   = player.team_allegiance;
+  fresh.ready             = player.ready;
+  fresh.kills             = player.kills;
+  fresh.deaths            = player.deaths;
+  player = fresh;
 }
 
 void restore_level_from_map(server_context_t &context)
 {
   shared::Entity_System &entity_system = context.world.session.entity_system;
 
-  std::unordered_set<shared::entity_uid_t> carried_weapons;
-  for (const entities::Player_Entity &player : entity_system.entities_of<entities::Player_Entity>())
-    for (const uint32_t weapon_uid : player.inventory.weapons.values)
-      if (weapon_uid != shared::null_entity_uid)
-        carried_weapons.insert(weapon_uid);
+  for (entities::Player_Entity &player : entity_system.entities_of<entities::Player_Entity>())
+    reset_player_to_construction(player);
 
   std::unordered_map<shared::entity_uid_t, entities::Playback> playback_before_restore;
   for (auto [emitter, playback] : entity_system.entities_with_trait<entities::Playable>())
@@ -164,7 +172,7 @@ void restore_level_from_map(server_context_t &context)
   std::vector<shared::entity_uid_t> discarded;
   for (const shared::Entity_Pool &pool : entity_system.pools)
     for (uint32_t slot = 0; slot < pool.count; ++slot)
-      if (!survives_the_round(*pool.at(slot), carried_weapons))
+      if (!survives_the_round(*pool.at(slot)))
         discarded.push_back(pool.at(slot)->entity_id);
 
   for (const shared::entity_uid_t uid : discarded)

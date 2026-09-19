@@ -21,6 +21,9 @@ struct Bubble_Entity : Entity
   linalg::vec3f launch_position = {};
   uint32_t launch_tick = {};
   uint32_t flight_ticks = {};
+  uint32_t popped_tick = {};
+  shared::entity_uid_t popped_by = {};
+  float linger_seconds = 0.25f;
   float flight_seconds = 1.0f;
   float rest_seconds = 8.0f;
   float arm_seconds = 0.2f;

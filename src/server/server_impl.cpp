@@ -23,6 +23,7 @@
 #include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
 #include "systems/bubble_system.hpp"
+#include "systems/hook_system.hpp"
 #include "send_protobuf_message.hpp"
 #include "weapon_fire.hpp"
 #include "entity_io_console.hpp"
@@ -573,6 +574,7 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Player_Spectate_Entity:
   case entities::entity_type::Weapon_Entity:
   case entities::entity_type::Rocket_Entity:
+  case entities::entity_type::Hook_Entity:
   case entities::entity_type::Bubble_Entity:
   case entities::entity_type::Physics_Body_Entity:
   case entities::entity_type::Particle_Emitter_Entity:
@@ -821,6 +823,9 @@ bool Tick()
         broadcast_server_text_message(
             context, std::format("{} joined the server (slot {})",
                                  cmd.connect().player_name(), slot));
+
+        if (try_find_rules_entity(context) != nullptr && current_mode(context).admit_on_connect)
+          try_admit_player(context, slot);
       }
       else
       {
@@ -1198,6 +1203,7 @@ bool Tick()
         {
           move_events.launched_by_pad = true;
           move_events.pad_uid         = step_events.pad_uid;
+          move_events.pad_kind        = step_events.pad_kind;
         }
       }
 
@@ -1267,13 +1273,22 @@ bool Tick()
     // launch pad is predicted locally too so it feels good.
     if (move_events.launched_by_pad)
     {
-      shared::Jump_Pad_Launch fx{};
-      fx.origin = shared::movement_volume_origin(movement_volume_span, move_events.pad_uid,
-                                                 player->position);
-      fx.normal          = linalg::normalize(player->velocity);
-      fx.attached_entity = player->entity_id;
-      shared::fire_jump_pad_launch(context.outgoing.effects, fx);
-      pop_bubble(context, move_events.pad_uid);
+      switch (move_events.pad_kind)
+      {
+        case shared::movement_volume_kind_t::Jump_Pad:
+        {
+          shared::Jump_Pad_Launch fx{};
+          fx.origin = shared::movement_volume_origin(movement_volume_span, move_events.pad_uid,
+                                                     player->position);
+          fx.normal          = linalg::normalize(player->velocity);
+          fx.attached_entity = player->entity_id;
+          shared::fire_jump_pad_launch(context.outgoing.effects, fx);
+          break;
+        }
+        case shared::movement_volume_kind_t::Bounce:
+          pop_bubble(context, move_events.pad_uid, player->entity_id);
+          break;
+      }
     }
 
     // jolt nonsense. 
@@ -1381,6 +1396,7 @@ bool Tick()
   }
 
   update_rockets(context, tick_dt);
+  update_hooks(context, tick_dt);
   update_bubbles(context, disabled_geometry_span);
   update_ping_markers(context, tick_dt);
 

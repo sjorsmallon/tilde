@@ -2155,6 +2155,7 @@ void Play_State::update(float dt)
           {
             tick_events.launched_by_pad = true;
             tick_events.pad_uid         = step_events.pad_uid;
+            tick_events.pad_kind        = step_events.pad_kind;
           }
         }
       }
@@ -2172,6 +2173,7 @@ void Play_State::update(float dt)
       {
         frame_move_events.launched_by_pad = true;
         frame_move_events.pad_uid         = tick_events.pad_uid;
+        frame_move_events.pad_kind        = tick_events.pad_kind;
       }
 
       int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
@@ -2195,7 +2197,9 @@ void Play_State::update(float dt)
       ctx.audio->play_2d(assets::sound_asset::player_land_new);
 
     if (frame_move_events.launched_by_pad)
-      ctx.audio->play_3d(assets::sound_asset::twang,
+      ctx.audio->play_3d(frame_move_events.pad_kind == shared::movement_volume_kind_t::Bounce
+                             ? assets::sound_asset::bubble_pop
+                             : assets::sound_asset::twang,
                          shared::movement_volume_origin(movement_volume_span,
                                                         frame_move_events.pad_uid,
                                                         ctx.prediction.player_position));

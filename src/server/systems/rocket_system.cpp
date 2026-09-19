@@ -1,5 +1,6 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "rocket_system.hpp"
+#include "projectile_flight.hpp"
 
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
@@ -113,8 +114,6 @@ static void detonate(const entities::Rocket_Entity &rocket,
 void update_rockets(server_context_t &context, float dt)
 {
   shared::game_session_t &session = context.world.session;
-  physics_state_t        &physics = *context.world.physics;
-
   Span<entities::Rocket_Entity> rockets =
       session.entity_system.entities_of<entities::Rocket_Entity>();
   if (rockets.empty())
@@ -139,32 +138,11 @@ void update_rockets(server_context_t &context, float dt)
       continue;
     }
 
-    const shared::projectile_t& projectile =
-        shared::get_weapon_definition(rocket.projectile.weapon_id).projectile;
-    const shared::projectile_step_t step = shared::advance_projectile(
-        projectile, context.cvars->g_gravity, rocket.position, rocket.projectile.velocity, dt);
-    const vec3f next_pos = step.position;
-    rocket.projectile.velocity      = step.velocity;
-
-    hit_result_t hit;
-    // Everything is a valid target except the player who fired: a rocket that
-    // clips its own owner's capsule on the first tick would detonate in their
-    // face. Back faces collide so a rocket spawned barely inside geometry
-    // still stops rather than sailing through it.
-    const query_filter_t filter{.layers     = query_layers_t::All,
-                                .ignore_uid = rocket.projectile.owner_uid,
-                                .back_faces = back_face_mode_t::Collide};
-
-    if (cast_sphere(physics, rocket.position, next_pos,
-                    rocket.collision_radius, filter, hit))
+    if (const std::optional<hit_result_t> hit =
+            fly_projectile(context, rocket, rocket.projectile, rocket.collision_radius, dt))
     {
-      rocket.position = hit.position;
-      detonate(rocket, context, hit.entity_id, hit.normal);
+      detonate(rocket, context, hit->entity_id, hit->normal);
       uids_to_remove.push_back(rocket.entity_id);
-    }
-    else
-    {
-      rocket.position = next_pos;
     }
   }
 

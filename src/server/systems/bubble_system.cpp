@@ -68,22 +68,35 @@ void update_bubbles(server_context_t& context, Span<const uint8_t> disabled_geom
 
     bubble.position = shared::bubble_position_at(bubble, context.tick_number, flight);
 
+    if (bubble.popped_tick != 0)
+    {
+      const uint32_t linger_ticks =
+          static_cast<uint32_t>(std::lround(bubble.linger_seconds / tick_interval_seconds));
+      if (context.tick_number >= bubble.popped_tick + linger_ticks)
+        expired.push_back(bubble.entity_id);
+      continue;
+    }
+
     const uint32_t rest_ticks =
         static_cast<uint32_t>(std::lround(bubble.rest_seconds / tick_interval_seconds));
     if (context.tick_number >= bubble.launch_tick + bubble.flight_ticks + rest_ticks)
-      expired.push_back(bubble.entity_id);
+      pop_bubble(context, bubble.entity_id, shared::null_entity_uid);
   }
 
   for (const shared::entity_uid_t uid : expired)
     destroy_entity(context, uid);
 }
 
-void pop_bubble(server_context_t& context, shared::entity_uid_t volume_uid)
+void pop_bubble(server_context_t& context, shared::entity_uid_t bubble_uid,
+                shared::entity_uid_t popped_by)
 {
-  if (context.world.session.entity_system.get<entities::Bubble_Entity>(volume_uid) == nullptr)
+  auto* bubble = context.world.session.entity_system.get<entities::Bubble_Entity>(bubble_uid);
+  if (bubble == nullptr || bubble->popped_tick != 0)
     return;
 
-  destroy_entity(context, volume_uid);
+  bubble->popped_tick    = context.tick_number;
+  bubble->popped_by      = popped_by;
+  bubble->render.visible = false;
 }
 
 } // namespace server

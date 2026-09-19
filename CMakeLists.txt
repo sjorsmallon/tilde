@@ -904,6 +904,8 @@ add_library(game_server SHARED
     src/server/weapon_fire.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bubble_system.cpp
+    src/server/systems/hook_system.cpp
+    src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/trigger_system.cpp
     src/server/systems/timer_system.cpp

@@ -150,6 +150,7 @@ struct Move_Events
   // comparison, and it generalises to any effect a predicted step produces.
   bool                launched_by_pad = false;
   shared::entity_uid_t pad_uid        = shared::null_entity_uid;
+  shared::movement_volume_kind_t pad_kind = shared::movement_volume_kind_t::Jump_Pad;
 };
 
 // new_player_position, new_player_velocity. Positions in and out are at the FEET,
