@@ -19,7 +19,7 @@ struct Hook_Entity : Entity
 
   Projectile projectile = {.weapon_id = Weapon::Hook};
   float lifetime = 4.0f;
-  float collision_radius = 10.0f;
+  float collision_radius = 25.0f;
   float pull_speed = 900.0f;
   Render render = {.mesh = assets::mesh_asset::meat_hook_1k};
 };

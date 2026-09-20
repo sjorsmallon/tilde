@@ -152,15 +152,13 @@ static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared:
           .armed  = true};
 }
 
-static vec3f predict_mover_push(client_context_t &ctx, Span<const uint8_t> disabled_geometry,
-                                int input_number, const entities::Movement &movement,
-                                const vec3f &feet, std::vector<shared::mover_t> &movers)
+// The cut is the CALLER's, one line above every call: this is the push alone,
+// so the two halves of tick_def.md step 2 read here exactly as they do in the
+// server's tick.
+static vec3f predict_mover_push(client_context_t &ctx, const shared::predicted_world_t &world,
+                                const entities::Movement &movement, const vec3f &feet)
 {
-  const uint32_t predicted_tick = predicted_tick_of_input(ctx, input_number);
-  shared::collect_movers(ctx.world.session.entity_system, ctx.world.session.path_links,
-                         ctx.world.session.mover_rests, predicted_tick,
-                         static_cast<float>(ctx.connection.server_tickrate), movers);
-  return push_player_by_movers(ctx.world.session.bvh, disabled_geometry, movers, movement, feet,
+  return push_player_by_movers(ctx.world.session.bvh, world, movement, feet,
                                shared::player_half_width, shared::player_half_height)
       .feet;
 }
@@ -763,11 +761,76 @@ void Play_State::on_exit()
 // to reiterate: input can be understood as a reaction on the previously presented frame.
 // input is gathered by a thread from hardware reads before entering this function, with the most precision that we can.
 // all edges (meaning: press / release) are recorded temporally.
-void Play_State::update(float dt)
+// One frame's resolved values, handed from step to step down Play_State::update.
+// Born at the top of that function and dead at the bottom -- a local, never a
+// member, because nothing in it survives a frame. Anything that must survive one
+// lives on client_context_t (the world, the prediction) or on Play_State (the
+// camera, the menus, the shot-debug ring).
+struct play_frame_t
 {
-  timed_function();
-  
-  auto &ctx = state_manager::get_client_context();
+  float dt = 0.f;
+  // The WORLD's clock: the replay's pause and speed, or the frame's dt. Not
+  // interchangeable with dt -- the two differ exactly while a replay is
+  // scrubbed, which is when anything driven by one and not the other shows it.
+  float world_dt = 0.f;
+
+  // No console and no pause menu; and, for the body, no noclip either.
+  bool body_input_allowed = false;
+  bool noclip_active      = false;
+  bool mouse_look_allowed = false;
+
+  float    fov_degrees          = 0.f;
+  float    mouse_sensitivity    = 0.f;
+  uint64_t buttons              = 0;
+  bool     local_player_is_dead = false;
+
+  // tick_def.md step 2, on the client's clock: cut out of our own session copy
+  // through the same shared functions the server's tick cuts it with.
+  shared::predicted_world_storage_t predicted_world_storage;
+  shared::predicted_world_t         predicted_world;
+
+  // Coalesced across however many ticks were stepped this frame.
+  Move_Events move_events;
+
+  // replay_def.md ss6: which player the replay is riding, sampled by the render
+  // half and read again by the camera.
+  std::optional<shared::replay_view_sample_t> first_person_view;
+};
+
+// The disabled set once per FRAME: it is a function of replicated switches
+// alone, so no tick names a different one (prediction_def.md ss4).
+static void cut_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
+{
+  shared::cut_disabled_geometry(ctx.world.session, frame.predicted_world_storage);
+  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage);
+}
+
+// The other two per INPUT, because both are functions of the TICK -- a bubble's
+// bounds and a mover's pose -- and the reconciliation replay walks several. That
+// replay deliberately uses the CURRENT switches rather than the ones at each
+// replayed input's tick: a switch that flipped inside the unacked window
+// mispredicts for that window and is corrected, which is what makes them need no
+// history (prediction_def.md ss1.4).
+static void cut_predicted_world_for_input(client_context_t& ctx, play_frame_t& frame,
+                                          int input_number)
+{
+  const shared::predicted_world_settings_t settings{
+      .tick        = predicted_tick_of_input(ctx, input_number),
+      .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
+      .gravity     = ctx.cvars->g_gravity};
+  shared::cut_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
+  shared::cut_movers(ctx.world.session, settings, frame.predicted_world_storage);
+  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage);
+}
+
+
+// RECEIVE, first half: the keyboard as a SHELL rather than as gameplay -- bound
+// keys, the pause menu, the console, noclip's free camera and the pointer
+// capture. Returns true when it switched state, in which case this Play_State is
+// gone and the caller must return without touching it.
+bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
+{
+  const float dt = frame.dt;
 
   // first execute bound keys because the bound key could close the console.
   console::get().execute_pressed_bindings();
@@ -789,15 +852,15 @@ void Play_State::update(float dt)
 
       case pause_menu_item_t::return_to_editor:
         state_manager::switch_to(game_state::tool_editor);
-        return;
+        return true;
 
       case pause_menu_item_t::main_menu:
         state_manager::switch_to(game_state::main_menu);
-        return;
+        return true;
 
       case pause_menu_item_t::exit_to_desktop:
         state_manager::request_exit();
-        return;
+        return true;
       }
     }
   }
@@ -821,7 +884,7 @@ void Play_State::update(float dt)
     {
       // Otherwise, go back to the editor.
       state_manager::switch_to(game_state::tool_editor);
-      return;
+      return true;
     }
 
     // U -> toggle mouse capture
@@ -898,6 +961,19 @@ void Play_State::update(float dt)
   // relative mouse mode (report only delta moves instead of absolute cursor position)
   input::set_relative_mouse_mode(connection_ui.mouse_captured && gameplay_input_allowed);
 
+  frame.body_input_allowed = body_input_allowed;
+  frame.noclip_active      = noclip_active;
+  return false;
+}
+
+// RECEIVE, second half: one drain of the inbox (or of the replay standing in for
+// it), every message kind in the order the stream needs them -- the handshake,
+// the map, the ghost, the reliable stream's own service, then the snapshot,
+// which is what the effect and event batches below it are dispatched against.
+void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
+{
+  const float dt = frame.dt;
+
   auto& transport = ctx.transport_layer;
 
   // actually network related stuff.
@@ -922,7 +998,7 @@ void Play_State::update(float dt)
   }
 
   // The world's clock: the replay's pause and speed, or the frame's dt.
-  const float world_dt = ctx.connection.phase == Connection_Phase::Replaying
+  frame.world_dt = ctx.connection.phase == Connection_Phase::Replaying
                              ? replay_world_dt(ctx.replay, dt)
                              : dt;
   if (ctx.audio)
@@ -1226,6 +1302,16 @@ void Play_State::update(float dt)
 
     dispatch_received_game_events(ctx, reader, ctx.cvars->cl_event_debug);
   }
+}
+
+// Everything with a LIFETIME that this frame ages: the fps ring and the
+// explosion effects. Owned client state by ui_def.md's rule -- a discrete
+// occurrence pushed into a model with a lifetime, retired per frame, polled by
+// the draw -- and deliberately never a session entity.
+void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &frame)
+{
+  const float dt       = frame.dt;
+  const float world_dt = frame.world_dt;
 
   // anything related to dt or a fraction of it happens below here.
 
@@ -1243,47 +1329,14 @@ void Play_State::update(float dt)
     return fx.time_remaining <= 0.f;
   });
 
-  // no use for reconciling or moving if the world is not ready yet.
-  if (!ctx.world.ready)
-    return;
+}
 
-  // Cut once per frame out of OUR session copy, and fed to both the replay and
-  // the live step. A pad's bounds are our own map load; the one thing we cannot
-  // know for ourselves is its switch, which rides the snapshot and is written
-  // onto this session in held_snapshot.cpp. The replay deliberately uses the
-  // CURRENT list rather than the list at each replayed input's tick: a switch
-  // that flipped inside the unacked window mispredicts for that window and is
-  // corrected, which is what makes the list need no history (prediction_def.md
-  // ss1.4).
-  //
-  // Re-cut per INPUT all the same, since a bubble's BOUNDS are a function of the tick.
-  std::vector<shared::movement_volume_t> movement_volumes;
-  Span<const shared::movement_volume_t>  movement_volume_span;
-  const auto cut_movement_volumes_for_input = [&](int input_number)
-  {
-    shared::collect_movement_volumes(
-        ctx.world.session.entity_system,
-        {.tick                  = predicted_tick_of_input(ctx, input_number),
-         .tick_interval_seconds = 1.0f / static_cast<float>(ctx.connection.server_tickrate),
-         .gravity               = ctx.cvars->g_gravity},
-        movement_volumes);
-    movement_volume_span = Span<const shared::movement_volume_t>{movement_volumes};
-  };
-  cut_movement_volumes_for_input(ctx.prediction.input_number);
-
-  // The geometry half of the same cut, for the same reason and with the same
-  // staleness rule: a brush's SHAPE is our own map load, its SWITCH rides the
-  // snapshot onto this session, and the replay reads the current set rather than
-  // one per replayed tick (prediction_def.md ss4).
-  shared::disabled_geometry_t disabled_geometry;
-  shared::collect_disabled_geometry(ctx.world.session.entity_system,
-                                    ctx.world.session.owner_of, disabled_geometry);
-  const Span<const uint8_t> disabled_geometry_span{disabled_geometry};
-
-  // Cut per INPUT rather than per frame, unlike the two above: a mover's pose is
-  // the tick's, and the replay and the live step each run at their own ticks.
-  std::vector<shared::mover_t> movers;
-
+// SIMULATE: re-run every input the server has not acked, from the state it last
+// told us, against the world cut above. The same two steps the live loop runs --
+// tick_def.md steps 2 and 3, through the same shared code -- which is what stops
+// a replay and a live step disagreeing.
+void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &frame)
+{
   // reconcile our locally predicted position with the server's simulated position of us.
   if (ctx.prediction.received_server_update &&
       ctx.connection.phase == Connection_Phase::Connected)
@@ -1329,9 +1382,9 @@ void Play_State::update(float dt)
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
-      cut_movement_volumes_for_input(replayed);
-      reconciled_position = predict_mover_push(ctx, disabled_geometry_span, replayed,
-                                               reconciled_movement, reconciled_position, movers);
+      cut_predicted_world_for_input(ctx, frame, replayed);
+      reconciled_position =
+          predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
 
       for (const shared::subtick_step_t& step : subtick_steps)
       {
@@ -1353,7 +1406,7 @@ void Play_State::update(float dt)
 
         std::tie(reconciled_position, reconciled_velocity) = player_move(
             *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
-            ctx.world.session.bvh, disabled_geometry_span, movement_volume_span, movers,
+            ctx.world.session.bvh, frame.predicted_world,
             reconciled_position, reconciled_velocity, step_basis.forward,
             step_basis.right, aim_sweep_of(step), player_half_width, player_half_height,
             step.dt, nullptr,
@@ -1416,6 +1469,16 @@ void Play_State::update(float dt)
     }
     // else: error is below quantization noise, that's fine.
   }
+}
+
+// This frame's aim and this frame's buttons: the zoom toggle and the FOV it eases
+// to, the sensitivity that FOV scales, the button poll, and every clock counted
+// in seconds rather than ticks. Nothing here is per-tick; the tick loop reads
+// what it leaves on `frame`.
+void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &frame)
+{
+  const float dt                 = frame.dt;
+  const bool  body_input_allowed = frame.body_input_allowed;
 
   // now our position is subtick-accurate: based on the latest baseline provded
   // by the server with our "local" moves recalculated on top of it.
@@ -1473,25 +1536,6 @@ void Play_State::update(float dt)
   const float mouse_sensitivity =
       ctx.cvars->m_sensitivity *
       shared::lerp(1.0f, zoom_scale, ctx.cvars->m_zoom_sensitivity_ratio);
-
-  // The aim the local player STEERS along, which is deliberately not the
-  // camera's: the spectate arms at the bottom point `camera` at someone else
-  // entirely, and movement must keep following our own look. Mouse look drives
-  // ctx.prediction.player_yaw underneath in both cases -- it just isn't always
-  // what the view shows. The steering BASIS is no longer resolved once per
-  // frame: every sub-step recomputes it from the aim in effect at that step.
-  auto apply_mouse_travel = [&](linalg::vec2i motion)
-  {
-    if (!mouse_look_allowed)
-      return;
-    ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
-    ctx.prediction.player_pitch -= motion.y * mouse_sensitivity;
-    shared::clamp_this(ctx.prediction.player_pitch, -89.0f, 89.0f);
-  };
-
-  auto current_view = [&]() -> shared::subtick_view_t {
-    return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
-  };
 
   // this _evaluates_ the input that was already gathered. it's not a live call.
   // although it reflects the most up-to-date stuff, I guess.
@@ -1557,6 +1601,45 @@ void Play_State::update(float dt)
       local_player_is_a_corpse
           ? 0.f
           : std::max(0.f, ctx.prediction.seconds_until_local_deploy_complete - dt);
+
+  frame.fov_degrees          = fov_degrees;
+  frame.mouse_sensitivity    = mouse_sensitivity;
+  frame.mouse_look_allowed   = mouse_look_allowed;
+  frame.buttons              = buttons;
+  frame.local_player_is_dead = local_player_is_dead;
+}
+
+// The raw arrival stream, placed where it actually happened. RECEIVE by nature
+// and SIMULATE by position: it needs this frame's sensitivity and button poll,
+// which need the world to be ready, and the ready test sits above the cut. See
+// tick_def.md's client section.
+void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
+                                                        play_frame_t &frame)
+{
+  const float    dt                 = frame.dt;
+  const uint64_t buttons            = frame.buttons;
+  const float    mouse_sensitivity  = frame.mouse_sensitivity;
+  const bool     mouse_look_allowed = frame.mouse_look_allowed;
+  const bool     body_input_allowed = frame.body_input_allowed;
+
+  // The aim the local player STEERS along, which is deliberately not the
+  // camera's: the spectate arms at the bottom point `camera` at someone else
+  // entirely, and movement must keep following our own look. Mouse look drives
+  // ctx.prediction.player_yaw underneath in both cases -- it just isn't always
+  // what the view shows. The steering BASIS is no longer resolved once per
+  // frame: every sub-step recomputes it from the aim in effect at that step.
+  auto apply_mouse_travel = [&](linalg::vec2i motion)
+  {
+    if (!mouse_look_allowed)
+      return;
+    ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
+    ctx.prediction.player_pitch -= motion.y * mouse_sensitivity;
+    shared::clamp_this(ctx.prediction.player_pitch, -89.0f, 89.0f);
+  };
+
+  auto current_view = [&]() -> shared::subtick_view_t {
+    return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
+  };
 
   // --- Place this frame's button transitions on the tick timeline ---
   //
@@ -1744,8 +1827,18 @@ void Play_State::update(float dt)
       }
     }
   }
+}
 
-  Move_Events frame_move_events{};
+// SIMULATE proper: one fixed step per server tick the accumulator has earned.
+// Cuts the tick's input out of the pending edges, sends the command with the
+// whole unacked tail, and predicts our OWN body -- and nothing else. Every other
+// entity in the session is the server's; see tick_def.md, "The client".
+void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
+{
+  const float    dt                   = frame.dt;
+  const uint64_t buttons              = frame.buttons;
+  const bool     local_player_is_dead = frame.local_player_is_dead;
+  network::Client_Transport_Layer &transport = ctx.transport_layer;
 
   // --- Client-side prediction ---
   // When connected, physics steps at the server tickrate so prediction matches
@@ -1972,10 +2065,10 @@ void Play_State::update(float dt)
 
         uint64_t buttons_entering_step = buttons_before_tick;
 
-        cut_movement_volumes_for_input(ctx.prediction.input_number);
-        ctx.prediction.player_position = predict_mover_push(
-            ctx, disabled_geometry_span, ctx.prediction.input_number,
-            ctx.prediction.player_movement, ctx.prediction.player_position, movers);
+        cut_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
+        ctx.prediction.player_position =
+            predict_mover_push(ctx, frame.predicted_world, ctx.prediction.player_movement,
+                               ctx.prediction.player_position);
 
         for (const shared::subtick_step_t& step : steps)
         {
@@ -2072,7 +2165,7 @@ void Play_State::update(float dt)
             auto [new_position, new_velocity] = player_move(
                 *ctx.cvars, move_input_from_buttons(step.buttons),
                 ctx.prediction.player_movement, ctx.world.session.bvh,
-                disabled_geometry_span, movement_volume_span, movers,
+                frame.predicted_world,
                 ctx.prediction.player_position, ctx.prediction.player_velocity,
                 step_basis.forward, step_basis.right, aim_sweep_of(step), player_half_width,
                 player_half_height, step.dt, &step_events, &ctx.visuals.debug_collision_faces);
@@ -2166,18 +2259,18 @@ void Play_State::update(float dt)
 
       // Coalesce across the (possibly multiple) ticks stepped this frame:
       // jump is a one-shot, landing keeps the hardest impact.
-      frame_move_events.jumped |= tick_events.jumped;
+      frame.move_events.jumped |= tick_events.jumped;
       if (tick_events.landed &&
-          tick_events.land_impact_speed > frame_move_events.land_impact_speed)
+          tick_events.land_impact_speed > frame.move_events.land_impact_speed)
       {
-        frame_move_events.landed = true;
-        frame_move_events.land_impact_speed = tick_events.land_impact_speed;
+        frame.move_events.landed = true;
+        frame.move_events.land_impact_speed = tick_events.land_impact_speed;
       }
       if (tick_events.launched_by_pad)
       {
-        frame_move_events.launched_by_pad = true;
-        frame_move_events.pad_uid         = tick_events.pad_uid;
-        frame_move_events.pad_kind        = tick_events.pad_kind;
+        frame.move_events.launched_by_pad = true;
+        frame.move_events.pad_uid         = tick_events.pad_uid;
+        frame.move_events.pad_kind        = tick_events.pad_kind;
       }
 
       int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
@@ -2188,26 +2281,42 @@ void Play_State::update(float dt)
     }
 
   }
+}
 
+// Our own jump, land and pad launch, 2D because they are ours. Everyone else's
+// arrive as spatialized effects from the server, which is why the predicted copy
+// is suppressed for its own subject (prediction_def.md ss1).
+void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t &frame)
+{
   // Local player's movement sounds — centered (2D), since it's us. Other
   // players' jumps/lands arrive as spatialized cosmetic effects from the server.
   if (ctx.audio)
   {
-    if (frame_move_events.jumped)
+    if (frame.move_events.jumped)
       ctx.audio->play_2d(assets::sound_asset::player_jump);
-    if (frame_move_events.landed &&
-        frame_move_events.land_impact_speed >
+    if (frame.move_events.landed &&
+        frame.move_events.land_impact_speed >
             ctx.cvars->pm_minimum_land_impact_speed)
       ctx.audio->play_2d(assets::sound_asset::player_land_new);
 
-    if (frame_move_events.launched_by_pad)
-      ctx.audio->play_3d(frame_move_events.pad_kind == shared::movement_volume_kind_t::Bounce
+    if (frame.move_events.launched_by_pad)
+      ctx.audio->play_3d(frame.move_events.pad_kind == shared::movement_volume_kind_t::Bounce
                              ? assets::sound_asset::bubble_pop
                              : assets::sound_asset::twang,
-                         shared::movement_volume_origin(movement_volume_span,
-                                                        frame_move_events.pad_uid,
+                         shared::movement_volume_origin(frame.predicted_world.movement_volumes,
+                                                        frame.move_events.pad_uid,
                                                         ctx.prediction.player_position));
   }
+}
+
+// RENDER: the visual error decaying away, the interpolation cursor moving, and
+// every remote player sampled to where that cursor says they were. A READ of
+// server-owned state onto per-frame render fields -- nothing here writes a
+// networked value back.
+void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame)
+{
+  const float dt       = frame.dt;
+  const float world_dt = frame.world_dt;
 
   // --- Decay visual error offset (frame-rate independent) ---
   {
@@ -2228,11 +2337,10 @@ void Play_State::update(float dt)
 
   // replay_def.md §6: the spectated player at the cursor, everyone else where that player saw them.
   const std::optional<int32_t> first_person_slot = try_replay_first_person_slot(ctx.replay, *ctx.cvars);
-  std::optional<shared::replay_view_sample_t> first_person_view;
   if (first_person_slot)
-    first_person_view = shared::try_sample_replay_view(ctx.replay.replay, ctx.replay.view_tracks,
-                                                       *first_person_slot,
-                                                       ctx.replication.interpolation_cursor.tick);
+    frame.first_person_view =
+        shared::try_sample_replay_view(ctx.replay.replay, ctx.replay.view_tracks, *first_person_slot,
+                                       ctx.replication.interpolation_cursor.tick);
 
   for (auto &[slot, remote_player] : ctx.replication.remote_players)
   {
@@ -2244,8 +2352,8 @@ void Play_State::update(float dt)
       continue;
 
     double sample_tick = ctx.replication.interpolation_cursor.tick;
-    if (first_person_view && first_person_view->seen_cursor_tick && slot != *first_person_slot)
-      sample_tick = *first_person_view->seen_cursor_tick;
+    if (frame.first_person_view && frame.first_person_view->seen_cursor_tick && slot != *first_person_slot)
+      sample_tick = *frame.first_person_view->seen_cursor_tick;
 
     const client::interpolation_result_t interpolated =
         client::sample_interpolated_pose(remote_player.interpolation, sample_tick);
@@ -2272,12 +2380,19 @@ void Play_State::update(float dt)
     remote_player.body_yaw        = interpolated.pose.body_yaw;
   }
 
-  // --- Resolve the camera ---
+}
+
+// The ONE place `camera` is written, and the order of the arms IS the priority
+// rule -- most specific first, the predicted eye as the fallthrough. After the
+// interpolation pass on purpose: the eye-follow arm reads the same
+// render_position the model is drawn from.
+void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
+{
   // The ONE place `camera` is written. Everything above works in
   // ctx.prediction / connection_ui and hands its result here, so two sources
   // cannot both write it in the same frame and the order of the arms below IS
   // the priority rule -- most specific first, the predicted eye as the
-  // fallthrough. Zoom used to write fov_degrees three hundred lines up and mouse
+  // fallthrough. Zoom used to write frame.fov_degrees three hundred lines up and mouse
   // look yaw/pitch two hundred, which is what made "resolved in one place" a
   // claim rather than a fact.
   //
@@ -2287,7 +2402,7 @@ void Play_State::update(float dt)
   // rather than being smoothed over by a separate camera path. Mouse look still
   // drives ctx.prediction.player_yaw underneath every arm -- it just isn't
   // always what the camera uses.
-  camera.fov_degrees = fov_degrees;
+  camera.fov_degrees = frame.fov_degrees;
   camera.yaw         = ctx.prediction.player_yaw;
   camera.pitch       = ctx.prediction.player_pitch;
 
@@ -2314,7 +2429,7 @@ void Play_State::update(float dt)
     }
   }
 
-  if (noclip_active)
+  if (frame.noclip_active)
   {
     // The free camera outranks every other arm: it is the one you asked for.
     camera.position = noclip_camera.position;
@@ -2332,10 +2447,10 @@ void Play_State::update(float dt)
                         vec3f{0.f, shared::player_eye_height, 0.f};
       camera.yaw   = spectated.render_yaw;
       camera.pitch = spectated.render_pitch;
-      if (first_person_view)
+      if (frame.first_person_view)
       {
-        camera.yaw   = first_person_view->view.yaw;
-        camera.pitch = first_person_view->view.pitch;
+        camera.yaw   = frame.first_person_view->view.yaw;
+        camera.pitch = frame.first_person_view->view.pitch;
       }
     }
   }
@@ -2346,7 +2461,13 @@ void Play_State::update(float dt)
 
     (void)try_pose_camera_at_spectate_spot(camera, ctx.world.session, 0);
   }
+}
 
+// Last, because it is the only step that READS the camera rather than writing
+// it: the listener rides the resolved view, not the predicted body.
+void Play_State::update_audio_listener(client_context_t &ctx, play_frame_t &frame)
+{
+  (void)frame;
   // The listener rides the RESOLVED camera, not the predicted body. With
   // cl_spectate_slot those are two different players -- ears on your own corpse,
   // eyes on someone else -- and even without it the camera is the one that
@@ -2363,6 +2484,43 @@ void Play_State::update(float dt)
                       attenuation);
   }
 
+}
+
+void Play_State::update(float dt)
+{
+  timed_function();
+
+  auto &ctx = state_manager::get_client_context();
+
+  // Receive, simulate, render -- the client's half of tick_def.md. Every line
+  // below is a call; anything that grows a body belongs in a step beside them.
+  play_frame_t frame{.dt = dt, .world_dt = dt};
+
+  // ------------------------------------------------------------------ RECEIVE
+  if (update_shell(ctx, frame))
+    return; // it switched state: this Play_State no longer exists.
+
+  receive_from_server(ctx, frame);
+  retire_per_frame_visuals(ctx, frame);
+
+  // no use for reconciling or moving if the world is not ready yet.
+  if (!ctx.world.ready)
+    return;
+
+  // ----------------------------------------------------------------- SIMULATE
+  cut_disabled_geometry_for_frame(ctx, frame);
+  cut_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
+
+  reconcile_with_server(ctx, frame);
+  resolve_aim_and_buttons(ctx, frame);
+  place_input_edges_on_the_tick_timeline(ctx, frame);
+  run_predicted_ticks(ctx, frame);
+  play_local_movement_sounds(ctx, frame);
+
+  // ------------------------------------------------------------------- RENDER
+  advance_render_state(ctx, frame);
+  resolve_camera(ctx, frame);
+  update_audio_listener(ctx, frame);
 }
 
 void Play_State::draw_imgui_panels()

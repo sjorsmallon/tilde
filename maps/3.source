@@ -236,7 +236,7 @@ static_mesh
 brush
 {
   "_uid" "14"
-  "vertices" "2902.75928 -184.153839 -640.000488, 2902.75928 -184.153839 640.000488, 2902.75928 -71.8461609 -640.000488, 2902.75928 -71.8461609 640.000488, 4879.87305 -184.153839 -640.000488, 4879.87305 -184.153839 640.000488, 4879.87305 -71.8461609 -640.000488, 4879.87305 -71.8461609 640.000488"
+  "vertices" "2796.70972 -184.153839 -640, 2796.70972 -184.153839 640, 2796.70972 -71.8461609 -640, 2796.70972 -71.8461609 640, 4985.67578 -184.153839 -640, 4985.67578 -184.153839 640, 4985.67578 -71.8461609 -640, 4985.67578 -71.8461609 640"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -246,7 +246,7 @@ brush
   face
   {
     "normal" "-1 0 0"
-    "distance" "-2902.75928"
+    "distance" "-2796.70972"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -261,8 +261,8 @@ brush
   }
   face
   {
-    "normal" "-0 -1 -0"
-    "distance" "184.153839"
+    "normal" "-0 -0.99999994 -0"
+    "distance" "184.153824"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -277,8 +277,8 @@ brush
   }
   face
   {
-    "normal" "0 0 -1"
-    "distance" "640.000488"
+    "normal" "0 0 -0.99999994"
+    "distance" "639.999939"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -293,8 +293,8 @@ brush
   }
   face
   {
-    "normal" "-0 -0 1"
-    "distance" "640.000488"
+    "normal" "-0 -0 0.99999994"
+    "distance" "639.999939"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -309,8 +309,8 @@ brush
   }
   face
   {
-    "normal" "0 1 0"
-    "distance" "-71.8461609"
+    "normal" "0 0.99999994 0"
+    "distance" "-71.8461533"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -326,7 +326,7 @@ brush
   face
   {
     "normal" "1 -0 -0"
-    "distance" "4879.87305"
+    "distance" "4985.67578"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -463,7 +463,7 @@ static_mesh
 brush
 {
   "_uid" "29"
-  "vertices" "2938.86157 -128 -4838.58691, 2938.86157 -128 -3558.58691, 2938.86157 -15.6923218 -4838.58691, 2938.86157 -15.6923218 -3558.58691, 4915.97119 -128 -4838.58691, 4915.97119 -128 -3558.58691, 4915.97119 -15.6923218 -4838.58691, 4915.97119 -15.6923218 -3558.58691"
+  "vertices" "2727.25146 -128 -4838.58691, 2727.25146 -128 -3558.58691, 2727.25146 -15.6923218 -4838.58691, 2727.25146 -15.6923218 -3558.58691, 4915.97119 -128 -4838.58691, 4915.97119 -128 -3558.58691, 4915.97119 -15.6923218 -4838.58691, 4915.97119 -15.6923218 -3558.58691"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -473,7 +473,7 @@ brush
   face
   {
     "normal" "-1 0 0"
-    "distance" "-2938.86157"
+    "distance" "-2727.25146"
     "material" "2"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -488,8 +488,8 @@ brush
   }
   face
   {
-    "normal" "-0 -1 -0"
-    "distance" "128"
+    "normal" "-0 -0.99999994 -0"
+    "distance" "127.999992"
     "material" "2"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -504,8 +504,8 @@ brush
   }
   face
   {
-    "normal" "0 0 -1"
-    "distance" "4838.58691"
+    "normal" "0 0 -0.99999994"
+    "distance" "4838.58643"
     "material" "2"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -520,8 +520,8 @@ brush
   }
   face
   {
-    "normal" "-0 -0 1"
-    "distance" "-3558.58691"
+    "normal" "-0 -0 0.99999994"
+    "distance" "-3558.58667"
     "material" "2"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -536,8 +536,8 @@ brush
   }
   face
   {
-    "normal" "0 1 0"
-    "distance" "-15.6923218"
+    "normal" "0 0.99999994 0"
+    "distance" "-15.6923208"
     "material" "2"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -632,8 +632,8 @@ entity
   "position" "2132.304 1278.1108 128"
   "orientation" "0 0 0 1"
   "name" ""
-  "counter.value" "2"
-  "counter.limit" "0"
+  "counter.value" "0"
+  "counter.limit" "2"
 }
 entity
 {

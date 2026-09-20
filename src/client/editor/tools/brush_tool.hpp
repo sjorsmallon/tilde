@@ -14,7 +14,7 @@
 // before it gets more confusing: there is a clear distinction between
 // points and vertices. points are points that occupy 3d space. nothing else.
 // vertices belong to a render mesh. they contain a normal, and whatever else.
-// it can be that a single point has multiple vertices because it is part of 
+// it can be that a single point becomes multiple vertices because it is part of 
 // a set of faces, like the corner of a cube, where each vertex has a different 
 // normal because it is part of a different face.
 

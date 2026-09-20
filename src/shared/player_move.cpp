@@ -592,17 +592,16 @@ shared::aabb_bounds_t hull_aabb(const vec3& center, float half_width, float half
 }
 
 void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
-                                  Span<const uint8_t> disabled_geometry,
-                                  Span<const shared::mover_t> movers,
+                                  const shared::predicted_world_t& world,
                                   const shared::aabb_bounds_t& bounds,
                                   std::vector<collision_candidate_t>& out)
 {
   std::vector<const BVH_Primitive*> overlapping;
-  bvh_intersect_aabb(bvh, bounds, overlapping, disabled_geometry);
+  bvh_intersect_aabb(bvh, bounds, overlapping, world.disabled_geometry);
   for (const BVH_Primitive* primitive : overlapping)
     out.push_back({&primitive->collision_planes, &primitive->face_polygons});
 
-  for (const shared::mover_t& mover : movers)
+  for (const shared::mover_t& mover : world.movers)
   {
     if (!shared::aabbs_intersect(bounds, mover.swept_bounds))
       continue;
@@ -630,8 +629,7 @@ float hull_penetration_depth(const std::vector<Plane>& planes, const vec3& cente
 }
 
 Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
-                                   Span<const uint8_t> disabled_geometry,
-                                   Span<const shared::mover_t> movers,
+                                   const shared::predicted_world_t &world,
                                    vec3 &player_pos,
                                    float half_width, float half_height,
                                    debug_collision::Face_Bucket *debug_faces)
@@ -642,7 +640,7 @@ Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
   shared::aabb_bounds_t player_aabb = hull_aabb(player_pos, half_width, half_height);
 
   std::vector<collision_candidate_t> overlapping;
-  collect_collision_candidates(bvh, disabled_geometry, movers, player_aabb, overlapping);
+  collect_collision_candidates(bvh, world, player_aabb, overlapping);
 
   for (const collision_candidate_t& candidate : overlapping)
   {
@@ -750,9 +748,7 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
-    Span<const uint8_t> disabled_geometry,
-    Span<const shared::movement_volume_t> movement_volumes,
-    Span<const shared::mover_t> movers,
+    const shared::predicted_world_t &world,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events,
@@ -775,7 +771,7 @@ std::tuple<vec3, vec3> player_move(
   const vec3 hull_center_offset{0.f, half_height, 0.f};
   vec3 player_pos = old_position + hull_center_offset;
   Collider_Planes collider_planes =
-      resolve_collisions(bvh, disabled_geometry, movers, player_pos, half_width, half_height,
+      resolve_collisions(bvh, world, player_pos, half_width, half_height,
                          recording_bucket);
 
   bool has_ground = !collider_planes.ground_planes.empty();
@@ -872,7 +868,7 @@ std::tuple<vec3, vec3> player_move(
       const float step_height = cvars.pm_step_height;
       vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
       Collider_Planes raised_planes =
-          resolve_collisions(bvh, disabled_geometry, movers, raised_pos, half_width, half_height,
+          resolve_collisions(bvh, world, raised_pos, half_width, half_height,
                              recording_bucket);
 
       // Only abort if a raised wall specifically blocks our wish direction.
@@ -922,7 +918,7 @@ std::tuple<vec3, vec3> player_move(
         drop_pos.z += wish_dir_xz.z * step_height;
         drop_pos.y -= step_height;
         Collider_Planes drop_planes =
-            resolve_collisions(bvh, disabled_geometry, movers, drop_pos, half_width, half_height,
+            resolve_collisions(bvh, world, drop_pos, half_width, half_height,
                                recording_bucket);
 
         // Reject the step if a wall still blocks the wish direction at the
@@ -984,7 +980,7 @@ std::tuple<vec3, vec3> player_move(
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
   Collider_Planes post_planes =
-      resolve_collisions(bvh, disabled_geometry, movers, new_pos, half_width, half_height,
+      resolve_collisions(bvh, world, new_pos, half_width, half_height,
                          recording_bucket);
 
   const float overbounce = cvars.pm_overbounce;
@@ -1088,7 +1084,7 @@ std::tuple<vec3, vec3> player_move(
   shared::movement_volume_kind_t launched_by_kind = shared::movement_volume_kind_t::Jump_Pad;
   bool                 touching_a_volume = false;
 
-  for (const shared::movement_volume_t &volume : movement_volumes)
+  for (const shared::movement_volume_t &volume : world.movement_volumes)
   {
     if (!volume.enabled)
       continue;
@@ -1136,11 +1132,12 @@ std::tuple<vec3, vec3> player_move(
 }
 
 mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
-                                   Span<const uint8_t> disabled_geometry,
-                                   Span<const shared::mover_t> movers,
+                                   const shared::predicted_world_t& world,
                                    const entities::Movement& movement, const vec3& feet,
                                    float half_width, float half_height)
 {
+  const Span<const shared::mover_t> movers = world.movers;
+
   const vec3 hull_center_offset{0.f, half_height, 0.f};
   mover_push_t result{.feet = feet};
   std::vector<shared::entity_uid_t> pushers;
@@ -1176,8 +1173,8 @@ mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
 
   const vec3 center = result.feet + hull_center_offset;
   std::vector<collision_candidate_t> overlapping;
-  collect_collision_candidates(bvh, disabled_geometry, movers,
-                               hull_aabb(center, half_width, half_height), overlapping);
+  collect_collision_candidates(bvh, world, hull_aabb(center, half_width, half_height),
+                               overlapping);
   for (const collision_candidate_t& candidate : overlapping)
   {
     if (std::find(pushers.begin(), pushers.end(), candidate.mover_uid) != pushers.end())

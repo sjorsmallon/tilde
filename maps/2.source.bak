@@ -286,7 +286,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Red"
 }
 entity
 {
@@ -307,7 +307,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Blu"
 }
 entity
 {
@@ -353,8 +353,8 @@ entity
   "position" "2132.304 1278.1108 128"
   "orientation" "0 0 0 1"
   "name" ""
-  "counter.value" "2"
-  "counter.limit" "0"
+  "counter.value" "0"
+  "counter.limit" "2"
 }
 entity
 {

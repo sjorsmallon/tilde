@@ -158,6 +158,9 @@ static move_result_t run_split(const cvar_state_t& cvars,
                                Span<const uint8_t> disabled_geometry = {},
                                Span<const shared::mover_t> movers = {})
 {
+  const shared::predicted_world_t world{.disabled_geometry = disabled_geometry,
+                                        .movement_volumes  = volumes,
+                                        .movers            = movers};
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
 
@@ -166,7 +169,7 @@ static move_result_t run_split(const cvar_state_t& cvars,
   {
     Move_Events events{};
     std::tie(position, velocity) =
-        player_move(cvars, input, state, bvh, disabled_geometry, volumes, movers, position, velocity,
+        player_move(cvars, input, state, bvh, world, position, velocity,
                     look_front,
                     look_right, aim_sweep_t{}, half_width, half_height, step_dt, &events);
     if (out_pad != nullptr && events.launched_by_pad)
@@ -1122,7 +1125,7 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
                       : aim_sweep_t{};
     const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
 
-    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, {}, {}, position,
+    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, position,
                                                velocity, front, right, sweep, half_width,
                                                half_height, step_dt);
     step_start = step_end;
@@ -1215,8 +1218,9 @@ static ride_result_t ride_platform(const cvar_state_t& cvars, const Bounding_Vol
   for (uint32_t tick = 1; tick <= ticks; ++tick)
   {
     const shared::mover_t movers[] = {platform_at(tick)};
+    const shared::predicted_world_t world{.movers = movers};
     const mover_push_t push =
-        push_player_by_movers(bvh, {}, movers, movement, feet, half_width, half_height);
+        push_player_by_movers(bvh, world, movement, feet, half_width, half_height);
     feet = push.feet;
     if (push.crushed_by != shared::null_entity_uid && result.crushed_by == shared::null_entity_uid)
     {

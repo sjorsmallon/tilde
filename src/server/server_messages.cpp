@@ -1,14 +1,32 @@
 #include "server_messages.hpp"
 
 #include "log.hpp"
+#include "network/bitstream.hpp"
 #include "network/server_transport_layer.hpp"
 #include "server_context.hpp"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace server
 {
+
+std::string current_map_wire_id(const server_context_t &context)
+{
+  return std::filesystem::path(context.world.current_map_path).filename().generic_string();
+}
+
+void send_cvar_values(server_context_t &context, int32_t slot,
+                      const shared::cvar_values_message_t &msg)
+{
+  auto writer  = network::Bit_Writer{};
+  shared::serialize_cvar_values(writer, msg);
+  network::queue_reliable_message(
+      context.transport_layer.clients[slot].reliable_stream,
+      static_cast<network::uint8>(network::Message_Type::S2C_CvarValues),
+      writer.buffer);
+}
 
 void send_text_message_to_a_specific_client(server_context_t &context,
                                 const network::Address &ip,

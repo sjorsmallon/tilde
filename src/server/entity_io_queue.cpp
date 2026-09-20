@@ -298,7 +298,7 @@ void dispatch_the_due_actions(server_context_t& context)
 
 } // namespace
 
-void drain_pending_entity_actions(server_context_t& context)
+void deliver_pending_entity_actions(server_context_t& context)
 {
   for (uint32_t hop = 0; anything_is_due(context); ++hop)
   {

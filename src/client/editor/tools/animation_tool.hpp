@@ -27,8 +27,8 @@ struct preview_model_t
 {
   assets::asset_handle_t<assets::mesh_asset_t> mesh;
   const assets::skeleton_t* skeleton = nullptr;
-  assets::pose_t sampled_pose;
-  assets::posed_skeleton_t posed_skeleton;
+  assets::pose_t sampled_pose{};
+  assets::posed_skeleton_t posed_skeleton{};
   bool posed = false;
   bool failure_logged = false;
 };
@@ -55,12 +55,12 @@ struct clip_playback_t
 struct hitbox_workspace_t
 {
   static constexpr int NO_HITBOX_VOLUME_SELECTED = -1;
-  std::optional<assets::hitbox_rig> file_based_hitbox_rig;
-  assets::hitbox_rig_t rig;
+  std::optional<assets::hitbox_rig> file_based_hitbox_rig{};
+  assets::hitbox_rig_t rig{};
   // this is used as a base to actually create the hitbox rig from.
-  std::vector<assets::guesstimated_hitbox_from_bone_t> guesstimated_hitboxes_from_bones;
+  std::vector<assets::guesstimated_hitbox_from_bone_t> guesstimated_hitboxes_from_bones{};
   // refilled every frame from the live pose
-  std::vector<assets::posed_hitbox_t> posed_hitboxes; 
+  std::vector<assets::posed_hitbox_t> posed_hitboxes{}; 
 
   // coverage is a bind-pose property and is computed at load; excursion is
   // per-pose and is recomputed with the volumes.

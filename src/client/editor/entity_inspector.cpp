@@ -26,13 +26,15 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
   }
 
   ImGui::PushID(id);
-  const bool  picking_here = pick->armed && pick->field.has_value() &&
-                            pick->field->entity == uid && pick->field->offset == leaf.offset;
+
+  const bool picking_here = pick->armed && pick->field.has_value() && pick->field->entity == uid && pick->field->offset == leaf.offset;
   const float pick_button_width = ImGui::CalcTextSize("Pick").x + ImGui::GetStyle().FramePadding.x * 2.f;
-  const float label_width       = ImGui::CalcTextSize(leaf.name.c_str()).x + ImGui::GetStyle().ItemInnerSpacing.x;
+  const float label_width = ImGui::CalcTextSize(leaf.name.c_str()).x + ImGui::GetStyle().ItemInnerSpacing.x;
+
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - pick_button_width - label_width -
                           ImGui::GetStyle().ItemSpacing.x);
   draw_entity_uid_combo(*map, leaf.name.c_str(), *reinterpret_cast<shared::entity_uid_t*>(base + leaf.offset));
+  
   ImGui::SameLine();
   if (picking_here)
   {

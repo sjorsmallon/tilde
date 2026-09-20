@@ -2,8 +2,7 @@
 
 #include "../../shared/game_session.hpp"
 #include "../../shared/linalg.hpp"
-#include "../../shared/movement_volumes.hpp"
-#include "../../shared/movers.hpp"
+#include "../../shared/predicted_world.hpp"
 #include "../../shared/span.hpp"
 #include "../../shared/network/network_types.hpp"
 #include "../../shared/physics.hpp"
@@ -20,15 +19,12 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
                     bot_personality_t personality = {});
 
 
-// `movement_volumes`, `disabled_geometry` and `movers` are the tick's three cuts, made once
-// in Tick() and handed down: a bot is a Player_Entity running the same
-// player_move, so it gets pads and switched-off walls for free. That is the test
-// that the seam is real (prediction_def.md ss1.4, ss4.3).
-void update_bots(server_context_t &context,
-                 Span<const shared::movement_volume_t> movement_volumes,
-                 Span<const uint8_t> disabled_geometry,
-                 Span<const shared::mover_t> movers,
-                 uint32_t          current_tick,
-                 float             dt);
+// `world` is the tick's cut, made once in Tick() and handed down: a bot is a
+// Player_Entity running the same player_move, so it gets pads and switched-off
+// walls for free. That is the test that the seam is real (prediction_def.md
+// ss1.4, ss4.3). Step 3 of the tick, beside the clients' inputs, because a bot's
+// input is input and its hits belong in the same step 4 (tick_def.md).
+void update_bots(server_context_t &context, const shared::predicted_world_t& world,
+                 uint32_t current_tick, float dt);
 
 } // namespace server

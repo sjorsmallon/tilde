@@ -32,6 +32,12 @@ struct map_package_t; // defined in shared/network/map_transfer.hpp
 namespace client
 {
 
+// One frame's resolved values, handed from step to step down Play_State::update.
+// Defined in play_state.cpp: nothing outside that file builds one or reads one,
+// and it is a local of `update` rather than a member because nothing in it
+// survives a frame.
+struct play_frame_t;
+
 class Play_State : public Game_State
 {
 public:
@@ -49,17 +55,35 @@ private:
   void switch_to_map(const shared::map_t &map);
   void set_provisional_player_pose_for_new_map(client_context_t &ctx);
 
+  // The steps of `update`, in the order it runs them: receive, simulate,
+  // render. tick_def.md is the design of record, and its "The client" section
+  // is the rule each of these is checked against -- nothing writes a session
+  // entity outside snapshot apply and own-player prediction.
+  //
+  // update_shell returns TRUE when it switched state, in which case this object
+  // no longer exists and the caller must return immediately.
+  [[nodiscard]] bool update_shell(client_context_t &ctx, play_frame_t &frame);
+  void receive_from_server(client_context_t &ctx, play_frame_t &frame);
+  void retire_per_frame_visuals(client_context_t &ctx, play_frame_t &frame);
+  void reconcile_with_server(client_context_t &ctx, play_frame_t &frame);
+  void resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &frame);
+  void place_input_edges_on_the_tick_timeline(client_context_t &ctx, play_frame_t &frame);
+  void run_predicted_ticks(client_context_t &ctx, play_frame_t &frame);
+  void play_local_movement_sounds(client_context_t &ctx, play_frame_t &frame);
+  void advance_render_state(client_context_t &ctx, play_frame_t &frame);
+  void resolve_camera(client_context_t &ctx, play_frame_t &frame);
+  void update_audio_listener(client_context_t &ctx, play_frame_t &frame);
+
 
   void enter_connected_phase();
   void enter_replay_playback(shared::replay_t&& replay);
 
   camera_t camera;
 
-  // The free camera cl_noclip flies. Seeded from `camera` on the rising edge
-  // and copied into it by the resolve, so the ONE-writer rule on `camera`
-  // holds; the body underneath keeps its own aim.
+  // there's some awkwardness with noclip camera that we don't really move
+  // but snap to a new position.
   camera_t noclip_camera;
-  bool     noclip_was_active = false;
+  bool noclip_was_active = false;
 
   pass_builder_t scene;
 
@@ -70,11 +94,11 @@ private:
 
 
   std::deque<assets::posed_skeleton_t> pose_storage;
-  size_t                               pose_count = 0;
+  size_t pose_count = 0;
 
 
   // Player dimensions — canonical values live in shared::player_half_width/height
-  static constexpr float player_half_width  = shared::player_half_width;
+  static constexpr float player_half_width = shared::player_half_width;
   static constexpr float player_half_height = shared::player_half_height;
 
   struct per_connection_ui_t

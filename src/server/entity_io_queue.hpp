@@ -90,7 +90,7 @@ constexpr uint32_t MAX_ACTION_HOPS_PER_TICK = 16;
 // and target and the still-due records are DROPPED, because leaving them would
 // run the same loop again next tick, forever, one error line at a time. A
 // record with a positive delay is not due and is never touched by the cap.
-void drain_pending_entity_actions(server_context_t& context);
+void deliver_pending_entity_actions(server_context_t& context);
 
 // How sv_io_debug and ent_fire name one end of a connection: the author's label
 // when the entity has one, its classname otherwise, and the uid always -- the

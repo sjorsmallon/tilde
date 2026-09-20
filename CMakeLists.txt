@@ -514,6 +514,11 @@ add_library(game_shared STATIC
     src/shared/player_move.cpp
     src/shared/movement_volumes.cpp
     src/shared/disabled_geometry.cpp
+    # The three cuts above as ONE value: what player_move reads that is state
+    # rather than shape, built by the server tick and by both client prediction
+    # loops through the same functions. tick_def.md step 2.
+    src/shared/predicted_world.hpp
+    src/shared/predicted_world.cpp
     src/shared/mover_path.cpp
     src/shared/movers.cpp
     src/shared/subtick.hpp
@@ -872,6 +877,14 @@ add_library(game_server SHARED
     # Fills the @Server command slots -- the other half of the split above.
     ${CVAR_GEN_SERVER_BINDINGS}
     src/server/server_impl.cpp
+    # Receive, simulate, send. tick.cpp is the ORDER and nothing else -- every
+    # line in it is a call; tick_def.md says which of the six simulate steps a
+    # new system belongs in, and the two halves either side of it are the wire.
+    src/server/tick.cpp
+    src/server/server_receive.hpp
+    src/server/server_receive.cpp
+    src/server/server_send.hpp
+    src/server/server_send.cpp
     # The reset seams: what is cleared on a map change, on a slot changing
     # occupant, and at each end of a tick. server_context_test guards them.
     src/server/server_context.hpp
@@ -908,6 +921,9 @@ add_library(game_server SHARED
     src/server/systems/hook_system.cpp
     src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
+    src/server/systems/player_input_system.cpp
+    src/server/systems/hit_resolution_system.cpp
+    src/server/systems/hit_test_world.cpp
     src/server/systems/trigger_system.cpp
     src/server/systems/timer_system.cpp
     src/server/systems/mover_system.cpp

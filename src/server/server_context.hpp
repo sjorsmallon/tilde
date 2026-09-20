@@ -80,8 +80,8 @@ struct client_slot_t
   uint32_t held_snapshot_tick = 0;
 
   // This client holds the map we are running. DERIVED every tick from
-  // C2S_ClientInput::map_content_hash, never announced -- see the pass at the
-  // top of Tick(). False on a fresh slot and false after a map load, and it
+  // C2S_ClientInput::map_content_hash, never announced -- see the rider pass in
+  // receive_from_clients. False on a fresh slot and false after a map load, and it
   // comes back on its own one input later; there is no ack to wait for and
   // nothing that retransmits.
   bool map_ready = false;
@@ -165,7 +165,8 @@ struct world_t
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
 
   // Entity I/O: every action a connection has requested and not yet delivered,
-  // drained at the top of the tick. In `world` because rows are keyed by MAP
+  // paid in step 6 of the tick -- after every system, before the snapshot
+  // (tick_def.md). In `world` because rows are keyed by MAP
   // uid, so a record outliving the map it was wired in would name an entity in
   // a world that no longer exists -- the whole-group `world = {}` in
   // reset_state_in_preparation_for_new_map_load is what clears both of these.
@@ -347,6 +348,11 @@ void connect_client(server_context_t& context, int32_t slot,
                     const network::pascal_string_t<32>& player_name);
 void disconnect_client(server_context_t& context, int32_t slot,
                        std::string_view reason);
+
+// A CmdDisconnect arrived: resolve the sender to a slot and disconnect it. An
+// address that occupies no slot is an error and says so.
+void process_client_leave_message(server_context_t& context,
+                                  const network::Address& sender);
 void clear_incoming(server_context_t& context);
 void clear_outgoing(server_context_t& context);
 

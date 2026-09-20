@@ -8,8 +8,6 @@ cvars
   "g_gravity" "500"
   "next_map" "5"
   "pm_acceleration" "instant"
-  "pm_friction" "6"
-  "pm_ground_acceleration" "10"
   "pm_maxspeed" "1000"
   "sv_skybox" "night_sky"
 }
@@ -885,7 +883,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Red"
 }
 entity
 {
@@ -931,8 +929,8 @@ entity
   "position" "2132.304 1278.1108 128"
   "orientation" "0 0 0 1"
   "name" ""
-  "counter.value" "2"
-  "counter.limit" "0"
+  "counter.value" "0"
+  "counter.limit" "2"
 }
 entity
 {
@@ -956,7 +954,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Blu"
 }
 entity
 {
@@ -1005,6 +1003,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
+  "wipe_timer" "0"
 }
 entity
 {
@@ -1039,4 +1038,5 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
+  "wipe_timer" "0"
 }

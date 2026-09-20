@@ -75,6 +75,59 @@ src/
 └── launcher/         main_integrated.cpp, main_dedicated.cpp
 ```
 
+### The tick — receive, simulate, send
+
+`tick_def.md` is the design of record. Read it before adding a system, moving a
+call, or deciding where something new runs; its "Where a new system goes" table
+answers the last one in six questions.
+
+**`src/server/tick.cpp` is the ORDER and nothing else** — every line in it is a
+call, and anything that grows a body belongs in a system beside it. Receive,
+simulate, send; simulate is six steps, each with ONE rule for what belongs in
+it:
+
+```
+Tick()                    src/server/tick.cpp
+
+  pending map change      frees the world, so it runs before anything holds a pointer
+  RECEIVE                 server_receive.cpp: the socket, the connects, the console lines,
+                          the map and ghost transfers, and the RIDERS off the inputs
+                          (held snapshot tick, map_ready, move credits)
+  SIMULATE
+    1 match transition    update_match. A transition restores the level from the map
+    2 freeze what inputs read   the predicted world, then the hit-test world
+    3 inputs              every client, then every bot. Shots are TESTED, not applied
+    4 consequences        swaps, hits -> damage -> deaths, reloads
+    5 the rest of the world     rockets, physics, movers' riders; OBSERVERS last
+    6 deliver             deliver_pending_entity_actions, then the mover switches
+  SEND                    server_send.cpp: the snapshot, the two batches, the replay
+                          record, the changed cvars, the reliable blocks
+```
+
+**There is no owner table and no generated `update()` per type**, and both were
+argued and refused — a `const char*` naming a system is a second spelling that
+can disagree with the first, and a generated loop would make declaration order
+in `entities.def` the simulation order. "Where is type X updated" is answered by
+`tick.cpp` plus a grep, neither of which can go stale.
+
+**`shared::predicted_world_t` is what `player_move` reads that is STATE** — the
+disabled geometry, the movement volumes, the movers — cut once per tick into a
+`predicted_world_storage_t` the caller keeps. The BVH stays a separate parameter
+because it is the map's SHAPE. **The client builds the same value through the
+same `cut_*` functions**, which is the definition of predicted; it just cuts the
+disabled set per FRAME and the other two per INPUT, because its replay walks
+several ticks.
+
+**The client is the same three, and `Play_State::update` IS that list** —
+eleven named steps and a `play_frame_t` local carrying what crosses between
+them. There is no step 1, 4, 5 or 6: the server's answer to those arrives in the
+snapshot. **The session's entities have exactly TWO writers in the whole
+client** — the snapshot apply (`advance_newest_held_snapshot`) and
+`state_manager`'s reset on teardown. Own-player prediction is not one of them:
+it writes `ctx.prediction`, and the local body is drawn from there. State with a
+lifetime the server does not own lives in `ctx.visuals` or `hud_state_t`.
+
+
 ### Prefabs, the clipboard, and the `.source` format
 
 `map_format_def.md` is the design of record for the FILE — the block grammar,
@@ -366,13 +419,13 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
 
 **The INSTANCE layer is `map_t::connections`**, and targets are **UIDS, never names** — uids are stable in the file, so `Entity::name` is a display LABEL nothing resolves and renaming breaks no wiring. A row is `{sender, signal, target_kind, target, data, has_override, delay_seconds, fire_once}`; `target_kind` is `{Uid, Activator, Self}`. **`data.tag` IS the action** — there is no separate `action` member, because two spellings of one fact can disagree.
 
-- **The load check is ONE function, TWO policies** (`validate_map_connections`, `shared/map_connection.hpp`). It returns a refusal per bad ROW with the row's index, not a sentence to parse back. `build_session` logs each and DROPS those rows, which is what keeps the drain's `fatal_error` on a null dispatch cell unreachable; the server's `load_map` runs the same check and refuses the whole map, keeping the one it is running. An editor that could not open a map with one bad row could not repair it either.
+- **The load check is ONE function, TWO policies** (`validate_map_connections`, `shared/map_connection.hpp`). It returns a refusal per bad ROW with the row's index, not a sentence to parse back. `build_session` logs each and DROPS those rows, which is what keeps the delivery's `fatal_error` on a null dispatch cell unreachable; the server's `load_map` runs the same check and refuses the whole map, keeping the one it is running. An editor that could not open a map with one bad row could not repair it either.
 - **`by` is load-bearing, not documentation**, and an `Activator` target is checked against the types it admits — but the rule is SOME, not every, and that asymmetry is a decision. A `Uid` and a `Self` name ONE type, so those two are exact. An `Activator` does not: `Touchable` is truthfully activated by a player OR a physics body, so requiring every one of them to accept made `Touched -> !activator Kill` — the most ordinary trigger in any level — unspellable, since a crate is not `Mortal` and never will be. Worse, all-accept made a `by` list **unwidenable**: adding a type would refuse every `!activator` row in every map already on disk, which is the opposite of what a declaration should cost. So the check refuses only a row that NOTHING admitted by `by` accepts — one that could never do anything. A signal with no `by` refuses the target kind outright, there being no type to check against at all.
 - **What some-accept gives up, the DRAIN absorbs.** A row is no longer proof that every activation does something, so `pending_action_t::target_resolved_from_activator` records which case a queued action came from: a `Uid` or `Self` target keeps `send_action` and its `fatal_error`, because a null dispatch cell there is a generator or loader bug, while an `Activator` goes through `try_send_action` and a miss is one `log_warning` naming the type. A crate rolling into a volume wired to kill whoever touched it is that line and nothing else. It is the only way an author learns why nothing happened, which is why `sv_io_debug` (step 6c) matters more now.
 - **Pass-through is a MEMCPY checked at load.** A row with no override needs the signal's and the action's payload field tables to agree name for name, type for type, offset for offset, and the payloads to be the same size. The field NAMES are what separate `Died(killer: entity)` from `Set_Health(amount: i32)`, which are otherwise the same four bytes.
-- **EVERYTHING FROM A CONNECTION IS QUEUED, delay zero included; everything from code is SYNCHRONOUS.** That is the reentrancy guard: an action reached through a connection can spawn or destroy, and must not do so under the system that emitted the signal. `world_t::pending_actions` is the ONE queue, drained at the END of `Tick()` — after every system, before the snapshot — in `(fire_tick, sequence)` order (`server/entity_io_queue.{hpp,cpp}`). **The guard is the HOP, not the tick**: each pass moves the due records OUT before any runs, so a handler that emits feeds the NEXT pass, and the drain loops while anything is still due. A zero-delay chain therefore settles inside the tick that started it, and the door a button opened is open in that tick's snapshot rather than one hop per tick later. Past `MAX_ACTION_HOPS_PER_TICK` (16) the wiring is a loop: it is reported by `sender -> action -> target` and the still-due records are DROPPED, because leaving them runs the same loop again every tick forever. A record with a positive delay is not due and the cap never touches it.
-- **Emitting happens in a SYSTEM, at the tick the state change becomes true, in the same statement that writes the state** — never in an action handler (it only requests) and never in the drain. `emit_<signal>` is generated per signal into the binder TU and calls one hand-written walk, `queue_signal_connections`.
-- **The activator is resolved at EMIT time**, not at drain time: `!activator` names whoever caused THIS signal, and a delayed record outlives that moment. A handler must tolerate it naming nobody by then.
+- **EVERYTHING FROM A CONNECTION IS QUEUED, delay zero included; everything from code is SYNCHRONOUS.** That is the reentrancy guard: an action reached through a connection can spawn or destroy, and must not do so under the system that emitted the signal. `world_t::pending_actions` is the ONE queue, delivered in step 6 of `Tick()` — after every system, before the snapshot — in `(fire_tick, sequence)` order (`deliver_pending_entity_actions`, `server/entity_io_queue.{hpp,cpp}`). **The guard is the HOP, not the tick**: each pass moves the due records OUT before any runs, so a handler that emits feeds the NEXT pass, and the delivery loops while anything is still due. A zero-delay chain therefore settles inside the tick that started it, and the door a button opened is open in that tick's snapshot rather than one hop per tick later. Past `MAX_ACTION_HOPS_PER_TICK` (16) the wiring is a loop: it is reported by `sender -> action -> target` and the still-due records are DROPPED, because leaving them runs the same loop again every tick forever. A record with a positive delay is not due and the cap never touches it.
+- **Emitting happens in a SYSTEM, at the tick the state change becomes true, in the same statement that writes the state** — never in an action handler (it only requests) and never in step 6. `emit_<signal>` is generated per signal into the binder TU and calls one hand-written walk, `queue_signal_connections`.
+- **The activator is resolved at EMIT time**, not at delivery time: `!activator` names whoever caused THIS signal, and a delayed record outlives that moment. A handler must tolerate it naming nobody by then.
 - **`fire_once` spends the SESSION's copy** (`session_connection_t::spent`), never the map's — a map is what the editor is editing and what the next round reloads from. A target destroyed during a delay is DROPPED with a line, which is the only way a queued action can fail.
 - **`Died` and `Health_Changed` are emitted from the DAMAGE CHOKE POINT** (`server/damage.cpp`'s two `*_damage_total` functions), by both `Player_Entity` and `Damageable_Entity` — the health write and the `>0 -> <=0` crossing are already there, which is what "emit in the same statement that writes the state" means here. `set_health` in `traits/mortal.cpp` deliberately emits nothing: a handler only requests. `Died` carries a KILLER, so the damageable path picks one by the same rule the player path credits a frag by (largest single contribution, ties to the lower attacker uid, a wrong-colour hit contributing zero and so never winning) — that is Died's payload, not kill credit, and it is what makes `!activator` name whoever broke the thing. A tick's hits are already summed per victim, so `Died` fires ONCE however many shooters landed one.
 - **A LIGHT IS THE FIRST RECEIVER THAT IS NOT THE PLAYER, and switching one is REPLICATED.** `Point_Light_Entity` and `Spot_Light_Entity` are `Colorable, Switchable`; `shared::light_is_switched_on(entity)` is the ONE rule (no `Enabled` component means always on, which is why a directional light needs no case) and `add_frame_light` plus the bake's `collect_lights` both ask it, while `try_light_of` deliberately does NOT — the editor's inspector says "Switched OFF" rather than falling silent. A light switched off before a bake is off for the bake too, or every chart names a slot whose radiance is permanently zero. And because a light is MAP-PLACED, the client holds one it loaded itself: `Light::color` joined `Enabled::value` as `@Networked`, which is what puts a light on the wire (replication is derived from the fields — see "A frame IS an `Entity_System`" under Networking), and the client writes every networked leaf onto its session copy through `copy_networked_fields`, as it does for every replicated entity it holds. Everything else about a light stays `@Editable` and off the wire, so an unswitched one costs a spawn record and then nothing.
@@ -392,7 +445,7 @@ Hierarchy: `Entity` (base, has `position`/`orientation`) → `Player_Spawn_Entit
   `loop = true` emitter warns once and is silent. `impact_sound_plan.md` §1 is the three-kinds rule and §6 the record.
 - **`sv_io_debug` AND `ent_fire` come BEFORE the first wired level, not after.** `sv_io_debug` exists for one line in particular — an emit whose sender has NO connections. "I walked into the trigger and nothing happened" has three causes (the signal never fired; it fired and nothing was wired; it was wired and the action was refused) and they are one symptom in the viewport, so the four states get four DIFFERENT lines: no bucket, a bucket with no row for that signal, a spent `fire_once` row, and the queue/dispatch pair for a row that ran. It is read DIRECTLY rather than latched the way `sv_event_debug` is — that latch exists because the GENERATED fire helpers must stay free of the cvar family, and every site here is hand-written server code already holding the context. `entity_io_label` prints the author's label AND the uid, always: a uid is what a row stores, so a line naming only a label names something no connection can be edited by.
 - **`ent_fire <uid> <Action> [field=value ...]` is SYNCHRONOUS, and the caller's body is the ACTIVATOR** — everything from code is synchronous, the console is code, and there is no emitting system for it to reenter. The action is a `string` parameter because `entity_action` is in the ENTITY family and a cvar may not reference one; the fence is what forces the `try_from_string` resolve. **The parameter tail is split by the ACTION'S FIELD TABLE, never by whitespace**: a `v3` writes as `"1 0 0"`, so whitespace cuts one value into three. A `name=` is a boundary only when `name` is a field the action declares, so `velocity=0 0 400 keep_velocity=true` is two pairs and needs no quoting. That parser is `src/server/entity_io_console.{hpp,cpp}` rather than the handler because getting it wrong sends the field's DEFAULT rather than failing — the silent kind of wrong — so it has to be pinnable with no server. `ent_fire` is also what earned `def_gen` an OPTIONAL rest parameter, whose only legal default is the empty string: a rest is a view into the console line, so any other default is text with nowhere to live.
-- `Entity_System::try_find(uid)` is the untyped resolve the drain needs; `get<T>` is the typed one.
+- `Entity_System::try_find(uid)` is the untyped resolve the delivery needs; `get<T>` is the typed one.
 - **THE WIRING IS EDITED IN THE EDITOR, and that gates the first real level.**
   `client/editor/connection_panel.{hpp,cpp}` is a window of its own, drawn by
   `Selection_Tool::on_draw_ui` for a SINGLE selected entity — the Map Cvars
@@ -1117,7 +1170,9 @@ toggle lands where movers cannot.
   `build_session`, and the editor walks `map.geometry` on demand. Both stored is
   two answers that can disagree.
 - **`collect_disabled_geometry(system, owner_of, out)` is the tick's second
-  cut**, beside `collect_movement_volumes` and at the same four sites. Keyed by
+  cut**, beside `collect_movement_volumes`; both reach their four call sites
+  inside `shared::predicted_world_t` (`shared/predicted_world.hpp`) rather than
+  as loose spans. Keyed by
   geometry INDEX because that is what `Collision_Id::index` carries, so the
   sweep's test is one array read and nothing resolves a uid at all. **A disabled
   brush is NOT a movement volume**: a volume is a box tested AFTER the step, this
@@ -1148,7 +1203,8 @@ A player is hit-tested against the **posed skeletal volumes**, not a static box 
 **A TARGET IS NOT NECESSARILY A PLAYER.** `resolve_hitscan` never knew what it
 was testing — a target is a uid plus posed volumes plus a bound — so the only
 thing making a shot player-only was that the list came from walking the
-`Player_Entity` pool. `pose_all_players` is now `pose_all_targets` and appends
+`Player_Entity` pool. `pose_all_players` is now `pose_all_targets`
+(`server/systems/hit_test_world.cpp`, the tick's step 2) and appends
 every living `Damageable_Entity` after the players, as ONE `hitbox_shape_t::Box`
 built from `position + volume.position` (start == end, so `center()` is exact)
 and `volume.half_extents`, in the default world-axis frame. That is what a Neon White
@@ -1378,7 +1434,7 @@ entity field.
 
 **EVERY CAUSE OF A TRANSITION IS A REQUEST, AND `update_match` IS THE ONE PLACE
 THAT PERFORMS ONE.** A transition respawns, reseeds and emits, which a handler in
-the drain may not do. So the `Match_Control` actions (`Start_Match`,
+step 6 may not do. So the `Match_Control` actions (`Start_Match`,
 `End_Round`, `Restart_Round`, `End_Match`, in `server/traits/match_control.cpp`)
 only write `requested`, refusing by `match_request_is_allowed` -- the rule
 `update_match` asks again when it pays one. Once per tick, one transition, in
@@ -1526,7 +1582,7 @@ An empty `try_find_client_slot` is **not** an error: `poll_network` asks it abou
 
 One deliberate irregularity, with the reason written at the site: the two tick groups `clear()` per member rather than `= {}` so their vectors keep capacity at 60Hz. (The match used to be a second, reset by a call; it is an entity in the session now and goes with `world = {}`.) `outgoing.effects` and `outgoing.events` are the same intent in a different member: `event_stream_t::reset()` keeps the writer's buffer *and* re-reserves the count slot, so both streams come out of `clear_outgoing` ready to be fired into. That is also where `sv_event_debug` is latched onto them — the one place guaranteed to run exactly once before anything can fire, which keeps the generated fire helpers free of the cvar family.
 
-`server_impl.cpp` has exactly **one** file-scope object, `g_server_context`; every helper in it takes `server_context_t&` as a parameter. The `cvars::commands::*` handlers at the bottom of that file are the one exception — the generated binder calls them with console arguments and nothing else, so there is no seam to thread a context through.
+`server_impl.cpp` is the MODULE — that one object, init / shutdown, the map load, and the @Server command handlers; the TICK is `tick.cpp` and the two wire halves beside it. It has exactly **one** file-scope object, `g_server_context`, declared in `server_impl.hpp` for the tick alone; every helper anywhere in the module takes `server_context_t&` as a parameter. The `cvars::commands::*` handlers at the bottom of that file are the one exception — the generated binder calls them with console arguments and nothing else, so there is no seam to thread a context through.
 
 ### Networking
 
@@ -1566,7 +1622,7 @@ The connect handshake exchanges `entities::SCHEMA_HASH` (in `CmdConnect`); the s
 
 **The C2S input message is `C2S_ClientInput`, and the name is load-bearing.** It is **one tick of a client's input, plus what that client was seeing when it made it** — and roughly half of it is not input: `input_number` sequences, while `held_snapshot_tick` and the `interpolated_*` bracket are documented **riders**, hitching along because this is the only regular C2S traffic. It was `C2S_PlayerMoveCommand`, and all three words were wrong: the move fields (`forwardmove`/`sidemove`/`upmove`) went dead at the sub-tick cutover and are now reserved, movement travels as `buttons_bitfield` + `subtick_edges` which also carry FIRE; a **spectator** has no player and still sends these (see "Client vs Player"); and `C2S_Command`, a console line, is a different message on the same socket. `client_slot_t::latest_processed_input_number` is the server's high-water mark over that stream — "consumed through N", **not** "the last input that moved you": a spectator's input and one whose sub-tick grammar was refused both advance it, and only an over-budget drop does not, since that one never ran and its button edges must not be skipped. The client mirrors it as `latest_input_number_processed_by_server`, which both trims `unacked_inputs` and is where reconciliation starts replaying.
 
-`held_snapshot_tick` **rides on `C2S_ClientInput` but is not part of the input** — client input is the only regular C2S traffic, so it hitches a ride rather than paying for a datagram of its own. The server therefore drains it in a pass of its own in `Tick()`, *before* the input loop: that loop skips a client with no body, and a spectator still receives snapshots. `client_slot_t::held_snapshot_tick` is the server's **note about** the client, and it grows only (`std::max`, not assignment) — UDP reorders and duplicates, so a later packet can carry an older number, and a stale one must not make the server forget what the client already confirmed.
+`held_snapshot_tick` **rides on `C2S_ClientInput` but is not part of the input** — client input is the only regular C2S traffic, so it hitches a ride rather than paying for a datagram of its own. The server therefore drains it in the rider pass of `receive_from_clients`, *before* the input loop: that loop skips a client with no body, and a spectator still receives snapshots. `client_slot_t::held_snapshot_tick` is the server's **note about** the client, and it grows only (`std::max`, not assignment) — UDP reorders and duplicates, so a later packet can carry an older number, and a stale one must not make the server forget what the client already confirmed.
 
 Per-leaf change masks come from `networked_leaf_fields(type)` on both ends, so bit N is the same field by construction; `deserialize_entity` can hand that mask back via an optional `network::changed_fields_t*` out-param.
 
@@ -1597,7 +1653,7 @@ A **bitmap**, not "highest contiguous plus a gap list". The gap list is smaller 
 
 A **completed multi-fragment bucket outlives its message** for `completed_transfer_retention_in_seconds`, holding only the count. Two reasons, both about the tail: the sender is waiting to hear the last fragments landed and a lost report has nothing to re-derive it from, so the receiver keeps answering; and a duplicate crossing the completion in flight must be **discarded** rather than opening a fresh bucket that would report "5 of 40" and re-stream a map already held. Only for `fragment_count >= 2`, and a packet declaring a different count **takes the bucket over** — `message_id` wraps every 256 sends, so retention must never eat the next message that draws its id.
 
-**`map_ready` is DERIVED, never announced.** The client reports the content hash of the map it holds on every `C2S_ClientInput` (`map_content_hash`, a rider like `held_snapshot_tick`), and the server sets `client_slot_t::map_ready` by comparing it to its own — one assignment, in the pass at the top of `Tick()`. There is no ack, no retransmit and no timer anywhere in the map handshake.
+**`map_ready` is DERIVED, never announced.** The client reports the content hash of the map it holds on every `C2S_ClientInput` (`map_content_hash`, a rider like `held_snapshot_tick`), and the server sets `client_slot_t::map_ready` by comparing it to its own — one assignment, in the rider pass of `receive_from_clients`. There is no ack, no retransmit and no timer anywhere in the map handshake.
 
 This replaced a `C2S_MapLoaded` message, and the rule it cost to learn is the one §8 already established in the other direction: **state that gates behavior is replicated as state, never delivered as an event.** A one-shot ack can be lost, and losing that one left `map_ready` false forever, which withheld snapshots forever — healed only by a 0.25s `CmdChangeMap` resend that existed for no other reason. A value that is continuously true has nothing to lose. That the same rule caught a hang on *each* side of the connection is the argument for it.
 

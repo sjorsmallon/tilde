@@ -559,7 +559,7 @@ void use_guesstimated_size_if_unauthored(assets::hitbox_volume_t& volume,
     if (ImGui::SmallButton("fill from guess"))
     {
       hitbox_volume.half_extents = guesstimated_hitbox.half_extents;
-      edit_finished       = true;
+      edit_finished = true;
     }
     ImGui::TextDisabled("guess %.2f %.2f %.2f", guesstimated_hitbox.half_extents.x,
                         guesstimated_hitbox.half_extents.y, guesstimated_hitbox.half_extents.z);

@@ -6,6 +6,7 @@
 #include "movement_volumes.hpp"
 #include "movers.hpp"
 #include "plane.hpp"
+#include "predicted_world.hpp"
 #include "span.hpp"
 #include "subtick.hpp"
 #include <algorithm>
@@ -175,27 +176,32 @@ struct Move_Events
 // decision, not a parameter to add -- see lag_compensation_def.md, "Why movement
 // needs no rewind".
 //
-// `disabled_geometry` does not contradict it either, and for the same reason
-// `movement_volumes` does not: it is the SWITCH and never the shape. The tree is
-// still identical at every tick and is still nothing this function writes to;
-// what the bitset says is which of its leaves are not there this tick, which is
-// replicated state that mispredicts for the unacked window and is corrected.
-// Empty means nothing is off, so a caller with no session (a test, a bot rig)
-// behaves exactly as it did. See shared/disabled_geometry.hpp.
+// `world` is everything that is not the shape, and it is ONE parameter because
+// the three inside it are cut together, handed on together, and were being
+// threaded by hand through every system that passes them along
+// (shared/predicted_world.hpp). `predicted_world_t{}` is the empty world.
 //
-// `movement_volumes` does NOT contradict that, and the difference is worth
-// saying exactly. Its BOUNDS are static map data, identical at every tick, so
-// there is still no "which tick did I overlap" to answer. The one
+// `world.disabled_geometry` does not contradict the paragraph above either, and
+// for the same reason `world.movement_volumes` does not: it is the SWITCH and
+// never the shape. The tree is still identical at every tick and is still
+// nothing this function writes to; what the bitset says is which of its leaves
+// are not there this tick, which is replicated state that mispredicts for the
+// unacked window and is corrected. Empty means nothing is off, so a caller with
+// no session (a test, a bot rig) behaves exactly as it did.
+//
+// `world.movement_volumes` does NOT contradict that, and the difference is
+// worth saying exactly. Its BOUNDS are static map data, identical at every
+// tick, so there is still no "which tick did I overlap" to answer. The one
 // time-dependent bit is `enabled`, which is replicated state: it mispredicts
 // for the unacked window and is corrected, the same contract every @Networked
 // field already has. What the warning above is about -- a collider whose
 // POSITION differs between ticks -- is still a wall (movers,
 // prediction_def.md §4).
 //
-// `movers` IS such a collider, and it is collided with at its pose at the END
-// of the tick. What keeps prediction honest is that the pose is a pure function
-// of the tick and the replicated Path_Follow, and that the push is not in here:
-// see push_player_by_movers below and mover_def.md ss12.
+// `world.movers` IS such a collider, and it is collided with at its pose at the
+// END of the tick. What keeps prediction honest is that the pose is a pure
+// function of the tick and the replicated Path_Follow, and that the push is not
+// in here: see push_player_by_movers below and mover_def.md ss12.
 //
 // `cvars` is the process's one cvar_state_t (the launcher's), passed by
 // reference rather than read from a global: the pm_* tunables are @Mirrored, so
@@ -225,9 +231,7 @@ std::tuple<vec3, vec3> player_move(
     const Move_Input &input,
     entities::Movement &movement,
     const Bounding_Volume_Hierarchy &bvh,
-    Span<const uint8_t> disabled_geometry,
-    Span<const shared::movement_volume_t> movement_volumes,
-    Span<const shared::mover_t> movers,
+    const shared::predicted_world_t &world,
     const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
     const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
     const float half_height, const float dt, Move_Events *out_events = nullptr,
@@ -255,8 +259,7 @@ struct mover_push_t
 // carries a rider (Movement::ground_mover_uid) or a hull the end pose strikes
 // from the start pose into the end pose. mover_def.md ss12.
 [[nodiscard]] mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
-                                                 Span<const uint8_t> disabled_geometry,
-                                                 Span<const shared::mover_t> movers,
+                                                 const shared::predicted_world_t& world,
                                                  const entities::Movement& movement,
                                                  const vec3& feet, float half_width,
                                                  float half_height);

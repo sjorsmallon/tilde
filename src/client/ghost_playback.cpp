@@ -36,8 +36,7 @@ void adopt_ghost(client_context_t& context, Span<const uint8_t> bytes, uint32_t 
                  std::string_view source)
 {
   context.world.ghost = shared::try_parse_ghost(bytes, source);
-  if (!context.world.ghost)
-    return;
+  if (!context.world.ghost) return;
 
   if (context.world.ghost->tracks.size() != party_size)
   {

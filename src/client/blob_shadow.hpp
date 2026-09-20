@@ -14,8 +14,11 @@ struct blob_shadow_settings_t
   float max_distance = 1024.0f;
 };
 
-void draw_blob_shadow(pass_builder_t& scene, const Bounding_Volume_Hierarchy& bvh,
-                      Span<const uint8_t> disabled_geometry, const vec3f& feet,
-                      const blob_shadow_settings_t& settings);
+void draw_blob_shadow(
+  pass_builder_t& scene,
+  const Bounding_Volume_Hierarchy& bvh,
+  Span<const uint8_t> disabled_geometry,
+  const vec3f& feet,
+  const blob_shadow_settings_t& settings);
 
 } // namespace client

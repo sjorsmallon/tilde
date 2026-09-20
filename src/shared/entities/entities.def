@@ -289,32 +289,14 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
 
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
-
-    // The warmup vote: every joined human ready starts the match.
     ready: bool                         @Networked
-
-    // Display name, sanitized from CmdConnect at the connect site. On the
-    // ENTITY rather than in a message of its own so a late joiner gets every
-    // name in its first full snapshot, with no backlog to replay -- and so a
-    // bot, which has no client, still has a name.
-    //
-    // NOT base Entity's `name`, which is the author's map label: this one is
-    // negotiated at connect and replicates, that one is authored and does not.
-    // A Player is @runtime_only and never sits in a map, so its label is
-    // always empty -- which is why these are two fields and not one.
     display_name: string<32>            @Networked
 
     // The scoreboard. Awarded at the one health crossing in damage.cpp.
     kills:  i32                         @Networked
     deaths: i32                         @Networked
-    // Feeds remote-player interpolation.
     velocity:          v3               @Networked
-
     inventory:         Inventory
-
-    // Per-player movement state. Sits beside velocity rather than inside it
-    // because velocity is what the world does to you and this is what you may
-    // still do to the world.
     movement:          Movement
 
     render:            Render = { mesh = .Leet_Full }
@@ -345,13 +327,12 @@ Rocket_Entity :: entity @runtime_only {
 Hook_Entity :: entity @runtime_only {
     projectile:       Projectile = { weapon_id = .Hook }
     lifetime:         f32 = 4
-    collision_radius: f32 = 10.0
+    collision_radius: f32 = 25.0
     pull_speed:       f32 = 900.0
     render:           Render = { mesh = .meat_hook_1k }
 }
 
 Bubble_Entity :: entity @runtime_only @predicted {
-    // projectile.velocity is the LAUNCH velocity and never changes.
     projectile:      Projectile = { weapon_id = .Bubble }
     launch_position: v3                 @Networked
     // 0 until the bubble system latches the launch, in the tick it was fired.
@@ -364,7 +345,8 @@ Bubble_Entity :: entity @runtime_only @predicted {
     linger_seconds:  f32 = 0.25
     flight_seconds:  f32 = 1.0
     rest_seconds:    f32 = 8.0
-    // Bounces nobody until it is clear of the muzzle, or the shooter pops it at once.
+
+    // there's some immunity after firing so you don't instantly get bounced.
     arm_seconds:     f32 = 0.2
     radius:          f32 = 32.0
     bounce_speed:    f32 = 700.0
@@ -499,7 +481,7 @@ Logic_Counter_Entity :: entity is Counting {
 }
 
 // this is used to switch geometry on and off.
-// the wipe timer was for the clock wipe of the clock. not really nice, but it's whatever.
+// the wipe timer is for the clock wipe of the clock. not really nice, but it's whatever.
 Geometry_Owner_Entity :: entity @predicted is Switchable {
     switch_state: Enabled
     wipe_timer: entity @Editable

@@ -395,8 +395,8 @@ void resolve_player_shot(
           // the shooter saw, it IS what the shooter saw.
           //
           // The spans these carry point into context.posed_players.volumes,
-          // which was sized once at the top of the tick and is not touched
-          // again until the next one -- so copying the target values is safe
+          // which pose_all_targets sized in step 2 of the tick and nothing
+          // touches again until the next one -- so copying the target values is safe
           // for exactly as long as this shot needs them.
           append_static_targets(context.posed_players, context.rewind_scratch);
 

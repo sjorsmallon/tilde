@@ -589,3 +589,21 @@ entity
   "spawn_type" "Human"
   "team_allegiance" "Blu"
 }
+entity
+{
+  "classname" "weapon_entity"
+  "_uid" "135"
+  "position" "896 13.410519 -3968"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "weapon_id" "Hook"
+  "damage_type" "Normal"
+  "render.mesh" "Error"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
