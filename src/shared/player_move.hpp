@@ -152,6 +152,13 @@ struct Move_Events
   bool                launched_by_pad = false;
   shared::entity_uid_t pad_uid        = shared::null_entity_uid;
   shared::movement_volume_kind_t pad_kind = shared::movement_volume_kind_t::Jump_Pad;
+
+  // The hook's reel let go this tick, at the hull CENTRE and carrying the
+  // velocity it lets go with. It rides the step for the pad's reason: the
+  // reeled player feels it here, a tick before any snapshot could tell them.
+  bool hook_released                = false;
+  vec3 hook_release_position        = {};
+  vec3 hook_release_velocity        = {};
 };
 
 // new_player_position, new_player_velocity. Positions in and out are at the FEET,

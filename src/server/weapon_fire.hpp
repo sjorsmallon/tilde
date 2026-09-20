@@ -21,9 +21,13 @@ void mark_shot_fired(const server_context_t& context, entities::Player_Entity& p
                      entities::Weapon weapon_id);
 
 // The one place a Fire_Resolution::Projectile row becomes an entity; bots call it too.
-shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_uid_t owner_uid,
-                                      const shared::weapon_definition_t& weapon,
-                                      const vec3f& origin, const vec3f& direction);
+// The trigger is here rather than at the call sites because a projectile that
+// flies differently per button is a property of the spawn, and this is the only
+// site that has both the row and the entity.
+shared::entity_uid_t spawn_projectile(
+    server_context_t& context, shared::entity_uid_t owner_uid,
+    const shared::weapon_definition_t& weapon, const vec3f& origin, const vec3f& direction,
+    shared::fire_trigger_t trigger = shared::fire_trigger_t::Primary);
 
 void resolve_player_shot(server_context_t& context, int32_t client_slot,
                          const game::C2S_ClientInput& input, Span<const uint8_t> disabled_geometry,

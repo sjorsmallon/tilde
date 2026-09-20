@@ -287,7 +287,8 @@ void mark_shot_fired(const server_context_t &context, entities::Player_Entity &p
 
 shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_uid_t owner_uid,
                                       const shared::weapon_definition_t& weapon,
-                                      const vec3f& origin, const vec3f& direction)
+                                      const vec3f& origin, const vec3f& direction,
+                                      shared::fire_trigger_t trigger)
 {
   if (weapon.fire_resolution != entities::Fire_Resolution::Projectile)
     fatal_error("spawn_projectile: {} does not resolve as a projectile", weapon.display_name);
@@ -312,6 +313,10 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
   projectile->velocity  = direction * weapon.projectile.speed;
   projectile->owner_uid = owner_uid;
   projectile->weapon_id = weapon.weapon;
+
+  if (entities::Hook_Entity* hook = entities::entity_as<entities::Hook_Entity>(entity))
+    hook->reels_target = trigger == shared::fire_trigger_t::Secondary;
+
   return projectile_uid;
 }
 

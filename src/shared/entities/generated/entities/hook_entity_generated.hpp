@@ -21,7 +21,8 @@ struct Hook_Entity : Entity
   float lifetime = 4.0f;
   float collision_radius = 25.0f;
   float pull_speed = 900.0f;
-  Render render = {.mesh = assets::mesh_asset::meat_hook_1k};
+  bool reels_target = {};
+  Render render = {.mesh = assets::mesh_asset::gripper, .scale = {20.0f, 20.0f, 20.0f}};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

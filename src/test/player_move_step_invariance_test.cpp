@@ -141,6 +141,16 @@ struct pad_probe_t
   vec3 velocity_at_launch = {};
 };
 
+// Where the reel let go, which is NOT where the tick ended: the release fires
+// mid-tick and the player coasts the rest of it. Only the release itself is
+// step-invariant, so only the release is what the pins below measure.
+struct hook_probe_t
+{
+  int  releases         = 0;
+  vec3 release_position = {};
+  vec3 release_velocity = {};
+};
+
 // Run `total_dt` as `sub_steps` equal steps, feeding each step's output into
 // the next -- exactly what a sub-tick split does.
 //
@@ -156,7 +166,8 @@ static move_result_t run_split(const cvar_state_t& cvars,
                                Span<const shared::movement_volume_t> volumes = {},
                                pad_probe_t* out_pad = nullptr,
                                Span<const uint8_t> disabled_geometry = {},
-                               Span<const shared::mover_t> movers = {})
+                               Span<const shared::mover_t> movers = {},
+                               hook_probe_t* out_hook = nullptr)
 {
   const shared::predicted_world_t world{.disabled_geometry = disabled_geometry,
                                         .movement_volumes  = volumes,
@@ -179,6 +190,12 @@ static move_result_t run_split(const cvar_state_t& cvars,
       // not the measurement: the sub-steps after the launch keep applying
       // gravity, so 64 of them legitimately arrive lower than one does.
       out_pad->velocity_at_launch = velocity;
+    }
+    if (out_hook != nullptr && events.hook_released)
+    {
+      ++out_hook->releases;
+      out_hook->release_position = events.hook_release_position;
+      out_hook->release_velocity = events.hook_release_velocity;
     }
   }
   return {position, velocity};
@@ -1433,6 +1450,89 @@ static void test_instant_pad_launch_is_borrowed(const cvar_state_t& cvars)
   }
 }
 
+// --- the hook's reel ---------------------------------------------------------
+//
+// The reel is a branch that OVERWRITES velocity every step, so nothing about it
+// composes the way an acceleration does -- what has to compose is where it
+// stops. Both caps in the branch exist for this test: without the distance one
+// the stop position lands anywhere inside the arrival sphere depending on how
+// the tick was cut, and without the time one the last step overshoots by up to
+// a whole step's travel.
+static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] hook reel: the arrival point does not move with the step count\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const vec3 anchor{0.f, half_height, 600.f};
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    movement.hook_anchor_position           = anchor;
+    movement.seconds_of_hook_pull_remaining = cvars.pm_hook_max_pull_seconds;
+
+    hook_probe_t  hook{};
+    move_result_t result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
+    for (int tick = 0; tick < 120 && hook.releases == 0; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &movement, {}, nullptr, {}, {}, &hook);
+
+    const float distance_at_release = length(anchor - hook.release_position);
+
+    printf("    N=%-2d  releases %d  distance %.6f  speed %.6f\n", sub_steps, hook.releases,
+           distance_at_release, length(hook.release_velocity));
+
+    check(hook.releases == 1, "the reel lets go exactly once");
+    check_near(distance_at_release, cvars.pm_hook_arrive_radius, 1e-2f,
+               "the reel lets go on the arrival sphere, not wherever a step landed");
+    check_near(hook.release_position.y, half_height, 1e-2f,
+               "a reel straight along z never falls: it applies no gravity");
+    check_near(length(hook.release_velocity), cvars.pm_hook_reel_speed, 1e-2f,
+               "it lets go at full reel speed, not at the last step's leftover");
+    check(movement.hook_anchor_uid == shared::null_entity_uid,
+          "arriving clears the tether");
+    check(movement.seconds_until_speed_returns_to_base_speed > 0.f,
+          "the release borrows its speed, or instant erases it next step");
+  }
+}
+
+// A pull that runs out of TIME before it runs out of distance travels
+// reel_speed * duration, whatever the step count -- which is what the reel_dt
+// clamp buys. Without it the final step spends a whole dt on a pull with only a
+// sliver left.
+static void test_hook_reel_timeout_is_step_invariant(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] hook reel: a pull that times out travels the same distance\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const float pull_seconds = 0.25f;
+  // Far enough that the timer, not the arrival radius, is what ends it.
+  const vec3  anchor{0.f, half_height, 100000.f};
+  const float expected_travel = cvars.pm_hook_reel_speed * pull_seconds;
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    movement.hook_anchor_position           = anchor;
+    movement.seconds_of_hook_pull_remaining = pull_seconds;
+
+    hook_probe_t  hook{};
+    move_result_t result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
+    for (int tick = 0; tick < 120 && hook.releases == 0; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &movement, {}, nullptr, {}, {}, &hook);
+
+    printf("    N=%-2d  releases %d  travelled %.6f  expected %.6f\n", sub_steps, hook.releases,
+           hook.release_position.z, expected_travel);
+
+    check(hook.releases == 1, "the reel lets go exactly once");
+    check_near(hook.release_position.z, expected_travel, 1e-2f,
+               "a timed-out pull travels reel_speed * duration however the tick was cut");
+    check(movement.hook_anchor_uid == shared::null_entity_uid,
+          "timing out clears the tether");
+  }
+}
+
 int main()
 {
   printf("player_move_step_invariance_test\n");
@@ -1470,6 +1570,8 @@ int main()
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);
   test_instant_pad_launch_is_borrowed(cvars);
+  test_hook_reel_arrival_is_step_invariant(cvars);
+  test_hook_reel_timeout_is_step_invariant(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

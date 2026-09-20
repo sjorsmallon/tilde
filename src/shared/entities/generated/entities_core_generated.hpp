@@ -515,6 +515,9 @@ struct Movement
   float seconds_until_speed_returns_to_base_speed = {};
   uint32_t pad_contact_uid = {};
   shared::entity_uid_t ground_mover_uid = {};
+  shared::entity_uid_t hook_anchor_uid = {};
+  linalg::vec3f hook_anchor_position = {};
+  float seconds_of_hook_pull_remaining = {};
 };
 
 struct Inventory

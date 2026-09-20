@@ -208,6 +208,38 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::pm_speed_return_seconds),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "pm_hook_reel_speed",
+     .description = "Speed a hooked player is reeled toward whoever hooked them",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_hook_reel_speed),
+     .size = sizeof(cvar_state_t::pm_hook_reel_speed),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_hook_max_pull_seconds",
+     .description = "Longest a hook reel lasts before it lets go on its own",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_hook_max_pull_seconds),
+     .size = sizeof(cvar_state_t::pm_hook_max_pull_seconds),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_hook_arrive_radius",
+     .description = "Distance from the anchor the reel lets go at",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_hook_arrive_radius),
+     .size = sizeof(cvar_state_t::pm_hook_arrive_radius),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_hook_release_borrow_seconds",
+     .description = "pm_acceleration instant: how long reel speed outlasts the release",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_hook_release_borrow_seconds),
+     .size = sizeof(cvar_state_t::pm_hook_release_borrow_seconds),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "mp_warmup_seconds",
      .description = "Warmup length before the match auto-starts (0 = wait for players)",
      .flags = CVAR_FLAG_SERVER,
@@ -1153,7 +1185,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[26] = {
+const cvar_id MIRRORED_CVAR_TABLE[30] = {
     cvar_id::pm_maxspeed,
     cvar_id::pm_stopspeed,
     cvar_id::pm_friction,
@@ -1173,6 +1205,10 @@ const cvar_id MIRRORED_CVAR_TABLE[26] = {
     cvar_id::pm_air_speed_cap,
     cvar_id::pm_acceleration,
     cvar_id::pm_speed_return_seconds,
+    cvar_id::pm_hook_reel_speed,
+    cvar_id::pm_hook_max_pull_seconds,
+    cvar_id::pm_hook_arrive_radius,
+    cvar_id::pm_hook_release_borrow_seconds,
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
     cvar_id::sv_aim_body_turn_rate,
@@ -1241,7 +1277,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 26};
+  return {MIRRORED_CVAR_TABLE, 30};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

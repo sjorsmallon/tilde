@@ -821,6 +821,35 @@ std::tuple<vec3, vec3> player_move(
 
   vec3 new_pos, new_vel;
 
+  // THE HOOK'S REEL. It is a branch rather than a velocity written from outside
+  // because the hooked player predicts their own movement: an unpredicted pull
+  // rubber-bands them for a round trip, which is the problem prediction_def.md
+  // §1 solved for pads. The direction is re-derived from the CURRENT positions
+  // every step, so the anchor moving drags the victim along for free and there
+  // is no path to store.
+  //
+  // Detach is tested BEFORE the step, so the arrival radius is the distance the
+  // reel stops at rather than one the step can carry the hull past.
+  bool reeling                 = movement.seconds_of_hook_pull_remaining > 0.f;
+  bool hook_released           = false;
+  vec3 hook_release_position   = {};
+  vec3 hook_release_velocity   = {};
+  if (reeling)
+  {
+    const vec3  to_anchor          = movement.hook_anchor_position - player_pos;
+    const float distance_to_anchor = length(to_anchor);
+    if (distance_to_anchor <= cvars.pm_hook_arrive_radius)
+    {
+      movement.seconds_of_hook_pull_remaining = 0.f;
+      movement.hook_anchor_uid                = shared::null_entity_uid;
+      borrow_speed(movement, cvars.pm_hook_release_borrow_seconds);
+      reeling                = false;
+      hook_released          = true;
+      hook_release_position  = player_pos;
+      hook_release_velocity  = old_velocity;
+    }
+  }
+
   // Flat wish direction from input — used to determine which walls are
   // actually being pressed into. We use this instead of old_velocity because
   // old_velocity gets clipped to near-zero against a wall after the first
@@ -850,7 +879,8 @@ std::tuple<vec3, vec3> player_move(
   // blocks our wish direction, the obstacle is short enough to step over.
   // Walk from the raised position, then drop back down onto the surface.
   bool used_step = false;
-  if (grounded && !ground_jump_fired && has_wish && !collider_planes.wall_planes.empty())
+  if (!reeling && grounded && !ground_jump_fired && has_wish &&
+      !collider_planes.wall_planes.empty())
   {
     // Only proceed if we're actually pressing toward at least one wall.
     bool pressing_into_wall = false;
@@ -952,7 +982,49 @@ std::tuple<vec3, vec3> player_move(
 
   if (!used_step)
   {
-    if (grounded && !ground_jump_fired)
+    if (reeling)
+    {
+      // No accel, no friction, no gravity: the velocity IS the reel, so
+      // anything else would be a second author of it. Walls are left to the
+      // post-move resolve below -- a reel that grinds into a corner is held
+      // there until the timer lets go.
+      //
+      // BOTH ends of the step are clamped so the split into sub-steps lands in
+      // the same place. The DISTANCE cap targets the arrival radius rather than
+      // the anchor, so a reel converges on exactly that sphere instead of
+      // stopping wherever a step happened to carry it inside; the TIME cap
+      // spends only the pull that is left, so the travel is reel_speed times
+      // the pull duration however the tick was cut.
+      const vec3  to_anchor          = movement.hook_anchor_position - player_pos;
+      const float distance_to_anchor = length(to_anchor);
+      const float distance_remaining =
+          std::max(distance_to_anchor - cvars.pm_hook_arrive_radius, 0.f);
+      const float reel_dt = std::min(dt, movement.seconds_of_hook_pull_remaining);
+      const vec3 reel_direction =
+          distance_to_anchor > 0.f ? to_anchor * (1.f / distance_to_anchor) : vec3{};
+
+      // The distance cap clamps the STEP, never the speed: a reel that arrives
+      // mid-step still lets go at full reel speed, so what you are flung with
+      // is the tunable rather than whatever fraction of a step was left. That
+      // is also what makes the release velocity the same however the tick was
+      // cut -- the last step's leftover is a function of the split.
+      const float travel = std::min(cvars.pm_hook_reel_speed * reel_dt, distance_remaining);
+
+      new_vel = reel_direction * cvars.pm_hook_reel_speed;
+      new_pos = player_pos + reel_direction * travel;
+
+      movement.seconds_of_hook_pull_remaining -= dt;
+      if (movement.seconds_of_hook_pull_remaining <= 0.f)
+      {
+        movement.seconds_of_hook_pull_remaining = 0.f;
+        movement.hook_anchor_uid                = shared::null_entity_uid;
+        borrow_speed(movement, cvars.pm_hook_release_borrow_seconds);
+        hook_released         = true;
+        hook_release_position = new_pos;
+        hook_release_velocity = new_vel;
+      }
+    }
+    else if (grounded && !ground_jump_fired)
     {
       //@FIXME: currently, we set the y_velocity to 0 here already. because
       // my_walk_move assumes that we are grounded.
@@ -1126,6 +1198,9 @@ std::tuple<vec3, vec3> player_move(
     out_events->launched_by_pad   = launched_by_pad;
     out_events->pad_uid           = launched_by;
     out_events->pad_kind          = launched_by_kind;
+    out_events->hook_released         = hook_released;
+    out_events->hook_release_position = hook_release_position;
+    out_events->hook_release_velocity = hook_release_velocity;
   }
 
   return {feet_after_move, new_vel};

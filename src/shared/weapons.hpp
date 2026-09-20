@@ -26,6 +26,9 @@ enum class secondary_fire_t : uint8_t
   None,
   Zoom,
   Self_Impulse,
+  // Spawns the row's own projectile, flagged as a secondary one. The hook's is
+  // the reel; the throw stays on the primary.
+  Projectile,
 };
 
 // Add joins the impulse to the velocity the player already has; Set REPLACES
@@ -270,6 +273,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .projectile              = {.speed         = 700.f,
                                  .gravity_scale = 0.f,
                                  .spawns        = entities::entity_type::Hook_Entity},
+     .secondary_fire          = secondary_fire_t::Projectile,
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Bubble,

@@ -108,6 +108,13 @@ Movement :: component {
 
     pad_contact_uid: u32                @Networked
     ground_mover_uid: entity            @Networked
+
+    // The hook's tether, live while seconds_of_hook_pull_remaining > 0. The uid
+    // is who reels us in; the position is that player's, refreshed per tick by
+    // update_hooks, because player_move is pure and cannot resolve a uid.
+    hook_anchor_uid: entity             @Networked
+    hook_anchor_position: v3            @Networked
+    seconds_of_hook_pull_remaining: f32 @Networked
 }
 
 Inventory :: component {
@@ -329,7 +336,9 @@ Hook_Entity :: entity @runtime_only {
     lifetime:         f32 = 4
     collision_radius: f32 = 25.0
     pull_speed:       f32 = 900.0
-    render:           Render = { mesh = .meat_hook_1k }
+    // Set by the secondary trigger: reels the victim in over time instead of throwing them once.
+    reels_target:     bool
+    render:           Render = { mesh = .gripper, scale = {20,20,20} }
 }
 
 Bubble_Entity :: entity @runtime_only @predicted {

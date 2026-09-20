@@ -286,13 +286,29 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       {
         const entities::Weapon_Entity* held_entity =
             try_find_active_weapon(context.world.session, *player);
-        if (held_entity != nullptr &&
-            shared::try_apply_self_impulse(
-                shared::get_weapon_definition(held_entity->weapon_id),
-                shared::fire_trigger_t::Secondary,
-                linalg::direction_from_angles(step.view.yaw, step.view.pitch),
-                player->movement, player->velocity))
-          mark_shot_fired(context, *player, held_entity->weapon_id);
+        if (held_entity != nullptr)
+        {
+          const shared::weapon_definition_t& weapon =
+              shared::get_weapon_definition(held_entity->weapon_id);
+          const vec3f direction =
+              linalg::direction_from_angles(step.view.yaw, step.view.pitch);
+
+          // A secondary projectile is spawned on the press EDGE, so it needs no
+          // clock of its own to stay one per click.
+          if (weapon.secondary_fire == shared::secondary_fire_t::Projectile)
+          {
+            const vec3f eye =
+                player->position + vec3f{0.f, shared::player_eye_height, 0.f};
+            spawn_projectile(context, player->entity_id, weapon, eye, direction,
+                             shared::fire_trigger_t::Secondary);
+            mark_shot_fired(context, *player, held_entity->weapon_id);
+          }
+          else if (shared::try_apply_self_impulse(weapon, shared::fire_trigger_t::Secondary,
+                                                  direction, player->movement, player->velocity))
+          {
+            mark_shot_fired(context, *player, held_entity->weapon_id);
+          }
+        }
       }
     }
 

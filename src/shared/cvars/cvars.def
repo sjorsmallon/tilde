@@ -71,6 +71,12 @@ Player_Movement :: cvars {
 
     pm_acceleration:        Acceleration_Mode = .quake  @Mirrored  "quake: accelerate against friction; instant: horizontal velocity IS the input, ground and air alike"
     pm_speed_return_seconds: f32 = 0.5       @Mirrored  "pm_acceleration instant: how long speed from a pad, Set_Velocity, Add_Velocity or knockback outlasts your input"
+
+    // The hook's reel. Read inside player_move, so @Mirrored like every other pm_.
+    pm_hook_reel_speed:     f32 = 900.0      @Mirrored  "Speed a hooked player is reeled toward whoever hooked them"
+    pm_hook_max_pull_seconds: f32 = 1.5      @Mirrored  "Longest a hook reel lasts before it lets go on its own"
+    pm_hook_arrive_radius:  f32 = 48.0       @Mirrored  "Distance from the anchor the reel lets go at"
+    pm_hook_release_borrow_seconds: f32 = 0.4 @Mirrored  "pm_acceleration instant: how long reel speed outlasts the release"
 }
 
 Gameplay :: cvars {

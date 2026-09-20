@@ -471,6 +471,33 @@ constexpr field_info_t Movement_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "hook_anchor_uid",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Movement, hook_anchor_uid),
+   .size_in_bytes = (uint32_t)sizeof(Movement::hook_anchor_uid),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "hook_anchor_position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Movement, hook_anchor_position),
+   .size_in_bytes = (uint32_t)sizeof(Movement::hook_anchor_position),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "seconds_of_hook_pull_remaining",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Movement, seconds_of_hook_pull_remaining),
+   .size_in_bytes = (uint32_t)sizeof(Movement::seconds_of_hook_pull_remaining),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Inventory_FIELDS[] = {
@@ -1315,6 +1342,15 @@ constexpr field_info_t Hook_Entity_FIELDS[] = {
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Hook_Entity, pull_speed),
    .size_in_bytes = (uint32_t)sizeof(Hook_Entity::pull_speed),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "reels_target",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Hook_Entity, reels_target),
+   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::reels_target),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2745,7 +2781,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Material", {Material_FIELDS, 2}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
   {"Light", {Light_FIELDS, 5}, (uint32_t)sizeof(Light)},
-  {"Movement", {Movement_FIELDS, 8}, (uint32_t)sizeof(Movement)},
+  {"Movement", {Movement_FIELDS, 11}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 5}, (uint32_t)sizeof(Timer_State)},
   {"Match", {Match_FIELDS, 9}, (uint32_t)sizeof(Match)},
@@ -2809,7 +2845,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_entity", "Player", {Player_Entity_FIELDS, 26}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 1680u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 128u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 136u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
-  {"hook_entity", "Hook", {Hook_Entity_FIELDS, 9}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 136u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
+  {"hook_entity", "Hook", {Hook_Entity_FIELDS, 10}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 136u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
   {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 17}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 136u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 128u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 145u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
@@ -3357,6 +3393,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xd1be9e2bu;
+const uint32_t SCHEMA_HASH = 0xc2550c7bu;
 
 } // namespace entities
