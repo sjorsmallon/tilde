@@ -3,7 +3,6 @@
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
 #include "../event_handlers.hpp"
-#include "../ghost_playback.hpp"
 #include "../hud/announcement.hpp"
 
 #include <format>
@@ -32,9 +31,6 @@ void on_objective_reached(client_context_t &context, const shared::Objective_Rea
     }
   }
   hud::set_announcement(text);
-
-  if (timed)
-    reload_map_ghost(context);
 
   if (context.audio)
     context.audio->play_2d(is_record ? assets::sound_asset::a_new_record

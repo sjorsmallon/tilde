@@ -506,7 +506,9 @@ static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
   ctx.world.physics_state = make_physics_state();
   shared::populate_static_physics_bodies(*ctx.world.physics_state, map);
 
-  reload_map_ghost(ctx);
+  // The server announces this map's ghost once it sees us holding the map.
+  ctx.world.ghost.reset();
+  ctx.world.announced_ghost_hash = 0;
 }
 
 // Where we stand until the first snapshot says otherwise; the server overwrites all of it.
@@ -1086,6 +1088,8 @@ void Play_State::update(float dt)
                  "content hash {:#x}", package.map_name, data.package_hash,
                  ctx.world.map_content_hash);
   }
+
+  consume_ghost_messages(ctx, inbox);
 
   // Directly after the inbox loops above, because they are what QUEUE onto this
   // stream -- a map request cut from this frame's CmdChangeMap or CmdAccept
@@ -2529,6 +2533,20 @@ void Play_State::draw_imgui_panels()
 namespace
 {
 
+struct ghost_tint_t
+{
+  entities::Team_Allegiance team;
+  linalg::vec3f             tint;
+};
+
+constexpr Enum_Array<entities::Team_Allegiance, ghost_tint_t> GHOST_TINTS = {{
+    {entities::Team_Allegiance::Red, {1.0f, 0.45f, 0.35f}},
+    {entities::Team_Allegiance::Blu, {0.35f, 0.55f, 1.0f}},
+    {entities::Team_Allegiance::Free_For_All, {0.35f, 0.8f, 1.0f}},
+}};
+
+static_assert(rows_in_enum_order<&ghost_tint_t::team>(GHOST_TINTS),
+              "GHOST_TINTS rows are not in Team_Allegiance order.");
 
 renderer::particle_emitter_parameters_t
 emitter_parameters(const entities::Particle_Emitter_Entity &emitter, float delta_seconds)
@@ -2740,13 +2758,18 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     scene.meshes.push_back(draw);
   }
 
-  if (const std::optional<shared::ghost_pose_t> ghost = try_sample_map_ghost(ctx))
+  if (const std::optional<double> ghost_run_tick = try_ghost_run_tick(ctx))
   {
     static const entities::Render ghost_render = entities::Player_Entity{}.render;
     const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset = assets::get_mesh(ghost_render.mesh);
     const renderer::mesh_handle_t                      mesh       = get_render_mesh(mesh_asset);
-    if (mesh.valid())
+
+    for (const shared::ghost_track_t& track : ctx.world.ghost->tracks)
     {
+      const std::optional<shared::ghost_pose_t> ghost = shared::try_sample_ghost(track, *ghost_run_tick);
+      if (!ghost || !mesh.valid())
+        continue;
+
       if (pose_count == pose_storage.size())
         pose_storage.emplace_back();
       assets::posed_skeleton_t& posed = pose_storage[pose_count++];
@@ -2766,7 +2789,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
           linalg::compose_model_rotation(linalg::from_view_angles(ghost->body_yaw, 0.f), ghost_render.rotation),
           ghost_render.scale);
       draw.pose               = posed.skinning;
-      draw.tint               = color_from_vec3({0.35f, 0.8f, 1.0f});
+      draw.tint               = color_from_vec3(GHOST_TINTS[track.team].tint);
       draw.material_overrides = material_variant(mesh, {.shader     = renderer::shader_t::ghost,
                                                         .blend_mode = renderer::blend_mode_t::alpha});
       draw.shadow_caster      = renderer::shadow_caster_t::none;

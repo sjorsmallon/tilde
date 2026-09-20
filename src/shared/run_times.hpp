@@ -1,8 +1,8 @@
 #pragma once
 
-// A map's completed runs, one line each, appended and never rewritten:
+// A map's completed runs, one file per PARTY SIZE, one line each, appended and never rewritten:
 //
-//   maps/bunnyhop.times
+//   maps/bunnyhop.1p.times
 //     748 60 2026-09-12T14:03 sjors
 //     791 60 2026-09-12T13:58 sjors
 //
@@ -32,8 +32,8 @@ struct run_time_record_t
   std::string name;
 };
 
-// maps/bunnyhop.source -> maps/bunnyhop.times
-[[nodiscard]] std::string run_times_path_for(std::string_view map_path);
+// maps/bunnyhop.source, 2 -> maps/bunnyhop.2p.times
+[[nodiscard]] std::string run_times_path_for(std::string_view map_path, uint32_t party_size);
 
 [[nodiscard]] std::string run_time_line(const run_time_record_t& record);
 [[nodiscard]] std::optional<run_time_record_t> try_parse_run_time_line(std::string_view line);

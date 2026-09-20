@@ -45,6 +45,10 @@ enum class Message_Type : uint8
   C2S_TransferReceipt, // C2S: which fragments of a bulk message we hold
   S2C_Connection,      // S2C: the server's answer to a connect
 
+  // The map's ghost, which travels the way the map does (network/ghost_transfer.hpp).
+  S2C_GhostAvailable, // S2C: the ghost for the party being run, by hash; 0 is none
+  C2S_RequestGhost,   // C2S: the client's cached ghost did not hash to that
+  S2C_GhostData,      // S2C: the .ghost file's bytes, a paced transfer
 
   // Not a wire value: one past the last type, so a table indexed by
   // Message_Type sizes itself (see the client's handler table).
@@ -77,6 +81,7 @@ constexpr message_direction_t message_direction(Message_Type type)
   case Message_Type::C2S_RequestMapData:
   case Message_Type::C2S_TransferReceipt:
   case Message_Type::C2S_Connection:
+  case Message_Type::C2S_RequestGhost:
     return message_direction_t::C2S;
 
   case Message_Type::S2C_EntityPackage:
@@ -89,6 +94,8 @@ constexpr message_direction_t message_direction(Message_Type type)
   case Message_Type::S2C_MapData:
   case Message_Type::S2C_CvarValues:
   case Message_Type::S2C_Connection:
+  case Message_Type::S2C_GhostAvailable:
+  case Message_Type::S2C_GhostData:
     return message_direction_t::S2C;
 
   case Message_Type::Reliable:

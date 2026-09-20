@@ -14,9 +14,11 @@
 namespace shared
 {
 
-std::string run_times_path_for(std::string_view map_path)
+std::string run_times_path_for(std::string_view map_path, uint32_t party_size)
 {
-  return std::filesystem::path(map_path).replace_extension(".times").generic_string();
+  return std::filesystem::path(map_path)
+      .replace_extension(std::format(".{}p.times", party_size))
+      .generic_string();
 }
 
 std::string run_time_line(const run_time_record_t& record)

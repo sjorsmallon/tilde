@@ -35,6 +35,8 @@ struct Server_Inbox
   // decoded in server_impl via shared::deserialize_request_map_data(). The
   // server responds by streaming the compiled package as S2C_MapData.
   std::vector<std::pair<int, std::vector<uint8>>> map_data_requests;
+  // Bitstream-native C2S_RequestGhost, decoded via shared::deserialize_request_ghost().
+  std::vector<std::pair<int, std::vector<uint8>>> ghost_requests;
 };
 
 // One bulk message in flight to one peer, handed out a few fragments at a time.
@@ -424,6 +426,10 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
     out_inbox.map_data_requests.push_back({client_slot, std::move(payload)});
     return;
 
+  case Message_Type::C2S_RequestGhost:
+    out_inbox.ghost_requests.push_back({client_slot, std::move(payload)});
+    return;
+
   // Transport, handled in poll_network before reassembly ever runs -- a block
   // is not a message, and a receipt names a message_id and a fragment set that
   // nothing above this layer has an opinion about. Reaching here means one
@@ -445,6 +451,8 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
   case Message_Type::S2C_MapData:
   case Message_Type::S2C_CvarValues:
   case Message_Type::S2C_Connection:
+  case Message_Type::S2C_GhostAvailable:
+  case Message_Type::S2C_GhostData:
   case Message_Type::Count:
     break;
   }

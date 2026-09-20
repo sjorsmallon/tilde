@@ -55,6 +55,9 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
     // back on its own -- so this line is the correct answer right now rather
     // than a flag someone has to remember to clear later.
     client.map_ready          = false;
+    // The client drops its ghost when it loads the map, so what it was told is no longer what it holds.
+    client.announced_ghost_hash = 0;
+    client.requested_ghost_hash = 0;
   }
 }
 
@@ -90,12 +93,13 @@ void clear_incoming(server_context_t& context)
   context.incoming.connection_messages.clear();
   context.incoming.developer_console_entries.clear();
   context.incoming.map_data_requests.clear();
+  context.incoming.ghost_requests.clear();
 }
 
 // The client's clear_client_inbox carries the reasoning; this is the same
 // tripwire on the same silent failure, one connection over. An inbox member
 // nothing clears replays last tick's traffic every tick.
-static_assert(sizeof(network::Server_Inbox) == 5 * sizeof(std::vector<int>),
+static_assert(sizeof(network::Server_Inbox) == 6 * sizeof(std::vector<int>),
               "Server_Inbox gained or lost a member. If you added one: clear it "
               "above AND drain it in server_impl.cpp's Tick(), then update this "
               "count");

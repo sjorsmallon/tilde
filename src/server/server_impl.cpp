@@ -449,6 +449,72 @@ static void send_change_map_message(server_context_t &context, int32_t slot)
       writer.buffer);
 }
 
+// The ghost, in three passes that are all STATE compared with state (coop_ghost_plan.md §2F): what a
+// client asked for, what it may be sent now, and what it has been told.
+static void service_ghost_transfers(server_context_t &context)
+{
+  for (const auto &[client_slot, payload] : context.incoming.ghost_requests)
+  {
+    network::Bit_Reader reader(payload.data(), payload.size());
+    context.clients[client_slot].requested_ghost_hash = shared::deserialize_request_ghost(reader).ghost_hash;
+  }
+
+  const shared::ghost_announcement_t &announced = context.world.announced_ghost;
+
+  for (connected_client_t row : connected_clients(context))
+  {
+    const uint32_t requested = row.client.requested_ghost_hash;
+    if (requested == 0)
+      continue;
+
+    if (requested != announced.hash)
+    {
+      log_terminal("slot {} asked for ghost {:#x}, which is no longer the announced one ({:#x}); "
+                   "the newer announce is already on its stream",
+                   row.slot, requested, announced.hash);
+      row.client.requested_ghost_hash = 0;
+      continue;
+    }
+
+    // Held, never restarted over: begin_paced_transfer REPLACES what the slot is sending, and that is the map.
+    if (row.transport.outbound_transfer.in_progress())
+      continue;
+
+    shared::ghost_data_message_t message;
+    message.party_size = announced.party_size;
+    message.ghost_hash = announced.hash;
+    message.bytes      = announced.bytes;
+
+    network::Bit_Writer writer;
+    shared::serialize_ghost_data(writer, message);
+    network::begin_paced_transfer(context.transport_layer, row.slot, writer.buffer,
+                                  static_cast<network::uint8>(network::Message_Type::S2C_GhostData));
+    row.client.requested_ghost_hash = 0;
+
+    log_terminal("Queued {}-player ghost ({} bytes, hash {:#x}) for slot {}", announced.party_size,
+                 announced.bytes.size(), announced.hash, row.slot);
+  }
+
+  // Not before map_ready: a client mid-load clears its ghost when the load finishes.
+  for (connected_client_t row : connected_clients(context))
+  {
+    if (!row.client.map_ready || row.client.announced_ghost_hash == announced.hash)
+      continue;
+
+    shared::ghost_available_message_t message;
+    message.party_size = announced.party_size;
+    message.ghost_hash = announced.hash;
+    message.byte_count = static_cast<uint32_t>(announced.bytes.size());
+
+    network::Bit_Writer writer;
+    shared::serialize_ghost_available(writer, message);
+    network::queue_reliable_message(row.transport.reliable_stream,
+                                    static_cast<network::uint8>(network::Message_Type::S2C_GhostAvailable),
+                                    writer.buffer);
+    row.client.announced_ghost_hash = announced.hash;
+  }
+}
+
 static void send_cvar_values(server_context_t &context, int32_t slot,
                              const shared::cvar_values_message_t &msg)
 {
@@ -889,6 +955,8 @@ bool Tick()
                  context.transport_layer.clients[client_slot].outbound_transfer.fragments.size(),
                  msg.package_hash, client_slot, request.map_name);
   }
+
+  service_ghost_transfers(context);
 
   // send a block of map fragments so not to swamp the connection.
   network::service_paced_transfers(
@@ -1421,9 +1489,10 @@ bool Tick()
   update_timers(context);
 
   // Before the drain, so the tick a goal volume fires Complete_Level has its pose.
+  // Not behind sv_ghost_record: the capture is also what measures the party a time is filed under.
   {
     const entities::Match& match = match_of(context);
-    if (context.cvars->sv_ghost_record && match.phase == entities::Round_Phase::Live &&
+    if (match.phase == entities::Round_Phase::Live &&
         current_mode(context).win_condition == Win_Condition::Objective_Reached)
       shared::capture_ghost_poses(
           context.world.ghost_capture, match.phase_start_tick, context.tick_number,

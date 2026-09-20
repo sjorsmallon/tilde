@@ -100,6 +100,8 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
     client.latest_buttons_bitmap    = 0b1011;
     client.held_snapshot_tick       = 880 + slot;
     client.map_ready                = true;
+    client.announced_ghost_hash     = 0xfeed0000u + slot;
+    client.requested_ghost_hash     = 0xfeed0000u + slot;
     client.last_rewind_warning_tick  = 870 + slot;
     client.wants_to_play             = true;
 
@@ -194,6 +196,12 @@ void test_reset_state_in_preparation_for_new_map_load()
     // after it has loaded the new map. Nothing re-sends anything to make that
     // happen.
     assert(!client.map_ready);
+
+    // Cleared: the client drops its ghost when it loads the new map, so a retained
+    // "already told" would withhold the announce of a ghost that hashes the same
+    // -- the same map reloaded. A request named the old world's ghost.
+    assert(client.announced_ghost_hash == 0);
+    assert(client.requested_ghost_hash == 0);
 
     // Survives: the command stream describes the CLIENT, not the world. Wiping
     // latest_buttons_bitmap would make every held button look like a fresh

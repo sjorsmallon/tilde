@@ -16,6 +16,7 @@
 #include "../shared/network/udp_socket.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/ghost.hpp"
+#include "../shared/network/ghost_transfer.hpp"
 #include "../shared/replay_recorder.hpp"
 #include "bot_state.hpp"
 #include "damage_types.hpp"
@@ -84,6 +85,16 @@ struct client_slot_t
   // comes back on its own one input later; there is no ack to wait for and
   // nothing that retransmits.
   bool map_ready = false;
+
+  // The ghost this client was last TOLD of, compared with world.announced_ghost once a tick: one test
+  // covers "the ghost changed" and "this client just became map_ready". 0 is "told there is none",
+  // which is also what a client that was told nothing holds.
+  uint32_t announced_ghost_hash = 0;
+
+  // A C2S_RequestGhost not yet answered. Held rather than refused while the slot's bulk transfer is
+  // busy: a cold client reports the map a receipt interval before the server sees its last fragment
+  // confirmed, and the ghost must never restart the map's transfer.
+  uint32_t requested_ghost_hash = 0;
 
   // This client wants a body, whether or not it has one yet. The two are not
   // the same question in a mode with join_in_progress = false: a player who
@@ -178,6 +189,9 @@ struct world_t
 
   // Always on while a run can be timed, replay or not: the ghost is cut from this.
   shared::ghost_capture_t ghost_capture;
+
+  // The ghost of the category being run, re-read at a round boundary and after a ghost write.
+  shared::ghost_announcement_t announced_ghost;
 };
 
 

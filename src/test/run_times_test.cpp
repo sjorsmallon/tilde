@@ -15,9 +15,10 @@ namespace
 
 void test_path_is_beside_the_map()
 {
-  assert(run_times_path_for("maps/bunnyhop.source") == "maps/bunnyhop.times");
-  assert(run_times_path_for("maps/nested/dir/x.source") == "maps/nested/dir/x.times");
-  std::printf("  path beside the map: ok\n");
+  assert(run_times_path_for("maps/bunnyhop.source", 1) == "maps/bunnyhop.1p.times");
+  assert(run_times_path_for("maps/bunnyhop.source", 2) == "maps/bunnyhop.2p.times");
+  assert(run_times_path_for("maps/nested/dir/x.source", 4) == "maps/nested/dir/x.4p.times");
+  std::printf("  path beside the map, party size in the name: ok\n");
 }
 
 void test_line_round_trip_keeps_spaces_in_the_name()

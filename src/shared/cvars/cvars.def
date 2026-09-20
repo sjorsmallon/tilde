@@ -530,7 +530,7 @@ Debugging :: cvars {
     // replay_def.md ss4. Unflagged: both recorders read it, each on its own side.
     replay_keyframe_seconds: f32 = 2.0                  "Seconds between full keyframes in a replay recording"
     sv_replay_auto:          bool = false   @Server     "Start a replay recording on every map load"
-    sv_ghost_record:         bool = true    @Server     "Capture every player's run and write maps/<map>.ghost when it is the fastest"
+    sv_ghost_record:         bool = true    @Server     "Write maps/<map>.<n>p.ghost when a run is the fastest of its party size"
 }
 
 // ---------------------------------------------------------------------------

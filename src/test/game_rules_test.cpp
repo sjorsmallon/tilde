@@ -18,10 +18,15 @@
 #include "server/systems/respawn_system.hpp"
 
 #include "shared/entities/generated/entity_io_generated.hpp"
+#include "shared/events/generated/events_generated.hpp"
+#include "shared/ghost.hpp"
 #include "shared/player_constants.hpp"
 #include "shared/round_phase_rules.hpp"
+#include "shared/run_times.hpp"
 
 #include <cstdio>
+#include <filesystem>
+#include <format>
 #include <string>
 
 namespace server
@@ -868,6 +873,120 @@ void test_speedrun_walk()
   check(!world.context.pending_map_change.empty(), "and the map changes after the hold");
 }
 
+// --- 7b. Run categories ------------------------------------------------------
+
+// server_impl's Tick(): the match, then the capture, before the drain that delivers Complete_Level.
+void run_live_ticks(server_context_t& context, uint32_t count)
+{
+  for (uint32_t elapsed = 0; elapsed < count; ++elapsed)
+  {
+    tick(context);
+    shared::capture_ghost_poses(context.world.ghost_capture, match(context).phase_start_tick,
+                                context.tick_number,
+                                context.world.session.entity_system.entities_of<entities::Player_Entity>());
+  }
+}
+
+// Hands back the tick's event stream as text, which is where best_ticks can be read.
+std::string finish_the_run(server_context_t& context, shared::entity_uid_t activator)
+{
+  clear_outgoing(context);
+  entities::action_data_t data;
+  data.tag = entities::entity_action::Complete_Level;
+  input_context_t handler_context{context, activator, context.tick_number};
+  entities::send_action(*try_find_rules_entity(context), data, handler_context);
+  tick(context);
+  return shared::game_event_stream_to_text(context.outgoing.events);
+}
+
+void restart_and_run(server_context_t& context, uint32_t live_ticks)
+{
+  request_and_tick(context, entities::entity_action::Restart_Round);
+  run_until_live(context);
+  run_live_ticks(context, live_ticks);
+}
+
+void test_run_categories()
+{
+  std::printf("[run categories]\n");
+
+  const std::string fixture_directory = "cmake_build/game_rules_test_fixtures";
+  std::filesystem::remove_all(fixture_directory);
+  std::filesystem::create_directories(fixture_directory);
+  const std::string map_path = fixture_directory + "/categories.source";
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::speedrun);
+  world.context.world.current_map_path = map_path;
+
+  const shared::entity_uid_t red_uid =
+      spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
+  player_of(world.context, red_uid).display_name = "red";
+
+  start_the_match(world.context);
+  run_until_live(world.context);
+  run_live_ticks(world.context, 30);
+  const uint32_t solo_ticks = world.context.tick_number - match(world.context).phase_start_tick;
+  const std::string solo_events = finish_the_run(world.context, red_uid);
+
+  const std::string solo_times_path = shared::run_times_path_for(map_path, 1);
+  const std::string coop_times_path = shared::run_times_path_for(map_path, 2);
+  const std::string solo_ghost_path = shared::ghost_path_for(map_path, 1);
+  const std::string coop_ghost_path = shared::ghost_path_for(map_path, 2);
+
+  check(solo_events.find("best_ticks=0") != std::string::npos, "the first solo finish has no best to beat");
+  check(shared::read_run_times(solo_times_path).size() == 1, "a lone runner's time lands in the 1p file");
+  check(shared::read_run_times(solo_times_path).front().name == "red", "under the runner's name");
+  check(!std::filesystem::exists(coop_times_path), "and in no other category's");
+  const std::optional<shared::ghost_t> solo_ghost = shared::try_read_ghost_file(solo_ghost_path, 1);
+  check(solo_ghost && solo_ghost->run_ticks == solo_ticks, "with a one-track ghost of that run beside it");
+
+  const shared::ghost_announcement_t& announced = world.context.world.announced_ghost;
+  check(announced.party_size == 1 && announced.hash != 0,
+        "the write is announced: the party at the start line was one, and its category now has a ghost");
+  const uint32_t solo_announced_hash = announced.hash;
+
+  // A partner joins, and the pair is SLOWER than the solo run.
+  const shared::entity_uid_t blu_uid =
+      spawn_test_player(world.context, entities::Team_Allegiance::Blu, 100);
+  player_of(world.context, blu_uid).display_name = "blu";
+
+  restart_and_run(world.context, 60);
+  check(announced.party_size == 2 && announced.hash == 0,
+        "the round boundary re-reads the announce for the bodies at the start line: two, and no 2p ghost yet");
+
+  const uint32_t coop_ticks = world.context.tick_number - match(world.context).phase_start_tick;
+  const std::string coop_events = finish_the_run(world.context, blu_uid);
+  check(announced.party_size == 2 && announced.hash != 0 && announced.hash != solo_announced_hash,
+        "and the coop finish announces the 2p ghost it wrote");
+
+  check(coop_ticks > solo_ticks, "the fixture's coop run is the slower one");
+  check(coop_events.find("best_ticks=0") != std::string::npos,
+        "a solo time is not the best a two-runner finish is compared with");
+  check(shared::read_run_times(coop_times_path).size() == 1, "two runners' time lands in the 2p file");
+  check(shared::read_run_times(coop_times_path).front().name == "red + blu",
+        "named for the party, in team order, whoever crossed the line");
+  check(shared::read_run_times(solo_times_path).size() == 1, "and the 1p file is left alone");
+  const std::optional<shared::ghost_t> coop_ghost = shared::try_read_ghost_file(coop_ghost_path, 2);
+  check(coop_ghost && coop_ghost->run_ticks == coop_ticks && coop_ghost->tracks.size() == 2,
+        "a slower coop run still writes its category's ghost, with both tracks");
+  check(coop_ghost && coop_ghost->tracks[0].team == entities::Team_Allegiance::Red &&
+            coop_ghost->tracks[1].team == entities::Team_Allegiance::Blu,
+        "each track carrying its runner's team");
+
+  // The pair again, faster: compared with the coop best, and the solo ghost still untouched.
+  restart_and_run(world.context, 45);
+  const std::string second_coop_events = finish_the_run(world.context, red_uid);
+  check(second_coop_events.find(std::format("best_ticks={}", coop_ticks)) != std::string::npos,
+        "the second coop finish is compared with the first coop time");
+  const std::optional<shared::ghost_t> faster_coop_ghost = shared::try_read_ghost_file(coop_ghost_path, 2);
+  check(faster_coop_ghost && faster_coop_ghost->run_ticks < coop_ticks, "and replaces the coop ghost");
+  const std::optional<shared::ghost_t> solo_ghost_after = shared::try_read_ghost_file(solo_ghost_path, 1);
+  check(solo_ghost_after && solo_ghost_after->run_ticks == solo_ticks, "never the solo one");
+
+  std::filesystem::remove_all(fixture_directory);
+}
+
 // --- 8. Checkpoints ---------------------------------------------------------
 
 shared::entity_uid_t spawn_checkpoint(server_context_t& context, const vec3f& position)
@@ -1025,6 +1144,7 @@ int main()
   test_frag_limit();
   test_team_elimination();
   test_speedrun_walk();
+  test_run_categories();
   test_team_assignment();
   test_spawn_policy();
   test_checkpoint_respawn();

@@ -536,6 +536,7 @@ add_library(game_shared STATIC
     src/shared/lag_compensation.hpp
     src/shared/lag_compensation.cpp
     src/shared/network/map_transfer.cpp
+    src/shared/network/ghost_transfer.cpp
     src/shared/network/cvar_mirror.cpp
 )
 

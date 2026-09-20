@@ -151,6 +151,12 @@ static void enter_phase(server_context_t &context,
     // pass as everyone else.
     admit_waiting_players(context);
     respawn_all_players(context);
+
+    // The category a run is filed under is its party size, and the party is the bodies at the start line.
+    if (mode.win_condition == Win_Condition::Objective_Reached)
+      context.world.announced_ghost = shared::load_ghost_announcement(
+          context.world.current_map_path,
+          context.world.session.entity_system.entities_of<entities::Player_Entity>().count);
   }
 
   log_terminal("Round {}: entering phase {} (ends tick {})", match.round_number, to_string(phase),

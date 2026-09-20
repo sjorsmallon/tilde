@@ -27,10 +27,6 @@ Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
-// The match -- match_def.md. Game_Mode is lowercase because it is typed in the
-// inspector by the same names the old sv_gamemode cvar took.
-// Countdown is the one between an all-ready vote and round 1; Freeze is the
-// per-round hold at the spawn markers.
 Round_Phase :: enum { Warmup, Countdown, Freeze, Live, Round_End, Game_Over }
 Game_Mode :: enum { deathmatch, rounds, speedrun }
 Round_End_Reason :: enum { None, Timeout, Frag_Limit, Team_Elimination, Objective, Requested }
@@ -346,7 +342,6 @@ Rocket_Entity :: entity @runtime_only {
     render:          Render = { mesh = .rocket}
 }
 
-// Flies like a rocket; a player it hits is thrown at the shooter in one arc, anything else is a miss.
 Hook_Entity :: entity @runtime_only {
     projectile:       Projectile = { weapon_id = .Hook }
     lifetime:         f32 = 4
@@ -355,7 +350,6 @@ Hook_Entity :: entity @runtime_only {
     render:           Render = { mesh = .meat_hook_1k }
 }
 
-// Its position is a pure function of the tick (shared/bubble_flight.hpp), so a bounce is predicted in flight too.
 Bubble_Entity :: entity @runtime_only @predicted {
     // projectile.velocity is the LAUNCH velocity and never changes.
     projectile:      Projectile = { weapon_id = .Bubble }
@@ -377,10 +371,6 @@ Bubble_Entity :: entity @runtime_only @predicted {
     render:          Render = { mesh = .Sphere, scale = {64, 64, 64} }
 }
 
-// Both map-placed AND runtime-spawned (the spawn_cube / spawn_sphere console
-// commands), which is why its Render component has to be @Networked while its
-// own configuration does not: play_state.cpp draws a body from
-// body.position / body.orientation / body.render and reads nothing else off it.
 Physics_Body_Entity :: entity {
     // Jolt's shape and the editor's size box. Server-side simulation input;
     // the visual size rides in render.scale, which the spawn path sets from
@@ -394,11 +384,7 @@ Physics_Body_Entity :: entity {
     render:   Render
 }
 
-// `volume` is the HITBOX: the box a shot is tested against and the box the
-// editor's reshape gizmo resizes. A component rather than a bare v3 so the
-// editor treats it as it treats a trigger's, and so it can sit off the origin.
-// Carrying Box_Volume without `is Touchable` is deliberate: a crate is not a
-// trigger, it merely has a box.
+// volume is the hitbox.
 Damageable_Entity :: entity is Mortal {
     health:   Health
     volume:   Box_Volume = { half_extents = {16, 32, 16} }
@@ -512,30 +498,19 @@ Logic_Counter_Entity :: entity is Counting {
     counter: Counter
 }
 
-// The entity a brush is TIED to, and the only thing it does is carry a switch.
-// No field names a brush: the brush names its owner through an `owner` key in
-// the map file, one direction stored and the other derived
-// (prediction_def.md ss4.2). @predicted because the switch is read INSIDE the
-// step -- every leaf test consults it -- rather than after it, which is what
-// separates this from a jump pad and why it feeds the disabled set rather than
-// the volume list.
-// `wipe_timer` set means the tied brushes clock-wipe as that timer runs, about
-// their own bounds centre, in this entity's orientation.
+// this is used to switch geometry on and off.
+// the wipe timer was for the clock wipe of the clock. not really nice, but it's whatever.
 Geometry_Owner_Entity :: entity @predicted is Switchable {
     switch_state: Enabled
-    wipe_timer: entity              @Editable
+    wipe_timer: entity @Editable
 }
 
-// A placeholder ping marker: middle mouse raycasts, this lands where the ray
-// did. @runtime_only because nothing places one in a map, and it replicates
-// through Render alone -- the countdown below is the server's bookkeeping and
-// the client only ever needs to know a duck is standing there.
+// middle-mouse button ping.
 Ping_Marker_Entity :: entity @runtime_only {
     lifetime: f32 = 10.0
     pinged_by: entity
     render: Render = { mesh = .Duck }
 }
-
 
 Logic_Timer_Entity :: entity is Timer {
     timer: Timer_State

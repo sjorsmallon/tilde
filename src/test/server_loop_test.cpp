@@ -1,4 +1,6 @@
+#include "../shared/ghost.hpp"
 #include "../shared/network/client_transport_layer.hpp"
+#include "../shared/network/ghost_transfer.hpp"
 #include "../shared/network/packet.hpp"
 #include "../shared/network/server_transport_layer.hpp"
 #include "../shared/network/udp_socket.hpp"
@@ -405,6 +407,126 @@ void test_lossy_transfer_converges()
 }
 
 
+// A ghost travels the way the map does, and this is all three legs over the real
+// socket: the announce and the request as records on the two reliable streams,
+// the file as a paced transfer. What the game layer adds on top is a hash
+// compare on each end, which is what the last assert stands in for.
+void test_a_cold_client_receives_the_announced_ghost()
+{
+  std::cout << "[TEST] Testing the ghost announce, request and transfer over UDP..." << std::endl;
+
+  Server_Transport_Layer server_state;
+  Udp_Socket server_socket;
+  Client_Transport_Layer client_state;
+
+  if (!server_socket.open(9011) || !client_state.socket.open(9012))
+  {
+    std::cerr << "Failed to open the socket pair" << std::endl;
+    exit(1);
+  }
+
+  const Address server_address(127, 0, 0, 1, 9011);
+  const Address client_address(127, 0, 0, 1, 9012);
+  client_state.server_address = server_address;
+  occupy_client_slot(server_state, 0, client_address, 400);
+
+  // A two-runner ghost long enough to need several fragments.
+  shared::ghost_t ghost;
+  ghost.tickrate_hz      = 60;
+  ghost.map_content_hash = 0x1234;
+  ghost.run_ticks        = 299;
+  for (const entities::Team_Allegiance team :
+       {entities::Team_Allegiance::Red, entities::Team_Allegiance::Blu})
+  {
+    shared::ghost_track_t &track = ghost.tracks.emplace_back();
+    track.team = team;
+    track.name = team == entities::Team_Allegiance::Red ? "red" : "blu";
+    for (uint32_t tick = 0; tick <= ghost.run_ticks; ++tick)
+      track.poses.push_back({.position = {static_cast<float>(tick), 0.f, 0.f}, .alive = true});
+  }
+  const std::vector<uint8> ghost_bytes = shared::serialize_ghost(ghost);
+  const uint32_t ghost_hash = shared::compute_ghost_hash(
+      Span<const uint8_t>(ghost_bytes.data(), static_cast<uint32_t>(ghost_bytes.size())));
+
+  // 1. The announce, on the S2C reliable stream.
+  Bit_Writer announce_writer;
+  shared::serialize_ghost_available(
+      announce_writer, {.party_size = 2,
+                        .ghost_hash = ghost_hash,
+                        .byte_count = static_cast<uint32_t>(ghost_bytes.size())});
+  queue_reliable_message(server_state.clients[0].reliable_stream,
+                         static_cast<uint8>(Message_Type::S2C_GhostAvailable),
+                         announce_writer.buffer);
+  send_reliable_block(server_state, server_socket, 0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  Client_Inbox client_inbox;
+  poll_client_network(client_state, client_receive_drain_cap_in_datagrams, client_inbox);
+  assert(client_inbox.ghost_available_messages.size() == 1);
+  Bit_Reader announce_reader(client_inbox.ghost_available_messages[0].data(),
+                             client_inbox.ghost_available_messages[0].size());
+  const shared::ghost_available_message_t announced =
+      shared::deserialize_ghost_available(announce_reader);
+  assert(announced.party_size == 2 && announced.ghost_hash == ghost_hash &&
+         announced.byte_count == ghost_bytes.size());
+  std::cout << "  -> The announce named the party, the hash and the size!" << std::endl;
+
+  // 2. A cold cache: the request, on the C2S reliable stream.
+  Bit_Writer request_writer;
+  shared::serialize_request_ghost(request_writer, {.ghost_hash = announced.ghost_hash});
+  queue_reliable_client_message(client_state, static_cast<uint8>(Message_Type::C2S_RequestGhost),
+                                request_writer.buffer);
+  service_client_reliable_stream(client_state);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  Server_Inbox server_inbox;
+  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams, 401,
+               server_inbox);
+  assert(server_inbox.ghost_requests.size() == 1 && server_inbox.ghost_requests[0].first == 0);
+  Bit_Reader request_reader(server_inbox.ghost_requests[0].second.data(),
+                            server_inbox.ghost_requests[0].second.size());
+  assert(shared::deserialize_request_ghost(request_reader).ghost_hash == ghost_hash);
+  std::cout << "  -> The request reached the server's inbox, naming that hash!" << std::endl;
+
+  // 3. The file, as a paced transfer.
+  Bit_Writer data_writer;
+  shared::serialize_ghost_data(
+      data_writer, {.party_size = 2, .ghost_hash = ghost_hash, .bytes = ghost_bytes});
+  begin_paced_transfer(server_state, 0, data_writer.buffer,
+                       static_cast<uint8>(Message_Type::S2C_GhostData));
+  assert(server_state.clients[0].outbound_transfer.fragments.size() > 1 &&
+         "the fixture is a real multi-fragment transfer");
+
+  client_inbox = {};
+  for (int pass = 0; pass < 20 && client_inbox.ghost_data_messages.empty(); ++pass)
+  {
+    service_paced_transfers(server_state, server_socket, 8);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    poll_client_network(client_state, client_receive_drain_cap_in_datagrams, client_inbox);
+  }
+  assert(client_inbox.ghost_data_messages.size() == 1);
+
+  Bit_Reader data_reader(client_inbox.ghost_data_messages[0].data(),
+                         client_inbox.ghost_data_messages[0].size());
+  const std::optional<shared::ghost_data_message_t> data =
+      shared::try_deserialize_ghost_data(data_reader);
+  assert(data && data->party_size == 2 && data->ghost_hash == ghost_hash);
+  assert(data->bytes == ghost_bytes && "the file's bytes survived the transfer");
+  assert(shared::compute_ghost_hash(Span<const uint8_t>(
+             data->bytes.data(), static_cast<uint32_t>(data->bytes.size()))) == announced.ghost_hash &&
+         "and hash to what was announced, which is the client's whole check");
+
+  const std::optional<shared::ghost_t> received = shared::try_parse_ghost(
+      Span<const uint8_t>(data->bytes.data(), static_cast<uint32_t>(data->bytes.size())),
+      "received");
+  assert(received && received->tracks.size() == 2 && received->run_ticks == 299);
+  std::cout << "  -> The ghost arrived whole, hashed right and parsed as two tracks!" << std::endl;
+
+  release_client_slot(server_state, 0);
+  client_state.socket.close();
+  server_socket.close();
+}
+
 // The failure the shared reassemble_fragment exists to make unrepresentable on
 // BOTH sides. message_id is a uint8 incremented once per message sent, so a
 // client sending one input batch per tick wraps the whole space every
@@ -470,6 +592,7 @@ int main()
   test_reliable_stream_round_trip();
   test_reliable_stream_round_trip_c2s();
   test_lossy_transfer_converges();
+  test_a_cold_client_receives_the_announced_ghost();
   test_wrapped_message_id_takes_over_a_stale_bucket();
   std::cout << "[TEST] All tests passed." << std::endl;
   return 0;

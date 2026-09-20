@@ -1458,7 +1458,7 @@ bomb timer) -- `match_def.md` "What this does NOT do" and `generalization_def.md
 **A speedrun's time is ONE subtraction and ONE appended line.** `complete_level`
 (`server/entities/game_rules_entity.cpp`) takes the current tick minus the
 match's `phase_start_tick` -- in ticks, exact, only while the phase is `Live` --
-appends `<ticks> <tickrate_hz> <date> <name>` to `maps/<map>.times` beside the map
+appends `<ticks> <tickrate_hz> <date> <name>` to `maps/<map>.<n>p.times` beside the map
 (`shared/run_times.{hpp,cpp}`, grammar in the header, `run_times_test` the
 guard), reads the file straight back and broadcasts the top five as
 `S2C_ServerMessage` lines through `server_messages.hpp`. Append only, never
@@ -1468,6 +1468,19 @@ map's `best_ticks` from BEFORE the run, so the client's banner says the time and
 "NEW BEST" without a second file read; `shared::format_run_time` is the one
 "mm:ss.cc" and the HUD run timer draws through it too. `timer_def.md` is the plan
 for the rest. A row written before 2026-09-13 is one tick slow.
+
+**Best times and ghosts are kept per PARTY SIZE, and the party is MEASURED**
+(`coop_ghost_plan.md`, steps 1 through 4 built 2026-09-20, never looked at in
+game). `world_t::ghost_capture` records every player's pose every Live tick,
+always -- `sv_ghost_record` gates only the WRITE -- and `try_extract_ghost` returns
+ONE run with a track per runner who held a living pose inside it, by team then
+uid, an early leaver padded dead. That track count is the category: it names
+both files (`ghost_path_for` / `run_times_path_for(map_path, party_size)`,
+nothing else builds either name), so a solo run cannot overwrite a coop ghost
+and "NEW BEST" never compares the two. A `.times` row's name is the party's
+names joined by `" + "`; the line grammar did not move. The `.ghost` file is
+version 2 (`shared/ghost.hpp` has the grammar), version 1 is refused, and a file
+whose track count is not what its name says is refused too.
 
 The predicates are gates in `shared/round_phase_rules.hpp` -- pure functions of
 the phase, so the client's prediction and the server's simulation run one rule.
@@ -1591,6 +1604,8 @@ This replaced a `C2S_MapLoaded` message, and the rule it cost to learn is the on
 So the client's two `Loading -> Connected` edges send **nothing**: entering `Connected` starts the input flow, and the hash rides it. And the server keeps no manual write — the optimistic `map_ready = true` at accept sent snapshots to a client that turned out to need a download, and the `= false` when a transfer starts is what the map-load reset already does.
 
 Map streaming: a client that lacks the server's map (cache miss / hash mismatch) requests it and the server streams the compiled package (`S2C_MapData`). The request rides the C2S reliable stream — a lost one left the client waiting for a transfer that never started, and that was the last job the `CmdChangeMap` resend was doing. The wire map id is maps-relative (a basename like `new_map.source`), resolved per-side against a maps dir — the client's is `maps/` by default, overridable via the `MAPS_DIR` env var. To test streaming locally, run a "cold" client whose maps dir is empty so it must download: `scripts/run_client_cold.cmd` (starts `MyGame_Client` with `MAPS_DIR=cold_maps`) against a running `MyGame_Server`.
+
+**A ghost travels the way the map does, and the client never picks one by itself** (`shared/network/ghost_transfer.{hpp,cpp}`). The ghost of the category being run is server STATE, `world_t::announced_ghost` — the file's bytes and their hash, re-read at the round boundary for the bodies at the start line and after a ghost write. `S2C_GhostAvailable {party_size, ghost_hash, byte_count}` rides the reliable stream; the client hashes its cached `<maps dir>/<map>.<n>p.ghost`, adopts it on a match and otherwise sends `C2S_RequestGhost`; `S2C_GhostData` is a paced transfer, verified against the ANNOUNCED hash, cached and adopted. Hash 0 is "no ghost" and clears the client's. The announce is derived per tick like the mirrored cvars: each slot keeps the hash it was last told (`client_slot_t::announced_ghost_hash`), so one comparison covers "it changed" and "this client just became `map_ready`", and a map load clears it on both ends. A request is HELD in `requested_ghost_hash` while the slot's `outbound_transfer` is in progress, never refused and never allowed to restart it: a cold client reports the map a receipt interval before the server sees the last fragment confirmed, and the map is the one transfer a ghost must not clobber. The integrated client takes the same path and hits the cache every time.
 
 ### Allocation attribution
 

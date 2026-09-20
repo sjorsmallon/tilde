@@ -21,44 +21,29 @@ namespace
 
 constexpr size_t LEADERBOARD_ROW_COUNT = 5;
 
-std::string activator_name(server::server_context_t& server, shared::entity_uid_t activator)
-{
-  const Entity* entity = server.world.session.entity_system.try_find(activator);
-  if (const Player_Entity* player = entity_as<Player_Entity>(entity))
-    return player->display_name.c_str();
-  return activator == shared::null_entity_uid ? "nobody" : std::format("uid {}", activator);
-}
-
 // Ranked against the ghost on file, not the .times file: a best set before ghosts existed has none to beat.
-void write_ghost_if_fastest(server::server_context_t& server, shared::entity_uid_t activator,
-                            const shared::run_time_record_t& record)
+void write_ghost_if_fastest(server::server_context_t& server, const shared::ghost_t& ghost)
 {
   if (!server.cvars->sv_ghost_record)
     return;
 
-  std::optional<shared::ghost_t> ghost =
-      shared::try_extract_ghost(server.world.ghost_capture, activator, record.ticks);
-  if (!ghost)
-  {
-    log_error("ghost: no capture of {} covering {} ticks, so no ghost is written", activator,
-              record.ticks);
-    return;
-  }
-  ghost->tickrate_hz      = record.tickrate_hz;
-  ghost->map_content_hash = server.world.map_content_hash;
-  ghost->name             = record.name;
-
-  const std::string                    path    = shared::ghost_path_for(server.world.current_map_path);
-  const std::optional<shared::ghost_t> on_file = shared::try_read_ghost_file(path);
-  if (on_file && shared::ghost_run_seconds(*on_file) <= shared::ghost_run_seconds(*ghost))
+  const uint32_t    party_size = static_cast<uint32_t>(ghost.tracks.size());
+  const std::string path       = shared::ghost_path_for(server.world.current_map_path, party_size);
+  const std::optional<shared::ghost_t> on_file = shared::try_read_ghost_file(path, party_size);
+  if (on_file && shared::ghost_run_seconds(*on_file) <= shared::ghost_run_seconds(ghost))
     return;
 
-  shared::write_ghost_file(path, *ghost);
-  log_terminal("ghost: wrote {} ({} ticks)", path, record.ticks);
+  shared::write_ghost_file(path, ghost);
+  log_terminal("ghost: wrote {} ({} ticks)", path, ghost.run_ticks);
+
+  // The announced category is re-read, whichever one was written: a runner who joined mid-run files under another.
+  server.world.announced_ghost = shared::load_ghost_announcement(server.world.current_map_path,
+                                                                 server.world.announced_ghost.party_size);
 }
 
 // The run is the current tick minus the tick Live began at, in ticks, so it
-// never rounds. Appended to the map's .times file, then the file is read
+// never rounds. The party is MEASURED from the capture and names the category;
+// the run is appended to that category's .times file, which is then read
 // straight back and the top rows go out as console lines.
 void record_run(const Match& match, server::input_context_t& context, shared::Objective_Reached& reached)
 {
@@ -70,15 +55,31 @@ void record_run(const Match& match, server::input_context_t& context, shared::Ob
     return;
   }
 
-  const std::string path = shared::run_times_path_for(server.world.current_map_path);
-  const std::vector<shared::run_time_record_t> before = shared::read_run_times(path);
-  const std::vector<shared::run_time_record_t> best_before = shared::best_run_times(before, 1);
+  const uint32_t                 run_ticks = context.tick - match.phase_start_tick;
+  std::optional<shared::ghost_t> ghost;
+  if (server.world.ghost_capture.phase_start_tick == match.phase_start_tick)
+    ghost = shared::try_extract_ghost(server.world.ghost_capture, run_ticks);
+  if (!ghost)
+  {
+    log_error("objective reached, but the capture holds no living runner across {} ticks: no party to "
+              "file the time under, no time recorded",
+              run_ticks);
+    return;
+  }
 
   shared::run_time_record_t record;
-  record.ticks       = context.tick - match.phase_start_tick;
+  record.ticks       = run_ticks;
   record.tickrate_hz = std::max(1u, static_cast<uint32_t>(server.cvars->sv_tickrate));
   record.date        = shared::current_date_text();
-  record.name        = activator_name(server, context.activator);
+  record.name        = shared::ghost_party_name(*ghost);
+
+  ghost->tickrate_hz      = record.tickrate_hz;
+  ghost->map_content_hash = server.world.map_content_hash;
+
+  const uint32_t    party_size = static_cast<uint32_t>(ghost->tracks.size());
+  const std::string path       = shared::run_times_path_for(server.world.current_map_path, party_size);
+  const std::vector<shared::run_time_record_t> before = shared::read_run_times(path);
+  const std::vector<shared::run_time_record_t> best_before = shared::best_run_times(before, 1);
   shared::append_run_time(path, record);
 
   reached.attempt_ticks = record.ticks;
@@ -91,7 +92,7 @@ void record_run(const Match& match, server::input_context_t& context, shared::Ob
           : static_cast<uint32_t>(std::lround(shared::run_time_seconds(best_before.front()) *
                                               static_cast<float>(record.tickrate_hz)));
 
-  write_ghost_if_fastest(server, context.activator, record);
+  write_ghost_if_fastest(server, *ghost);
 
   const std::string map_name =
       std::filesystem::path(server.world.current_map_path).stem().generic_string();
@@ -101,7 +102,8 @@ void record_run(const Match& match, server::input_context_t& context, shared::Ob
 
   const std::vector<shared::run_time_record_t> best =
       shared::best_run_times(shared::read_run_times(path), LEADERBOARD_ROW_COUNT);
-  server::broadcast_server_text_message(server, std::format("best times on {}:", map_name));
+  server::broadcast_server_text_message(
+      server, std::format("best {}-player times on {}:", party_size, map_name));
   for (size_t row = 0; row < best.size(); ++row)
   {
     const shared::run_time_record_t& entry = best[row];

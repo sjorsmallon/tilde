@@ -73,6 +73,9 @@ struct Client_Inbox
   // cvar_state_t — the network layer stays ignorant of cvars, same division as
   // the two above.
   std::vector<std::vector<uint8>> cvar_value_messages;
+  // S2C_GhostAvailable and S2C_GhostData, decoded in client/ghost_playback.cpp.
+  std::vector<std::vector<uint8>> ghost_available_messages;
+  std::vector<std::vector<uint8>> ghost_data_messages;
 };
 
 // clear() per member rather than `= {}` on the whole struct: this is refilled
@@ -91,6 +94,8 @@ inline void clear_client_inbox(Client_Inbox &inbox)
   inbox.change_map_messages.clear();
   inbox.map_data_messages.clear();
   inbox.cvar_value_messages.clear();
+  inbox.ghost_available_messages.clear();
+  inbox.ghost_data_messages.clear();
 }
 
 // A member that exists but is never cleared, or never read, type-checks
@@ -109,7 +114,7 @@ inline void clear_client_inbox(Client_Inbox &inbox)
 // STL widens every container under _ITERATOR_DEBUG_LEVEL), which is a tripwire
 // that fires on the build configuration rather than on the change it is
 // watching for.
-static_assert(sizeof(Client_Inbox) == 10 * sizeof(std::vector<int>),
+static_assert(sizeof(Client_Inbox) == 12 * sizeof(std::vector<int>),
               "Client_Inbox gained or lost a member. If you added one: clear it "
               "in clear_client_inbox AND drain it in play_state.cpp's "
               "network-consume section, then update this count");
@@ -299,6 +304,10 @@ constexpr client_message_handler_table_t make_client_message_handlers()
       &deliver_raw_payload<&Client_Inbox::map_data_messages>;
   handlers[static_cast<size_t>(Message_Type::S2C_CvarValues)] =
       &deliver_raw_payload<&Client_Inbox::cvar_value_messages>;
+  handlers[static_cast<size_t>(Message_Type::S2C_GhostAvailable)] =
+      &deliver_raw_payload<&Client_Inbox::ghost_available_messages>;
+  handlers[static_cast<size_t>(Message_Type::S2C_GhostData)] =
+      &deliver_raw_payload<&Client_Inbox::ghost_data_messages>;
 
   return handlers;
 }
