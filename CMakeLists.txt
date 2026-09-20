@@ -519,6 +519,8 @@ add_library(game_shared STATIC
     src/shared/locomotion.cpp
     src/shared/locomotion_quake.cpp
     src/shared/locomotion_instant.cpp
+    src/shared/locomotion_instant_momentum.cpp
+    src/shared/locomotion_instant_redirect.cpp
     # What replaces a model for a duration and exits as an impulse.
     src/shared/movement_override.cpp
     src/shared/movement_volumes.cpp

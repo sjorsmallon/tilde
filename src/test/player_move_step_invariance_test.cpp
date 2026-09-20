@@ -1461,6 +1461,312 @@ static void test_instant_pad_launch_is_borrowed(const cvar_state_t& cvars)
   }
 }
 
+// --- 20. pm_model instant_momentum: the memory is a velocity, not a timer ----
+//
+// The same input rule as instant over a momentum an impulse LANDS in, so there
+// is no cliff when a timer runs out -- what bleeds it is a drag, and an
+// exponential decay composes exactly under any split of dt for the same reason
+// friction's does.
+static cvar_state_t momentum_cvars(const cvar_state_t& cvars, float ground_drag, float air_drag)
+{
+  cvar_state_t momentum                    = cvars;
+  momentum.pm_model                        = cvars::Locomotion_Model::instant_momentum;
+  momentum.pm_instant_momentum_ground_drag = ground_drag;
+  momentum.pm_instant_momentum_air_drag    = air_drag;
+  return momentum;
+}
+
+static void test_instant_momentum_decay_composes(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant_momentum: the drag is a decay, so it composes\n");
+
+  constexpr float                   air_drag = 4.f;
+  const cvar_state_t                momentum = momentum_cvars(cvars, 10.f, air_drag);
+  const Bounding_Volume_Hierarchy   bvh      = empty_world();
+  const shared::movement_settings_t settings = shared::movement_settings_from(momentum);
+
+  const float expected = 900.f * std::exp(-air_drag * tick_dt);
+
+  for (int sub_steps : {1, 2, 8, 64})
+  {
+    shared::move_state_t state{.feet = {0.f, 1000.f, 0.f}};
+    shared::apply_impulse(settings, state, {.velocity = {900.f, 0.f, 0.f}});
+    check_near(state.movement.momentum.x, 900.f, 1e-3f,
+               "the impulse lands in the momentum rather than in a timer");
+
+    const move_result_t result = run_split(momentum, bvh, Move_Input{}, state.feet, state.velocity,
+                                           tick_dt, sub_steps, &state.movement);
+
+    printf("    N=%-2d  momentum %.6f  velocity %.6f\n", sub_steps, state.movement.momentum.x,
+           result.velocity.x);
+    check_near(state.movement.momentum.x, expected, 1e-2f,
+               "one tick of drag is the same total however the tick was split");
+    check_near(result.velocity.x, expected, 1e-2f,
+               "and with no input the velocity IS the momentum");
+  }
+
+  // The other end of "there is no cliff": ten ticks of it is still the closed
+  // form, where a timer would have dropped the whole thing at once.
+  shared::move_state_t state{.feet = {0.f, 1000.f, 0.f}};
+  shared::apply_impulse(settings, state, {.velocity = {900.f, 0.f, 0.f}});
+  move_result_t result{state.feet, state.velocity};
+  for (int tick = 0; tick < 10; ++tick)
+    result = run_split(momentum, bvh, Move_Input{}, result.position, result.velocity, tick_dt, 4,
+                       &state.movement);
+  check_near(result.velocity.x, 900.f * std::exp(-air_drag * 10.f * tick_dt), 1e-1f,
+             "ten ticks of it bleeds rather than expiring");
+}
+
+// --- 21. the room rule: input adds NOTHING along the momentum ----------------
+//
+// What a launch gives you cannot be stacked on by holding forward, and cannot
+// be thrown away by holding against it either -- which is the whole difference
+// from instant, where the input owns the horizontal velocity outright.
+static void test_instant_momentum_input_adds_only_beside_it(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant_momentum: input fills the room beside the momentum\n");
+
+  const cvar_state_t                momentum  = momentum_cvars(cvars, 10.f, 0.f);
+  const Bounding_Volume_Hierarchy   bvh       = empty_world();
+  const shared::movement_settings_t settings  = shared::movement_settings_from(momentum);
+  const float                       run_speed = momentum.pm_maxspeed;
+
+  Move_Input forward;
+  forward.forward_pressed = true;
+  Move_Input backward;
+  backward.backward_pressed = true;
+  Move_Input across;
+  across.right_pressed = true;
+
+  // +x is forward here, so a launch along +x is one the input is aimed at.
+  for (float launch_speed : {900.f, 100.f})
+  {
+    shared::move_state_t held{.feet = {0.f, 1000.f, 0.f}};
+    shared::apply_impulse(settings, held, {.velocity = {launch_speed, 0.f, 0.f}});
+    const move_result_t forward_held =
+        run_split(momentum, bvh, forward, held.feet, held.velocity, tick_dt, 8, &held.movement);
+
+    printf("    launch %.0f  forward held -> %.6f  (max(launch, run_speed) = %.0f)\n",
+           launch_speed, forward_held.velocity.x, std::max(launch_speed, run_speed));
+    check_near(forward_held.velocity.x, std::max(launch_speed, run_speed), 1e-2f,
+               "holding into a launch is max(launch, run_speed): the room is what is left of it");
+  }
+
+  shared::move_state_t braking{.feet = {0.f, 1000.f, 0.f}};
+  shared::apply_impulse(settings, braking, {.velocity = {900.f, 0.f, 0.f}});
+  const move_result_t braked = run_split(momentum, bvh, backward, braking.feet, braking.velocity,
+                                         tick_dt, 8, &braking.movement);
+  printf("    launch 900  backward held -> %.6f\n", braked.velocity.x);
+  check_near(braked.velocity.x, 900.f - run_speed, 1e-2f,
+             "holding against it brakes by run_speed rather than reversing the launch");
+
+  shared::move_state_t steering{.feet = {0.f, 1000.f, 0.f}};
+  shared::apply_impulse(settings, steering, {.velocity = {900.f, 0.f, 0.f}});
+  const move_result_t steered = run_split(momentum, bvh, across, steering.feet, steering.velocity,
+                                          tick_dt, 8, &steering.movement);
+  printf("    launch 900  across held -> (%.6f, %.6f)  speed %.6f\n", steered.velocity.x,
+         steered.velocity.z, horizontal_speed(steered.velocity));
+  check_near(steered.velocity.x, 900.f, 1e-2f, "across it, the launch is untouched");
+  check_near(steered.velocity.z, run_speed, 1e-2f, "and the input is spent in full beside it");
+}
+
+// --- 22. zero air drag flies the arc the editor draws ------------------------
+//
+// The pad overlay draws a parabola from the launch velocity. Under instant that
+// arc is a promise the timer can break; under instant_momentum with air drag 0
+// there is nothing to break it, so the landing is where the closed form says.
+static void test_instant_momentum_pad_flies_the_drawn_arc(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant_momentum: a pad with no air drag lands on its own arc\n");
+
+  const cvar_state_t              momentum = momentum_cvars(cvars, 10.f, 0.f);
+  const Bounding_Volume_Hierarchy bvh      = floor_world();
+  const vec3                      launch{300.f, 900.f, 0.f};
+  const std::vector<shared::movement_volume_t> volumes = {
+      pad_at({0.f, 8.f, 0.f}, {32.f, 8.f, 32.f}, launch, true)};
+
+  const float flight_seconds = 2.f * launch.y / momentum.g_gravity;
+  const float expected_x     = launch.x * flight_seconds;
+
+  for (int sub_steps : {1, 4})
+  {
+    entities::Movement movement{};
+    pad_probe_t        pad{};
+    move_result_t      result =
+        run_split(momentum, bvh, Move_Input{}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, tick_dt,
+                  sub_steps, &movement, Span<const shared::movement_volume_t>(volumes), &pad);
+    check(pad.launches == 1, "the pad fires once");
+
+    // Off the volume list from here: the landing puts the hull back inside the
+    // pad's box, and re-latching is a second launch, not a flight.
+    //
+    // At least one tick before the grounded test, because the launch fires
+    // AFTER the ground snap: the step that throws you still ends reporting the
+    // floor it left.
+    int   ticks_flown             = 0;
+    float speed_while_still_flying = 0.f;
+    do
+    {
+      speed_while_still_flying = result.velocity.x;
+      result = run_split(momentum, bvh, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &movement);
+      ++ticks_flown;
+    } while (!movement.is_grounded && ticks_flown < 600);
+
+    printf("    N=%-2d  landed after %.4f s at x = %.4f  (closed form %.4f s, %.4f)\n", sub_steps,
+           (float)ticks_flown * tick_dt, result.position.x, flight_seconds, expected_x);
+
+    check(movement.is_grounded, "it comes back down");
+    // One tick of travel: the landing snap fires on the step that crosses the
+    // floor, which is up to a whole step past the exact crossing.
+    check_near(result.position.x, expected_x, launch.x * tick_dt,
+               "and lands within a tick's travel of where the drawn arc says");
+    // The landing tick itself is on the ground, where the drag is the ground
+    // one and eats it -- which is the point of the two numbers being separate.
+    check_near(speed_while_still_flying, launch.x, 1e-2f,
+               "having kept the launch's horizontal speed the whole way, with no timer to lose it");
+  }
+}
+
+// --- 23. pm_model instant_redirect: carried speed is AIMED, never summed with -
+//
+// The model instant_momentum's launch case argued for: a pad aimed upward lands
+// only a few hundred units of horizontal on you, so an input that SUBTRACTS at
+// pm_maxspeed does not brake it, it annihilates it. Here the input cannot touch
+// the size of carried speed at all -- it turns it, at a rate -- so a press
+// costs time instead of speed.
+static cvar_state_t redirect_cvars(const cvar_state_t& cvars, float turn_degrees_per_second,
+                                   float air_drag)
+{
+  cvar_state_t redirect = cvars;
+  redirect.pm_model     = cvars::Locomotion_Model::instant_redirect;
+  redirect.pm_instant_redirect_turn_degrees_per_second = turn_degrees_per_second;
+  redirect.pm_instant_redirect_ground_drag             = 10.f;
+  redirect.pm_instant_redirect_air_drag                = air_drag;
+  return redirect;
+}
+
+static void test_instant_redirect_turns_carried_speed(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant_redirect: a press aims carried speed, at a rate\n");
+
+  constexpr float                 turn_rate = 360.f;
+  const cvar_state_t              redirect  = redirect_cvars(cvars, turn_rate, 0.f);
+  const Bounding_Volume_Hierarchy bvh       = empty_world();
+  const shared::movement_settings_t settings = shared::movement_settings_from(redirect);
+
+  Move_Input backward;
+  backward.backward_pressed = true;
+  Move_Input across;
+  across.right_pressed = true;
+  const Move_Input no_input;
+
+  // The pad that started this: uid 125 of maps/bunnyhop.source throws 502 along
+  // the aim and 869 up, so the horizontal half is barely more than run_speed.
+  const vec3  launch{502.f, 869.f, 0.f};
+  const float expected_turn = turn_rate * tick_dt;
+
+  for (int sub_steps : {1, 2, 8, 64})
+  {
+    shared::move_state_t braking{.feet = {0.f, 1000.f, 0.f}};
+    shared::apply_impulse(settings, braking, {.velocity = launch});
+    const move_result_t braked = run_split(redirect, bvh, backward, braking.feet,
+                                           braking.velocity, tick_dt, sub_steps,
+                                           &braking.movement);
+
+    shared::move_state_t coasting{.feet = {0.f, 1000.f, 0.f}};
+    shared::apply_impulse(settings, coasting, {.velocity = launch});
+    const move_result_t coasted = run_split(redirect, bvh, no_input, coasting.feet,
+                                            coasting.velocity, tick_dt, sub_steps,
+                                            &coasting.movement);
+
+    const float turned_degrees = linalg::to_degrees(
+        std::atan2(-braked.velocity.z, braked.velocity.x));
+
+    printf("    N=%-2d  braking speed %.6f turned %+.4f deg   coasting speed %.6f\n", sub_steps,
+           horizontal_speed(braked.velocity), turned_degrees,
+           horizontal_speed(coasted.velocity));
+
+    check_near(horizontal_speed(braked.velocity), launch.x, 1e-2f,
+               "holding back costs NONE of the launch: a turn cannot change a magnitude");
+    check_near(std::fabs(turned_degrees), expected_turn, 1e-2f,
+               "it spends the tick's worth of turn rate instead, however the tick was split");
+    check_near(horizontal_speed(coasted.velocity), launch.x, 1e-2f,
+               "and with no input it flies straight, with nothing to aim it");
+  }
+
+  // Half a turn takes 180 / turn_rate seconds, and the swing STOPS there rather
+  // than overshooting: the step turns by the angle left when that is smaller.
+  shared::move_state_t reversing{.feet = {0.f, 1000.f, 0.f}};
+  shared::apply_impulse(settings, reversing, {.velocity = launch});
+  move_result_t result{reversing.feet, reversing.velocity};
+  for (int tick = 0; tick < 60; ++tick)
+    result = run_split(redirect, bvh, backward, result.position, result.velocity, tick_dt, 4,
+                       &reversing.movement);
+
+  printf("    a full second of holding back -> (%.4f, %.4f)  speed %.6f\n", result.velocity.x,
+         result.velocity.z, horizontal_speed(result.velocity));
+  check_near(result.velocity.x, -launch.x, 1e-1f, "a second of it comes out fully reversed");
+  check_near(horizontal_speed(result.velocity), launch.x, 1e-1f,
+             "at exactly the speed it was launched with");
+
+  // Across it: the same turn, so the launch is carved rather than widened. This
+  // is the row instant_momentum answered with a 6% gain.
+  shared::move_state_t carving{.feet = {0.f, 1000.f, 0.f}};
+  shared::apply_impulse(settings, carving, {.velocity = launch});
+  const move_result_t carved = run_split(redirect, bvh, across, carving.feet, carving.velocity,
+                                         tick_dt, 8, &carving.movement);
+  printf("    across held -> (%.4f, %.4f)  speed %.6f\n", carved.velocity.x, carved.velocity.z,
+         horizontal_speed(carved.velocity));
+  check_near(horizontal_speed(carved.velocity), launch.x, 1e-2f,
+             "steering across it is free of charge and free of gain alike");
+  check_near(carved.velocity.z, launch.x * std::sin(linalg::to_radians(expected_turn)), 1e-2f,
+             "the whole of the press went into the angle");
+}
+
+// --- 24. ...and below run_speed it IS the instant model ----------------------
+//
+// The redirect rule owns nothing but speed you did not make yourself, so
+// ordinary running has to be indistinguishable from instant: the turn rate must
+// not apply to your own 320, or every corner would be a slow arc.
+static void test_instant_redirect_is_instant_below_run_speed(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant_redirect: your own speed still arrives and leaves at once\n");
+
+  const cvar_state_t              redirect  = redirect_cvars(cvars, 360.f, 0.f);
+  const Bounding_Volume_Hierarchy floor_bvh = floor_world();
+  const float                     run_speed = redirect.pm_maxspeed;
+
+  Move_Input forward;
+  forward.forward_pressed = true;
+  Move_Input across;
+  across.right_pressed = true;
+  const Move_Input no_input;
+
+  const vec3 grounded_position{0.f, -0.02f, 0.f};
+  const vec3 running{run_speed, 0.f, 0.f};
+
+  for (int sub_steps : {1, 8})
+  {
+    const move_result_t started = run_split(redirect, floor_bvh, forward, grounded_position,
+                                            {10.f, 0.f, 0.f}, tick_dt, sub_steps);
+    const move_result_t turned  = run_split(redirect, floor_bvh, across, grounded_position,
+                                            running, tick_dt, sub_steps);
+    const move_result_t stopped = run_split(redirect, floor_bvh, no_input, grounded_position,
+                                            running, tick_dt, sub_steps);
+
+    printf("    N=%-2d  started %.6f  turned (%.4f, %.4f)  stopped %.6f\n", sub_steps,
+           horizontal_speed(started.velocity), turned.velocity.x, turned.velocity.z,
+           horizontal_speed(stopped.velocity));
+
+    check_near(started.velocity.x, run_speed, 1e-2f, "a press is top speed within the tick");
+    check_near(turned.velocity.z, run_speed, 1e-2f,
+               "a corner at run speed is a corner, not an arc");
+    check_near(turned.velocity.x, 0.f, 1e-2f, "nothing of the old direction survives it");
+    check_near(horizontal_speed(stopped.velocity), 0.f, 1e-2f, "and no input is no velocity");
+  }
+}
+
 // --- the door: an impulse survives every model -------------------------------
 //
 // A writer states WHAT it wants and carries no duration, so remembering it is
@@ -1475,9 +1781,11 @@ static void test_an_impulse_survives_every_model(const cvar_state_t& cvars)
   Move_Input                      forward;
   forward.forward_pressed = true;
 
-  for (cvars::Locomotion_Model model :
-       {cvars::Locomotion_Model::quake, cvars::Locomotion_Model::instant})
+  // Every model, by the enum's own count: a model added with no memory of its
+  // own is what this fails on, and it should not need an edit here to do it.
+  for (uint32_t row = 0; row < enum_traits<cvars::Locomotion_Model>::count; ++row)
   {
+    const cvars::Locomotion_Model model = (cvars::Locomotion_Model)row;
     cvar_state_t tuned    = cvars;
     tuned.pm_model = model;
     const shared::movement_settings_t settings = shared::movement_settings_from(tuned);
@@ -1553,6 +1861,40 @@ static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
 // reel_speed * duration, whatever the step count -- which is what the reel_dt
 // clamp buys. Without it the final step spends a whole dt on a pull with only a
 // sliver left.
+// A wedge whose sloped face rises from x = 0 to x = 512 at 60 degrees, plus a
+// vertical wall standing on x = 64 at y = 1000. The slope is past the 45-degree
+// ground rule, so both are WALLS to resolve_collisions; only the normals differ.
+static const vec3 ramp_normal = normalize(vec3{-std::sin(linalg::to_radians(60.f)),
+                                               std::cos(linalg::to_radians(60.f)), 0.f});
+
+static Bounding_Volume_Hierarchy ramp_and_wall_world()
+{
+  const float             rise = 512.f * std::tan(linalg::to_radians(60.f));
+  shared::brush_geometry_t ramp;
+  ramp.hull_points = {{0.f, 0.f, -512.f},    {0.f, 0.f, 512.f},    {512.f, 0.f, -512.f},
+                      {512.f, 0.f, 512.f},   {512.f, rise, -512.f}, {512.f, rise, 512.f}};
+  const shared::geometry_value_t wall =
+      shared::make_box_brush({128.f, 1000.f, -2048.f}, {64.f, 512.f, 512.f});
+
+  std::vector<BVH_Input> inputs;
+  uint32_t               index = 0;
+  for (const shared::geometry_value_t& geometry : {shared::geometry_value_t{ramp}, wall})
+  {
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1))
+    {
+      BVH_Input input;
+      input.aabb             = piece.bounds;
+      input.id               = {Collision_Id::Type::Static_Geometry, index};
+      input.collision_planes = piece.planes;
+      input.face_polygons    = piece.face_polygons;
+      inputs.push_back(std::move(input));
+    }
+    ++index;
+  }
+
+  return build_bvh(inputs);
+}
+
 static void test_hook_reel_timeout_is_step_invariant(const cvar_state_t& cvars)
 {
   printf("\n[EXACT] hook reel: a pull that times out travels the same distance\n");
@@ -1586,6 +1928,67 @@ static void test_hook_reel_timeout_is_step_invariant(const cvar_state_t& cvars)
                "a timed-out pull travels reel_speed * duration however the tick was cut");
     check(movement.active_override == entities::Movement_Override::None,
           "timing out clears the override");
+  }
+}
+
+// --- 35. a surf ramp: the fall is projected onto the face, a vertical wall leaves y alone
+//
+// In the air the whole velocity is clipped against a wall as ONE vector, and the
+// clip is a linear projection: P(v0 - g*t) sums to the same parabola however the
+// tick is cut, so long as the same plane is under the hull the whole tick. On a
+// 60-degree face gravity's along-ramp share is g*sin(60); on a vertical wall the
+// normal has no y and the fall is exactly the free-fall one from scenario 2.
+static void test_surf_ramp_projects_the_fall(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] surf ramp: a wall past 45 degrees keeps g*sin(theta) of the fall\n");
+
+  const Bounding_Volume_Hierarchy bvh = ramp_and_wall_world();
+  const Move_Input                no_input;
+  const float                     g = cvars.g_gravity;
+
+  // Hull centre resting against the middle of the slope, penetrating it by
+  // 0.02 so the first resolve reads the contact; the feet are half_height
+  // below that.
+  const float ramp_support   = half_width * std::fabs(ramp_normal.x) + half_height * ramp_normal.y;
+  const vec3  ramp_point     = {256.f, 256.f * std::tan(linalg::to_radians(60.f)), 0.f};
+  const vec3  ramp_center    = ramp_point + ramp_normal * (ramp_support - 0.02f);
+  const vec3  ramp_start     = ramp_center - vec3{0.f, half_height, 0.f};
+  const float along_ramp     = std::sin(linalg::to_radians(60.f));
+  const float expected_speed = g * tick_dt * along_ramp;
+  const vec3  expected_direction = {-std::cos(linalg::to_radians(60.f)),
+                                    -std::sin(linalg::to_radians(60.f)), 0.f};
+
+  // Against the wall's -x face, flying into it at 300 with no input.
+  const vec3 wall_start{64.f - half_width + 0.02f, 1000.f - half_height, -2048.f};
+  const vec3 wall_velocity{300.f, 0.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    const move_result_t surfed =
+        run_split(cvars, bvh, no_input, ramp_start, {0.f, 0.f, 0.f}, tick_dt, sub_steps);
+    const move_result_t walled =
+        run_split(cvars, bvh, no_input, wall_start, wall_velocity, tick_dt, sub_steps);
+
+    const float surfed_speed = length(surfed.velocity);
+    printf("    N=%-2d  ramp speed %.6f (expected %.6f) dir (%.3f, %.3f)   wall vx %.4f dy %.6f\n",
+           sub_steps, surfed_speed, expected_speed, surfed.velocity.x / surfed_speed,
+           surfed.velocity.y / surfed_speed, walled.velocity.x, walled.position.y - wall_start.y);
+
+    check_near(surfed_speed, expected_speed, 1e-2f,
+               "ramp: one tick of gravity arrives as g*dt*sin(theta) under any split");
+    check_near(surfed.velocity.x / surfed_speed, expected_direction.x, 1e-3f,
+               "ramp: the velocity points down the face");
+    check_near(surfed.velocity.y / surfed_speed, expected_direction.y, 1e-3f,
+               "ramp: the velocity lies in the face");
+    check_near(dot(surfed.velocity, ramp_normal), 0.f, 1e-2f,
+               "ramp: nothing is left pointing into the face");
+
+    check(std::fabs(walled.velocity.x) < 1.f, "wall: the into-wall speed is gone, not kept");
+    check_near(walled.velocity.y, -g * tick_dt, 1e-3f,
+               "wall: the vertical velocity is free fall");
+    check_near(walled.position.y - wall_start.y,
+               -g * tick_dt * tick_dt * expected_drop_coefficient(sub_steps), 1e-3f,
+               "wall: the drop is scenario 2's, untouched by the clip");
   }
 }
 
@@ -1626,9 +2029,15 @@ int main()
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);
   test_instant_pad_launch_is_borrowed(cvars);
+  test_instant_momentum_decay_composes(cvars);
+  test_instant_momentum_input_adds_only_beside_it(cvars);
+  test_instant_momentum_pad_flies_the_drawn_arc(cvars);
+  test_instant_redirect_turns_carried_speed(cvars);
+  test_instant_redirect_is_instant_below_run_speed(cvars);
   test_an_impulse_survives_every_model(cvars);
   test_hook_reel_arrival_is_step_invariant(cvars);
   test_hook_reel_timeout_is_step_invariant(cvars);
+  test_surf_ramp_projects_the_fall(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

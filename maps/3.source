@@ -7,8 +7,8 @@ cvars
 {
   "g_gravity" "500"
   "next_map" "4"
-  "pm_acceleration" "instant"
   "pm_maxspeed" "1000"
+  "pm_model" "instant"
   "sv_skybox" "night_sky"
 }
 materials

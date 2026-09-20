@@ -25,6 +25,16 @@ namespace shared
                                          const vec3& velocity_entering_move, move_state_t& state,
                                          const move_input_t& input);
 
+[[nodiscard]] wanted_move_t instant_momentum_step(const movement_settings_t& settings,
+                                                  const contacts_t& contacts, bool grounded,
+                                                  const vec3& velocity_entering_move,
+                                                  move_state_t& state, const move_input_t& input);
+
+[[nodiscard]] wanted_move_t instant_redirect_step(const movement_settings_t& settings,
+                                                  const contacts_t& contacts, bool grounded,
+                                                  const vec3& velocity_entering_move,
+                                                  move_state_t& state, const move_input_t& input);
+
 [[nodiscard]] vec3 velocity_after_impulse(const move_state_t& state, const impulse_t& impulse);
 
 // Where an impulse LANDS is the model's answer, which is what turns N writers
@@ -33,6 +43,10 @@ void quake_impulse(const movement_settings_t& settings, move_state_t& state,
                    const impulse_t& impulse);
 void instant_impulse(const movement_settings_t& settings, move_state_t& state,
                      const impulse_t& impulse);
+void instant_momentum_impulse(const movement_settings_t& settings, move_state_t& state,
+                              const impulse_t& impulse);
+void instant_redirect_impulse(const movement_settings_t& settings, move_state_t& state,
+                              const impulse_t& impulse);
 
 // A GROUND jump reads the LEVEL, unchanged: holding space to bunnyhop is the
 // behavior, not a bug, and nothing is spent by it.
@@ -86,5 +100,11 @@ struct friction_step_t
                                              float dt);
 
 [[nodiscard]] vec3 rotate_about_y(const vec3& vector, float radians);
+
+// Where the aim had turned to by the END of the step, in the sweep's own
+// terms: the direction the LAST of its pushes would have been spent along. A
+// model whose answer is an instant one reads this rather than the step's
+// opening aim, or an extra sub-tick edge moves the aim it answers under.
+[[nodiscard]] vec3 last_push_direction_of(const vec3& direction, const aim_sweep_t& sweep);
 
 } // namespace shared

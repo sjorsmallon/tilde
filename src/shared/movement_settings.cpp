@@ -59,6 +59,16 @@ movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars)
     case cvars::Locomotion_Model::instant:
       settings.instant = {.speed_return_seconds = cvars.pm_instant_speed_return_seconds};
       break;
+    case cvars::Locomotion_Model::instant_momentum:
+      settings.instant_momentum = {.ground_drag = cvars.pm_instant_momentum_ground_drag,
+                                   .air_drag    = cvars.pm_instant_momentum_air_drag};
+      break;
+    case cvars::Locomotion_Model::instant_redirect:
+      settings.instant_redirect = {
+          .turn_degrees_per_second = cvars.pm_instant_redirect_turn_degrees_per_second,
+          .ground_drag             = cvars.pm_instant_redirect_ground_drag,
+          .air_drag                = cvars.pm_instant_redirect_air_drag};
+      break;
   }
 
   settings.record_collisions = cvars.debug_show_collisions;
@@ -68,6 +78,12 @@ movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars)
 
 std::optional<cvars::Locomotion_Model> locomotion_model_a_cvar_belongs_to(std::string_view name)
 {
+  // The longest prefix first: every model's own prefix starts with pm_instant_,
+  // and the more specific one is the one that names its model.
+  if (name.starts_with("pm_instant_momentum_"))
+    return cvars::Locomotion_Model::instant_momentum;
+  if (name.starts_with("pm_instant_redirect_"))
+    return cvars::Locomotion_Model::instant_redirect;
   if (name.starts_with("pm_quake_"))
     return cvars::Locomotion_Model::quake;
   if (name.starts_with("pm_instant_"))

@@ -25,6 +25,8 @@ constexpr const char* Bunnyhop_Mode_VALUE_NAMES[] = {
 constexpr const char* Locomotion_Model_VALUE_NAMES[] = {
   "quake",
   "instant",
+  "instant_momentum",
+  "instant_redirect",
 };
 
 constexpr const char* Debug_Channel_VALUE_NAMES[] = {
@@ -50,14 +52,14 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Bunnyhop_Mode", {Bunnyhop_Mode_VALUE_NAMES, 3}},
-  {"Locomotion_Model", {Locomotion_Model_VALUE_NAMES, 2}},
+  {"Locomotion_Model", {Locomotion_Model_VALUE_NAMES, 4}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 12}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
 const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
     {.name = "pm_model",
-     .description = "Movement style: quake (accelerate against friction) or instant (horizontal velocity IS the input, ground and air alike)",
+     .description = "Movement style: quake (accelerate against friction), instant (horizontal velocity IS the input), instant_momentum (the same input rule beside a momentum outside speed lands in) or instant_redirect (the same, but carried speed can only be AIMED, never added to or cancelled)",
      .flags = CVAR_FLAG_MIRRORED,
      .type = CVAR_TYPE_ENUM,
      .offset = offsetof(cvar_state_t, pm_model),
@@ -206,6 +208,46 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, pm_instant_speed_return_seconds),
      .size = sizeof(cvar_state_t::pm_instant_speed_return_seconds),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_instant_momentum_ground_drag",
+     .description = "How fast momentum from a pad, a dash or knockback bleeds while walking (exponential, per second)",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_instant_momentum_ground_drag),
+     .size = sizeof(cvar_state_t::pm_instant_momentum_ground_drag),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_instant_momentum_air_drag",
+     .description = "The same in the air. Zero flies the arc the editor draws",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_instant_momentum_air_drag),
+     .size = sizeof(cvar_state_t::pm_instant_momentum_air_drag),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_instant_redirect_turn_degrees_per_second",
+     .description = "How fast the input can swing carried speed around. A half turn takes 180/this seconds",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_instant_redirect_turn_degrees_per_second),
+     .size = sizeof(cvar_state_t::pm_instant_redirect_turn_degrees_per_second),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_instant_redirect_ground_drag",
+     .description = "How fast carried speed bleeds back to pm_maxspeed while walking (exponential, per second)",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_instant_redirect_ground_drag),
+     .size = sizeof(cvar_state_t::pm_instant_redirect_ground_drag),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_instant_redirect_air_drag",
+     .description = "The same in the air. Zero keeps a launch until you land",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_instant_redirect_air_drag),
+     .size = sizeof(cvar_state_t::pm_instant_redirect_air_drag),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "sv_hook_pull_speed",
@@ -1177,7 +1219,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[26] = {
+const cvar_id MIRRORED_CVAR_TABLE[31] = {
     cvar_id::pm_model,
     cvar_id::pm_maxspeed,
     cvar_id::pm_overbounce,
@@ -1197,6 +1239,11 @@ const cvar_id MIRRORED_CVAR_TABLE[26] = {
     cvar_id::pm_quake_jump_boost_max_speed,
     cvar_id::pm_quake_air_speed_cap,
     cvar_id::pm_instant_speed_return_seconds,
+    cvar_id::pm_instant_momentum_ground_drag,
+    cvar_id::pm_instant_momentum_air_drag,
+    cvar_id::pm_instant_redirect_turn_degrees_per_second,
+    cvar_id::pm_instant_redirect_ground_drag,
+    cvar_id::pm_instant_redirect_air_drag,
     cvar_id::sv_aim_max_pitch,
     cvar_id::sv_aim_max_yaw,
     cvar_id::sv_aim_body_turn_rate,
@@ -1265,7 +1312,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 26};
+  return {MIRRORED_CVAR_TABLE, 31};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)
@@ -1468,6 +1515,8 @@ const char* to_string(Locomotion_Model value)
   {
     case Locomotion_Model::quake: return "quake";
     case Locomotion_Model::instant: return "instant";
+    case Locomotion_Model::instant_momentum: return "instant_momentum";
+    case Locomotion_Model::instant_redirect: return "instant_redirect";
   }
   assert(false && "invalid Locomotion_Model");
   return "";
@@ -1477,6 +1526,8 @@ template <> std::optional<Locomotion_Model> try_from_string<Locomotion_Model>(st
 {
   if (text == "quake") return Locomotion_Model::quake;
   if (text == "instant") return Locomotion_Model::instant;
+  if (text == "instant_momentum") return Locomotion_Model::instant_momentum;
+  if (text == "instant_redirect") return Locomotion_Model::instant_redirect;
   return std::nullopt;
 }
 

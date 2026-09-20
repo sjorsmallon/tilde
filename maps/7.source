@@ -6,7 +6,7 @@ entity
 cvars
 {
   "g_gravity" "500"
-  "pm_acceleration" "instant"
+  "pm_model" "instant"
   "pm_maxspeed" "1000"
   "sv_skybox" "night_sky"
 }

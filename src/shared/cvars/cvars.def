@@ -52,11 +52,11 @@
 // sets one its own pm_model does not read.
 
 Bunnyhop_Mode :: enum { none, hl2, cs }
-Locomotion_Model :: enum { quake, instant }
+Locomotion_Model :: enum { quake, instant, instant_momentum, instant_redirect }
 
 // Read by every model and by the kernel.
 Player_Movement :: cvars {
-    pm_model:               Locomotion_Model = .quake  @Mirrored  "Movement style: quake (accelerate against friction) or instant (horizontal velocity IS the input, ground and air alike)"
+    pm_model:               Locomotion_Model = .quake  @Mirrored  "Movement style: quake (accelerate against friction), instant (horizontal velocity IS the input), instant_momentum (the same input rule beside a momentum outside speed lands in) or instant_redirect (the same, but carried speed can only be AIMED, never added to or cancelled)"
     pm_maxspeed:            f32 = 320.0       @Mirrored  "Run speed: the most your own acceleration pushes you to"
     pm_overbounce:          f32 = 1.001       @Mirrored  "Plane clip overbounce factor"
     pm_jumpspeed:           f32 = 270.0       @Mirrored  "Jump velocity"
@@ -87,6 +87,23 @@ Quake_Movement :: cvars {
 // Read only when pm_model is instant.
 Instant_Movement :: cvars {
     pm_instant_speed_return_seconds: f32 = 0.5 @Mirrored  "How long speed from a pad, a dash, Set_Velocity, Add_Velocity or knockback outlasts your input"
+}
+
+// Read only when pm_model is instant_momentum. There is no speed_return_seconds
+// here on purpose: the memory is the momentum itself, so it bleeds rather than
+// falling off a cliff when a timer runs out.
+Instant_Momentum_Movement :: cvars {
+    pm_instant_momentum_ground_drag: f32 = 10.0 @Mirrored  "How fast momentum from a pad, a dash or knockback bleeds while walking (exponential, per second)"
+    pm_instant_momentum_air_drag:    f32 = 0.0  @Mirrored  "The same in the air. Zero flies the arc the editor draws"
+}
+
+// Read only when pm_model is instant_redirect. Carried speed is the velocity
+// itself here, and the input may only AIM it: nothing adds to it and nothing
+// cancels it, so a launch is steered rather than summed with.
+Instant_Redirect_Movement :: cvars {
+    pm_instant_redirect_turn_degrees_per_second: f32 = 360.0 @Mirrored  "How fast the input can swing carried speed around. A half turn takes 180/this seconds"
+    pm_instant_redirect_ground_drag:             f32 = 10.0  @Mirrored  "How fast carried speed bleeds back to pm_maxspeed while walking (exponential, per second)"
+    pm_instant_redirect_air_drag:                f32 = 0.0   @Mirrored  "The same in the air. Zero keeps a launch until you land"
 }
 
 // The hook's reel is an OVERRIDE, and an override's numbers are written into

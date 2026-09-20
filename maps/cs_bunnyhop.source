@@ -5,8 +5,8 @@ entity
 }
 cvars
 {
-  "pm_air_acceleration" "12"
-  "pm_bunnyhop" "cs"
+  "pm_quake_air_acceleration" "12"
+  "pm_quake_bunnyhop" "cs"
   "pm_maxspeed" "540"
   "sv_skybox" "night_sky"
 }

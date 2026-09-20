@@ -251,39 +251,39 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
   new_velocity = normalize(new_velocity);
   new_velocity = new_speed * new_velocity;
 
-  // readjust the velocity for all the wall collider planes.
-  for (const Plane& collider_plane : contacts.wall_planes)
-  {
-    // we should not collide with the plane if we are trying to move away from
-    // it.
-    new_speed = length(new_velocity);
-    new_velocity = normalize(new_velocity);
-    if (dot(new_velocity, collider_plane.normal) > 0.f)
-    {
-      new_velocity = new_velocity * new_speed;
-      continue;
-    }
-
-    new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
-
-    // Speed-preserving rescale: when sliding along a wall we normalize and
-    // rescale to new_speed so that touching a wall doesn't bleed speed.
-    // BUT: new_velocity was a unit vector entering clip_vector, so when
-    // pressing nearly perpendicular into a wall the clip leaves only a tiny
-    // residual (< 0.01) pointing slightly away. Normalizing that to a unit
-    // vector and rescaling to new_speed launches the player backward at full
-    // speed every frame — causing an oscillation that friction eventually
-    // snaps to zero. Guard: only rescale when the tangential component is
-    // meaningful. A tiny residual is left as-is; friction zeroes it next frame.
-    {
-      float clip_len = length(new_velocity);
-      if (clip_len > 0.01f)
-        new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
-    }
-  }
-
   if (frame.walking)
   {
+    // readjust the velocity for all the wall collider planes.
+    for (const Plane& collider_plane : contacts.wall_planes)
+    {
+      // we should not collide with the plane if we are trying to move away from
+      // it.
+      new_speed = length(new_velocity);
+      new_velocity = normalize(new_velocity);
+      if (dot(new_velocity, collider_plane.normal) > 0.f)
+      {
+        new_velocity = new_velocity * new_speed;
+        continue;
+      }
+
+      new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
+
+      // Speed-preserving rescale: when sliding along a wall we normalize and
+      // rescale to new_speed so that touching a wall doesn't bleed speed.
+      // BUT: new_velocity was a unit vector entering clip_vector, so when
+      // pressing nearly perpendicular into a wall the clip leaves only a tiny
+      // residual (< 0.01) pointing slightly away. Normalizing that to a unit
+      // vector and rescaling to new_speed launches the player backward at full
+      // speed every frame — causing an oscillation that friction eventually
+      // snaps to zero. Guard: only rescale when the tangential component is
+      // meaningful. A tiny residual is left as-is; friction zeroes it next frame.
+      {
+        float clip_len = length(new_velocity);
+        if (clip_len > 0.01f)
+          new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
+      }
+    }
+
     new_velocity = clip_horizontal_speed(new_velocity, wanted.horizontal_speed_limit);
 
     // NOTE: integrate position BEFORE snapping Y velocity. This order matters!
@@ -322,9 +322,7 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
   // integrates with the step's MIDPOINT y velocity, and under a constant g the
   // midpoint IS the exact mean of the endpoints -- so this reproduces
   // p0 + v0*dt - 0.5*g*dt^2 rather than the -1.0 that integrating with the END
-  // velocity gave. The returned velocity is unchanged (v0 - g*dt either way),
-  // so the grounded check, the land snap and the post-move clips see what they
-  // always did.
+  // velocity gave.
   //
   // The point is not the extra 5% of jump apex, it is that the exact parabola
   // is the one answer that does not move when dt does: the old form dropped
@@ -332,8 +330,23 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
   // difference reachable. See player_move_step_invariance_test.
   const float half_gravity_step = 0.5f * wanted.gravity * dt;
 
-  new_velocity.y = new_y_velocity - half_gravity_step;
+  // The limit bounds what the MODEL added, so it is applied before the walls
+  // see the vector: a ramp turning gravity into speed is not the model's push.
   new_velocity   = clip_horizontal_speed(new_velocity, wanted.horizontal_speed_limit);
+  new_velocity.y = new_y_velocity - half_gravity_step;
+
+  // In the air the WHOLE vector is clipped against every wall, as one vector
+  // and with no rescale -- Source's TryPlayerMove. A vertical wall has no y in
+  // its normal and so never touches the vertical; a wall steeper than 45
+  // degrees (a surf ramp) turns the fall into along-ramp speed and a sideways
+  // push into lift, which IS surfing. Rescaling to the pre-clip speed here
+  // handed back gravity's whole step as along-ramp speed whatever the angle,
+  // and clipping the horizontal alone threw the lift away with its y.
+  for (const Plane& collider_plane : contacts.wall_planes)
+  {
+    if (dot(new_velocity, collider_plane.normal) < 0.f)
+      new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
+  }
 
   // @FIXME: test if we can actually be at the new position (collide with the
   // environment and push back). we need to perform a new trace here to prevent

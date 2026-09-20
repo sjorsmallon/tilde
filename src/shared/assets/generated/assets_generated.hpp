@@ -23,21 +23,19 @@ enum class mesh_asset : uint16_t
   GlassBrokenWindow = 2,
   damaged_helmet = 3,
   gripper = 4,
-  meat_hook_1k = 5,
-  meat_hook_4k = 6,
-  rocket = 7,
-  shattered_glass = 8,
-  stopwatch = 9,
-  target = 10,
-  Box = 11,
-  Leet_Full = 12,
-  Sphere = 13,
-  Error = 14,
-  Isosphere = 15,
-  Pyramid = 16,
+  rocket = 5,
+  shattered_glass = 6,
+  stopwatch = 7,
+  target = 8,
+  Box = 9,
+  Leet_Full = 10,
+  Sphere = 11,
+  Error = 12,
+  Isosphere = 13,
+  Pyramid = 14,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 17;
+constexpr uint32_t mesh_asset_COUNT = 15;
 
 const char* to_string(mesh_asset value);
 template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);

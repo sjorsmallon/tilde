@@ -62,6 +62,13 @@ vec3 rotate_about_y(const vec3& vector, const float radians)
   return vec3{vector.x * cosine - vector.z * sine, vector.y, vector.x * sine + vector.z * cosine};
 }
 
+vec3 last_push_direction_of(const vec3& direction, const aim_sweep_t& sweep)
+{
+  const float pushes = static_cast<float>(sweep.push_count);
+  return rotate_about_y(direction,
+                        linalg::to_radians(sweep.yaw_change_degrees) * (pushes - 0.5f) / pushes);
+}
+
 //@NOTE(SJM):
 // speed_drop = speed * friction * dt bills you for friction at the speed you're currently going. Take one step and that's fine. Take two half-steps and the second one is charged against a different, already-reduced speed:
 // friction = 4, dt = 1/60  →  friction*dt = 0.0667
@@ -269,6 +276,12 @@ void apply_impulse(const movement_settings_t& settings, move_state_t& state,
     case cvars::Locomotion_Model::instant:
       instant_impulse(settings, state, impulse);
       return;
+    case cvars::Locomotion_Model::instant_momentum:
+      instant_momentum_impulse(settings, state, impulse);
+      return;
+    case cvars::Locomotion_Model::instant_redirect:
+      instant_redirect_impulse(settings, state, impulse);
+      return;
   }
   fatal_error("apply_impulse: no arm for locomotion model {}", (int)settings.model);
 }
@@ -283,6 +296,12 @@ wanted_move_t decide_move(const movement_settings_t& settings, const contacts_t&
       return quake_step(settings, contacts, grounded, velocity_entering_move, state, input);
     case cvars::Locomotion_Model::instant:
       return instant_step(settings, contacts, grounded, velocity_entering_move, state, input);
+    case cvars::Locomotion_Model::instant_momentum:
+      return instant_momentum_step(settings, contacts, grounded, velocity_entering_move, state,
+                                   input);
+    case cvars::Locomotion_Model::instant_redirect:
+      return instant_redirect_step(settings, contacts, grounded, velocity_entering_move, state,
+                                   input);
   }
   fatal_error("decide_move: no arm for locomotion model {}", (int)settings.model);
 }

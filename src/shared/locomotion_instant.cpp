@@ -65,10 +65,7 @@ wanted_move_t instant_step(const movement_settings_t& settings, const contacts_t
   }
 
   // Only the sweep's LAST push counts under a set, and it names the same slot however the tick was split.
-  const float pushes_in_step = static_cast<float>(input.aim_sweep.push_count);
-  const vec3  last_push_direction =
-      rotate_about_y(wish.direction, linalg::to_radians(input.aim_sweep.yaw_change_degrees) *
-                                        (pushes_in_step - 0.5f) / pushes_in_step);
+  const vec3 last_push_direction = last_push_direction_of(wish.direction, input.aim_sweep);
 
   return {.velocity = instant_velocity(horizontal, last_push_direction, wish.speed, borrowed),
           .vertical_velocity      = velocity_entering_move.y,

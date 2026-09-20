@@ -41,13 +41,32 @@ struct instant_settings_t
   float speed_return_seconds = 0.5f;
 };
 
+// The same input rule over a real memory, so there is no timer here: what the
+// drag bleeds is the momentum an impulse landed in.
+struct instant_momentum_settings_t
+{
+  float ground_drag = 10.f;
+  float air_drag    = 0.f;
+};
+
+// The velocity is the memory here, so the input's only power over carried speed
+// is a turn rate: it cannot add to one and cannot cancel one.
+struct instant_redirect_settings_t
+{
+  float turn_degrees_per_second = 360.f;
+  float ground_drag             = 10.f;
+  float air_drag                = 0.f;
+};
+
 struct movement_settings_t
 {
-  cvars::Locomotion_Model    model = cvars::Locomotion_Model::quake;
-  shared_movement_settings_t shared;
-  quake_settings_t           quake;
-  instant_settings_t         instant;
-  bool                       record_collisions = false;
+  cvars::Locomotion_Model     model = cvars::Locomotion_Model::quake;
+  shared_movement_settings_t  shared;
+  quake_settings_t            quake;
+  instant_settings_t          instant;
+  instant_momentum_settings_t instant_momentum;
+  instant_redirect_settings_t instant_redirect;
+  bool                        record_collisions = false;
 };
 
 [[nodiscard]] movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars);

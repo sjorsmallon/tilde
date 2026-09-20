@@ -531,6 +531,7 @@ struct Movement
   bool jump_was_held = {};
   float seconds_until_impulse_ready = {};
   float seconds_until_speed_returns_to_base_speed = {};
+  linalg::vec3f momentum = {};
   uint32_t pad_contact_uid = {};
   shared::entity_uid_t ground_mover_uid = {};
   Movement_Override active_override = Movement_Override::None;

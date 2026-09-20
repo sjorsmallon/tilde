@@ -879,23 +879,29 @@ void test_locomotion_model_prefixes()
   check(shared::locomotion_model_a_cvar_belongs_to("pm_instant_speed_return_seconds") ==
             cvars::Locomotion_Model::instant,
         "a pm_instant_ name names the instant model");
+  check(shared::locomotion_model_a_cvar_belongs_to("pm_instant_momentum_air_drag") ==
+            cvars::Locomotion_Model::instant_momentum,
+        "and the longer prefix wins over the one it starts with");
 
   // Every declared cvar whose prefix claims a model must actually be read by
   // the cut for that model and by no other, which is what makes the warning
   // mean something. The cheap half of that: a claimed prefix is a real group.
-  uint32_t quake_cvar_count   = 0;
-  uint32_t instant_cvar_count = 0;
+  Enum_Array<cvars::Locomotion_Model, uint32_t> cvars_per_model{};
   for (const cvars::cvar_info_t& info : cvars::cvar_infos())
   {
     const std::optional<cvars::Locomotion_Model> model =
         shared::locomotion_model_a_cvar_belongs_to(info.name);
-    if (model == cvars::Locomotion_Model::quake)
-      ++quake_cvar_count;
-    if (model == cvars::Locomotion_Model::instant)
-      ++instant_cvar_count;
+    if (model.has_value())
+      ++cvars_per_model[*model];
   }
-  check(quake_cvar_count == 8, "the quake group is the eight cvars its model reads");
-  check(instant_cvar_count == 1, "the instant group is the one cvar its model reads");
+  check(cvars_per_model[cvars::Locomotion_Model::quake] == 8,
+        "the quake group is the eight cvars its model reads");
+  check(cvars_per_model[cvars::Locomotion_Model::instant] == 1,
+        "the instant group is the one cvar its model reads");
+  check(cvars_per_model[cvars::Locomotion_Model::instant_momentum] == 2,
+        "and the instant_momentum group is its two drags");
+  check(cvars_per_model[cvars::Locomotion_Model::instant_redirect] == 3,
+        "and the instant_redirect group is its turn rate and two drags");
 
   // The cut proves the other half: under instant, every quake number is its
   // own default however the console was driven.
@@ -908,6 +914,12 @@ void test_locomotion_model_prefixes()
   check(settings.quake.friction == shared::quake_settings_t{}.friction,
         "a pm_quake_ value cannot reach the instant model");
   check(settings.quake.clip_air_speed, "and neither can its bunnyhop mode");
+
+  state.pm_model                        = cvars::Locomotion_Model::instant;
+  state.pm_instant_momentum_ground_drag = 3.f;
+  const shared::movement_settings_t instant = shared::movement_settings_from(state);
+  check(instant.instant_momentum.ground_drag == shared::instant_momentum_settings_t{}.ground_drag,
+        "a drag cannot reach the model that has no momentum to bleed");
 }
 
 } // namespace

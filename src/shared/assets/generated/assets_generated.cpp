@@ -15,8 +15,6 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"GlassBrokenWindow", "resources/glb/GlassBrokenWindow.glb"},
   {"damaged_helmet", "resources/glb/damaged_helmet.glb"},
   {"gripper", "resources/glb/gripper.glb"},
-  {"meat_hook_1k", "resources/glb/meat_hook_1k.glb"},
-  {"meat_hook_4k", "resources/glb/meat_hook_4k.glb"},
   {"rocket", "resources/glb/rocket.glb"},
   {"shattered_glass", "resources/glb/shattered_glass.glb"},
   {"stopwatch", "resources/glb/stopwatch.glb"},
