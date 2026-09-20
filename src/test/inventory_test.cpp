@@ -346,7 +346,7 @@ int main()
           "the quake model keeps an impulse in the velocity, so it borrows nothing");
 
     cvars::cvar_state_t instant_cvars{};
-    instant_cvars.pm_acceleration = cvars::Acceleration_Mode::instant;
+    instant_cvars.pm_model = cvars::Locomotion_Model::instant;
     const shared::movement_settings_t instant_settings =
         shared::movement_settings_from(instant_cvars);
 

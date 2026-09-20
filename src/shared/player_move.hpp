@@ -145,12 +145,17 @@ struct Move_Events
   shared::entity_uid_t pad_uid        = shared::null_entity_uid;
   shared::movement_volume_kind_t pad_kind = shared::movement_volume_kind_t::Jump_Pad;
 
-  // The hook's reel let go this tick, at the hull CENTRE and carrying the
-  // velocity it lets go with. It rides the step for the pad's reason: the
-  // reeled player feels it here, a tick before any snapshot could tell them.
-  bool hook_released                = false;
-  vec3 hook_release_position        = {};
-  vec3 hook_release_velocity        = {};
+  // An override let go this tick -- which one, at the hull CENTRE, carrying
+  // the velocity it lets go with. `None` is the nothing-happened value, so the
+  // kind IS the test. It rides the step for the pad's reason: the player it
+  // happened to feels it here, a tick before any snapshot could tell them.
+  struct override_end_t
+  {
+    entities::Movement_Override kind     = entities::Movement_Override::None;
+    vec3                        position = {};
+    vec3                        velocity = {};
+  };
+  override_end_t override_ended = {};
 };
 
 namespace shared

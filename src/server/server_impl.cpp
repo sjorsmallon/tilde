@@ -7,6 +7,7 @@
 #include "../shared/collision_detection.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/frame_timing.hpp"
+#include "../shared/movement_settings.hpp"
 #include "../shared/memory_audit.hpp"
 #include "../shared/network/packet.hpp"
 #include "../shared/player_animator.hpp"
@@ -152,6 +153,20 @@ static void apply_map_cvars_that_were_supplied_from_the_editor(server_context_t 
     const shared::cvar_line_t split = shared::split_cvar_line(line);
     if (const std::optional<cvars::cvar_id> id = cvars::try_find_cvar(split.name))
       context.world.cvars_applied_by_map.push_back(*id);
+  }
+
+  // A model's group is read only when pm_model names it, so a map setting one
+  // of another model's numbers is setting a value nothing will read. Checked
+  // after the whole list, because pm_model may be set by any line in it.
+  const cvars::Locomotion_Model model = context.cvars->pm_model;
+  for (const cvars::cvar_id id : context.world.cvars_applied_by_map)
+  {
+    const std::string_view name = cvars::cvar_info(id).name;
+    const std::optional<cvars::Locomotion_Model> belongs_to =
+        shared::locomotion_model_a_cvar_belongs_to(name);
+    if (belongs_to && *belongs_to != model)
+      log_error("Map '{}': '{}' is read only under pm_model {}, and this map sets pm_model {}",
+                map.name, name, to_string(*belongs_to), to_string(model));
   }
 }
 

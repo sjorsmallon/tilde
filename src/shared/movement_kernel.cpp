@@ -41,6 +41,23 @@ vec3 clip_horizontal_speed(const vec3& velocity, const float speed_limit)
   return vec3{velocity.x * scale, velocity.y, velocity.z * scale};
 }
 
+namespace
+{
+
+// The step's displacement, capped in LENGTH by what the mover asked for. An
+// infinite limit compares true on the first branch and hands the product back
+// untouched, which is why every model pays nothing for this.
+[[nodiscard]] vec3 limited_travel(const vec3& velocity, float dt, float travel_limit)
+{
+  const vec3  travel   = velocity * dt;
+  const float distance = length(travel);
+  if (distance <= travel_limit)
+    return travel;
+  return travel * (travel_limit / distance);
+}
+
+} // namespace
+
 ground_frame_t ground_frame_of(const contacts_t& contacts, bool grounded, float vertical_velocity)
 {
   const bool walking        = grounded && vertical_velocity <= 0.f;
@@ -280,7 +297,7 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
     // clip_vector can produce tiny positive Y on slopes too. Even a small
     // positive Y fails the grounded check (vel_y <= 0) next frame, kicking
     // the player into air mode where gravity builds up negative Y.
-    const vec3 position = hull_center + (new_velocity * dt);
+    const vec3 position = hull_center + limited_travel(new_velocity, dt, wanted.travel_limit);
 
     if (frame.has_ground)
       new_velocity.y = 0.f;
@@ -321,7 +338,7 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
   // @FIXME: test if we can actually be at the new position (collide with the
   // environment and push back). we need to perform a new trace here to prevent
   // tunneling / getting stuck in the ground.
-  const vec3 position = hull_center + (new_velocity * dt);
+  const vec3 position = hull_center + limited_travel(new_velocity, dt, wanted.travel_limit);
 
   new_velocity.y -= half_gravity_step;
   return {.hull_center = position, .velocity = new_velocity};

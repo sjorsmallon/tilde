@@ -225,6 +225,17 @@ constexpr uint32_t Easing_COUNT = 2;
 const char* to_string(Easing value);
 template <> std::optional<Easing> try_from_string<Easing>(std::string_view text);
 
+enum class Movement_Override : uint8_t
+{
+  None = 0,
+  Reel = 1,
+};
+
+constexpr uint32_t Movement_Override_COUNT = 2;
+
+const char* to_string(Movement_Override value);
+template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text);
+
 enum class enum_type : uint16_t
 {
   Spawn_Type = 0,
@@ -242,9 +253,10 @@ enum class enum_type : uint16_t
   Round_End_Reason = 12,
   Match_Request = 13,
   Easing = 14,
+  Movement_Override = 15,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 15;
+constexpr uint32_t ENUM_TYPE_COUNT = 16;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -405,6 +417,12 @@ template <> struct enum_traits<entities::Easing>
   static constexpr entities::enum_type type = entities::enum_type::Easing;
 };
 
+template <> struct enum_traits<entities::Movement_Override>
+{
+  static constexpr uint32_t count = entities::Movement_Override_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Movement_Override;
+};
+
 template <> struct enum_traits<entities::enum_type>
 {
   static constexpr uint32_t count = entities::ENUM_TYPE_COUNT;
@@ -515,9 +533,12 @@ struct Movement
   float seconds_until_speed_returns_to_base_speed = {};
   uint32_t pad_contact_uid = {};
   shared::entity_uid_t ground_mover_uid = {};
-  shared::entity_uid_t hook_anchor_uid = {};
-  linalg::vec3f hook_anchor_position = {};
-  float seconds_of_hook_pull_remaining = {};
+  Movement_Override active_override = Movement_Override::None;
+  shared::entity_uid_t override_target_uid = {};
+  linalg::vec3f override_target_position = {};
+  float override_seconds_remaining = {};
+  float override_speed = {};
+  float override_arrive_radius = {};
 };
 
 struct Inventory

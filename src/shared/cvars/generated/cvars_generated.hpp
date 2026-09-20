@@ -45,16 +45,16 @@ constexpr uint32_t Bunnyhop_Mode_COUNT = 3;
 const char* to_string(Bunnyhop_Mode value);
 template <> std::optional<Bunnyhop_Mode> try_from_string<Bunnyhop_Mode>(std::string_view text);
 
-enum class Acceleration_Mode : uint8_t
+enum class Locomotion_Model : uint8_t
 {
   quake = 0,
   instant = 1,
 };
 
-constexpr uint32_t Acceleration_Mode_COUNT = 2;
+constexpr uint32_t Locomotion_Model_COUNT = 2;
 
-const char* to_string(Acceleration_Mode value);
-template <> std::optional<Acceleration_Mode> try_from_string<Acceleration_Mode>(std::string_view text);
+const char* to_string(Locomotion_Model value);
+template <> std::optional<Locomotion_Model> try_from_string<Locomotion_Model>(std::string_view text);
 
 enum class Debug_Channel : uint8_t
 {
@@ -101,11 +101,8 @@ template <> std::optional<Bot_Mode> try_from_string<Bot_Mode>(std::string_view t
 // save order -- so a saved config is diffable.
 struct cvar_state_t
 {
+  Locomotion_Model pm_model = Locomotion_Model::quake;
   float pm_maxspeed = 320.0f;
-  float pm_stopspeed = 100.0f;
-  float pm_friction = 6.0f;
-  float pm_ground_acceleration = 10.0f;
-  float pm_air_acceleration = 5.0f;
   float pm_overbounce = 1.001f;
   float pm_jumpspeed = 270.0f;
   float g_gravity = 800.0f;
@@ -114,16 +111,18 @@ struct cvar_state_t
   float pm_minimum_land_impact_speed = 150.0f;
   int32_t pm_air_jump_count = 0;
   float pm_air_jump_speed = 270.0f;
-  Bunnyhop_Mode pm_bunnyhop = Bunnyhop_Mode::none;
-  float pm_jump_boost = 32.0f;
-  float pm_jump_boost_max_speed = 480.0f;
-  float pm_air_speed_cap = 30.0f;
-  Acceleration_Mode pm_acceleration = Acceleration_Mode::quake;
-  float pm_speed_return_seconds = 0.5f;
-  float pm_hook_reel_speed = 900.0f;
-  float pm_hook_max_pull_seconds = 1.5f;
-  float pm_hook_arrive_radius = 48.0f;
-  float pm_hook_release_borrow_seconds = 0.4f;
+  float pm_quake_friction = 6.0f;
+  float pm_quake_stop_speed = 100.0f;
+  float pm_quake_ground_acceleration = 10.0f;
+  float pm_quake_air_acceleration = 5.0f;
+  Bunnyhop_Mode pm_quake_bunnyhop = Bunnyhop_Mode::none;
+  float pm_quake_jump_boost = 32.0f;
+  float pm_quake_jump_boost_max_speed = 480.0f;
+  float pm_quake_air_speed_cap = 30.0f;
+  float pm_instant_speed_return_seconds = 0.5f;
+  float sv_hook_pull_speed = 900.0f;
+  float sv_hook_max_pull_seconds = 1.5f;
+  float sv_hook_arrive_radius = 48.0f;
   float mp_warmup_seconds = 0.0f;
   float mp_countdown_seconds = 5.0f;
   float mp_freeze_seconds = 3.0f;
@@ -237,135 +236,134 @@ static_assert(std::is_trivially_copyable_v<cvar_state_t>,
 
 enum class cvar_id : uint16_t
 {
-  pm_maxspeed = 0,
-  pm_stopspeed = 1,
-  pm_friction = 2,
-  pm_ground_acceleration = 3,
-  pm_air_acceleration = 4,
-  pm_overbounce = 5,
-  pm_jumpspeed = 6,
-  g_gravity = 7,
-  pm_speed_threshold = 8,
-  pm_step_height = 9,
-  pm_minimum_land_impact_speed = 10,
-  pm_air_jump_count = 11,
-  pm_air_jump_speed = 12,
-  pm_bunnyhop = 13,
-  pm_jump_boost = 14,
-  pm_jump_boost_max_speed = 15,
-  pm_air_speed_cap = 16,
-  pm_acceleration = 17,
-  pm_speed_return_seconds = 18,
-  pm_hook_reel_speed = 19,
-  pm_hook_max_pull_seconds = 20,
-  pm_hook_arrive_radius = 21,
-  pm_hook_release_borrow_seconds = 22,
-  mp_warmup_seconds = 23,
-  mp_countdown_seconds = 24,
-  mp_freeze_seconds = 25,
-  mp_round_seconds = 26,
-  mp_round_end_seconds = 27,
-  mp_game_over_seconds = 28,
-  mp_players_to_start = 29,
-  mp_frag_limit = 30,
-  sv_aim_max_pitch = 31,
-  sv_aim_max_yaw = 32,
-  sv_aim_body_turn_rate = 33,
-  sv_lag_compensation = 34,
-  sv_max_rewind_ticks = 35,
-  sv_lag_compensation_debug = 36,
-  sv_shot_debug = 37,
-  sv_ping_range = 38,
-  sv_ping_lifetime_seconds = 39,
-  sv_tickrate = 40,
-  sv_timeout = 41,
-  sv_max_move_backlog = 42,
-  sv_map_transfer_fragments_per_tick = 43,
-  name = 44,
-  cl_max_unacked_inputs = 45,
-  r_fov = 46,
-  r_zoom_fov = 47,
-  r_zoom_easing_time_between_fovs = 48,
-  r_shadow_map_size = 49,
-  r_shadow_layer_count = 50,
-  r_shadow_light_offset = 51,
-  r_shadow_bias_slope = 52,
-  r_shadow_normal_offset = 53,
-  r_shadow_pcf_radius = 54,
-  r_shadow_pcss = 55,
-  r_shadow_pcss_max_radius = 56,
-  r_shadow_debug_light = 57,
-  r_lightmap_gpu = 58,
-  r_shadow_cascade_count = 59,
-  r_shadow_cascade_lambda = 60,
-  r_shadow_cascade_distance = 61,
-  r_shadow_cascade_blend = 62,
-  r_shadow_cascade_caster_extent = 63,
-  r_shadow_freeze = 64,
-  m_sensitivity = 65,
-  m_zoom_sensitivity_ratio = 66,
-  cl_maxfps = 67,
-  cl_interpolation_delay_ticks = 68,
-  cl_interpolation_debug = 69,
-  cl_display_latency_ms = 70,
-  cl_draw_player_hull = 71,
-  cl_spectate_slot = 72,
-  cl_replay_player_view = 73,
-  cl_replay_panel = 74,
-  cl_ghost_show = 75,
-  cl_noclip = 76,
-  cl_player_unlit = 77,
-  cl_blob_shadow = 78,
-  cl_blob_shadow_radius = 79,
-  cl_blob_shadow_opacity = 80,
-  cl_blob_shadow_max_distance = 81,
-  cl_aim_debug = 82,
-  cl_aim_debug_pitch = 83,
-  cl_aim_debug_yaw = 84,
-  cl_show_deploy_timer = 85,
-  cl_crosshair = 86,
-  cl_crosshair_dot = 87,
-  cl_crosshair_size = 88,
-  cl_crosshair_gap = 89,
-  cl_crosshair_thickness = 90,
-  cl_crosshair_r = 91,
-  cl_crosshair_g = 92,
-  cl_crosshair_b = 93,
-  cl_crosshair_a = 94,
-  editor_speed = 95,
-  cl_timescale = 96,
-  sound_reference_distance = 97,
-  sound_max_distance_cutoff = 98,
-  sound_rolloff_factor = 99,
-  map_respawn_delay_seconds = 100,
-  map_kill_limit = 101,
-  map_round_time_limit_seconds = 102,
-  next_map = 103,
-  pin_main_thread = 104,
-  r_debug_channel = 105,
-  r_exposure = 106,
-  sv_skybox = 107,
-  debug_show_collisions = 108,
-  debug_show_hitboxes = 109,
-  debug_show_navmesh = 110,
-  debug_show_box_volumes = 111,
-  debug_hide_geometry = 112,
-  cl_shot_debug_seconds = 113,
-  debug_show_entity_counts = 114,
-  debug_show_physics_bodies = 115,
-  net_snapshot_debug = 116,
-  sv_event_debug = 117,
-  cl_event_debug = 118,
-  sv_reliable_debug = 119,
-  sv_io_debug = 120,
-  replay_keyframe_seconds = 121,
-  sv_replay_auto = 122,
-  sv_ghost_record = 123,
+  pm_model = 0,
+  pm_maxspeed = 1,
+  pm_overbounce = 2,
+  pm_jumpspeed = 3,
+  g_gravity = 4,
+  pm_speed_threshold = 5,
+  pm_step_height = 6,
+  pm_minimum_land_impact_speed = 7,
+  pm_air_jump_count = 8,
+  pm_air_jump_speed = 9,
+  pm_quake_friction = 10,
+  pm_quake_stop_speed = 11,
+  pm_quake_ground_acceleration = 12,
+  pm_quake_air_acceleration = 13,
+  pm_quake_bunnyhop = 14,
+  pm_quake_jump_boost = 15,
+  pm_quake_jump_boost_max_speed = 16,
+  pm_quake_air_speed_cap = 17,
+  pm_instant_speed_return_seconds = 18,
+  sv_hook_pull_speed = 19,
+  sv_hook_max_pull_seconds = 20,
+  sv_hook_arrive_radius = 21,
+  mp_warmup_seconds = 22,
+  mp_countdown_seconds = 23,
+  mp_freeze_seconds = 24,
+  mp_round_seconds = 25,
+  mp_round_end_seconds = 26,
+  mp_game_over_seconds = 27,
+  mp_players_to_start = 28,
+  mp_frag_limit = 29,
+  sv_aim_max_pitch = 30,
+  sv_aim_max_yaw = 31,
+  sv_aim_body_turn_rate = 32,
+  sv_lag_compensation = 33,
+  sv_max_rewind_ticks = 34,
+  sv_lag_compensation_debug = 35,
+  sv_shot_debug = 36,
+  sv_ping_range = 37,
+  sv_ping_lifetime_seconds = 38,
+  sv_tickrate = 39,
+  sv_timeout = 40,
+  sv_max_move_backlog = 41,
+  sv_map_transfer_fragments_per_tick = 42,
+  name = 43,
+  cl_max_unacked_inputs = 44,
+  r_fov = 45,
+  r_zoom_fov = 46,
+  r_zoom_easing_time_between_fovs = 47,
+  r_shadow_map_size = 48,
+  r_shadow_layer_count = 49,
+  r_shadow_light_offset = 50,
+  r_shadow_bias_slope = 51,
+  r_shadow_normal_offset = 52,
+  r_shadow_pcf_radius = 53,
+  r_shadow_pcss = 54,
+  r_shadow_pcss_max_radius = 55,
+  r_shadow_debug_light = 56,
+  r_lightmap_gpu = 57,
+  r_shadow_cascade_count = 58,
+  r_shadow_cascade_lambda = 59,
+  r_shadow_cascade_distance = 60,
+  r_shadow_cascade_blend = 61,
+  r_shadow_cascade_caster_extent = 62,
+  r_shadow_freeze = 63,
+  m_sensitivity = 64,
+  m_zoom_sensitivity_ratio = 65,
+  cl_maxfps = 66,
+  cl_interpolation_delay_ticks = 67,
+  cl_interpolation_debug = 68,
+  cl_display_latency_ms = 69,
+  cl_draw_player_hull = 70,
+  cl_spectate_slot = 71,
+  cl_replay_player_view = 72,
+  cl_replay_panel = 73,
+  cl_ghost_show = 74,
+  cl_noclip = 75,
+  cl_player_unlit = 76,
+  cl_blob_shadow = 77,
+  cl_blob_shadow_radius = 78,
+  cl_blob_shadow_opacity = 79,
+  cl_blob_shadow_max_distance = 80,
+  cl_aim_debug = 81,
+  cl_aim_debug_pitch = 82,
+  cl_aim_debug_yaw = 83,
+  cl_show_deploy_timer = 84,
+  cl_crosshair = 85,
+  cl_crosshair_dot = 86,
+  cl_crosshair_size = 87,
+  cl_crosshair_gap = 88,
+  cl_crosshair_thickness = 89,
+  cl_crosshair_r = 90,
+  cl_crosshair_g = 91,
+  cl_crosshair_b = 92,
+  cl_crosshair_a = 93,
+  editor_speed = 94,
+  cl_timescale = 95,
+  sound_reference_distance = 96,
+  sound_max_distance_cutoff = 97,
+  sound_rolloff_factor = 98,
+  map_respawn_delay_seconds = 99,
+  map_kill_limit = 100,
+  map_round_time_limit_seconds = 101,
+  next_map = 102,
+  pin_main_thread = 103,
+  r_debug_channel = 104,
+  r_exposure = 105,
+  sv_skybox = 106,
+  debug_show_collisions = 107,
+  debug_show_hitboxes = 108,
+  debug_show_navmesh = 109,
+  debug_show_box_volumes = 110,
+  debug_hide_geometry = 111,
+  cl_shot_debug_seconds = 112,
+  debug_show_entity_counts = 113,
+  debug_show_physics_bodies = 114,
+  net_snapshot_debug = 115,
+  sv_event_debug = 116,
+  cl_event_debug = 117,
+  sv_reliable_debug = 118,
+  sv_io_debug = 119,
+  replay_keyframe_seconds = 120,
+  sv_replay_auto = 121,
+  sv_ghost_record = 122,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 124;
+constexpr uint32_t CVAR_COUNT = 123;
 
 enum class command_id : uint16_t
 {
@@ -628,9 +626,9 @@ template <> struct enum_traits<cvars::Bunnyhop_Mode>
   static constexpr uint32_t count = cvars::Bunnyhop_Mode_COUNT;
 };
 
-template <> struct enum_traits<cvars::Acceleration_Mode>
+template <> struct enum_traits<cvars::Locomotion_Model>
 {
-  static constexpr uint32_t count = cvars::Acceleration_Mode_COUNT;
+  static constexpr uint32_t count = cvars::Locomotion_Model_COUNT;
 };
 
 template <> struct enum_traits<cvars::Debug_Channel>

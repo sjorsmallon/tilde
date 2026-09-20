@@ -2,6 +2,7 @@
 #include "locomotion.hpp"
 #include "log.hpp"
 #include "movement_kernel.hpp"
+#include "movement_override.hpp"
 #include "network/network_types.hpp"
 #include "player_constants.hpp"
 #include <algorithm>
@@ -89,85 +90,22 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
   // two ways is the divergence the replay cannot see.
   const shared::jump_t jump = shared::try_jump(settings, grounded, state, input);
 
-  // THE HOOK'S REEL. It is a branch rather than a velocity written from outside
-  // because the hooked player predicts their own movement: an unpredicted pull
+  // AN OVERRIDE replaces the model while it is live and exits as an impulse.
+  // It is a branch rather than a velocity written from outside because the
+  // player it happens to predicts their own movement: an unpredicted pull
   // rubber-bands them for a round trip, which is the problem prediction_def.md
-  // §1 solved for pads. The direction is re-derived from the CURRENT positions
-  // every step, so the anchor moving drags the victim along for free and there
-  // is no path to store.
-  //
-  // Detach is tested BEFORE the step, so the arrival radius is the distance the
-  // reel stops at rather than one the step can carry the hull past.
-  bool reeling               = movement.seconds_of_hook_pull_remaining > 0.f;
-  bool hook_released         = false;
-  vec3 hook_release_position = {};
-  vec3 hook_release_velocity = {};
-  if (reeling)
-  {
-    const vec3  to_anchor          = movement.hook_anchor_position - hull_center;
-    const float distance_to_anchor = length(to_anchor);
-    if (distance_to_anchor <= settings.hook.arrive_radius)
-    {
-      movement.seconds_of_hook_pull_remaining = 0.f;
-      movement.hook_anchor_uid                = shared::null_entity_uid;
-      shared::apply_impulse(settings, state,
-                            {.horizontal = shared::impulse_mode_t::Set,
-                             .vertical   = shared::impulse_mode_t::Set,
-                             .velocity   = state.velocity});
-      reeling                = false;
-      hook_released          = true;
-      hook_release_position  = hull_center;
-      hook_release_velocity  = state.velocity;
-    }
-  }
+  // §1 solved for pads.
+  const shared::override_step_t over = shared::step_override(settings, state, dt);
 
   vec3 new_center   = hull_center;
   vec3 new_velocity = state.velocity;
 
-  if (reeling)
+  if (over.moves)
   {
-    // No accel, no friction, no gravity: the velocity IS the reel, so
-    // anything else would be a second author of it. Walls are left to the
-    // post-move resolve below -- a reel that grinds into a corner is held
-    // there until the timer lets go.
-    //
-    // BOTH ends of the step are clamped so the split into sub-steps lands in
-    // the same place. The DISTANCE cap targets the arrival radius rather than
-    // the anchor, so a reel converges on exactly that sphere instead of
-    // stopping wherever a step happened to carry it inside; the TIME cap
-    // spends only the pull that is left, so the travel is reel_speed times
-    // the pull duration however the tick was cut.
-    const vec3  to_anchor          = movement.hook_anchor_position - hull_center;
-    const float distance_to_anchor = length(to_anchor);
-    const float distance_remaining =
-        std::max(distance_to_anchor - settings.hook.arrive_radius, 0.f);
-    const float reel_dt = std::min(dt, movement.seconds_of_hook_pull_remaining);
-    const vec3  reel_direction =
-        distance_to_anchor > 0.f ? to_anchor * (1.f / distance_to_anchor) : vec3{};
-
-    // The distance cap clamps the STEP, never the speed: a reel that arrives
-    // mid-step still lets go at full reel speed, so what you are flung with
-    // is the tunable rather than whatever fraction of a step was left. That
-    // is also what makes the release velocity the same however the tick was
-    // cut -- the last step's leftover is a function of the split.
-    const float travel = std::min(settings.hook.reel_speed * reel_dt, distance_remaining);
-
-    new_velocity = reel_direction * settings.hook.reel_speed;
-    new_center   = hull_center + reel_direction * travel;
-
-    movement.seconds_of_hook_pull_remaining -= dt;
-    if (movement.seconds_of_hook_pull_remaining <= 0.f)
-    {
-      movement.seconds_of_hook_pull_remaining = 0.f;
-      movement.hook_anchor_uid                = shared::null_entity_uid;
-      shared::apply_impulse(settings, state,
-                            {.horizontal = shared::impulse_mode_t::Set,
-                             .vertical   = shared::impulse_mode_t::Set,
-                             .velocity   = new_velocity});
-      hook_released         = true;
-      hook_release_position = new_center;
-      hook_release_velocity = new_velocity;
-    }
+    const shared::slide_result_t slid =
+        shared::slide(settings, contacts, grounded, over.wanted, hull_center, dt);
+    new_center   = slid.hull_center;
+    new_velocity = slid.velocity;
   }
   else
   {
@@ -271,9 +209,11 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
     out_events->launched_by_pad   = touch.launched;
     out_events->pad_uid           = touch.uid;
     out_events->pad_kind          = touch.kind;
-    out_events->hook_released         = hook_released;
-    out_events->hook_release_position = hook_release_position;
-    out_events->hook_release_velocity = hook_release_velocity;
+    // An override that let go BEFORE the step let go where the step started;
+    // one that ran out during it let go where the step ended.
+    out_events->override_ended = {.kind     = over.ended,
+                                  .position = over.moves ? new_center : hull_center,
+                                  .velocity = over.end_velocity};
   }
 
   return state;

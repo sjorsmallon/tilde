@@ -263,10 +263,10 @@ void apply_impulse(const movement_settings_t& settings, move_state_t& state,
 {
   switch (settings.model)
   {
-    case cvars::Acceleration_Mode::quake:
+    case cvars::Locomotion_Model::quake:
       quake_impulse(settings, state, impulse);
       return;
-    case cvars::Acceleration_Mode::instant:
+    case cvars::Locomotion_Model::instant:
       instant_impulse(settings, state, impulse);
       return;
   }
@@ -279,9 +279,9 @@ wanted_move_t decide_move(const movement_settings_t& settings, const contacts_t&
 {
   switch (settings.model)
   {
-    case cvars::Acceleration_Mode::quake:
+    case cvars::Locomotion_Model::quake:
       return quake_step(settings, contacts, grounded, velocity_entering_move, state, input);
-    case cvars::Acceleration_Mode::instant:
+    case cvars::Locomotion_Model::instant:
       return instant_step(settings, contacts, grounded, velocity_entering_move, state, input);
   }
   fatal_error("decide_move: no arm for locomotion model {}", (int)settings.model);

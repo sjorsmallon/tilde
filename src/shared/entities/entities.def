@@ -35,6 +35,11 @@ Match_Request :: enum { None, Start_Match, End_Round, Restart_Round, End_Match }
 // mover_def.md ss2. Orientation always slerps; this is t alone.
 Easing :: enum { Linear, Smooth }
 
+// What is authoring a player's move instead of the model, while it lasts.
+// movement_def.md "Overrides": one override, one member. A second kind reuses
+// the generic override_* fields below and adds only what none of them says.
+Movement_Override :: enum { None, Reel }
+
 // ---------------------------------------------------------------------------
 // COMPONENTS
 // ---------------------------------------------------------------------------
@@ -109,12 +114,17 @@ Movement :: component {
     pad_contact_uid: u32                @Networked
     ground_mover_uid: entity            @Networked
 
-    // The hook's tether, live while seconds_of_hook_pull_remaining > 0. The uid
-    // is who reels us in; the position is that player's, refreshed per tick by
-    // update_hooks, because player_move is pure and cannot resolve a uid.
-    hook_anchor_uid: entity             @Networked
-    hook_anchor_position: v3            @Networked
-    seconds_of_hook_pull_remaining: f32 @Networked
+    // An override replaces the MODEL while it is live and exits as an impulse.
+    // The numbers are written AT ATTACH by whoever attaches, so player_move
+    // reads no hook cvar and the client predicts a reel from state it holds.
+    // The uid is what the attacher refreshes the position from per tick,
+    // because player_move is pure and cannot resolve one.
+    active_override: Movement_Override = .None  @Networked
+    override_target_uid: entity                 @Networked
+    override_target_position: v3                @Networked
+    override_seconds_remaining: f32             @Networked
+    override_speed: f32                         @Networked
+    override_arrive_radius: f32                 @Networked
 }
 
 Inventory :: component {
@@ -335,7 +345,6 @@ Hook_Entity :: entity @runtime_only {
     projectile:       Projectile = { weapon_id = .Hook }
     lifetime:         f32 = 4
     collision_radius: f32 = 25.0
-    pull_speed:       f32 = 900.0
     // Set by the secondary trigger: reels the victim in over time instead of throwing them once.
     reels_target:     bool
     render:           Render = { mesh = .gripper, scale = {20,20,20} }

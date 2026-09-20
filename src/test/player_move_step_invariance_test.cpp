@@ -197,11 +197,12 @@ static move_result_t run_split(const cvar_state_t& cvars,
       // gravity, so 64 of them legitimately arrive lower than one does.
       out_pad->velocity_at_launch = velocity;
     }
-    if (out_hook != nullptr && events.hook_released)
+    if (out_hook != nullptr &&
+        events.override_ended.kind == entities::Movement_Override::Reel)
     {
       ++out_hook->releases;
-      out_hook->release_position = events.hook_release_position;
-      out_hook->release_velocity = events.hook_release_velocity;
+      out_hook->release_position = events.override_ended.position;
+      out_hook->release_velocity = events.override_ended.velocity;
     }
   }
   return {position, velocity};
@@ -334,7 +335,7 @@ static void test_air_horizontal_composes(const cvar_state_t& cvars)
 // exp(a)exp(b) = exp(a+b). Until this file there was no test on it.
 static void test_friction_speed_composes(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] ground friction above pm_stopspeed: exp() composes\n");
+  printf("\n[EXACT] ground friction above pm_quake_stop_speed: exp() composes\n");
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   const Move_Input input;
@@ -344,10 +345,10 @@ static void test_friction_speed_composes(const cvar_state_t& cvars)
   const vec3 start_velocity{300.f, 0.f, 0.f};
 
   const float expected_speed =
-      horizontal_speed(start_velocity) * std::exp(-cvars.pm_friction * tick_dt);
+      horizontal_speed(start_velocity) * std::exp(-cvars.pm_quake_friction * tick_dt);
 
-  printf("    exp(-%.1f * %.5f) = %.6f, so %.1f -> %.6f\n", cvars.pm_friction,
-         tick_dt, std::exp(-cvars.pm_friction * tick_dt),
+  printf("    exp(-%.1f * %.5f) = %.6f, so %.1f -> %.6f\n", cvars.pm_quake_friction,
+         tick_dt, std::exp(-cvars.pm_quake_friction * tick_dt),
          horizontal_speed(start_velocity), expected_speed);
 
   for (int sub_steps : {1, 2, 4, 16})
@@ -361,24 +362,24 @@ static void test_friction_speed_composes(const cvar_state_t& cvars)
   }
 }
 
-// --- 5. friction below pm_stopspeed: the linear floor is exact too ------------
+// --- 5. friction below pm_quake_stop_speed: the linear floor is exact too ------------
 //
-// Below pm_stopspeed the drop becomes the CONSTANT pm_stopspeed*friction*dt --
+// Below pm_quake_stop_speed the drop becomes the CONSTANT pm_quake_stop_speed*friction*dt --
 // it stops depending on the thing it is changing, so the feedback is gone and a
 // linear step is the closed form. The branch must stay linear on purpose:
 // exponential decay never reaches zero, and this is the deceleration floor.
 static void test_friction_floor_composes(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] ground friction below pm_stopspeed: a constant drop\n");
+  printf("\n[EXACT] ground friction below pm_quake_stop_speed: a constant drop\n");
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   const Move_Input input;
   const vec3 start_position{0.f, -0.02f, 0.f};
-  const float start_speed = 0.5f * cvars.pm_stopspeed;
+  const float start_speed = 0.5f * cvars.pm_quake_stop_speed;
   const vec3 start_velocity{start_speed, 0.f, 0.f};
 
   const float expected_speed =
-      start_speed - cvars.pm_stopspeed * cvars.pm_friction * tick_dt;
+      start_speed - cvars.pm_quake_stop_speed * cvars.pm_quake_friction * tick_dt;
 
   for (int sub_steps : {1, 2, 8})
   {
@@ -410,7 +411,7 @@ static void test_ground_position_is_first_order(const cvar_state_t& cvars)
   const float start_speed = 300.f;
   const vec3 start_velocity{start_speed, 0.f, 0.f};
 
-  const float k = cvars.pm_friction;
+  const float k = cvars.pm_quake_friction;
   const float exact_distance = start_speed * (1.f - std::exp(-k * tick_dt)) / k;
   printf("    exact integral of the decay: %.6f units\n", exact_distance);
 
@@ -463,12 +464,12 @@ static void test_ground_position_is_first_order(const cvar_state_t& cvars)
 //
 // The clamp survives this exactly. min(d*f + c, W) composed with itself is
 // min(d*f^2 + c*f + c, W) = min(d*F + C, W) whichever side of W each half lands
-// on, because c >= W*(1-f) whenever accel >= pm_friction -- so a saturated
+// on, because c >= W*(1-f) whenever accel >= pm_quake_friction -- so a saturated
 // projection stays saturated rather than drifting under the split.
 //
 // The feel cost was taken deliberately, the same call gravity and friction
 // made: a tick now gains A*(1-exp(-k*dt))/k where it gained A*dt, which at
-// pm_friction 6 and 60Hz is 4.8% less acceleration through the transient. The
+// pm_quake_friction 6 and 60Hz is 4.8% less acceleration through the transient. The
 // clamp binds after ~7 ticks from a standstill, so nothing about top speed
 // moves; only the ramp does.
 //
@@ -486,8 +487,8 @@ static void test_ground_accelerate_composes(const cvar_state_t& cvars)
   const float start_speed = 100.f;
   const vec3 start_velocity{start_speed, 0.f, 0.f};
 
-  const float k = cvars.pm_friction;
-  const float acceleration_rate = cvars.pm_ground_acceleration * cvars.pm_maxspeed;
+  const float k = cvars.pm_quake_friction;
+  const float acceleration_rate = cvars.pm_quake_ground_acceleration * cvars.pm_maxspeed;
   const float decay = std::exp(-k * tick_dt);
   const float exact_speed =
       start_speed * decay + (acceleration_rate / k) * (1.f - decay);
@@ -495,7 +496,7 @@ static void test_ground_accelerate_composes(const cvar_state_t& cvars)
   printf("    exact solution of v' = -%.1f*v + %.0f : %.6f\n", k,
          acceleration_rate, exact_speed);
   printf("    (the pre-fix alternating recurrence gave %.6f at N=1)\n",
-         start_speed * decay + cvars.pm_ground_acceleration * tick_dt *
+         start_speed * decay + cvars.pm_quake_ground_acceleration * tick_dt *
                                    cvars.pm_maxspeed);
 
   for (int sub_steps : {1, 2, 4, 16, 64})
@@ -1019,7 +1020,7 @@ static void test_carried_speed_survives_the_clip(const cvar_state_t& cvars)
   const vec3 carried_velocity{900.f, 0.f, 0.f};
 
   const float carried_speed = horizontal_speed(carried_velocity);
-  const float slid_speed = carried_speed * std::exp(-cvars.pm_friction * tick_dt);
+  const float slid_speed = carried_speed * std::exp(-cvars.pm_quake_friction * tick_dt);
 
   for (int sub_steps : {1, 2, 8})
   {
@@ -1042,10 +1043,10 @@ static void test_carried_speed_survives_the_clip(const cvar_state_t& cvars)
   }
 }
 
-// --- 13. pm_bunnyhop cs: a sideways air push adds speed, and a fixed aim composes
+// --- 13. pm_quake_bunnyhop cs: a sideways air push adds speed, and a fixed aim composes
 static void test_bunnyhop_cs_strafe_gains(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] pm_bunnyhop cs: an air push adds speed where none only turns\n");
+  printf("\n[EXACT] pm_quake_bunnyhop cs: an air push adds speed where none only turns\n");
 
   const Bounding_Volume_Hierarchy bvh = empty_world();
   Move_Input input;
@@ -1055,10 +1056,10 @@ static void test_bunnyhop_cs_strafe_gains(const cvar_state_t& cvars)
   const vec3 start_velocity{cvars.pm_maxspeed, 0.f, 0.f};
 
   cvar_state_t strafing = cvars;
-  strafing.pm_bunnyhop = cvars::Bunnyhop_Mode::cs;
+  strafing.pm_quake_bunnyhop = cvars::Bunnyhop_Mode::cs;
 
-  const float push = std::min(strafing.pm_air_acceleration * strafing.pm_maxspeed * tick_dt,
-                              strafing.pm_air_speed_cap);
+  const float push = std::min(strafing.pm_quake_air_acceleration * strafing.pm_maxspeed * tick_dt,
+                              strafing.pm_quake_air_speed_cap);
   const float expected_speed =
       std::sqrt(strafing.pm_maxspeed * strafing.pm_maxspeed + push * push);
 
@@ -1077,10 +1078,10 @@ static void test_bunnyhop_cs_strafe_gains(const cvar_state_t& cvars)
   }
 }
 
-// --- 14. pm_bunnyhop hl2: a ground jump adds its boost once, up to the ceiling --
+// --- 14. pm_quake_bunnyhop hl2: a ground jump adds its boost once, up to the ceiling --
 static void test_bunnyhop_hl2_jump_boost(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] pm_bunnyhop hl2: a ground jump adds pm_jump_boost once\n");
+  printf("\n[EXACT] pm_quake_bunnyhop hl2: a ground jump adds pm_quake_jump_boost once\n");
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   Move_Input input;
@@ -1090,11 +1091,11 @@ static void test_bunnyhop_hl2_jump_boost(const cvar_state_t& cvars)
   const vec3 grounded_position{0.f, -0.02f, 0.f};
 
   cvar_state_t boosting = cvars;
-  boosting.pm_bunnyhop = cvars::Bunnyhop_Mode::hl2;
+  boosting.pm_quake_bunnyhop = cvars::Bunnyhop_Mode::hl2;
 
   const vec3 running_velocity{boosting.pm_maxspeed, 0.f, 0.f};
   const vec3 near_ceiling_velocity{
-      boosting.pm_jump_boost_max_speed - 0.5f * boosting.pm_jump_boost, 0.f, 0.f};
+      boosting.pm_quake_jump_boost_max_speed - 0.5f * boosting.pm_quake_jump_boost, 0.f, 0.f};
 
   for (int sub_steps : {1, 2, 8})
   {
@@ -1108,10 +1109,10 @@ static void test_bunnyhop_hl2_jump_boost(const cvar_state_t& cvars)
            horizontal_speed(boosted.velocity), horizontal_speed(capped.velocity),
            horizontal_speed(plain.velocity));
     check_near(horizontal_speed(boosted.velocity),
-               boosting.pm_maxspeed + boosting.pm_jump_boost, 1e-2f,
-               "hl2: a running jump adds pm_jump_boost exactly once");
-    check_near(horizontal_speed(capped.velocity), boosting.pm_jump_boost_max_speed, 1e-2f,
-               "hl2: the boost stops at pm_jump_boost_max_speed");
+               boosting.pm_maxspeed + boosting.pm_quake_jump_boost, 1e-2f,
+               "hl2: a running jump adds pm_quake_jump_boost exactly once");
+    check_near(horizontal_speed(capped.velocity), boosting.pm_quake_jump_boost_max_speed, 1e-2f,
+               "hl2: the boost stops at pm_quake_jump_boost_max_speed");
     check_near(horizontal_speed(plain.velocity), cvars.pm_maxspeed, 1e-2f,
                "none: the same jump adds nothing");
   }
@@ -1169,7 +1170,7 @@ static void test_air_push_ignores_edges_on_a_steady_turn(const cvar_state_t& cva
   input.right_pressed = true;
 
   cvar_state_t strafing = cvars;
-  strafing.pm_bunnyhop = cvars::Bunnyhop_Mode::cs;
+  strafing.pm_quake_bunnyhop = cvars::Bunnyhop_Mode::cs;
 
   const float    start_yaw = -6.f;
   const float    yaw_turn  = 3.f;
@@ -1315,17 +1316,17 @@ static void test_a_mover_crushes_against_a_ceiling(const cvar_state_t& cvars)
         "not before the gap closes, and not long after");
 }
 
-// --- 17. pm_acceleration instant: the velocity IS the input, ground and air --
+// --- 17. pm_model instant: the velocity IS the input, ground and air --
 static cvar_state_t instant_cvars(const cvar_state_t& cvars)
 {
   cvar_state_t instant = cvars;
-  instant.pm_acceleration = cvars::Acceleration_Mode::instant;
+  instant.pm_model = cvars::Locomotion_Model::instant;
   return instant;
 }
 
 static void test_instant_velocity_is_the_input(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] pm_acceleration instant: one step to top speed, one step to a stop\n");
+  printf("\n[EXACT] pm_model instant: one step to top speed, one step to a stop\n");
 
   const cvar_state_t instant = instant_cvars(cvars);
   const Bounding_Volume_Hierarchy empty_bvh = empty_world();
@@ -1377,7 +1378,7 @@ static void test_instant_velocity_is_the_input(const cvar_state_t& cvars)
 // --- 18. borrowed speed keeps its size while the input steers it ------------
 static void test_instant_borrowed_speed_is_steered(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] pm_acceleration instant: borrowed speed is steered, then returned\n");
+  printf("\n[EXACT] pm_model instant: borrowed speed is steered, then returned\n");
 
   const cvar_state_t instant = instant_cvars(cvars);
   const Bounding_Volume_Hierarchy bvh = empty_world();
@@ -1426,7 +1427,7 @@ static void test_instant_borrowed_speed_is_steered(const cvar_state_t& cvars)
 // --- 19. a pad launch borrows its speed for the whole flight ----------------
 static void test_instant_pad_launch_is_borrowed(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] pm_acceleration instant: a pad's arc survives an idle input\n");
+  printf("\n[EXACT] pm_model instant: a pad's arc survives an idle input\n");
 
   const cvar_state_t instant = instant_cvars(cvars);
   const Bounding_Volume_Hierarchy bvh = floor_world();
@@ -1474,11 +1475,11 @@ static void test_an_impulse_survives_every_model(const cvar_state_t& cvars)
   Move_Input                      forward;
   forward.forward_pressed = true;
 
-  for (cvars::Acceleration_Mode model :
-       {cvars::Acceleration_Mode::quake, cvars::Acceleration_Mode::instant})
+  for (cvars::Locomotion_Model model :
+       {cvars::Locomotion_Model::quake, cvars::Locomotion_Model::instant})
   {
     cvar_state_t tuned    = cvars;
-    tuned.pm_acceleration = model;
+    tuned.pm_model = model;
     const shared::movement_settings_t settings = shared::movement_settings_from(tuned);
 
     for (const Move_Input& input : {Move_Input{}, forward})
@@ -1517,8 +1518,11 @@ static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
   for (int sub_steps : {1, 2, 8})
   {
     entities::Movement movement{};
-    movement.hook_anchor_position           = anchor;
-    movement.seconds_of_hook_pull_remaining = cvars.pm_hook_max_pull_seconds;
+    movement.active_override            = entities::Movement_Override::Reel;
+    movement.override_target_position   = anchor;
+    movement.override_seconds_remaining = cvars.sv_hook_max_pull_seconds;
+    movement.override_speed             = cvars.sv_hook_pull_speed;
+    movement.override_arrive_radius     = cvars.sv_hook_arrive_radius;
 
     hook_probe_t  hook{};
     move_result_t result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
@@ -1532,14 +1536,14 @@ static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
            distance_at_release, length(hook.release_velocity));
 
     check(hook.releases == 1, "the reel lets go exactly once");
-    check_near(distance_at_release, cvars.pm_hook_arrive_radius, 1e-2f,
+    check_near(distance_at_release, cvars.sv_hook_arrive_radius, 1e-2f,
                "the reel lets go on the arrival sphere, not wherever a step landed");
     check_near(hook.release_position.y, half_height, 1e-2f,
                "a reel straight along z never falls: it applies no gravity");
-    check_near(length(hook.release_velocity), cvars.pm_hook_reel_speed, 1e-2f,
+    check_near(length(hook.release_velocity), cvars.sv_hook_pull_speed, 1e-2f,
                "it lets go at full reel speed, not at the last step's leftover");
-    check(movement.hook_anchor_uid == shared::null_entity_uid,
-          "arriving clears the tether");
+    check(movement.active_override == entities::Movement_Override::None,
+          "arriving clears the override");
     check(movement.seconds_until_speed_returns_to_base_speed == 0.f,
           "the release goes through apply_impulse, and quake's answer is to borrow nothing");
   }
@@ -1557,13 +1561,16 @@ static void test_hook_reel_timeout_is_step_invariant(const cvar_state_t& cvars)
   const float pull_seconds = 0.25f;
   // Far enough that the timer, not the arrival radius, is what ends it.
   const vec3  anchor{0.f, half_height, 100000.f};
-  const float expected_travel = cvars.pm_hook_reel_speed * pull_seconds;
+  const float expected_travel = cvars.sv_hook_pull_speed * pull_seconds;
 
   for (int sub_steps : {1, 2, 8})
   {
     entities::Movement movement{};
-    movement.hook_anchor_position           = anchor;
-    movement.seconds_of_hook_pull_remaining = pull_seconds;
+    movement.active_override            = entities::Movement_Override::Reel;
+    movement.override_target_position   = anchor;
+    movement.override_seconds_remaining = pull_seconds;
+    movement.override_speed             = cvars.sv_hook_pull_speed;
+    movement.override_arrive_radius     = cvars.sv_hook_arrive_radius;
 
     hook_probe_t  hook{};
     move_result_t result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
@@ -1577,15 +1584,15 @@ static void test_hook_reel_timeout_is_step_invariant(const cvar_state_t& cvars)
     check(hook.releases == 1, "the reel lets go exactly once");
     check_near(hook.release_position.z, expected_travel, 1e-2f,
                "a timed-out pull travels reel_speed * duration however the tick was cut");
-    check(movement.hook_anchor_uid == shared::null_entity_uid,
-          "timing out clears the tether");
+    check(movement.active_override == entities::Movement_Override::None,
+          "timing out clears the override");
   }
 }
 
 int main()
 {
   printf("player_move_step_invariance_test\n");
-  printf("  dt = %.6f (60Hz), g_gravity = 800, pm_friction = 6\n", tick_dt);
+  printf("  dt = %.6f (60Hz), g_gravity = 800, pm_quake_friction = 6\n", tick_dt);
   printf("  gravity position scheme: %s\n",
          gravity_position_uses_endpoint_average
              ? "endpoint average (trapezoid)"

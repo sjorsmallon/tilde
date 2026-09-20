@@ -519,6 +519,8 @@ add_library(game_shared STATIC
     src/shared/locomotion.cpp
     src/shared/locomotion_quake.cpp
     src/shared/locomotion_instant.cpp
+    # What replaces a model for a duration and exits as an impulse.
+    src/shared/movement_override.cpp
     src/shared/movement_volumes.cpp
     src/shared/disabled_geometry.cpp
     # The three cuts above as ONE value: what player_move reads that is state

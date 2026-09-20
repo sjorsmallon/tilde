@@ -42,6 +42,11 @@ struct wanted_move_t
   float vertical_velocity      = 0.f;
   float horizontal_speed_limit = std::numeric_limits<float>::infinity();
   float gravity                = 0.f;
+  // Caps the DISTANCE this step travels and never the speed, so a move that
+  // arrives mid-step still ends at the speed it was going: what a reel flings
+  // you with is its tunable rather than whatever fraction of a step was left.
+  // Infinity is no cap, and is exact -- it moves no float.
+  float travel_limit = std::numeric_limits<float>::infinity();
 };
 
 // The kernel WALKS a step when the hull is grounded and the wanted velocity

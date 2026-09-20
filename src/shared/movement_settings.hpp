@@ -2,6 +2,8 @@
 #include "cvars/generated/cvars_generated.hpp"
 #include "player_constants.hpp"
 #include <limits>
+#include <optional>
+#include <string_view>
 
 namespace shared
 {
@@ -21,7 +23,7 @@ struct shared_movement_settings_t
   float   half_height     = player_half_height;
 };
 
-// Friction plus accelerate, with pm_bunnyhop already resolved into values.
+// Friction plus accelerate, with pm_quake_bunnyhop already resolved into values.
 struct quake_settings_t
 {
   float friction             = 6.f;
@@ -39,22 +41,20 @@ struct instant_settings_t
   float speed_return_seconds = 0.5f;
 };
 
-struct hook_settings_t
-{
-  float reel_speed    = 900.f;
-  float arrive_radius = 48.f;
-};
-
 struct movement_settings_t
 {
-  cvars::Acceleration_Mode   model = cvars::Acceleration_Mode::quake;
+  cvars::Locomotion_Model    model = cvars::Locomotion_Model::quake;
   shared_movement_settings_t shared;
   quake_settings_t           quake;
   instant_settings_t         instant;
-  hook_settings_t            hook;
   bool                       record_collisions = false;
 };
 
 [[nodiscard]] movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars);
+
+// The model a cvar's prefix names, or nothing when every model reads it. A map
+// setting one whose model is not its own pm_model is setting a dead number.
+[[nodiscard]] std::optional<cvars::Locomotion_Model>
+locomotion_model_a_cvar_belongs_to(std::string_view name);
 
 } // namespace shared

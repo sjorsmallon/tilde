@@ -25,6 +25,7 @@
 #include "cvars/cvar_console.hpp"
 #include "cvars/generated/cvars_generated.hpp"
 #include "network/bitstream.hpp"
+#include "movement_settings.hpp"
 #include "network/cvar_mirror.hpp"
 
 #include <cstring>
@@ -362,41 +363,41 @@ void test_text_conversion()
         "a rejected bool leaves the value alone -- it does not fall back to false");
 
   // Enums convert by VALUE NAME in both directions.
-  text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_bunnyhop);
+  text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_quake_bunnyhop);
   check(text.has_value(), "try_cvar_to_text succeeds for an enum");
   check_equal(*text, "none", "an enum formats as its value name");
 
   for (uint32_t value = 0; value < cvars::Bunnyhop_Mode_COUNT; ++value)
   {
     const cvars::Bunnyhop_Mode mode = (cvars::Bunnyhop_Mode)value;
-    check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, to_string(mode)),
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_quake_bunnyhop, to_string(mode)),
           "every declared value name parses");
-    check(state.pm_bunnyhop == mode, "the parsed name landed as its own value");
-    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_bunnyhop);
+    check(state.pm_quake_bunnyhop == mode, "the parsed name landed as its own value");
+    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_quake_bunnyhop);
     check(text.has_value() && *text == to_string(mode), "an enum round-trips through text");
   }
 
   // A NUMBER is not a spelling of an enum value: an index survives exactly until
   // a value is inserted ahead of it.
-  const cvars::Bunnyhop_Mode before = state.pm_bunnyhop;
-  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "0"),
+  const cvars::Bunnyhop_Mode before = state.pm_quake_bunnyhop;
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_quake_bunnyhop, "0"),
         "an enum rejects a numeric value");
-  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "no_such_mode"),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_quake_bunnyhop, "no_such_mode"),
         "an enum rejects an undeclared name");
-  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_bunnyhop, "None"),
+  check(!cvars::try_cvar_from_text(state, cvars::cvar_id::pm_quake_bunnyhop, "None"),
         "an enum name is case sensitive, like every other declared name");
-  check(state.pm_bunnyhop == before, "a rejected enum write leaves the value alone");
+  check(state.pm_quake_bunnyhop == before, "a rejected enum write leaves the value alone");
 
-  check(state.pm_acceleration == cvars::Acceleration_Mode::quake,
-        "pm_acceleration defaults to quake, so existing movement is untouched");
-  for (uint32_t value = 0; value < cvars::Acceleration_Mode_COUNT; ++value)
+  check(state.pm_model == cvars::Locomotion_Model::quake,
+        "pm_model defaults to quake, so existing movement is untouched");
+  for (uint32_t value = 0; value < cvars::Locomotion_Model_COUNT; ++value)
   {
-    const cvars::Acceleration_Mode mode = (cvars::Acceleration_Mode)value;
-    check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_acceleration, to_string(mode)),
-          "every acceleration mode name parses");
-    check(state.pm_acceleration == mode, "the parsed acceleration mode landed as its own value");
-    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_acceleration);
-    check(text.has_value() && *text == to_string(mode), "pm_acceleration round-trips through text");
+    const cvars::Locomotion_Model mode = (cvars::Locomotion_Model)value;
+    check(cvars::try_cvar_from_text(state, cvars::cvar_id::pm_model, to_string(mode)),
+          "every locomotion model name parses");
+    check(state.pm_model == mode, "the parsed locomotion model landed as its own value");
+    text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_model);
+    check(text.has_value() && *text == to_string(mode), "pm_model round-trips through text");
   }
 }
 
@@ -745,7 +746,7 @@ void test_mirroring()
   // the server on every mirrored member, because it feeds them into the same
   // player_move() the server runs.
   server.pm_maxspeed  = 411.5f;
-  server.pm_friction  = 6.25f;
+  server.pm_quake_friction  = 6.25f;
   server.g_gravity    = 812.125f;
   server.pm_overbounce = 1.001f;
   full = shared::collect_mirrored_cvars(server);
@@ -857,6 +858,58 @@ void test_mirror_revert()
         "a second revert changes nothing");
 }
 
+// --- 10. Which model a movement cvar belongs to -------------------------------
+//
+// movement_def.md: a number belongs to exactly ONE reader, and where a map file
+// or a console line is the only context, the prefix is what says which. This is
+// the rule apply_map_cvars warns through, and it is pinned here rather than on
+// the server because it is a function of the NAME alone.
+
+void test_locomotion_model_prefixes()
+{
+  std::cout << "[locomotion model prefixes]\n";
+
+  check(!shared::locomotion_model_a_cvar_belongs_to("pm_maxspeed").has_value(),
+        "a run speed every model answers belongs to no model in particular");
+  check(!shared::locomotion_model_a_cvar_belongs_to("pm_model").has_value(),
+        "the selector itself belongs to no model");
+  check(shared::locomotion_model_a_cvar_belongs_to("pm_quake_friction") ==
+            cvars::Locomotion_Model::quake,
+        "a pm_quake_ name names the quake model");
+  check(shared::locomotion_model_a_cvar_belongs_to("pm_instant_speed_return_seconds") ==
+            cvars::Locomotion_Model::instant,
+        "a pm_instant_ name names the instant model");
+
+  // Every declared cvar whose prefix claims a model must actually be read by
+  // the cut for that model and by no other, which is what makes the warning
+  // mean something. The cheap half of that: a claimed prefix is a real group.
+  uint32_t quake_cvar_count   = 0;
+  uint32_t instant_cvar_count = 0;
+  for (const cvars::cvar_info_t& info : cvars::cvar_infos())
+  {
+    const std::optional<cvars::Locomotion_Model> model =
+        shared::locomotion_model_a_cvar_belongs_to(info.name);
+    if (model == cvars::Locomotion_Model::quake)
+      ++quake_cvar_count;
+    if (model == cvars::Locomotion_Model::instant)
+      ++instant_cvar_count;
+  }
+  check(quake_cvar_count == 8, "the quake group is the eight cvars its model reads");
+  check(instant_cvar_count == 1, "the instant group is the one cvar its model reads");
+
+  // The cut proves the other half: under instant, every quake number is its
+  // own default however the console was driven.
+  cvars::cvar_state_t state;
+  state.pm_model              = cvars::Locomotion_Model::instant;
+  state.pm_quake_friction     = 99.f;
+  state.pm_quake_air_speed_cap = 7.f;
+  state.pm_quake_bunnyhop     = cvars::Bunnyhop_Mode::cs;
+  const shared::movement_settings_t settings = shared::movement_settings_from(state);
+  check(settings.quake.friction == shared::quake_settings_t{}.friction,
+        "a pm_quake_ value cannot reach the instant model");
+  check(settings.quake.clip_air_speed, "and neither can its bunnyhop mode");
+}
+
 } // namespace
 
 int main()
@@ -872,6 +925,7 @@ int main()
   test_command_binders();
   test_mirroring();
   test_mirror_revert();
+  test_locomotion_model_prefixes();
 
   if (failure_count != 0)
   {

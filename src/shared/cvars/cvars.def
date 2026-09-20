@@ -43,40 +43,61 @@
 // something the generator already knows, which is exactly what sv_gamemode was
 // until 2026-08-26.
 
-Bunnyhop_Mode :: enum { none, hl2, cs }
-Acceleration_Mode :: enum { quake, instant }
+// movement_def.md: a LOCOMOTION MODEL is a complete, named movement style, and
+// the cvars it reads are its own group with its own prefix. A number belongs to
+// exactly one reader -- shared, one model, or one item -- and the prefix is what
+// says which where a map file or a console line is the only context.
+// movement_settings_from fills only the group pm_model names, so a pm_quake_*
+// value cannot reach the instant model, and apply_map_cvars warns when a map
+// sets one its own pm_model does not read.
 
+Bunnyhop_Mode :: enum { none, hl2, cs }
+Locomotion_Model :: enum { quake, instant }
+
+// Read by every model and by the kernel.
 Player_Movement :: cvars {
+    pm_model:               Locomotion_Model = .quake  @Mirrored  "Movement style: quake (accelerate against friction) or instant (horizontal velocity IS the input, ground and air alike)"
     pm_maxspeed:            f32 = 320.0       @Mirrored  "Run speed: the most your own acceleration pushes you to"
-    pm_stopspeed:           f32 = 100.0       @Mirrored  "Deceleration threshold"
-    pm_friction:            f32 = 6.0         @Mirrored  "Ground friction"
-    pm_ground_acceleration: f32 = 10.0        @Mirrored  "Ground acceleration"
-    pm_air_acceleration:    f32 = 5.0         @Mirrored  "Air acceleration"
     pm_overbounce:          f32 = 1.001       @Mirrored  "Plane clip overbounce factor"
     pm_jumpspeed:           f32 = 270.0       @Mirrored  "Jump velocity"
     g_gravity:              f32 = 800.0       @Mirrored  "Gravity"
-    pm_speed_threshold:     f32 = 1.0         @Mirrored  "Speed below which friction snaps to zero"
+    pm_speed_threshold:     f32 = 1.0         @Mirrored  "Speed below which a decay snaps to zero"
     pm_step_height:         f32 = 18.0        @Mirrored  "Maximum step height the player can glide up"
     pm_minimum_land_impact_speed: f32 = 150.0 @Mirrored  "Threshold for speed to cause audio to play when landing"
 
-    
-    // speedrun specific stuff
     pm_air_jump_count:      i32 = 0          @Mirrored  "Air jumps allowed before touching ground again (0 = none)"
     pm_air_jump_speed:      f32 = 270.0      @Mirrored  "Upward velocity an air jump sets"
+}
 
-    pm_bunnyhop:            Bunnyhop_Mode = .none  @Mirrored  "Where hop speed comes from: none (hops only keep speed), hl2 (ground jumps add pm_jump_boost), cs (air strafing up to pm_air_speed_cap)"
-    pm_jump_boost:          f32 = 32.0       @Mirrored  "pm_bunnyhop hl2: speed a ground jump adds along the held direction"
-    pm_jump_boost_max_speed: f32 = 480.0     @Mirrored  "pm_bunnyhop hl2: horizontal speed a jump boost stops at"
-    pm_air_speed_cap:       f32 = 30.0       @Mirrored  "pm_bunnyhop cs: speed an air push stops adding at, along its own direction"
+// Read only when pm_model is quake. pm_quake_bunnyhop stays an enum INSIDE the
+// model: it selects a behaviour over fields that are all live, which is the
+// lights rule's second kind.
+Quake_Movement :: cvars {
+    pm_quake_friction:            f32 = 6.0    @Mirrored  "Ground friction"
+    pm_quake_stop_speed:          f32 = 100.0  @Mirrored  "Speed below which friction becomes a constant drop instead of a decay"
+    pm_quake_ground_acceleration: f32 = 10.0   @Mirrored  "Ground acceleration"
+    pm_quake_air_acceleration:    f32 = 5.0    @Mirrored  "Air acceleration"
 
-    pm_acceleration:        Acceleration_Mode = .quake  @Mirrored  "quake: accelerate against friction; instant: horizontal velocity IS the input, ground and air alike"
-    pm_speed_return_seconds: f32 = 0.5       @Mirrored  "pm_acceleration instant: how long speed from a pad, Set_Velocity, Add_Velocity or knockback outlasts your input"
+    pm_quake_bunnyhop:            Bunnyhop_Mode = .none  @Mirrored  "Where hop speed comes from: none (hops only keep speed), hl2 (ground jumps add pm_quake_jump_boost), cs (air strafing up to pm_quake_air_speed_cap)"
+    pm_quake_jump_boost:          f32 = 32.0   @Mirrored  "hl2: speed a ground jump adds along the held direction"
+    pm_quake_jump_boost_max_speed: f32 = 480.0 @Mirrored  "hl2: horizontal speed a jump boost stops at"
+    pm_quake_air_speed_cap:       f32 = 30.0   @Mirrored  "cs: speed an air push stops adding at, along its own direction"
+}
 
-    // The hook's reel. Read inside player_move, so @Mirrored like every other pm_.
-    pm_hook_reel_speed:     f32 = 900.0      @Mirrored  "Speed a hooked player is reeled toward whoever hooked them"
-    pm_hook_max_pull_seconds: f32 = 1.5      @Mirrored  "Longest a hook reel lasts before it lets go on its own"
-    pm_hook_arrive_radius:  f32 = 48.0       @Mirrored  "Distance from the anchor the reel lets go at"
-    pm_hook_release_borrow_seconds: f32 = 0.4 @Mirrored  "pm_acceleration instant: how long reel speed outlasts the release"
+// Read only when pm_model is instant.
+Instant_Movement :: cvars {
+    pm_instant_speed_return_seconds: f32 = 0.5 @Mirrored  "How long speed from a pad, a dash, Set_Velocity, Add_Velocity or knockback outlasts your input"
+}
+
+// The hook's reel is an OVERRIDE, and an override's numbers are written into
+// Movement at ATTACH by whoever attaches it (movement_def.md). So these are
+// read once, on the server, by the system that hooks somebody -- never inside
+// player_move -- which is what takes them off the wire and out of the pm_
+// family. The client predicts the reel from the replicated state instead.
+Hook :: cvars {
+    sv_hook_pull_speed:       f32 = 900.0  @Server  "Speed a hooked player is pulled toward whoever hooked them"
+    sv_hook_max_pull_seconds: f32 = 1.5    @Server  "Longest a hook reel lasts before it lets go on its own"
+    sv_hook_arrive_radius:    f32 = 48.0   @Server  "Distance from the anchor the reel lets go at"
 }
 
 Gameplay :: cvars {

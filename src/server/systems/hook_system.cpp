@@ -23,13 +23,13 @@ static vec3f hook_anchor_of(const entities::Player_Entity& shooter)
 
 // The arc that lands `victim` on `shooter` after the flight time, gravity included.
 static void throw_victim_at_shooter(const server_context_t& context,
-                                    const entities::Hook_Entity& hook,
                                     const entities::Player_Entity& shooter,
                                     entities::Player_Entity& victim)
 {
   const vec3f to_shooter     = shooter.position - victim.position;
-  const float flight_seconds = std::clamp(linalg::length(to_shooter) / hook.pull_speed,
-                                          SHORTEST_PULL_SECONDS, LONGEST_PULL_SECONDS);
+  const float flight_seconds = std::clamp(
+      linalg::length(to_shooter) / context.cvars->sv_hook_pull_speed, SHORTEST_PULL_SECONDS,
+      LONGEST_PULL_SECONDS);
 
   shared::apply_impulse(shared::movement_settings_from(*context.cvars), victim.velocity,
                         victim.movement,
@@ -41,29 +41,31 @@ static void throw_victim_at_shooter(const server_context_t& context,
 // The reel's other half: player_move is pure and cannot resolve a uid, so the
 // anchor travels as a position and this is the ONE place it is written. A
 // caster who left, died or dropped the hook detaches here rather than leaving
-// the victim reeling toward a stale point.
+// the victim reeling toward a stale point -- through the door, so the exit is
+// the one every override exit is.
 static void refresh_hook_anchors(server_context_t& context)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
   for (entities::Player_Entity& victim : entity_system.entities_of<entities::Player_Entity>())
   {
-    if (victim.movement.seconds_of_hook_pull_remaining <= 0.f)
+    if (victim.movement.active_override != entities::Movement_Override::Reel)
       continue;
 
     const entities::Player_Entity* shooter =
-        entity_system.get<entities::Player_Entity>(victim.movement.hook_anchor_uid);
+        entity_system.get<entities::Player_Entity>(victim.movement.override_target_uid);
 
     if (shooter == nullptr || shooter->health.current_health <= 0)
     {
-      victim.movement.seconds_of_hook_pull_remaining = 0.f;
-      victim.movement.hook_anchor_uid                = shared::null_entity_uid;
+      victim.movement.active_override            = entities::Movement_Override::None;
+      victim.movement.override_target_uid        = shared::null_entity_uid;
+      victim.movement.override_seconds_remaining = 0.f;
       shared::apply_impulse(shared::movement_settings_from(*context.cvars), victim.velocity,
                             victim.movement, {.velocity = victim.velocity});
       continue;
     }
 
-    victim.movement.hook_anchor_position = hook_anchor_of(*shooter);
+    victim.movement.override_target_position = hook_anchor_of(*shooter);
   }
 }
 
@@ -99,13 +101,19 @@ void update_hooks(server_context_t& context, float dt)
 
     if (hook.reels_target)
     {
-      victim->movement.hook_anchor_uid                = shooter->entity_id;
-      victim->movement.hook_anchor_position           = hook_anchor_of(*shooter);
-      victim->movement.seconds_of_hook_pull_remaining = context.cvars->pm_hook_max_pull_seconds;
+      // An override's numbers are written AT ATTACH and are replicated from
+      // there, which is what lets the victim predict their own reel and is why
+      // player_move reads no hook cvar.
+      victim->movement.active_override            = entities::Movement_Override::Reel;
+      victim->movement.override_target_uid        = shooter->entity_id;
+      victim->movement.override_target_position   = hook_anchor_of(*shooter);
+      victim->movement.override_seconds_remaining = context.cvars->sv_hook_max_pull_seconds;
+      victim->movement.override_speed             = context.cvars->sv_hook_pull_speed;
+      victim->movement.override_arrive_radius     = context.cvars->sv_hook_arrive_radius;
     }
     else
     {
-      throw_victim_at_shooter(context, hook, *shooter, *victim);
+      throw_victim_at_shooter(context, *shooter, *victim);
     }
   }
 

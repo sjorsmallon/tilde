@@ -116,6 +116,11 @@ constexpr const char* Easing_VALUE_NAMES[] = {
   "Smooth",
 };
 
+constexpr const char* Movement_Override_VALUE_NAMES[] = {
+  "None",
+  "Reel",
+};
+
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
@@ -132,6 +137,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Round_End_Reason", {Round_End_Reason_VALUE_NAMES, 6}},
   {"Match_Request", {Match_Request_VALUE_NAMES, 5}},
   {"Easing", {Easing_VALUE_NAMES, 2}},
+  {"Movement_Override", {Movement_Override_VALUE_NAMES, 2}},
 };
 
 namespace
@@ -471,28 +477,55 @@ constexpr field_info_t Movement_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "hook_anchor_uid",
+  {.name = "active_override",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Movement, active_override),
+   .size_in_bytes = (uint32_t)sizeof(Movement::active_override),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[15]},
+  {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Movement, hook_anchor_uid),
-   .size_in_bytes = (uint32_t)sizeof(Movement::hook_anchor_uid),
+   .offset = (uint32_t)offsetof(Movement, override_target_uid),
+   .size_in_bytes = (uint32_t)sizeof(Movement::override_target_uid),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "hook_anchor_position",
+  {.name = "override_target_position",
    .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Movement, hook_anchor_position),
-   .size_in_bytes = (uint32_t)sizeof(Movement::hook_anchor_position),
+   .offset = (uint32_t)offsetof(Movement, override_target_position),
+   .size_in_bytes = (uint32_t)sizeof(Movement::override_target_position),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "seconds_of_hook_pull_remaining",
+  {.name = "override_seconds_remaining",
    .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Movement, seconds_of_hook_pull_remaining),
-   .size_in_bytes = (uint32_t)sizeof(Movement::seconds_of_hook_pull_remaining),
+   .offset = (uint32_t)offsetof(Movement, override_seconds_remaining),
+   .size_in_bytes = (uint32_t)sizeof(Movement::override_seconds_remaining),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "override_speed",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Movement, override_speed),
+   .size_in_bytes = (uint32_t)sizeof(Movement::override_speed),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "override_arrive_radius",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Movement, override_arrive_radius),
+   .size_in_bytes = (uint32_t)sizeof(Movement::override_arrive_radius),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1333,15 +1366,6 @@ constexpr field_info_t Hook_Entity_FIELDS[] = {
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Hook_Entity, collision_radius),
    .size_in_bytes = (uint32_t)sizeof(Hook_Entity::collision_radius),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "pull_speed",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Hook_Entity, pull_speed),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::pull_speed),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2781,7 +2805,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Material", {Material_FIELDS, 2}, (uint32_t)sizeof(Material)},
   {"Render", {Render_FIELDS, 7}, (uint32_t)sizeof(Render)},
   {"Light", {Light_FIELDS, 5}, (uint32_t)sizeof(Light)},
-  {"Movement", {Movement_FIELDS, 11}, (uint32_t)sizeof(Movement)},
+  {"Movement", {Movement_FIELDS, 14}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 5}, (uint32_t)sizeof(Timer_State)},
   {"Match", {Match_FIELDS, 9}, (uint32_t)sizeof(Match)},
@@ -2845,7 +2869,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_entity", "Player", {Player_Entity_FIELDS, 26}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 1680u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 11}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 128u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 136u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
-  {"hook_entity", "Hook", {Hook_Entity_FIELDS, 10}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 136u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
+  {"hook_entity", "Hook", {Hook_Entity_FIELDS, 9}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 136u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
   {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 17}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 136u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 128u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 145u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
@@ -3265,6 +3289,24 @@ template <> std::optional<Easing> try_from_string<Easing>(std::string_view text)
   return std::nullopt;
 }
 
+const char* to_string(Movement_Override value)
+{
+  switch (value)
+  {
+    case Movement_Override::None: return "None";
+    case Movement_Override::Reel: return "Reel";
+  }
+  assert(false && "invalid Movement_Override");
+  return "";
+}
+
+template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text)
+{
+  if (text == "None") return Movement_Override::None;
+  if (text == "Reel") return Movement_Override::Reel;
+  return std::nullopt;
+}
+
 const enum_type_info_t& enum_info(enum_type type)
 {
   assert((uint32_t)type < ENUM_TYPE_COUNT);
@@ -3393,6 +3435,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xc2550c7bu;
+const uint32_t SCHEMA_HASH = 0xd550c328u;
 
 } // namespace entities

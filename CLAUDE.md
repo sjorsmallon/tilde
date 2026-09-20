@@ -1042,11 +1042,11 @@ jump cannot gain, and speed from outside `player_move` (the Dash, knockback,
 `Set_Velocity`) survives until friction takes it. Not `pm_maxspeed` alone, which
 cut the Dash's 900 back to 320 on the next step.
 
-**Where HOP speed comes from is `pm_bunnyhop`**, resolved once per step by
+**Where HOP speed comes from is `pm_quake_bunnyhop`**, resolved once per step by
 `bunnyhop_rules_for`: `none` (the default) hops only keep speed; `hl2` makes a
-ground jump add `pm_jump_boost` along the held direction, never past
-`pm_jump_boost_max_speed`; `cs` turns the air clip off and stops an air push's
-room test at `pm_air_speed_cap` (Source's 30), so strafing gains and A/D alone
+ground jump add `pm_quake_jump_boost` along the held direction, never past
+`pm_quake_jump_boost_max_speed`; `cs` turns the air clip off and stops an air push's
+room test at `pm_quake_air_speed_cap` (Source's 30), so strafing gains and A/D alone
 barely steers. **The air push is cut into one piece per sub-tick slot along the
 aim turning from the step's open to its close** (`aim_sweep_of`,
 `subtick_step_t::view_at_end`), so an extra edge changes where the mouse is known
@@ -1054,7 +1054,7 @@ to have been, never how many pushes the tick got: with one aim per step, `cs`
 gained ~40% more in any tick with one extra edge. Shots and every other use of
 the aim still take the step's opening aim.
 
-**`pm_acceleration instant` is Neon White's model, and speed from outside is BORROWED.**
+**`pm_model instant` is Neon White's model, and speed from outside is BORROWED.**
 Under it the horizontal velocity IS the input, on the ground and in the air alike: one
 step to `pm_maxspeed`, no input is no velocity, no friction (`apply_friction` is skipped,
 not zeroed). Anything that writes a velocity from outside `player_move` -- the Dash, a
@@ -1064,7 +1064,7 @@ it; Quake 3's `PMF_TIME_KNOCKBACK`). While it runs the input steers the DIRECTIO
 and the speed is `max(current, pm_maxspeed)`; no input keeps the velocity as it was. A
 writer that forgets is erased the next step. A pad borrows for its flight time back to
 launch height, the dash for its row's `speed_return_seconds`, the rest for
-`pm_speed_return_seconds`. `quake` (the default) ignores the timer, so nothing else moved. **A ground jump flies its step through
+`pm_instant_speed_return_seconds`. `quake` (the default) ignores the timer, so nothing else moved. **A ground jump flies its step through
 `my_air_move`** exactly as an air jump does, so gravity starts at the impulse:
 through `my_walk_move` it started a step late, and jump height depended on where
 in the tick the press landed. Invariance tests 8 and 11 to 15 guard all of it.
