@@ -512,6 +512,13 @@ add_library(game_shared STATIC
     src/shared/player_rig.hpp
     src/shared/player_rig.cpp
     src/shared/player_move.cpp
+    # The step, cut into the kernel that collides, the models that decide, and
+    # the settings both read. movement_def.md.
+    src/shared/movement_settings.cpp
+    src/shared/movement_kernel.cpp
+    src/shared/locomotion.cpp
+    src/shared/locomotion_quake.cpp
+    src/shared/locomotion_instant.cpp
     src/shared/movement_volumes.cpp
     src/shared/disabled_geometry.cpp
     # The three cuts above as ONE value: what player_move reads that is state

@@ -75,7 +75,11 @@ static void detonate(const entities::Rocket_Entity &rocket,
     const vec3f push      = direction * (rocket.knockback_force * falloff);
 
     if (player)
-      player->velocity = player->velocity + push;
+      shared::apply_impulse(shared::movement_settings_from(*context.cvars), player->velocity,
+                            player->movement,
+                            {.horizontal = shared::impulse_mode_t::Add,
+                             .vertical   = shared::impulse_mode_t::Add,
+                             .velocity   = push});
     else
       add_linear_velocity(physics, h.entity_id, push);
   }

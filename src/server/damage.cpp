@@ -57,9 +57,11 @@ static void apply_player_damage_total(server_context_t &context,
                                       const vec3f& knockback_velocity,
                                       const damage_info_t &credited)
 {
-  player.velocity = player.velocity + knockback_velocity;
-  if (knockback_velocity.x != 0.f || knockback_velocity.y != 0.f || knockback_velocity.z != 0.f)
-    borrow_speed(player.movement, context.cvars->pm_speed_return_seconds);
+  shared::apply_impulse(shared::movement_settings_from(*context.cvars), player.velocity,
+                        player.movement,
+                        {.horizontal = shared::impulse_mode_t::Add,
+                         .vertical   = shared::impulse_mode_t::Add,
+                         .velocity   = knockback_velocity});
 
   // Knockback is deliberately ABOVE the gate and health is below it: a shove is
   // not damage, so a frozen player can still be rocket-jumped by someone whose

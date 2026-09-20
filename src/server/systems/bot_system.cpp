@@ -107,16 +107,20 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   if (rlen > 0.001f) right = right * (1.f / rlen);
 
   Move_Events move_events{};
+  shared::movement_settings_t settings = shared::movement_settings_from(*context.cvars);
+  settings.shared.half_width           = half_width;
+
   // A bot is a Player_Entity, so it carries the same movement state and gets
   // every ability for free -- which is the point of putting the state on the
   // entity rather than in a per-client side table.
-  auto [new_pos, new_vel] =
-      player_move(*context.cvars, input, bot_ent.movement, session.bvh, world,
-                  bot_ent.position, bot_ent.velocity, front, right, aim_sweep_t{}, half_width,
-                  shared::player_half_height, dt, &move_events);
+  const shared::move_state_t moved = player_move(
+      settings, session.bvh, world,
+      {.feet = bot_ent.position, .velocity = bot_ent.velocity, .movement = bot_ent.movement},
+      {.buttons = input, .front = front, .right = right, .dt = dt}, &move_events);
 
-  bot_ent.position = new_pos;
-  bot_ent.velocity = new_vel;
+  bot_ent.position = moved.feet;
+  bot_ent.velocity = moved.velocity;
+  bot_ent.movement = moved.movement;
 
   // Movement cosmetics, same as real players. Bots are never the local player
   // on any client, so no originator-suppression is needed — every client hears
@@ -124,7 +128,7 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   if (move_events.jumped)
   {
     shared::Jump fx{};
-    fx.origin          = new_pos;
+    fx.origin          = moved.feet;
     fx.attached_entity = bot_ent.entity_id;
     shared::fire_jump(context.outgoing.effects, fx);
   }
@@ -132,7 +136,7 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
       move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
   {
     shared::Land fx{};
-    fx.origin          = new_pos;
+    fx.origin          = moved.feet;
     fx.scale           = move_events.land_impact_speed;
     fx.attached_entity = bot_ent.entity_id;
     shared::fire_land(context.outgoing.effects, fx);
@@ -144,8 +148,8 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
       case shared::movement_volume_kind_t::Jump_Pad:
       {
         shared::Jump_Pad_Launch fx{};
-        fx.origin = shared::movement_volume_origin(world.movement_volumes, move_events.pad_uid, new_pos);
-        fx.normal          = linalg::normalize(new_vel);
+        fx.origin = shared::movement_volume_origin(world.movement_volumes, move_events.pad_uid, moved.feet);
+        fx.normal          = linalg::normalize(moved.velocity);
         fx.attached_entity = bot_ent.entity_id;
         shared::fire_jump_pad_launch(context.outgoing.effects, fx);
         break;
@@ -157,7 +161,7 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
   }
 
   set_kinematic_pose(physics, bot_ent.entity_id,
-                     new_pos + vec3f{0.f, shared::player_capsule_center_offset, 0.f}, new_vel);
+                     moved.feet + vec3f{0.f, shared::player_capsule_center_offset, 0.f}, moved.velocity);
 }
 
 void update_bots(server_context_t &context,

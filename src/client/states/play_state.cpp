@@ -1368,6 +1368,8 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
     float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
 
+    const shared::movement_settings_t move_settings = shared::movement_settings_from(*ctx.cvars);
+
     for (int replayed = ctx.prediction.latest_input_number_processed_by_server + 1;
          replayed < ctx.prediction.input_number; ++replayed)
     {
@@ -1388,12 +1390,6 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
       for (const shared::subtick_step_t& step : subtick_steps)
       {
-        // per-step aim because that's just correct.
-        camera_t step_look;
-        step_look.yaw   = step.view.yaw;
-        step_look.pitch = step.view.pitch;
-        const camera_basis_t step_basis = get_orientation_vectors(step_look);
-
         const uint64_t replay_pressed_in_this_step =
             step.buttons & ~replay_previous_buttons;
         replay_previous_buttons = step.buttons;
@@ -1404,13 +1400,17 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
           continue;
         }
 
-        std::tie(reconciled_position, reconciled_velocity) = player_move(
-            *ctx.cvars, move_input_from_buttons(step.buttons), reconciled_movement,
-            ctx.world.session.bvh, frame.predicted_world,
-            reconciled_position, reconciled_velocity, step_basis.forward,
-            step_basis.right, aim_sweep_of(step), player_half_width, player_half_height,
-            step.dt, nullptr,
-            &ctx.visuals.debug_collision_faces);
+        // per-step aim because that's just correct.
+        const shared::move_state_t replayed_state = player_move(
+            move_settings, ctx.world.session.bvh, frame.predicted_world,
+            {.feet     = reconciled_position,
+             .velocity = reconciled_velocity,
+             .movement = reconciled_movement},
+            shared::move_input_of(step), nullptr, &ctx.visuals.debug_collision_faces);
+
+        reconciled_position = replayed_state.feet;
+        reconciled_velocity = replayed_state.velocity;
+        reconciled_movement = replayed_state.movement;
 
         // AFTER the move, exactly where the server applies it: the impulse
         // steers the steps that follow the press, not the one it opened. The
@@ -1420,12 +1420,12 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
         // same cooldown the server will charge.
         if ((replay_pressed_in_this_step & Button::Fire) && replayed_weapon != nullptr)
           (void)shared::try_apply_self_impulse(
-              *replayed_weapon, shared::fire_trigger_t::Primary,
+              move_settings, *replayed_weapon, shared::fire_trigger_t::Primary,
               linalg::direction_from_angles(step.view.yaw, step.view.pitch),
               reconciled_movement, reconciled_velocity);
         if ((replay_pressed_in_this_step & Button::Secondary_Fire) && replayed_weapon != nullptr)
           (void)shared::try_apply_self_impulse(
-              *replayed_weapon, shared::fire_trigger_t::Secondary,
+              move_settings, *replayed_weapon, shared::fire_trigger_t::Secondary,
               linalg::direction_from_angles(step.view.yaw, step.view.pitch),
               reconciled_movement, reconciled_velocity);
       }
@@ -2141,15 +2141,6 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             }
           }
 
-          // The basis is PER STEP now, from the aim in effect when the step
-          // opened. One basis for the whole tick meant every step of it steered
-          // along wherever the mouse finished the frame -- the aim half of the
-          // quantization sub-tick already fixed for the buttons.
-          camera_t step_look;
-          step_look.yaw   = step.view.yaw;
-          step_look.pitch = step.view.pitch;
-          const camera_basis_t step_basis = get_orientation_vectors(step_look);
-
           // The freeze SUPPRESSES THE MOVE and lets the rest of the step run,
           // exactly as the server's world_is_frozen does: a weapon switch during
           // the freeze is legal on both sides, and it lives in this loop now.
@@ -2162,16 +2153,22 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
           }
           else
           {
-            auto [new_position, new_velocity] = player_move(
-                *ctx.cvars, move_input_from_buttons(step.buttons),
-                ctx.prediction.player_movement, ctx.world.session.bvh,
+            // The basis is PER STEP, from the aim in effect when the step
+            // opened. One basis for the whole tick meant every step of it steered
+            // along wherever the mouse finished the frame -- the aim half of the
+            // quantization sub-tick already fixed for the buttons.
+            const shared::move_state_t moved = player_move(
+                shared::movement_settings_from(*ctx.cvars), ctx.world.session.bvh,
                 frame.predicted_world,
-                ctx.prediction.player_position, ctx.prediction.player_velocity,
-                step_basis.forward, step_basis.right, aim_sweep_of(step), player_half_width,
-                player_half_height, step.dt, &step_events, &ctx.visuals.debug_collision_faces);
+                {.feet     = ctx.prediction.player_position,
+                 .velocity = ctx.prediction.player_velocity,
+                 .movement = ctx.prediction.player_movement},
+                shared::move_input_of(step), &step_events,
+                &ctx.visuals.debug_collision_faces);
 
-            ctx.prediction.player_position = new_position;
-            ctx.prediction.player_velocity = new_velocity;
+            ctx.prediction.player_position = moved.feet;
+            ctx.prediction.player_velocity = moved.velocity;
+            ctx.prediction.player_movement = moved.movement;
           }
 
           // The one thing a fire press does to our OWN state, so the one thing
@@ -2191,16 +2188,18 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             if (held_definition != nullptr)
             {
               const vec3f aim = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
+              const shared::movement_settings_t move_settings =
+                  shared::movement_settings_from(*ctx.cvars);
               if (fire_pressed_in_this_step)
                 (void)shared::try_apply_self_impulse(
-                    *held_definition, shared::fire_trigger_t::Primary, aim,
+                    move_settings, *held_definition, shared::fire_trigger_t::Primary, aim,
                     ctx.prediction.player_movement, ctx.prediction.player_velocity);
               // The secondary's sound rides the same gate as its impulse, here
               // rather than in play_predicted_local_gunshot, which is the
               // trigger's and re-runs the shot clocks this button never sees.
               if (secondary_fire_pressed_in_this_step &&
                   shared::try_apply_self_impulse(
-                      *held_definition, shared::fire_trigger_t::Secondary, aim,
+                      move_settings, *held_definition, shared::fire_trigger_t::Secondary, aim,
                       ctx.prediction.player_movement, ctx.prediction.player_velocity) &&
                   ctx.audio && held_definition->sounds.fire != assets::sound_asset::Missing)
                 ctx.audio->play_2d(held_definition->sounds.fire);

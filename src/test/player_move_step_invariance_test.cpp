@@ -175,14 +175,20 @@ static move_result_t run_split(const cvar_state_t& cvars,
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
 
+  const shared::movement_settings_t settings = shared::movement_settings_from(cvars);
+
   const float step_dt = total_dt / (float)sub_steps;
   for (int i = 0; i < sub_steps; ++i)
   {
     Move_Events events{};
-    std::tie(position, velocity) =
-        player_move(cvars, input, state, bvh, world, position, velocity,
-                    look_front,
-                    look_right, aim_sweep_t{}, half_width, half_height, step_dt, &events);
+    const shared::move_state_t moved =
+        player_move(settings, bvh, world,
+                    {.feet = position, .velocity = velocity, .movement = state},
+                    {.buttons = input, .front = look_front, .right = look_right, .dt = step_dt},
+                    &events);
+    position = moved.feet;
+    velocity = moved.velocity;
+    state    = moved.movement;
     if (out_pad != nullptr && events.launched_by_pad)
     {
       ++out_pad->launches;
@@ -1142,9 +1148,13 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
                       : aim_sweep_t{};
     const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
 
-    std::tie(position, velocity) = player_move(cvars, input, movement, bvh, {}, position,
-                                               velocity, front, right, sweep, half_width,
-                                               half_height, step_dt);
+    const shared::move_state_t moved = player_move(
+        shared::movement_settings_from(cvars), bvh, {},
+        {.feet = position, .velocity = velocity, .movement = movement},
+        {.buttons = input, .front = front, .right = right, .aim_sweep = sweep, .dt = step_dt});
+    position = moved.feet;
+    velocity = moved.velocity;
+    movement = moved.movement;
     step_start = step_end;
   }
   return velocity;
@@ -1450,6 +1460,45 @@ static void test_instant_pad_launch_is_borrowed(const cvar_state_t& cvars)
   }
 }
 
+// --- the door: an impulse survives every model -------------------------------
+//
+// A writer states WHAT it wants and carries no duration, so remembering it is
+// each model's own job (movement_def.md, "The door"). This is the case that
+// fails when a new model forgets: under instant without its timer, 900 is gone
+// by the step after the press.
+static void test_an_impulse_survives_every_model(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] the door: a Set impulse of 900 outlives the ticks after it, under every model\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  Move_Input                      forward;
+  forward.forward_pressed = true;
+
+  for (cvars::Acceleration_Mode model :
+       {cvars::Acceleration_Mode::quake, cvars::Acceleration_Mode::instant})
+  {
+    cvar_state_t tuned    = cvars;
+    tuned.pm_acceleration = model;
+    const shared::movement_settings_t settings = shared::movement_settings_from(tuned);
+
+    for (const Move_Input& input : {Move_Input{}, forward})
+    {
+      shared::move_state_t state{.feet = {0.f, 1000.f, 0.f}};
+      shared::apply_impulse(settings, state, {.velocity = {900.f, 0.f, 0.f}});
+
+      move_result_t result{state.feet, state.velocity};
+      for (int tick = 0; tick < 5; ++tick)
+        result = run_split(tuned, bvh, input, result.position, result.velocity, tick_dt, 4,
+                           &state.movement);
+
+      printf("    %-8s %-7s  speed %.6f\n", to_string(model),
+             input.forward_pressed ? "forward" : "idle", horizontal_speed(result.velocity));
+      check_near(horizontal_speed(result.velocity), 900.f, 1e-2f,
+                 "the model remembered the impulse across the ticks that followed it");
+    }
+  }
+}
+
 // --- the hook's reel ---------------------------------------------------------
 //
 // The reel is a branch that OVERWRITES velocity every step, so nothing about it
@@ -1491,8 +1540,8 @@ static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
                "it lets go at full reel speed, not at the last step's leftover");
     check(movement.hook_anchor_uid == shared::null_entity_uid,
           "arriving clears the tether");
-    check(movement.seconds_until_speed_returns_to_base_speed > 0.f,
-          "the release borrows its speed, or instant erases it next step");
+    check(movement.seconds_until_speed_returns_to_base_speed == 0.f,
+          "the release goes through apply_impulse, and quake's answer is to borrow nothing");
   }
 }
 
@@ -1570,6 +1619,7 @@ int main()
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);
   test_instant_pad_launch_is_borrowed(cvars);
+  test_an_impulse_survives_every_model(cvars);
   test_hook_reel_arrival_is_step_invariant(cvars);
   test_hook_reel_timeout_is_step_invariant(cvars);
 

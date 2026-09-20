@@ -3,6 +3,7 @@
 #include "cvars/generated/cvars_generated.hpp"
 #include "debug_collision.hpp"
 #include "entities/generated/entities_generated.hpp"
+#include "movement_settings.hpp"
 #include "movement_volumes.hpp"
 #include "movers.hpp"
 #include "plane.hpp"
@@ -10,16 +11,7 @@
 #include "span.hpp"
 #include "subtick.hpp"
 #include <algorithm>
-#include <tuple>
 #include <vector>
-
-struct Collider_Planes
-{
-  std::vector<Plane> ground_planes;
-  std::vector<Plane> ceiling_planes;
-  std::vector<Plane> wall_planes;
-  shared::entity_uid_t ground_mover_uid = shared::null_entity_uid;
-};
 
 // Button bitfield constants — shared between client and server.
 // These map 1:1 to the proto buttons_bitfield.
@@ -161,8 +153,69 @@ struct Move_Events
   vec3 hook_release_velocity        = {};
 };
 
-// new_player_position, new_player_velocity. Positions in and out are at the FEET,
-// like every other player position. `out_events`, if non-null, receives
+namespace shared
+{
+
+// Everything a step advances. Positions are at the FEET, like every other
+// player position.
+struct move_state_t
+{
+  vec3               feet     = {};
+  vec3               velocity = {};
+  entities::Movement movement = {};
+};
+
+struct move_input_t
+{
+  Move_Input  buttons   = {};
+  vec3        front     = {1.f, 0.f, 0.f};
+  vec3        right     = {0.f, 0.f, 1.f};
+  aim_sweep_t aim_sweep = {};
+  float       dt        = 0.f;
+};
+
+// The ONE derivation of the basis from a step's aim.
+[[nodiscard]] move_input_t move_input_of(const shared::subtick_step_t& step);
+
+// Keep leaves the axis alone, Add joins the impulse to the velocity the player
+// already has, Set REPLACES it -- per AXIS, because the writers already are: a
+// bounce keeps your horizontal speed and replaces your vertical one.
+enum class impulse_mode_t : uint8_t
+{
+  Keep,
+  Add,
+  Set,
+};
+
+struct impulse_t
+{
+  impulse_mode_t horizontal = impulse_mode_t::Set;
+  impulse_mode_t vertical   = impulse_mode_t::Set;
+  vec3           velocity   = {};
+};
+
+// THE ONE DOOR. Everything from outside the player's own input -- a pad, a
+// dash, knockback, Set_Velocity, a teleport, a hook throw, an override ending
+// -- comes through here, states WHAT it wants, and carries no duration: where
+// it lands and how long it lasts is the MODEL's answer (movement_def.md).
+void apply_impulse(const movement_settings_t& settings, move_state_t& state,
+                   const impulse_t& impulse);
+
+// The same door for a caller that holds the two fields it touches rather than
+// a whole move_state_t (every server-side writer, and the weapon's own).
+inline void apply_impulse(const movement_settings_t& settings, vec3& velocity,
+                          entities::Movement& movement, const impulse_t& impulse)
+{
+  move_state_t state{.velocity = velocity, .movement = movement};
+  apply_impulse(settings, state, impulse);
+  velocity = state.velocity;
+  movement = state.movement;
+}
+
+} // namespace shared
+
+// The ORDER of one step: sense, decide, slide, clocks, touch. The state goes in
+// by value and comes back out. `out_events`, if non-null, receives
 // the movement cosmetics produced this tick (jump/land).
 //
 // `debug_faces`, if non-null AND debug_show_collisions is set, receives the
@@ -210,22 +263,14 @@ struct Move_Events
 // function of the tick and the replicated Path_Follow, and that the push is not
 // in here: see push_player_by_movers below and mover_def.md ss12.
 //
-// `cvars` is the process's one cvar_state_t (the launcher's), passed by
-// reference rather than read from a global: the pm_* tunables are @Mirrored, so
-// the client's prediction and the server's authoritative run must feed the SAME
-// values into this function or the client mispredicts every frame. A reference
-// makes that a signature obligation instead of a hope about which copy of a
-// static-lib global each module happened to link.
+// `settings` is cut from the process's one cvar_state_t (the launcher's) by
+// movement_settings_from: the pm_* tunables are @Mirrored, so the client's
+// prediction and the server's authoritative run must feed the SAME values into
+// this function or the client mispredicts every frame.
 //
-// `movement` is the ONE mutable parameter, and it is in/out on purpose: it is
-// this function's per-player state (jump charges, ground contact, the coyote
-// clock), read at the top of a step and written at the bottom of it. Everything
-// else here is still a pure function of its arguments.
-//
-// It is a REFERENCE rather than a return value because it is about STORAGE --
-// the caller owns it, across ticks, and player_move refills it. That is the
-// out-param case the failure convention keeps (see CLAUDE.md, "Failure"), the
-// same one skinning.hpp's Span<T> occupies.
+// `state.movement` is this function's per-player state (jump charges, ground
+// contact, the coyote clock), read at the top of a step and written at the
+// bottom of it. Everything here is a pure function of its arguments.
 //
 // THE CALLER MUST REPLAY IT. Client reconciliation re-runs past ticks from a
 // stored position and velocity; a replay that starts from the CURRENT movement
@@ -233,23 +278,14 @@ struct Move_Events
 // packet loss. Saved_Input carries a copy for exactly this reason -- the same
 // reason it stopped carrying a yaw/pitch pair beside the input it can derive
 // them from.
-std::tuple<vec3, vec3> player_move(
-    const cvars::cvar_state_t &cvars,
-    const Move_Input &input,
-    entities::Movement &movement,
+[[nodiscard]] shared::move_state_t player_move(
+    const shared::movement_settings_t &settings,
     const Bounding_Volume_Hierarchy &bvh,
     const shared::predicted_world_t &world,
-    const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
-    const float half_height, const float dt, Move_Events *out_events = nullptr,
+    shared::move_state_t state,
+    const shared::move_input_t &input,
+    Move_Events *out_events = nullptr,
     debug_collision::Face_Bucket *debug_faces = nullptr);
-
-// Every velocity write from outside player_move calls this, or pm_acceleration instant erases it next step.
-inline void borrow_speed(entities::Movement& movement, float seconds)
-{
-  movement.seconds_until_speed_returns_to_base_speed =
-      std::max(movement.seconds_until_speed_returns_to_base_speed, seconds);
-}
 
 // A mover strikes a hull it penetrates deeper than this; the skin a resting
 // contact leaves (0.01) must not count, or a lift drags whoever leans on it.

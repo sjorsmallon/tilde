@@ -1,825 +1,93 @@
 #include "player_move.hpp"
-#include "network/network_types.hpp"
-#include "debug_collision.hpp"
+#include "locomotion.hpp"
 #include "log.hpp"
+#include "movement_kernel.hpp"
+#include "network/network_types.hpp"
 #include "player_constants.hpp"
 #include <algorithm>
 #include <cmath>
-#include <limits>
-#include <print>
 #include "timed_function.hpp"
 
 using namespace network;
 
-using cvars::cvar_state_t;
-
-namespace
+namespace shared
 {
 
-// Protocol constant: input range is -127..+127, not a gameplay tunable.
-constexpr float pm_input_axial_extreme = 127.f;
-
-// wish_direction is normalized, new_velocity is not.
-[[nodiscard]]
-auto accelerate(vec3 new_velocity, vec3 wish_direction, float wish_speed,
-                float target_speed, float acceleration, float dt) -> vec3
+move_input_t move_input_of(const shared::subtick_step_t& step)
 {
-  float current_speed_in_wish_direction = dot(new_velocity, wish_direction);
-  float add_speed = target_speed - current_speed_in_wish_direction;
+  const float yaw_radians   = linalg::to_radians(step.view.yaw);
+  const float pitch_radians = linalg::to_radians(step.view.pitch);
+  const float cos_yaw       = std::cos(yaw_radians);
+  const float sin_yaw       = std::sin(yaw_radians);
+  const float cos_pitch     = std::cos(pitch_radians);
+  const float sin_pitch     = std::sin(pitch_radians);
 
-  if (add_speed < 0.0f)
-    return new_velocity;
-
-  float acceleration_speed = acceleration * dt * wish_speed;
-
-  if (acceleration_speed > add_speed)
-    acceleration_speed = add_speed;
-
-  vec3 result = new_velocity + (acceleration_speed * wish_direction);
-
-  return result;
-}
-
-[[nodiscard]]
-vec3 clip_horizontal_speed(const vec3& velocity, const float speed_limit)
-{
-  const float speed = sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-  if (speed <= speed_limit)
-    return velocity;
-
-  const float scale = speed_limit / speed;
-  return vec3{velocity.x * scale, velocity.y, velocity.z * scale};
-}
-
-[[nodiscard]]
-vec3 rotate_about_y(const vec3& vector, const float radians)
-{
-  const float cosine = std::cos(radians);
-  const float sine   = std::sin(radians);
-  return vec3{vector.x * cosine - vector.z * sine, vector.y, vector.x * sine + vector.z * cosine};
-}
-
-struct movement_rules_t
-{
-  bool  clip_air_speed       = true;
-  float air_target_speed     = std::numeric_limits<float>::infinity();
-  float jump_boost_speed     = 0.f;
-  float jump_boost_max_speed = 0.f;
-  bool  instant_velocity     = false;
-  bool  speed_is_borrowed    = false;
-};
-
-[[nodiscard]]
-movement_rules_t movement_rules_for(const cvar_state_t& cvars, const entities::Movement& movement)
-{
-  movement_rules_t rules;
-  rules.instant_velocity  = cvars.pm_acceleration == cvars::Acceleration_Mode::instant;
-  rules.speed_is_borrowed = movement.seconds_until_speed_returns_to_base_speed > 0.f;
-  switch (cvars.pm_bunnyhop)
+  const vec3 front = {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
+  //@FIXME(SJM): up vector global?
+  vec3        right        = linalg::cross(front, vec3{0.f, 1.f, 0.f});
+  const float right_length = linalg::length(right);
+  if (right_length > 0.001f)
   {
-    case cvars::Bunnyhop_Mode::none:
-      break;
-    case cvars::Bunnyhop_Mode::hl2:
-      rules.jump_boost_speed     = cvars.pm_jump_boost;
-      rules.jump_boost_max_speed = cvars.pm_jump_boost_max_speed;
-      break;
-    case cvars::Bunnyhop_Mode::cs:
-      rules.clip_air_speed   = false;
-      rules.air_target_speed = cvars.pm_air_speed_cap;
-      break;
-  }
-  return rules;
-}
-
-// Borrowed speed (a dash, a pad) keeps its size while the input picks its direction.
-[[nodiscard]]
-vec3 instant_velocity(const vec3& old_velocity, const vec3& wish_direction, float wish_speed,
-                      bool speed_is_borrowed)
-{
-  if (!speed_is_borrowed)
-    return wish_direction * wish_speed;
-  if (wish_speed < 0.0000001f)
-    return old_velocity;
-  return wish_direction * std::max(length(old_velocity), wish_speed);
-}
-
-// Time to fall back to launch height, never shorter than a flat shove's.
-[[nodiscard]]
-float pad_flight_seconds(const cvar_state_t& cvars, const vec3& launch_velocity)
-{
-  const float flight_seconds =
-      cvars.g_gravity > 0.f ? 2.f * std::max(launch_velocity.y, 0.f) / cvars.g_gravity : 0.f;
-  return std::max(flight_seconds, cvars.pm_speed_return_seconds);
-}
-
-[[nodiscard]]
-auto step_air_move(const vec3& old_position, vec3& new_velocity,
-                   const float speed_limit, const float dt)
-    -> std::tuple<vec3, vec3>
-{
-  new_velocity = clip_horizontal_speed(new_velocity, speed_limit);
-
-  vec3 position = old_position + (new_velocity * dt);
-
-  // @FIXME: test if we can actually be at the new position (collide with the
-  // environment and push back). we need to perform a new trace here to prevent
-  // tunneling / getting stuck in the ground.
-
-  return std::make_tuple(position, new_velocity);
-}
-
-[[nodiscard]] std::tuple<vec3, vec3> step_slide_move(const vec3& old_position,
-                                                     vec3& new_velocity,
-                                                     const float speed_limit,
-                                                     bool ground_collided,
-                                                     const float dt)
-{
-  new_velocity = clip_horizontal_speed(new_velocity, speed_limit);
-
-  // NOTE: integrate position BEFORE snapping Y velocity. This order matters!
-  // On slopes, the ground clip gives velocity a Y component so the player
-  // follows the surface. If we zeroed Y first, the position would move
-  // purely horizontally — floating off the slope, losing ground contact, and
-  // falling into air mode (which has no friction and no jump). The snap
-  // afterward prevents Y from accumulating across frames.
-  //
-  // We snap ALL Y (not just negative) because the overbounce factor in
-  // clip_vector can produce tiny positive Y on slopes too. Even a small
-  // positive Y fails the grounded check (vel_y <= 0) next frame, kicking
-  // the player into air mode where gravity builds up negative Y.
-  vec3 position = old_position + (new_velocity * dt);
-
-  if (ground_collided)
-  {
-    new_velocity.y = 0.f;
-  }
-
-  return std::make_tuple(position, new_velocity);
-}
-
-//@NOTE(SJM):
-// speed_drop = speed * friction * dt bills you for friction at the speed you're currently going. Take one step and that's fine. Take two half-steps and the second one is charged against a different, already-reduced speed:
-// friction = 4, dt = 1/60  →  friction*dt = 0.0667
-
-// v' = v - friction * dt;
-// start: speed = 300
-
-// one full step:    drop = 300 * 0.0667  = 20.00        → 280.000
-
-// two half steps:   drop = 300 * 0.0333  =  9.999       → 290.001
-//                   drop = 290 * 0.0333  =  9.667       → 280.334
-//                                           ^^^^^
-//                               charged against 290, not 300
-// Friction and acceleration are ONE system on the ground, not two operators
-// applied in turn: v' = -k*v + a*w. Running them alternately is what made a
-// split tick diverge even after both halves became individually exact, so this
-// reports the duration the acceleration must integrate over as well as the
-// decayed velocity. The exponential branch hands back (1-exp(-k*dt))/k rather
-// than dt, and two halves of THAT sum to the whole:
-//   t(h)*(1+exp(-k*h)) = (1-exp(-k*h))(1+exp(-k*h))/k = (1-exp(-2*k*h))/k
-// which plain dt does not do.
-struct friction_step_t
-{
-  vec3  velocity;
-  float acceleration_duration = 0.f;
-};
-
-auto apply_friction(const cvar_state_t &cvars, vec3 old_velocity, float dt)
-    -> friction_step_t
-{
-  // snap to only planar movement.
-  old_velocity.y = 0.f;
-
-  float speed = length(old_velocity);
-  // if we are very small moving, instead of infinitely applying drag, just snap
-  // stop.
-  if (speed < cvars.pm_speed_threshold)
-  {
-    return {vec3{}, dt};
-  }
-
-  // exponential decay composes exactly under any subdivision of dt.
-  if (speed >= cvars.pm_stopspeed)
-  {
-    const float decay = std::exp(-cvars.pm_friction * dt);
-    return {old_velocity * decay, (1.f - decay) / cvars.pm_friction};
-  }
-
-  float adjusted_speed = speed - cvars.pm_stopspeed * cvars.pm_friction * dt;
-
-  // cannot move in the negatives.
-  if (adjusted_speed < 0.0f)
-    adjusted_speed = 0.0f;
-
-  // The floor is a CONSTANT drop, so there is no decay for the acceleration to
-  // be weighted against and dt is already the exact duration.
-  return {old_velocity * (adjusted_speed / speed), dt};
-}
-
-// since input can be provided -127 -> +127, scale the movement vector based on
-// the input delivered.
-//@FIXME: this should be better.
-[[nodiscard]] float calculate_input_scale(const float forward_move,
-                                          const float right_move,
-                                          const float max_speed,
-                                          const float input_axial_extreme)
-{
-
-  int max = abs(static_cast<int>(forward_move));
-  if (abs(static_cast<int>(right_move)) > max)
-    max = abs(static_cast<int>(right_move));
-
-  if (!max)
-    return 0.f;
-
-  float total = sqrt(forward_move * forward_move + right_move * right_move);
-  float scale =
-      max_speed * static_cast<float>(max) / (input_axial_extreme * total);
-  return scale;
-}
-
-vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
-{
-  // how strong is the incoming vector in the direction of the face normal?
-  // (i.e. we split the incoming vector in two parts: the one that is parallel
-  // to the normal, and the one that is perpendicular to it (along the wall).
-  float backoff = dot(in, normal);
-
-  if (backoff < 0.0f)
-  {
-    backoff *= overbounce;
+    right = right * (1.0f / right_length);
   }
   else
   {
-    backoff /= overbounce;
+    log_warning("arbitrarily deciding that right is {{1, 0, 0}} because the vector length was too small.");
+    right = {1.f, 0.f, 0.f};
   }
 
-  vec3 change = normal * backoff;
-
-  vec3 result = in - change;
-
-  return result;
+  return {.buttons   = move_input_from_buttons(step.buttons),
+          .front     = front,
+          .right     = right,
+          .aim_sweep = aim_sweep_of(step),
+          .dt        = step.dt};
 }
 
-std::tuple<vec3, vec3> my_walk_move(const cvar_state_t &cvars,
-                                    const Move_Input &input,
-                                    const movement_rules_t &rules,
-                                    bool has_ground, const vec3 &ground_normal,
-                                    const Collider_Planes &collider_planes,
-                                    const vec3 old_position,
-                                    const vec3 old_velocity, const vec3 front,
-                                    const vec3 right, const float dt)
-{
-  const float maxspeed = cvars.pm_maxspeed;
-  const float overbounce = cvars.pm_overbounce;
-
-  // apply friction. this does not fully 'nullify' the velocity (or does it?).
-  const friction_step_t friction =
-      rules.instant_velocity
-          ? friction_step_t{vec3{old_velocity.x, 0.f, old_velocity.z}, dt}
-          : apply_friction(cvars, old_velocity, dt); // at this point, y velocity is already gone.
-  const vec3  old_velocity_with_friction_applied = friction.velocity;
-  const float acceleration_duration              = friction.acceleration_duration;
-
-  // what inputs did we provide?
-  float forward_input = pm_input_axial_extreme * input.forward_pressed -
-                        pm_input_axial_extreme * input.backward_pressed;
-  float right_input = pm_input_axial_extreme * input.right_pressed -
-                      pm_input_axial_extreme * input.left_pressed;
-
-  // get rid of the y component: only look at the xz plane. the y-component is
-  // handled by "a different subroutine". where are we looking?
-  vec3 front_without_y = vec3{front.x, 0.0f, front.z};
-  vec3 right_without_y = vec3{right.x, 0.0f, right.z};
-
-  // look at the floor below you. this is known as a "ground trace". what is the
-  // normal of that face? imagine it is steep, like an incline. we do not want
-  // to move inside of that, but move smoothly perpendicular to that normal. so
-  // we "clip" the velocity vector such that we redirect it along that
-  // perpendicular axis.
-  vec3 front_clipped = front_without_y;
-  vec3 right_clipped = right_without_y;
-
-  if (has_ground)
-  {
-    front_clipped = clip_vector(front_without_y, ground_normal, overbounce);
-    right_clipped = clip_vector(right_without_y, ground_normal, overbounce);
-  }
-
-  // don't forget to normalize: if you don't, this will be really small if you
-  // look up.
-  front_clipped = normalize(front_clipped);
-  right_clipped = normalize(right_clipped);
-
-  bool received_input = (input.forward_pressed || input.backward_pressed ||
-                         input.left_pressed || input.right_pressed);
-
-  // what is the resulting direction we should take, based on the new clipped
-  // front and right (accounting for the walls we might be colliding with), and
-  // what buttons I pressed in relation to those vectors.
-  vec3 wish_direction =
-      front_clipped * forward_input + right_clipped * right_input;
-  vec3 normalized_wish_direction = normalize(wish_direction);
-
-  float input_scale = calculate_input_scale(
-      forward_input, right_input, maxspeed, pm_input_axial_extreme);
-  float wish_speed =
-      0.0f; // we set this because I think some float weirdness happens when
-            // taking the length of wish_direction when it is 0.
-
-  if (received_input)
-  {
-    wish_speed = input_scale * length(wish_direction);
-  }
-
-  vec3 new_velocity{};
-
-  if (rules.instant_velocity)
-  {
-    new_velocity = instant_velocity(old_velocity_with_friction_applied, normalized_wish_direction,
-                                    wish_speed, rules.speed_is_borrowed);
-  }
-  else if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
-  {
-    new_velocity = old_velocity_with_friction_applied;
-  }
-  else
-  {
-    float acceleration = cvars.pm_ground_acceleration;
-    new_velocity = accelerate(old_velocity_with_friction_applied,
-                              normalized_wish_direction, wish_speed, wish_speed,
-                              acceleration, acceleration_duration);
-  }
-
-  // clip the new velocity against the ground plane. take the length before
-  // it is clipped.
-  float new_speed = length(new_velocity);
-  new_velocity = clip_vector(new_velocity, ground_normal, overbounce);
-
-  // since we take the velocity before clipping. it can be we clip the movement
-  // vectors (effectively reducing player speed.) but we still want to retain
-  // the speed we were moving in before.
-  new_velocity = normalize(new_velocity);
-  new_velocity = new_speed * new_velocity;
-
-  // readjust the velocity for all the wall collider planes.
-  for (auto &collider_plane : collider_planes.wall_planes)
-  {
-    // we should not collide with the plane if we are trying to move away from
-    // it.
-    new_speed = length(new_velocity);
-    new_velocity = normalize(new_velocity);
-    if (dot(new_velocity, collider_plane.normal) > 0)
-    {
-      new_velocity = new_velocity * new_speed;
-      continue;
-    }
-
-    new_velocity =
-        clip_vector(new_velocity, collider_plane.normal, overbounce);
-
-    // Speed-preserving rescale: when sliding along a wall we normalize and
-    // rescale to new_speed so that touching a wall doesn't bleed speed.
-    // BUT: new_velocity was a unit vector entering clip_vector, so when
-    // pressing nearly perpendicular into a wall the clip leaves only a tiny
-    // residual (< 0.01) pointing slightly away. Normalizing that to a unit
-    // vector and rescaling to new_speed launches the player backward at full
-    // speed every frame — causing an oscillation that friction eventually
-    // snaps to zero. Guard: only rescale when the tangential component is
-    // meaningful. A tiny residual is left as-is; friction zeroes it next frame.
-    {
-      float clip_len = length(new_velocity);
-      if (clip_len > 0.01f)
-        new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
-    }
-  }
-
-  const float speed_limit =
-      std::max(length(old_velocity_with_friction_applied), maxspeed);
-  return step_slide_move(old_position, new_velocity, speed_limit, has_ground, dt);
-}
-
-auto my_air_move(const cvar_state_t &cvars, const Move_Input &input,
-                 const movement_rules_t& rules, const aim_sweep_t& aim_sweep,
-                 bool has_ground, const vec3 &ground_normal,
-                 bool has_ceiling, const vec3 &ceiling_normal,
-                 Collider_Planes &collider_planes, const vec3 &old_position,
-                 const vec3 &old_velocity, const vec3 &front, const vec3 &right,
-                 const float dt) -> std::tuple<vec3, vec3>
-{
-  const float maxspeed = cvars.pm_maxspeed;
-  const float overbounce = cvars.pm_overbounce;
-  constexpr auto world_down = vec3{0.f, -1.f, 0.f};
-
-  vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
-  // what inputs did we provide?
-  float forward_input = pm_input_axial_extreme * input.forward_pressed -
-                        pm_input_axial_extreme * input.backward_pressed;
-  float right_input = pm_input_axial_extreme * input.right_pressed -
-                      pm_input_axial_extreme * input.left_pressed;
-
-  // get rid of the y component: only look at the xz plane.
-  vec3 front_without_y = vec3{front.x, 0.0f, front.z};
-  vec3 right_without_y = vec3{right.x, 0.0f, right.z};
-
-  vec3 front_clipped = front_without_y;
-  vec3 right_clipped = right_without_y;
-
-  if (has_ground)
-  {
-    front_clipped = clip_vector(front_without_y, ground_normal, overbounce);
-    right_clipped = clip_vector(right_without_y, ground_normal, overbounce);
-  }
-
-  // FIX #3: normalize front_clipped and right_clipped, same as my_walk_move
-  // does. Without this, two things go wrong:
-  //   (a) after stripping Y from a unit vector, the XZ remainder is shorter
-  //       when looking up/down, so air control weakens at steep pitch angles;
-  //   (b) after clip_vector redirects the vector along the ground plane, its
-  //       length changes, making wish_speed depend on the ground slope.
-  // my_walk_move normalizes these (lines 265-266); air move should too.
-  front_clipped = normalize(front_clipped);
-  right_clipped = normalize(right_clipped);
-
-  bool received_input = (input.forward_pressed || input.backward_pressed ||
-                         input.left_pressed || input.right_pressed);
-
-  vec3 wish_direction =
-      front_clipped * forward_input + right_clipped * right_input;
-  vec3 normalized_wish_direction = normalize(wish_direction);
-
-  float input_scale = calculate_input_scale(
-      forward_input, right_input, maxspeed, pm_input_axial_extreme);
-  float wish_speed =
-      0.0f; // we set this because I think some float weirdness happens when
-            // taking the length of wish_direction when it is 0.
-
-  if (received_input)
-  {
-    wish_speed = input_scale * length(wish_direction);
-  }
-
-  vec3 new_velocity{};
-
-  if (rules.instant_velocity)
-  {
-    // Only the sweep's LAST push counts under a set, and it names the same slot however the tick was split.
-    const float pushes_in_step = static_cast<float>(aim_sweep.push_count);
-    const vec3  last_push_direction =
-        rotate_about_y(normalized_wish_direction,
-                       linalg::to_radians(aim_sweep.yaw_change_degrees) *
-                           (pushes_in_step - 0.5f) / pushes_in_step);
-    new_velocity = instant_velocity(old_velocity_without_y, last_push_direction, wish_speed,
-                                    rules.speed_is_borrowed);
-  }
-  else if (wish_speed < 0.0000001f) //@FIXME: formalize the treshold.
-  {
-    // FIX #1: was `old_velocity`, which includes Y. When the code below does
-    // new_speed = length(new_velocity), that 3D length is dominated by the Y
-    // component (gravity). After clipping strips Y and normalize-rescale runs,
-    // all that vertical speed gets pumped into XZ — making the player speed up
-    // horizontally just by falling. Use the XZ-only velocity so the
-    // clip/normalize/rescale below only operates on horizontal speed.
-    new_velocity = old_velocity_without_y;
-  }
-  else
-  {
-    // if we are in the air, you have less control.
-    float acceleration = cvars.pm_air_acceleration;
-    const float target_speed   = std::min(wish_speed, rules.air_target_speed);
-    const float pushes_in_step = static_cast<float>(aim_sweep.push_count);
-    const float turn_radians   = linalg::to_radians(aim_sweep.yaw_change_degrees);
-    new_velocity = old_velocity_without_y;
-    for (uint32_t push = 0; push < aim_sweep.push_count; ++push)
-    {
-      const vec3 push_direction = rotate_about_y(
-          normalized_wish_direction,
-          turn_radians * (static_cast<float>(push) + 0.5f) / pushes_in_step);
-      new_velocity = accelerate(new_velocity, push_direction, wish_speed, target_speed,
-                                acceleration, dt / pushes_in_step);
-    }
-  }
-
-  float new_speed = length(new_velocity);
-  new_velocity = clip_vector(new_velocity, ground_normal, overbounce);
-  new_velocity = normalize(new_velocity);
-  new_velocity = new_speed * new_velocity;
-
-  float new_y_velocity = old_velocity.y;
-
-  // clip if necessary
-  for (auto &collider_plane : collider_planes.wall_planes)
-  {
-    // we should not collide with the plane if we are trying to move away from
-    // it.
-    new_speed = length(new_velocity);
-    new_velocity = normalize(new_velocity);
-
-    auto cos_angle = dot(new_velocity, collider_plane.normal);
-    if (cos_angle > 0.f) // are we moving away? just keep your velocity.
-    {
-      new_velocity = new_velocity * new_speed;
-      continue;
-    }
-
-    new_velocity =
-        clip_vector(new_velocity, collider_plane.normal, overbounce);
-
-    // Same guard as my_walk_move: clip operates on a unit vector, so a
-    // near-perpendicular wall press leaves a tiny residual that must not be
-    // rescaled to full speed (that would cause the same oscillation/snap).
-    {
-      float clip_len = length(new_velocity);
-      if (clip_len > 0.01f)
-        new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
-    }
-  }
-
-  // clip against the ceiling.
-  if (has_ceiling)
-  {
-    auto cos_angle_plane_world_down = dot(ceiling_normal, world_down);
-    if (cos_angle_plane_world_down > 0.707f)
-    {
-      // if we were already moving down, it does not matter.
-      new_y_velocity = (new_y_velocity < 0.f ? new_y_velocity : 0.f);
-    }
-  }
-
-  // Apply gravity as two halves around the position integration. Position then
-  // integrates with the step's MIDPOINT y velocity, and under a constant g the
-  // midpoint IS the exact mean of the endpoints -- so this reproduces
-  // p0 + v0*dt - 0.5*g*dt^2 rather than the -1.0 that integrating with the END
-  // velocity gave. The returned velocity is unchanged (v0 - g*dt either way),
-  // so the grounded check, the land snap and the post-move clips see what they
-  // always did.
-  //
-  // The point is not the extra 5% of jump apex, it is that the exact parabola
-  // is the one answer that does not move when dt does: the old form dropped
-  // 1.0*g*dt^2 whole, 0.75 split in two, 0.625 in four. Sub-tick makes that
-  // difference reachable. See player_move_step_invariance_test.
-  const float half_gravity_step = 0.5f * cvars.g_gravity * dt;
-
-  new_velocity.y = new_y_velocity - half_gravity_step;
-
-  const float speed_limit = rules.clip_air_speed
-                                ? std::max(length(old_velocity_without_y), maxspeed)
-                                : std::numeric_limits<float>::infinity();
-  auto [position, velocity] =
-      step_air_move(old_position, new_velocity, speed_limit, dt);
-  velocity.y -= half_gravity_step;
-  return std::make_tuple(position, velocity);
-}
-// Resolve collisions against the BVH using hull-plane-based penetration test.
-// Pushes player_pos out of overlapping hulls and classifies contact normals.
-//
-// `debug_faces` is the caller's bucket, already gated on debug_show_collisions by
-// the caller: the recording happens in SHARED code but the drawing is
-// client-side, so both the flag and the destination have to arrive from
-// whichever side is simulating rather than from a global. Null means the caller
-// has no reader for them (the server, every time) -- see debug_collision.hpp.
-struct collision_candidate_t
-{
-  const std::vector<Plane>*              collision_planes;
-  const std::vector<std::vector<vec3f>>* face_polygons;
-  shared::entity_uid_t                   mover_uid = shared::null_entity_uid;
-};
-
-shared::aabb_bounds_t hull_aabb(const vec3& center, float half_width, float half_height)
-{
-  return {center - vec3{half_width, half_height, half_width},
-          center + vec3{half_width, half_height, half_width}};
-}
-
-void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
-                                  const shared::predicted_world_t& world,
-                                  const shared::aabb_bounds_t& bounds,
-                                  std::vector<collision_candidate_t>& out)
-{
-  std::vector<const BVH_Primitive*> overlapping;
-  bvh_intersect_aabb(bvh, bounds, overlapping, world.disabled_geometry);
-  for (const BVH_Primitive* primitive : overlapping)
-    out.push_back({&primitive->collision_planes, &primitive->face_polygons});
-
-  for (const shared::mover_t& mover : world.movers)
-  {
-    if (!shared::aabbs_intersect(bounds, mover.swept_bounds))
-      continue;
-    for (const shared::collision_piece_t& piece : mover.pieces)
-      if (shared::aabbs_intersect(bounds, piece.bounds))
-        out.push_back({&piece.planes, &piece.face_polygons, mover.uid});
-  }
-}
-
-float hull_penetration_depth(const std::vector<Plane>& planes, const vec3& center,
-                             float half_width, float half_height)
-{
-  if (planes.empty())
-    return 0.f;
-
-  float depth = std::numeric_limits<float>::infinity();
-  for (const Plane& plane : planes)
-  {
-    const float support_radius = half_width * fabsf(plane.normal.x) +
-                                 half_height * fabsf(plane.normal.y) +
-                                 half_width * fabsf(plane.normal.z);
-    depth = std::min(depth, support_radius - dot(center - plane.point, plane.normal));
-  }
-  return depth;
-}
-
-Collider_Planes resolve_collisions(const Bounding_Volume_Hierarchy &bvh,
-                                   const shared::predicted_world_t &world,
-                                   vec3 &player_pos,
-                                   float half_width, float half_height,
-                                   debug_collision::Face_Bucket *debug_faces)
-{
-  Collider_Planes result;
-  constexpr float cos_45 = 0.707f;
-
-  shared::aabb_bounds_t player_aabb = hull_aabb(player_pos, half_width, half_height);
-
-  std::vector<collision_candidate_t> overlapping;
-  collect_collision_candidates(bvh, world, player_aabb, overlapping);
-
-  for (const collision_candidate_t& candidate : overlapping)
-  {
-    const std::vector<Plane>& collision_planes = *candidate.collision_planes;
-    if (collision_planes.empty())
-      continue;
-
-    // Rebuild player AABB from (potentially updated) player_pos each iteration
-    player_aabb = hull_aabb(player_pos, half_width, half_height);
-
-    // Hull-plane penetration test:
-    // For each plane of the convex hull, compute how far the player AABB
-    // penetrates past it. If the player is fully outside any face, it's
-    // not inside the hull. Otherwise, push out along the least-penetrated face.
-    float min_penetration = -1e30f;
-    int min_plane_idx = -1;
-    vec3 push_normal = {0, 0, 0};
-    bool outside = false;
-
-    for (int pi = 0; pi < (int)collision_planes.size(); ++pi)
-    {
-      const auto &plane = collision_planes[pi];
-      float signed_dist = dot(player_pos - plane.point, plane.normal);
-      // Support radius: how far the AABB extends along the plane normal direction
-      float support_radius = half_width * fabsf(plane.normal.x) +
-                              half_height * fabsf(plane.normal.y) +
-                              half_width * fabsf(plane.normal.z);
-      float penetration = signed_dist - support_radius;
-
-      if (penetration >= 0.f)
-      {
-        // Player is fully outside this face -> not inside the hull
-        outside = true;
-        break;
-      }
-
-      // At ledge corners the side face often has slightly less penetration
-      // than the top face, so the resolver pushes sideways (wall) instead of
-      // upward (ground). Bias toward upward-facing normals so the player
-      // lands on top rather than bouncing off the side.
-      bool is_ground_normal = plane.normal.y > cos_45;
-      float biased_penetration = penetration;
-      if (is_ground_normal)
-        biased_penetration += 8.f; // make ground faces win when close
-
-      if (biased_penetration > min_penetration)
-      {
-        min_penetration = penetration; // store actual penetration for push amount
-        push_normal = plane.normal;
-        min_plane_idx = pi;
-      }
-    }
-
-    if (outside)
-      continue;
-
-    // Push player out along the least-penetrated face, but keep a small
-    // skin width of penetration. Without this, the player lands exactly at
-    // the surface (penetration = 0), which the penetration test reads as
-    // "outside" next frame — so ground contact is never detected. Leaving
-    // a tiny margin ensures the next frame's test finds penetration < 0
-    // and properly classifies the contact (ground/wall/ceiling).
-    constexpr float skin_width = 0.01f;
-    float push_amount = -min_penetration - skin_width;
-    if (push_amount > 0.f)
-      player_pos = player_pos + push_normal * push_amount;
-
-    // Create a collision plane at the contact point
-    Plane p;
-    p.normal = push_normal;
-    p.point = player_pos - push_normal * 0.01f;
-
-    // Record collision for debug visualization
-    if (debug_faces && min_plane_idx >= 0 &&
-        min_plane_idx < (int)candidate.face_polygons->size())
-      debug_collision::record_collision(*debug_faces, p,
-                                        (*candidate.face_polygons)[min_plane_idx]);
-
-    // Classify: ground (normal pointing up), ceiling (down), wall (horizontal)
-    if (push_normal.y > cos_45)
-    {
-      result.ground_planes.push_back(p);
-      if (result.ground_mover_uid == shared::null_entity_uid)
-        result.ground_mover_uid = candidate.mover_uid;
-    }
-    else if (push_normal.y < -cos_45)
-    {
-      result.ceiling_planes.push_back(p);
-    }
-    else
-    {
-      result.wall_planes.push_back(p);
-    }
-  }
-
-  return result;
-}
-
-} // namespace
+} // namespace shared
 
 // Exposed functions
-// new position, new velocity.
-std::tuple<vec3, vec3> player_move(
-    const cvars::cvar_state_t &cvars,
-    const Move_Input &input,
-    entities::Movement &movement,
-    const Bounding_Volume_Hierarchy &bvh,
-    const shared::predicted_world_t &world,
-    const vec3 &old_position, const vec3 &old_velocity, const vec3 &front,
-    const vec3 &right, const aim_sweep_t& aim_sweep, const float half_width,
-    const float half_height, const float dt, Move_Events *out_events,
-    debug_collision::Face_Bucket *debug_faces)
+shared::move_state_t player_move(const shared::movement_settings_t& settings,
+                                 const Bounding_Volume_Hierarchy& bvh,
+                                 const shared::predicted_world_t& world,
+                                 shared::move_state_t state, const shared::move_input_t& input,
+                                 Move_Events* out_events,
+                                 debug_collision::Face_Bucket* debug_faces)
 {
   timed_function();
 
-  if (aim_sweep.push_count == 0)
+  if (input.aim_sweep.push_count == 0)
     fatal_error("player_move: aim_sweep.push_count is {}, which divides the step by zero",
-                aim_sweep.push_count);
+                input.aim_sweep.push_count);
 
   // Resolved once for the whole tick: every resolve_collisions call below must
   // agree about whether it is recording, or a mid-tick console toggle would
   // record half a frame's faces. A caller with no bucket records nothing whatever
   // the toggle says -- that is how the server opts out (debug_collision.hpp).
-  debug_collision::Face_Bucket *recording_bucket =
-      cvars.debug_show_collisions ? debug_faces : nullptr;
+  debug_collision::Face_Bucket* recording_bucket =
+      settings.record_collisions ? debug_faces : nullptr;
 
+  const float         dt       = input.dt;
+  entities::Movement& movement = state.movement;
+
+  // --- 1 SENSE ---
+  //
   // The caller's position is at the FEET; everything below works on the hull centre.
-  const vec3 hull_center_offset{0.f, half_height, 0.f};
-  vec3 player_pos = old_position + hull_center_offset;
-  Collider_Planes collider_planes =
-      resolve_collisions(bvh, world, player_pos, half_width, half_height,
-                         recording_bucket);
-
-  bool has_ground = !collider_planes.ground_planes.empty();
-  bool has_ceiling = !collider_planes.ceiling_planes.empty();
-  vec3 ground_normal = has_ground ? collider_planes.ground_planes[0].normal : vec3{0, 1, 0};
-  vec3 ceiling_normal = has_ceiling ? collider_planes.ceiling_planes[0].normal : vec3{0, -1, 0};
+  const vec3 hull_center_offset{0.f, settings.shared.half_height, 0.f};
+  vec3       hull_center = state.feet + hull_center_offset;
+  const shared::contacts_t contacts =
+      shared::resolve_collisions(settings, bvh, world, hull_center, recording_bucket);
 
   // we are grounded if (and only if):
   // - the ground trace hits.
   // - y velocity is going down. (at least not going up.)
-  bool grounded = has_ground && (old_velocity.y <= 0.0f);
+  const bool grounded = contacts.has_ground() && (state.velocity.y <= 0.0f);
 
-  const movement_rules_t rules = movement_rules_for(cvars, movement);
-
-  // --- ABILITIES: the only place per-player movement state is read ---
+  // --- 2 DECIDE: a jump, then the reel or the model ---
   //
-  // A GROUND jump reads the LEVEL, unchanged: holding space to bunnyhop is the
-  // behavior, not a bug, and nothing is spent by it.
-  //
-  // An AIR jump reads the rising EDGE, because it spends a charge. Reading the
-  // level would empty the whole budget inside one tick -- and at 64 sub-tick
-  // slots per tick that is not a rounding error, it is every charge on one
-  // press. The edge is derived HERE from movement.jump_was_held rather than at
-  // the call sites, because the four callers (server, live prediction,
-  // reconciliation, bots) would each have to diff two inputs identically, and a
-  // replay that diffed differently is exactly the silent divergence this state
-  // has to avoid.
-  const bool jump_edge = input.jump_pressed && !movement.jump_was_held;
-
-  const bool ground_jump_fired = grounded && input.jump_pressed;
-
-  const bool air_jump_fired =
-      !grounded && jump_edge &&
-      (int32_t)movement.air_jumps_used < cvars.pm_air_jump_count;
-
-  // Both jumps fly their whole step, so gravity starts at the impulse whatever the step's length.
-  vec3 velocity_entering_move = old_velocity;
-  if (ground_jump_fired)
-  {
-    velocity_entering_move.y = cvars.pm_jumpspeed;
-  }
-  if (air_jump_fired)
-  {
-    velocity_entering_move.y = cvars.pm_air_jump_speed;
-    ++movement.air_jumps_used;
-  }
-
-  vec3 new_pos, new_vel;
+  // The jump is the one ability every model shares, and it is spent HERE
+  // rather than in one of them: a charge is state, and two models spending it
+  // two ways is the divergence the replay cannot see.
+  const shared::jump_t jump = shared::try_jump(settings, grounded, state, input);
 
   // THE HOOK'S REEL. It is a branch rather than a velocity written from outside
   // because the hooked player predicts their own movement: an unpredicted pull
@@ -830,275 +98,117 @@ std::tuple<vec3, vec3> player_move(
   //
   // Detach is tested BEFORE the step, so the arrival radius is the distance the
   // reel stops at rather than one the step can carry the hull past.
-  bool reeling                 = movement.seconds_of_hook_pull_remaining > 0.f;
-  bool hook_released           = false;
-  vec3 hook_release_position   = {};
-  vec3 hook_release_velocity   = {};
+  bool reeling               = movement.seconds_of_hook_pull_remaining > 0.f;
+  bool hook_released         = false;
+  vec3 hook_release_position = {};
+  vec3 hook_release_velocity = {};
   if (reeling)
   {
-    const vec3  to_anchor          = movement.hook_anchor_position - player_pos;
+    const vec3  to_anchor          = movement.hook_anchor_position - hull_center;
     const float distance_to_anchor = length(to_anchor);
-    if (distance_to_anchor <= cvars.pm_hook_arrive_radius)
+    if (distance_to_anchor <= settings.hook.arrive_radius)
     {
       movement.seconds_of_hook_pull_remaining = 0.f;
       movement.hook_anchor_uid                = shared::null_entity_uid;
-      borrow_speed(movement, cvars.pm_hook_release_borrow_seconds);
+      shared::apply_impulse(settings, state,
+                            {.horizontal = shared::impulse_mode_t::Set,
+                             .vertical   = shared::impulse_mode_t::Set,
+                             .velocity   = state.velocity});
       reeling                = false;
       hook_released          = true;
-      hook_release_position  = player_pos;
-      hook_release_velocity  = old_velocity;
+      hook_release_position  = hull_center;
+      hook_release_velocity  = state.velocity;
     }
   }
 
-  // Flat wish direction from input — used to determine which walls are
-  // actually being pressed into. We use this instead of old_velocity because
-  // old_velocity gets clipped to near-zero against a wall after the first
-  // frame of contact, so it stops reporting "moving into wall" even while
-  // the player keeps pressing forward.
-  vec3 front_xz = normalize(vec3{front.x, 0.f, front.z});
-  vec3 right_xz = normalize(vec3{right.x, 0.f, right.z});
-  float fwd_in = (input.forward_pressed ? 1.f : 0.f) - (input.backward_pressed ? 1.f : 0.f);
-  float rgt_in = (input.right_pressed  ? 1.f : 0.f) - (input.left_pressed     ? 1.f : 0.f);
-  vec3 wish_dir_xz = front_xz * fwd_in + right_xz * rgt_in;
-  bool has_wish = length(wish_dir_xz) > 0.f;
-  if (has_wish)
-    wish_dir_xz = normalize(wish_dir_xz);
+  vec3 new_center   = hull_center;
+  vec3 new_velocity = state.velocity;
 
-  if (ground_jump_fired && has_wish && rules.jump_boost_speed > 0.f)
+  if (reeling)
   {
-    const vec3 horizontal_velocity{old_velocity.x, 0.f, old_velocity.z};
-    const vec3 boosted_velocity = clip_horizontal_speed(
-        horizontal_velocity + wish_dir_xz * rules.jump_boost_speed,
-        std::max(length(horizontal_velocity), rules.jump_boost_max_speed));
-    velocity_entering_move.x = boosted_velocity.x;
-    velocity_entering_move.z = boosted_velocity.z;
+    // No accel, no friction, no gravity: the velocity IS the reel, so
+    // anything else would be a second author of it. Walls are left to the
+    // post-move resolve below -- a reel that grinds into a corner is held
+    // there until the timer lets go.
+    //
+    // BOTH ends of the step are clamped so the split into sub-steps lands in
+    // the same place. The DISTANCE cap targets the arrival radius rather than
+    // the anchor, so a reel converges on exactly that sphere instead of
+    // stopping wherever a step happened to carry it inside; the TIME cap
+    // spends only the pull that is left, so the travel is reel_speed times
+    // the pull duration however the tick was cut.
+    const vec3  to_anchor          = movement.hook_anchor_position - hull_center;
+    const float distance_to_anchor = length(to_anchor);
+    const float distance_remaining =
+        std::max(distance_to_anchor - settings.hook.arrive_radius, 0.f);
+    const float reel_dt = std::min(dt, movement.seconds_of_hook_pull_remaining);
+    const vec3  reel_direction =
+        distance_to_anchor > 0.f ? to_anchor * (1.f / distance_to_anchor) : vec3{};
+
+    // The distance cap clamps the STEP, never the speed: a reel that arrives
+    // mid-step still lets go at full reel speed, so what you are flung with
+    // is the tunable rather than whatever fraction of a step was left. That
+    // is also what makes the release velocity the same however the tick was
+    // cut -- the last step's leftover is a function of the split.
+    const float travel = std::min(settings.hook.reel_speed * reel_dt, distance_remaining);
+
+    new_velocity = reel_direction * settings.hook.reel_speed;
+    new_center   = hull_center + reel_direction * travel;
+
+    movement.seconds_of_hook_pull_remaining -= dt;
+    if (movement.seconds_of_hook_pull_remaining <= 0.f)
+    {
+      movement.seconds_of_hook_pull_remaining = 0.f;
+      movement.hook_anchor_uid                = shared::null_entity_uid;
+      shared::apply_impulse(settings, state,
+                            {.horizontal = shared::impulse_mode_t::Set,
+                             .vertical   = shared::impulse_mode_t::Set,
+                             .velocity   = new_velocity});
+      hook_released         = true;
+      hook_release_position = new_center;
+      hook_release_velocity = new_velocity;
+    }
   }
-
-  // Stair-step glide: if grounded and pressing into a wall, try raising the
-  // player by pm_step_height and re-testing. If no wall at the raised height
-  // blocks our wish direction, the obstacle is short enough to step over.
-  // Walk from the raised position, then drop back down onto the surface.
-  bool used_step = false;
-  if (!reeling && grounded && !ground_jump_fired && has_wish &&
-      !collider_planes.wall_planes.empty())
+  else
   {
-    // Only proceed if we're actually pressing toward at least one wall.
-    bool pressing_into_wall = false;
-    for (const auto &plane : collider_planes.wall_planes)
+    const vec3           wish_direction = shared::flat_wish_direction(input);
+    shared::stair_step_t stair{};
+    if (grounded && !jump.from_ground && length(wish_direction) > 0.f &&
+        !contacts.wall_planes.empty())
+      stair = shared::try_stair_step(settings, bvh, world, contacts, state, input, hull_center,
+                                     wish_direction, recording_bucket);
+
+    if (stair.taken)
     {
-      if (dot(wish_dir_xz, plane.normal) < 0.f)
-      {
-        pressing_into_wall = true;
-        break;
-      }
-    }
-
-    if (pressing_into_wall)
-    {
-      const float step_height = cvars.pm_step_height;
-      vec3 raised_pos = player_pos + vec3{0.f, step_height, 0.f};
-      Collider_Planes raised_planes =
-          resolve_collisions(bvh, world, raised_pos, half_width, half_height,
-                             recording_bucket);
-
-      // Only abort if a raised wall specifically blocks our wish direction.
-      // Walls from other nearby obstacles that we're not moving into are ignored.
-      bool raised_blocks_wish = false;
-      for (const auto &plane : raised_planes.wall_planes)
-      {
-        if (dot(wish_dir_xz, plane.normal) < 0.f)
-        {
-          raised_blocks_wish = true;
-          break;
-        }
-      }
-
-      if (!raised_blocks_wish && raised_planes.ceiling_planes.empty())
-      {
-        bool raised_has_ground = !raised_planes.ground_planes.empty();
-        vec3 raised_ground_normal = raised_has_ground
-                                        ? raised_planes.ground_planes[0].normal
-                                        : vec3{0.f, 1.f, 0.f};
-
-        // old_velocity may be near-zero: it was clipped against the wall that
-        // triggered this step-up and then zeroed by friction. Reconstruct to
-        // the intended running speed so the player carries momentum through
-        // the step rather than shuffling across it at ~0 units/s.
-        vec3 old_vel_xz = vec3{old_velocity.x, 0.f, old_velocity.z};
-        if (length(old_vel_xz) < cvars.pm_speed_threshold)
-          old_vel_xz = wish_dir_xz * cvars.pm_maxspeed;
-        vec3 step_pos, step_vel;
-        std::tie(step_pos, step_vel) =
-            my_walk_move(cvars, input, rules, true, raised_ground_normal, raised_planes,
-                         raised_pos, old_vel_xz, front, right, dt);
-
-        // Drop back down by step_height. resolve_collisions will push the
-        // player up to sit on top of whatever surface is below (the step top,
-        // or the original floor if we overshot).
-        //
-        // IMPORTANT: we also push extra forward by step_height in the wish
-        // direction before dropping. Without this, the player's center is only
-        // (velocity * dt) ≈ 5 units past the step edge. The step's side face
-        // then has less absolute penetration than the top face, so
-        // resolve_collisions pushes the player sideways (wall) instead of up
-        // (ground). Adding step_height of extra horizontal offset guarantees
-        // the top face always wins the SAT test regardless of step size.
-        vec3 drop_pos = step_pos;
-        drop_pos.x += wish_dir_xz.x * step_height;
-        drop_pos.z += wish_dir_xz.z * step_height;
-        drop_pos.y -= step_height;
-        Collider_Planes drop_planes =
-            resolve_collisions(bvh, world, drop_pos, half_width, half_height,
-                               recording_bucket);
-
-        // Reject the step if a wall still blocks the wish direction at the
-        // drop position — that means we ran into a real obstacle, not just
-        // the edge of the stair we were climbing.
-        bool drop_wall_blocks = false;
-        for (const auto &p : drop_planes.wall_planes)
-        {
-          if (dot(wish_dir_xz, p.normal) < 0.f)
-          {
-            drop_wall_blocks = true;
-            break;
-          }
-        }
-
-        if (!drop_planes.ground_planes.empty() && !drop_wall_blocks)
-        {
-          new_pos = drop_pos;
-          // Do not use step_vel here. old_velocity may have been partially
-          // clipped by the wall (anywhere from 0..maxspeed), so step_vel
-          // inherits that reduced speed after friction — giving the player
-          // a visible slowdown on every step. The step bypasses the wall
-          // entirely, so carry full speed in the wish direction instead.
-          new_vel = wish_dir_xz * cvars.pm_maxspeed;
-          new_vel.y = 0.f;
-          used_step = true;
-        }
-      }
-    } // if (pressing_into_wall)
-  }   // if (grounded && !ground_jump_fired && has_wish && ...)
-
-  if (!used_step)
-  {
-    if (reeling)
-    {
-      // No accel, no friction, no gravity: the velocity IS the reel, so
-      // anything else would be a second author of it. Walls are left to the
-      // post-move resolve below -- a reel that grinds into a corner is held
-      // there until the timer lets go.
-      //
-      // BOTH ends of the step are clamped so the split into sub-steps lands in
-      // the same place. The DISTANCE cap targets the arrival radius rather than
-      // the anchor, so a reel converges on exactly that sphere instead of
-      // stopping wherever a step happened to carry it inside; the TIME cap
-      // spends only the pull that is left, so the travel is reel_speed times
-      // the pull duration however the tick was cut.
-      const vec3  to_anchor          = movement.hook_anchor_position - player_pos;
-      const float distance_to_anchor = length(to_anchor);
-      const float distance_remaining =
-          std::max(distance_to_anchor - cvars.pm_hook_arrive_radius, 0.f);
-      const float reel_dt = std::min(dt, movement.seconds_of_hook_pull_remaining);
-      const vec3 reel_direction =
-          distance_to_anchor > 0.f ? to_anchor * (1.f / distance_to_anchor) : vec3{};
-
-      // The distance cap clamps the STEP, never the speed: a reel that arrives
-      // mid-step still lets go at full reel speed, so what you are flung with
-      // is the tunable rather than whatever fraction of a step was left. That
-      // is also what makes the release velocity the same however the tick was
-      // cut -- the last step's leftover is a function of the split.
-      const float travel = std::min(cvars.pm_hook_reel_speed * reel_dt, distance_remaining);
-
-      new_vel = reel_direction * cvars.pm_hook_reel_speed;
-      new_pos = player_pos + reel_direction * travel;
-
-      movement.seconds_of_hook_pull_remaining -= dt;
-      if (movement.seconds_of_hook_pull_remaining <= 0.f)
-      {
-        movement.seconds_of_hook_pull_remaining = 0.f;
-        movement.hook_anchor_uid                = shared::null_entity_uid;
-        borrow_speed(movement, cvars.pm_hook_release_borrow_seconds);
-        hook_released         = true;
-        hook_release_position = new_pos;
-        hook_release_velocity = new_vel;
-      }
-    }
-    else if (grounded && !ground_jump_fired)
-    {
-      //@FIXME: currently, we set the y_velocity to 0 here already. because
-      // my_walk_move assumes that we are grounded.
-      // I do not really like that.
-      vec3 old_velocity_without_y = vec3{old_velocity.x, 0.f, old_velocity.z};
-      std::tie(new_pos, new_vel) =
-          my_walk_move(cvars, input, rules, has_ground, ground_normal, collider_planes,
-                       player_pos, old_velocity_without_y, front, right, dt);
+      new_center   = stair.hull_center;
+      new_velocity = stair.velocity;
     }
     else
     {
-      // velocity_entering_move, not old_velocity: a jump replaced the Y
-      // component above and this is the path that integrates it. They are the
-      // same vector on every step where no jump fired.
-      std::tie(new_pos, new_vel) = my_air_move(
-          cvars, input, rules, aim_sweep, has_ground && !ground_jump_fired,
-          ground_jump_fired ? vec3{0.f, 1.f, 0.f} : ground_normal, has_ceiling,
-          ceiling_normal, collider_planes, player_pos, velocity_entering_move,
-          front, right, dt);
+      // --- 3 SLIDE ---
+      const shared::wanted_move_t wanted =
+          shared::decide_move(settings, contacts, grounded, jump.velocity, state, input);
+      const shared::slide_result_t slid =
+          shared::slide(settings, contacts, grounded, wanted, hull_center, dt);
+      new_center   = slid.hull_center;
+      new_velocity = slid.velocity;
     }
   }
 
-  const bool jumped = ground_jump_fired || air_jump_fired;
+  const shared::settled_move_t settled = shared::resolve_after_move(
+      settings, bvh, world, new_center, new_velocity, recording_bucket);
 
-  // Post-move collision resolve: push position out of any geometry we
-  // tunneled into, and correct velocity so it doesn't fight the surface.
-  Collider_Planes post_planes =
-      resolve_collisions(bvh, world, new_pos, half_width, half_height,
-                         recording_bucket);
+  state.feet     = settled.hull_center - hull_center_offset;
+  state.velocity = settled.velocity;
 
-  const float overbounce = cvars.pm_overbounce;
-
-  // Ground: the pre-move resolve uses a penetration test, so the player must
-  // be *inside* geometry for has_ground to be true. But this resolve pushes
-  // the player to exactly the surface (penetration = 0), which reads as
-  // "outside" next frame — so the pre-move resolve won't detect ground.
-  // Without this snap, the player enters air_move, gravity accumulates
-  // unchecked (-3800+), and the post-move keeps pushing them back each frame
-  // in an invisible free-fall loop.
-  //
-  // We do a plain Y=0 snap here, NOT clip_vector — overbounce would push
-  // velocity slightly upward, which fails the grounded check (vel_y <= 0).
-  // This snap firing on a downward velocity *is* a landing: the player came in
-  // falling (air_move leaves new_vel.y negative) and the ground arrests it.
-  // Walking/resting on flat ground never trips this — my_walk_move zeroes y, so
-  // new_vel.y is already 0. The arrested speed is the impact magnitude.
-  float land_impact_speed = 0.f;
-  if (!post_planes.ground_planes.empty() && new_vel.y < 0.f)
-  {
-    land_impact_speed = -new_vel.y;
-    new_vel.y = 0.f;
-  }
-
-  for (const auto &plane : post_planes.ceiling_planes)
-  {
-    if (dot(new_vel, plane.normal) < 0.f)
-      new_vel = clip_vector(new_vel, plane.normal, overbounce);
-  }
-  for (const auto &plane : post_planes.wall_planes)
-  {
-    if (dot(new_vel, plane.normal) < 0.f)
-      new_vel = clip_vector(new_vel, plane.normal, overbounce);
-  }
-
-  // --- ABILITIES: the only place per-player movement state is written ---
+  // --- 4 CLOCKS: the only place per-player movement state is written ---
   //
   // Off the POST-move resolve, which is the honest end-of-step answer: the
   // pre-move `grounded` above also demands a non-rising velocity, because that
   // is what makes a jump leave the ground, so it answers "may I walk" rather
   // than "am I touching floor". An ability budget keys off the second question
   // -- a player rising off a ledge has not left the ground yet.
-  const bool grounded_after_move = !post_planes.ground_planes.empty();
-
-  if (grounded_after_move)
+  if (settled.grounded)
   {
     // Landing is what refills the budget, not jumping. Tying it to the jump
     // would let a player who walked off a ledge spend charges they never
@@ -1115,8 +225,8 @@ std::tuple<vec3, vec3> player_move(
     movement.time_since_grounded_seconds += dt;
   }
 
-  movement.is_grounded = grounded_after_move;
-  movement.ground_mover_uid = post_planes.ground_mover_uid;
+  movement.is_grounded      = settled.grounded;
+  movement.ground_mover_uid = settled.ground_mover_uid;
 
   // Counted down HERE rather than at the fire site for the same reason
   // time_since_grounded_seconds is accumulated here: N sub-steps summing to one
@@ -1134,9 +244,9 @@ std::tuple<vec3, vec3> player_move(
 
   // The edge's other half, written last so the next step compares against what
   // this one actually saw.
-  movement.jump_was_held = input.jump_pressed;
+  movement.jump_was_held = input.buttons.jump_pressed;
 
-  // --- MOVEMENT VOLUMES: a pad launches the step that carried us into it ---
+  // --- 5 TOUCH: a pad launches the step that carried us into it ---
   //
   // After the ground snap on purpose. A player falling onto a pad LANDS and is
   // then thrown, so the land is still reported (it happened) and the launch is
@@ -1144,66 +254,29 @@ std::tuple<vec3, vec3> player_move(
   // snap. Sub-tick invariant for free: the step that carries the hull in is the
   // step that launches it, on both sides, so an edge count changes nothing.
   //
+  // After the clocks for the same reason: a launch at the end of a step has
+  // not spent any of what it borrows yet.
+  //
   // The latch fires on the first overlapped volume that is NOT the one we are
   // already latched to, which is what makes stepping from one pad straight onto
   // another fire twice while standing on one fires once.
-  const vec3 feet_after_move = new_pos - hull_center_offset;
-  const shared::aabb_bounds_t hull_after_move =
-      shared::player_hull_bounds(feet_after_move, half_width, half_height);
-
-  bool                 launched_by_pad = false;
-  shared::entity_uid_t launched_by     = shared::null_entity_uid;
-  shared::movement_volume_kind_t launched_by_kind = shared::movement_volume_kind_t::Jump_Pad;
-  bool                 touching_a_volume = false;
-
-  for (const shared::movement_volume_t &volume : world.movement_volumes)
-  {
-    if (!volume.enabled)
-      continue;
-    if (!shared::aabbs_intersect(hull_after_move, volume.bounds))
-      continue;
-
-    touching_a_volume = true;
-
-    if (volume.uid == movement.pad_contact_uid)
-      continue;
-
-    switch (volume.kind)
-    {
-      case shared::movement_volume_kind_t::Jump_Pad:
-        new_vel = volume.launch_velocity;
-        movement.seconds_until_speed_returns_to_base_speed =
-            std::max(movement.seconds_until_speed_returns_to_base_speed,
-                     pad_flight_seconds(cvars, volume.launch_velocity));
-        break;
-      case shared::movement_volume_kind_t::Bounce:
-        new_vel.y = volume.launch_velocity.y;
-        break;
-    }
-    movement.pad_contact_uid   = volume.uid;
-    launched_by_pad            = true;
-    launched_by                = volume.uid;
-    launched_by_kind           = volume.kind;
-    break;
-  }
-
-  if (!touching_a_volume)
-    movement.pad_contact_uid = shared::null_entity_uid;
+  const shared::volume_touch_t touch =
+      shared::touch_movement_volumes(settings, world.movement_volumes, state);
 
   if (out_events)
   {
-    out_events->jumped            = jumped;
-    out_events->landed            = land_impact_speed > 0.f;
-    out_events->land_impact_speed = land_impact_speed;
-    out_events->launched_by_pad   = launched_by_pad;
-    out_events->pad_uid           = launched_by;
-    out_events->pad_kind          = launched_by_kind;
+    out_events->jumped            = jump.from_ground || jump.in_air;
+    out_events->landed            = settled.land_impact_speed > 0.f;
+    out_events->land_impact_speed = settled.land_impact_speed;
+    out_events->launched_by_pad   = touch.launched;
+    out_events->pad_uid           = touch.uid;
+    out_events->pad_kind          = touch.kind;
     out_events->hook_released         = hook_released;
     out_events->hook_release_position = hook_release_position;
     out_events->hook_release_velocity = hook_release_velocity;
   }
 
-  return {feet_after_move, new_vel};
+  return state;
 }
 
 mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
@@ -1225,13 +298,14 @@ mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
     if (movement.ground_mover_uid != mover.uid)
     {
       const vec3 center = result.feet + hull_center_offset;
-      if (!shared::aabbs_intersect(hull_aabb(center, half_width, half_height), mover.swept_bounds))
+      if (!shared::aabbs_intersect(shared::hull_aabb(center, half_width, half_height),
+                                   mover.swept_bounds))
         continue;
 
       bool struck = false;
       for (const shared::collision_piece_t& piece : mover.pieces)
-        struck = struck || hull_penetration_depth(piece.planes, center, half_width, half_height) >
-                               MOVER_STRIKE_DEPTH;
+        struck = struck || shared::hull_penetration_depth(piece.planes, center, half_width,
+                                                          half_height) > MOVER_STRIKE_DEPTH;
       if (!struck)
         continue;
     }
@@ -1247,15 +321,15 @@ mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
     return result;
 
   const vec3 center = result.feet + hull_center_offset;
-  std::vector<collision_candidate_t> overlapping;
-  collect_collision_candidates(bvh, world, hull_aabb(center, half_width, half_height),
-                               overlapping);
-  for (const collision_candidate_t& candidate : overlapping)
+  std::vector<shared::collision_candidate_t> overlapping;
+  shared::collect_collision_candidates(
+      bvh, world, shared::hull_aabb(center, half_width, half_height), overlapping);
+  for (const shared::collision_candidate_t& candidate : overlapping)
   {
     if (std::find(pushers.begin(), pushers.end(), candidate.mover_uid) != pushers.end())
       continue;
-    if (hull_penetration_depth(*candidate.collision_planes, center, half_width, half_height) >
-        MOVER_CRUSH_DEPTH)
+    if (shared::hull_penetration_depth(*candidate.collision_planes, center, half_width,
+                                       half_height) > MOVER_CRUSH_DEPTH)
     {
       result.crushed_by = pushers.back();
       break;

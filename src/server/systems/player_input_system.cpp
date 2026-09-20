@@ -130,6 +130,9 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     const shared::subtick_steps_t steps =
         shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
 
+    const shared::movement_settings_t move_settings =
+        shared::movement_settings_from(*context.cvars);
+
     auto move_events = Move_Events{};
     uint64_t buttons_entering_step = buttons_before_tick;
 
@@ -196,50 +199,24 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       const bool secondary_fire_pressed_in_this_step =
           (pressed_in_this_step & Button::Secondary_Fire) != 0;
 
-      const float step_yaw_rad   = linalg::to_radians(step.view.yaw);
-      const float step_pitch_rad = linalg::to_radians(step.view.pitch);
-      const float cos_yaw        = std::cos(step_yaw_rad);
-      const float sin_yaw        = std::sin(step_yaw_rad);
-      const float cos_pitch      = std::cos(step_pitch_rad);
-      const float sin_pitch      = std::sin(step_pitch_rad);
-
-      vec3 front = {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
-      //@FIXME(SJM): up vector global?
-      const vec3 up = vec3{0, 1, 0};
-      vec3       right = linalg::cross(front, up);
-      const float right_length = linalg::length(right);
-      if (right_length > 0.001f)
-        right = right * (1.0f / right_length);
-      else
-      {
-        log_warning("arbitrarily deciding that right is {{1, 0, 0}} because the vector length was too small.");
-        right = {1, 0, 0};
-      }
-
       // process movement and fire stuff only if the world is not frozen.
       if (!world_is_frozen)
       {
         auto step_events = Move_Events{};
 
-        // canonical move.
-        auto [new_pos, new_vel] = player_move(
-            *context.cvars,
-            allowed_to_move ? move_input_from_buttons(step.buttons) : Move_Input{},
-            player->movement,
-            context.world.session.bvh,
-            world,
-            player->position,
-            player->velocity,
-            front,
-            right,
-            aim_sweep_of(step),
-            16.f,
-            36.f,
-            step.dt,
-            &step_events);
+        shared::move_input_t move_input = shared::move_input_of(step);
+        if (!allowed_to_move)
+          move_input.buttons = Move_Input{};
 
-        player->position = new_pos;
-        player->velocity = new_vel;
+        // canonical move.
+        const shared::move_state_t moved = player_move(
+            move_settings, context.world.session.bvh, world,
+            {.feet = player->position, .velocity = player->velocity, .movement = player->movement},
+            move_input, &step_events);
+
+        player->position = moved.feet;
+        player->velocity = moved.velocity;
+        player->movement = moved.movement;
 
         // check what movement events happened so we can fire events and track some state.
         move_events.jumped |= step_events.jumped;
@@ -303,8 +280,9 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                              shared::fire_trigger_t::Secondary);
             mark_shot_fired(context, *player, held_entity->weapon_id);
           }
-          else if (shared::try_apply_self_impulse(weapon, shared::fire_trigger_t::Secondary,
-                                                  direction, player->movement, player->velocity))
+          else if (shared::try_apply_self_impulse(move_settings, weapon,
+                                                  shared::fire_trigger_t::Secondary, direction,
+                                                  player->movement, player->velocity))
           {
             mark_shot_fired(context, *player, held_entity->weapon_id);
           }

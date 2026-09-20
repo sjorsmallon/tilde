@@ -31,14 +31,6 @@ enum class secondary_fire_t : uint8_t
   Projectile,
 };
 
-// Add joins the impulse to the velocity the player already has; Set REPLACES
-// it, so the outcome is the same whatever the player was doing at the press.
-enum class impulse_mode_t : uint8_t
-{
-  Add,
-  Set,
-};
-
 // Speed along the AIM at the moment of the press, and speed straight up. Two
 // numbers rather than one direction because the two abilities this exists for
 // want opposite halves of it: a Godspeed-shaped dash is aim with a little lift,
@@ -54,8 +46,6 @@ struct self_impulse_t
   impulse_mode_t mode;
   float          along_aim_speed;
   float          upward_speed;
-  // pm_acceleration instant: how long the dash's speed outlasts the input.
-  float          speed_return_seconds;
 };
 
 // Which button the impulse came off. Primary is the trigger, Secondary the
@@ -233,18 +223,16 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size                 = 0,
      .reload_duration_seconds       = 0.f,
      .fire_resolution               = entities::Fire_Resolution::Self_Impulse,
-     .self_impulse                  = {.mode                 = impulse_mode_t::Add,
-                                       .along_aim_speed      = 900.f,
-                                       .upward_speed         = 150.f,
-                                       .speed_return_seconds = 0.5f},
+     .self_impulse                  = {.mode            = impulse_mode_t::Add,
+                                       .along_aim_speed = 900.f,
+                                       .upward_speed    = 150.f},
      .self_impulse_cooldown_seconds = 1.5f,
      // The right mouse button is the same dash with the velocity REPLACED
      // rather than added, so the two can be felt side by side on one key each.
      .secondary_fire                = secondary_fire_t::Self_Impulse,
-     .secondary_self_impulse        = {.mode                 = impulse_mode_t::Set,
-                                       .along_aim_speed      = 900.f,
-                                       .upward_speed         = 0.f,
-                                       .speed_return_seconds = 0.5f},
+     .secondary_self_impulse        = {.mode            = impulse_mode_t::Set,
+                                       .along_aim_speed = 900.f,
+                                       .upward_speed    = 0.f},
      .sounds                        = {.fire         = assets::sound_asset::gust_of_wind,
                                        .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Swapper,
@@ -439,7 +427,8 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 // row's own impulse, Secondary the one behind secondary_fire_t::Self_Impulse.
 // A button whose half is not an impulse is refused here rather than by the
 // caller, which is what lets every site call this off whatever is in the hand.
-[[nodiscard]] inline bool try_apply_self_impulse(const weapon_definition_t& weapon,
+[[nodiscard]] inline bool try_apply_self_impulse(const movement_settings_t& settings,
+                                                 const weapon_definition_t& weapon,
                                                  fire_trigger_t trigger,
                                                  const vec3f& aim_direction,
                                                  entities::Movement& movement,
@@ -463,23 +452,39 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
   if (movement.seconds_until_impulse_ready > 0.f)
     return false;
   
+  // The row states WHAT the press wants and the model decides where it lands.
+  // The vertical half is the one that differs from the horizontal: an Add
+  // dash REPLACES a fall (max(vy, 0) + lift) rather than summing with it.
+  vec3f wanted = aim_direction * impulse->along_aim_speed;
   switch (impulse->mode)
   {
-  case impulse_mode_t::Add:
-    velocity = velocity + aim_direction * impulse->along_aim_speed;
-    if (impulse->upward_speed > 0.f)
-      velocity.y = std::max(velocity.y, 0.f) + impulse->upward_speed;
+  case impulse_mode_t::Keep:
     break;
 
+  case impulse_mode_t::Add:
+  {
+    impulse_t added{.horizontal = impulse_mode_t::Add,
+                    .vertical   = impulse_mode_t::Add,
+                    .velocity   = wanted};
+    if (impulse->upward_speed > 0.f)
+    {
+      added.vertical   = impulse_mode_t::Set;
+      added.velocity.y = std::max(velocity.y + wanted.y, 0.f) + impulse->upward_speed;
+    }
+    apply_impulse(settings, velocity, movement, added);
+    break;
+  }
+
   case impulse_mode_t::Set:
-    velocity = aim_direction * impulse->along_aim_speed;
-    velocity.y += impulse->upward_speed;
+    wanted.y += impulse->upward_speed;
+    apply_impulse(settings, velocity, movement,
+                  {.horizontal = impulse_mode_t::Set,
+                   .vertical   = impulse_mode_t::Set,
+                   .velocity   = wanted});
     break;
   }
 
   movement.seconds_until_impulse_ready = weapon.self_impulse_cooldown_seconds;
-  movement.seconds_until_speed_returns_to_base_speed =
-      std::max(movement.seconds_until_speed_returns_to_base_speed, impulse->speed_return_seconds);
   return true;
 }
 

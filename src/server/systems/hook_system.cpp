@@ -31,9 +31,11 @@ static void throw_victim_at_shooter(const server_context_t& context,
   const float flight_seconds = std::clamp(linalg::length(to_shooter) / hook.pull_speed,
                                           SHORTEST_PULL_SECONDS, LONGEST_PULL_SECONDS);
 
-  victim.velocity = to_shooter * (1.f / flight_seconds) +
-                    vec3f{0.f, 0.5f * context.cvars->g_gravity * flight_seconds, 0.f};
-  borrow_speed(victim.movement, flight_seconds);
+  shared::apply_impulse(shared::movement_settings_from(*context.cvars), victim.velocity,
+                        victim.movement,
+                        {.velocity = to_shooter * (1.f / flight_seconds) +
+                                     vec3f{0.f, 0.5f * context.cvars->g_gravity * flight_seconds,
+                                           0.f}});
 }
 
 // The reel's other half: player_move is pure and cannot resolve a uid, so the
@@ -56,7 +58,8 @@ static void refresh_hook_anchors(server_context_t& context)
     {
       victim.movement.seconds_of_hook_pull_remaining = 0.f;
       victim.movement.hook_anchor_uid                = shared::null_entity_uid;
-      borrow_speed(victim.movement, context.cvars->pm_hook_release_borrow_seconds);
+      shared::apply_impulse(shared::movement_settings_from(*context.cvars), victim.velocity,
+                            victim.movement, {.velocity = victim.velocity});
       continue;
     }
 

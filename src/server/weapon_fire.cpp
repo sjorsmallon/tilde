@@ -482,7 +482,8 @@ void resolve_player_shot(
     }
     case entities::Fire_Resolution::Self_Impulse:
     {
-      if (!shared::try_apply_self_impulse(weapon, shared::fire_trigger_t::Primary, direction,
+      if (!shared::try_apply_self_impulse(shared::movement_settings_from(*context.cvars), weapon,
+                                          shared::fire_trigger_t::Primary, direction,
                                           player->movement, player->velocity))
         return;
       break;

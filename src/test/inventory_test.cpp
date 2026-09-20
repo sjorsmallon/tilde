@@ -321,12 +321,15 @@ int main()
     const shared::weapon_definition_t& dash =
         shared::get_weapon_definition(entities::Weapon::Dash);
 
+    const cvars::cvar_state_t         defaults{};
+    const shared::movement_settings_t settings = shared::movement_settings_from(defaults);
+
     entities::Movement movement{};
     vec3f              velocity{0.f, -400.f, 0.f};
     const vec3f        aim{1.f, 0.f, 0.f};
 
-    const bool fired = shared::try_apply_self_impulse(dash, shared::fire_trigger_t::Primary,
-                                                      aim, movement, velocity);
+    const bool fired = shared::try_apply_self_impulse(
+        settings, dash, shared::fire_trigger_t::Primary, aim, movement, velocity);
     check(fired && velocity.x == dash.self_impulse.along_aim_speed,
           "a self-impulse pushes the shooter along the aim it was fired on");
 
@@ -337,21 +340,34 @@ int main()
           "the upward half cancels a fall rather than being eaten by it");
     check(movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
           "firing charges the cooldown, which is the only gate there is");
-    check(dash.self_impulse.speed_return_seconds > 0.f &&
-              movement.seconds_until_speed_returns_to_base_speed ==
-                  dash.self_impulse.speed_return_seconds,
-          "firing borrows the dash's speed, or pm_acceleration instant erases it next step");
+    // The row carries no duration any more: where an impulse lands and how
+    // long it lasts is the MODEL's answer, and quake's is "in the velocity".
+    check(movement.seconds_until_speed_returns_to_base_speed == 0.f,
+          "the quake model keeps an impulse in the velocity, so it borrows nothing");
+
+    cvars::cvar_state_t instant_cvars{};
+    instant_cvars.pm_acceleration = cvars::Acceleration_Mode::instant;
+    const shared::movement_settings_t instant_settings =
+        shared::movement_settings_from(instant_cvars);
+
+    entities::Movement instant_movement{};
+    vec3f              instant_velocity{0.f, 0.f, 0.f};
+    check(shared::try_apply_self_impulse(instant_settings, dash, shared::fire_trigger_t::Primary,
+                                         aim, instant_movement, instant_velocity) &&
+              instant_movement.seconds_until_speed_returns_to_base_speed ==
+                  instant_settings.instant.speed_return_seconds,
+          "the instant model borrows it instead, for a duration the row does not carry");
 
     vec3f      second_velocity{0.f, 0.f, 0.f};
     const bool fired_again = shared::try_apply_self_impulse(
-        dash, shared::fire_trigger_t::Primary, aim, movement, second_velocity);
+        settings, dash, shared::fire_trigger_t::Primary, aim, movement, second_velocity);
     check(!fired_again && second_velocity.x == 0.f,
           "a second press while the cooldown runs does nothing at all");
 
     // The secondary spends the SAME cooldown: one countdown in Movement, so
     // one gate for both buttons.
     vec3f secondary_while_cooling{0.f, 0.f, 0.f};
-    check(!shared::try_apply_self_impulse(dash, shared::fire_trigger_t::Secondary, aim,
+    check(!shared::try_apply_self_impulse(settings, dash, shared::fire_trigger_t::Secondary, aim,
                                           movement, secondary_while_cooling),
           "the secondary impulse is refused while the primary's cooldown runs");
 
@@ -363,7 +379,7 @@ int main()
     check(dash.secondary_fire == shared::secondary_fire_t::Self_Impulse &&
               dash.secondary_self_impulse.mode == shared::impulse_mode_t::Set,
           "the Dash's right mouse button is the Set-mode impulse this block tests");
-    check(shared::try_apply_self_impulse(dash, shared::fire_trigger_t::Secondary, aim,
+    check(shared::try_apply_self_impulse(settings, dash, shared::fire_trigger_t::Secondary, aim,
                                          secondary_movement, secondary_velocity),
           "the secondary impulse fires off a fresh cooldown");
     check(secondary_velocity.x == dash.secondary_self_impulse.along_aim_speed &&
@@ -372,9 +388,8 @@ int main()
           "a Set-mode impulse replaces the velocity rather than joining it");
     check(secondary_movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
           "the secondary charges the shared cooldown");
-    check(secondary_movement.seconds_until_speed_returns_to_base_speed ==
-              dash.secondary_self_impulse.speed_return_seconds,
-          "the secondary borrows its speed too");
+    check(secondary_movement.seconds_until_speed_returns_to_base_speed == 0.f,
+          "and the secondary asks the same model the same question");
 
     // Nothing else in the table is one, and asking is the arm's own job rather
     // than the caller's -- the client calls this straight off whatever is in
@@ -382,11 +397,13 @@ int main()
     // secondary is Zoom, which is the client's FOV and no impulse at all.
     entities::Movement scout_movement{};
     vec3f              scout_velocity{0.f, 0.f, 0.f};
-    check(!shared::try_apply_self_impulse(shared::get_weapon_definition(entities::Weapon::Scout),
+    check(!shared::try_apply_self_impulse(settings,
+                                          shared::get_weapon_definition(entities::Weapon::Scout),
                                           shared::fire_trigger_t::Primary, aim, scout_movement,
                                           scout_velocity),
           "a weapon that is not a self-impulse is refused by the function, not by its caller");
-    check(!shared::try_apply_self_impulse(shared::get_weapon_definition(entities::Weapon::Scout),
+    check(!shared::try_apply_self_impulse(settings,
+                                          shared::get_weapon_definition(entities::Weapon::Scout),
                                           shared::fire_trigger_t::Secondary, aim, scout_movement,
                                           scout_velocity),
           "a Zoom secondary is refused as an impulse: the scope is the client's, not a shove");

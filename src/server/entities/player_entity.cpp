@@ -25,21 +25,25 @@ void teleport(Player_Entity& player, const Teleport_Data& payload,
 
   player.position = destination->position;
   if (!payload.keep_velocity)
-    player.velocity = {};
+    shared::apply_impulse(shared::movement_settings_from(*context.server.cvars), player.velocity,
+                          player.movement, {});
 }
 
 void set_velocity(Player_Entity& player, const Set_Velocity_Data& payload,
                   server::input_context_t& context)
 {
-  player.velocity = payload.velocity;
-  borrow_speed(player.movement, context.server.cvars->pm_speed_return_seconds);
+  shared::apply_impulse(shared::movement_settings_from(*context.server.cvars), player.velocity,
+                        player.movement, {.velocity = payload.velocity});
 }
 
 void add_velocity(Player_Entity& player, const Add_Velocity_Data& payload,
                   server::input_context_t& context)
 {
-  player.velocity = player.velocity + payload.velocity;
-  borrow_speed(player.movement, context.server.cvars->pm_speed_return_seconds);
+  shared::apply_impulse(shared::movement_settings_from(*context.server.cvars), player.velocity,
+                        player.movement,
+                        {.horizontal = shared::impulse_mode_t::Add,
+                         .vertical   = shared::impulse_mode_t::Add,
+                         .velocity   = payload.velocity});
 }
 
 // Stored as a uid and resolved at the respawn rather than copied as a
