@@ -7,8 +7,8 @@ cvars
 {
   "g_gravity" "500"
   "next_map" "2"
-  "pm_model" "instant"
   "pm_maxspeed" "1000"
+  "pm_model" "instant"
   "sv_skybox" "night_sky"
 }
 materials
@@ -48,6 +48,18 @@ connections
     {
       "destination" "2"
       "keep_velocity" "false"
+    }
+  }
+  connection
+  {
+    "sender" "6"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "9"
+    "action" "Add"
+    override
+    {
+      "amount" "-1"
     }
   }
 }
@@ -258,7 +270,7 @@ entity
   "name" ""
   "light.color" "1 1 1"
   "light.intensity" "0.78"
-  "light.mode" "Baked"
+  "light.mode" "Dynamic"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "angular_diameter_degrees" "0"

@@ -484,7 +484,7 @@ entity
   "position" "1576 -278.55347 -344"
   "orientation" "0 0 0 1"
   "name" ""
-  "ammo" "3"
+  "ammo" "1"
   "reserve_ammo" "-1"
   "weapon_id" "Bubble"
   "damage_type" "Normal"

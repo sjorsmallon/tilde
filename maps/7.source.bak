@@ -6,8 +6,9 @@ entity
 cvars
 {
   "g_gravity" "500"
-  "pm_acceleration" "instant"
+  "next_map" "8_hook"
   "pm_maxspeed" "1000"
+  "pm_model" "instant"
   "sv_skybox" "night_sky"
 }
 materials

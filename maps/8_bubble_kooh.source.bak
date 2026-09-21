@@ -1,13 +1,13 @@
 entity
 {
   "classname" "worldspawn"
-  "name" "8.source"
+  "name" "8_bubble_kooh.source"
 }
 cvars
 {
   "g_gravity" "500"
-  "pm_model" "instant"
   "pm_maxspeed" "1000"
+  "pm_model" "instant"
   "sv_skybox" "night_sky"
 }
 materials
@@ -24,6 +24,18 @@ connections
     "target_kind" "Uid"
     "target" "5"
     "action" "Complete_Level"
+  }
+  connection
+  {
+    "sender" "136"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "9"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
   }
 }
 groups
@@ -43,15 +55,19 @@ groups
   }
   group
   {
-    "_uid" "134"
-    "name" "group 22"
+    "_uid" "140"
+    "name" "level_end"
     member
     {
-      "uid" "133"
+      "uid" "136"
     }
     member
     {
-      "uid" "132"
+      "uid" "137"
+    }
+    member
+    {
+      "uid" "138"
     }
   }
 }
@@ -379,7 +395,7 @@ brush
 brush
 {
   "_uid" "133"
-  "vertices" "2849.7395 820.949829 -4021.83154, 2849.7395 820.949829 -2741.83252, 2849.7395 933.257446 -4021.83154, 2849.7395 933.257446 -2741.83252, 5595.78223 820.949829 -4021.83154, 5595.78223 820.949829 -2741.83252, 5595.78223 933.257446 -4021.83154, 5595.78223 933.257446 -2741.83252"
+  "vertices" "3490.97876 -56.1538086 -4228.26855, 3490.97876 -56.1538086 -2948.26709, 3490.97876 56.1538086 -4228.26855, 3490.97876 56.1538086 -2948.26709, 6237.02148 -56.1538086 -4228.26855, 6237.02148 -56.1538086 -2948.26709, 6237.02148 56.1538086 -4228.26855, 6237.02148 56.1538086 -2948.26709"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -389,14 +405,14 @@ brush
   face
   {
     "normal" "-1 0 0"
-    "distance" "-2849.7395"
+    "distance" "-3490.97876"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "-276.813477"
-    "v_shift" "2683.79395"
+    "u_shift" "-70.3789062"
+    "v_shift" "3560.89771"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -405,14 +421,14 @@ brush
   face
   {
     "normal" "-0 -1 -0"
-    "distance" "-820.949829"
+    "distance" "56.1538086"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
-    "u_shift" "-3634.17529"
-    "v_shift" "3381.83252"
+    "u_shift" "-4275.41455"
+    "v_shift" "3588.26709"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -421,14 +437,14 @@ brush
   face
   {
     "normal" "0 0 -1"
-    "distance" "4021.83154"
+    "distance" "4228.26855"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
-    "u_shift" "-3634.17529"
-    "v_shift" "2683.79395"
+    "u_shift" "-4275.41455"
+    "v_shift" "3560.89771"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -437,14 +453,14 @@ brush
   face
   {
     "normal" "-0 -0 1"
-    "distance" "-2741.83252"
+    "distance" "-2948.26709"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
-    "u_shift" "-3634.17529"
-    "v_shift" "2683.79395"
+    "u_shift" "-4275.41455"
+    "v_shift" "3560.89771"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -453,14 +469,14 @@ brush
   face
   {
     "normal" "0 1 0"
-    "distance" "933.257446"
+    "distance" "56.1538086"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
-    "u_shift" "-3634.17529"
-    "v_shift" "3381.83252"
+    "u_shift" "-4275.41455"
+    "v_shift" "3588.26709"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -469,19 +485,32 @@ brush
   face
   {
     "normal" "1 -0 -0"
-    "distance" "5595.78223"
+    "distance" "6237.02148"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "-276.813477"
-    "v_shift" "2683.79395"
+    "u_shift" "-70.3789062"
+    "v_shift" "3560.89771"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
     "smoothing_group" "0"
   }
+}
+static_mesh
+{
+  "_uid" "138"
+  "position" "5821.795410 147.720306 -3613.405273"
+  "rotation" "0 0 0 1"
+  "scale" "3.000000 3.000000 3.000000"
+  "mesh_path" "resources/glb/Duck.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
 }
 entity
 {
@@ -510,8 +539,8 @@ entity
   "position" "2139.9514 1278.1108 -541.0721"
   "orientation" "0 0 0 1"
   "name" ""
-  "counter.value" "2"
-  "counter.limit" "0"
+  "counter.value" "0"
+  "counter.limit" "2"
 }
 entity
 {
@@ -568,26 +597,20 @@ entity
   "position" "128 13.410519 -3328"
   "orientation" "0 0 0 1"
   "name" ""
+  "ammo" "1"
+  "reserve_ammo" "-1"
   "weapon_id" "Bubble"
   "damage_type" "Normal"
-  "render.mesh" "Error"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "40 40 40"
+  "render.mesh" "high_res_sphere"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
-  "render.scale" "1 1 1"
+  "render.scale" "0.08 0.08 0.08"
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
-}
-entity
-{
-  "classname" "player_spawn_entity"
-  "_uid" "132"
-  "position" "3096.2725 934.72437 -3077.0884"
-  "orientation" "0 0 0 1"
-  "name" ""
-  "spawn_type" "Human"
-  "team_allegiance" "Blu"
 }
 entity
 {
@@ -596,8 +619,12 @@ entity
   "position" "896 13.410519 -3968"
   "orientation" "0 0 0 1"
   "name" ""
-  "weapon_id" "Hook"
+  "ammo" "-1"
+  "reserve_ammo" "-1"
+  "weapon_id" "Kooh"
   "damage_type" "Normal"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "40 40 40"
   "render.mesh" "Error"
   "render.visible" "true"
   "render.is_wireframe" "false"
@@ -606,4 +633,32 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "136"
+  "position" "5920.412 178.42236 -3594.174"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "288.41217 178.42236 245.82585"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "137"
+  "position" "5719.644 698.2246 -3721.422"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "1250"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "591.2"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
 }

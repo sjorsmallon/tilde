@@ -1,0 +1,797 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "14_bubble_climber.source"
+}
+cvars
+{
+  "g_gravity" "500"
+  "next_map" "2"
+  "pm_maxspeed" "1000"
+  "pm_model" "instant"
+  "sv_skybox" "night_sky"
+}
+materials
+{
+  "0" ""
+  "1" "resources/textures/glass_blue"
+}
+connections
+{
+  connection
+  {
+    "sender" "6"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "9"
+    "action" "Add"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "9"
+    "signal" "Limit_Reached"
+    "target_kind" "Uid"
+    "target" "5"
+    "action" "Complete_Level"
+  }
+  connection
+  {
+    "sender" "3"
+    "signal" "Touched"
+    "target_kind" "Activator"
+    "action" "Teleport"
+    override
+    {
+      "destination" "2"
+      "keep_velocity" "false"
+    }
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "15"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "17"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "16"
+    "action" "Start"
+  }
+  connection
+  {
+    "sender" "6"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "9"
+    "action" "Add"
+    override
+    {
+      "amount" "-1"
+    }
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "18"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "20"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "21"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "22"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "23"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "24"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "25"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "26"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "27"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "28"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "16"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "29"
+    "action" "Fire"
+  }
+  connection
+  {
+    "sender" "17"
+    "signal" "Touched"
+    "target_kind" "Activator"
+    "action" "Grant_Weapon"
+    override
+    {
+      "weapon" "Platform"
+      "damage_type" "Normal"
+    }
+  }
+}
+groups
+{
+  group
+  {
+    "_uid" "19"
+    "name" "group 19"
+    member
+    {
+      "uid" "7"
+    }
+    member
+    {
+      "uid" "6"
+    }
+    member
+    {
+      "uid" "8"
+    }
+    member
+    {
+      "uid" "1"
+    }
+  }
+}
+brush
+{
+  "_uid" "1"
+  "vertices" "2198.3042 6040.01318 -128, 2198.3042 6040.01318 1152, 2198.3042 6154.91846 -128, 2198.3042 6154.91846 1152, 4097.54736 6040.01318 -128, 4097.54736 6040.01318 1152, 4097.54736 6154.91846 -128, 4097.54736 6154.91846 1152"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  face
+  {
+    "normal" "-1 0 0"
+    "distance" "-2198.3042"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-512"
+    "v_shift" "-6225.63379"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -1 -0"
+    "distance" "-6040.01318"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "830.722656"
+    "v_shift" "-512"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 -0.99999994"
+    "distance" "127.999947"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "830.722656"
+    "v_shift" "-6225.63379"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0 0.99999994"
+    "distance" "1151.99988"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "830.722656"
+    "v_shift" "-6225.63379"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 1 0"
+    "distance" "6154.91846"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "830.722656"
+    "v_shift" "-512"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 -0 -0"
+    "distance" "4097.54736"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-512"
+    "v_shift" "-6225.63379"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
+static_mesh
+{
+  "_uid" "7"
+  "position" "3678.660645 6194.932129 492.768738"
+  "rotation" "0 0 0 1"
+  "scale" "3.000000 3.000000 3.000000"
+  "mesh_path" "resources/glb/Duck.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
+brush
+{
+  "_uid" "12"
+  "vertices" "-1693.16846 -415.678497 -496.987549, -1693.16846 -415.678497 783.012451, -1693.16846 -103.66861 -496.987549, -1693.16846 -103.66861 783.012451, 925.168457 -415.678497 -496.987549, 925.168457 -415.678497 783.012451, 925.168457 -103.66861 -496.987549, 925.168457 -103.66861 783.012451"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  face
+  {
+    "normal" "-1 0 0"
+    "distance" "1693.16846"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1551.01257"
+    "v_shift" "415.678406"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -1 -0"
+    "distance" "415.678497"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "4003.1001"
+    "v_shift" "-143.012466"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 -1"
+    "distance" "496.987549"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "4003.1001"
+    "v_shift" "230.057678"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0 1"
+    "distance" "783.012451"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "4003.1001"
+    "v_shift" "230.057678"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 1 0"
+    "distance" "-103.66861"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "4003.1001"
+    "v_shift" "-143.012466"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 -0 -0"
+    "distance" "925.168457"
+    "material" "1"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-143.012466"
+    "v_shift" "230.057678"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "2"
+  "position" "-512 -96.32156 384"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "spawn_type" "Human"
+  "team_allegiance" "Red"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "3"
+  "position" "4280.1787 -807.41064 -1805.7404"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "6352.2314 88.58918 7115.7646"
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "4"
+  "position" "-512 -96.32156 -256"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "spawn_type" "Human"
+  "team_allegiance" "Blu"
+}
+entity
+{
+  "classname" "game_rules_entity"
+  "_uid" "5"
+  "position" "2048 1235.7031 -128"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "match.mode" "speedrun"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "6"
+  "position" "3720.5225 6276.056 494.99817"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "288.41217 178.42236 245.82585"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "8"
+  "position" "3576.5093 6745.436 384.752"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "1250"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "591.2"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
+}
+entity
+{
+  "classname" "logic_counter_entity"
+  "_uid" "9"
+  "position" "2132.304 1278.1108 128"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "counter.value" "0"
+  "counter.limit" "2"
+}
+entity
+{
+  "classname" "directional_light_entity"
+  "_uid" "10"
+  "position" "-1010.8706 696.55176 487.36945"
+  "orientation" "0 0 -0.38268343 0.92387956"
+  "name" ""
+  "light.color" "1 1 1"
+  "light.intensity" "0.78"
+  "light.mode" "Baked"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "angular_diameter_degrees" "0"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "15"
+  "position" "1792 -140.9455 820.71173"
+  "orientation" "0 0.70710677 0 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "logic_timer_entity"
+  "_uid" "16"
+  "position" "1792 1536 640"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "timer.duration_seconds" "0.8"
+  "timer.repeat" "true"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "17"
+  "position" "-512 -39.66861 97.03208"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "64 64 417.03204"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "18"
+  "position" "1800 507.8001 -289.4923"
+  "orientation" "0 0.7071067 0 -0.7071068"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "20"
+  "position" "1544 1032 990.2041"
+  "orientation" "0 0.70710677 0 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "21"
+  "position" "1552 1680.7456 -120"
+  "orientation" "0 0.7071067 0 -0.7071068"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "22"
+  "position" "1672 2029.4166 966.9431"
+  "orientation" "0 0.70710677 0 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "23"
+  "position" "1680 2678.162 -143.26096"
+  "orientation" "0 0.7071067 0 -0.7071068"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "24"
+  "position" "1652.5447 3229.16 1004.6117"
+  "orientation" "0 0.70710677 0 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "25"
+  "position" "1660.5447 3877.9053 -105.59247"
+  "orientation" "0 0.7071067 0 -0.7071068"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "26"
+  "position" "1672 4232 990.2041"
+  "orientation" "0 0.70710677 0 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "27"
+  "position" "1680 4880.745 -120"
+  "orientation" "0 0.7071067 0 -0.7071068"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "28"
+  "position" "1672 5384 1118.2041"
+  "orientation" "0 0.70710677 0 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "launcher_entity"
+  "_uid" "29"
+  "position" "1680 6032.745 8"
+  "orientation" "0 0.7071067 0 -0.7071068"
+  "name" ""
+  "switch_state.value" "true"
+  "weapon" "Bubble"
+  "trigger" "Primary"
+  "spread_yaw_degrees" "26.2"
+  "spread_pitch_degrees" "22.1"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "16 16 16"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
