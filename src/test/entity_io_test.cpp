@@ -847,6 +847,121 @@ void test_a_platform_crumbles_under_one_and_holds_under_two()
   (void)first;
 }
 
+void test_a_launcher_fires_its_weapon_row_along_its_aim()
+{
+  std::printf("connections: a launcher fires one projectile per Fire, and none while disabled\n");
+
+  wired_map_t wired = make_wired_map();
+
+  auto launcher_entity = std::make_shared<entities::Launcher_Entity>();
+  launcher_entity->name.set("bubble_cannon");
+  launcher_entity->position = {0.f, 300.f, 0.f};
+  const shared::entity_uid_t launcher = wired.map.add_entity(launcher_entity);
+
+  wired.map.connections.push_back(wire(wired.trigger, entities::entity_signal::Touched, launcher,
+                                       entities::entity_action::Fire));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+  const auto bubble_count = [&entity_system]()
+  {
+    size_t count = 0;
+    for (const entities::Bubble_Entity& bubble : entity_system.entities_of<entities::Bubble_Entity>())
+    {
+      (void)bubble;
+      ++count;
+    }
+    return count;
+  };
+
+  const shared::entity_uid_t toucher = place_player_in(context, {0.f, 0.f, 0.f});
+  run_one_tick(context);
+  check(bubble_count() == 1, "one touch is one bubble");
+
+  for (const entities::Bubble_Entity& bubble : entity_system.entities_of<entities::Bubble_Entity>())
+  {
+    const entities::Launcher_Entity* in_session = entity_system.get<entities::Launcher_Entity>(launcher);
+    check(bubble.projectile.owner_uid == launcher, "owned by the launcher, not by whoever touched");
+    check(bubble.position.y == 300.f, "spawned at the launcher");
+    const linalg::vec3f aim = linalg::forward(in_session->orientation);
+    check(linalg::dot(bubble.projectile.velocity, aim) > 0.f &&
+              linalg::length(linalg::cross(bubble.projectile.velocity, aim)) < 0.001f,
+          "flying along the launcher's orientation");
+  }
+
+  move_player(context, toucher, {5000.f, 0.f, 0.f});
+  run_one_tick(context);
+  entity_system.get<entities::Launcher_Entity>(launcher)->switch_state.value = false;
+  move_player(context, toucher, {0.f, 0.f, 0.f});
+  run_one_tick(context);
+  check(bubble_count() == 1, "a disabled launcher swallows its Fire");
+}
+
+std::vector<linalg::vec3f> launcher_shot_directions(uint32_t shot_count)
+{
+  wired_map_t wired = make_wired_map();
+
+  auto launcher_entity = std::make_shared<entities::Launcher_Entity>();
+  launcher_entity->position             = {0.f, 300.f, 0.f};
+  launcher_entity->weapon               = entities::Weapon::Rocket_Launcher;
+  launcher_entity->spread_yaw_degrees   = 20.f;
+  launcher_entity->spread_pitch_degrees = 10.f;
+  const shared::entity_uid_t launcher = wired.map.add_entity(launcher_entity);
+
+  wired.map.connections.push_back(wire(wired.trigger, entities::entity_signal::Touched, launcher,
+                                       entities::entity_action::Fire));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  const shared::entity_uid_t toucher = place_player_in(context, {5000.f, 0.f, 0.f});
+
+  std::vector<linalg::vec3f> directions;
+  for (uint32_t shot = 0; shot < shot_count; ++shot)
+  {
+    move_player(context, toucher, {0.f, 0.f, 0.f});
+    run_one_tick(context);
+    move_player(context, toucher, {5000.f, 0.f, 0.f});
+    run_one_tick(context);
+  }
+
+  for (const entities::Rocket_Entity& rocket :
+       context.world.session.entity_system.entities_of<entities::Rocket_Entity>())
+    directions.push_back(linalg::normalize(rocket.projectile.velocity));
+  return directions;
+}
+
+void test_a_launchers_spread_is_the_same_pattern_every_attempt()
+{
+  std::printf("connections: a launcher's spread is derived, bounded and repeats per attempt\n");
+
+  constexpr uint32_t SHOT_COUNT = 8;
+  const std::vector<linalg::vec3f> first  = launcher_shot_directions(SHOT_COUNT);
+  const std::vector<linalg::vec3f> second = launcher_shot_directions(SHOT_COUNT);
+
+  check(first.size() == SHOT_COUNT && second.size() == SHOT_COUNT, "every Fire spawned a rocket");
+
+  bool repeats = first.size() == second.size();
+  bool bounded = true;
+  bool varies  = false;
+  for (size_t shot = 0; shot < first.size() && shot < second.size(); ++shot)
+  {
+    repeats = repeats && linalg::length(first[shot] - second[shot]) == 0.f;
+    // Forward is +X at the identity: yaw swings it in XZ, pitch lifts it in Y.
+    const float yaw_degrees   = std::atan2(first[shot].z, first[shot].x) * (180.f / 3.14159265f);
+    const float pitch_degrees = std::asin(first[shot].y) * (180.f / 3.14159265f);
+    bounded = bounded && std::abs(yaw_degrees) <= 20.001f && std::abs(pitch_degrees) <= 10.001f;
+    varies  = varies || linalg::length(first[shot] - first[0]) > 0.01f;
+  }
+  check(repeats, "a second attempt fires the same directions, shot for shot");
+  check(bounded, "every shot is inside the two half-angles");
+  check(varies, "and they are not all the same shot");
+}
+
 void test_a_disabled_trigger_releases_whoever_is_inside()
 {
   std::printf("connections: switching a trigger off is a Left, not a freeze\n");
@@ -1200,6 +1315,8 @@ int main()
   test_the_trigger_system_emits_edges();
   test_a_disabled_trigger_releases_whoever_is_inside();
   test_a_platform_crumbles_under_one_and_holds_under_two();
+  test_a_launcher_fires_its_weapon_row_along_its_aim();
+  test_a_launchers_spread_is_the_same_pattern_every_attempt();
   test_the_toucher_is_the_activator();
   test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();

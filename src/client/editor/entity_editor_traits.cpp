@@ -353,6 +353,15 @@ void jump_pad_reach(const entities::Entity* e, pass_builder_t& draws,
                     settings.gravity);
 }
 
+void launcher_diagram(const entities::Entity* e, pass_builder_t& draws,
+                      const linalg::vec3& position, color_t color,
+                      const entity_draw_settings_t&)
+{
+  constexpr float LAUNCHER_AIM_ARROW_LENGTH = 96.f;
+  draws.debug.arrow(position, position + linalg::forward(e->orientation) * LAUNCHER_AIM_ARROW_LENGTH,
+                    color);
+}
+
 void point_light_diagram(const entities::Entity* e, pass_builder_t& draws,
                          const linalg::vec3& position, color_t color,
                          const entity_draw_settings_t&)
@@ -481,6 +490,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::icon_timer},
     {.type = entity_type::Path_Node_Entity, .color = colors::green},
     {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = assets::texture_asset::move},
+    {.type = entity_type::Launcher_Entity, .color = colors::orange, .draw_diagram = &launcher_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

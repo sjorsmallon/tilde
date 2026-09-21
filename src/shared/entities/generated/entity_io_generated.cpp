@@ -240,6 +240,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // End_Match
   {},   // Reverse
   {GO_TO_FIELDS, 1},
+  {},   // Fire
 };
 
 constexpr Span<const field_info_t> SIGNAL_PAYLOAD_FIELDS[] = {
@@ -292,6 +293,7 @@ const char* to_string(entity_action value)
     case entity_action::End_Match: return "End_Match";
     case entity_action::Reverse: return "Reverse";
     case entity_action::Go_To: return "Go_To";
+    case entity_action::Fire: return "Fire";
   }
   return "<unknown>";
 }
@@ -326,6 +328,7 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "End_Match") return entity_action::End_Match;
   if (text == "Reverse") return entity_action::Reverse;
   if (text == "Go_To") return entity_action::Go_To;
+  if (text == "Fire") return entity_action::Fire;
   return std::nullopt;
 }
 
@@ -385,6 +388,7 @@ const char* to_string(entity_trait value)
     case entity_trait::Timer: return "Timer";
     case entity_trait::Match_Control: return "Match_Control";
     case entity_trait::Path_Following: return "Path_Following";
+    case entity_trait::Firing: return "Firing";
   }
   return "<unknown>";
 }
@@ -404,6 +408,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Timer") return entity_trait::Timer;
   if (text == "Match_Control") return entity_trait::Match_Control;
   if (text == "Path_Following") return entity_trait::Path_Following;
+  if (text == "Firing") return entity_trait::Firing;
   return std::nullopt;
 }
 
@@ -451,6 +456,7 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::End_Match: return (uint32_t)sizeof(End_Match_Data);
     case entity_action::Reverse: return (uint32_t)sizeof(Reverse_Data);
     case entity_action::Go_To: return (uint32_t)sizeof(Go_To_Data);
+    case entity_action::Fire: return (uint32_t)sizeof(Fire_Data);
   }
   return 0;
 }
@@ -697,6 +703,14 @@ action_data_t erase(const Go_To_Data& payload)
   action_data_t data;
   data.tag = entity_action::Go_To;
   data.go_to = payload;
+  return data;
+}
+
+action_data_t erase(const Fire_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Fire;
+  data.fire = payload;
   return data;
 }
 

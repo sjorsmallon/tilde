@@ -51,6 +51,7 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     case entities::entity_type::Logic_Timer_Entity:
     case entities::entity_type::Path_Node_Entity:
     case entities::entity_type::Mover_Entity:
+    case entities::entity_type::Launcher_Entity:
     case entities::entity_type::Invalid:
       return false;
   }

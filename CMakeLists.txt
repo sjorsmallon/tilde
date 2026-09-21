@@ -247,6 +247,7 @@ set(ENTITY_IO_HANDLERS
     src/server/entities/player_entity.cpp
     src/server/entities/game_rules_entity.cpp
     src/server/entities/logic_counter_entity.cpp
+    src/server/entities/launcher_entity.cpp
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${ENTITY_IO_HANDLERS} PROPERTIES
@@ -928,6 +929,7 @@ add_library(game_server SHARED
     ${ENTITY_IO_GEN_BINDINGS}
     ${ENTITY_IO_HANDLERS}
     src/server/weapon_fire.cpp
+    src/server/spawn_projectile.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bubble_system.cpp
     src/server/systems/platform_system.cpp
@@ -1291,6 +1293,7 @@ set(MATCH_SERVER_SOURCES
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/mover_system.cpp
+    src/server/spawn_projectile.cpp
     src/server/entity_lifecycle.cpp)
 add_executable(game_rules_test src/test/game_rules_test.cpp ${MATCH_SERVER_SOURCES})
 target_include_directories(game_rules_test PRIVATE src src/shared src/server)
@@ -1320,6 +1323,7 @@ add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/mover_system.cpp
+    src/server/spawn_projectile.cpp
     src/server/entity_lifecycle.cpp)
 target_include_directories(entity_io_test PRIVATE src src/shared src/server)
 target_link_libraries(entity_io_test PRIVATE game_shared)

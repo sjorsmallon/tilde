@@ -3033,6 +3033,108 @@ constexpr field_info_t Mover_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Launcher_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Launcher_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Launcher_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Launcher_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Launcher_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Launcher_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "weapon",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Launcher_Entity, weapon),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::weapon),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[2]},
+  {.name = "trigger",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Launcher_Entity, trigger),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::trigger),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[4]},
+  {.name = "spread_yaw_degrees",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Launcher_Entity, spread_yaw_degrees),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::spread_yaw_degrees),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "spread_pitch_degrees",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Launcher_Entity, spread_pitch_degrees),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::spread_pitch_degrees),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "shots_fired",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Launcher_Entity, shots_fired),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::shots_fired),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Launcher_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Launcher_Entity::render),
+   .flags = 0u,
+   .component_id = 8,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -3077,6 +3179,7 @@ Entity* construct_Ping_Marker_Entity(void* memory) { return new (memory) Ping_Ma
 Entity* construct_Logic_Timer_Entity(void* memory) { return new (memory) Logic_Timer_Entity(); }
 Entity* construct_Path_Node_Entity(void* memory) { return new (memory) Path_Node_Entity(); }
 Entity* construct_Mover_Entity(void* memory) { return new (memory) Mover_Entity(); }
+Entity* construct_Launcher_Entity(void* memory) { return new (memory) Launcher_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -3104,6 +3207,7 @@ Entity* as_base_Ping_Marker_Entity(void* memory) { return static_cast<Entity*>((
 Entity* as_base_Logic_Timer_Entity(void* memory) { return static_cast<Entity*>((Logic_Timer_Entity*)memory); }
 Entity* as_base_Path_Node_Entity(void* memory) { return static_cast<Entity*>((Path_Node_Entity*)memory); }
 Entity* as_base_Mover_Entity(void* memory) { return static_cast<Entity*>((Mover_Entity*)memory); }
+Entity* as_base_Launcher_Entity(void* memory) { return static_cast<Entity*>((Launcher_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -3133,6 +3237,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 4096u, false, true, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
   {"path_node_entity", "Path Node", {Path_Node_Entity_FIELDS, 8}, (uint32_t)sizeof(Path_Node_Entity), (uint32_t)alignof(Path_Node_Entity), 0u, false, false, false, construct_Path_Node_Entity, as_base_Path_Node_Entity},
   {"mover_entity", "Mover", {Mover_Entity_FIELDS, 6}, (uint32_t)sizeof(Mover_Entity), (uint32_t)alignof(Mover_Entity), 16386u, false, true, true, construct_Mover_Entity, as_base_Mover_Entity},
+  {"launcher_entity", "Launcher", {Launcher_Entity_FIELDS, 11}, (uint32_t)sizeof(Launcher_Entity), (uint32_t)alignof(Launcher_Entity), 258u, false, true, false, construct_Launcher_Entity, as_base_Launcher_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][15] = {
@@ -3163,9 +3268,10 @@ constexpr int32_t COMPONENT_OFFSETS[][15] = {
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Logic_Timer_Entity, timer), -1, -1}, // Logic_Timer_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Path_Node_Entity
   {-1, (int32_t)offsetof(Mover_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Mover_Entity, follow)}, // Mover_Entity
+  {-1, (int32_t)offsetof(Launcher_Entity, switch_state), -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Launcher_Entity, render), -1, -1, -1, -1, -1, -1}, // Launcher_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 19;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 20;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -3186,9 +3292,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Logic_Timer_Entity,
   entity_type::Path_Node_Entity,
   entity_type::Mover_Entity,
+  entity_type::Launcher_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 20;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 21;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -3210,6 +3317,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Ping_Marker_Entity,
   entity_type::Logic_Timer_Entity,
   entity_type::Mover_Entity,
+  entity_type::Launcher_Entity,
 };
 
 } // namespace
@@ -3659,6 +3767,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Logic_Timer_Entity: return new Logic_Timer_Entity();
     case entity_type::Path_Node_Entity: return new Path_Node_Entity();
     case entity_type::Mover_Entity: return new Mover_Entity();
+    case entity_type::Launcher_Entity: return new Launcher_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -3706,6 +3815,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Logic_Timer_Entity: delete static_cast<Logic_Timer_Entity*>(entity); return;
     case entity_type::Path_Node_Entity: delete static_cast<Path_Node_Entity*>(entity); return;
     case entity_type::Mover_Entity: delete static_cast<Mover_Entity*>(entity); return;
+    case entity_type::Launcher_Entity: delete static_cast<Launcher_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -3720,6 +3830,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x2a8a4b0au;
+const uint32_t SCHEMA_HASH = 0xe626373au;
 
 } // namespace entities

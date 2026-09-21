@@ -58,6 +58,12 @@ void shim_mover_entity_enable(Entity& entity, const action_data_t& data, input_c
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
+void shim_launcher_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Launcher_Entity& self = *entity_as<Launcher_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
+}
+
 void shim_sound_emitter_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -100,6 +106,12 @@ void shim_mover_entity_disable(Entity& entity, const action_data_t& data, input_
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
+void shim_launcher_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Launcher_Entity& self = *entity_as<Launcher_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
+}
+
 void shim_sound_emitter_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -139,6 +151,12 @@ void shim_geometry_owner_entity_toggle_enabled(Entity& entity, const action_data
 void shim_mover_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Mover_Entity& self = *entity_as<Mover_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
+}
+
+void shim_launcher_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Launcher_Entity& self = *entity_as<Launcher_Entity>(&entity);
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
@@ -316,6 +334,12 @@ void shim_mover_entity_go_to(Entity& entity, const action_data_t& data, input_co
   go_to(self, self.follow, data.as_go_to(), context);
 }
 
+void shim_launcher_entity_fire(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Launcher_Entity& self = *entity_as<Launcher_Entity>(&entity);
+  fire(self, data.as_fire(), context);
+}
+
 using action_shim_fn = void (*)(Entity&, const action_data_t&, input_context_t&);
 
 // A non-null cell means the type accepts the action. Rows are entity
@@ -353,6 +377,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {},   // Weapon_Entity
   {},   // Rocket_Entity
@@ -390,6 +415,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {},   // Particle_Emitter_Entity
   {   // Sound_Emitter_Entity
@@ -421,6 +447,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {   // Point_Light_Entity
     shim_point_light_entity_enable,
@@ -451,6 +478,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {   // Spot_Light_Entity
     shim_spot_light_entity_enable,
@@ -481,6 +509,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {},   // Directional_Light_Entity
   {   // Trigger_Volume_Entity
@@ -512,6 +541,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {   // Jump_Pad_Entity
     shim_jump_pad_entity_enable,
@@ -542,6 +572,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {},   // Reflection_Volume_Entity
   {   // Game_Rules_Entity
@@ -573,6 +604,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_game_rules_entity_end_match,
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {   // Logic_Counter_Entity
     nullptr,   // Enable
@@ -603,6 +635,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {   // Geometry_Owner_Entity
     shim_geometry_owner_entity_enable,
@@ -633,6 +666,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {},   // Ping_Marker_Entity
   {   // Logic_Timer_Entity
@@ -664,6 +698,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     nullptr,   // Reverse
     nullptr,   // Go_To
+    nullptr,   // Fire
   },
   {},   // Path_Node_Entity
   {   // Mover_Entity
@@ -695,6 +730,38 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // End_Match
     shim_mover_entity_reverse,
     shim_mover_entity_go_to,
+    nullptr,   // Fire
+  },
+  {   // Launcher_Entity
+    shim_launcher_entity_enable,
+    shim_launcher_entity_disable,
+    shim_launcher_entity_toggle_enabled,
+    nullptr,   // Play
+    nullptr,   // Stop_Playing
+    nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
+    nullptr,   // Reverse
+    nullptr,   // Go_To
+    shim_launcher_entity_fire,
   },
 };
 
@@ -1194,6 +1261,23 @@ void go_to(Entity& entity, const Go_To_Data& payload, input_context_t& context)
 {
   if (!try_go_to(entity, payload, context))
     fatal_error("{} does not accept Go_To", entity_info(entity.type).classname);
+}
+
+bool try_fire(Entity& entity, const Fire_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Fire];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void fire(Entity& entity, const Fire_Data& payload, input_context_t& context)
+{
+  if (!try_fire(entity, payload, context))
+    fatal_error("{} does not accept Fire", entity_info(entity.type).classname);
 }
 
 bool try_send_action(Entity& target, const action_data_t& data, input_context_t& context)

@@ -10,6 +10,7 @@
 
 #include "collision_detection.hpp"
 #include "entity_uid.hpp"
+#include "hash.hpp"
 #include "lighting.hpp"
 #include "lightmap.hpp"
 #include "map.hpp"
@@ -191,15 +192,8 @@ struct light_arrival_t
 // at unchanged settings has to reproduce the same pixels, and the chart loop runs
 // on several threads, so a sequence anyone can advance is a bake that differs
 // from itself. Keyed by atlas position, which is unique across the whole solve.
-[[nodiscard]] uint32_t hash_mix(uint32_t hash, uint32_t value);
+// hash_mix and unit_float_from are shared/hash.hpp's.
 [[nodiscard]] uint32_t sample_hash(int atlas_x, int atlas_y, int page, int sample_index);
-
-// A uniform float in [0, 1) out of a hash, which is what every sampling decision
-// below the solve is spelled in.
-[[nodiscard]] inline float unit_float_from(uint32_t bits)
-{
-  return (float)(bits >> 8) * (1.f / 16777216.f);
-}
 
 // Per-channel product. There is deliberately no vec3 * vec3 operator in linalg
 // (a vector times a vector is not one thing), and a bake multiplies colours by

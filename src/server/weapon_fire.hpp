@@ -7,6 +7,7 @@
 #include "../shared/subtick.hpp"
 #include "../shared/weapons.hpp"
 #include "server_context.hpp"
+#include "spawn_projectile.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -20,14 +21,6 @@ void cancel_reload(entities::Player_Entity& player);
 
 void mark_shot_fired(const server_context_t& context, entities::Player_Entity& player,
                      entities::Weapon weapon_id);
-
-// The one place a Fire_Resolution::Projectile fire becomes an entity; bots call it too.
-// The trigger picks which half of the row it reads, and is stamped on the
-// Projectile so the flight reads the same half.
-shared::entity_uid_t spawn_projectile(
-    server_context_t& context, shared::entity_uid_t owner_uid,
-    const shared::weapon_definition_t& weapon, const vec3f& origin, const vec3f& direction,
-    entities::Fire_Trigger trigger = entities::Fire_Trigger::Primary);
 
 // shared::try_find_held_fire_time for the weapon in the player's hand; empty for an empty hand.
 [[nodiscard]] std::optional<shared::subtick_time_t>

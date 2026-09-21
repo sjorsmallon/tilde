@@ -223,6 +223,8 @@ int main()
         entity_type::Logic_Timer_Entity,
         // Through Path_Follow and Enabled; a Path_Node_Entity is all @Editable and rides nothing.
         entity_type::Mover_Entity,
+        // Through Enabled and Render.
+        entity_type::Launcher_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

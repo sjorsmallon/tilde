@@ -311,11 +311,12 @@ enum class entity_type : uint16_t
   Logic_Timer_Entity = 24,
   Path_Node_Entity = 25,
   Mover_Entity = 26,
+  Launcher_Entity = 27,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 27;
+constexpr uint32_t ENTITY_TYPE_COUNT = 28;
 
 enum class component_type : uint16_t
 {

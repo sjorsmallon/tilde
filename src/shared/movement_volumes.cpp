@@ -106,6 +106,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Ping_Marker_Entity:
       case entities::entity_type::Logic_Timer_Entity:
       case entities::entity_type::Path_Node_Entity:
+      case entities::entity_type::Launcher_Entity:
         break;
     }
   }

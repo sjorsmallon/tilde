@@ -36,6 +36,7 @@
 #include "entities/logic_timer_entity_generated.hpp"
 #include "entities/path_node_entity_generated.hpp"
 #include "entities/mover_entity_generated.hpp"
+#include "entities/launcher_entity_generated.hpp"
 
 namespace entities
 {

@@ -387,16 +387,6 @@ linalg::vec3 shadow_ray_transmittance(const shadow_scene_t &scene,
   return segment_transmittance(scene, origin, direction, travel);
 }
 
-uint32_t hash_mix(uint32_t hash, uint32_t value)
-{
-  for (int byte = 0; byte < 4; ++byte)
-  {
-    hash ^= (value >> (byte * 8)) & 0xffu;
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
 uint32_t sample_hash(int atlas_x, int atlas_y, int page, int sample_index)
 {
   uint32_t hash = 2166136261u;

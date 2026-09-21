@@ -1029,7 +1029,9 @@ void Tool_Editor_State::draw_imgui_panels()
     should_open_new_map_popup = false;
   }
 
-  if (ImGui::BeginPopupModal("Load Map", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+  ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(280, 200), ImVec2(FLT_MAX, FLT_MAX));
+  if (ImGui::BeginPopupModal("Load Map", nullptr, ImGuiWindowFlags_None))
   {
     static std::vector<std::string> map_files;
     static int selected_idx = -1;
@@ -1041,7 +1043,7 @@ void Tool_Editor_State::draw_imgui_panels()
     }
 
     ImGui::Text("maps/");
-    if (ImGui::BeginChild("##maplist", ImVec2(320, 200), true))
+    if (ImGui::BeginChild("##maplist", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()), true))
     {
       if (map_files.empty())
       {

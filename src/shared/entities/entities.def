@@ -273,6 +273,10 @@ Path_Following :: trait requires Path_Follow {
     emits   Node_Reached(node: entity)
 }
 
+Firing :: trait {
+    accepts Fire()
+}
+
 
 // ---------------------------------------------------------------------------
 // ENTITIES - note that declaration order is sacred. or: if you break it,
@@ -406,7 +410,6 @@ Bubble_Entity :: entity @runtime_only @predicted {
     radius:          f32 = 32.0
     bounce_speed:    f32 = 700.0
 
-    ///.Sphere, scale = {64, 64, 64}
     render:          Render = { mesh = .Sphere, scale = {64, 64, 64}, material = { shader_type = .Ghost, color = {0.55, 0.85, 1} } }
 }
 
@@ -452,13 +455,6 @@ Particle_Emitter_Entity :: entity {
     alpha_end:          f32 = 0.0             @Editable
 }
 
-// The third map-placed receiver after the two lights, and the ONE place a
-// sound is authored per instance: an emitter's identity is its sound the way a
-// static mesh's is its mesh path. The switch is a MUTE for a one-shot (Play on
-// a disabled emitter does nothing) and the level for a loop. `spatial` off is
-// everyone's ears -- an announcer, music -- never one player's; that is a
-// state edge on the player, not an emitter. Loops are NOT built yet: the
-// client warns once and stays silent, hence the default is a one-shot.
 Sound_Emitter_Entity :: entity is Switchable, Playable {
     switch_state: Enabled
     playback:     Playback
@@ -566,4 +562,16 @@ Path_Node_Entity :: entity {
 Mover_Entity :: entity @predicted is Switchable, Path_Following {
     switch_state: Enabled
     follow:       Path_Follow
+}
+
+// Fires the weapon row's projectile along its orientation, once per Fire. The cadence is wiring: a Logic_Timer's Elapsed.
+Launcher_Entity :: entity is Switchable, Firing {
+    switch_state: Enabled
+    weapon:       Weapon = .Bubble          @Editable
+    trigger:      Fire_Trigger = .Primary   @Editable
+    // Half-angles, each side of the aim. Derived from (uid, shots_fired), so every attempt sees the same pattern.
+    spread_yaw_degrees:   f32 = 0.0         @Editable
+    spread_pitch_degrees: f32 = 0.0         @Editable
+    shots_fired:  u32
+    render:       Render = { mesh = .Box, scale = {16, 16, 16} }
 }
