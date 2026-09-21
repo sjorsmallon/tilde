@@ -47,7 +47,8 @@ struct predicted_world_t
   Span<const movement_volume_t> movement_volumes;
 
   // Moving platforms, collided with at their pose at the END of the tick. The
-  // carry is NOT in player_move -- see push_player_by_movers.
+  // carry is NOT in player_move -- see push_player_by_movers. A landed
+  // Platform_Entity is in here too, as a mover whose two poses are equal.
   Span<const mover_t> movers;
 };
 

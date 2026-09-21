@@ -16,6 +16,8 @@
 #include "entities/weapon_entity_generated.hpp"
 #include "entities/rocket_entity_generated.hpp"
 #include "entities/hook_entity_generated.hpp"
+#include "entities/kooh_entity_generated.hpp"
+#include "entities/platform_entity_generated.hpp"
 #include "entities/bubble_entity_generated.hpp"
 #include "entities/physics_body_entity_generated.hpp"
 #include "entities/damageable_entity_generated.hpp"

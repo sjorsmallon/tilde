@@ -14,14 +14,15 @@ Entity :: base {
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum { Red, Blu, Free_For_All }
 
-Weapon :: enum { Knife, Scout, Rocket_Launcher, Dash, Swapper, Hook, Bubble}
-Fire_Resolution :: enum { Hitscan, Projectile, Self_Impulse }
+Weapon :: enum { Knife, Scout, Rocket_Launcher, Dash, Swapper, Hook, Bubble, Kooh, Magnet, Mock, Platform }
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom }
+Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
 //@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
 Damage_Type :: enum { Normal, Orange, Teal }
 
-Shader_Type :: enum { Lit, Unlit }
+Shader_Type :: enum { Lit, Unlit, Ghost }
 Shape_Kind :: enum { Sphere, Box }
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 
@@ -62,8 +63,18 @@ Playback :: component {
 Projectile :: component {
     // The WEAPON_DEFINITIONS row that fired it: its projectile_t is how this flies.
     weapon_id: Weapon = .Rocket_Launcher @Networked
+    // Which of the row's two fires it came off: the other half of how it flies.
+    trigger:   Fire_Trigger              @Networked
     velocity:  v3                        @Networked
     owner_uid: entity
+}
+
+// A flight decided ONCE, at launch, so every later position is a pure function of the tick.
+Fixed_Arc_Flight :: component {
+    launch_position: v3                 @Networked
+    // 0 until the type's system fixes the arc, in the tick it was fired.
+    launch_tick:     u32                @Networked
+    flight_ticks:    u32                @Networked
 }
 
 Health :: component {
@@ -326,13 +337,17 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
 }
 
 Weapon_Entity :: entity {
-    ammo:             i32               @Networked
+    // In the magazine, and what a reload draws from. Negative is unlimited.
+    ammo:             i32 = -1          @Fully_Serializable
+    reserve_ammo:     i32 = -1          @Fully_Serializable
     weapon_id:        Weapon            @Fully_Serializable
     // Null owner means the weapon lies in the world as a physics body, waiting to be picked up.
     owner_uid:        entity            @Networked
     next_fire_time:   u64
     pickup_allowed_tick: u32
     damage_type: Damage_Type = .Normal  @Editable
+    // The pickup reach and the thrown physics box.
+    volume:           Box_Volume = { half_extents = {40, 40, 40} }
     render:           Render = { mesh = .Error }
 }
 
@@ -347,20 +362,37 @@ Rocket_Entity :: entity @runtime_only {
 }
 
 Hook_Entity :: entity @runtime_only {
-    projectile:       Projectile = { weapon_id = .Hook }
+    projectile:      Projectile = { weapon_id = .Hook }
     lifetime:         f32 = 4
     collision_radius: f32 = 25.0
     // Set by the secondary trigger: reels the victim in over time instead of throwing them once.
     reels_target:     bool
-    render:           Render = { mesh = .gripper, scale = {20,20,20} }
+    render:           Render = { mesh = .hookshot, scale = {0.03, 0.03, 0.03} }
+}
+
+Kooh_Entity:: entity @runtime_only {
+    projectile:       Projectile = { weapon_id = .Kooh }
+    lifetime: f32 = 4.0
+    collision_radius: f32 = 25.0
+    // 
+    reels_player:     bool
+    render:           Render = { mesh = .hookshot, scale = {0.03,0.03,0.03}}
+}
+
+// A ghost while it flies, a solid box from the tick it lands until rest_seconds later (shared/spawned_platforms.hpp).
+Platform_Entity :: entity @runtime_only @predicted {
+    projectile:     Projectile = { weapon_id = .Platform }
+    flight:         Fixed_Arc_Flight
+    flight_seconds: f32 = 0.6
+    rest_seconds:   f32 = 6.0
+    half_extents:   v3 = {64, 4, 64}
+    // Drawn at half_extents, never at render.scale.
+    render:         Render = { mesh = .Box, material = { color = {1, 0.75, 0.3} } }
 }
 
 Bubble_Entity :: entity @runtime_only @predicted {
     projectile:      Projectile = { weapon_id = .Bubble }
-    launch_position: v3                 @Networked
-    // 0 until the bubble system latches the launch, in the tick it was fired.
-    launch_tick:     u32                @Networked
-    flight_ticks:    u32                @Networked
+    flight:          Fixed_Arc_Flight
     // 0 while whole. A popped bubble bounces nobody, draws nothing, and is reaped linger_seconds later.
     popped_tick:     u32                @Networked
     // Whoever bounced on it, who heard the pop off their own predicted step; null when it timed out.
@@ -373,7 +405,9 @@ Bubble_Entity :: entity @runtime_only @predicted {
     arm_seconds:     f32 = 0.2
     radius:          f32 = 32.0
     bounce_speed:    f32 = 700.0
-    render:          Render = { mesh = .Sphere, scale = {64, 64, 64} }
+
+    ///.Sphere, scale = {64, 64, 64}
+    render:          Render = { mesh = .Sphere, scale = {64, 64, 64}, material = { shader_type = .Ghost, color = {0.55, 0.85, 1} } }
 }
 
 Physics_Body_Entity :: entity {

@@ -532,6 +532,7 @@ add_library(game_shared STATIC
     src/shared/predicted_world.cpp
     src/shared/mover_path.cpp
     src/shared/movers.cpp
+    src/shared/spawned_platforms.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
@@ -929,7 +930,10 @@ add_library(game_server SHARED
     src/server/weapon_fire.cpp
     src/server/systems/rocket_system.cpp
     src/server/systems/bubble_system.cpp
+    src/server/systems/platform_system.cpp
+    src/server/systems/fixed_arc_flight_launch.cpp
     src/server/systems/hook_system.cpp
+    src/server/systems/kooh_system.cpp
     src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/player_input_system.cpp

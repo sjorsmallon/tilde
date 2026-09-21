@@ -81,6 +81,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   pending.region            = shared::hit_region_t::Head;
   context.outgoing.pending_hits.push_back(pending);
   context.outgoing.pending_swaps.push_back({7, 42});
+  context.outgoing.pending_magnets.push_back({7, 42, 600.f});
 
   // A map whose attached_cvars claimed two values. Set through the state the
   // context points at, exactly as apply_map_cvars_that_were_supplied_from_the_editor does.
@@ -173,6 +174,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   // we are entering — the victim uid may not even exist there.
   assert(context.outgoing.pending_hits.empty());
   assert(context.outgoing.pending_swaps.empty());
+  assert(context.outgoing.pending_magnets.empty());
 
   // The match went with the session; the next map load's install_match makes
   // the next one.
@@ -313,6 +315,7 @@ void test_clear_tick_groups()
   assert(context.outgoing.events.empty());
   assert(context.outgoing.pending_hits.empty());
   assert(context.outgoing.pending_swaps.empty());
+  assert(context.outgoing.pending_magnets.empty());
 
   // The reason these are functions and not `= {}` on the group: they run at the
   // tickrate, so the capacity has to survive. An `= {}` "simplification" fails
@@ -321,6 +324,7 @@ void test_clear_tick_groups()
   assert(context.incoming.map_data_requests.capacity() > 0);
   assert(context.outgoing.pending_hits.capacity() > 0);
   assert(context.outgoing.pending_swaps.capacity() > 0);
+  assert(context.outgoing.pending_magnets.capacity() > 0);
   // Same intent, different member: a stream keeps its buffer's allocation.
   assert(context.outgoing.effects.writer.buffer.capacity() > 0);
   assert(context.outgoing.events.writer.buffer.capacity() > 0);

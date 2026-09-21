@@ -352,9 +352,6 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
   return {position, position};
 }
 
-namespace
-{
-
 collision_piece_t piece_from_aabb(const aabb_t &aabb)
 {
   collision_piece_t piece;
@@ -363,6 +360,9 @@ collision_piece_t piece_from_aabb(const aabb_t &aabb)
   piece.face_polygons = compute_face_polygons(aabb);
   return piece;
 }
+
+namespace
+{
 
 collision_piece_t piece_from_polyhedron(const brush_polyhedron_t &polyhedron)
 {

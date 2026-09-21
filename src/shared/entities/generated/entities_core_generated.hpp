@@ -65,24 +65,41 @@ enum class Weapon : uint8_t
   Swapper = 4,
   Hook = 5,
   Bubble = 6,
+  Kooh = 7,
+  Magnet = 8,
+  Mock = 9,
+  Platform = 10,
 };
 
-constexpr uint32_t Weapon_COUNT = 7;
+constexpr uint32_t Weapon_COUNT = 11;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
 
 enum class Fire_Resolution : uint8_t
 {
-  Hitscan = 0,
-  Projectile = 1,
-  Self_Impulse = 2,
+  None = 0,
+  Hitscan = 1,
+  Projectile = 2,
+  Self_Impulse = 3,
+  Zoom = 4,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 3;
+constexpr uint32_t Fire_Resolution_COUNT = 5;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);
+
+enum class Fire_Trigger : uint8_t
+{
+  Primary = 0,
+  Secondary = 1,
+};
+
+constexpr uint32_t Fire_Trigger_COUNT = 2;
+
+const char* to_string(Fire_Trigger value);
+template <> std::optional<Fire_Trigger> try_from_string<Fire_Trigger>(std::string_view text);
 
 enum class Inventory_Slot : uint8_t
 {
@@ -114,9 +131,10 @@ enum class Shader_Type : uint8_t
 {
   Lit = 0,
   Unlit = 1,
+  Ghost = 2,
 };
 
-constexpr uint32_t Shader_Type_COUNT = 2;
+constexpr uint32_t Shader_Type_COUNT = 3;
 
 const char* to_string(Shader_Type value);
 template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_view text);
@@ -242,21 +260,22 @@ enum class enum_type : uint16_t
   Team_Allegiance = 1,
   Weapon = 2,
   Fire_Resolution = 3,
-  Inventory_Slot = 4,
-  Damage_Type = 5,
-  Shader_Type = 6,
-  Shape_Kind = 7,
-  Light_Mode = 8,
-  Aim_Pose = 9,
-  Round_Phase = 10,
-  Game_Mode = 11,
-  Round_End_Reason = 12,
-  Match_Request = 13,
-  Easing = 14,
-  Movement_Override = 15,
+  Fire_Trigger = 4,
+  Inventory_Slot = 5,
+  Damage_Type = 6,
+  Shader_Type = 7,
+  Shape_Kind = 8,
+  Light_Mode = 9,
+  Aim_Pose = 10,
+  Round_Phase = 11,
+  Game_Mode = 12,
+  Round_End_Reason = 13,
+  Match_Request = 14,
+  Easing = 15,
+  Movement_Override = 16,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 16;
+constexpr uint32_t ENUM_TYPE_COUNT = 17;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -272,29 +291,31 @@ enum class entity_type : uint16_t
   Weapon_Entity = 4,
   Rocket_Entity = 5,
   Hook_Entity = 6,
-  Bubble_Entity = 7,
-  Physics_Body_Entity = 8,
-  Damageable_Entity = 9,
-  Particle_Emitter_Entity = 10,
-  Sound_Emitter_Entity = 11,
-  Point_Light_Entity = 12,
-  Spot_Light_Entity = 13,
-  Directional_Light_Entity = 14,
-  Trigger_Volume_Entity = 15,
-  Jump_Pad_Entity = 16,
-  Reflection_Volume_Entity = 17,
-  Game_Rules_Entity = 18,
-  Logic_Counter_Entity = 19,
-  Geometry_Owner_Entity = 20,
-  Ping_Marker_Entity = 21,
-  Logic_Timer_Entity = 22,
-  Path_Node_Entity = 23,
-  Mover_Entity = 24,
+  Kooh_Entity = 7,
+  Platform_Entity = 8,
+  Bubble_Entity = 9,
+  Physics_Body_Entity = 10,
+  Damageable_Entity = 11,
+  Particle_Emitter_Entity = 12,
+  Sound_Emitter_Entity = 13,
+  Point_Light_Entity = 14,
+  Spot_Light_Entity = 15,
+  Directional_Light_Entity = 16,
+  Trigger_Volume_Entity = 17,
+  Jump_Pad_Entity = 18,
+  Reflection_Volume_Entity = 19,
+  Game_Rules_Entity = 20,
+  Logic_Counter_Entity = 21,
+  Geometry_Owner_Entity = 22,
+  Ping_Marker_Entity = 23,
+  Logic_Timer_Entity = 24,
+  Path_Node_Entity = 25,
+  Mover_Entity = 26,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 25;
+constexpr uint32_t ENTITY_TYPE_COUNT = 27;
 
 enum class component_type : uint16_t
 {
@@ -302,19 +323,20 @@ enum class component_type : uint16_t
   Enabled = 1,
   Playback = 2,
   Projectile = 3,
-  Health = 4,
-  Counter = 5,
-  Material = 6,
-  Render = 7,
-  Light = 8,
-  Movement = 9,
-  Inventory = 10,
-  Timer_State = 11,
-  Match = 12,
-  Path_Follow = 13,
+  Fixed_Arc_Flight = 4,
+  Health = 5,
+  Counter = 6,
+  Material = 7,
+  Render = 8,
+  Light = 9,
+  Movement = 10,
+  Inventory = 11,
+  Timer_State = 12,
+  Match = 13,
+  Path_Follow = 14,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 14;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 15;
 
 } // namespace entities
 
@@ -349,6 +371,12 @@ template <> struct enum_traits<entities::Fire_Resolution>
 {
   static constexpr uint32_t count = entities::Fire_Resolution_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Fire_Resolution;
+};
+
+template <> struct enum_traits<entities::Fire_Trigger>
+{
+  static constexpr uint32_t count = entities::Fire_Trigger_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Fire_Trigger;
 };
 
 template <> struct enum_traits<entities::Inventory_Slot>
@@ -469,8 +497,18 @@ struct Projectile
   static constexpr component_type static_component = component_type::Projectile;
 
   Weapon weapon_id = Weapon::Rocket_Launcher;
+  Fire_Trigger trigger = {};
   linalg::vec3f velocity = {};
   shared::entity_uid_t owner_uid = {};
+};
+
+struct Fixed_Arc_Flight
+{
+  static constexpr component_type static_component = component_type::Fixed_Arc_Flight;
+
+  linalg::vec3f launch_position = {};
+  uint32_t launch_tick = {};
+  uint32_t flight_ticks = {};
 };
 
 struct Health

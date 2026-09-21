@@ -106,6 +106,8 @@ struct settled_move_t
   bool                 grounded          = false;
   shared::entity_uid_t ground_mover_uid  = shared::null_entity_uid;
   float                land_impact_speed = 0.f;
+  // The walls the velocity was clipped against, for a model whose memory must be clipped too.
+  std::vector<Plane>   wall_planes;
 };
 
 [[nodiscard]] settled_move_t resolve_after_move(const movement_settings_t& settings,

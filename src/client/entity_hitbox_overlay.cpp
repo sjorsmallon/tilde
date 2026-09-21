@@ -26,11 +26,12 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
                                            shared::hit_region_t::Torso);
       break;
     }
-    // A player's volumes come off a posed rig, not off fields -- see the header.
     case entities::entity_type::Player_Entity:
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Hook_Entity:
+    case entities::entity_type::Kooh_Entity:
     case entities::entity_type::Bubble_Entity:
+    case entities::entity_type::Platform_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Spectate_Entity:
     case entities::entity_type::Weapon_Entity:

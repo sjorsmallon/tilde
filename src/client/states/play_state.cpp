@@ -25,7 +25,8 @@
 #include "../../shared/subtick.hpp"
 #include "../../shared/disabled_geometry.hpp"
 #include "../../shared/timer_fraction.hpp"
-#include "../../shared/bubble_flight.hpp"
+#include "../../shared/fixed_arc_flight.hpp"
+#include "../../shared/spawned_platforms.hpp"
 #include "../../shared/movement_volumes.hpp"
 #include "../../shared/weapons.hpp"
 #ifdef JPH_DEBUG_RENDERER
@@ -75,8 +76,26 @@ static uint32_t predicted_tick_of_input(const client_context_t &ctx, int input_n
          static_cast<uint32_t>(input_number - ctx.prediction.latest_input_number_processed_by_server);
 }
 
-// A mover is drawn between the tick the camera rides and the next one, by the
-// accumulator's fraction -- the same fraction the rider's camera is carried by.
+// Everything tick-pure is drawn between the tick the camera rides and the next
+// one, by the accumulator's fraction -- the same fraction the rider's camera is
+// carried by.
+struct drawn_tick_t
+{
+  uint32_t tick;
+  float    fraction;
+  float    tickrate;
+};
+
+static drawn_tick_t drawn_tick_of(const client_context_t &ctx)
+{
+  const float tickrate = static_cast<float>(ctx.connection.server_tickrate);
+  return {.tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1),
+          .fraction = ctx.connection.phase == Connection_Phase::Connected
+                          ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
+                          : 0.0f,
+          .tickrate = tickrate};
+}
+
 struct drawn_mover_poses_t
 {
   shared::path_pose_t at_tick;
@@ -86,17 +105,37 @@ struct drawn_mover_poses_t
 // Drawn where the predicted step tests it, never at the snapshot's position a round trip behind.
 static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
-  const float    tickrate = static_cast<float>(ctx.connection.server_tickrate);
-  const uint32_t tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1);
-  const float    fraction = ctx.connection.phase == Connection_Phase::Connected
-                                ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
-                                : 0.0f;
+  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
-  const shared::bubble_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
-                                                .gravity               = ctx.cvars->g_gravity};
-  const vec3f at_tick = shared::bubble_position_at(bubble, tick, flight);
-  const vec3f at_next = shared::bubble_position_at(bubble, tick + 1, flight);
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
+                                                   .gravity               = ctx.cvars->g_gravity};
+  const vec3f at_tick = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position, tick, flight);
+  const vec3f at_next = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position, tick + 1, flight);
   return at_tick + (at_next - at_tick) * fraction;
+}
+
+// A ghost while it flies, solid with its rest wiping away once landed: the states the predicted step tests.
+struct drawn_platform_t
+{
+  vec3f position;
+  bool  is_solid;
+  bool  has_expired;
+  float rest_fraction;
+};
+
+static drawn_platform_t drawn_platform(const client_context_t &ctx, const entities::Platform_Entity &platform)
+{
+  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+
+  const float tick_interval_seconds = 1.0f / tickrate;
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
+                                                   .gravity               = ctx.cvars->g_gravity};
+  const vec3f at_tick = shared::platform_box_at(platform, tick, flight).center;
+  const vec3f at_next = shared::platform_box_at(platform, tick + 1, flight).center;
+  return {.position      = at_tick + (at_next - at_tick) * fraction,
+          .is_solid      = shared::platform_is_solid_at(platform, tick, tick_interval_seconds),
+          .has_expired   = shared::platform_has_expired_at(platform, tick, tick_interval_seconds),
+          .rest_fraction = shared::platform_rest_fraction(platform, tick, fraction, tick_interval_seconds)};
 }
 
 static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const entities::Mover_Entity &mover)
@@ -109,11 +148,7 @@ static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const enti
 
 static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const entities::Mover_Entity &mover)
 {
-  const float    tickrate = static_cast<float>(ctx.connection.server_tickrate);
-  const uint32_t tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1);
-  const float    fraction = ctx.connection.phase == Connection_Phase::Connected
-                                ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
-                                : 0.0f;
+  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
   const shared::Entity_System &system = ctx.world.session.entity_system;
   const shared::path_links_t  &links  = ctx.world.session.path_links;
@@ -138,11 +173,7 @@ static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared:
   if (timer_state == nullptr)
     return {};
 
-  const float    tickrate = static_cast<float>(ctx.connection.server_tickrate);
-  const uint32_t tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1);
-  const float    fraction = ctx.connection.phase == Connection_Phase::Connected
-                                ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
-                                : 0.0f;
+  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
   const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
   return {.center = (bounds.min + bounds.max) * 0.5f,
@@ -231,7 +262,8 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
 // Edge, not held state: the server fires once per press
 // (`step.buttons & ~buttons_entering_step & Button::Fire` in its step loop), so
 // the old poll of `buttons & Button::Fire` played a shot every fire_interval for
-// as long as the trigger was down while the server fired exactly one.
+// as long as the trigger was down while the server fired exactly one. A row
+// with fires_while_held is the exception on both sides, and the only one.
 //
 // It re-runs the server's rate limit (weapons.hpp is shared, so it is the same
 // number) or click-spamming would bang faster than the server accepts. Being
@@ -310,7 +342,8 @@ try_find_local_weapon_definition(const client_context_t &ctx)
   return try_find_weapon_definition_held_by(ctx, try_find_my_player(ctx));
 }
 
-static void play_predicted_local_gunshot(client_context_t &ctx)
+static void play_predicted_local_gunshot(client_context_t &ctx, entities::Fire_Trigger trigger,
+                                         bool button_was_already_down)
 {
   if (!ctx.audio)
     return;
@@ -336,6 +369,30 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
     return;
 
   const shared::weapon_definition_t &weapon = shared::get_weapon_definition(my_weapon);
+  const shared::weapon_fire_t       &fire   = shared::fire_of(weapon, trigger);
+
+  if (button_was_already_down && !fire.fires_while_held)
+    return;
+
+  switch (fire.resolution)
+  {
+  case entities::Fire_Resolution::None:
+  case entities::Fire_Resolution::Zoom:
+    return;
+
+  // A self-impulse's one gate is the movement cooldown, which the server
+  // refuses on and the step loop below spends -- read here, before that step.
+  // It never passes through the shot clocks, on either button.
+  case entities::Fire_Resolution::Self_Impulse:
+    if (ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
+      return;
+    ctx.audio->play_2d(*sound);
+    return;
+
+  case entities::Fire_Resolution::Hitscan:
+  case entities::Fire_Resolution::Projectile:
+    break;
+  }
 
   // THIS WEAPON's clock, not the player's. The server's gate is
   // Weapon_Entity::next_fire_time, which is per weapon and keeps running while
@@ -360,17 +417,11 @@ static void play_predicted_local_gunshot(client_context_t &ctx)
   // cannot have moved since the snapshot that carried it. A magazine_size of 0
   // is the knife, which has no magazine and is never empty.
   //
-  if (weapon.magazine_size > 0 && held->ammo <= 0)
+  if (!shared::ammo_allows_a_shot(held->ammo))
     return;
 
   // MID-RELOAD, off the local prediction rather than the server's deadline.
   if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
-    return;
-
-  // A self-impulse's one gate is the movement cooldown, which the server
-  // refuses on and the step loop below spends -- read here, before that step.
-  if (weapon.fire_resolution == entities::Fire_Resolution::Self_Impulse &&
-      ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
     return;
 
   ctx.prediction.seconds_since_local_fire[my_weapon] = 0.f;
@@ -1357,7 +1408,7 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
     const bool movement_allowed = local_movement_is_allowed(ctx);
 
     // The one thing the replay needs beyond movement, and the reason it needs
-    // it: a Fire_Resolution::Self_Impulse lands on OUR OWN velocity
+    // it: a Fire_Resolution::Self_Impulse, on either button, lands on OUR OWN velocity
     // (generalization_def.md §4), so an unacked dash that the replay does not
     // re-apply is a dash undone for a round trip and then reinstated -- a
     // rubber-band on the one ability whose whole point is that it is instant.
@@ -1420,12 +1471,12 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
         // same cooldown the server will charge.
         if ((replay_pressed_in_this_step & Button::Fire) && replayed_weapon != nullptr)
           (void)shared::try_apply_self_impulse(
-              move_settings, *replayed_weapon, shared::fire_trigger_t::Primary,
+              move_settings, *replayed_weapon, entities::Fire_Trigger::Primary,
               linalg::direction_from_angles(step.view.yaw, step.view.pitch),
               reconciled_movement, reconciled_velocity);
         if ((replay_pressed_in_this_step & Button::Secondary_Fire) && replayed_weapon != nullptr)
           (void)shared::try_apply_self_impulse(
-              move_settings, *replayed_weapon, shared::fire_trigger_t::Secondary,
+              move_settings, *replayed_weapon, entities::Fire_Trigger::Secondary,
               linalg::direction_from_angles(step.view.yaw, step.view.pitch),
               reconciled_movement, reconciled_velocity);
       }
@@ -1488,7 +1539,8 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   const shared::weapon_definition_t* zoom_weapon = try_find_local_weapon_definition(ctx);
   const bool zoom_input_allowed = connection_ui.mouse_captured && body_input_allowed &&
                                   zoom_weapon != nullptr &&
-                                  zoom_weapon->secondary_fire == shared::secondary_fire_t::Zoom;
+                                  zoom_weapon->secondary_fire.resolution ==
+                                      entities::Fire_Resolution::Zoom;
 
   // if zoom is not allowed, just cancel the effect.
   // most of this zoom FOV / stepping looks confusing but we are just interpolating between the zoom FOV and the normal FOV based on the zoom easing time.
@@ -1891,7 +1943,8 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
         const uint64_t buttons_after =
             pending.buttons_after | (buttons & ~Button::Subtick_Tracked);
 
-        if ((pending.buttons_after & ~tracked_buttons_walked & Button::Fire) != 0)
+        if ((pending.buttons_after & ~tracked_buttons_walked &
+             (Button::Fire | Button::Secondary_Fire)) != 0)
           fire_press_arrival_qpc_ticks = pending.arrival_qpc_ticks;
         tracked_buttons_walked = pending.buttons_after;
 
@@ -1972,6 +2025,8 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
       // With no press this is "what is on screen now", which nothing consumes.
       const uint32_t fire_slot = shared::subtick_slot_of_press(
           subtick_input, buttons_before_tick, Button::Fire);
+      const uint32_t secondary_fire_slot = shared::subtick_slot_of_press(
+          subtick_input, buttons_before_tick, Button::Secondary_Fire);
 
       // Present-to-photons: the frame was handed to the presenter, and the
       // player saw it some milliseconds later. Only the MACHINE's share of that
@@ -2040,10 +2095,20 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
       // tick, and the sound and the bracket sent to the server cannot disagree
       // about it. The gates match the server's -- a corpse and a spectator both
       // have their shots refused there.
-      if (fire_slot < shared::SUBTICK_SLOT_COUNT && !local_player_is_dead &&
-          !ctx.connection.spectating)
+      if (!local_player_is_dead && !ctx.connection.spectating)
       {
-        play_predicted_local_gunshot(ctx);
+        const uint64_t buttons_down_across_tick =
+            subtick_input.buttons_at_start & subtick_input.buttons_at_end();
+
+        if (fire_slot < shared::SUBTICK_SLOT_COUNT)
+          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, false);
+        else if ((buttons_down_across_tick & Button::Fire) != 0)
+          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, true);
+
+        if (secondary_fire_slot < shared::SUBTICK_SLOT_COUNT)
+          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Secondary, false);
+        else if ((buttons_down_across_tick & Button::Secondary_Fire) != 0)
+          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Secondary, true);
       }
 
       // What the prediction actually runs. A dead player steers nothing -- the
@@ -2133,9 +2198,8 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             {
               const shared::weapon_definition_t &held =
                   shared::get_weapon_definition(held_entity->weapon_id);
-              if (held.magazine_size > 0 &&
-                  ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
-                  held_entity->ammo < held.magazine_size)
+              if (ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
+                  shared::reload_may_start(held, held_entity->ammo, held_entity->reserve_ammo))
                 ctx.prediction.seconds_until_local_reload_complete =
                     held.reload_duration_seconds;
             }
@@ -2192,17 +2256,12 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
                   shared::movement_settings_from(*ctx.cvars);
               if (fire_pressed_in_this_step)
                 (void)shared::try_apply_self_impulse(
-                    move_settings, *held_definition, shared::fire_trigger_t::Primary, aim,
+                    move_settings, *held_definition, entities::Fire_Trigger::Primary, aim,
                     ctx.prediction.player_movement, ctx.prediction.player_velocity);
-              // The secondary's sound rides the same gate as its impulse, here
-              // rather than in play_predicted_local_gunshot, which is the
-              // trigger's and re-runs the shot clocks this button never sees.
-              if (secondary_fire_pressed_in_this_step &&
-                  shared::try_apply_self_impulse(
-                      move_settings, *held_definition, shared::fire_trigger_t::Secondary, aim,
-                      ctx.prediction.player_movement, ctx.prediction.player_velocity) &&
-                  ctx.audio && held_definition->sounds.fire != assets::sound_asset::Missing)
-                ctx.audio->play_2d(held_definition->sounds.fire);
+              if (secondary_fire_pressed_in_this_step)
+                (void)shared::try_apply_self_impulse(
+                    move_settings, *held_definition, entities::Fire_Trigger::Secondary, aim,
+                    ctx.prediction.player_movement, ctx.prediction.player_velocity);
             }
           }
 
@@ -2211,7 +2270,8 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
           // uses. Recording it at command-build time instead would compare the
           // server's shot against a position this client had not reached yet,
           // and the two rays would separate for a reason that is not a bug.
-          if (fire_pressed_in_this_step && ctx.cvars->cl_shot_debug_seconds > 0.f)
+          if ((fire_pressed_in_this_step || secondary_fire_pressed_in_this_step) &&
+              ctx.cvars->cl_shot_debug_seconds > 0.f)
           {
             client::shot_debug_local_t stashed{};
             stashed.input_number = ctx.prediction.input_number;
@@ -2889,16 +2949,34 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (!mesh.valid())
       continue;
 
-    const vec3f drawn_position =
-        entity.type == entities::entity_type::Bubble_Entity
-            ? drawn_bubble_position(ctx, static_cast<const entities::Bubble_Entity&>(entity))
-            : entity.position;
+    vec3f              drawn_position = entity.position;
+    vec3f              drawn_scale    = render.scale;
+    entities::Material drawn_material = render.material;
+    renderer::clock_wipe_t clock_wipe = {};
+
+    if (entity.type == entities::entity_type::Bubble_Entity)
+      drawn_position = drawn_bubble_position(ctx, static_cast<const entities::Bubble_Entity&>(entity));
+
+    if (const entities::Platform_Entity* platform = entities::entity_as<entities::Platform_Entity>(&entity))
+    {
+      const drawn_platform_t drawn = drawn_platform(ctx, *platform);
+      if (drawn.has_expired)
+        continue;
+
+      drawn_position = drawn.position;
+      drawn_scale    = platform->half_extents * 2.0f;
+      if (drawn.is_solid)
+        clock_wipe = {.center = drawn.position, .wiped = drawn.rest_fraction, .armed = true};
+      else
+        drawn_material.shader_type = entities::Shader_Type::Ghost;
+    }
 
     renderer::mesh_draw_t draw{};
-    draw.mesh      = mesh;
-    draw.transform = linalg::compose_transform(
+    draw.mesh       = mesh;
+    draw.clock_wipe = clock_wipe;
+    draw.transform  = linalg::compose_transform(
         drawn_position, linalg::compose_model_rotation(entity.orientation, render.rotation),
-        render.scale);
+        drawn_scale);
 
     // Same split the geometry surface path makes, and the editor preview with
     // it: a wireframe takes neither the base colour nor the shader, because
@@ -2909,8 +2987,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
     else
     {
-      draw.tint               = color_from_vec3(render.material.color);
-      draw.material_overrides = material_variant(mesh, state_for(render.material));
+      draw.tint               = color_from_vec3(drawn_material.color);
+      draw.material_overrides = material_variant(mesh, state_for(drawn_material));
     }
     scene.meshes.push_back(draw);
   }
@@ -3214,6 +3292,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   {
     for (auto [entity, volume] : entity_system.entities_with<entities::Box_Volume>())
     {
+      if (entity.type == entities::entity_type::Weapon_Entity &&
+          static_cast<const entities::Weapon_Entity&>(entity).owner_uid != shared::null_entity_uid)
+        continue;
+
       const shared::aabb_bounds_t bounds = shared::get_bounds(volume, entity.position);
       scene.debug.aabb(bounds.min, bounds.max, colors::magenta);
     }

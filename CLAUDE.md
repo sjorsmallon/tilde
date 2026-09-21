@@ -513,9 +513,10 @@ the same axis conflated with weapon FLAVOUR: `Sniper` had no reader at all,
 decided — a knife swing leaves no bullet decal — was asked outside the switch.
 Four values funding two arms and a predicate. Flavour that earns a difference is
 a row field now (`leaves_bullet_impact`); flavour that earns nothing is gone. The
-set is `{Hitscan, Projectile, Self_Impulse}`; `Consume_For_Ability` waits for an
-ability set to consume into, and `None` is unrepresentable because an empty slot
-already is a legal hand. Not named `Fire_Effect` (`effects.def` owns "effect"),
+set is `{None, Hitscan, Projectile, Self_Impulse, Zoom}`; `Consume_For_Ability`
+waits for an ability set to consume into. `None` and `Zoom` exist for the
+secondary button and the table check refuses both on a primary: an empty slot
+already is a legal hand, and Zoom is a client-side toggle. Not named `Fire_Effect` (`effects.def` owns "effect"),
 `Fire_Mode` (then taken by trigger volumes, and means semi/burst/auto everywhere
 else) or `Fire_Action` (then `Trigger_Action`, `fire_trigger_action`). Both of
 those clashes went away with entity I/O's step 4, which is a reason to leave the
@@ -557,14 +558,18 @@ granted into `Utility_1` (Key4). Both client loops resolve the held weapon from
 the latest snapshot's `active_slot`, a round trip stale — the same staleness the
 predicted deploy clock already accepts, and the same one-line fix.
 
-**The RIGHT mouse button is a row field, `secondary_fire_t {None, Zoom,
-Self_Impulse}`, and Zoom is the Scout's alone.** The client's FOV toggle reads
-the held row and drops the scope on a switch away from it, so a knife no longer
-zooms. The click itself is `Button::Secondary_Fire`, sub-tick tracked for the
-trigger's reason, beside `Button::Zoom`, which stays the tick-granular STATE.
-A `Self_Impulse` secondary is `try_apply_self_impulse` with
-`fire_trigger_t::Secondary`, at the same three sites as the primary plus the
-server's step loop directly — it never passes through the shot clocks, and both
+**Both mouse buttons are the SAME shape: `primary_fire` and `secondary_fire`,
+each a `weapon_fire_t` of a `Fire_Resolution` and its three parameter structs.**
+`fire_of(row, Fire_Trigger)` picks the half, and `resolve_player_shot` takes the
+trigger, so a secondary hitscan or projectile runs the same switch arm, the same
+shot clocks and the same magazine as a primary one; a projectile stamps
+`Projectile::trigger` so its flight (`projectile_parameters_of`) reads the half
+that fired it, and `Shot_Impact` carries it for the decal rule. Zoom is the
+Scout's alone: the client's FOV toggle reads the held row's secondary and drops
+the scope on a switch away from it. The click itself is `Button::Secondary_Fire`,
+sub-tick tracked for the trigger's reason, beside `Button::Zoom`, which stays the
+tick-granular STATE. A `Self_Impulse` on either button is `try_apply_self_impulse`
+at the same three sites — it never passes through the shot clocks, and both
 buttons spend the ONE movement cooldown. A `self_impulse_t` carries an
 `impulse_mode_t`: `Add` joins the velocity the player has (the LMB Dash), `Set`
 replaces it (the RMB Dash, there so the two can be felt side by side).
@@ -1191,6 +1196,42 @@ toggle lands where movers cannot.
   geometry with a pointer, not part of the entity. `bake_map_csg` and `stamp_map`
   remap the key through the same uid table as everything else; a brush tied
   outside a prefab is the "field that crosses" case and is cleared loudly.
+
+### The platform gun — a spawned solid is a mover that does not move
+
+Built 2026-09-21, never tried in game. `Platform_Entity` (`@runtime_only
+@predicted`) is the bubble's shape with a different cut: a GHOST while it flies,
+ONE SOLID BOX from the tick it lands until `rest_seconds` later.
+
+- **`Fixed_Arc_Flight` is the component the bubble and the platform share**
+  (`launch_position`, `launch_tick`, `flight_ticks`, all `@Networked`), and
+  `shared/fixed_arc_flight.hpp` is the one position function. The server decides
+  the flight ONCE (`launch_fixed_arc_flight`, clipped to the first wall with a
+  clearance) and from then on every position is a pure function of the tick.
+- **A landed platform joins `predicted_world_t::movers`** through
+  `collect_spawned_platforms` (`shared/spawned_platforms.{hpp,cpp}`), called by
+  `cut_movers` after `collect_movers`: one `piece_from_aabb` box whose two poses
+  are EQUAL, so the push carries nobody, `ground_mover_uid` names it, and the
+  replay re-cuts it per input like any mover. Not the BVH, for
+  `disabled_geometry`'s reason: the tree is the map's shape.
+- **Solid is `platform_is_solid_at(platform, tick, interval)`**, from replicated
+  state and the entity's own defaults, so the client predicts both the landing
+  and the expiry with no message. `update_platforms` reaps on the tick the cut
+  drops it, and retires an owner's older platform when a new one is latched
+  (one per player). The refire retire is the one edge the client learns a
+  round trip late.
+- **Solid only at rest.** The flight hides the spawn's round trip; a platform
+  solid in flight starts inside its shooter. One that lands AROUND a hull pushes
+  it out onto the top and crushes nobody — equal poses push nothing, and the
+  crush test only asks about OTHER solids. `player_move_step_invariance_test`
+  16b pins the landing, the ghost and the engulf.
+- **The draw is the predicted state's**: Ghost shader in flight, the entity's
+  material at rest with the clock wipe running landing-to-expiry, scale from
+  `half_extents` rather than `render.scale`.
+- **Not done:** shots and rockets do not see it (`resolve_player_shot` tests the
+  BVH only — `mover_def.md` §5's "shots test the mover list" is not built for
+  movers either), Jolt does not see it, and it has no sound. It is world-axis
+  aligned whatever the aim.
 
 ### Player hit volumes
 

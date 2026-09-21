@@ -24,7 +24,9 @@ void play_world_impact(client_context_t& context, const shared::Shot_Impact& dat
   if (!sound)
     return;
 
-  if (shared::WEAPON_DEFINITIONS[weapon].hitscan.leaves_bullet_impact)
+  if (shared::fire_of(shared::WEAPON_DEFINITIONS[weapon],
+                      static_cast<entities::Fire_Trigger>(data.trigger))
+          .hitscan.leaves_bullet_impact)
   {
     // The bullet decal, at data.origin facing data.normal: not built yet.
   }

@@ -57,12 +57,11 @@ bracket_verdict_t classify_bracket(interpolation_bracket_t requested,
   if (requested.from_tick == 0 || requested.towards_tick == 0)
     return {bracket_status_t::Absent, {}};
 
-  // A client cannot have drawn a snapshot it never told us it holds, nor one we
-  // have not taken yet. This is the tie between the two wire fields, and the
-  // only check here that a fabricated bracket cannot walk past.
+  // the client never held the tick it seems to mention.
   if (requested.towards_tick > held_snapshot_tick || requested.towards_tick > current_tick)
     return {bracket_status_t::Unheld, {}};
 
+  // from -> towards is borked or the fraction exceeds bounds.
   if (requested.from_tick > requested.towards_tick || !(requested.fraction >= 0.f) ||
       requested.fraction > 1.f)
     return {bracket_status_t::Malformed, {}};

@@ -1,6 +1,7 @@
 #include "predicted_world.hpp"
 
 #include "game_session.hpp"
+#include "spawned_platforms.hpp"
 
 namespace shared
 {
@@ -25,6 +26,10 @@ void cut_movers(game_session_t& session, const predicted_world_settings_t& setti
 {
   collect_movers(session.entity_system, session.path_links, session.mover_rests, settings.tick,
                  settings.tickrate_hz, out.movers);
+  collect_spawned_platforms(session.entity_system, settings.tick,
+                            {.tick_interval_seconds = settings.tick_interval_seconds(),
+                             .gravity               = settings.gravity},
+                            out.movers);
 }
 
 void cut_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,

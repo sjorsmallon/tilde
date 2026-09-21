@@ -124,7 +124,7 @@ constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[5]},
+   .enum_info = &ENUM_INFOS[6]},
 };
 
 constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
@@ -196,7 +196,7 @@ constexpr field_info_t ROUND_ENDED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[12]},
+   .enum_info = &ENUM_INFOS[13]},
 };
 
 constexpr field_info_t NODE_REACHED_FIELDS[] = {

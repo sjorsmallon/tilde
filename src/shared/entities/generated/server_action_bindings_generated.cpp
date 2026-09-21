@@ -357,6 +357,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   {},   // Weapon_Entity
   {},   // Rocket_Entity
   {},   // Hook_Entity
+  {},   // Kooh_Entity
+  {},   // Platform_Entity
   {},   // Bubble_Entity
   {},   // Physics_Body_Entity
   {   // Damageable_Entity

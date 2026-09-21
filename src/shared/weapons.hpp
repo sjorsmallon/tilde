@@ -8,6 +8,7 @@
 #include "array.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "player_move.hpp"
+#include "subtick.hpp"
 
 namespace shared
 {
@@ -16,19 +17,9 @@ enum class hit_effect_t : uint8_t
 {
   Damage,
   Swap,
-};
-
-// What the RIGHT mouse button does on a weapon. Zoom is the sniper's and only
-// the sniper's: the client toggles its FOV off this and nothing else, so a
-// knife or a rocket launcher no longer scopes.
-enum class secondary_fire_t : uint8_t
-{
-  None,
-  Zoom,
-  Self_Impulse,
-  // Spawns the row's own projectile, flagged as a secondary one. The hook's is
-  // the reel; the throw stays on the primary.
-  Projectile,
+  Magnet,
+  // Re-arms a Movement_Override::Reel on the SHOOTER toward the player it hit, so the pull is predicted.
+  Tether,
 };
 
 // Speed along the AIM at the moment of the press, and speed straight up. Two
@@ -48,16 +39,6 @@ struct self_impulse_t
   float          upward_speed;
 };
 
-// Which button the impulse came off. Primary is the trigger, Secondary the
-// right mouse button; each reads its own row half and both spend the one
-// movement cooldown.
-enum class fire_trigger_t : uint8_t
-{
-  Primary,
-  Secondary,
-};
-
-
 // Fire_Resolution::Hitscan's parameters.
 struct hitscan_t
 {
@@ -66,6 +47,11 @@ struct hitscan_t
   float        range;               // knife 50, scout map-length
   // Swap exchanges position and velocity with a player target instead of damaging it.
   hit_effect_t hit_effect;
+  // Magnet only: the speed each of the two players gains along the line between them, negative apart.
+  float        magnet_speed;
+  // Tether only: the reel's speed, and how long ONE hit keeps it alive (a lease the next held hit renews).
+  float        tether_speed;
+  float        tether_seconds;
   // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
   // the client -- the effect itself always fires, so the knife still sounds.
   // A BOOL rather than an "is this melee" test: a silenced pistol or a fist
@@ -107,6 +93,19 @@ struct weapon_sounds_t
   assets::sound_asset world_impact;
 };
 
+// What ONE button does: the resolution and the parameters it reads. Both
+// buttons are this shape, so a secondary hitscan or a secondary projectile is
+// the same arm of the same switch as a primary one.
+struct weapon_fire_t
+{
+  entities::Fire_Resolution resolution;
+  hitscan_t                 hitscan;
+  projectile_t              projectile;
+  self_impulse_t            self_impulse;
+  // A button that stays down repeats at fire_interval_seconds (try_find_held_fire_time).
+  bool                      fires_while_held;
+};
+
 struct weapon_definition_t
 {
   // Which weapon this row is for. Present so the row can be checked against
@@ -125,7 +124,7 @@ struct weapon_definition_t
   // the loadout question, not a table error.
   entities::Inventory_Slot slot;
 
-  // --- The clocks. Every resolution but Self_Impulse runs through them. ---
+  // --- The clocks. Hitscan and Projectile run through them, on either button. ---
   float   fire_interval_seconds;
   // How long after this weapon is RAISED before anything may fire. A property
   // of the weapon, but the gate it feeds is the PLAYER's
@@ -147,23 +146,16 @@ struct weapon_definition_t
   int32_t magazine_size;
   float   reload_duration_seconds;
 
-  // WHAT PULLING THE TRIGGER DOES. The switch in resolve_player_shot is over
-  // this and nothing else, and it reads exactly one of the three structs.
-  entities::Fire_Resolution fire_resolution;
-  hitscan_t                 hitscan;
-  projectile_t              projectile;
-  self_impulse_t            self_impulse;
+  // The left and the right mouse button. The switch in resolve_player_shot is
+  // over one of these and reads exactly one of its three structs. Zoom is a
+  // secondary only: the client toggles its FOV off it and nothing else.
+  weapon_fire_t primary_fire;
+  weapon_fire_t secondary_fire;
   // Seconds before EITHER impulse may be taken again. THE gate -- see
   // try_apply_self_impulse and the static_assert below for why it is not
-  // fire_interval_seconds. Shared by the primary and the secondary impulse,
-  // because Movement carries one countdown and a second one is a second thing
-  // the replay has to restart.
-  float                     self_impulse_cooldown_seconds;
-
-  // What the right mouse button does on this row, and the impulse it fires
-  // when that is Self_Impulse (zero otherwise).
-  secondary_fire_t secondary_fire;
-  self_impulse_t   secondary_self_impulse;
+  // fire_interval_seconds. Shared by both buttons, because Movement carries one
+  // countdown and a second one is a second thing the replay has to restart.
+  float         self_impulse_cooldown_seconds;
 
   weapon_sounds_t sounds;
 };
@@ -178,12 +170,12 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.4f,
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
-     .fire_resolution         = entities::Fire_Resolution::Hitscan,
-     .hitscan                 = {.damage               = 50.f,
-                                 .headshot_multiplier  = 1.0f,
-                                 .range                = 50.f,
-                                 .hit_effect           = hit_effect_t::Damage,
-                                 .leaves_bullet_impact = false},
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 50.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 50.f,
+                                                .hit_effect           = hit_effect_t::Damage,
+                                                .leaves_bullet_impact = false}},
      .sounds                  = {.fire         = assets::sound_asset::knife_slash1,
                                  .world_impact = assets::sound_asset::knife_hitwall1}},
     {.weapon                  = entities::Weapon::Scout,
@@ -193,13 +185,13 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.7f,
      .magazine_size           = 10,
      .reload_duration_seconds = 2.0f,
-     .fire_resolution         = entities::Fire_Resolution::Hitscan,
-     .hitscan                 = {.damage               = 60.f,
-                                 .headshot_multiplier  = 2.0f,
-                                 .range                = 10000.f,
-                                 .hit_effect           = hit_effect_t::Damage,
-                                 .leaves_bullet_impact = true},
-     .secondary_fire          = secondary_fire_t::Zoom,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 60.f,
+                                                .headshot_multiplier  = 2.0f,
+                                                .range                = 10000.f,
+                                                .hit_effect           = hit_effect_t::Damage,
+                                                .leaves_bullet_impact = true}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Zoom},
      .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Rocket_Launcher,
@@ -209,10 +201,10 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.9f,
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
-     .fire_resolution         = entities::Fire_Resolution::Projectile,
-     .projectile              = {.speed         = 600.f,
-                                 .gravity_scale = 0.f,
-                                 .spawns        = entities::entity_type::Rocket_Entity},
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 600.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Rocket_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                        = entities::Weapon::Dash,
@@ -222,17 +214,17 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds       = 0.f,
      .magazine_size                 = 0,
      .reload_duration_seconds       = 0.f,
-     .fire_resolution               = entities::Fire_Resolution::Self_Impulse,
-     .self_impulse                  = {.mode            = impulse_mode_t::Add,
-                                       .along_aim_speed = 900.f,
-                                       .upward_speed    = 150.f},
-     .self_impulse_cooldown_seconds = 1.5f,
+     .primary_fire                  = {.resolution   = entities::Fire_Resolution::Self_Impulse,
+                                       .self_impulse = {.mode            = impulse_mode_t::Add,
+                                                        .along_aim_speed = 900.f,
+                                                        .upward_speed    = 150.f}},
      // The right mouse button is the same dash with the velocity REPLACED
      // rather than added, so the two can be felt side by side on one key each.
-     .secondary_fire                = secondary_fire_t::Self_Impulse,
-     .secondary_self_impulse        = {.mode            = impulse_mode_t::Set,
-                                       .along_aim_speed = 900.f,
-                                       .upward_speed    = 0.f},
+     .secondary_fire                = {.resolution   = entities::Fire_Resolution::Self_Impulse,
+                                       .self_impulse = {.mode            = impulse_mode_t::Set,
+                                                        .along_aim_speed = 900.f,
+                                                        .upward_speed    = 0.f}},
+     .self_impulse_cooldown_seconds = 1.5f,
      .sounds                        = {.fire         = assets::sound_asset::gust_of_wind,
                                        .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Swapper,
@@ -242,39 +234,123 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
-     .fire_resolution         = entities::Fire_Resolution::Hitscan,
-     .hitscan                 = {.damage               = 0.f,
-                                 .headshot_multiplier  = 1.0f,
-                                 .range                = 10000.f,
-                                 .hit_effect           = hit_effect_t::Swap,
-                                 .leaves_bullet_impact = false},
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 0.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 10000.f,
+                                                .hit_effect           = hit_effect_t::Swap,
+                                                .leaves_bullet_impact = false}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+    // The secondary is the same hook, fired as the reel (Hook_Entity::reels_target).
     {.weapon                  = entities::Weapon::Hook,
      .display_name            = "Hook",
      .slot                    = entities::Inventory_Slot::Secondary,
      .fire_interval_seconds   = 0.1f,
-     .deploy_duration_seconds = 0.9f,
+     .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
-     .fire_resolution         = entities::Fire_Resolution::Projectile,
-     .projectile              = {.speed         = 700.f,
-                                 .gravity_scale = 0.f,
-                                 .spawns        = entities::entity_type::Hook_Entity},
-     .secondary_fire          = secondary_fire_t::Projectile,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 850.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Hook_Entity}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 850.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Hook_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Bubble,
      .display_name            = "Bubble",
      .slot                    = entities::Inventory_Slot::Secondary,
      .fire_interval_seconds   = 0.1f,
-     .deploy_duration_seconds = 0.9f,
+     .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
-     .fire_resolution         = entities::Fire_Resolution::Projectile,
-     .projectile              = {.speed         = 500.f,
-                                 .gravity_scale = -0.5f,
-                                 .spawns        = entities::entity_type::Bubble_Entity},
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 500.f,
+                                                .gravity_scale = -0.5f,
+                                                .spawns = entities::entity_type::Bubble_Entity}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Kooh,
+     .display_name            = "Kooh",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 0.1f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 2.5f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 850.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Kooh_Entity}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 850.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Kooh_Entity}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+
+    {.weapon                  = entities::Weapon::Magnet,
+     .display_name            = "Magnet",
+     .slot                    = entities::Inventory_Slot::Primary,
+     .fire_interval_seconds   = 0.5f,
+     .deploy_duration_seconds = 0.7f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 0.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 1500.f,
+                                                .hit_effect           = hit_effect_t::Magnet,
+                                                .magnet_speed         = 600.f,
+                                                .leaves_bullet_impact = false}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 0.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 1500.f,
+                                                .hit_effect           = hit_effect_t::Magnet,
+                                                .magnet_speed         = -600.f,
+                                                .leaves_bullet_impact = false}},
+     .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
+                                 .world_impact = assets::sound_asset::Missing}},
+    // The fiddle row: both buttons repeat while held, a tether toward the player hit and a bullet stream.
+    {.weapon                  = entities::Weapon::Mock,
+     .display_name            = "Mock",
+     .slot                    = entities::Inventory_Slot::Primary,
+     .fire_interval_seconds   = 0.1f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution       = entities::Fire_Resolution::Hitscan,
+                                 .hitscan          = {.damage               = 0.f,
+                                                      .headshot_multiplier  = 1.0f,
+                                                      .range                = 3000.f,
+                                                      .hit_effect           = hit_effect_t::Tether,
+                                                      .tether_speed         = 600.f,
+                                                      .tether_seconds       = 0.25f,
+                                                      .leaves_bullet_impact = false},
+                                 .fires_while_held = true},
+     .secondary_fire          = {.resolution       = entities::Fire_Resolution::Hitscan,
+                                 .hitscan          = {.damage               = 8.f,
+                                                      .headshot_multiplier  = 2.0f,
+                                                      .range                = 10000.f,
+                                                      .hit_effect           = hit_effect_t::Damage,
+                                                      .leaves_bullet_impact = true},
+                                 .fires_while_held = true},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Platform,
+     .display_name            = "Platform",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 1.0f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 700.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Platform_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 }};
@@ -295,6 +371,12 @@ static_assert(rows_in_enum_order<&weapon_definition_t::weapon>(WEAPON_DEFINITION
               "WEAPON_DEFINITIONS rows are not in Weapon enum order: get_weapon_definition "
               "indexes by enum value, so a row out of place returns another weapon's stats.");
 
+constexpr bool fire_passes_through_shot_clocks(const weapon_fire_t& fire)
+{
+  return fire.resolution == entities::Fire_Resolution::Hitscan ||
+         fire.resolution == entities::Fire_Resolution::Projectile;
+}
+
 // THE SECOND CHECK: a self-impulse must be gated by exactly one clock.
 //
 // Its gate is Movement::seconds_until_impulse_ready, because that is the only
@@ -304,13 +386,11 @@ static_assert(rows_in_enum_order<&weapon_definition_t::weapon>(WEAPON_DEFINITION
 // predicted a dash against either would be predicting against a number it does
 // not have. See try_apply_self_impulse.
 //
-// So the weapon-side clocks on such a row must be ZERO, and this is what says
-// so. A nonzero fire_interval_seconds beside a nonzero cooldown is two gates
-// that agree today and drift the first time one of them is tuned; the failure
-// is a dash the server refuses and the client took, which is a rubber-band
-// rather than a wrong sound. A magazine is refused for the same reason one
-// level down: ammo is not replayable either, and a self-impulse with a
-// magazine is asking for a resource the prediction cannot count.
+// An impulse on either button never passes through the shot clocks, so a row
+// on which NEITHER button does must carry zero clocks and no magazine: those
+// are numbers nothing reads, and the day one is read beside the movement gate
+// it is two gates that agree today and drift the first time one is tuned. A
+// cooldown on a row with no impulse is the same silence the other way round.
 //
 // The day a self-impulse genuinely wants a raise time, what earns it is a
 // PREDICTED deploy clock in the replay, not a second gate here.
@@ -319,20 +399,16 @@ constexpr uint32_t first_self_impulse_row_gated_by_more_than_movement()
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
     const uint32_t row = static_cast<uint32_t>(definition.weapon);
-    const bool primary_is_impulse =
-        definition.fire_resolution == entities::Fire_Resolution::Self_Impulse;
-    const bool secondary_is_impulse =
-        definition.secondary_fire == secondary_fire_t::Self_Impulse;
+    const bool any_impulse =
+        definition.primary_fire.resolution == entities::Fire_Resolution::Self_Impulse ||
+        definition.secondary_fire.resolution == entities::Fire_Resolution::Self_Impulse;
+    const bool any_shot = fire_passes_through_shot_clocks(definition.primary_fire) ||
+                          fire_passes_through_shot_clocks(definition.secondary_fire);
 
-    if (!primary_is_impulse && !secondary_is_impulse)
-      continue;
-
-    if (definition.self_impulse_cooldown_seconds <= 0.f)
+    if (any_impulse != (definition.self_impulse_cooldown_seconds > 0.f))
       return row;
 
-    // The secondary never passes through the shot clocks, so only a primary
-    // impulse has weapon-side clocks that could stand beside the movement one.
-    if (primary_is_impulse &&
+    if (!any_shot &&
         (definition.fire_interval_seconds != 0.f || definition.deploy_duration_seconds != 0.f ||
          definition.magazine_size != 0))
       return row;
@@ -342,65 +418,168 @@ constexpr uint32_t first_self_impulse_row_gated_by_more_than_movement()
 
 static_assert(first_self_impulse_row_gated_by_more_than_movement() == entities::Weapon_COUNT,
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
-              "a Fire_Resolution::Self_Impulse row must carry zero fire_interval_seconds, "
-              "zero deploy_duration_seconds and no magazine, and any row firing a "
-              "self-impulse on either button a positive self_impulse_cooldown_seconds: the "
-              "only gate is Movement::seconds_until_impulse_ready, which is the only one the "
-              "client can replay. A weapon-side clock beside it is a second gate the client "
-              "cannot see.");
+              "a row firing a self-impulse on either button carries a positive "
+              "self_impulse_cooldown_seconds and a row with none carries zero, and a row on "
+              "which no button is Hitscan or Projectile carries zero fire_interval_seconds, "
+              "zero deploy_duration_seconds and no magazine: the only gate an impulse has is "
+              "Movement::seconds_until_impulse_ready, which is the only one the client can "
+              "replay.");
 
-// THE THIRD CHECK: a row's parameters match its resolution. The struct a
-// resolution reads must be filled and the two it does not read must be zero
-// -- a Swap on a Projectile row or a range on a Self_Impulse row is a number
-// nothing reads, which is the same silence as an unfilled row.
+// THE THIRD CHECK: each button's parameters match its resolution. The struct a
+// resolution reads must be filled and the ones it does not read must be zero
+// -- a Swap on a Projectile fire or a range on a Self_Impulse fire is a number
+// nothing reads, which is the same silence as an unfilled row. None and Zoom
+// read nothing. The primary may be neither: an unfilled primary is a zeroed
+// one, and Zoom is the client's right-click toggle.
+constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
+{
+  const hitscan_t&      hitscan    = fire.hitscan;
+  const projectile_t&   projectile = fire.projectile;
+  const self_impulse_t& impulse    = fire.self_impulse;
+  const bool hitscan_is_zero = hitscan.damage == 0.f && hitscan.headshot_multiplier == 0.f &&
+                               hitscan.range == 0.f && hitscan.hit_effect == hit_effect_t::Damage &&
+                               hitscan.magnet_speed == 0.f && hitscan.tether_speed == 0.f &&
+                               hitscan.tether_seconds == 0.f && !hitscan.leaves_bullet_impact;
+  const bool magnet_speed_matches_effect =
+      (hitscan.hit_effect == hit_effect_t::Magnet) == (hitscan.magnet_speed != 0.f);
+  const bool tether_matches_effect =
+      hitscan.hit_effect == hit_effect_t::Tether
+          ? hitscan.tether_speed > 0.f && hitscan.tether_seconds > 0.f
+          : hitscan.tether_speed == 0.f && hitscan.tether_seconds == 0.f;
+  const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
+                                  projectile.spawns == entities::entity_type::Invalid;
+  const bool impulse_is_zero = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
+
+  switch (fire.resolution)
+  {
+  case entities::Fire_Resolution::None:
+  case entities::Fire_Resolution::Zoom:
+    return hitscan_is_zero && projectile_is_zero && impulse_is_zero && !fire.fires_while_held;
+  case entities::Fire_Resolution::Hitscan:
+    return hitscan.range > 0.f && hitscan.headshot_multiplier > 0.f &&
+           magnet_speed_matches_effect && tether_matches_effect && projectile_is_zero &&
+           impulse_is_zero;
+  case entities::Fire_Resolution::Projectile:
+    return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
+           hitscan_is_zero && impulse_is_zero;
+  case entities::Fire_Resolution::Self_Impulse:
+    return hitscan_is_zero && projectile_is_zero && !fire.fires_while_held;
+  }
+  return false;
+}
+
 constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
 {
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
-    const uint32_t      row        = static_cast<uint32_t>(definition.weapon);
-    const hitscan_t&    hitscan    = definition.hitscan;
-    const projectile_t& projectile = definition.projectile;
-    const bool hitscan_is_zero = hitscan.damage == 0.f && hitscan.headshot_multiplier == 0.f &&
-                                 hitscan.range == 0.f &&
-                                 hitscan.hit_effect == hit_effect_t::Damage &&
-                                 !hitscan.leaves_bullet_impact;
-    const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
-                                    projectile.spawns == entities::entity_type::Invalid;
-    const bool impulse_is_zero    = definition.self_impulse.along_aim_speed == 0.f &&
-                                 definition.self_impulse.upward_speed == 0.f;
-
-    switch (definition.fire_resolution)
-    {
-    case entities::Fire_Resolution::Hitscan:
-      if (hitscan.range <= 0.f || hitscan.headshot_multiplier <= 0.f) return row;
-      if (!projectile_is_zero || !impulse_is_zero) return row;
-      break;
-    case entities::Fire_Resolution::Projectile:
-      if (projectile.speed <= 0.f) return row;
-      if (projectile.spawns == entities::entity_type::Invalid) return row;
-      if (!hitscan_is_zero || !impulse_is_zero) return row;
-      break;
-    case entities::Fire_Resolution::Self_Impulse:
-      if (!hitscan_is_zero || !projectile_is_zero) return row;
-      break;
-    }
+    const uint32_t row = static_cast<uint32_t>(definition.weapon);
+    if (definition.primary_fire.resolution == entities::Fire_Resolution::None ||
+        definition.primary_fire.resolution == entities::Fire_Resolution::Zoom)
+      return row;
+    if (!fire_parameters_match_resolution(definition.primary_fire) ||
+        !fire_parameters_match_resolution(definition.secondary_fire))
+      return row;
+    if ((definition.primary_fire.fires_while_held || definition.secondary_fire.fires_while_held) &&
+        !(definition.fire_interval_seconds > 0.f))
+      return row;
+    for (const weapon_fire_t* fire : {&definition.primary_fire, &definition.secondary_fire})
+      if (fire->fires_while_held && fire->hitscan.hit_effect == hit_effect_t::Tether &&
+          !(fire->hitscan.tether_seconds > definition.fire_interval_seconds))
+        return row;
   }
   return entities::Weapon_COUNT;
 }
 
 static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::Weapon_COUNT,
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
-              "a WEAPON_DEFINITIONS row fills the parameter struct of its own Fire_Resolution "
-              "(hitscan: positive range and headshot_multiplier; projectile: positive speed and "
-              "a spawned entity type) "
-              "and leaves the other two zero: resolve_player_shot reads exactly one of them, "
-              "so a value in another is a number nothing reads.");
+              "each fire of a WEAPON_DEFINITIONS row fills the parameter struct of its own "
+              "Fire_Resolution (hitscan: positive range and headshot_multiplier; projectile: "
+              "positive speed and a spawned entity type) and leaves the others zero, and the "
+              "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
+              "so a value in another is a number nothing reads. fires_while_held is for a "
+              "Hitscan or Projectile fire on a row with a positive fire_interval_seconds: "
+              "with no interval a held trigger fires once per sub-tick step, which is a rate "
+              "set by how many edges the tick had. A held Tether's tether_seconds is LONGER "
+              "than the fire interval: it is a lease the next hit renews, and one that runs "
+              "out between two hits drops the reel ten times a second.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {
   assert(static_cast<uint32_t>(id) < WEAPON_DEFINITIONS.size() &&
          "get_weapon_definition on an id with no table entry");
   return WEAPON_DEFINITIONS[id];
+}
+
+// The half of the row a button reads.
+constexpr const weapon_fire_t& fire_of(const weapon_definition_t& weapon,
+                                       entities::Fire_Trigger trigger)
+{
+  switch (trigger)
+  {
+  case entities::Fire_Trigger::Primary:   return weapon.primary_fire;
+  case entities::Fire_Trigger::Secondary: return weapon.secondary_fire;
+  }
+  return weapon.primary_fire;
+}
+
+// When a button that was ALREADY down fires inside [step_start, step_end): the moment both clocks open, never rounded to the step.
+[[nodiscard]] constexpr std::optional<subtick_time_t>
+try_find_held_fire_time(const weapon_fire_t& fire, subtick_time_t next_fire_time,
+                        subtick_time_t deploy_complete_time, subtick_time_t step_start,
+                        subtick_time_t step_end)
+{
+  if (!fire.fires_while_held)
+    return std::nullopt;
+
+  const subtick_time_t fire_time = std::max({step_start, next_fire_time, deploy_complete_time});
+  if (fire_time >= step_end)
+    return std::nullopt;
+  return fire_time;
+}
+
+// Negative ammo or reserve is UNLIMITED; both are per weapon INSTANCE and authored in the map.
+inline constexpr int32_t UNLIMITED_AMMO = -1;
+
+constexpr int32_t full_magazine_of(const weapon_definition_t& weapon)
+{
+  return weapon.magazine_size > 0 ? weapon.magazine_size : UNLIMITED_AMMO;
+}
+
+constexpr bool ammo_allows_a_shot(int32_t ammo)
+{
+  return ammo != 0;
+}
+
+constexpr bool reload_may_start(const weapon_definition_t& weapon, int32_t ammo,
+                                int32_t reserve_ammo)
+{
+  return weapon.magazine_size > 0 && ammo >= 0 && ammo < weapon.magazine_size &&
+         reserve_ammo != 0;
+}
+
+struct magazine_t
+{
+  int32_t ammo;
+  int32_t reserve_ammo;
+};
+
+constexpr magazine_t reloaded_magazine(const weapon_definition_t& weapon, magazine_t magazine)
+{
+  if (!reload_may_start(weapon, magazine.ammo, magazine.reserve_ammo))
+    return magazine;
+
+  const int32_t missing = weapon.magazine_size - magazine.ammo;
+  if (magazine.reserve_ammo < 0)
+    return {.ammo = weapon.magazine_size, .reserve_ammo = magazine.reserve_ammo};
+
+  const int32_t moved = missing < magazine.reserve_ammo ? missing : magazine.reserve_ammo;
+  return {.ammo = magazine.ammo + moved, .reserve_ammo = magazine.reserve_ammo - moved};
+}
+
+// How a live projectile flies: the row that fired it, the button it came off.
+inline const projectile_t& projectile_parameters_of(const entities::Projectile& projectile)
+{
+  return fire_of(get_weapon_definition(projectile.weapon_id), projectile.trigger).projectile;
 }
 
 // ---------------------------------------------------------------------------
@@ -423,31 +602,20 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 // dash goes where the player was looking at the press rather than wherever the
 // mouse finished the tick.
 //
-// The TRIGGER picks the row half: Primary is a Fire_Resolution::Self_Impulse
-// row's own impulse, Secondary the one behind secondary_fire_t::Self_Impulse.
-// A button whose half is not an impulse is refused here rather than by the
+// The TRIGGER picks the row half, primary_fire or secondary_fire. A button
+// whose half is not an impulse is refused here rather than by the
 // caller, which is what lets every site call this off whatever is in the hand.
 [[nodiscard]] inline bool try_apply_self_impulse(const movement_settings_t& settings,
                                                  const weapon_definition_t& weapon,
-                                                 fire_trigger_t trigger,
+                                                 entities::Fire_Trigger trigger,
                                                  const vec3f& aim_direction,
                                                  entities::Movement& movement,
                                                  vec3f& velocity)
 {
-  const self_impulse_t* impulse = nullptr;
-  switch (trigger)
-  {
-  case fire_trigger_t::Primary:
-    if (weapon.fire_resolution == entities::Fire_Resolution::Self_Impulse)
-      impulse = &weapon.self_impulse;
-    break;
-  case fire_trigger_t::Secondary:
-    if (weapon.secondary_fire == secondary_fire_t::Self_Impulse)
-      impulse = &weapon.secondary_self_impulse;
-    break;
-  }
-  if (impulse == nullptr)
+  const weapon_fire_t& fire = fire_of(weapon, trigger);
+  if (fire.resolution != entities::Fire_Resolution::Self_Impulse)
     return false;
+  const self_impulse_t* impulse = &fire.self_impulse;
 
   if (movement.seconds_until_impulse_ready > 0.f)
     return false;

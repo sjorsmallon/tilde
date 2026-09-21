@@ -54,6 +54,18 @@ void instant_momentum_impulse(const movement_settings_t&, move_state_t& state,
   momentum.y = 0.f;
 }
 
+void instant_momentum_clip_memory(const movement_settings_t& settings, move_state_t& state,
+                                  Span<const Plane> wall_planes)
+{
+  vec3& momentum = state.movement.momentum;
+  for (const Plane& plane : wall_planes)
+  {
+    if (dot(momentum, plane.normal) < 0.f)
+      momentum = clip_vector(momentum, plane.normal, settings.shared.overbounce);
+  }
+  momentum.y = 0.f;
+}
+
 wanted_move_t instant_momentum_step(const movement_settings_t& settings,
                                     const contacts_t& contacts, bool grounded,
                                     const vec3& velocity_entering_move, move_state_t& state,

@@ -163,6 +163,8 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Hook_Entity
+  0u,   // Kooh_Entity
+  0u,   // Platform_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
@@ -216,6 +218,8 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Hook_Entity
+  0u,   // Kooh_Entity
+  0u,   // Platform_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
@@ -261,6 +265,8 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Hook_Entity
+  0u,   // Kooh_Entity
+  0u,   // Platform_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity

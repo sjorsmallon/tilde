@@ -4,6 +4,7 @@
 #include "../../shared/log.hpp"
 #include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
+#include "../../shared/shapes.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
 
@@ -15,7 +16,6 @@
 namespace server
 {
 
-static constexpr vec3f DROPPED_WEAPON_SIZE          = {24.f, 6.f, 6.f};
 static constexpr float THROW_SPAWN_DISTANCE         = 32.f;
 static constexpr float THROW_SPEED                  = 400.f;
 static constexpr float THROW_UPWARD_SPEED           = 150.f;
@@ -53,7 +53,7 @@ static constexpr float THROW_PICKUP_DELAY_SECONDS   = 0.75f;
   }
 
   weapon_entity->weapon_id   = weapon;
-  weapon_entity->ammo        = definition.magazine_size;
+  weapon_entity->ammo        = shared::full_magazine_of(definition);
   weapon_entity->owner_uid   = owner.entity_id;
   weapon_entity->damage_type = damage_type;
 
@@ -125,13 +125,21 @@ void refill_inventory(shared::game_session_t& session, entities::Player_Entity& 
       continue;
     }
 
-    // Off the WEAPON's own id, not off the slot: a slot has no stats and the
-    // thing in it is what knows its own magazine.
-    weapon_entity->ammo = shared::get_weapon_definition(weapon_entity->weapon_id).magazine_size;
+    reload_magazine(*weapon_entity);
     weapon_entity->next_fire_time = 0;
   }
 
   player.inventory.deploy_complete_time = 0;
+}
+
+void reload_magazine(entities::Weapon_Entity& weapon)
+{
+  const shared::magazine_t reloaded = shared::reloaded_magazine(
+      shared::get_weapon_definition(weapon.weapon_id),
+      {.ammo = weapon.ammo, .reserve_ammo = weapon.reserve_ammo});
+
+  weapon.ammo         = reloaded.ammo;
+  weapon.reserve_ammo = reloaded.reserve_ammo;
 }
 
 entities::Weapon_Entity* try_find_active_weapon(shared::game_session_t&          session,
@@ -145,6 +153,22 @@ entities::Weapon_Entity* try_find_active_weapon(shared::game_session_t&         
     return nullptr;
 
   return session.entity_system.get<entities::Weapon_Entity>(*weapon_uid);
+}
+
+bool carries_weapon(shared::game_session_t& session, const entities::Player_Entity& player,
+                    entities::Weapon weapon)
+{
+  for (const shared::entity_uid_t weapon_uid : player.inventory.weapons)
+  {
+    if (weapon_uid == shared::null_entity_uid)
+      continue;
+
+    const entities::Weapon_Entity* carried =
+        session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
+    if (carried != nullptr && carried->weapon_id == weapon)
+      return true;
+  }
+  return false;
 }
 
 bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity& player,
@@ -173,13 +197,23 @@ bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity&
 
   weapon->owner_uid           = shared::null_entity_uid;
   weapon->position            = position;
-  weapon->render.scale        = DROPPED_WEAPON_SIZE;
   weapon->pickup_allowed_tick =
       context.tick_number + static_cast<uint32_t>(std::ceil(THROW_PICKUP_DELAY_SECONDS / tick_dt));
 
-  register_dynamic_box(*context.world.physics, thrown_uid, position, DROPPED_WEAPON_SIZE * 0.5f,
+  register_dynamic_box(*context.world.physics, thrown_uid, position, weapon->volume.half_extents,
                        velocity);
   return true;
+}
+
+// A cube of the box's longest half extent: a thrown weapon tumbles and the volume does not turn with it.
+static shared::aabb_bounds_t pickup_bounds_of(const entities::Weapon_Entity& weapon)
+{
+  const vec3f half_extents = weapon.volume.half_extents;
+  const float reach        = std::max({half_extents.x, half_extents.y, half_extents.z});
+
+  entities::Box_Volume cube = weapon.volume;
+  cube.half_extents         = {reach, reach, reach};
+  return shared::get_bounds(cube, weapon.position);
 }
 
 void update_dropped_weapons(server_context_t& context)
@@ -187,8 +221,6 @@ void update_dropped_weapons(server_context_t& context)
   shared::game_session_t& session = context.world.session;
   physics_state_t&        physics = *context.world.physics;
   JPH::BodyInterface&     body_interface = physics.physics_system.GetBodyInterface();
-
-  const float reach = std::max({DROPPED_WEAPON_SIZE.x, DROPPED_WEAPON_SIZE.y, DROPPED_WEAPON_SIZE.z}) * 0.5f;
 
   Span<entities::Weapon_Entity> weapons = session.entity_system.entities_of<entities::Weapon_Entity>();
   Span<entities::Player_Entity> players = session.entity_system.entities_of<entities::Player_Entity>();
@@ -212,8 +244,7 @@ void update_dropped_weapons(server_context_t& context)
     if (context.tick_number < weapon.pickup_allowed_tick)
       continue;
 
-    const vec3f minimum = weapon.position - vec3f{reach, reach, reach};
-    const vec3f maximum = weapon.position + vec3f{reach, reach, reach};
+    const shared::aabb_bounds_t pickup = pickup_bounds_of(weapon);
     const entities::Inventory_Slot slot = shared::get_weapon_definition(weapon.weapon_id).slot;
 
     for (entities::Player_Entity& player : players)
@@ -224,7 +255,7 @@ void update_dropped_weapons(server_context_t& context)
         continue;
 
       const shared::aabb_bounds_t hull = shared::player_hull_bounds(player.position);
-      if (!linalg::intersect_aabb_aabb(hull.min, hull.max, minimum, maximum))
+      if (!linalg::intersect_aabb_aabb(hull.min, hull.max, pickup.min, pickup.max))
         continue;
 
       unregister_physics_body(physics, weapon.entity_id);

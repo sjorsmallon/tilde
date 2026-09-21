@@ -130,11 +130,13 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
           shared::slide(settings, contacts, grounded, wanted, hull_center, dt);
       new_center   = slid.hull_center;
       new_velocity = slid.velocity;
+      shared::clip_model_memory(settings, state, contacts.wall_planes);
     }
   }
 
   const shared::settled_move_t settled = shared::resolve_after_move(
       settings, bvh, world, new_center, new_velocity, recording_bucket);
+  shared::clip_model_memory(settings, state, settled.wall_planes);
 
   state.feet     = settled.hull_center - hull_center_offset;
   state.velocity = settled.velocity;
@@ -163,6 +165,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
     movement.time_since_grounded_seconds += dt;
   }
 
+  // A LANDING ends a borrow: it was sized for a flight, and the flight is over.
+  const bool landed_this_step = settled.grounded && !movement.is_grounded;
+
   movement.is_grounded      = settled.grounded;
   movement.ground_mover_uid = settled.ground_mover_uid;
 
@@ -178,7 +183,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
   movement.seconds_until_impulse_ready =
       std::max(0.f, movement.seconds_until_impulse_ready - dt);
   movement.seconds_until_speed_returns_to_base_speed =
-      std::max(0.f, movement.seconds_until_speed_returns_to_base_speed - dt);
+      landed_this_step
+          ? 0.f
+          : std::max(0.f, movement.seconds_until_speed_returns_to_base_speed - dt);
 
   // The edge's other half, written last so the next step compares against what
   // this one actually saw.

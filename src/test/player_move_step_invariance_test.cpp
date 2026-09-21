@@ -29,7 +29,10 @@
 #include "../shared/collision_detection.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/map_geometry.hpp"
+#include "../shared/entity_system.hpp"
+#include "../shared/movement_kernel.hpp"
 #include "../shared/player_move.hpp"
+#include "../shared/spawned_platforms.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1316,6 +1319,87 @@ static void test_a_mover_crushes_against_a_ceiling(const cvar_state_t& cvars)
         "not before the gap closes, and not long after");
 }
 
+// --- 16b. a spawned platform catches a hull from the tick it lands, and never crushes ---
+struct platform_drop_result_t
+{
+  vec3                 feet;
+  shared::entity_uid_t ground_mover_uid = shared::null_entity_uid;
+  shared::entity_uid_t crushed_by       = shared::null_entity_uid;
+  float                deepest_overlap_after_settling = 0.f;
+};
+
+static platform_drop_result_t drop_onto_spawned_platform(const cvar_state_t& cvars, uint32_t flight_ticks,
+                                                        float drop_height, uint32_t ticks,
+                                                        shared::entity_uid_t& out_platform_uid)
+{
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_dt, .gravity = 800.f};
+
+  shared::Entity_System system;
+  out_platform_uid = system.spawn(entities::entity_type::Platform_Entity);
+  entities::Platform_Entity* platform = system.get<entities::Platform_Entity>(out_platform_uid);
+  platform->flight       = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 1, .flight_ticks = flight_ticks};
+  platform->rest_seconds = 60.f;
+
+  entities::Movement movement{};
+  vec3 feet = vec3{0.f, 100.f + platform->half_extents.y + drop_height, 0.f};
+  vec3 velocity{};
+  platform_drop_result_t result;
+  std::vector<shared::mover_t> movers;
+
+  for (uint32_t tick = 1; tick <= ticks; ++tick)
+  {
+    movers.clear();
+    shared::collect_spawned_platforms(system, tick, flight, movers);
+    const shared::predicted_world_t world{.movers = movers};
+
+    const mover_push_t push = push_player_by_movers(bvh, world, movement, feet, half_width, half_height);
+    feet = push.feet;
+    if (push.crushed_by != shared::null_entity_uid)
+      result.crushed_by = push.crushed_by;
+
+    const move_result_t moved = run_split(cvars, bvh, Move_Input{}, feet, velocity, tick_dt, 1,
+                                          &movement, {}, nullptr, {}, movers);
+    feet     = moved.position;
+    velocity = moved.velocity;
+
+    if (tick + 10 > ticks)
+      for (const shared::mover_t& mover : movers)
+        result.deepest_overlap_after_settling = std::max(
+            result.deepest_overlap_after_settling,
+            shared::hull_penetration_depth(mover.pieces.front().planes,
+                                           feet + vec3{0.f, half_height, 0.f}, half_width, half_height));
+  }
+
+  result.feet             = feet;
+  result.ground_mover_uid = movement.ground_mover_uid;
+  return result;
+}
+
+static void test_a_spawned_platform_catches_a_hull(const cvar_state_t& cvars)
+{
+  printf("\n[pin] platform gun: solid from the tick it lands, a ghost before, and it crushes nobody\n");
+
+  shared::entity_uid_t uid = shared::null_entity_uid;
+  const float top = 100.f + entities::Platform_Entity{}.half_extents.y;
+
+  const platform_drop_result_t landed = drop_onto_spawned_platform(cvars, 5, 64.f, 120, uid);
+  printf("    landed:   feet.y %.4f (top %.4f)\n", landed.feet.y, top);
+  check_near(landed.feet.y, top, 0.1f, "a hull dropped onto a landed platform stands on its top");
+  check(landed.ground_mover_uid == uid, "Movement::ground_mover_uid names the platform");
+
+  const platform_drop_result_t fell = drop_onto_spawned_platform(cvars, 100000, 64.f, 120, uid);
+  printf("    ghost:    feet.y %.4f\n", fell.feet.y);
+  check(fell.feet.y < 100.f - 200.f, "a hull dropped through a platform still in flight keeps falling");
+
+  // The platform goes solid AROUND the falling hull: 20 ticks of fall puts the hull's middle in the box.
+  const platform_drop_result_t engulfed = drop_onto_spawned_platform(cvars, 20, -half_height + 45.f, 120, uid);
+  printf("    engulfed: feet.y %.4f, overlap after settling %.4f\n", engulfed.feet.y,
+         engulfed.deepest_overlap_after_settling);
+  check(engulfed.crushed_by == shared::null_entity_uid, "a platform that lands around a hull crushes nobody");
+  check(engulfed.deepest_overlap_after_settling < 0.1f, "and the hull is pushed out of it rather than left inside");
+}
+
 // --- 17. pm_model instant: the velocity IS the input, ground and air --
 static cvar_state_t instant_cvars(const cvar_state_t& cvars)
 {
@@ -1461,6 +1545,49 @@ static void test_instant_pad_launch_is_borrowed(const cvar_state_t& cvars)
   }
 }
 
+// A borrow is sized for a flight, so landing early must end it rather than glide it out.
+static void test_instant_landing_ends_the_borrow(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant: a landing ends borrowed speed, a grounded borrow runs on\n");
+
+  const cvar_state_t              instant = instant_cvars(cvars);
+  const Bounding_Volume_Hierarchy bvh     = floor_world();
+
+  for (int sub_steps : {1, 8})
+  {
+    entities::Movement falling{};
+    falling.seconds_until_speed_returns_to_base_speed = 5.f;
+    move_result_t landed{{0.f, 40.f, 0.f}, {300.f, 0.f, 0.f}};
+    for (int tick = 0; tick < 60; ++tick)
+      landed = run_split(instant, bvh, Move_Input{}, landed.position, landed.velocity, tick_dt,
+                         sub_steps, &falling);
+
+    entities::Movement dashing{};
+    move_result_t      dashed{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
+    for (int tick = 0; tick < 5; ++tick)
+      dashed = run_split(instant, bvh, Move_Input{}, dashed.position, dashed.velocity, tick_dt,
+                         sub_steps, &dashing);
+    dashing.seconds_until_speed_returns_to_base_speed = 1.f;
+    dashed.velocity                                   = {900.f, 0.f, 0.f};
+    for (int tick = 0; tick < 5; ++tick)
+      dashed = run_split(instant, bvh, Move_Input{}, dashed.position, dashed.velocity, tick_dt,
+                         sub_steps, &dashing);
+
+    printf("    N=%-2d  landed: grounded %d remaining %.4f speed %.4f   dash: remaining %.4f speed %.4f\n",
+           sub_steps, (int)falling.is_grounded, falling.seconds_until_speed_returns_to_base_speed,
+           horizontal_speed(landed.velocity), dashing.seconds_until_speed_returns_to_base_speed,
+           horizontal_speed(dashed.velocity));
+
+    check(falling.is_grounded, "the fall reached the floor");
+    check(falling.seconds_until_speed_returns_to_base_speed == 0.f, "landing ends the borrow");
+    check_near(horizontal_speed(landed.velocity), 0.f, 1e-3f,
+               "so no input is no velocity again, rather than a glide");
+    check_near(dashing.seconds_until_speed_returns_to_base_speed, 1.f - 5.f * tick_dt, 1e-4f,
+               "a borrow taken ON the ground is not ended by standing on it");
+    check_near(horizontal_speed(dashed.velocity), 900.f, 1e-2f, "and keeps its speed");
+  }
+}
+
 // --- 20. pm_model instant_momentum: the memory is a velocity, not a timer ----
 //
 // The same input rule as instant over a momentum an impulse LANDS in, so there
@@ -1515,6 +1642,34 @@ static void test_instant_momentum_decay_composes(const cvar_state_t& cvars)
                        &state.movement);
   check_near(result.velocity.x, 900.f * std::exp(-air_drag * 10.f * tick_dt), 1e-1f,
              "ten ticks of it bleeds rather than expiring");
+}
+
+// A wall clips the MEMORY too, or the launch is pushed back into it every step.
+static void test_instant_momentum_is_clipped_by_a_wall(const cvar_state_t& cvars)
+{
+  printf("\n[EXACT] pm_model instant_momentum: a wall takes its share out of the momentum\n");
+
+  const cvar_state_t                momentum = momentum_cvars(cvars, 0.f, 0.f);
+  const Bounding_Volume_Hierarchy   bvh      = floor_and_wall_world();
+  const shared::movement_settings_t settings = shared::movement_settings_from(momentum);
+
+  for (int sub_steps : {1, 8})
+  {
+    shared::move_state_t state{.feet = {0.f, 512.f, 0.f}};
+    shared::apply_impulse(settings, state,
+                          {.vertical = shared::impulse_mode_t::Keep, .velocity = {600.f, 0.f, 200.f}});
+
+    move_result_t result{state.feet, state.velocity};
+    for (int tick = 0; tick < 20; ++tick)
+      result = run_split(momentum, bvh, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &state.movement);
+
+    printf("    N=%-2d  momentum (%.4f, %.4f)  x = %.4f\n", sub_steps, state.movement.momentum.x,
+           state.movement.momentum.z, result.position.x);
+    check(result.position.x < 100.f, "the wall stopped the hull");
+    check(std::fabs(state.movement.momentum.x) < 1.f, "the into-wall momentum is gone");
+    check_near(state.movement.momentum.z, 200.f, 1e-2f, "the share along the wall is kept");
+  }
 }
 
 // --- 21. the room rule: input adds NOTHING along the momentum ----------------
@@ -2026,10 +2181,13 @@ int main()
   test_a_disabled_brush_is_walked_through(cvars);
   test_a_mover_carries_its_rider(cvars);
   test_a_mover_crushes_against_a_ceiling(cvars);
+  test_a_spawned_platform_catches_a_hull(cvars);
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);
   test_instant_pad_launch_is_borrowed(cvars);
+  test_instant_landing_ends_the_borrow(cvars);
   test_instant_momentum_decay_composes(cvars);
+  test_instant_momentum_is_clipped_by_a_wall(cvars);
   test_instant_momentum_input_adds_only_beside_it(cvars);
   test_instant_momentum_pad_flies_the_drawn_arc(cvars);
   test_instant_redirect_turns_carried_speed(cvars);

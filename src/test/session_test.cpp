@@ -353,7 +353,7 @@ int main()
     entity_system.spawn<entities::Rocket_Entity>();
     entity_system.spawn<entities::Rocket_Entity>();
     entity_system.spawn<entities::Rocket_Entity>();
-    entity_system.spawn<entities::Weapon_Entity>();
+    entity_system.spawn<entities::Hook_Entity>();
     entity_system.spawn<entities::Physics_Body_Entity>();
     entity_system.spawn<entities::Trigger_Volume_Entity>();
     entity_system.spawn<entities::Spot_Light_Entity>();

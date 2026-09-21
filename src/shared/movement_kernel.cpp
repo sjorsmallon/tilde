@@ -364,7 +364,7 @@ settled_move_t resolve_after_move(const movement_settings_t& settings,
 {
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
-  const contacts_t post = resolve_collisions(settings, bvh, world, hull_center, debug_faces);
+  contacts_t post = resolve_collisions(settings, bvh, world, hull_center, debug_faces);
 
   const float overbounce = settings.shared.overbounce;
 
@@ -404,7 +404,8 @@ settled_move_t resolve_after_move(const movement_settings_t& settings,
           .velocity          = velocity,
           .grounded          = post.has_ground(),
           .ground_mover_uid  = post.ground_mover_uid,
-          .land_impact_speed = land_impact_speed};
+          .land_impact_speed = land_impact_speed,
+          .wall_planes       = std::move(post.wall_planes)};
 }
 
 // Stair-step glide: if grounded and pressing into a wall, try raising the

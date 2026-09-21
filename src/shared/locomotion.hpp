@@ -48,6 +48,12 @@ void instant_momentum_impulse(const movement_settings_t& settings, move_state_t&
 void instant_redirect_impulse(const movement_settings_t& settings, move_state_t& state,
                               const impulse_t& impulse);
 
+// A wall takes the same share out of a model's memory that it took out of the velocity.
+void clip_model_memory(const movement_settings_t& settings, move_state_t& state,
+                       Span<const Plane> wall_planes);
+void instant_momentum_clip_memory(const movement_settings_t& settings, move_state_t& state,
+                                  Span<const Plane> wall_planes);
+
 // A GROUND jump reads the LEVEL, unchanged: holding space to bunnyhop is the
 // behavior, not a bug, and nothing is spent by it.
 //

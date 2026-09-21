@@ -44,7 +44,7 @@ try_grant_weapon(server_context_t&     context,
 // handle to.
 void destroy_inventory(server_context_t& context, shared::entity_uid_t player_uid);
 
-// Every carried weapon back to a full magazine, with its own fire clock cleared
+// Every carried weapon reloaded out of its own reserve, with its own fire clock cleared
 // and no switch in flight. This is what a (re)spawn resets, and it is here
 // rather than in respawn_system because it walks the inventory: the clocks and
 // the magazines are per-weapon now, so there is no single field left for a
@@ -55,6 +55,9 @@ void destroy_inventory(server_context_t& context, shared::entity_uid_t player_ui
 // player who died mid-recovery would otherwise come back still gated by a
 // deadline the corpse earned.
 void refill_inventory(shared::game_session_t& session, entities::Player_Entity& player);
+
+// Tops the magazine up out of the reserve; a respawn and a finished reload are the same transfer.
+void reload_magazine(entities::Weapon_Entity& weapon);
 
 // The weapon in the active slot, or nullptr if that slot is empty.
 //
@@ -68,6 +71,10 @@ void refill_inventory(shared::game_session_t& session, entities::Player_Entity& 
 // Weapon_Entity pool. Do not store it.
 [[nodiscard]] entities::Weapon_Entity*
 try_find_active_weapon(shared::game_session_t& session, const entities::Player_Entity& player);
+
+// Whether any slot, held or not, carries a weapon of this kind.
+[[nodiscard]] bool carries_weapon(shared::game_session_t& session,
+                                  const entities::Player_Entity& player, entities::Weapon weapon);
 
 // Turns the held weapon into an ownerless physics body flying along the aim. False for an empty hand.
 [[nodiscard]] bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity& player,

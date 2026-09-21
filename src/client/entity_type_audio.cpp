@@ -40,6 +40,8 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     {entities::entity_type::Weapon_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Rocket_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Hook_Entity, {}, assets::sound_asset::Missing},
+    {entities::entity_type::Kooh_Entity, {}, assets::sound_asset::Missing},
+    {entities::entity_type::Platform_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Bubble_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Physics_Body_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
     {entities::entity_type::Damageable_Entity, TARGET_BREAK_SOUNDS, assets::sound_asset::target_break},

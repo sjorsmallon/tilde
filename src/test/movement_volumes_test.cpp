@@ -21,6 +21,7 @@
 #include "movement_volumes.hpp"
 #include "movers.hpp"
 #include "shapes.hpp"
+#include "spawned_platforms.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -78,6 +79,10 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     spawned_uids.push_back(system.spawn(type));
     spawned_types.push_back(type);
     try_switch_off(system, spawned_uids.back());
+
+    // A platform answers only once it has landed, as an owner answers only once it is off.
+    if (entities::Platform_Entity* platform = system.get<entities::Platform_Entity>(spawned_uids.back()))
+      platform->flight = {.launch_tick = 1, .flight_ticks = 0};
   }
 
   std::vector<shared::movement_volume_t> volumes;
@@ -100,6 +105,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
 
   std::vector<shared::mover_t> movers;
   shared::collect_movers(system, {}, {}, 1, 60.0f, movers);
+  shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+                                    movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -138,6 +145,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a brush entity is not a movement volume");
   check(types_that_produced_a_mover.count(entities::entity_type::Mover_Entity) > 0,
         "a mover entity is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Platform_Entity) > 0,
+        "a landed platform is a mover");
 
   // Not vacuous: if nothing is @predicted the loop above passes by saying
   // nothing, which is the one way this pin could quietly stop measuring.
@@ -251,10 +260,8 @@ static void test_a_bubble_is_placed_by_the_tick_it_is_cut_for()
   check(volumes.size() == 1 && !volumes[0].enabled,
         "a bubble whose launch is not latched yet bounces nobody");
 
-  bubble->launch_position     = {0.f, 100.f, 0.f};
+  bubble->flight              = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 60};
   bubble->projectile.velocity = {600.f, 0.f, 0.f};
-  bubble->launch_tick         = 10;
-  bubble->flight_ticks        = 60;
 
   const auto volume_at = [&](uint32_t tick)
   {
@@ -286,11 +293,61 @@ static void test_a_bubble_is_placed_by_the_tick_it_is_cut_for()
         "the bounce is the bubble's own upward speed");
 }
 
+static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out()
+{
+  printf("\n[pin] a platform is a ghost in flight, one still box at rest, and gone after\n");
+
+  shared::Entity_System        system;
+  const shared::entity_uid_t   uid      = system.spawn(entities::entity_type::Platform_Entity);
+  entities::Platform_Entity*   platform = system.get<entities::Platform_Entity>(uid);
+
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+
+  std::vector<shared::mover_t> movers;
+  const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
+  {
+    movers.clear();
+    shared::collect_spawned_platforms(system, tick, flight, movers);
+    return movers;
+  };
+
+  check(cut_at(1).empty(), "a platform whose launch is not latched yet is not solid");
+
+  platform->flight              = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 30};
+  platform->projectile.velocity = {600.f, 0.f, 0.f};
+  platform->rest_seconds        = 2.f;
+  platform->half_extents        = {48.f, 4.f, 48.f};
+
+  check(cut_at(10 + 29).empty(), "the last tick of the flight is still a ghost");
+  check(cut_at(10 + 30).size() == 1, "the tick it lands is the tick it is solid");
+  check(cut_at(10 + 30 + 119).size() == 1, "the last tick of its rest is still solid");
+  check(cut_at(10 + 30 + 120).empty(), "two seconds at sixty hertz is 120 ticks of rest, and then it is gone");
+  check(shared::platform_has_expired_at(*platform, 10 + 30 + 120, flight.tick_interval_seconds) &&
+            !shared::platform_has_expired_at(*platform, 10 + 30 + 119, flight.tick_interval_seconds),
+        "the server reaps it on the tick the cut drops it");
+
+  const shared::mover_t& rested = cut_at(10 + 60)[0];
+  check(rested.uid == uid, "the mover names the platform, which is what ground_mover_uid stores");
+  check(rested.pieces.size() == 1 && rested.pieces[0].planes.size() == 6, "it is one box");
+  check(linalg::length(rested.pose_at_tick_end.position - rested.pose_at_tick_start.position) == 0.f,
+        "its two poses are equal, so the push carries nobody");
+  check(std::fabs(rested.swept_bounds.min.x - (300.f - 48.f)) < 0.01f &&
+            std::fabs(rested.swept_bounds.max.x - (300.f + 48.f)) < 0.01f &&
+            std::fabs(rested.swept_bounds.max.y - 104.f) < 0.01f,
+        "the box sits where half a second at 600 units a second left it");
+
+  check(shared::platform_rest_fraction(*platform, 10 + 30, 0.f, flight.tick_interval_seconds) == 0.f &&
+            std::fabs(shared::platform_rest_fraction(*platform, 10 + 30 + 60, 0.f,
+                                                     flight.tick_interval_seconds) - 0.5f) < 1e-4f,
+        "the wipe runs from landing to expiry");
+}
+
 int main()
 {
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
+  test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
   test_a_switch_reaches_the_geometry_it_owns();
   test_a_drawn_mover_carries_its_rider_by_the_same_fraction();
 

@@ -37,9 +37,9 @@ constexpr uint64_t Zoom     = 1 << 16;
 constexpr uint64_t P        = 1 << 17; // Placeholder that you can use to hijack.
 constexpr uint64_t Reload   = 1 << 18;
 constexpr uint64_t Throw    = 1 << 19;
-// The right mouse button as a CLICK, for the weapon whose secondary is an
-// impulse (shared/weapons.hpp, secondary_fire_t). Zoom below is the same
-// button as a client-side toggle; the two ride together.
+// The right mouse button as a CLICK: the weapon's secondary_fire, resolved
+// exactly as Fire resolves its primary_fire (shared/weapons.hpp). Zoom below is
+// the same button as a client-side toggle; the two ride together.
 constexpr uint64_t Secondary_Fire = 1 << 20;
 // The middle mouse button as a CLICK. It lands on the WORLD (a raycast and a
 // marker), not on the player's own velocity, so nothing about it is predicted --

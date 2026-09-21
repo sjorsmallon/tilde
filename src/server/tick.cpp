@@ -19,10 +19,12 @@
 #include "server_send.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/bubble_system.hpp"
+#include "systems/platform_system.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/hit_resolution_system.hpp"
 #include "systems/hit_test_world.hpp"
 #include "systems/hook_system.hpp"
+#include "systems/kooh_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"
 #include "systems/physics_body_system.hpp"
@@ -138,7 +140,9 @@ bool Tick()
 
     update_rockets(context, tick_dt);
     update_hooks(context, tick_dt);
+    update_koohs(context, tick_dt);
     update_bubbles(context, world.disabled_geometry);
+    update_platforms(context, world.disabled_geometry);
     update_ping_markers(context, tick_dt);
 
     // respawn runs after death so we can correctly set next ticks etc.

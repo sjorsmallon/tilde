@@ -218,6 +218,21 @@ struct pending_swap_t
   shared::entity_uid_t target_uid  = shared::null_entity_uid;
 };
 
+struct pending_magnet_t
+{
+  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
+  shared::entity_uid_t target_uid  = shared::null_entity_uid;
+  float                speed       = 0.f;
+};
+
+struct pending_tether_t
+{
+  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
+  shared::entity_uid_t target_uid  = shared::null_entity_uid;
+  float                speed       = 0.f;
+  float                seconds     = 0.f;
+};
+
 struct tick_output_t
 {
   shared::event_stream_t effects;
@@ -227,6 +242,10 @@ struct tick_output_t
   std::vector<pending_hit_t> pending_hits;
 
   std::vector<pending_swap_t> pending_swaps;
+
+  std::vector<pending_magnet_t> pending_magnets;
+
+  std::vector<pending_tether_t> pending_tethers;
 };
 
 struct server_context_t

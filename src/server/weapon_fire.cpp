@@ -220,7 +220,7 @@ void finish_reload(shared::game_session_t &session, entities::Player_Entity &pla
     log_error("finish_reload: player {} finished reloading {}, which is empty",
               player.entity_id, to_string(player.inventory.active_slot));
   else
-    active_weapon->ammo = shared::get_weapon_definition(active_weapon->weapon_id).magazine_size;
+    reload_magazine(*active_weapon);
 
   player.reload_complete_time = 0;
 }
@@ -238,12 +238,27 @@ void cancel_reload(entities::Player_Entity &player)
                                          const shared::weapon_definition_t &weapon,
                                          shared::subtick_time_t fire_time)
 {
+  const float seconds_per_subtick_slot =
+      static_cast<float>(get_tick_interval()) / static_cast<float>(shared::SUBTICK_SLOT_COUNT);
+
   // can't fire because it's not time yet.
-  if (fire_time < active_weapon.next_fire_time) return false;
+  if (fire_time < active_weapon.next_fire_time)
+  {
+    log_terminal("slot {}: {} trigger refused, fire interval has {:.3f}s left", client_slot,
+                 weapon.display_name,
+                 static_cast<float>(active_weapon.next_fire_time - fire_time) * seconds_per_subtick_slot);
+    return false;
+  }
 
   // can't fire because weapon is still deploying.
   if (fire_time < player.inventory.deploy_complete_time)
+  {
+    log_terminal("slot {}: {} trigger refused, still deploying for {:.3f}s", client_slot,
+                 weapon.display_name,
+                 static_cast<float>(player.inventory.deploy_complete_time - fire_time) *
+                     seconds_per_subtick_slot);
     return false;
+  }
 
   // we're reloading.
   if (is_reloading(player))
@@ -256,7 +271,7 @@ void cancel_reload(entities::Player_Entity &player)
   }
 
   // can't fire because we're out of ammo.
-  if ((weapon.magazine_size > 0) && (active_weapon.ammo <= 0))
+  if (!shared::ammo_allows_a_shot(active_weapon.ammo))
   {
     const uint32_t warning_interval =
         std::max(1u, static_cast<uint32_t>(context.cvars->sv_tickrate));
@@ -269,7 +284,7 @@ void cancel_reload(entities::Player_Entity &player)
     return false;
   }
 
-  if (weapon.magazine_size > 0)
+  if (active_weapon.ammo > 0)
     --active_weapon.ammo;
 
   active_weapon.next_fire_time = shared::subtick_time_after(
@@ -288,36 +303,68 @@ void mark_shot_fired(const server_context_t &context, entities::Player_Entity &p
 shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_uid_t owner_uid,
                                       const shared::weapon_definition_t& weapon,
                                       const vec3f& origin, const vec3f& direction,
-                                      shared::fire_trigger_t trigger)
+                                      entities::Fire_Trigger trigger)
 {
-  if (weapon.fire_resolution != entities::Fire_Resolution::Projectile)
-    fatal_error("spawn_projectile: {} does not resolve as a projectile", weapon.display_name);
+  const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
+  if (fire.resolution != entities::Fire_Resolution::Projectile)
+    fatal_error("spawn_projectile: {}'s {} fire does not resolve as a projectile",
+                weapon.display_name, to_string(trigger));
 
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
-  const shared::entity_uid_t projectile_uid = entity_system.spawn(weapon.projectile.spawns);
-  entities::Entity*          entity         = entity_system.try_find(projectile_uid);
+  const shared::entity_uid_t projectile_uid = entity_system.spawn(fire.projectile.spawns);
+  entities::Entity* entity = entity_system.try_find(projectile_uid);
   if (entity == nullptr)
   {
     log_error("spawn_projectile: no room to spawn a {} for {}",
-              entities::entity_info(weapon.projectile.spawns).display_name, weapon.display_name);
+              entities::entity_info(fire.projectile.spawns).display_name, weapon.display_name);
     return shared::null_entity_uid;
   }
 
   entities::Projectile* projectile = entities::get_component<entities::Projectile>(entity);
   if (projectile == nullptr)
     fatal_error("spawn_projectile: {} spawns a {}, which carries no Projectile component",
-                weapon.display_name, entities::entity_info(weapon.projectile.spawns).display_name);
+                weapon.display_name, entities::entity_info(fire.projectile.spawns).display_name);
+
+  auto* player = entity_system.get<entities::Player_Entity>(owner_uid);
+  if (player == nullptr)
+    fatal_error("spawn_projectile: owner {} is not a Player_Entity", owner_uid);
+  
+  // what part of the player's velocity is in the firing direction -> add that onto the firing speed.
+  float player_velocity_along_direction = linalg::dot(player->velocity, direction);
+  if (player_velocity_along_direction < 0.f) player_velocity_along_direction = 0.f;
 
   entity->position      = origin;
-  projectile->velocity  = direction * weapon.projectile.speed;
+  projectile->velocity  = direction * fire.projectile.speed + (direction * player_velocity_along_direction);
   projectile->owner_uid = owner_uid;
   projectile->weapon_id = weapon.weapon;
+  projectile->trigger   = trigger;
 
   if (entities::Hook_Entity* hook = entities::entity_as<entities::Hook_Entity>(entity))
-    hook->reels_target = trigger == shared::fire_trigger_t::Secondary;
+    hook->reels_target = trigger == entities::Fire_Trigger::Secondary;
+
+  if (entities::Kooh_Entity* kooh = entities::entity_as<entities::Kooh_Entity>(entity))
+  {
+    log_terminal("spawn_projectile: kooh->reels_player = {}", (trigger == entities::Fire_Trigger::Secondary));
+    kooh->reels_player = (trigger == entities::Fire_Trigger::Secondary);
+  }
 
   return projectile_uid;
+}
+
+std::optional<shared::subtick_time_t>
+try_find_held_fire_time(shared::game_session_t& session, const entities::Player_Entity& player,
+                        entities::Fire_Trigger trigger, shared::subtick_time_t step_start,
+                        shared::subtick_time_t step_end)
+{
+  const entities::Weapon_Entity* active_weapon = try_find_active_weapon(session, player);
+  if (active_weapon == nullptr)
+    return std::nullopt;
+
+  const shared::weapon_definition_t& weapon = shared::get_weapon_definition(active_weapon->weapon_id);
+  return shared::try_find_held_fire_time(shared::fire_of(weapon, trigger),
+                                         active_weapon->next_fire_time,
+                                         player.inventory.deploy_complete_time, step_start, step_end);
 }
 
 void resolve_player_shot(
@@ -326,8 +373,10 @@ void resolve_player_shot(
   Span<const uint8_t> disabled_geometry,
   entities::Player_Entity* player,
   float yaw, float pitch,
-  shared::subtick_time_t fire_time)
+  shared::subtick_time_t fire_time,
+  entities::Fire_Trigger trigger)
 {
+
   // this tripped me up 15 different times, so here we go again.
   // POST-move eye, against start-of-tick or rewound victims. The asymmetry
   // is deliberate and it is what the client's screen looks like: prediction
@@ -344,15 +393,21 @@ void resolve_player_shot(
   if (active_weapon == nullptr) return;
 
   const shared::weapon_definition_t& weapon = shared::get_weapon_definition(active_weapon->weapon_id);
+  const shared::weapon_fire_t&       fire   = shared::fire_of(weapon, trigger);
 
-  switch (weapon.fire_resolution)
+  switch (fire.resolution)
   {
+    // Nothing on this button, or the client's scope: no shot and no fire mark.
+    case entities::Fire_Resolution::None:
+    case entities::Fire_Resolution::Zoom:
+      return;
+
     case entities::Fire_Resolution::Hitscan:
     {
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
         return;
 
-      float range = weapon.hitscan.range;
+      float range = fire.hitscan.range;
       auto world_hit = ray_hit_result_t{};
       
       const bool shot_collided_with_static_geometry =
@@ -423,7 +478,7 @@ void resolve_player_shot(
 
       if (hit.hit_uid != shared::null_entity_uid)
       {
-        switch (weapon.hitscan.hit_effect)
+        switch (fire.hitscan.hit_effect)
         {
           case shared::hit_effect_t::Damage:
           {
@@ -443,7 +498,7 @@ void resolve_player_shot(
             damage_info.inflictor_uid = player->entity_id;
             damage_info.weapon_id = static_cast<uint16_t>(active_weapon->weapon_id);
 
-            int32_t damage_amount = weapon.hitscan.damage * (was_headshot ? weapon.hitscan.headshot_multiplier : 1.f);;
+            int32_t damage_amount = fire.hitscan.damage * (was_headshot ? fire.hitscan.headshot_multiplier : 1.f);
             damage_info.amount = damage_amount;
             damage_info.source_position = eye;
             damage_info.was_headshot = was_headshot;
@@ -460,31 +515,47 @@ void resolve_player_shot(
               context.outgoing.pending_swaps.push_back({player->entity_id, hit.hit_uid});
             break;
           }
+          case shared::hit_effect_t::Magnet:
+          {
+            context.outgoing.pending_magnets.push_back(
+                {player->entity_id, hit.hit_uid, fire.hitscan.magnet_speed});
+            break;
+          }
+          case shared::hit_effect_t::Tether:
+          {
+            context.outgoing.pending_tethers.push_back(
+                {player->entity_id, hit.hit_uid, fire.hitscan.tether_speed,
+                 fire.hitscan.tether_seconds});
+            break;
+          }
         }
       }
-      else if (shot_collided_with_static_geometry && world_hit.t <= weapon.hitscan.range)
+      else if (shot_collided_with_static_geometry && world_hit.t <= fire.hitscan.range)
       {
         auto shot_impact_fx = shared::Shot_Impact{};
         shot_impact_fx.origin = eye + direction * world_hit.t;
         shot_impact_fx.normal = world_hit.normal;
         shot_impact_fx.weapon = static_cast<uint16_t>(active_weapon->weapon_id);
+        shot_impact_fx.trigger = static_cast<uint8_t>(trigger);
         shared::fire_shot_impact(context.outgoing.effects, shot_impact_fx);
       }
       break;
     }
     case entities::Fire_Resolution::Projectile:
     {
+      log_terminal("trying to fire a projectile.");
+
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
         return;
 
-      spawn_projectile(context, player->entity_id, weapon, eye, direction);
+      spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger);
       break;
     }
     case entities::Fire_Resolution::Self_Impulse:
     {
       if (!shared::try_apply_self_impulse(shared::movement_settings_from(*context.cvars), weapon,
-                                          shared::fire_trigger_t::Primary, direction,
-                                          player->movement, player->velocity))
+                                          trigger, direction, player->movement,
+                                          player->velocity))
         return;
       break;
     }

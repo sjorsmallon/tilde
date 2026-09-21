@@ -17,12 +17,14 @@ struct Weapon_Entity : Entity
 
   Weapon_Entity() { type = entity_type::Weapon_Entity; }
 
-  int32_t ammo = {};
+  int32_t ammo = -1;
+  int32_t reserve_ammo = -1;
   Weapon weapon_id = {};
   shared::entity_uid_t owner_uid = {};
   uint64_t next_fire_time = {};
   uint32_t pickup_allowed_tick = {};
   Damage_Type damage_type = Damage_Type::Normal;
+  Box_Volume volume = {.half_extents = {40.0f, 40.0f, 40.0f}};
   Render render = {.mesh = assets::mesh_asset::Error};
 };
 

@@ -321,6 +321,15 @@ constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "trigger",
+   .type = FIELD_TYPE_U8,
+   .offset = (uint32_t)offsetof(Shot_Impact, trigger),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Impact::trigger),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t JUMP_PAD_LAUNCH_FIELDS[] = {
@@ -558,7 +567,7 @@ std::string to_text(const Land& value)
 void fire_shot_impact(event_stream_t& stream, const Shot_Impact& payload)
 {
   stream.writer.write_bits((uint32_t)effect_type::Shot_Impact, 16);
-  for (const field_info_t& field : Span<const field_info_t>{SHOT_IMPACT_FIELDS, 8})
+  for (const field_info_t& field : Span<const field_info_t>{SHOT_IMPACT_FIELDS, 9})
     network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
   ++stream.count;
 
@@ -569,7 +578,7 @@ void fire_shot_impact(event_stream_t& stream, const Shot_Impact& payload)
 std::optional<Shot_Impact> try_read_shot_impact(network::Bit_Reader& reader)
 {
   Shot_Impact payload;
-  for (const field_info_t& field : Span<const field_info_t>{SHOT_IMPACT_FIELDS, 8})
+  for (const field_info_t& field : Span<const field_info_t>{SHOT_IMPACT_FIELDS, 9})
     if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
       return std::nullopt;
   return payload;
@@ -577,7 +586,7 @@ std::optional<Shot_Impact> try_read_shot_impact(network::Bit_Reader& reader)
 
 std::string to_text(const Shot_Impact& value)
 {
-  return std::string("Shot_Impact") + fields_to_text({SHOT_IMPACT_FIELDS, 8}, &value);
+  return std::string("Shot_Impact") + fields_to_text({SHOT_IMPACT_FIELDS, 9}, &value);
 }
 
 void fire_jump_pad_launch(event_stream_t& stream, const Jump_Pad_Launch& payload)

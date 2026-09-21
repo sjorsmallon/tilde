@@ -7,6 +7,9 @@ class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh .glb
   GlassBrokenWindow resources/glb/GlassBrokenWindow.glb
   damaged_helmet resources/glb/damaged_helmet.glb
   gripper resources/glb/gripper.glb
+  high_res_sphere resources/glb/high_res_sphere.glb
+  hookshot resources/glb/hookshot.glb
+  magnet resources/glb/magnet.glb
   rocket resources/glb/rocket.glb
   shattered_glass resources/glb/shattered_glass.glb
   stopwatch resources/glb/stopwatch.glb

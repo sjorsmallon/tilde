@@ -10,7 +10,7 @@ std::optional<hit_result_t> fly_projectile(server_context_t& context, entities::
                                            float collision_radius, float dt)
 {
   const shared::projectile_step_t step = shared::advance_projectile(
-      shared::get_weapon_definition(projectile.weapon_id).projectile, context.cvars->g_gravity,
+      shared::projectile_parameters_of(projectile), context.cvars->g_gravity,
       entity.position, projectile.velocity, dt);
   projectile.velocity = step.velocity;
 

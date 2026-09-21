@@ -220,6 +220,9 @@ void test_record_layout()
       {"weapon", FIELD_TYPE_U16, (uint32_t)offsetof(Shot_Impact, weapon),
        (uint32_t)sizeof(payload.weapon), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
        NOT_AN_ENUM},
+      {"trigger", FIELD_TYPE_U8, (uint32_t)offsetof(Shot_Impact, trigger),
+       (uint32_t)sizeof(payload.trigger), 0u, NOT_A_COMPONENT, NOT_A_STRING, NOT_AN_ASSET_CLASS,
+       NOT_AN_ENUM},
   };
 
   network::Bit_Writer reference;

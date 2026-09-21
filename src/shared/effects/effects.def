@@ -50,6 +50,7 @@ Shot_Impact      :: Effect  "a shot landed; attached_entity is what it hit, 0 fo
 {
     region: u16   // hit_region_t, read only when the thing hit is a player
     weapon: u16   // entities::Weapon as a raw id; an effect may not name an entity enum
+    trigger: u8   // entities::Fire_Trigger as a raw id, for the same reason
 }
 
 Jump_Pad_Launch  :: Effect  "a pad threw somebody; normal is the launch direction, attached_entity who"

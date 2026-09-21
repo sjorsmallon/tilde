@@ -203,6 +203,8 @@ int main()
         entity_type::Weapon_Entity,
         entity_type::Rocket_Entity,
         entity_type::Hook_Entity,
+        entity_type::Kooh_Entity,
+        entity_type::Platform_Entity,
         entity_type::Bubble_Entity,
         entity_type::Physics_Body_Entity,
         entity_type::Damageable_Entity,
@@ -248,8 +250,9 @@ int main()
               entity_type_is_predicted(entity_type::Geometry_Owner_Entity) &&
               entity_type_is_predicted(entity_type::Mover_Entity) &&
               entity_type_is_predicted(entity_type::Bubble_Entity) &&
+              entity_type_is_predicted(entity_type::Platform_Entity) &&
               !entity_type_is_predicted(entity_type::Point_Light_Entity),
-          "@predicted is the jump pad, the brush entity, the mover and the bubble, and not the light");
+          "@predicted is the jump pad, the brush entity, the mover, the bubble and the platform, and not the light");
   }
 
   // --- placeable types ---

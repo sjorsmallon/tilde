@@ -1,6 +1,6 @@
 #include "movement_volumes.hpp"
 
-#include "bubble_flight.hpp"
+#include "fixed_arc_flight.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 #include "shapes.hpp"
@@ -47,7 +47,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
 
       case entities::entity_type::Bubble_Entity:
       {
-        const bubble_flight_settings_t flight{
+        const fixed_arc_flight_settings_t flight{
             .tick_interval_seconds = settings.tick_interval_seconds,
             .gravity               = settings.gravity};
 
@@ -59,14 +59,15 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
                   ? static_cast<uint32_t>(
                         std::lround(bubble.arm_seconds / settings.tick_interval_seconds))
                   : 0u;
-          const linalg::vec3f center = bubble_position_at(bubble, settings.tick, flight);
+          const linalg::vec3f center = flight_position_at(bubble.projectile, bubble.flight,
+                                                          bubble.position, settings.tick, flight);
           const linalg::vec3f reach  = {bubble.radius, bubble.radius, bubble.radius};
           out.push_back({
               .uid             = bubble.entity_id,
               .kind            = movement_volume_kind_t::Bounce,
               .bounds          = {.min = center - reach, .max = center + reach},
-              .enabled         = bubble.launch_tick != 0 && bubble.popped_tick == 0 &&
-                                 settings.tick >= bubble.launch_tick + arm_ticks,
+              .enabled         = bubble.flight.launch_tick != 0 && bubble.popped_tick == 0 &&
+                                 settings.tick >= bubble.flight.launch_tick + arm_ticks,
               .launch_velocity = {0.f, bubble.bounce_speed, 0.f},
           });
         }
@@ -75,6 +76,10 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
 
       // @predicted, and feeds collect_movers: its geometry moves, it is not a box tested after the step.
       case entities::entity_type::Mover_Entity:
+        break;
+
+      // @predicted, and feeds collect_spawned_platforms: a landed platform is solid, swept inside the step.
+      case entities::entity_type::Platform_Entity:
         break;
 
       // Every type that is not @predicted. Adding one makes this a compile
@@ -86,6 +91,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Weapon_Entity:
       case entities::entity_type::Rocket_Entity:
       case entities::entity_type::Hook_Entity:
+      case entities::entity_type::Kooh_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:
       case entities::entity_type::Particle_Emitter_Entity:

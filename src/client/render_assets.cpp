@@ -60,8 +60,19 @@ renderer::mesh_handle_t get_render_mesh(assets::asset_handle_t<assets::mesh_asse
 renderer::pipeline_state_t state_for(const entities::Material &material)
 {
   renderer::pipeline_state_t state;
-  state.shader = material.shader_type == entities::Shader_Type::Unlit ? renderer::shader_t::unlit
-                                                                      : renderer::shader_t::lit;
+  switch (material.shader_type)
+  {
+  case entities::Shader_Type::Lit:
+    state.shader = renderer::shader_t::lit;
+    break;
+  case entities::Shader_Type::Unlit:
+    state.shader = renderer::shader_t::unlit;
+    break;
+  case entities::Shader_Type::Ghost:
+    state.shader     = renderer::shader_t::ghost;
+    state.blend_mode = renderer::blend_mode_t::alpha;
+    break;
+  }
   return state;
 }
 

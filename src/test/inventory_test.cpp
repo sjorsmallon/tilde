@@ -39,6 +39,22 @@ static constexpr Array<entities::Weapon, 5> TEST_LOADOUT = {{
     entities::Weapon::Swapper,
 }};
 
+constexpr const shared::weapon_definition_t& SCOUT = shared::get_weapon_definition(entities::Weapon::Scout);
+constexpr const shared::weapon_definition_t& KNIFE = shared::get_weapon_definition(entities::Weapon::Knife);
+
+static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = -1}).ammo == SCOUT.magazine_size);
+static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = -1}).reserve_ammo == -1);
+static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = 4}).ammo == 7);
+static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = 4}).reserve_ammo == 0);
+static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = 30}).reserve_ammo ==
+              30 - (SCOUT.magazine_size - 3));
+static_assert(!shared::reload_may_start(SCOUT, 3, 0));
+static_assert(!shared::reload_may_start(SCOUT, -1, -1));
+static_assert(!shared::reload_may_start(SCOUT, SCOUT.magazine_size, 30));
+static_assert(!shared::reload_may_start(KNIFE, 0, 30));
+static_assert(shared::ammo_allows_a_shot(-1) && shared::ammo_allows_a_shot(1) &&
+              !shared::ammo_allows_a_shot(0));
+
 static void grant_test_loadout(shared::game_session_t& session, shared::entity_uid_t player_uid)
 {
   for (const entities::Weapon weapon : TEST_LOADOUT)
@@ -49,7 +65,7 @@ static void grant_test_loadout(shared::game_session_t& session, shared::entity_u
     entities::Weapon_Entity* weapon_entity =
         session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
     weapon_entity->weapon_id = weapon;
-    weapon_entity->ammo      = definition.magazine_size;
+    weapon_entity->ammo      = shared::full_magazine_of(definition);
     weapon_entity->owner_uid = player_uid;
 
     entities::Player_Entity* player = session.entity_system.get<entities::Player_Entity>(player_uid);
@@ -103,6 +119,21 @@ static void fire_at(shared::game_session_t& session, const entities::Player_Enti
       moment, shared::get_weapon_definition(active->weapon_id).fire_interval_seconds, tick_dt);
 }
 
+constexpr shared::weapon_fire_t HELD_FIRE = {.resolution = entities::Fire_Resolution::Hitscan,
+                                             .fires_while_held = true};
+constexpr shared::weapon_fire_t PRESSED_FIRE = {.resolution = entities::Fire_Resolution::Hitscan};
+
+static_assert(!shared::try_find_held_fire_time(PRESSED_FIRE, 0, 0, 640, 704),
+              "a fire that is not fires_while_held never repeats");
+static_assert(shared::try_find_held_fire_time(HELD_FIRE, 600, 0, 640, 704) == 640,
+              "a held fire already due fires where the step opens");
+static_assert(shared::try_find_held_fire_time(HELD_FIRE, 650, 0, 640, 704) == 650,
+              "a held fire due inside the step fires AT its interval, not at a step boundary");
+static_assert(!shared::try_find_held_fire_time(HELD_FIRE, 704, 0, 640, 704),
+              "a held fire due where the step closes belongs to the next step");
+static_assert(shared::try_find_held_fire_time(HELD_FIRE, 600, 700, 640, 704) == 700,
+              "a held fire waits out the deploy");
+
 int main()
 {
   shared::game_session_t session;
@@ -136,7 +167,7 @@ int main()
       const entities::Weapon_Entity* entity =
           session.entity_system.get<entities::Weapon_Entity>(uid);
       if (entity == nullptr || entity->weapon_id != weapon || entity->owner_uid != player_uid ||
-          entity->ammo != shared::get_weapon_definition(weapon).magazine_size)
+          entity->ammo != shared::full_magazine_of(shared::get_weapon_definition(weapon)))
         every_entity_agrees = false;
     }
     check(every_weapon_carried,
@@ -284,8 +315,8 @@ int main()
     equip(*player, entities::Weapon::Rocket_Launcher);
     const entities::Weapon_Entity* rocket = server::try_find_active_weapon(session, *player);
     check(rocket != nullptr &&
-              rocket->ammo ==
-                  shared::get_weapon_definition(entities::Weapon::Rocket_Launcher).magazine_size,
+              rocket->ammo == shared::full_magazine_of(shared::get_weapon_definition(
+                                  entities::Weapon::Rocket_Launcher)),
           "one weapon's spent rounds are not another's");
   }
 
@@ -329,14 +360,14 @@ int main()
     const vec3f        aim{1.f, 0.f, 0.f};
 
     const bool fired = shared::try_apply_self_impulse(
-        settings, dash, shared::fire_trigger_t::Primary, aim, movement, velocity);
-    check(fired && velocity.x == dash.self_impulse.along_aim_speed,
+        settings, dash, entities::Fire_Trigger::Primary, aim, movement, velocity);
+    check(fired && velocity.x == dash.primary_fire.self_impulse.along_aim_speed,
           "a self-impulse pushes the shooter along the aim it was fired on");
 
     // Like a jump, not like a sum: the fall in progress is cancelled rather
     // than subtracted from the launch, so how long the player had been falling
     // does not decide how much of their dash survives.
-    check(velocity.y == dash.self_impulse.upward_speed,
+    check(velocity.y == dash.primary_fire.self_impulse.upward_speed,
           "the upward half cancels a fall rather than being eaten by it");
     check(movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
           "firing charges the cooldown, which is the only gate there is");
@@ -352,7 +383,7 @@ int main()
 
     entities::Movement instant_movement{};
     vec3f              instant_velocity{0.f, 0.f, 0.f};
-    check(shared::try_apply_self_impulse(instant_settings, dash, shared::fire_trigger_t::Primary,
+    check(shared::try_apply_self_impulse(instant_settings, dash, entities::Fire_Trigger::Primary,
                                          aim, instant_movement, instant_velocity) &&
               instant_movement.seconds_until_speed_returns_to_base_speed ==
                   instant_settings.instant.speed_return_seconds,
@@ -360,14 +391,14 @@ int main()
 
     vec3f      second_velocity{0.f, 0.f, 0.f};
     const bool fired_again = shared::try_apply_self_impulse(
-        settings, dash, shared::fire_trigger_t::Primary, aim, movement, second_velocity);
+        settings, dash, entities::Fire_Trigger::Primary, aim, movement, second_velocity);
     check(!fired_again && second_velocity.x == 0.f,
           "a second press while the cooldown runs does nothing at all");
 
     // The secondary spends the SAME cooldown: one countdown in Movement, so
     // one gate for both buttons.
     vec3f secondary_while_cooling{0.f, 0.f, 0.f};
-    check(!shared::try_apply_self_impulse(settings, dash, shared::fire_trigger_t::Secondary, aim,
+    check(!shared::try_apply_self_impulse(settings, dash, entities::Fire_Trigger::Secondary, aim,
                                           movement, secondary_while_cooling),
           "the secondary impulse is refused while the primary's cooldown runs");
 
@@ -376,14 +407,14 @@ int main()
     // come out as exactly the aimed speed plus the lift.
     entities::Movement secondary_movement{};
     vec3f              secondary_velocity{0.f, -400.f, 250.f};
-    check(dash.secondary_fire == shared::secondary_fire_t::Self_Impulse &&
-              dash.secondary_self_impulse.mode == shared::impulse_mode_t::Set,
+    check(dash.secondary_fire.resolution == entities::Fire_Resolution::Self_Impulse &&
+              dash.secondary_fire.self_impulse.mode == shared::impulse_mode_t::Set,
           "the Dash's right mouse button is the Set-mode impulse this block tests");
-    check(shared::try_apply_self_impulse(settings, dash, shared::fire_trigger_t::Secondary, aim,
+    check(shared::try_apply_self_impulse(settings, dash, entities::Fire_Trigger::Secondary, aim,
                                          secondary_movement, secondary_velocity),
           "the secondary impulse fires off a fresh cooldown");
-    check(secondary_velocity.x == dash.secondary_self_impulse.along_aim_speed &&
-              secondary_velocity.y == dash.secondary_self_impulse.upward_speed &&
+    check(secondary_velocity.x == dash.secondary_fire.self_impulse.along_aim_speed &&
+              secondary_velocity.y == dash.secondary_fire.self_impulse.upward_speed &&
               secondary_velocity.z == 0.f,
           "a Set-mode impulse replaces the velocity rather than joining it");
     check(secondary_movement.seconds_until_impulse_ready == dash.self_impulse_cooldown_seconds,
@@ -399,12 +430,12 @@ int main()
     vec3f              scout_velocity{0.f, 0.f, 0.f};
     check(!shared::try_apply_self_impulse(settings,
                                           shared::get_weapon_definition(entities::Weapon::Scout),
-                                          shared::fire_trigger_t::Primary, aim, scout_movement,
+                                          entities::Fire_Trigger::Primary, aim, scout_movement,
                                           scout_velocity),
           "a weapon that is not a self-impulse is refused by the function, not by its caller");
     check(!shared::try_apply_self_impulse(settings,
                                           shared::get_weapon_definition(entities::Weapon::Scout),
-                                          shared::fire_trigger_t::Secondary, aim, scout_movement,
+                                          entities::Fire_Trigger::Secondary, aim, scout_movement,
                                           scout_velocity),
           "a Zoom secondary is refused as an impulse: the scope is the client's, not a shove");
   }

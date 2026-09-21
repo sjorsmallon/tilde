@@ -431,9 +431,11 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .stand_in      = stand_in_shape_t::pyramid_marker,
      .draw_stand_in = &pyramid_marker_stand_in},
 
-    {.type = entity_type::Weapon_Entity}, // the render component draws it
+    {.type = entity_type::Weapon_Entity, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Rocket_Entity}, // runtime only
     {.type = entity_type::Hook_Entity}, // runtime only
+    {.type = entity_type::Kooh_Entity}, // runtime only
+    {.type = entity_type::Platform_Entity}, // runtime only
     {.type = entity_type::Bubble_Entity}, // runtime only
     {.type = entity_type::Physics_Body_Entity},
 

@@ -392,6 +392,8 @@ struct collision_piece_t
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid);
 
+collision_piece_t piece_from_aabb(const aabb_t &aabb);
+
 // The box a static mesh collides as: its mesh bounds under its scale, turned by
 // its orientation. Answered whether or not `collides` is set, so the editor can
 // pick and draw the box of a mesh that has its collision switched off.

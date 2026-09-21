@@ -186,8 +186,8 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
         {
           const shared::weapon_definition_t &held =
               shared::get_weapon_definition(held_entity->weapon_id);
-          if (held.magazine_size > 0 && !is_reloading(*player) &&
-              held_entity->ammo < held.magazine_size)
+          if (!is_reloading(*player) &&
+              shared::reload_may_start(held, held_entity->ammo, held_entity->reserve_ammo))
           {
             player->reload_complete_time = shared::subtick_time_after(
                 step_time, held.reload_duration_seconds, tick_dt);
@@ -249,44 +249,40 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
                              world.disabled_geometry);
       // if we tried to fire.
-      if (fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
-        resolve_player_shot(context, client_slot, input, world.disabled_geometry, player,
-                            step.view.yaw, step.view.pitch,
-                            shared::subtick_time(context.tick_number, step.start_slot));
+      // Both buttons resolve the same way, each through its own half of the row.
+      // Zoom is the client's (it arrives as Button::Zoom state) and resolves to
+      // nothing here.
+      // A press fires at the step it opened; a button already down fires when its row says a held one is due.
+      const shared::subtick_time_t step_end_time =
+          shared::subtick_time(context.tick_number, step.start_slot + step.slot_count);
 
-      // The right mouse button never passes through the shot clocks: Zoom is
-      // the client's (it arrives as Button::Zoom state), and an impulse is gated
-      // by the movement cooldown alone, the same call the client predicts. One
-      // that fired is still a shot for the fire mark, or it sounds on nobody's
-      // screen.
-      if (secondary_fire_pressed_in_this_step && allowed_to_move && !world_is_frozen)
+      struct trigger_button_t
       {
-        const entities::Weapon_Entity* held_entity =
-            try_find_active_weapon(context.world.session, *player);
-        if (held_entity != nullptr)
-        {
-          const shared::weapon_definition_t& weapon =
-              shared::get_weapon_definition(held_entity->weapon_id);
-          const vec3f direction =
-              linalg::direction_from_angles(step.view.yaw, step.view.pitch);
+        entities::Fire_Trigger trigger;
+        uint64_t               button;
+        bool                   pressed_in_this_step;
+      };
+      const Array<trigger_button_t, 2> trigger_buttons = {{
+          {entities::Fire_Trigger::Primary, Button::Fire, fire_pressed_in_this_step},
+          {entities::Fire_Trigger::Secondary, Button::Secondary_Fire,
+           secondary_fire_pressed_in_this_step},
+      }};
 
-          // A secondary projectile is spawned on the press EDGE, so it needs no
-          // clock of its own to stay one per click.
-          if (weapon.secondary_fire == shared::secondary_fire_t::Projectile)
-          {
-            const vec3f eye =
-                player->position + vec3f{0.f, shared::player_eye_height, 0.f};
-            spawn_projectile(context, player->entity_id, weapon, eye, direction,
-                             shared::fire_trigger_t::Secondary);
-            mark_shot_fired(context, *player, held_entity->weapon_id);
-          }
-          else if (shared::try_apply_self_impulse(move_settings, weapon,
-                                                  shared::fire_trigger_t::Secondary, direction,
-                                                  player->movement, player->velocity))
-          {
-            mark_shot_fired(context, *player, held_entity->weapon_id);
-          }
-        }
+      for (const trigger_button_t& trigger_button : trigger_buttons)
+      {
+        if (!allowed_to_move || world_is_frozen)
+          continue;
+
+        std::optional<shared::subtick_time_t> fire_time;
+        if (trigger_button.pressed_in_this_step)
+          fire_time = step_time;
+        else if ((step.buttons & trigger_button.button) != 0)
+          fire_time = try_find_held_fire_time(context.world.session, *player,
+                                              trigger_button.trigger, step_time, step_end_time);
+
+        if (fire_time)
+          resolve_player_shot(context, client_slot, input, world.disabled_geometry, player,
+                              step.view.yaw, step.view.pitch, *fire_time, trigger_button.trigger);
       }
     }
 

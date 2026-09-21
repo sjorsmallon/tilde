@@ -96,6 +96,7 @@ struct Shot_Impact : Effect
 {
   uint16_t region = {};
   uint16_t weapon = {};
+  uint8_t trigger = {};
 };
 static_assert(std::is_trivially_copyable_v<Shot_Impact>,
               "Shot_Impact must stay trivially copyable: the codec addresses its fields "

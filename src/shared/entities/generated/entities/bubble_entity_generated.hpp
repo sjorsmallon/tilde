@@ -18,9 +18,7 @@ struct Bubble_Entity : Entity
   Bubble_Entity() { type = entity_type::Bubble_Entity; }
 
   Projectile projectile = {.weapon_id = Weapon::Bubble};
-  linalg::vec3f launch_position = {};
-  uint32_t launch_tick = {};
-  uint32_t flight_ticks = {};
+  Fixed_Arc_Flight flight = {};
   uint32_t popped_tick = {};
   shared::entity_uid_t popped_by = {};
   float linger_seconds = 0.25f;
@@ -29,7 +27,7 @@ struct Bubble_Entity : Entity
   float arm_seconds = 0.2f;
   float radius = 32.0f;
   float bounce_speed = 700.0f;
-  Render render = {.mesh = assets::mesh_asset::Sphere, .scale = {64.0f, 64.0f, 64.0f}};
+  Render render = {.mesh = assets::mesh_asset::Sphere, .scale = {64.0f, 64.0f, 64.0f}, .material = {.shader_type = Shader_Type::Ghost, .color = {0.55f, 0.85f, 1.0f}}};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

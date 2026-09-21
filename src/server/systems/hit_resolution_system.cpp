@@ -3,6 +3,8 @@
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_constants.hpp"
+#include "../shared/player_move.hpp"
+#include "systems/inventory_system.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "systems/game_rules_system.hpp"
 #include "../shared/subtick.hpp"
@@ -44,6 +46,74 @@ static void apply_pending_swaps(server_context_t& context)
                          swapped->velocity);
   }
   context.outgoing.pending_swaps.clear();
+}
+
+// After the swaps, so the line between the two is the one they end the tick on.
+static void apply_pending_magnets(server_context_t& context)
+{
+  shared::game_session_t& session = context.world.session;
+
+  for (const pending_magnet_t& magnet : context.outgoing.pending_magnets)
+  {
+    entities::Player_Entity* shooter =
+        session.entity_system.get<entities::Player_Entity>(magnet.shooter_uid);
+    entities::Player_Entity* target =
+        session.entity_system.get<entities::Player_Entity>(magnet.target_uid);
+    if (shooter == nullptr || target == nullptr)
+      continue;
+
+    if (shooter->health.current_health <= 0 || target->health.current_health <= 0)
+      continue;
+
+    if (!carries_weapon(session, *target, entities::Weapon::Magnet))
+      continue;
+
+    const vec3f to_target = target->position - shooter->position;
+    const float distance  = linalg::length(to_target);
+    if (distance < 1.f)
+      continue;
+
+    const vec3f toward_target = to_target * (magnet.speed / distance);
+    const shared::movement_settings_t settings = shared::movement_settings_from(*context.cvars);
+
+    shared::apply_impulse(settings, shooter->velocity, shooter->movement,
+                          {.horizontal = shared::impulse_mode_t::Add,
+                           .vertical   = shared::impulse_mode_t::Add,
+                           .velocity   = toward_target});
+    shared::apply_impulse(settings, target->velocity, target->movement,
+                          {.horizontal = shared::impulse_mode_t::Add,
+                           .vertical   = shared::impulse_mode_t::Add,
+                           .velocity   = toward_target * -1.f});
+  }
+  context.outgoing.pending_magnets.clear();
+}
+
+// A hit RENEWS the reel rather than pushing: the pull itself is player_move's, so the shooter predicts it.
+static void apply_pending_tethers(server_context_t& context)
+{
+  shared::game_session_t& session = context.world.session;
+
+  for (const pending_tether_t& tether : context.outgoing.pending_tethers)
+  {
+    entities::Player_Entity* shooter =
+        session.entity_system.get<entities::Player_Entity>(tether.shooter_uid);
+    const entities::Player_Entity* target =
+        session.entity_system.get<entities::Player_Entity>(tether.target_uid);
+    if (shooter == nullptr || target == nullptr)
+      continue;
+
+    if (shooter->health.current_health <= 0 || target->health.current_health <= 0)
+      continue;
+
+    shooter->movement.active_override            = entities::Movement_Override::Reel;
+    shooter->movement.override_target_uid        = target->entity_id;
+    shooter->movement.override_target_position =
+        target->position + vec3f{0.f, shared::player_half_height, 0.f};
+    shooter->movement.override_seconds_remaining = tether.seconds;
+    shooter->movement.override_speed             = tether.speed;
+    shooter->movement.override_arrive_radius     = context.cvars->sv_hook_arrive_radius;
+  }
+  context.outgoing.pending_tethers.clear();
 }
 
 static void apply_pending_hits(server_context_t& context)
@@ -98,6 +168,8 @@ static void finish_reloads_that_came_due(server_context_t& context)
 void update_hit_resolution(server_context_t& context)
 {
   apply_pending_swaps(context);
+  apply_pending_magnets(context);
+  apply_pending_tethers(context);
   apply_pending_hits(context);
   finish_reloads_that_came_due(context);
 }

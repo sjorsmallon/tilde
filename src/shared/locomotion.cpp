@@ -286,6 +286,23 @@ void apply_impulse(const movement_settings_t& settings, move_state_t& state,
   fatal_error("apply_impulse: no arm for locomotion model {}", (int)settings.model);
 }
 
+void clip_model_memory(const movement_settings_t& settings, move_state_t& state,
+                       Span<const Plane> wall_planes)
+{
+  switch (settings.model)
+  {
+    // These three keep no horizontal memory beside the velocity the walls already clipped.
+    case cvars::Locomotion_Model::quake:
+    case cvars::Locomotion_Model::instant:
+    case cvars::Locomotion_Model::instant_redirect:
+      return;
+    case cvars::Locomotion_Model::instant_momentum:
+      instant_momentum_clip_memory(settings, state, wall_planes);
+      return;
+  }
+  fatal_error("clip_model_memory: no arm for locomotion model {}", (int)settings.model);
+}
+
 wanted_move_t decide_move(const movement_settings_t& settings, const contacts_t& contacts,
                           bool grounded, const vec3& velocity_entering_move, move_state_t& state,
                           const move_input_t& input)

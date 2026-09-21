@@ -58,8 +58,8 @@ void test_zero_gravity_scale_flies_straight()
 void test_the_rocket_launcher_row_does_not_drop()
 {
   const weapon_definition_t& launcher = get_weapon_definition(entities::Weapon::Rocket_Launcher);
-  assert(launcher.fire_resolution == entities::Fire_Resolution::Projectile);
-  assert(launcher.projectile.gravity_scale == 0.f);
+  assert(launcher.primary_fire.resolution == entities::Fire_Resolution::Projectile);
+  assert(launcher.primary_fire.projectile.gravity_scale == 0.f);
   std::printf("  the rocket launcher row does not drop: ok\n");
 }
 
