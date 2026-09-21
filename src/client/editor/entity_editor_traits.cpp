@@ -491,6 +491,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Path_Node_Entity, .color = colors::green},
     {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = assets::texture_asset::move},
     {.type = entity_type::Launcher_Entity, .color = colors::orange, .draw_diagram = &launcher_diagram},
+    {.type = entity_type::Movement_Modifier_Entity, .color = colors::green, .draw_diagram = &box_volume_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

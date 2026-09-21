@@ -15,6 +15,7 @@
 // them a type feeds, and a per-collect pin cannot ask that: it would pass on a
 // type that feeds both, or neither.
 #include "disabled_geometry.hpp"
+#include "movement_modifiers.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
@@ -118,6 +119,17 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   check(disabled.size() == spawned_uids.size(),
         "the bitset is sized to the geometry list it was cut for");
 
+  std::vector<shared::movement_modifier_t> modifiers;
+  shared::collect_movement_modifiers(system, modifiers);
+  std::set<entities::entity_type> types_that_produced_a_modifier;
+  for (const shared::movement_modifier_t& modifier : modifiers)
+  {
+    const entities::Entity* entity = system.try_find(modifier.uid);
+    check(entity != nullptr, "every modifier names an entity that exists");
+    if (entity != nullptr)
+      types_that_produced_a_modifier.insert(entity->type);
+  }
+
   for (uint32_t index = 0; index < spawned_types.size(); ++index)
   {
     const entities::entity_type type = spawned_types[index];
@@ -126,16 +138,21 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     const bool volume    = types_that_produced_a_volume.count(type) > 0;
     const bool bit       = index < disabled.size() && disabled[index] != 0;
     const bool mover     = types_that_produced_a_mover.count(type) > 0;
+    const bool modifier  = types_that_produced_a_modifier.count(type) > 0;
 
-    printf("    %-26s predicted=%s volume=%s disabled_bit=%s mover=%s\n",
+    printf("    %-26s predicted=%s volume=%s disabled_bit=%s mover=%s modifier=%s\n",
            entities::entity_info(type).classname, predicted ? "yes" : "no ",
-           volume ? "yes" : "no ", bit ? "yes" : "no ", mover ? "yes" : "no ");
+           volume ? "yes" : "no ", bit ? "yes" : "no ", mover ? "yes" : "no ",
+           modifier ? "yes" : "no ");
 
-    check(predicted == (volume || bit || mover),
-          predicted ? "a @predicted type feeds one of the three collects"
+    check(predicted == (volume || bit || mover || modifier),
+          predicted ? "a @predicted type feeds one of the four collects"
                     : "a type that is not @predicted feeds none");
-    check((int)volume + (int)bit + (int)mover <= 1, "no type feeds two collects");
+    check((int)volume + (int)bit + (int)mover + (int)modifier <= 1, "no type feeds two collects");
   }
+
+  check(types_that_produced_a_modifier.count(entities::entity_type::Movement_Modifier_Entity) > 0,
+        "a movement modifier is a modifier");
 
   // Which one, for the two that exist -- the half the loop above cannot say,
   // since it only asks that ONE of them answered.
@@ -193,6 +210,50 @@ static void test_a_pad_is_flattened_into_what_the_step_reads()
   shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
   check(volumes.size() == 1 && !volumes[0].enabled,
         "a disabled pad is still collected, and says so");
+}
+
+static void test_a_modifier_scales_the_settings_of_a_hull_inside_it()
+{
+  printf("\n[pin] a modifier scales what the step runs under, only inside it and only while on\n");
+
+  shared::Entity_System system;
+  const shared::entity_uid_t uid = system.spawn(entities::entity_type::Movement_Modifier_Entity);
+
+  entities::Movement_Modifier_Entity* zone = system.get<entities::Movement_Modifier_Entity>(uid);
+  zone->position            = {0.f, 0.f, 0.f};
+  zone->volume.half_extents = {64.f, 64.f, 64.f};
+  zone->gravity_scale       = -1.f;
+  zone->friction_scale      = 0.f;
+  zone->run_speed_scale     = 2.f;
+
+  std::vector<shared::movement_modifier_t> modifiers;
+  shared::collect_movement_modifiers(system, modifiers);
+  check(modifiers.size() == 1, "one zone, one modifier");
+
+  const shared::movement_settings_t base{};
+  const shared::aabb_bounds_t       inside{.min = {-16.f, 0.f, -16.f}, .max = {16.f, 72.f, 16.f}};
+  const shared::aabb_bounds_t       outside{.min = {500.f, 0.f, 500.f}, .max = {532.f, 72.f, 532.f}};
+
+  const shared::movement_settings_t in_zone =
+      shared::modified_movement_settings(base, modifiers, inside);
+  check(in_zone.shared.gravity == -base.shared.gravity, "gravity is inverted inside");
+  check(in_zone.quake.friction == 0.f, "friction is gone inside");
+  check(in_zone.shared.run_speed == 2.f * base.shared.run_speed, "run speed doubles inside");
+  check(in_zone.shared.jump_speed == base.shared.jump_speed, "a scale of 1 moves no float");
+
+  const shared::movement_settings_t out_of_zone =
+      shared::modified_movement_settings(base, modifiers, outside);
+  check(out_of_zone.shared.gravity == base.shared.gravity &&
+            out_of_zone.quake.friction == base.quake.friction &&
+            out_of_zone.shared.run_speed == base.shared.run_speed,
+        "a hull outside the box runs under the settings it came with");
+
+  zone->switch_state.value = false;
+  shared::collect_movement_modifiers(system, modifiers);
+  const shared::movement_settings_t switched_off =
+      shared::modified_movement_settings(base, modifiers, inside);
+  check(modifiers.size() == 1 && switched_off.shared.gravity == base.shared.gravity,
+        "a switched-off zone is still collected, and scales nothing");
 }
 
 static void test_a_switch_reaches_the_geometry_it_owns()
@@ -346,6 +407,7 @@ int main()
 {
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
+  test_a_modifier_scales_the_settings_of_a_hull_inside_it();
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
   test_a_switch_reaches_the_geometry_it_owns();

@@ -808,6 +808,40 @@ static void test_a_disabled_jump_pad_is_passed_through(const cvar_state_t& cvars
         "the step through it is bit-identical to a step through no volume at all");
 }
 
+// --- a modifier zone scales the step that opens inside it ----------------------
+static void test_an_inverted_gravity_zone_lifts_a_standing_hull(const cvar_state_t& cvars)
+{
+  printf("\n[pin] modifier: inverted gravity lifts a hull off the floor, a switched-off one does not\n");
+
+  const Bounding_Volume_Hierarchy   bvh      = floor_world();
+  const shared::movement_settings_t settings = shared::movement_settings_from(cvars);
+
+  const auto height_after_half_a_second = [&](bool enabled)
+  {
+    const std::vector<shared::movement_modifier_t> modifiers = {
+        {.uid           = 7,
+         .bounds        = {.min = {-64.f, -64.f, -64.f}, .max = {64.f, 512.f, 64.f}},
+         .enabled       = enabled,
+         .gravity_scale = -1.f}};
+    const shared::predicted_world_t world{.movement_modifiers = modifiers};
+
+    shared::move_state_t state{.feet = {0.f, 0.f, 0.f}};
+    for (int tick = 0; tick < 30; ++tick)
+      state = player_move(settings, bvh, world, state,
+                          {.buttons = Move_Input{}, .front = look_front, .right = look_right,
+                           .dt = tick_dt},
+                          nullptr);
+    return state.feet.y;
+  };
+
+  // 0.5 * g * t^2 with t = 0.5: the exact parabola, which is what the kernel integrates.
+  const float expected_rise = 0.5f * settings.shared.gravity * 0.25f;
+  const float risen         = height_after_half_a_second(true);
+  check(std::fabs(risen - expected_rise) < 1.f, "the hull falls UP along the same parabola");
+  check(std::fabs(height_after_half_a_second(false)) < 0.01f,
+        "a switched-off zone leaves the hull standing");
+}
+
 // --- a switched-off brush is not there ---------------------------------------
 //
 // The geometry half of the same rule the pad's `enabled` obeys, and it lands in
@@ -2178,6 +2212,7 @@ int main()
   test_air_push_ignores_edges_on_a_steady_turn(cvars);
   test_a_jump_pad_fires_once_per_contact(cvars);
   test_a_disabled_jump_pad_is_passed_through(cvars);
+  test_an_inverted_gravity_zone_lifts_a_standing_hull(cvars);
   test_a_disabled_brush_is_walked_through(cvars);
   test_a_mover_carries_its_rider(cvars);
   test_a_mover_crushes_against_a_ceiling(cvars);

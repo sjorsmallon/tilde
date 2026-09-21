@@ -82,6 +82,10 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Platform_Entity:
         break;
 
+      // @predicted, and feeds collect_movement_modifiers: it is read when the step OPENS, not tested after it.
+      case entities::entity_type::Movement_Modifier_Entity:
+        break;
+
       // Every type that is not @predicted. Adding one makes this a compile
       // error, which is the point.
       case entities::entity_type::Invalid:

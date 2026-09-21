@@ -1149,6 +1149,31 @@ run inside the client's prediction step.
   `Jump_Pad_Launch` for it. It is `death_tick` and the crate's health crossing
   again. There is still no generic sound event.
 
+### Movement modifiers — a box that scales the step's settings
+
+Built 2026-09-21, never tried in game. `Movement_Modifier_Entity` (`@predicted
+is Switchable, Touchable`) carries five scales — gravity, run speed, jump speed,
+friction, control — and `shared/movement_modifiers.{hpp,cpp}` is the whole of it.
+
+- **`movement_settings_t` is a VALUE, so a zone is one function over it.**
+  `modified_movement_settings(settings, modifiers, hull)` runs at the top of
+  `player_move` and everything below reads the result; no model, no kernel
+  function and no call site changed. Overlapping zones multiply.
+- **Read when the step OPENS**, where a pad is tested after it: friction, gravity
+  and the accelerate need their number before they run. That is why it is a
+  list of its own (`predicted_world_t::movement_modifiers`, cut beside the
+  volumes) rather than a third `movement_volume_kind_t`, whose loop latches.
+- **`friction_scale` and `control_scale` are per MODEL**: quake's friction and
+  its two accelerations, `instant_momentum` / `instant_redirect`'s ground drag,
+  `instant_redirect`'s turn rate. Plain `instant` has neither, so ice means
+  nothing under it.
+- **A negative gravity is never grounded** (`player_move`'s `grounded` asks
+  `gravity >= 0`), so a standing hull lifts. It falls UP and is pressed against
+  the ceiling in air mode; walking on a ceiling is not built.
+- **Players and bots only.** Rockets, bubbles, platforms and Jolt read
+  `g_gravity`, and the editor's pad arc ignores a zone it passes through.
+- `apply_friction` answers a friction of zero with no decay; it divided by it.
+
 ### A brush can be switched off — the second predicted cut
 
 `prediction_def.md` §4 is the design of record. A Neon-White gate and a CS

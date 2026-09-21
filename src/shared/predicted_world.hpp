@@ -22,6 +22,7 @@
 // and a mover's pose are functions of the TICK, and a replay walks several.
 
 #include "disabled_geometry.hpp"
+#include "movement_modifiers.hpp"
 #include "movement_volumes.hpp"
 #include "movers.hpp"
 #include "span.hpp"
@@ -46,6 +47,9 @@ struct predicted_world_t
   // Boxes tested AFTER the step: pads, bubbles.
   Span<const movement_volume_t> movement_volumes;
 
+  // Boxes read when the step OPENS: they scale the settings it runs under.
+  Span<const movement_modifier_t> movement_modifiers;
+
   // Moving platforms, collided with at their pose at the END of the tick. The
   // carry is NOT in player_move -- see push_player_by_movers. A landed
   // Platform_Entity is in here too, as a mover whose two poses are equal.
@@ -59,15 +63,17 @@ struct predicted_world_t
 struct predicted_world_storage_t
 {
   disabled_geometry_t            disabled_geometry;
-  std::vector<movement_volume_t> movement_volumes;
-  std::vector<mover_t>           movers;
+  std::vector<movement_volume_t>   movement_volumes;
+  std::vector<movement_modifier_t> movement_modifiers;
+  std::vector<mover_t>             movers;
 };
 
 [[nodiscard]] inline predicted_world_t predicted_world_of(const predicted_world_storage_t& storage)
 {
-  return {.disabled_geometry = storage.disabled_geometry,
-          .movement_volumes  = storage.movement_volumes,
-          .movers            = storage.movers};
+  return {.disabled_geometry  = storage.disabled_geometry,
+          .movement_volumes   = storage.movement_volumes,
+          .movement_modifiers = storage.movement_modifiers,
+          .movers             = storage.movers};
 }
 
 // The tick a cut is FOR. `tick_interval_seconds` is DERIVED from the tickrate

@@ -103,6 +103,10 @@ friction_step_t apply_friction(const movement_settings_t& settings, vec3 old_vel
     return {vec3{}, dt};
   }
 
+  // Frictionless: the decay below divides by it.
+  if (settings.quake.friction <= 0.f)
+    return {old_velocity, dt};
+
   // exponential decay composes exactly under any subdivision of dt.
   if (speed >= settings.quake.stop_speed)
   {

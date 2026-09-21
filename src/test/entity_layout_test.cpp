@@ -225,6 +225,8 @@ int main()
         entity_type::Mover_Entity,
         // Through Enabled and Render.
         entity_type::Launcher_Entity,
+        // Through Enabled.
+        entity_type::Movement_Modifier_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

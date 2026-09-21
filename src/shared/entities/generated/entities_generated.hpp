@@ -37,6 +37,7 @@
 #include "entities/path_node_entity_generated.hpp"
 #include "entities/mover_entity_generated.hpp"
 #include "entities/launcher_entity_generated.hpp"
+#include "entities/movement_modifier_entity_generated.hpp"
 
 namespace entities
 {

@@ -33,25 +33,8 @@ struct pending_action_t
 
   shared::entity_uid_t    target = shared::null_entity_uid;
   entities::action_data_t data   = {};
-
-  // Who emitted the signal this row hangs off. Nothing dispatches by it: it is
-  // here so the hop cap below can name the wiring that would not settle, which
-  // is the only information an author can act on.
   shared::entity_uid_t sender = shared::null_entity_uid;
-
-  // Who caused the signal this came from, resolved at EMIT time rather than at
-  // drain time: `!activator` means the player who walked into the trigger,
-  // and by the time a delayed record fires they may have left. Carried through
-  // so the handler still gets the answer -- which may by then name nobody, and
-  // handlers tolerate that.
   shared::entity_uid_t activator = shared::null_entity_uid;
-
-  // Whether `target` came from an Activator row, which is the ONE case the load
-  // check could not settle exactly: it admits a row that SOME `by` type
-  // accepts, so the entity that actually showed up may not. The drain dispatches
-  // those through try_send_action and logs a miss; a Uid or Self target was
-  // checked against one type and stays a fatal_error, because a null dispatch
-  // cell there is a generator or loader bug.
   bool target_resolved_from_activator = false;
 };
 

@@ -69,10 +69,6 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
   auto bucket = session.connections_by_sender.find(sender.entity_id);
   if (bucket == session.connections_by_sender.end())
   {
-    // THE line this cvar exists for. "I walked into the trigger and nothing
-    // happened" has three causes and they are indistinguishable from the
-    // viewport; this one separates "the signal never fired" from "it fired and
-    // nothing was wired to it".
     if (debug)
       log_terminal("[io] {} emitted {} — no connections from this sender",
                    entity_io_label(context.server, sender.entity_id),
@@ -100,7 +96,7 @@ void queue_signal_connections(input_context_t& context, const entities::Entity& 
       continue;
     }
 
-    pending_action_t record;
+    auto record = pending_action_t{};
     record.data      = connection.row.data;
     record.sender    = sender.entity_id;
     record.activator = context.activator;

@@ -19,6 +19,7 @@ void cut_movement_volumes(game_session_t& session, const predicted_world_setting
                             .tick_interval_seconds = settings.tick_interval_seconds(),
                             .gravity               = settings.gravity},
                            out.movement_volumes);
+  collect_movement_modifiers(session.entity_system, out.movement_modifiers);
 }
 
 void cut_movers(game_session_t& session, const predicted_world_settings_t& settings,

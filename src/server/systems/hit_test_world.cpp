@@ -52,6 +52,7 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Path_Node_Entity:
   case entities::entity_type::Mover_Entity:
   case entities::entity_type::Launcher_Entity:
+  case entities::entity_type::Movement_Modifier_Entity:
     break;
   }
 

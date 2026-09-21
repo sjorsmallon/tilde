@@ -579,3 +579,14 @@ Launcher_Entity :: entity is Switchable, Firing {
     shots_fired:  u32
     render:       Render = { mesh = .Box, scale = {16, 16, 16} }
 }
+
+// Scales the movement settings of a hull that OPENS a step inside it. 1 changes nothing, a negative gravity falls up.
+Movement_Modifier_Entity :: entity @predicted is Switchable, Touchable {
+    switch_state:     Enabled
+    volume:           Box_Volume = { half_extents = {128, 128, 128} }
+    gravity_scale:    f32 = 1.0   @Editable
+    run_speed_scale:  f32 = 1.0   @Editable
+    jump_speed_scale: f32 = 1.0   @Editable
+    friction_scale:   f32 = 1.0   @Editable
+    control_scale:    f32 = 1.0   @Editable
+}

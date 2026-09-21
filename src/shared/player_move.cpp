@@ -47,7 +47,7 @@ move_input_t move_input_of(const shared::subtick_step_t& step)
 } // namespace shared
 
 // Exposed functions
-shared::move_state_t player_move(const shared::movement_settings_t& settings,
+shared::move_state_t player_move(const shared::movement_settings_t& unmodified_settings,
                                  const Bounding_Volume_Hierarchy& bvh,
                                  const shared::predicted_world_t& world,
                                  shared::move_state_t state, const shared::move_input_t& input,
@@ -59,6 +59,12 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
   if (input.aim_sweep.push_count == 0)
     fatal_error("player_move: aim_sweep.push_count is {}, which divides the step by zero",
                 input.aim_sweep.push_count);
+
+  // The hull is tested where the step OPENS, so every number below is one value for the whole step.
+  const shared::movement_settings_t settings = shared::modified_movement_settings(
+      unmodified_settings, world.movement_modifiers,
+      shared::player_hull_bounds(state.feet, unmodified_settings.shared.half_width,
+                                 unmodified_settings.shared.half_height));
 
   // Resolved once for the whole tick: every resolve_collisions call below must
   // agree about whether it is recording, or a mid-tick console toggle would
@@ -81,7 +87,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& settings,
   // we are grounded if (and only if):
   // - the ground trace hits.
   // - y velocity is going down. (at least not going up.)
-  const bool grounded = contacts.has_ground() && (state.velocity.y <= 0.0f);
+  // - gravity pulls down: under an inverted one the floor is something you fall away from.
+  const bool grounded =
+      contacts.has_ground() && (state.velocity.y <= 0.0f) && settings.shared.gravity >= 0.f;
 
   // --- 2 DECIDE: a jump, then the reel or the model ---
   //

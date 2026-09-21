@@ -188,6 +188,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Path_Node_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Path_Following),   // Mover_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Firing),   // Launcher_Entity
+  trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Movement_Modifier_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -244,6 +245,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Path_Node_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Reverse) | action_bit(entity_action::Go_To),   // Mover_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Fire),   // Launcher_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Movement_Modifier_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -292,6 +294,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Path_Node_Entity
   signal_bit(entity_signal::Node_Reached),   // Mover_Entity
   0u,   // Launcher_Entity
+  signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Movement_Modifier_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)
