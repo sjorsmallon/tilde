@@ -613,6 +613,7 @@ struct Match
   Round_End_Reason end_reason = Round_End_Reason::None;
   Team_Allegiance winning_team = Team_Allegiance::Free_For_All;
   bool objective_reached = false;
+  bool starts_when_loaded = false;
   Match_Request requested = Match_Request::None;
 };
 

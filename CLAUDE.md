@@ -1529,7 +1529,25 @@ other reader in this mode, and `Single_Fixed_Start` is deleted, 2026-09-19) over
 `{Freeze, Live, Round_End}` cycle (the
 freeze is the countdown at the start line; `Restart_Round` is also taken in it) with
 `max_rounds` 0, which is unbounded: the run ends in a Round_End that holds until
-someone asks for `Restart_Round` or `End_Match`. The hold and the untimed run are
+someone asks for `Restart_Round` or `End_Match` -- unless the OBJECTIVE ended it
+and `next_map` is set (`objective_advances_to_next_map`, 2026-09-21, never looked
+at in game): that Round_End has a deadline of `mp_next_map_seconds` (5), the HUD
+counts it down, and the deadline writes `pending_map_change` once, the way
+Game_Over's does. `Restart_Round` inside it is the cancel, and a requested end
+still holds, since nobody finished the level. **A Freeze ends early once every
+joined player has pressed jump**: `Player_Entity::wants_to_skip_freeze`
+(`@Networked`, so the HUD says `1/2`), written on the press edge in the input
+step, polled by `update_match` in every mode, and cleared by the round boundary's
+player reset because it is not on the keep list. **The ready vote gates a
+SESSION'S FIRST MAP, not every map** (2026-09-21, never looked at in game):
+`load_map_file_into_context` asks `match_has_started` BEFORE the wipe and hands the
+answer to `install_match`, which writes `Match::starts_when_loaded` when the NEW
+map's row says `started_match_carries_across_maps` (speedrun alone) (`@Networked`,
+so the HUD says "WAITING FOR PLAYERS TO LOAD" rather than asking for F3). The
+warmup poll then starts the match -- straight to element 0 of the cycle, no vote
+and no Countdown -- once every joined client is `map_ready`, so nobody's run
+clock starts under their load screen. A server with nobody connected clears the
+flag: that session is over and the next one votes. The hold and the untimed run are
 the ROW's (`round_end_holds`, `live_is_timed`), not the map's: they were two cvars
 every speedrun map had to remember, and `maps/1.source` forgot them and cycled
 rounds. A one-element cycle may not be

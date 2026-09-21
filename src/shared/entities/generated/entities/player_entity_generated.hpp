@@ -35,6 +35,7 @@ struct Player_Entity : Entity
   bool last_hit_was_headshot = {};
   int32_t client_slot_index = {};
   bool ready = {};
+  bool wants_to_skip_freeze = {};
   network::pascal_string_t<32> display_name = {};
   int32_t kills = {};
   int32_t deaths = {};

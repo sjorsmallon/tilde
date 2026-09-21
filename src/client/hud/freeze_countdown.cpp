@@ -7,7 +7,8 @@ namespace client::hud
 {
 
 void draw_freeze_countdown(renderer::ui_draw_list_t& list, const ui::ui_font_t& font,
-                           linalg::vec2 screen, float display_scale, float seconds_remaining)
+                           linalg::vec2 screen, float display_scale, float seconds_remaining,
+                           std::string_view caption)
 {
   if (seconds_remaining <= 0.0f)
     return;
@@ -26,6 +27,18 @@ void draw_freeze_countdown(renderer::ui_draw_list_t& list, const ui::ui_font_t& 
   ui::draw_text(list, font, size, {top_left.x + shadow_offset, top_left.y + shadow_offset}, text,
                 color_t{0, 0, 0, static_cast<uint8_t>(alpha / 3)});
   ui::draw_text(list, font, size, top_left, text, color_t{255, 255, 255, alpha});
+
+  if (caption.empty())
+    return;
+
+  const ui::font_size_t caption_size      = ui::font_size_t::medium;
+  const linalg::vec2    caption_text_size = ui::measure_text(font, caption_size, caption);
+  const linalg::vec2    caption_top_left  = {std::floor((screen.x - caption_text_size.x) * 0.5f),
+                                             std::floor(top_left.y + text_size.y + 8.0f * display_scale)};
+  ui::draw_text(list, font, caption_size,
+                {caption_top_left.x + shadow_offset, caption_top_left.y + shadow_offset}, caption,
+                color_t{0, 0, 0, 85});
+  ui::draw_text(list, font, caption_size, caption_top_left, caption, color_t{255, 255, 255, 255});
 }
 
 } // namespace client::hud

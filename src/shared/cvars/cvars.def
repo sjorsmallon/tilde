@@ -138,6 +138,7 @@ Match :: cvars {
     mp_freeze_seconds:      f32 = 3.0     @Server  "Per-round freeze length (unused by modes with no freeze phase)"
     mp_round_seconds:       f32 = 180.0   @Server  "Round time limit"
     mp_round_end_seconds:   f32 = 5.0     @Server  "Post-round settle length before the next round begins"
+    mp_next_map_seconds:    f32 = 5.0     @Server  "How long a reached objective is held before next_map loads; a restart cancels it (0 = hold until asked)"
 
     // Game_Over is terminal for the MATCH, not for the server: when it expires
     // the map reloads and the whole thing starts again at Warmup. 0 holds the

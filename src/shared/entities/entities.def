@@ -168,6 +168,8 @@ Match :: component {
     end_reason:        Round_End_Reason = .None         @Networked
     winning_team:      Team_Allegiance = .Free_For_All  @Networked
     objective_reached: bool = false                     @Networked
+    // The map this one replaced had a started match: no vote, it starts once every joined client holds the map.
+    starts_when_loaded: bool = false                    @Networked
     requested:         Match_Request = .None
 }
 
@@ -327,6 +329,8 @@ Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
     // How a client works out which player entity is itself.
     client_slot_index: i32              @Networked
     ready: bool                         @Networked
+    // Jump pressed during this Freeze; the round boundary's player reset clears it.
+    wants_to_skip_freeze: bool          @Networked
     display_name: string<32>            @Networked
 
     // The scoreboard. Awarded at the one health crossing in damage.cpp.

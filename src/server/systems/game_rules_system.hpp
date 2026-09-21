@@ -16,6 +16,7 @@ struct round_timing_t
   float live_seconds      = 0.0f;
   float round_end_seconds = 0.0f;
   float game_over_seconds = 0.0f;
+  float next_map_seconds  = 0.0f;
 };
 
 [[nodiscard]] round_timing_t round_timing_from_cvars(const cvars::cvar_state_t &cvars);
@@ -36,8 +37,13 @@ struct round_timing_t
 [[nodiscard]] uint32_t count_rules_entities(const shared::map_t &map);
 
 // After build_session: mint the rules entity the map did not carry, and enter
-// Warmup once.
-void install_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz);
+// Warmup once. The ready vote gates a session's FIRST map: a map loaded over a
+// started match starts by itself (Match::starts_when_loaded).
+void install_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz,
+                   bool replaces_a_started_match);
+
+// Read before a map load wipes the world it asks about.
+[[nodiscard]] bool match_has_started(const server_context_t &context);
 
 // Whether a phase can take a request. The handlers ask it before writing one and
 // update_match asks it again before paying one.

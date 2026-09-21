@@ -385,7 +385,7 @@ void install(server_context_t& context, cvars::cvar_state_t& cvar_state, const s
   context.tick_number         = 1;
   context.world.current_map   = map;
   context.world.session       = shared::build_session(map);
-  install_match(context, context.tick_number, tickrate);
+  install_match(context, context.tick_number, tickrate, false);
 }
 
 const entities::Point_Light_Entity* light_in(const server_context_t& context,

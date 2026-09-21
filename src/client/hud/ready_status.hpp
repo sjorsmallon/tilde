@@ -15,6 +15,7 @@ struct warmup_vote_view_t
   int32_t              ready         = 0;
   bool                 i_have_a_body = false;
   bool                 i_am_ready    = false;
+  bool                 starts_when_loaded = false;
   std::optional<float> seconds_until_start;
 };
 

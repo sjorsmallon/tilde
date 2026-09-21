@@ -781,6 +781,15 @@ constexpr field_info_t Match_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "starts_when_loaded",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Match, starts_when_loaded),
+   .size_in_bytes = (uint32_t)sizeof(Match::starts_when_loaded),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "requested",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, requested),
@@ -1085,6 +1094,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Player_Entity, ready),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::ready),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "wants_to_skip_freeze",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Player_Entity, wants_to_skip_freeze),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::wants_to_skip_freeze),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -3149,7 +3167,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Movement", {Movement_FIELDS, 15}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 5}, (uint32_t)sizeof(Timer_State)},
-  {"Match", {Match_FIELDS, 9}, (uint32_t)sizeof(Match)},
+  {"Match", {Match_FIELDS, 10}, (uint32_t)sizeof(Match)},
   {"Path_Follow", {Path_Follow_FIELDS, 4}, (uint32_t)sizeof(Path_Follow)},
 };
 
@@ -3213,7 +3231,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, false, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 26}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 3360u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 27}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 3360u, true, true, false, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 13}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 257u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 11}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 264u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"hook_entity", "Hook", {Hook_Entity_FIELDS, 9}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 264u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
@@ -3830,6 +3848,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xe626373au;
+const uint32_t SCHEMA_HASH = 0xf228e3acu;
 
 } // namespace entities

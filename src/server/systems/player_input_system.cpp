@@ -121,6 +121,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     float tick_dt = static_cast<float>(get_tick_interval());
 
     const bool world_is_frozen = !is_movement_allowed(context);
+    const bool in_freeze = match_of(context).phase == entities::Round_Phase::Freeze;
     if (world_is_frozen)
     {
       // zero out velocity so nothing builds up.
@@ -176,6 +177,9 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
         }
 
       }
+
+      if ((pressed_in_this_step & Button::Jump) && in_freeze)
+        player->wants_to_skip_freeze = true;
 
       // did we press reload?
       if (pressed_in_this_step & Button::Reload)

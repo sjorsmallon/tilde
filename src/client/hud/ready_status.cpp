@@ -19,6 +19,8 @@ std::string warmup_vote_text(const warmup_vote_view_t& vote)
       return std::format("MATCH STARTS IN {}  (F3 to cancel)", whole_seconds);
     return std::format("MATCH STARTS IN {}", whole_seconds);
   }
+  if (vote.starts_when_loaded)
+    return "WAITING FOR PLAYERS TO LOAD";
   if (!vote.i_have_a_body)
     return std::format("WARMUP  {}/{} READY", vote.ready, vote.joined);
   if (vote.i_am_ready)

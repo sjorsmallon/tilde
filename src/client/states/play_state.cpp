@@ -3416,8 +3416,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const ui::ui_font_t* font = ctx.font)
     {
       const shared::weapon_definition_t* held_weapon = try_find_weapon_definition_held_by(ctx, viewed_player);
+      const entities::Weapon_Entity* held_entity =
+          held_weapon != nullptr ? try_find_active_weapon(ctx, *viewed_player) : nullptr;
       hud::draw_weapon_name(ui, *font, renderer::screen_size(), renderer::display_scale(),
-                            held_weapon != nullptr ? held_weapon->display_name : "Empty");
+                            held_weapon != nullptr ? held_weapon->display_name : "Empty",
+                            held_entity != nullptr ? held_entity->ammo : -1,
+                            held_entity != nullptr ? held_entity->reserve_ammo : -1);
     }
     else
     {
@@ -3448,13 +3452,49 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     {
       const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -
                                  static_cast<int64_t>(ctx.replication.latest_processed_tick);
+
+      int32_t joined = 0;
+      int32_t voted  = 0;
+      for (const entities::Player_Entity& player :
+           ctx.world.session.entity_system.entities_of<entities::Player_Entity>())
+      {
+        if (player.client_slot_index < 0 || player.client_slot_index >= network::sv_max_client_count)
+          continue;
+        ++joined;
+        if (player.wants_to_skip_freeze)
+          ++voted;
+      }
+      const std::string caption = joined > 1 ? std::format("SPACE to skip  {}/{}", voted, joined)
+                                             : std::string{"SPACE to skip"};
+
       hud::draw_freeze_countdown(ui, *font, renderer::screen_size(), renderer::display_scale(),
                                  static_cast<float>(ticks_left) /
-                                     static_cast<float>(ctx.connection.server_tickrate));
+                                     static_cast<float>(ctx.connection.server_tickrate),
+                                 caption);
     }
     else
     {
       log_error("[hud] no UI font registered; the freeze countdown cannot draw");
+    }
+  }
+
+  // A Round_End with a deadline that the objective caused is the hold before next_map loads.
+  if (match != nullptr && match->phase == entities::Round_Phase::Round_End &&
+      match->end_reason == entities::Round_End_Reason::Objective && match->phase_end_tick != 0 &&
+      !connection_ui.show_pause_menu)
+  {
+    if (const ui::ui_font_t* font = ctx.font)
+    {
+      const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -
+                                 static_cast<int64_t>(ctx.replication.latest_processed_tick);
+      hud::draw_freeze_countdown(ui, *font, renderer::screen_size(), renderer::display_scale(),
+                                 static_cast<float>(ticks_left) /
+                                     static_cast<float>(ctx.connection.server_tickrate),
+                                 "NEXT LEVEL  (R to restart)");
+    }
+    else
+    {
+      log_error("[hud] no UI font registered; the next-map countdown cannot draw");
     }
   }
 
@@ -3463,6 +3503,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const ui::ui_font_t* font = ctx.font)
     {
       hud::warmup_vote_view_t vote;
+      vote.starts_when_loaded = match->starts_when_loaded;
       if (match->phase == entities::Round_Phase::Countdown)
       {
         const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -

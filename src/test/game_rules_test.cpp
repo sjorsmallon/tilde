@@ -199,7 +199,7 @@ void stand_up(test_world_t& world, entities::Game_Mode mode)
   world.context.world.current_map_path = "maps/game_rules_test.source";
   world.context.world.session          = shared::build_session(map);
 
-  install_match(world.context, world.context.tick_number, tickrate);
+  install_match(world.context, world.context.tick_number, tickrate, false);
   check(match(world.context).mode == mode, "the rules entity's mode is the match's");
   check(world.context.world.pending_actions.empty(), "installing the match emits nothing");
 }
@@ -566,7 +566,7 @@ void test_warmup_vote()
   check_phase(world.context, Round_Phase::Freeze,
               "every joined human ready starts the match, at once under mp_countdown_seconds 0");
 
-  install_match(world.context, world.context.tick_number, tickrate);
+  install_match(world.context, world.context.tick_number, tickrate, false);
   check(!player_of(world.context, first).ready && !player_of(world.context, second).ready,
         "installing the match clears every vote");
 
@@ -645,7 +645,7 @@ void test_restart_round_resets_the_level()
       map.add_entity(std::make_shared<entities::Weapon_Entity>());
   const shared::entity_uid_t rules_uid = try_find_rules_entity(world.context)->entity_id;
   world.context.world.session          = shared::build_session(map);
-  install_match(world.context, world.context.tick_number, tickrate);
+  install_match(world.context, world.context.tick_number, tickrate, false);
 
   shared::Entity_System& entity_system = world.context.world.session.entity_system;
   const shared::entity_uid_t player_uid =
@@ -871,6 +871,121 @@ void test_speedrun_walk()
   for (uint32_t elapsed = 0; elapsed <= tickrate; ++elapsed)
     tick(world.context);
   check(!world.context.pending_map_change.empty(), "and the map changes after the hold");
+}
+
+// --- 7a. The speedrun's two clocks -------------------------------------------
+
+void test_speedrun_freeze_skip_and_next_map()
+{
+  std::printf("[speedrun freeze skip and next map]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::speedrun);
+  world.cvars.mp_freeze_seconds   = 10.f;
+  world.cvars.mp_next_map_seconds = 2.f;
+  world.cvars.next_map.set("maps/after.source");
+  const shared::entity_uid_t first  = join_test_client(world.context, 0);
+  const shared::entity_uid_t second = join_test_client(world.context, 1);
+
+  start_the_match(world.context);
+  check_phase(world.context, Round_Phase::Freeze, "the run counts down");
+
+  player_of(world.context, first).wants_to_skip_freeze = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Freeze, "one skip vote of two skips nothing");
+
+  player_of(world.context, second).wants_to_skip_freeze = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Live, "every joined player voting ends the freeze");
+
+  match(world.context).objective_reached = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Round_End, "the objective ends the run");
+  check(match(world.context).phase_end_tick != 0, "and with a next_map the result has a deadline");
+
+  request_and_tick(world.context, entities::entity_action::Restart_Round);
+  check_phase(world.context, Round_Phase::Freeze, "a restart inside the hold cancels the map change");
+  check(world.context.pending_map_change.empty(), "and asks for no map");
+  check(!player_of(world.context, first).wants_to_skip_freeze &&
+            !player_of(world.context, second).wants_to_skip_freeze,
+        "the round boundary clears the skip votes");
+
+  player_of(world.context, first).wants_to_skip_freeze  = true;
+  player_of(world.context, second).wants_to_skip_freeze = true;
+  tick(world.context);
+  match(world.context).objective_reached = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Round_End, "the second run ends on the objective too");
+
+  for (uint32_t elapsed = 0; elapsed <= 2 * tickrate; ++elapsed)
+    tick(world.context);
+  check(world.context.pending_map_change == "maps/after.source", "left alone, the hold loads next_map");
+  check_phase(world.context, Round_Phase::Round_End, "holding on the result until the load");
+
+  test_world_t requested;
+  stand_up(requested, entities::Game_Mode::speedrun);
+  requested.cvars.next_map.set("maps/after.source");
+  spawn_test_player(requested.context, entities::Team_Allegiance::Free_For_All, 100);
+  start_the_match(requested.context);
+  run_until_live(requested.context);
+  request_and_tick(requested.context, entities::entity_action::End_Round);
+  check_phase(requested.context, Round_Phase::Round_End, "End_Round ends the run");
+  check(match(requested.context).phase_end_tick == 0, "and a requested end holds: nobody finished the level");
+}
+
+// --- 7a2. The vote gates a session's first map -------------------------------
+
+void test_a_started_match_carries_across_a_map_load()
+{
+  std::printf("[a started match carries across a map load]\n");
+
+  test_world_t world;
+  stand_up(world, entities::Game_Mode::speedrun);
+  world.cvars.mp_players_to_start = 2;
+  const shared::entity_uid_t first  = join_test_client(world.context, 0);
+  const shared::entity_uid_t second = join_test_client(world.context, 1);
+  (void)first;
+  (void)second;
+
+  check(!match_has_started(world.context), "warmup is not a started match");
+  start_the_match(world.context);
+  check(match_has_started(world.context), "the freeze is");
+
+  // What load_map_file_into_context does with that answer.
+  install_match(world.context, world.context.tick_number, tickrate, true);
+  check_phase(world.context, Round_Phase::Warmup, "the next map still loads into warmup");
+
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup, "and waits while nobody holds the map");
+
+  world.context.clients[0].map_ready = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Warmup, "one of two loaded starts nothing");
+
+  world.context.clients[1].map_ready = true;
+  tick(world.context);
+  check_phase(world.context, Round_Phase::Freeze, "both loaded starts the run with no vote and no countdown");
+  check(match(world.context).round_number == 1, "as round 1 of the new map");
+
+  test_world_t emptied;
+  stand_up(emptied, entities::Game_Mode::speedrun);
+  emptied.cvars.mp_players_to_start = 1;
+  install_match(emptied.context, emptied.context.tick_number, tickrate, true);
+  tick(emptied.context);
+  check(!match(emptied.context).starts_when_loaded, "a server nobody is connected to ends the session");
+
+  test_world_t rotation;
+  stand_up(rotation, entities::Game_Mode::deathmatch);
+  install_match(rotation.context, rotation.context.tick_number, tickrate, true);
+  check(!match(rotation.context).starts_when_loaded, "only the speedrun row carries a start: a deathmatch rotation votes");
+
+  const shared::entity_uid_t late = join_test_client(emptied.context, 0);
+  emptied.context.clients[0].map_ready = true;
+  tick(emptied.context);
+  check_phase(emptied.context, Round_Phase::Warmup, "so the next session votes again");
+  player_of(emptied.context, late).ready = true;
+  tick(emptied.context);
+  check(match(emptied.context).phase != Round_Phase::Warmup, "and its vote starts it");
 }
 
 // --- 7b. Run categories ------------------------------------------------------
@@ -1144,6 +1259,8 @@ int main()
   test_frag_limit();
   test_team_elimination();
   test_speedrun_walk();
+  test_speedrun_freeze_skip_and_next_map();
+  test_a_started_match_carries_across_a_map_load();
   test_run_categories();
   test_team_assignment();
   test_spawn_policy();

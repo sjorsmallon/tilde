@@ -241,11 +241,13 @@ static bool load_map_file_into_context(server_context_t &context,
     {
       reset_state_in_preparation_for_new_map_load(context);
       context.world.physics = make_physics_state();
-      install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
+      install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate),
+                    false);
     }
     return false;
   }
 
+  const bool replaces_a_started_match = match_has_started(context);
   reset_state_in_preparation_for_new_map_load(context);
   context.world.physics = make_physics_state();
 
@@ -260,7 +262,8 @@ static bool load_map_file_into_context(server_context_t &context,
   world.session = shared::build_session(server_map);
   world.current_map_path  = map_path;
   world.map_content_hash = shared::compute_map_content_hash(server_map);
-  install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
+  install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate),
+                replaces_a_started_match);
   install_movers(context);
 
   shared::populate_static_physics_bodies(*world.physics, server_map);

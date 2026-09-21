@@ -86,6 +86,10 @@ struct game_mode_settings_t
   bool live_is_timed;
   // On: Round_End waits for a request, whatever mp_round_end_seconds says.
   bool round_end_holds;
+  // On: a Round_End the objective caused loads next_map after mp_next_map_seconds.
+  bool objective_advances_to_next_map;
+  // On: a map loaded over a started match starts once everyone holds it, with no ready vote.
+  bool started_match_carries_across_maps;
 
   Span<const entities::Round_Phase> phase_cycle;
 };
@@ -102,6 +106,8 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .max_rounds           = 1,
         .live_is_timed        = true,
         .round_end_holds      = false,
+        .objective_advances_to_next_map = false,
+        .started_match_carries_across_maps = false,
         .phase_cycle          = SINGLE_ROUND_PHASE_CYCLE,
     },
     {
@@ -115,6 +121,8 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .max_rounds           = 15,
         .live_is_timed        = true,
         .round_end_holds      = false,
+        .objective_advances_to_next_map = false,
+        .started_match_carries_across_maps = false,
         .phase_cycle          = ROUNDS_PHASE_CYCLE,
     },
     {
@@ -128,6 +136,8 @@ inline constexpr Enum_Array<Game_Mode, game_mode_settings_t> GAME_MODES = {{
         .max_rounds           = 0,
         .live_is_timed        = false,
         .round_end_holds      = true,
+        .objective_advances_to_next_map = true,
+        .started_match_carries_across_maps = true,
         .phase_cycle          = LEVEL_PHASE_CYCLE,
     },
 }};

@@ -26,12 +26,23 @@ round_timing_t round_timing_from_cvars(const cvars::cvar_state_t &cvars)
       .live_seconds      = cvars.mp_round_seconds,
       .round_end_seconds = cvars.mp_round_end_seconds,
       .game_over_seconds = cvars.mp_game_over_seconds,
+      .next_map_seconds  = cvars.mp_next_map_seconds,
   };
 }
 
-static float phase_duration_seconds(Round_Phase phase, const round_timing_t &timing,
-                                    const game_mode_settings_t &mode)
+static bool round_end_loads_next_map(const Match &match, const game_mode_settings_t &mode,
+                                     const cvars::cvar_state_t &cvars)
 {
+  return mode.objective_advances_to_next_map && match.end_reason == Round_End_Reason::Objective &&
+         !cvars.next_map.empty();
+}
+
+static float phase_duration_seconds(Round_Phase phase, const round_timing_t &timing,
+                                    const game_mode_settings_t &mode, bool loads_next_map)
+{
+  if (phase == Round_Phase::Round_End && loads_next_map)
+    return timing.next_map_seconds;
+
   switch (phase)
   {
     case Round_Phase::Warmup:    return timing.warmup_seconds;
@@ -128,7 +139,8 @@ static void enter_phase(server_context_t &context,
   const Round_Phase from = match.phase;
   const game_mode_settings_t &mode = current_mode(context);
   const float duration =
-      phase_duration_seconds(phase, round_timing_from_cvars(*context.cvars), mode);
+      phase_duration_seconds(phase, round_timing_from_cvars(*context.cvars), mode,
+                             round_end_loads_next_map(match, mode, *context.cvars));
 
   match.phase            = phase;
   match.phase_start_tick = current_tick;
@@ -196,7 +208,14 @@ static Round_Phase next_phase(const Match &match, const game_mode_settings_t &mo
   return mode.phase_cycle[0];
 }
 
-void install_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz)
+bool match_has_started(const server_context_t &context)
+{
+  const entities::Game_Rules_Entity *rules = try_find_rules_entity(context);
+  return rules != nullptr && !shared::is_before_match(rules->match.phase);
+}
+
+void install_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz,
+                   bool replaces_a_started_match)
 {
   shared::Entity_System &entity_system = context.world.session.entity_system;
   const size_t count = entity_system.entities_of<entities::Game_Rules_Entity>().size();
@@ -216,6 +235,8 @@ void install_match(server_context_t &context, uint32_t current_tick, uint32_t ti
   const entities::Game_Mode mode = match.mode;
   match = Match{};
   match.mode = mode;
+  match.starts_when_loaded =
+      replaces_a_started_match && GAME_MODES[mode].started_match_carries_across_maps;
   log_terminal("Game mode: {}", to_string(mode));
 
   // Here and not on entering Warmup: a cancelled Countdown returns to Warmup
@@ -296,6 +317,51 @@ static bool warmup_vote_holds(server_context_t &context)
 
   const warmup_vote_t vote = count_warmup_vote(context);
   return vote.joined >= required && vote.ready == vote.joined;
+}
+
+namespace
+{
+
+struct loaded_clients_t
+{
+  int32_t connected = 0;
+  int32_t joined    = 0;
+  int32_t loaded    = 0;
+};
+
+} // namespace
+
+static loaded_clients_t count_loaded_clients(server_context_t &context)
+{
+  loaded_clients_t count;
+  for (connected_client_t row : connected_clients(context))
+  {
+    ++count.connected;
+    if (context.world.session.entity_system.get<entities::Player_Entity>(row.client.player_uid) ==
+        nullptr)
+      continue;
+    ++count.joined;
+    if (row.client.map_ready)
+      ++count.loaded;
+  }
+  return count;
+}
+
+static bool freeze_skip_vote_holds(server_context_t &context)
+{
+  int32_t joined = 0;
+  int32_t voted  = 0;
+  for (connected_client_t row : connected_clients(context))
+  {
+    const entities::Player_Entity *player =
+        context.world.session.entity_system.get<entities::Player_Entity>(row.client.player_uid);
+    if (player == nullptr)
+      continue;
+    ++joined;
+    if (player->wants_to_skip_freeze)
+      ++voted;
+  }
+  return joined > 0 && voted == joined;
 }
 
 // The mode's win condition, asked only in Live. A result means the round is over.
@@ -412,6 +478,22 @@ void update_match(server_context_t &context, uint32_t current_tick, uint32_t tic
     log_warning("match: dropping {}, which {} cannot take", to_string(request), to_string(match.phase));
   }
 
+  if (match.phase == Round_Phase::Warmup && match.starts_when_loaded)
+  {
+    const loaded_clients_t clients = count_loaded_clients(context);
+    if (clients.connected == 0)
+    {
+      log_terminal("match: nobody is connected; the session is over and the next one votes");
+      match.starts_when_loaded = false;
+    }
+    else if (clients.joined > 0 && clients.loaded == clients.joined)
+    {
+      log_terminal("match: every joined player holds the map; starting without a vote");
+      enter_phase(context, mode.phase_cycle[0], current_tick, tickrate_hz);
+      return;
+    }
+  }
+
   if (match.phase == Round_Phase::Warmup && warmup_vote_holds(context))
   {
     const bool counts_down = context.cvars->mp_countdown_seconds > 0.f;
@@ -426,6 +508,13 @@ void update_match(server_context_t &context, uint32_t current_tick, uint32_t tic
   {
     log_terminal("match: the vote no longer holds; countdown cancelled");
     enter_phase(context, Round_Phase::Warmup, current_tick, tickrate_hz);
+    return;
+  }
+
+  if (match.phase == Round_Phase::Freeze && freeze_skip_vote_holds(context))
+  {
+    log_terminal("match: every joined player skipped the freeze");
+    enter_phase(context, next_phase(match, mode, Round_Phase::Freeze), current_tick, tickrate_hz);
     return;
   }
 
@@ -455,6 +544,15 @@ void update_match(server_context_t &context, uint32_t current_tick, uint32_t tic
       log_error("the match ended but no map is loaded and next_map is empty; holding Game_Over");
     else
       log_terminal("--- Match over: changing to '{}' ---", context.pending_map_change);
+    return;
+  }
+
+  // Asked once, like Game_Over's: a load that fails keeps this world, holding on the result.
+  if (match.phase == Round_Phase::Round_End && round_end_loads_next_map(match, mode, *context.cvars))
+  {
+    match.phase_end_tick = 0;
+    context.pending_map_change = std::string(context.cvars->next_map.c_str());
+    log_terminal("--- Objective reached: changing to '{}' ---", context.pending_map_change);
     return;
   }
 
