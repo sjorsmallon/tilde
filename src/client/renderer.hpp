@@ -38,6 +38,7 @@
 #include "../shared/lightmap.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/span.hpp"
+#include "../shared/team_wall_ripples.hpp"
 #include "camera.hpp"
 
 namespace client
@@ -640,6 +641,12 @@ struct view_pass_t
   // with no chart evaluates.
   uint32_t                                  baked_light_count = 0;
   cvars::Debug_Channel                      debug_channel = cvars::Debug_Channel::off;
+  // Where players came through a team wall this last while. A property of a
+  // POINT in the world rather than of a draw, so it rides the pass's scene
+  // block (the atlas's reason) and every draw carries nothing; the ghost
+  // shader reads them all and confines each to the face it names. Past
+  // MAX_SCENE_RIPPLES the oldest are dropped.
+  Span<const shared::wall_ripple_t>         ripples   = {};
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
   color_t                                   selected_outline_color = colors::white;

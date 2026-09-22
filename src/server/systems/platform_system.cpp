@@ -11,7 +11,7 @@
 namespace server
 {
 
-void update_platforms(server_context_t& context, Span<const uint8_t> disabled_geometry)
+void update_platforms(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
   const float tick_interval_seconds = static_cast<float>(get_tick_interval());
   const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
@@ -28,7 +28,7 @@ void update_platforms(server_context_t& context, Span<const uint8_t> disabled_ge
       const float clearance = std::max(platform.half_extents.x, platform.half_extents.z);
       launch_fixed_arc_flight(context, platform.projectile, platform.position,
                               {.flight_seconds = platform.flight_seconds, .clearance = clearance},
-                              flight, disabled_geometry, platform.flight);
+                              flight, world, platform.flight);
 
       for (const entities::Platform_Entity& older : platforms)
         if (older.entity_id != platform.entity_id && older.flight.launch_tick != 0 &&

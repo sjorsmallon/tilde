@@ -641,7 +641,8 @@ int main()
     const vec3f forward{1.f, 0.f, 0.f};
 
     disabled_geometry_t disabled;
-    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of, disabled);
+    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of,
+                              entities::Team_Allegiance::Free_For_All, disabled);
     if (disabled.size() != 2 || disabled[0] != 0 || disabled[1] != 0)
     {
       log_error("an enabled owner disabled something");
@@ -657,7 +658,8 @@ int main()
     }
 
     tie_session.entity_system.get<entities::Geometry_Owner_Entity>(owner_uid)->switch_state.value = false;
-    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of, disabled);
+    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of,
+                              entities::Team_Allegiance::Free_For_All, disabled);
     if (disabled.size() != 2 || disabled[0] == 0 || disabled[1] != 0)
     {
       log_error("switching the owner off did not reach the geometry it owns");

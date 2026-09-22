@@ -26,6 +26,8 @@
 #include "../../shared/disabled_geometry.hpp"
 #include "../../shared/timer_fraction.hpp"
 #include "../../shared/fixed_arc_flight.hpp"
+#include "../../shared/tween.hpp"
+#include "../../shared/canopy.hpp"
 #include "../../shared/spawned_platforms.hpp"
 #include "../../shared/movement_volumes.hpp"
 #include "../../shared/weapons.hpp"
@@ -138,6 +140,27 @@ static drawn_platform_t drawn_platform(const client_context_t &ctx, const entiti
           .rest_fraction = shared::platform_rest_fraction(platform, tick, fraction, tick_interval_seconds)};
 }
 
+// A bob above the surface and a pop-in, both functions of the age its spawned_tick gives.
+struct drawn_ping_marker_t
+{
+  float lift;
+  float scale;
+};
+
+static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const entities::Ping_Marker_Entity &marker)
+{
+  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+
+  const float age_seconds =
+      (std::max(0.0f, (float)(int32_t)(tick - marker.spawned_tick)) + fraction) / tickrate;
+
+  constexpr shared::tween_t bob = {.from = 0.0f, .to = 8.0f, .duration = 0.6f, .easing = entities::Easing::In_Out_Cubic};
+  constexpr shared::tween_t pop = {.from = 0.0f, .to = 1.0f, .duration = 0.15f, .easing = entities::Easing::Out_Cubic};
+
+  return {.lift  = shared::evaluate(bob, shared::ping_pong(age_seconds, bob.duration)),
+          .scale = shared::evaluate(pop, age_seconds)};
+}
+
 static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const entities::Mover_Entity &mover)
 {
   const auto found = ctx.world.session.mover_rests.find(mover.entity_id);
@@ -156,6 +179,48 @@ static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const 
   const shared::path_pose_t at_tick   = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
   const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
   return {.at_tick = at_tick, .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)};
+}
+
+// Where OUR body is drawn this frame, and the one expression of it: the predicted feet carried
+// by the leftover accumulator for smooth motion between ticks, the decaying reconciliation
+// offset, and a ridden lift's carry, which lands once per tick and is in no velocity. The camera
+// stands on this and so does anything glued to our body -- a slab drawn off the raw tick-stepped
+// position judders against a camera that glides per frame.
+static vec3f drawn_local_feet(const client_context_t &ctx)
+{
+  const float extrapolation_factor =
+      ctx.connection.phase == Connection_Phase::Connected ? ctx.prediction.physics_accumulator : 0.f;
+  vec3f feet = ctx.prediction.player_position +
+               ctx.prediction.player_velocity * extrapolation_factor +
+               ctx.prediction.visual_error_offset;
+
+  if (ctx.world.ready)
+  {
+    if (const entities::Mover_Entity *ridden = ctx.world.session.entity_system.get<entities::Mover_Entity>(
+            ctx.prediction.player_movement.ground_mover_uid))
+    {
+      const drawn_mover_poses_t poses = drawn_mover_poses(ctx, *ridden);
+      const vec3f at_tick = ctx.prediction.player_position;
+      feet = feet + (shared::carry_point_between_poses(poses.at_tick, poses.drawn, at_tick) - at_tick);
+    }
+  }
+  return feet;
+}
+
+// Glued to the carrier's DRAWN body: our own drawn feet, a remote's interpolated feet. The
+// collision trails one tick behind that (canopy.hpp); the draw does not, because a slab hanging a
+// hand's width behind its carrier's head reads as a bug and the gap is under one tick of travel.
+static vec3f drawn_canopy_position(const client_context_t &ctx, const entities::Canopy_Entity &canopy)
+{
+  const entities::Player_Entity *my_player = try_find_my_player(ctx);
+  if (my_player != nullptr && my_player->entity_id == canopy.carrier_uid)
+    return shared::canopy_center_for(canopy, drawn_local_feet(ctx));
+
+  for (const auto &[slot, remote_player] : ctx.replication.remote_players)
+    if (remote_player.active && remote_player.entity_uid == canopy.carrier_uid)
+      return shared::canopy_center_for(canopy, remote_player.render_position);
+
+  return canopy.position;
 }
 
 // The same clock the movers are drawn on, so a wipe and a lift agree about now.
@@ -378,6 +443,7 @@ static void play_predicted_local_gunshot(client_context_t &ctx, entities::Fire_T
   {
   case entities::Fire_Resolution::None:
   case entities::Fire_Resolution::Zoom:
+  case entities::Fire_Resolution::Canopy:
     return;
 
   // A self-impulse's one gate is the movement cooldown, which the server
@@ -391,6 +457,7 @@ static void play_predicted_local_gunshot(client_context_t &ctx, entities::Fire_T
 
   case entities::Fire_Resolution::Hitscan:
   case entities::Fire_Resolution::Projectile:
+  case entities::Fire_Resolution::Place:
     break;
   }
 
@@ -836,9 +903,12 @@ struct play_frame_t
   bool     local_player_is_dead = false;
 
   // tick_def.md step 2, on the client's clock: cut out of our own session copy
-  // through the same shared functions the server's tick cuts it with.
+  // through the same shared functions the server's tick cuts it with. The view
+  // is OUR team's, since a team wall is not there for us and solid for the rest;
+  // a spectator has no team and passes no team wall.
   shared::predicted_world_storage_t predicted_world_storage;
   shared::predicted_world_t         predicted_world;
+  entities::Team_Allegiance         team = entities::Team_Allegiance::Free_For_All;
 
   // Coalesced across however many ticks were stepped this frame.
   Move_Events move_events;
@@ -853,7 +923,10 @@ struct play_frame_t
 static void cut_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
 {
   shared::cut_disabled_geometry(ctx.world.session, frame.predicted_world_storage);
-  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage);
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  frame.team = my_player != nullptr ? my_player->team_allegiance
+                                    : entities::Team_Allegiance::Free_For_All;
+  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage, frame.team);
 }
 
 // The other two per INPUT, because both are functions of the TICK -- a bubble's
@@ -867,11 +940,13 @@ static void cut_predicted_world_for_input(client_context_t& ctx, play_frame_t& f
 {
   const shared::predicted_world_settings_t settings{
       .tick        = predicted_tick_of_input(ctx, input_number),
+      // The session's entities are the newest snapshot's, so that is the tick their state describes.
+      .state_tick  = ctx.prediction.latest_server_tick,
       .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
       .gravity     = ctx.cvars->g_gravity};
   shared::cut_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
   shared::cut_movers(ctx.world.session, settings, frame.predicted_world_storage);
-  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage);
+  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage, frame.team);
 }
 
 
@@ -1380,6 +1455,7 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
     return fx.time_remaining <= 0.f;
   });
 
+  shared::age_wall_ripples(ctx.visuals.team_wall_ripples, world_dt);
 }
 
 // SIMULATE: re-run every input the server has not acked, from the state it last
@@ -2372,6 +2448,39 @@ void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t 
 // every remote player sampled to where that cursor says they were. A READ of
 // server-owned state onto per-frame render fields -- nothing here writes a
 // networked value back.
+// RENDER: who came through a team wall this frame. After advance_render_state
+// because a remote body's centre is its interpolated render position, and our
+// own is the prediction's; the ripples are cosmetic, so a round trip of
+// staleness on a remote body is the same staleness its drawn body already has.
+void Play_State::ripple_team_walls(client_context_t &ctx, play_frame_t &frame)
+{
+  (void)frame;
+  const vec3f hull_centre_above_feet = {0.f, shared::player_half_height, 0.f};
+
+  std::vector<shared::wall_crosser_t> crossers;
+  if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
+      my_player != nullptr && !frame.local_player_is_dead)
+    crossers.push_back({.uid    = my_player->entity_id,
+                        .team   = my_player->team_allegiance,
+                        .center = ctx.prediction.player_position + hull_centre_above_feet});
+
+  for (const auto& [slot, remote_player] : ctx.replication.remote_players)
+  {
+    if (!remote_player.active || slot == ctx.connection.my_slot || remote_player.death_tick != 0)
+      continue;
+    const entities::Player_Entity* player = try_find_player_in_slot(ctx, slot);
+    if (player == nullptr)
+      continue;
+    crossers.push_back({.uid    = player->entity_id,
+                        .team   = player->team_allegiance,
+                        .center = remote_player.render_position + hull_centre_above_feet});
+  }
+
+  shared::detect_team_wall_crossings(ctx.world.session.entity_system, ctx.world.session.geometry,
+                                     ctx.world.session.owner_of, crossers,
+                                     ctx.visuals.team_wall_ripples);
+}
+
 void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame)
 {
   const float dt       = frame.dt;
@@ -2465,28 +2574,7 @@ void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
   camera.yaw         = ctx.prediction.player_yaw;
   camera.pitch       = ctx.prediction.player_pitch;
 
-  // Extrapolate by the leftover accumulator for smooth inter-tick camera motion.
-  const float extrapolation_factor =
-      (ctx.connection.phase == Connection_Phase::Connected)
-          ? ctx.prediction.physics_accumulator
-          : 0.f;
-  camera.position = ctx.prediction.player_position +
-                    ctx.prediction.player_velocity * extrapolation_factor +
-                    ctx.prediction.visual_error_offset +
-                    vec3f{0.f, shared::player_eye_height, 0.f};
-
-  // A rider's push lands once per tick and is in no velocity, so the lift carries the camera here.
-  if (ctx.world.ready)
-  {
-    if (const entities::Mover_Entity *ridden = ctx.world.session.entity_system.get<entities::Mover_Entity>(
-            ctx.prediction.player_movement.ground_mover_uid))
-    {
-      const drawn_mover_poses_t poses = drawn_mover_poses(ctx, *ridden);
-      const vec3f feet = ctx.prediction.player_position;
-      camera.position = camera.position +
-                        (shared::carry_point_between_poses(poses.at_tick, poses.drawn, feet) - feet);
-    }
-  }
+  camera.position = drawn_local_feet(ctx) + vec3f{0.f, shared::player_eye_height, 0.f};
 
   if (frame.noclip_active)
   {
@@ -2578,6 +2666,7 @@ void Play_State::update(float dt)
 
   // ------------------------------------------------------------------- RENDER
   advance_render_state(ctx, frame);
+  ripple_team_walls(ctx, frame);
   resolve_camera(ctx, frame);
   update_audio_listener(ctx, frame);
 }
@@ -2861,14 +2950,16 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // Render the session's geometry. One call per object — the mesh-path /
   // primitive / generated-mesh decision lives in draw_geometry, shared with
   // the editor, instead of being spelled out twice.
-  // The draw follows the same bit the sweep does, resolved through the same
-  // table, so what you walk through is what you cannot see. Cut here rather
+  // The draw follows the SWITCH the sweep does, resolved through the same
+  // table, so a gate you walk through is a gate you cannot see -- and only the
+  // switch: a team wall is passable for one team and visible to everyone, so
+  // this is the hidden set, never a team's disabled set. Cut here rather
   // than reused from the prediction cut above: this runs on the frame clock
   // and that one on the tick clock, and a set held across the gap would draw
   // a gate one frame behind the wall you can already pass.
   shared::disabled_geometry_t hidden;
-  shared::collect_disabled_geometry(ctx.world.session.entity_system,
-                                    ctx.world.session.owner_of, hidden);
+  shared::collect_hidden_geometry(ctx.world.session.entity_system,
+                                  ctx.world.session.owner_of, hidden);
 
   const blob_shadow_settings_t blob_shadow_settings = {
       .radius       = ctx.cvars->cl_blob_shadow_radius,
@@ -2894,6 +2985,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       mover_matrices[mover.entity_id] =
           shared::mover_model_matrix(rest_frame_of(ctx, mover), drawn_mover_poses(ctx, mover).drawn);
 
+    // A team wall is drawn in ITS team's colour: a ghost when it is ours to walk
+    // through, solid when it is not, so it says whose it is either way. Which is
+    // ours is the same rule the sweep asks -- a visible owner that does not
+    // block us -- so the draw and the collision cannot disagree.
+    const entities::Player_Entity*  my_player = try_find_my_player(ctx);
+    const entities::Team_Allegiance my_team   = my_player != nullptr
+                                                    ? my_player->team_allegiance
+                                                    : entities::Team_Allegiance::Free_For_All;
+
     for (uint32_t index = 0; index < ctx.world.session.geometry.size(); ++index)
     {
       if (index < hidden.size() && hidden[index] != 0)
@@ -2904,12 +3004,22 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                                  : shared::null_entity_uid;
       const auto moved = mover_matrices.find(owner_uid);
       const shared::map_geometry_t &entry = ctx.world.session.geometry[index];
+
+      std::optional<team_wall_tint_t> team_wall;
+      if (const entities::Geometry_Owner_Entity* owner =
+              entity_system.get<entities::Geometry_Owner_Entity>(owner_uid);
+          owner != nullptr && owner->passable_by != entities::Team_Allegiance::Free_For_All)
+        team_wall = {.color    = color_from_vec3(GHOST_TINTS[owner->passable_by].tint),
+                     .passable = !shared::geometry_owner_blocks(*owner, my_team)};
+
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
-                    clock_wipe_of(ctx, owner_uid, entry.value));
+                    clock_wipe_of(ctx, owner_uid, entry.value), team_wall);
     }
   }
+
+  scene.ripples = ctx.visuals.team_wall_ripples.ripples;
 
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
@@ -2969,6 +3079,19 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         clock_wipe = {.center = drawn.position, .wiped = drawn.rest_fraction, .armed = true};
       else
         drawn_material.shader_type = entities::Shader_Type::Ghost;
+    }
+
+    if (const entities::Canopy_Entity* canopy = entities::entity_as<entities::Canopy_Entity>(&entity))
+    {
+      drawn_position = drawn_canopy_position(ctx, *canopy);
+      drawn_scale    = canopy->half_extents * 2.0f;
+    }
+
+    if (const entities::Ping_Marker_Entity* marker = entities::entity_as<entities::Ping_Marker_Entity>(&entity))
+    {
+      const drawn_ping_marker_t drawn = drawn_ping_marker(ctx, *marker);
+      drawn_position = drawn_position + vec3f{0.0f, drawn.lift, 0.0f};
+      drawn_scale = drawn_scale * drawn.scale;
     }
 
     renderer::mesh_draw_t draw{};

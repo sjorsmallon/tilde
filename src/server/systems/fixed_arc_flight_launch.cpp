@@ -8,11 +8,18 @@
 namespace server
 {
 
-void launch_fixed_arc_flight(const server_context_t& context, const entities::Projectile& projectile,
+void launch_fixed_arc_flight(server_context_t& context, const entities::Projectile& projectile,
                              const linalg::vec3f& spawn_position, const flight_launch_settings_t& launch,
                              const shared::fixed_arc_flight_settings_t& flight_settings,
-                             Span<const uint8_t> disabled_geometry, entities::Fixed_Arc_Flight& out_flight)
+                             const shared::predicted_world_storage_t& world, entities::Fixed_Arc_Flight& out_flight)
 {
+  const entities::Player_Entity* owner =
+      context.world.session.entity_system.get<entities::Player_Entity>(projectile.owner_uid);
+  const Span<const uint8_t> disabled_geometry =
+      shared::predicted_world_of(world, owner != nullptr ? owner->team_allegiance
+                                                         : entities::Team_Allegiance::Free_For_All)
+          .disabled_geometry;
+
   const uint32_t wanted_flight_ticks = static_cast<uint32_t>(
       std::lround(launch.flight_seconds / flight_settings.tick_interval_seconds));
 

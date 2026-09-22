@@ -1,0 +1,25 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "bubble_weapon.prefab"
+}
+entity
+{
+  "classname" "weapon_entity"
+  "_uid" "159"
+  "position" "0 40 0"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "weapon_id" "Bubble"
+  "damage_type" "Normal"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "40 40 40"
+  "render.mesh" "Sphere"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "40 40 40"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}

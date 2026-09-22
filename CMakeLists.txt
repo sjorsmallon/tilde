@@ -527,14 +527,18 @@ add_library(game_shared STATIC
     src/shared/movement_modifiers.cpp
     src/shared/movement_volumes.cpp
     src/shared/disabled_geometry.cpp
+    src/shared/team_wall_ripples.cpp
     # The three cuts above as ONE value: what player_move reads that is state
     # rather than shape, built by the server tick and by both client prediction
     # loops through the same functions. tick_def.md step 2.
     src/shared/predicted_world.hpp
     src/shared/predicted_world.cpp
     src/shared/mover_path.cpp
+    src/shared/tween.cpp
     src/shared/movers.cpp
     src/shared/spawned_platforms.cpp
+    src/shared/canopy.cpp
+    src/shared/statues.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
@@ -689,7 +693,8 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/lightmap_shadow.glsl
                     ${SHADER_SRC_DIR}/alpha_cutout.glsl
                     ${SHADER_SRC_DIR}/mesh_push.glsl
-                    ${SHADER_SRC_DIR}/clock_wipe.glsl)
+                    ${SHADER_SRC_DIR}/clock_wipe.glsl
+                    ${SHADER_SRC_DIR}/ripple.glsl)
 
 set(SHADER_HEADERS "")
 
@@ -934,9 +939,11 @@ add_library(game_server SHARED
     src/server/systems/rocket_system.cpp
     src/server/systems/bubble_system.cpp
     src/server/systems/platform_system.cpp
+    src/server/systems/canopy_system.cpp
     src/server/systems/fixed_arc_flight_launch.cpp
     src/server/systems/hook_system.cpp
     src/server/systems/kooh_system.cpp
+    src/server/systems/ricochet_system.cpp
     src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/player_input_system.cpp
@@ -1172,6 +1179,11 @@ target_link_libraries(mover_path_test PRIVATE game_shared)
 add_executable(movement_volumes_test src/test/movement_volumes_test.cpp)
 target_include_directories(movement_volumes_test PRIVATE src src/shared)
 target_link_libraries(movement_volumes_test PRIVATE game_shared)
+
+# A team wall ripples once per entry, on the face entered, for the team that passes.
+add_executable(team_wall_ripples_test src/test/team_wall_ripples_test.cpp)
+target_include_directories(team_wall_ripples_test PRIVATE src src/shared)
+target_link_libraries(team_wall_ripples_test PRIVATE game_shared)
 
 # 22. CVar / command test — tables, text conversion, console dispatch,
 # argument binders, and the @Mirrored wire path.
@@ -1444,6 +1456,7 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     movement_volumes_test
+    team_wall_ripples_test
     mover_path_test
     prefab_test
     map_group_test

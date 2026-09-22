@@ -21,6 +21,7 @@
 // client's replay, which re-cuts per replayed input because a bubble's bounds
 // and a mover's pose are functions of the TICK, and a replay walks several.
 
+#include "array.hpp"
 #include "disabled_geometry.hpp"
 #include "movement_modifiers.hpp"
 #include "movement_volumes.hpp"
@@ -60,17 +61,28 @@ struct predicted_world_t
 // re-cut reuses the vectors rather than reallocating them. Separate from the
 // view because a view is what a callee takes and storage is what a caller
 // keeps; holding the spans inside the storage would make a copy of it dangle.
+//
+// The disabled set is ONE PER TEAM, because a team wall is not there for one
+// team's movers and solid for the rest (disabled_geometry.hpp). The team is the
+// only input, so three sets serve every player; the view a mover takes is cut
+// by `predicted_world_of(storage, team)` and player_move never learns the team.
 struct predicted_world_storage_t
 {
-  disabled_geometry_t            disabled_geometry;
-  std::vector<movement_volume_t>   movement_volumes;
-  std::vector<movement_modifier_t> movement_modifiers;
-  std::vector<mover_t>             movers;
+  Enum_Array<entities::Team_Allegiance, disabled_geometry_t> disabled_geometry;
+  std::vector<movement_volume_t>                             movement_volumes;
+  std::vector<movement_modifier_t>                           movement_modifiers;
+  std::vector<mover_t>                                       movers;
 };
 
-[[nodiscard]] inline predicted_world_t predicted_world_of(const predicted_world_storage_t& storage)
+[[nodiscard]] inline predicted_world_t predicted_world_of(const predicted_world_storage_t& storage,
+                                                          entities::Team_Allegiance mover_team)
 {
-  return {.disabled_geometry  = storage.disabled_geometry,
+  // `try_get` because a team is a replicated field: an out-of-range one reads as
+  // no team, which passes no team wall, the solid direction.
+  const disabled_geometry_t* disabled = storage.disabled_geometry.try_get(mover_team);
+  return {.disabled_geometry  = disabled != nullptr
+                                    ? Span<const uint8_t>{*disabled}
+                                    : Span<const uint8_t>{storage.disabled_geometry[entities::Team_Allegiance::Free_For_All]},
           .movement_volumes   = storage.movement_volumes,
           .movement_modifiers = storage.movement_modifiers,
           .movers             = storage.movers};
@@ -83,6 +95,10 @@ struct predicted_world_storage_t
 struct predicted_world_settings_t
 {
   uint32_t tick        = 0;
+  // The tick the session's replicated state DESCRIBES, for the one cut that is a function of
+  // state another player's input wrote rather than of the tick (canopy.hpp): the server's is
+  // tick - 1, the client's is its newest snapshot. Always older than `tick`.
+  uint32_t state_tick  = 0;
   float    tickrate_hz = 0.f;
   float    gravity     = 0.f;
 
@@ -94,6 +110,7 @@ struct predicted_world_settings_t
 // replicated switches alone, so the client cuts it once a frame, while the
 // volumes and the movers are functions of the TICK and its replay re-cuts them
 // per input. The server runs one tick at a time and takes the whole cut.
+// The disabled cut fills EVERY team's set; picking one is the view's job.
 void cut_disabled_geometry(game_session_t& session, predicted_world_storage_t& out);
 void cut_movement_volumes(game_session_t& session, const predicted_world_settings_t& settings,
                           predicted_world_storage_t& out);

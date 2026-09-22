@@ -22,6 +22,10 @@ struct override_step_t
   bool          moves  = false;
   wanted_move_t wanted = {};
 
+  // The hull stays exactly where and how it is: no slide, no resolve, velocity
+  // untouched. A Stasis holds; it does not move by zero.
+  bool          holds  = false;
+
   // What let go this step, None being nothing. It has already gone through
   // apply_impulse with `end_velocity`; the caller only reports it.
   entities::Movement_Override ended        = entities::Movement_Override::None;
@@ -32,5 +36,14 @@ struct override_step_t
 // override when it is spent, which is why the state is taken by reference.
 [[nodiscard]] override_step_t step_override(const movement_settings_t& settings,
                                             move_state_t& state, float dt);
+
+// A frozen hull is a MOVER other players stand on (shared/statues.hpp), so the
+// step must not collide with its own: the kernel sees no movers while this is
+// true, and the mover push skips the hull. Stasis keeps the velocity it was
+// frozen with and hands it back at thaw; Statue was zeroed at attach and falls.
+[[nodiscard]] constexpr bool override_freezes(entities::Movement_Override kind)
+{
+  return kind == entities::Movement_Override::Stasis || kind == entities::Movement_Override::Statue;
+}
 
 } // namespace shared

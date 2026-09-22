@@ -13,6 +13,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"Missing", nullptr},
   {"Duck", "resources/glb/Duck.glb"},
   {"GlassBrokenWindow", "resources/glb/GlassBrokenWindow.glb"},
+  {"arrow", "resources/glb/arrow.glb"},
   {"damaged_helmet", "resources/glb/damaged_helmet.glb"},
   {"gripper", "resources/glb/gripper.glb"},
   {"high_res_sphere", "resources/glb/high_res_sphere.glb"},

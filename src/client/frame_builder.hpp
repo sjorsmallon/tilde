@@ -16,6 +16,8 @@ struct pass_builder_t
   // Two regions, filled together by shared::begin_frame_lights /
   // add_frame_light: the bake's slots first, the analytic tail after.
   shared::frame_lights_t                               lights;
+  // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
+  std::vector<shared::wall_ripple_t>                   ripples;
   std::vector<renderer::custom_draw_t>                 custom;
 
   // The baked atlas every lightmapped draw in this pass samples. Set when the
@@ -73,6 +75,7 @@ struct pass_builder_t
     particles.clear();
     lights.entries.clear();
     lights.baked_count = 0;
+    ripples.clear();
     custom.clear();
     debug.retire(delta_seconds);
   }
@@ -85,6 +88,7 @@ struct pass_builder_t
     pass.debug     = &debug;
     pass.lights            = lights.entries;
     pass.baked_light_count = lights.baked_count;
+    pass.ripples           = ripples;
     pass.debug_channel = debug_channel;
     pass.particles = particles;
     pass.custom    = custom;

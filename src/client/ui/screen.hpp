@@ -11,6 +11,7 @@
 
 #include "../../shared/color.hpp"
 #include "../../shared/linalg.hpp"
+#include "../../shared/tween.hpp"
 #include "../renderer.hpp"
 #include "font.hpp"
 #include "layout.hpp"
@@ -103,23 +104,15 @@ enum class ui_property_t : uint8_t
   offset_y
 };
 
-enum class ease_t : uint8_t
-{
-  linear,
-  in_cubic,
-  out_cubic,
-  in_out_cubic
-};
-
 struct ui_animation_t
 {
-  ui_node_id_t  node     = UI_INVALID_NODE_ID;
-  ui_property_t property = ui_property_t::opacity;
-  float         from     = 0.0f;
-  float         to       = 0.0f;
-  float         duration = 0.0f;
-  float         elapsed  = 0.0f;
-  ease_t        easing   = ease_t::linear;
+  ui_node_id_t     node     = UI_INVALID_NODE_ID;
+  ui_property_t    property = ui_property_t::opacity;
+  float            from     = 0.0f;
+  float            to       = 0.0f;
+  float            duration = 0.0f;
+  float            elapsed  = 0.0f;
+  entities::Easing easing   = entities::Easing::Linear;
 };
 
 // --- The screen --------------------------------------------------------------
@@ -188,8 +181,6 @@ void draw_screen(renderer::ui_draw_list_t &list, const ui_screen_t &screen, cons
 [[nodiscard]] float property_value(const ui_node_t &node, ui_property_t property);
 void                set_property_value(ui_node_t &node, ui_property_t property, float value);
 
-[[nodiscard]] float apply_ease(ease_t easing, float t);
-
 // Returned by animate(). Every setter mutates the entry that animate() already
 // appended and returns *this, so a chain reads as written and an omitted term
 // simply keeps its default -- there is no build() to forget.
@@ -213,7 +204,7 @@ public:
     entry().duration = seconds;
     return *this;
   }
-  ui_animation_builder_t &ease(ease_t easing)
+  ui_animation_builder_t &ease(entities::Easing easing)
   {
     entry().easing = easing;
     return *this;
@@ -229,7 +220,7 @@ private:
 // Start (or RESTART) an animation on one node property:
 //
 //   animate(screen, row, ui_property_t::opacity)
-//       .from(0.0f).to(1.0f).duration(0.25f).ease(ease_t::out_cubic);
+//       .from(0.0f).to(1.0f).duration(0.25f).ease(entities::Easing::Out_Cubic);
 //
 // An existing animation on the same (node, property) is REPLACED rather than
 // appended to. Two tweens writing one float is not a blend, it is whichever

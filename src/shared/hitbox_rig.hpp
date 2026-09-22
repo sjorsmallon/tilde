@@ -150,6 +150,20 @@ inline posed_hitbox_t make_box_hit_volume(const linalg::vec3f  &center,
   return volume;
 }
 
+// A sphere at `center`. start == end, so center() is exact and the Sphere arm
+// reads `start`. One spelling for the same reason as the box above.
+inline posed_hitbox_t make_sphere_hit_volume(const linalg::vec3f& center, float radius,
+                                             shared::hit_region_t region)
+{
+  posed_hitbox_t volume{};
+  volume.shape  = hitbox_shape_t::Sphere;
+  volume.start  = center;
+  volume.end    = center;
+  volume.radius = radius;
+  volume.region = region;
+  return volume;
+}
+
 // `model_space` is what compute_model_space_matrices produced for the pose being
 // drawn -- NOT the skinning matrices, which carry the inverse bind and would put
 // every volume at the origin. `out` must be rig.volumes.size() long; a wrong

@@ -71,6 +71,7 @@ private:
   void run_predicted_ticks(client_context_t &ctx, play_frame_t &frame);
   void play_local_movement_sounds(client_context_t &ctx, play_frame_t &frame);
   void advance_render_state(client_context_t &ctx, play_frame_t &frame);
+  void ripple_team_walls(client_context_t &ctx, play_frame_t &frame);
   void resolve_camera(client_context_t &ctx, play_frame_t &frame);
   void update_audio_listener(client_context_t &ctx, play_frame_t &frame);
 

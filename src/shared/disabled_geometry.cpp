@@ -6,8 +6,22 @@
 namespace shared
 {
 
-void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
-                               disabled_geometry_t& out)
+bool geometry_owner_blocks(const entities::Geometry_Owner_Entity& owner,
+                           entities::Team_Allegiance          mover_team)
+{
+  if (!owner.switch_state.value)
+    return false;
+  return owner.passable_by == entities::Team_Allegiance::Free_For_All ||
+         owner.passable_by != mover_team;
+}
+
+namespace
+{
+
+// ONE walk for both sets, the predicate being the only thing they disagree on.
+template <typename Blocks_T>
+void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owner_of,
+                            disabled_geometry_t& out, Blocks_T&& owner_blocks)
 {
   out.assign(owner_of.size(), 0);
 
@@ -30,7 +44,7 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       {
         const entities::Geometry_Owner_Entity* owner =
             entities::entity_as<entities::Geometry_Owner_Entity>(entity);
-        out[index] = owner->switch_state.value ? 0 : 1;
+        out[index] = owner_blocks(*owner) ? 0 : 1;
         break;
       }
 
@@ -45,8 +59,10 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       case entities::entity_type::Rocket_Entity:
       case entities::entity_type::Hook_Entity:
       case entities::entity_type::Kooh_Entity:
+      case entities::entity_type::Ricochet_Entity:
       case entities::entity_type::Bubble_Entity:
       case entities::entity_type::Platform_Entity:
+      case entities::entity_type::Canopy_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:
       case entities::entity_type::Particle_Emitter_Entity:
@@ -64,6 +80,7 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
       case entities::entity_type::Path_Node_Entity:
       case entities::entity_type::Launcher_Entity:
       case entities::entity_type::Movement_Modifier_Entity:
+      case entities::entity_type::Remnant_Entity:
         break;
 
       // A mover's switch freezes it rather than removing it, and its pieces are not in the tree anyway.
@@ -71,6 +88,24 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
         break;
     }
   }
+}
+
+} // namespace
+
+void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
+                               entities::Team_Allegiance mover_team, disabled_geometry_t& out)
+{
+  collect_geometry_where(system, owner_of, out,
+                         [mover_team](const entities::Geometry_Owner_Entity& owner)
+                         { return geometry_owner_blocks(owner, mover_team); });
+}
+
+void collect_hidden_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
+                             disabled_geometry_t& out)
+{
+  collect_geometry_where(system, owner_of, out,
+                         [](const entities::Geometry_Owner_Entity& owner)
+                         { return owner.switch_state.value; });
 }
 
 } // namespace shared

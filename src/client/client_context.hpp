@@ -18,6 +18,7 @@
 #include "../shared/player_move.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/team_wall_ripples.hpp"
 
 #include <memory>
 #include <optional>
@@ -479,6 +480,11 @@ struct visual_effects_t
   // Client only, since the server cannot visualize. Filled by player_move
   // during prediction, drawn and cleared in build_frame.
   debug_collision::Face_Bucket debug_collision_faces;
+
+  // Where players came through a team wall lately, and who is inside one now.
+  // Derived per frame from positions every client already holds, so nothing is
+  // networked; aged in retire_per_frame_visuals, drawn by the ghost shader.
+  shared::wall_ripple_state_t team_wall_ripples;
 
   // Which local input number the run's pose 0 is, latched once per Live phase so the ghost
   // advances with our own input counter rather than with snapshot arrival.

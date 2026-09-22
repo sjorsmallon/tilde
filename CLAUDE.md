@@ -1216,6 +1216,47 @@ toggle lands where movers cannot.
   is what you cannot see. **The lightmap bake ignores it** — a brush baked into
   the atlas leaves its shadow when it disappears — and so does Jolt, so a physics
   crate still rests on a gate the player walks through.
+- **A TEAM WALL IS THE SAME CUT WITH ONE MORE INPUT** (built 2026-09-22, never
+  tried in game). `Geometry_Owner_Entity::passable_by` (`Team_Allegiance`,
+  `@Networked @Editable`, `Free_For_All` meaning passable by NOBODY, the plain
+  switchable brush) names the team whose movers and shots the geometry is not
+  there for. Nothing new reaches the wire: the set was always derived on both
+  sides from replicated state, and still is. What changed is that it is a
+  function of WHO is moving, and since the team is the only input it is ONE SET
+  PER TEAM -- `predicted_world_storage_t::disabled_geometry` is an `Enum_Array`
+  over `Team_Allegiance`, `cut_disabled_geometry` fills all of them, and
+  `predicted_world_of(storage, team)` is the view a mover takes, so `player_move`
+  never learns the team. Every server system that used to take the view takes
+  the STORAGE and cuts per player (`update_player_inputs`, `update_bots`,
+  `push_players_by_movers`); `launch_fixed_arc_flight` resolves its
+  projectile's OWNER's team itself, so a bubble or platform flies through what
+  its shooter walks through, and a shot reads the shooter's view -- you shoot
+  through what you can walk through. The client cuts all three per frame and
+  picks by `try_find_my_player`'s team, a spectator taking `Free_For_All`. **The
+  DRAW asks a DIFFERENT question**: `collect_hidden_geometry` is the switch
+  alone, and a team wall is in nobody's hidden set, so it is visible to the team
+  that walks through it -- drawn in ITS team's `GHOST_TINTS` colour either way
+  (`draw_geometry`'s `team_wall_tint_t`): a GHOST (the fresnel `shader_t::ghost`
+  through `material_variant`, alpha-blended, no shadow) when the viewer passes
+  it, the wall's own materials with the colour multiplied in when not. Passable
+  is the same `geometry_owner_blocks(owner, my_team)` the sweep asks, so the
+  draw and the collision cannot disagree about which walls are ours. That rule
+  is the one both collects go through too. `movement_volumes_test` pins the
+  sets. **A crossing RIPPLES, and the sweep cannot report it** (built
+  2026-09-22, never looked at in game): a passable wall is skipped at every
+  leaf test, so `shared/team_wall_ripples.{hpp,cpp}` detects the entry OUTSIDE
+  the move, once per frame on the client (`Play_State::ripple_team_walls`,
+  own centre from the prediction, remote centres from `render_position`), by
+  the same `geometry_owner_blocks` rule -- inside a wall you pass and not
+  last frame is one impact, on the piece plane nearest the centre, which at
+  entry is the face you came through. Nothing is networked. A ripple is a
+  property of a POINT, not of a draw, so it rides the pass's SCENE BLOCK
+  (`view_pass_t::ripples`, `MAX_SCENE_RIPPLES` 16, the newest kept) and no
+  draw carries it; `ripple.glsl` is the damped travelling ring, confined to
+  its face by distance from the plane, and `mesh_ghost.frag` tilts the rim's
+  normal by its SLOPE and brightens the alpha by its height -- a wall face is
+  two triangles, so nothing is displaced. `team_wall_ripples_test` pins the
+  detector.
 - **Editor: "Tie to entity" / "Untie" in the inspector**, either end untying it,
   and deleting a `Geometry_Owner_Entity` UNTIES rather than deletes: a brush is world
   geometry with a pointer, not part of the entity. `bake_map_csg` and `stamp_map`
@@ -1257,6 +1298,89 @@ ONE SOLID BOX from the tick it lands until `rest_seconds` later.
   BVH only — `mover_def.md` §5's "shots test the mover list" is not built for
   movers either), Jolt does not see it, and it has no sound. It is world-axis
   aligned whatever the aim.
+
+### The canopy — a mover whose poses are another player's positions
+
+Built 2026-09-22, never tried in game. `Weapon::Canopy` holds a slab above its
+carrier for as long as its primary button is DOWN; other players stand on it and
+are carried by the carrier's own movement. `shared/canopy.{hpp,cpp}` is the
+whole shared half and `server/systems/canopy_system.cpp` the server's.
+
+- **It is a MOVER, cut into `predicted_world_t::movers` beside the landed
+  platform**, so `push_player_by_movers`, `ground_mover_uid` and the sweep are
+  untouched. `Canopy_Entity` (`@runtime_only @predicted`) carries `carrier_uid`,
+  `position` and `position_at_previous_tick`, all `@Networked`: a snapshot frame
+  holds the whole pose pair, so `collect_canopies` is a pure function of the
+  frame and the client re-cuts it per replayed input with no history.
+- **The button is a LEVEL, not a shot.** `Fire_Resolution::Canopy` resolves to
+  nothing in `resolve_player_shot`; the system reads
+  `client_slot_t::latest_buttons_bitmap & Button::Fire` after the inputs, spawns
+  on the first held tick, rewrites the pair every tick (`write_canopy_poses`, the
+  ONE writer) and destroys on release, death, a switch away or a disconnect. The
+  row carries no clocks, which the existing static_assert demands of a row with
+  no shot.
+- **It TRAILS the carrier by one tick, and that is the price of one cut per
+  tick.** The world is frozen before the inputs run, so the newest thing known at
+  cut time is where the carrier ended the PREVIOUS tick; a rider is carried by
+  that displacement one tick late. `predicted_world_settings_t::state_tick`
+  names the tick the session's state describes (server: `tick - 1`; client: its
+  newest snapshot), and `canopy_poses_for_tick` is exact for the tick after it
+  and EXTRAPOLATES along the carrier's replicated velocity past it -- every tick
+  a replay walks is ahead of the newest snapshot, and the carrier's input there
+  is another human's. A rider is corrected by the carrier's acceleration over one
+  round trip, which no engine can predict away; the levers left are smoothing the
+  correction on the client and springing the slab so its motion is smoother than
+  the carrier's. The draw is glued to the carrier's DRAWN body, not the trail.
+- **`mover_t::crushes` is false for a canopy**: a carrier walking their rider
+  into a wall makes the push take its carry back rather than kill them. The
+  carrier never meets their own canopy by CLEARANCE (24 units above the hull, more
+  than any launch moves a hull in one tick), because `player_move` has no uid to
+  exclude it by. Shots and rockets do not see it, as with the landed platform.
+- `player_move_step_invariance_test` 16c pins the carry, the one-tick trail and
+  the no-crush; `movement_volumes_test` pins that a canopy with a carrier is a
+  mover.
+
+### The statue gun — a frozen player is a mover, and a freeze is an override
+
+Built 2026-09-22, never tried in game. `Weapon::Statue` is a hitscan with two
+freeze effects: the left button's `Stasis` holds the player it hit with their
+velocity KEPT, the right button's `Statue` zeroes it and lets gravity keep
+acting, so a mid-air victim drops and lands. Both last `freeze_seconds` (2.0),
+and a second hit of either RELEASES early. `shared/statues.{hpp,cpp}` is the
+cut and `shared/movement_override.{hpp,cpp}` the two arms.
+
+- **A freeze is a `Movement_Override`** (`Stasis`, `Statue` beside `Reel`), so
+  the frozen player predicts their own hold from state they already hold and
+  nothing rubber-bands. `Stasis` is the one override that HOLDS
+  (`override_step_t::holds`): no slide, no resolve, velocity untouched, so what
+  it thaws with is exactly what it was frozen with, through the one exit door.
+  `Statue` MOVES with no input -- its own velocity under the step's gravity,
+  clipped by the walls -- and is zeroed at attach by the server through
+  `apply_impulse`. A press during either spends no jump charge and touches no
+  volume.
+- **Nothing is spawned.** `collect_statues` walks the player pool and emits one
+  `mover_t` per frozen living player: the hull at their position, equal poses,
+  `crushes` false, uid the PLAYER's. Both halves of that box are replicated
+  already, which is the platform's argument with no entity to reap; it is why
+  `Player_Entity` is now `@predicted`. `ground_mover_uid` naming a player is
+  legal and means "standing on someone".
+- **The frozen hull must not see its own box, and there is no uid in
+  `player_move` to skip it by**, so `override_freezes` gates two things: the
+  step runs against a view with NO movers, and `push_player_by_movers` returns
+  the feet untouched. The cost is that a falling statue passes through a
+  landed platform or a lift, and a lift passes through a statue. The canopy
+  paid clearance for the same problem; a uid on the step is the door if either
+  matters.
+- **The server attaches in step 4** (`apply_pending_freezes`, after the swaps
+  and before the damage), `pending_freeze_t` carrying the kind and the seconds
+  off the row. A release is `override_seconds_remaining = 0`: the next step
+  thaws through `end_override`, never a direct `None` write. Attaching over a
+  live `Reel` replaces it without the reel's exit impulse.
+- **Not done:** no visual on the frozen body (the clock wipe is the obvious
+  one), no sound, a frozen player can still fire, and the victim feels the
+  freeze a round trip late like every hit. `player_move_step_invariance_test`
+  pins the hold, the parabola, both thaws, the rider and the own-box skip;
+  `movement_volumes_test` pins that a frozen player is a mover.
 
 ### Player hit volumes
 

@@ -21,7 +21,10 @@
 #include "entity_system.hpp"
 #include "movement_volumes.hpp"
 #include "movers.hpp"
+#include "predicted_world.hpp"
 #include "shapes.hpp"
+#include "canopy.hpp"
+#include "statues.hpp"
 #include "spawned_platforms.hpp"
 
 #include <cmath>
@@ -86,6 +89,15 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
       platform->flight = {.launch_tick = 1, .flight_ticks = 0};
   }
 
+  // A canopy answers only for a carrier the system holds: the one player spawned above.
+  for (entities::Canopy_Entity& canopy : system.entities_of<entities::Canopy_Entity>())
+    for (const entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+      canopy.carrier_uid = player.entity_id;
+
+  // A player answers only while frozen.
+  for (entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+    player.movement.active_override = entities::Movement_Override::Stasis;
+
   std::vector<shared::movement_volume_t> volumes;
   shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
 
@@ -102,12 +114,15 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   // keyed by geometry index and resolves the owner, so an owner_of naming every
   // candidate in turn is the whole map this pin needs -- no map_t, no BVH.
   shared::disabled_geometry_t disabled;
-  shared::collect_disabled_geometry(system, spawned_uids, disabled);
+  shared::collect_disabled_geometry(system, spawned_uids, entities::Team_Allegiance::Free_For_All,
+                                    disabled);
 
   std::vector<shared::mover_t> movers;
   shared::collect_movers(system, {}, {}, 1, 60.0f, movers);
+  shared::collect_canopies(system, 1, 0, 1.f / 60.f, movers);
   shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
                                     movers);
+  shared::collect_statues(system, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -164,6 +179,10 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a mover entity is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Platform_Entity) > 0,
         "a landed platform is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Canopy_Entity) > 0,
+        "a canopy with a carrier is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Player_Entity) > 0,
+        "a frozen player is a mover");
 
   // Not vacuous: if nothing is @predicted the loop above passes by saying
   // nothing, which is the one way this pin could quietly stop measuring.
@@ -267,23 +286,77 @@ static void test_a_switch_reaches_the_geometry_it_owns()
   // entity is what the tie is FOR, so one switch has to reach both.
   const shared::entity_uid_t owner_of[] = {shared::null_entity_uid, owner, owner};
 
+  const entities::Team_Allegiance no_team = entities::Team_Allegiance::Free_For_All;
+
   shared::disabled_geometry_t disabled;
-  shared::collect_disabled_geometry(system, owner_of, disabled);
+  shared::collect_disabled_geometry(system, owner_of, no_team, disabled);
   check(disabled.size() == 3 && !disabled[0] && !disabled[1] && !disabled[2],
         "an enabled owner disables nothing");
 
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
-  shared::collect_disabled_geometry(system, owner_of, disabled);
+  shared::collect_disabled_geometry(system, owner_of, no_team, disabled);
   check(disabled.size() == 3 && !disabled[0] && disabled[1] && disabled[2],
         "switching the owner off takes out every object tied to it and nothing else");
+
+  shared::collect_hidden_geometry(system, owner_of, disabled);
+  check(disabled.size() == 3 && !disabled[0] && disabled[1] && disabled[2],
+        "the hidden set follows the switch too");
 
   // An owner the system no longer holds sets no bit: the object stays solid,
   // which is the safe direction -- a wall you cannot see is worse than one you
   // can walk through.
   (void)system.destroy(owner);
-  shared::collect_disabled_geometry(system, owner_of, disabled);
+  shared::collect_disabled_geometry(system, owner_of, no_team, disabled);
   check(disabled.size() == 3 && !disabled[0] && !disabled[1] && !disabled[2],
         "a destroyed owner leaves its geometry solid");
+}
+
+static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
+{
+  printf("\n[pin] a team wall: passable by one team, solid for the rest, hidden from nobody\n");
+
+  shared::Entity_System system;
+  const shared::entity_uid_t owner = system.spawn(entities::entity_type::Geometry_Owner_Entity);
+  system.get<entities::Geometry_Owner_Entity>(owner)->passable_by = entities::Team_Allegiance::Red;
+
+  const shared::entity_uid_t owner_of[] = {shared::null_entity_uid, owner};
+
+  shared::disabled_geometry_t disabled;
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
+  check(disabled.size() == 2 && !disabled[0] && disabled[1],
+        "the wall is not there for the team it is passable by");
+
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  check(disabled.size() == 2 && !disabled[0] && !disabled[1], "the wall is solid for the other team");
+
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Free_For_All,
+                                    disabled);
+  check(disabled.size() == 2 && !disabled[0] && !disabled[1],
+        "a mover with no team passes no team wall");
+
+  // The draw asks a different question: a team wall is in nobody's hidden set.
+  shared::collect_hidden_geometry(system, owner_of, disabled);
+  check(disabled.size() == 2 && !disabled[0] && !disabled[1], "a team wall is visible to everyone");
+
+  // Off is off for everyone, its team included.
+  system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  check(disabled.size() == 2 && disabled[1], "a switched-off team wall is gone for the other team too");
+  shared::collect_hidden_geometry(system, owner_of, disabled);
+  check(disabled.size() == 2 && disabled[1], "and hidden, like any switched-off brush");
+
+  // The storage cuts every team's set at once and the view picks one.
+  system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = true;
+  shared::predicted_world_storage_t storage;
+  for (uint32_t team = 0; team < storage.disabled_geometry.count; ++team)
+    shared::collect_disabled_geometry(system, owner_of, static_cast<entities::Team_Allegiance>(team),
+                                      storage.disabled_geometry.values[team]);
+  check(shared::predicted_world_of(storage, entities::Team_Allegiance::Red).disabled_geometry[1] != 0 &&
+            shared::predicted_world_of(storage, entities::Team_Allegiance::Blu).disabled_geometry[1] == 0,
+        "the view is the mover's team's set");
+  check(shared::predicted_world_of(storage, static_cast<entities::Team_Allegiance>(200))
+                .disabled_geometry[1] == 0,
+        "a team off the wire that names no value passes no team wall");
 }
 
 static void test_a_drawn_mover_carries_its_rider_by_the_same_fraction()
@@ -411,6 +484,7 @@ int main()
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
   test_a_switch_reaches_the_geometry_it_owns();
+  test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone();
   test_a_drawn_mover_carries_its_rider_by_the_same_fraction();
 
   printf("\nmovement_volumes_test %s (%d)\n", failure_count == 0 ? "PASSED" : "FAILED",

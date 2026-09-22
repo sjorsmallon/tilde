@@ -190,32 +190,6 @@ void set_property_value(ui_node_t &node, ui_property_t property, float value)
   }
 }
 
-float apply_ease(ease_t easing, float t)
-{
-  // Clamped so a caller that oversteps the duration cannot overshoot the
-  // endpoint -- cubic curves are not bounded outside [0,1].
-  if (t <= 0.0f)
-    return 0.0f;
-  if (t >= 1.0f)
-    return 1.0f;
-
-  const float inverted = 1.0f - t;
-
-  switch (easing)
-  {
-  case ease_t::linear:
-    return t;
-  case ease_t::in_cubic:
-    return t * t * t;
-  case ease_t::out_cubic:
-    return 1.0f - inverted * inverted * inverted;
-  case ease_t::in_out_cubic:
-    return t < 0.5f ? 4.0f * t * t * t : 1.0f - 4.0f * inverted * inverted * inverted;
-  }
-
-  return t;
-}
-
 ui_animation_builder_t animate(ui_screen_t &screen, ui_node_id_t node, ui_property_t property)
 {
   if (node == UI_INVALID_NODE_ID || node >= screen.nodes.size())
@@ -241,7 +215,7 @@ ui_animation_builder_t animate(ui_screen_t &screen, ui_node_id_t node, ui_proper
   animation.from     = current;
   animation.to       = current;
   animation.duration = 0.2f;
-  animation.easing   = ease_t::linear;
+  animation.easing   = entities::Easing::Linear;
 
   screen.animations.push_back(animation);
   return ui_animation_builder_t(screen, (uint32_t)screen.animations.size() - 1);
@@ -275,7 +249,7 @@ void advance_animations(ui_screen_t &screen, float delta_seconds)
       continue;
     }
 
-    const float fraction = apply_ease(animation.easing, animation.elapsed / animation.duration);
+    const float fraction = shared::apply_easing(animation.easing, animation.elapsed / animation.duration);
     set_property_value(screen[animation.node], animation.property,
                        animation.from + (animation.to - animation.from) * fraction);
 

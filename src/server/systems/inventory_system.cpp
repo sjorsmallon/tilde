@@ -81,6 +81,44 @@ shared::entity_uid_t try_grant_weapon(server_context_t&     context,
   return granted;
 }
 
+bool try_take_weapon(
+  server_context_t& context,
+  entities::Entity& owner,
+  entities::Inventory& inventory,
+  entities::Weapon weapon)
+{
+  for (uint32_t index = 0; index < enum_traits<entities::Inventory_Slot>::count; ++index)
+  {
+    const entities::Inventory_Slot slot = (entities::Inventory_Slot)index;
+    const shared::entity_uid_t weapon_uid = inventory.weapons[slot];
+    if (weapon_uid == shared::null_entity_uid) continue;
+
+    const entities::Weapon_Entity* carried = context.world.session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
+    
+    if (carried == nullptr)
+    {
+      log_error("try_take_weapon: {} holds uid {} in {}, which resolves to nothing",
+                owner.entity_id, weapon_uid, to_string(slot));
+      continue;
+    }
+    if (carried->weapon_id != weapon) continue;
+
+    inventory.weapons[slot] = shared::null_entity_uid;
+
+    // The hand stays on the slot, now empty; only a reload of the taken weapon
+    // has nothing left to complete into.
+    if (entities::Player_Entity* player = entities::entity_as<entities::Player_Entity>(&owner);
+        player != nullptr && inventory.active_slot == slot && is_reloading(*player))
+      cancel_reload(*player);
+
+    destroy_entity(context, weapon_uid);
+    return true;
+  }
+
+  return false;
+}
+
+
 void destroy_inventory(server_context_t& context, shared::entity_uid_t player_uid)
 {
   entities::Player_Entity* player =
@@ -130,6 +168,28 @@ void refill_inventory(shared::game_session_t& session, entities::Player_Entity& 
   }
 
   player.inventory.deploy_complete_time = 0;
+}
+
+bool is_reloading(const entities::Player_Entity& player)
+{
+  return player.reload_complete_time != 0;
+}
+
+void finish_reload(shared::game_session_t& session, entities::Player_Entity& player)
+{
+  entities::Weapon_Entity* active_weapon = try_find_active_weapon(session, player);
+  if (active_weapon == nullptr)
+    log_error("finish_reload: player {} finished reloading {}, which is empty",
+              player.entity_id, to_string(player.inventory.active_slot));
+  else
+    reload_magazine(*active_weapon);
+
+  player.reload_complete_time = 0;
+}
+
+void cancel_reload(entities::Player_Entity& player)
+{
+  player.reload_complete_time = 0;
 }
 
 void reload_magazine(entities::Weapon_Entity& weapon)

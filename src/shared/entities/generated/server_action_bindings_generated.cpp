@@ -274,6 +274,12 @@ void shim_player_entity_grant_weapon(Entity& entity, const action_data_t& data, 
   grant_weapon(self, self.inventory, data.as_grant_weapon(), context);
 }
 
+void shim_player_entity_take_weapon(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  take_weapon(self, self.inventory, data.as_take_weapon(), context);
+}
+
 void shim_player_entity_set_respawn_point(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Player_Entity& self = *entity_as<Player_Entity>(&entity);
@@ -382,6 +388,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_player_entity_set_velocity,
     shim_player_entity_add_velocity,
     shim_player_entity_grant_weapon,
+    shim_player_entity_take_weapon,
     shim_player_entity_set_respawn_point,
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -401,7 +408,9 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   {},   // Rocket_Entity
   {},   // Hook_Entity
   {},   // Kooh_Entity
+  {},   // Ricochet_Entity
   {},   // Platform_Entity
+  {},   // Canopy_Entity
   {},   // Bubble_Entity
   {},   // Physics_Body_Entity
   {   // Damageable_Entity
@@ -420,6 +429,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -452,6 +462,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -483,6 +494,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -514,6 +526,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -546,6 +559,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -577,6 +591,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -609,6 +624,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     shim_game_rules_entity_complete_level,
     nullptr,   // Start
@@ -640,6 +656,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -671,6 +688,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -703,6 +721,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     shim_logic_timer_entity_start,
@@ -735,6 +754,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -766,6 +786,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -797,6 +818,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
     nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
     nullptr,   // Complete_Level
     nullptr,   // Start
@@ -812,6 +834,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Go_To
     nullptr,   // Fire
   },
+  {},   // Remnant_Entity
 };
 
 // The shared ACCEPTANCE mask and this table are two artifacts of one
@@ -1089,6 +1112,23 @@ void grant_weapon(Entity& entity, const Grant_Weapon_Data& payload, input_contex
 {
   if (!try_grant_weapon(entity, payload, context))
     fatal_error("{} does not accept Grant_Weapon", entity_info(entity.type).classname);
+}
+
+bool try_take_weapon(Entity& entity, const Take_Weapon_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Take_Weapon];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void take_weapon(Entity& entity, const Take_Weapon_Data& payload, input_context_t& context)
+{
+  if (!try_take_weapon(entity, payload, context))
+    fatal_error("{} does not accept Take_Weapon", entity_info(entity.type).classname);
 }
 
 bool try_set_respawn_point(Entity& entity, const Set_Respawn_Point_Data& payload, input_context_t& context)

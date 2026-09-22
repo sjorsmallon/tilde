@@ -233,6 +233,22 @@ struct pending_tether_t
   float                seconds     = 0.f;
 };
 
+// The shooter goes to the remnant it hit, and the remnant is spent.
+struct pending_teleport_t
+{
+  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
+  shared::entity_uid_t remnant_uid = shared::null_entity_uid;
+};
+
+// The target is frozen as `kind` for `seconds`, or released if it already was.
+struct pending_freeze_t
+{
+  shared::entity_uid_t        shooter_uid = shared::null_entity_uid;
+  shared::entity_uid_t        target_uid  = shared::null_entity_uid;
+  entities::Movement_Override kind        = entities::Movement_Override::None;
+  float                       seconds     = 0.f;
+};
+
 struct tick_output_t
 {
   shared::event_stream_t effects;
@@ -246,6 +262,10 @@ struct tick_output_t
   std::vector<pending_magnet_t> pending_magnets;
 
   std::vector<pending_tether_t> pending_tethers;
+
+  std::vector<pending_teleport_t> pending_teleports;
+
+  std::vector<pending_freeze_t> pending_freezes;
 };
 
 struct server_context_t

@@ -69,6 +69,7 @@ struct action_data_t
     Set_Velocity_Data set_velocity;
     Add_Velocity_Data add_velocity;
     Grant_Weapon_Data grant_weapon;
+    Take_Weapon_Data take_weapon;
     Set_Respawn_Point_Data set_respawn_point;
     Complete_Level_Data complete_level;
     Start_Data start;
@@ -100,6 +101,7 @@ struct action_data_t
   const Set_Velocity_Data& as_set_velocity() const { assert(tag == entity_action::Set_Velocity); return set_velocity; }
   const Add_Velocity_Data& as_add_velocity() const { assert(tag == entity_action::Add_Velocity); return add_velocity; }
   const Grant_Weapon_Data& as_grant_weapon() const { assert(tag == entity_action::Grant_Weapon); return grant_weapon; }
+  const Take_Weapon_Data& as_take_weapon() const { assert(tag == entity_action::Take_Weapon); return take_weapon; }
   const Set_Respawn_Point_Data& as_set_respawn_point() const { assert(tag == entity_action::Set_Respawn_Point); return set_respawn_point; }
   const Complete_Level_Data& as_complete_level() const { assert(tag == entity_action::Complete_Level); return complete_level; }
   const Start_Data& as_start() const { assert(tag == entity_action::Start); return start; }
@@ -133,6 +135,7 @@ action_data_t erase(const Teleport_Data& payload);
 action_data_t erase(const Set_Velocity_Data& payload);
 action_data_t erase(const Add_Velocity_Data& payload);
 action_data_t erase(const Grant_Weapon_Data& payload);
+action_data_t erase(const Take_Weapon_Data& payload);
 action_data_t erase(const Set_Respawn_Point_Data& payload);
 action_data_t erase(const Complete_Level_Data& payload);
 action_data_t erase(const Start_Data& payload);
@@ -168,7 +171,9 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Rocket_Entity
   0u,   // Hook_Entity
   0u,   // Kooh_Entity
+  0u,   // Ricochet_Entity
   0u,   // Platform_Entity
+  0u,   // Canopy_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   trait_bit(entity_trait::Mortal),   // Damageable_Entity
@@ -189,6 +194,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Path_Following),   // Mover_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Firing),   // Launcher_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Movement_Modifier_Entity
+  0u,   // Remnant_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -220,12 +226,14 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Invalid
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
-  action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
+  action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Take_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Rocket_Entity
   0u,   // Hook_Entity
   0u,   // Kooh_Entity
+  0u,   // Ricochet_Entity
   0u,   // Platform_Entity
+  0u,   // Canopy_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage),   // Damageable_Entity
@@ -246,6 +254,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Reverse) | action_bit(entity_action::Go_To),   // Mover_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Fire),   // Launcher_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Movement_Modifier_Entity
+  0u,   // Remnant_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -274,7 +283,9 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Rocket_Entity
   0u,   // Hook_Entity
   0u,   // Kooh_Entity
+  0u,   // Ricochet_Entity
   0u,   // Platform_Entity
+  0u,   // Canopy_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Damageable_Entity
@@ -295,6 +306,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   signal_bit(entity_signal::Node_Reached),   // Mover_Entity
   0u,   // Launcher_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Movement_Modifier_Entity
+  0u,   // Remnant_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)

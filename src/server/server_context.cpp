@@ -117,6 +117,8 @@ void clear_outgoing(server_context_t& context)
   context.outgoing.pending_swaps.clear();
   context.outgoing.pending_magnets.clear();
   context.outgoing.pending_tethers.clear();
+  context.outgoing.pending_teleports.clear();
+  context.outgoing.pending_freezes.clear();
 
   // sv_event_debug, latched once per tick rather than read per fire. This is
   // the one place guaranteed to run exactly once before anything can fire, and

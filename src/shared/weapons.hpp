@@ -20,6 +20,12 @@ enum class hit_effect_t : uint8_t
   Magnet,
   // Re-arms a Movement_Override::Reel on the SHOOTER toward the player it hit, so the pull is predicted.
   Tether,
+  // Sends the SHOOTER to the Remnant_Entity it hit and spends it. Only the shooter's own remnants are targets.
+  Teleport,
+  // Freezes the player it hit for freeze_seconds as a box others stand on (shared/statues.hpp). Stasis holds
+  // them with their velocity kept; Statue zeroes it and lets gravity act. A second hit of either releases.
+  Stasis,
+  Statue
 };
 
 // Speed along the AIM at the moment of the press, and speed straight up. Two
@@ -52,6 +58,8 @@ struct hitscan_t
   // Tether only: the reel's speed, and how long ONE hit keeps it alive (a lease the next held hit renews).
   float        tether_speed;
   float        tether_seconds;
+  // Stasis and Statue only: how long one hit freezes the player it hit.
+  float        freeze_seconds;
   // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
   // the client -- the effect itself always fires, so the knife still sounds.
   // A BOOL rather than an "is this melee" test: a silenced pistol or a fist
@@ -83,6 +91,13 @@ inline projectile_step_t advance_projectile(const projectile_t& projectile, floa
           .velocity = velocity + acceleration * dt};
 }
 
+// Fire_Resolution::Place's parameters: the type set down where the shooter STANDS, facing their yaw, with no
+// flight. A teleport destination has to fit a hull, and where you stood is the one place known to.
+struct place_t
+{
+  entities::entity_type spawns;
+};
+
 // What the weapon sounds like. Client-only facts, on the shared row (see
 // above). Missing is a declared absence, logged once per id by the audio
 // system, never a silent skip.
@@ -101,6 +116,7 @@ struct weapon_fire_t
   entities::Fire_Resolution resolution;
   hitscan_t                 hitscan;
   projectile_t              projectile;
+  place_t                   place;
   self_impulse_t            self_impulse;
   // A button that stays down repeats at fire_interval_seconds (try_find_held_fire_time).
   bool                      fires_while_held;
@@ -353,6 +369,74 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                 .spawns = entities::entity_type::Platform_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+
+    {.weapon                  = entities::Weapon::Remnant,
+     .display_name            = "Remnant",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 1.0f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Place,
+                                 .place      = {.spawns = entities::entity_type::Remnant_Entity}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 0.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 10000.f,
+                                                .hit_effect           = hit_effect_t::Teleport,
+                                                .leaves_bullet_impact = false}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    {.weapon                  = entities::Weapon::Ricochet,
+     .display_name            = "Ricochet",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 1.0f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 900.f,
+                                                .gravity_scale = 1.f,
+                                                .spawns = entities::entity_type::Ricochet_Entity}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    // A held LEVEL, not a shot: the primary's resolution says what the button means and
+    // canopy_system reads the button itself, so the row has no clocks (canopy.hpp).
+    {.weapon                  = entities::Weapon::Canopy,
+     .display_name            = "Canopy",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 0.f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Canopy},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    // Both buttons freeze the player hit for the same two seconds; the left keeps their momentum, the right
+    // drops them. Shooting a frozen player again with either releases them early.
+    {.weapon                  = entities::Weapon::Statue,
+     .display_name            = "Statue",
+     .slot                    = entities::Inventory_Slot::Primary,
+     .fire_interval_seconds   = 0.5f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 0.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 10000.f,
+                                                .hit_effect           = hit_effect_t::Stasis,
+                                                .freeze_seconds       = 2.0f,
+                                                .leaves_bullet_impact = false}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.damage               = 0.f,
+                                                .headshot_multiplier  = 1.0f,
+                                                .range                = 10000.f,
+                                                .hit_effect           = hit_effect_t::Statue,
+                                                .freeze_seconds       = 2.0f,
+                                                .leaves_bullet_impact = false}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -374,7 +458,8 @@ static_assert(rows_in_enum_order<&weapon_definition_t::weapon>(WEAPON_DEFINITION
 constexpr bool fire_passes_through_shot_clocks(const weapon_fire_t& fire)
 {
   return fire.resolution == entities::Fire_Resolution::Hitscan ||
-         fire.resolution == entities::Fire_Resolution::Projectile;
+         fire.resolution == entities::Fire_Resolution::Projectile ||
+         fire.resolution == entities::Fire_Resolution::Place;
 }
 
 // THE SECOND CHECK: a self-impulse must be gated by exactly one clock.
@@ -435,6 +520,7 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
 {
   const hitscan_t&      hitscan    = fire.hitscan;
   const projectile_t&   projectile = fire.projectile;
+  const place_t&        place      = fire.place;
   const self_impulse_t& impulse    = fire.self_impulse;
   const bool hitscan_is_zero = hitscan.damage == 0.f && hitscan.headshot_multiplier == 0.f &&
                                hitscan.range == 0.f && hitscan.hit_effect == hit_effect_t::Damage &&
@@ -449,21 +535,28 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
                                   projectile.spawns == entities::entity_type::Invalid;
   const bool impulse_is_zero = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
+  const bool place_is_zero   = place.spawns == entities::entity_type::Invalid;
 
   switch (fire.resolution)
   {
+  // Canopy reads nothing either: the button is a level canopy_system reads for itself.
   case entities::Fire_Resolution::None:
   case entities::Fire_Resolution::Zoom:
-    return hitscan_is_zero && projectile_is_zero && impulse_is_zero && !fire.fires_while_held;
+  case entities::Fire_Resolution::Canopy:
+    return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
+           !fire.fires_while_held;
   case entities::Fire_Resolution::Hitscan:
     return hitscan.range > 0.f && hitscan.headshot_multiplier > 0.f &&
            magnet_speed_matches_effect && tether_matches_effect && projectile_is_zero &&
-           impulse_is_zero;
+           place_is_zero && impulse_is_zero;
   case entities::Fire_Resolution::Projectile:
     return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
-           hitscan_is_zero && impulse_is_zero;
+           hitscan_is_zero && place_is_zero && impulse_is_zero;
+  case entities::Fire_Resolution::Place:
+    return place.spawns != entities::entity_type::Invalid && hitscan_is_zero &&
+           projectile_is_zero && impulse_is_zero && !fire.fires_while_held;
   case entities::Fire_Resolution::Self_Impulse:
-    return hitscan_is_zero && projectile_is_zero && !fire.fires_while_held;
+    return hitscan_is_zero && projectile_is_zero && place_is_zero && !fire.fires_while_held;
   }
   return false;
 }
@@ -494,7 +587,7 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "each fire of a WEAPON_DEFINITIONS row fills the parameter struct of its own "
               "Fire_Resolution (hitscan: positive range and headshot_multiplier; projectile: "
-              "positive speed and a spawned entity type) and leaves the others zero, and the "
+              "positive speed and a spawned entity type; place: a spawned entity type) and leaves the others zero, and the "
               "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
               "so a value in another is a number nothing reads. fires_while_held is for a "
               "Hitscan or Projectile fire on a row with a positive fire_interval_seconds: "

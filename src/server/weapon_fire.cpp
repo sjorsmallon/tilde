@@ -8,6 +8,7 @@
 #include "../shared/player_animator.hpp"
 #include "../shared/player_constants.hpp"
 #include "../shared/player_rig.hpp"
+#include "../shared/remnant.hpp"
 #include "damage.hpp"
 #include "send_protobuf_message.hpp"
 #include "server_api.hpp"
@@ -204,33 +205,6 @@ static void send_shot_debug(
 
   ::send_protobuf_message(context, client_address, message);
 }
-bool is_reloading(const entities::Player_Entity& player)
-{
-  return player.reload_complete_time != 0;
-}
-
-// A reload is a deadline nothing ticks. The end-of-tick pass completes one
-// normally; the fire path calls this too, for a deadline that passed mid-tick
-// before a press in the same tick, or the first shot after a reload is refused
-// as empty.
-void finish_reload(shared::game_session_t &session, entities::Player_Entity &player)
-{
-  entities::Weapon_Entity* active_weapon = try_find_active_weapon(session, player);
-  if (active_weapon == nullptr)
-    log_error("finish_reload: player {} finished reloading {}, which is empty",
-              player.entity_id, to_string(player.inventory.active_slot));
-  else
-    reload_magazine(*active_weapon);
-
-  player.reload_complete_time = 0;
-}
-
-// fully cancel (switch weapons or whatever)
-void cancel_reload(entities::Player_Entity &player)
-{
-  player.reload_complete_time = 0;
-}
-
 
 [[nodiscard]] static bool try_begin_shot(server_context_t &context, int32_t client_slot,
                                          entities::Player_Entity &player,
@@ -345,9 +319,11 @@ void resolve_player_shot(
 
   switch (fire.resolution)
   {
-    // Nothing on this button, or the client's scope: no shot and no fire mark.
+    // Nothing on this button, or the client's scope: no shot and no fire mark. A canopy is a
+    // held LEVEL that canopy_system reads off the slot's last input, so the press is nothing too.
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
+    case entities::Fire_Resolution::Canopy:
       return;
 
     case entities::Fire_Resolution::Hitscan:
@@ -382,7 +358,33 @@ void resolve_player_shot(
       auto verdict = shared::bracket_verdict_t{};
       bool used_rewind = false;
 
-      if (context.cvars->sv_lag_compensation)
+      // A teleport shot is aimed at the shooter's OWN remnants and at nothing
+      // else: a remnant is a marker, not a body, so it never soaks a bullet and
+      // nobody else's can be aimed at. It does not move, so there is nothing to
+      // rewind; the volume is the one the hitbox overlay draws.
+      std::vector<assets::posed_hitbox_t>   remnant_volumes;
+      std::vector<shared::hitscan_target_t> remnant_targets;
+      const bool aims_at_remnants = fire.hitscan.hit_effect == shared::hit_effect_t::Teleport;
+      if (aims_at_remnants)
+      {
+        std::vector<shared::entity_uid_t> remnant_uids;
+        for (const entities::Remnant_Entity& remnant :
+             context.world.session.entity_system.entities_of<entities::Remnant_Entity>())
+        {
+          if (remnant.owner_uid != player->entity_id)
+            continue;
+          remnant_uids.push_back(remnant.entity_id);
+          remnant_volumes.push_back(shared::remnant_hit_volume(remnant));
+        }
+        remnant_targets.reserve(remnant_uids.size());
+        for (size_t index = 0; index < remnant_uids.size(); ++index)
+          remnant_targets.push_back(shared::make_hitscan_target(
+              remnant_uids[index],
+              Span<const assets::posed_hitbox_t>{remnant_volumes.data() + index, 1}));
+        targets = Span<const shared::hitscan_target_t>{remnant_targets};
+      }
+
+      if (context.cvars->sv_lag_compensation && !aims_at_remnants)
       {
 
         verdict = get_interpolation_bracket_for_input(context, client_slot, input);
@@ -476,6 +478,22 @@ void resolve_player_shot(
                  fire.hitscan.tether_seconds});
             break;
           }
+          case shared::hit_effect_t::Teleport:
+          {
+            context.outgoing.pending_teleports.push_back({player->entity_id, hit.hit_uid});
+            break;
+          }
+          case shared::hit_effect_t::Stasis:
+          case shared::hit_effect_t::Statue:
+          {
+            const entities::Movement_Override kind =
+                fire.hitscan.hit_effect == shared::hit_effect_t::Stasis
+                    ? entities::Movement_Override::Stasis
+                    : entities::Movement_Override::Statue;
+            context.outgoing.pending_freezes.push_back(
+                {player->entity_id, hit.hit_uid, kind, fire.hitscan.freeze_seconds});
+            break;
+          }
         }
       }
       else if (shot_collided_with_static_geometry && world_hit.t <= fire.hitscan.range)
@@ -497,6 +515,14 @@ void resolve_player_shot(
         return;
 
       spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger);
+      break;
+    }
+    case entities::Fire_Resolution::Place:
+    {
+      if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
+        return;
+
+      spawn_placed_entity(context, player->entity_id, weapon, player->position, yaw, trigger);
       break;
     }
     case entities::Fire_Resolution::Self_Impulse:

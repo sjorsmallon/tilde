@@ -18,6 +18,9 @@
 // How many layers the sun's shadow may take -- shared/lighting.hpp's
 // MAX_SHADOW_CASCADES; the receiver picks one by view depth (direct_light.glsl).
 #define MAX_SHADOW_CASCADES 4
+// Team wall ripples the ghost shader draws (ripple.glsl) -- renderer.cpp's
+// MAX_SCENE_RIPPLES, kept one number by the scene block's size assert.
+#define MAX_RIPPLES 16
 
 // scene.debug_flags, from r_debug_channel. One text for every fragment shader
 // that reads them, so a channel added here is a channel every shader can show.
@@ -48,6 +51,13 @@
 // the arrival functions; a vertex shader including this file gets them anyway,
 // which is free and is why they carry no derivatives.
 #include "light_arrival.glsl"
+
+// One impact on a team wall: where the hull centre came through (xyz) and how
+// long ago (w); the face's outward normal (xyz) and dot(normal, point) (w).
+struct Ripple {
+    vec4 center_age;
+    vec4 plane;
+};
 
 layout(set = 3, binding = 1) uniform SceneUniform {
     mat4  view_projection;
@@ -90,6 +100,9 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     ivec4 probe_visibility_slots;
     // x = PCSS on (1) or off (0), y = the cap on the search and filter radius in texels
     vec4  shadow_pcss;
+    // x = how many of `ripples` are live, the newest last; y = the age a ripple is dropped at.
+    vec4   ripple_settings;
+    Ripple ripples[MAX_RIPPLES];
 } scene;
 
 #endif // SCENE_GLSL

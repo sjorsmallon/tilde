@@ -15,10 +15,6 @@
 namespace server
 {
 
-bool is_reloading(const entities::Player_Entity& player);
-void finish_reload(shared::game_session_t& session, entities::Player_Entity& player);
-void cancel_reload(entities::Player_Entity& player);
-
 void mark_shot_fired(const server_context_t& context, entities::Player_Entity& player,
                      entities::Weapon weapon_id);
 

@@ -27,7 +27,7 @@ void install_movers(server_context_t& context)
   update_mover_switches(context);
 }
 
-void push_players_by_movers(server_context_t& context, const shared::predicted_world_t& world)
+void push_players_by_movers(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
   if (world.movers.empty())
     return;
@@ -35,9 +35,9 @@ void push_players_by_movers(server_context_t& context, const shared::predicted_w
   for (entities::Player_Entity &player :
        context.world.session.entity_system.entities_of<entities::Player_Entity>())
   {
-    const mover_push_t push =
-        push_player_by_movers(context.world.session.bvh, world, player.movement, player.position,
-                              shared::player_half_width, shared::player_half_height);
+    const mover_push_t push = push_player_by_movers(
+        context.world.session.bvh, shared::predicted_world_of(world, player.team_allegiance),
+        player.movement, player.position, shared::player_half_width, shared::player_half_height);
     player.position = push.feet;
 
     if (push.crushed_by != shared::null_entity_uid && player.health.current_health > 0)

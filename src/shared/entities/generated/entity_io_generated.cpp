@@ -127,6 +127,18 @@ constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
    .enum_info = &ENUM_INFOS[6]},
 };
 
+constexpr field_info_t TAKE_WEAPON_FIELDS[] = {
+  {.name = "weapon",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Take_Weapon_Data, weapon),
+   .size_in_bytes = (uint32_t)sizeof(Take_Weapon_Data::weapon),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[2]},
+};
+
 constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
   {.name = "location",
    .type = FIELD_TYPE_ENTITY_UID,
@@ -227,6 +239,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {SET_VELOCITY_FIELDS, 1},
   {ADD_VELOCITY_FIELDS, 1},
   {GRANT_WEAPON_FIELDS, 2},
+  {TAKE_WEAPON_FIELDS, 1},
   {SET_RESPAWN_POINT_FIELDS, 1},
   {},   // Complete_Level
   {},   // Start
@@ -280,6 +293,7 @@ const char* to_string(entity_action value)
     case entity_action::Set_Velocity: return "Set_Velocity";
     case entity_action::Add_Velocity: return "Add_Velocity";
     case entity_action::Grant_Weapon: return "Grant_Weapon";
+    case entity_action::Take_Weapon: return "Take_Weapon";
     case entity_action::Set_Respawn_Point: return "Set_Respawn_Point";
     case entity_action::Complete_Level: return "Complete_Level";
     case entity_action::Start: return "Start";
@@ -315,6 +329,7 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Set_Velocity") return entity_action::Set_Velocity;
   if (text == "Add_Velocity") return entity_action::Add_Velocity;
   if (text == "Grant_Weapon") return entity_action::Grant_Weapon;
+  if (text == "Take_Weapon") return entity_action::Take_Weapon;
   if (text == "Set_Respawn_Point") return entity_action::Set_Respawn_Point;
   if (text == "Complete_Level") return entity_action::Complete_Level;
   if (text == "Start") return entity_action::Start;
@@ -443,6 +458,7 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Set_Velocity: return (uint32_t)sizeof(Set_Velocity_Data);
     case entity_action::Add_Velocity: return (uint32_t)sizeof(Add_Velocity_Data);
     case entity_action::Grant_Weapon: return (uint32_t)sizeof(Grant_Weapon_Data);
+    case entity_action::Take_Weapon: return (uint32_t)sizeof(Take_Weapon_Data);
     case entity_action::Set_Respawn_Point: return (uint32_t)sizeof(Set_Respawn_Point_Data);
     case entity_action::Complete_Level: return (uint32_t)sizeof(Complete_Level_Data);
     case entity_action::Start: return (uint32_t)sizeof(Start_Data);
@@ -599,6 +615,14 @@ action_data_t erase(const Grant_Weapon_Data& payload)
   action_data_t data;
   data.tag = entity_action::Grant_Weapon;
   data.grant_weapon = payload;
+  return data;
+}
+
+action_data_t erase(const Take_Weapon_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Take_Weapon;
+  data.take_weapon = payload;
   return data;
 }
 

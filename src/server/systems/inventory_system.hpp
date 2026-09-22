@@ -39,6 +39,29 @@ try_grant_weapon(server_context_t&     context,
                  entities::Weapon      weapon,
                  entities::Damage_Type damage_type = entities::Damage_Type::Normal);
 
+// The inverse: take the named weapon OUT of the hand and destroy it. Found by
+// what the weapon IS, not by the slot its definition names -- the slot may hold
+// a different weapon of the same class, which is not the one being taken.
+//
+// Fallible because not carrying it is a real outcome, reported as false; the
+// wiring said "take the rifle" of someone with no rifle, and the level author
+// wants to hear that. An empty slot is a legal hand, so taking the held weapon
+// leaves the hand on that slot and only cancels a reload of it, since a reload
+// completing into an empty hand is an error the fire path reports.
+[[nodiscard]] bool try_take_weapon(server_context_t&    context,
+                                   entities::Entity&    owner,
+                                   entities::Inventory& inventory,
+                                   entities::Weapon     weapon);
+
+// The reload clock is a DEADLINE on the player, nothing ticks it. The end-of-tick
+// pass completes one normally; the fire path finishes one too, for a deadline
+// that passed mid-tick before a press in the same tick, or the first shot after
+// a reload is refused as empty. Here beside the hand rather than in weapon_fire
+// because taking or throwing the held weapon cancels it, and those never fire.
+bool is_reloading(const entities::Player_Entity& player);
+void finish_reload(shared::game_session_t& session, entities::Player_Entity& player);
+void cancel_reload(entities::Player_Entity& player);
+
 // Destroy every weapon the player carries and clear the list. Same tick rule as
 // above, in reverse: a weapon outliving its owner is a leak no one holds a
 // handle to.

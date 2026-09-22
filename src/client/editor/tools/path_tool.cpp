@@ -683,8 +683,9 @@ void Path_Tool::on_draw_ui(editor_context_t& ctx)
         edit(ImGui::DragFloat("wait", &node.wait_seconds, 0.05f, 0.0f, 600.0f, "%.2f s"));
 
         int easing = (int)node.easing;
-        const char* easing_names[] = {entities::to_string(entities::Easing::Linear),
-                                      entities::to_string(entities::Easing::Smooth)};
+        const char* easing_names[entities::Easing_COUNT];
+        for (uint32_t i = 0; i < entities::Easing_COUNT; ++i)
+          easing_names[i] = entities::to_string((entities::Easing)i);
         if (ImGui::Combo("easing", &easing, easing_names, IM_ARRAYSIZE(easing_names)))
         {
           begin_field_edit(ctx, uid);

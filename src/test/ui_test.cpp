@@ -31,7 +31,7 @@ using client::renderer::ui_draw_list_t;
 using client::ui::add_node;
 using client::ui::anchor_t;
 using client::ui::anchored;
-using client::ui::ease_t;
+using entities::Easing;
 using client::ui::font_atlas_t;
 using client::ui::font_size_t;
 using client::ui::glyph_t;
@@ -591,7 +591,7 @@ void test_animation_lands_exactly_and_retires()
       .from(0.0f)
       .to(1.0f)
       .duration(0.5f)
-      .ease(ease_t::linear);
+      .ease(Easing::Linear);
 
   advance_animations(screen, 0.25f);
   assert(std::fabs(screen[node].opacity - 0.5f) < 0.0001f);
@@ -670,19 +670,19 @@ void test_rebuilding_a_screen_replaces_its_animations_and_focus()
 
 void test_easing_endpoints()
 {
-  const ease_t all[4] = {ease_t::linear, ease_t::in_cubic, ease_t::out_cubic,
-                         ease_t::in_out_cubic};
+  const Easing all[5] = {Easing::Linear, Easing::Smooth, Easing::In_Cubic, Easing::Out_Cubic,
+                         Easing::In_Out_Cubic};
 
-  for (const ease_t easing : all)
+  for (const Easing easing : all)
   {
-    assert(client::ui::apply_ease(easing, 0.0f) == 0.0f);
-    assert(client::ui::apply_ease(easing, 1.0f) == 1.0f);
+    assert(shared::apply_easing(easing, 0.0f) == 0.0f);
+    assert(shared::apply_easing(easing, 1.0f) == 1.0f);
     // Clamped, so a caller that oversteps cannot overshoot -- cubics are not
     // bounded outside [0,1].
-    assert(client::ui::apply_ease(easing, -0.5f) == 0.0f);
-    assert(client::ui::apply_ease(easing, 1.5f) == 1.0f);
+    assert(shared::apply_easing(easing, -0.5f) == 0.0f);
+    assert(shared::apply_easing(easing, 1.5f) == 1.0f);
 
-    const float middle = client::ui::apply_ease(easing, 0.5f);
+    const float middle = shared::apply_easing(easing, 0.5f);
     assert(middle > 0.0f && middle < 1.0f);
   }
 

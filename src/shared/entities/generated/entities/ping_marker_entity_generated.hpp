@@ -19,7 +19,8 @@ struct Ping_Marker_Entity : Entity
 
   float lifetime = 10.0f;
   shared::entity_uid_t pinged_by = {};
-  Render render = {.mesh = assets::mesh_asset::Duck};
+  uint32_t spawned_tick = 0;
+  Render render = {.mesh = assets::mesh_asset::arrow, .rotation = {0.0f, 0.0f, -0.7071068f, 0.7071068f}};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

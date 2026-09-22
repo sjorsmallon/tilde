@@ -16,4 +16,12 @@ shared::entity_uid_t spawn_projectile(
     const shared::weapon_definition_t& weapon, const vec3f& origin, const vec3f& direction,
     entities::Fire_Trigger trigger = entities::Fire_Trigger::Primary);
 
+// The one place a Fire_Resolution::Place fire becomes an entity: set down at
+// `feet`, facing `yaw_degrees`, with no flight. A Remnant_Entity is one per
+// owner, so setting a new one moves it.
+shared::entity_uid_t spawn_placed_entity(
+    server_context_t& context, shared::entity_uid_t owner_uid,
+    const shared::weapon_definition_t& weapon, const vec3f& feet, float yaw_degrees,
+    entities::Fire_Trigger trigger = entities::Fire_Trigger::Primary);
+
 } // namespace server

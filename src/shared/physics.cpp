@@ -398,10 +398,10 @@ bool cast_sphere(physics_state_t &state,
     out.entity_id = entity_for_body(state, hit_id);
     out.fraction  = collector.mHit.mFraction;
     out.position  = from + (to - from) * collector.mHit.mFraction;
-    // ContactPointOn2 + surface normal need the body to be locked; the closest-hit
-    // collector stores mPenetrationAxis which points from body2 into body1 (the cast).
+    // mPenetrationAxis is the direction to move the HIT body out of the cast, so it points
+    // INTO the surface; Jolt documents -axis as the contact normal.
     JPH::Vec3 n = collector.mHit.mPenetrationAxis.Normalized();
-    out.normal = from_jolt(n);
+    out.normal = from_jolt(-n);
     return true;
 }
 

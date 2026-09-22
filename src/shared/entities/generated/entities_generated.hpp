@@ -17,7 +17,9 @@
 #include "entities/rocket_entity_generated.hpp"
 #include "entities/hook_entity_generated.hpp"
 #include "entities/kooh_entity_generated.hpp"
+#include "entities/ricochet_entity_generated.hpp"
 #include "entities/platform_entity_generated.hpp"
+#include "entities/canopy_entity_generated.hpp"
 #include "entities/bubble_entity_generated.hpp"
 #include "entities/physics_body_entity_generated.hpp"
 #include "entities/damageable_entity_generated.hpp"
@@ -38,6 +40,7 @@
 #include "entities/mover_entity_generated.hpp"
 #include "entities/launcher_entity_generated.hpp"
 #include "entities/movement_modifier_entity_generated.hpp"
+#include "entities/remnant_entity_generated.hpp"
 
 namespace entities
 {

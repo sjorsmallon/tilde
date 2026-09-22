@@ -73,6 +73,7 @@ void teleport(Player_Entity&, const Teleport_Data&, input_context_t&);   // Mobi
 void set_velocity(Player_Entity&, const Set_Velocity_Data&, input_context_t&);   // Mobile, this type's own: src/server/entities/player_entity.cpp
 void add_velocity(Player_Entity&, const Add_Velocity_Data&, input_context_t&);   // Mobile, this type's own: src/server/entities/player_entity.cpp
 void grant_weapon(Entity&, Inventory&, const Grant_Weapon_Data&, input_context_t&);   // Armable, shared by every opting-in type: src/server/traits/armable.cpp
+void take_weapon(Entity&, Inventory&, const Take_Weapon_Data&, input_context_t&);   // Armable, shared by every opting-in type: src/server/traits/armable.cpp
 void set_respawn_point(Player_Entity&, const Set_Respawn_Point_Data&, input_context_t&);   // Respawnable, this type's own: src/server/entities/player_entity.cpp
 
 // --- what a Player_Entity announces ---

@@ -27,7 +27,7 @@
 namespace server
 {
 
-void update_player_inputs(server_context_t& context, const shared::predicted_world_t& world)
+void update_player_inputs(server_context_t& context, const shared::predicted_world_storage_t& world_storage)
 {
   for (const auto &[client_slot, input] : context.incoming.client_inputs)
   {
@@ -67,6 +67,10 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     // filtering so we don't process input people that could probably not move.
     const bool is_dead = player->health.current_health <= 0;
+
+    // This player's view of the frozen world: its team's walls are not there.
+    const shared::predicted_world_t world =
+        shared::predicted_world_of(world_storage, player->team_allegiance);
 
     if (!try_spend_move_credit(client.move_credits))
     {

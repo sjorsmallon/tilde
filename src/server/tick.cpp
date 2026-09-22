@@ -19,12 +19,14 @@
 #include "server_send.hpp"
 #include "systems/bot_system.hpp"
 #include "systems/bubble_system.hpp"
+#include "systems/canopy_system.hpp"
 #include "systems/platform_system.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/hit_resolution_system.hpp"
 #include "systems/hit_test_world.hpp"
 #include "systems/hook_system.hpp"
 #include "systems/kooh_system.hpp"
+#include "systems/ricochet_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"
 #include "systems/physics_body_system.hpp"
@@ -80,17 +82,20 @@ bool Tick()
   // 2. Freeze what the inputs read. Cut once, never written again this tick,
   //    which is what makes the order players are processed in unable to matter.
   //    The client builds the same value through the same shared functions --
-  //    that is what "predicted" means (shared/predicted_world.hpp).
+  //    that is what "predicted" means (shared/predicted_world.hpp). The systems
+  //    take the STORAGE and cut each player's view by team, since a team wall is
+  //    not there for one team and solid for the rest.
   auto predicted_world_storage = shared::predicted_world_storage_t{};
   {
     FRAME_ZONE("server tick: freeze the predicted world");
     shared::cut_predicted_world(context.world.session,
                                 {.tick        = context.tick_number,
+                                 .state_tick  = context.tick_number - 1,
                                  .tickrate_hz = context.cvars->sv_tickrate,
                                  .gravity     = context.cvars->g_gravity},
                                 predicted_world_storage);
   }
-  const shared::predicted_world_t world = shared::predicted_world_of(predicted_world_storage);
+  const shared::predicted_world_storage_t& world = predicted_world_storage;
 
   {
     FRAME_ZONE("server tick: carry riders, advance movers");
@@ -141,8 +146,11 @@ bool Tick()
     update_rockets(context, tick_dt);
     update_hooks(context, tick_dt);
     update_koohs(context, tick_dt);
-    update_bubbles(context, world.disabled_geometry);
-    update_platforms(context, world.disabled_geometry);
+    update_ricochets(context, world, tick_dt);
+    update_bubbles(context, world);
+    update_platforms(context, world);
+    // After the inputs, so the pose it writes is where the carrier ended this tick (canopy.hpp).
+    update_canopies(context);
     update_ping_markers(context, tick_dt);
 
     // respawn runs after death so we can correctly set next ticks etc.

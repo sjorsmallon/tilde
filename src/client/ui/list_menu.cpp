@@ -134,7 +134,7 @@ list_menu_t build_list_menu(Span<const char *const> labels, const list_menu_styl
         .from(0.0f)
         .to(1.0f)
         .duration(style.intro_fade_seconds)
-        .ease(ease_t::out_cubic);
+        .ease(entities::Easing::Out_Cubic);
   }
 
   return menu;
@@ -163,7 +163,7 @@ void move_list_menu_focus_to(list_menu_t &menu, ui_node_id_t node, linalg::vec2 
       .from(previous_y - settled_y)
       .to(0.0f)
       .duration(menu.style.highlight_slide_seconds)
-      .ease(ease_t::out_cubic);
+      .ease(entities::Easing::Out_Cubic);
 }
 
 std::optional<uint32_t> try_row_index_for_node(const list_menu_t &menu, ui_node_id_t node)

@@ -204,7 +204,10 @@ int main()
         entity_type::Rocket_Entity,
         entity_type::Hook_Entity,
         entity_type::Kooh_Entity,
+        entity_type::Ricochet_Entity,
         entity_type::Platform_Entity,
+        // Through its carrier and its pose pair, which the client's mover cut reads.
+        entity_type::Canopy_Entity,
         entity_type::Bubble_Entity,
         entity_type::Physics_Body_Entity,
         entity_type::Damageable_Entity,
@@ -227,6 +230,8 @@ int main()
         entity_type::Launcher_Entity,
         // Through Enabled.
         entity_type::Movement_Modifier_Entity,
+        // Through Render alone, like the ping marker.
+        entity_type::Remnant_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 
@@ -255,8 +260,9 @@ int main()
               entity_type_is_predicted(entity_type::Mover_Entity) &&
               entity_type_is_predicted(entity_type::Bubble_Entity) &&
               entity_type_is_predicted(entity_type::Platform_Entity) &&
+              entity_type_is_predicted(entity_type::Canopy_Entity) &&
               !entity_type_is_predicted(entity_type::Point_Light_Entity),
-          "@predicted is the jump pad, the brush entity, the mover, the bubble and the platform, and not the light");
+          "@predicted is the jump pad, the brush entity, the mover, the bubble, the platform and the canopy, and not the light");
   }
 
   // --- placeable types ---

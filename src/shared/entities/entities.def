@@ -14,8 +14,25 @@ Entity :: base {
 Spawn_Type :: enum { Human, Bot }
 Team_Allegiance :: enum { Red, Blu, Free_For_All }
 
-Weapon :: enum { Knife, Scout, Rocket_Launcher, Dash, Swapper, Hook, Bubble, Kooh, Magnet, Mock, Platform }
-Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom }
+Weapon :: enum { 
+    Knife,
+    Scout,
+    Rocket_Launcher,
+    Dash,
+    Swapper,
+    Hook,
+    Bubble,
+    Kooh,
+    Magnet,
+    Mock,
+    Platform,
+    Remnant,
+    Ricochet,
+    Canopy,
+    Statue
+}
+    
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy }
 Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -33,13 +50,15 @@ Game_Mode :: enum { deathmatch, rounds, speedrun }
 Round_End_Reason :: enum { None, Timeout, Frag_Limit, Team_Elimination, Objective, Requested }
 Match_Request :: enum { None, Start_Match, End_Round, Restart_Round, End_Match }
 
-// mover_def.md ss2. Orientation always slerps; this is t alone.
-Easing :: enum { Linear, Smooth }
+// mover_def.md ss2. Orientation always slerps; this is t alone. shared/tween.hpp is the curve.
+Easing :: enum { Linear, Smooth, In_Cubic, Out_Cubic, In_Out_Cubic }
 
 // What is authoring a player's move instead of the model, while it lasts.
 // movement_def.md "Overrides": one override, one member. A second kind reuses
 // the generic override_* fields below and adds only what none of them says.
-Movement_Override :: enum { None, Reel }
+// Stasis holds the hull with its velocity kept; Statue zeroes it and lets gravity keep acting. Both are
+// a Movement_Override so the frozen player predicts their own hold (shared/movement_override.hpp).
+Movement_Override :: enum { None, Reel, Stasis, Statue }
 
 // ---------------------------------------------------------------------------
 // COMPONENTS
@@ -250,6 +269,7 @@ Mobile :: trait {
 
 Armable :: trait requires Inventory {
     accepts Grant_Weapon(weapon: Weapon, damage_type: Damage_Type)
+    accepts Take_Weapon(weapon: Weapon)
 }
 
 Respawnable :: trait {
@@ -294,7 +314,8 @@ Player_Spawn_Entity :: entity {
 Player_Spectate_Entity :: entity {
 }
 
-Player_Entity :: entity @runtime_only is Mortal, Mobile, Armable, Respawnable {
+// @predicted because a FROZEN player is a mover (shared/statues.hpp): the cut is a function of replicated state.
+Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Respawnable {
     // The remote player's model is oriented from these, so they replicate.
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
@@ -387,6 +408,14 @@ Kooh_Entity:: entity @runtime_only {
     render:           Render = { mesh = .hookshot, scale = {0.03,0.03,0.03}}
 }
 
+// Flies an arc; wherever it FIRST touches, its owner is sent (server/systems/ricochet_system.cpp). One that touches nothing sends nobody.
+Ricochet_Entity :: entity @runtime_only {
+    projectile:       Projectile = { weapon_id = .Ricochet }
+    lifetime:         f32 = 3.0
+    collision_radius: f32 = 8.0
+    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, material = { color = {1, 0.45, 0.15} } }
+}
+
 // A ghost while it flies, a solid box from the tick it lands until rest_seconds later (shared/spawned_platforms.hpp).
 Platform_Entity :: entity @runtime_only @predicted {
     projectile:     Projectile = { weapon_id = .Platform }
@@ -396,6 +425,17 @@ Platform_Entity :: entity @runtime_only @predicted {
     half_extents:   v3 = {64, 4, 64}
     // Drawn at half_extents, never at render.scale.
     render:         Render = { mesh = .Box, material = { color = {1, 0.75, 0.3} } }
+}
+
+// A slab held above its carrier for as long as the Canopy's button is down; other players stand on it and are
+// carried by the carrier's own movement. A mover whose two poses are the carrier's last two positions (shared/canopy.hpp).
+Canopy_Entity :: entity @runtime_only @predicted {
+    carrier_uid:               entity          @Networked
+    // Where `position` was the tick before it was last written: the mover's start pose, so a snapshot carries both.
+    position_at_previous_tick: v3              @Networked
+    half_extents:              v3 = {48, 4, 48}
+    // Drawn at half_extents, never at render.scale.
+    render:                    Render = { mesh = .Box, material = { color = {0.4, 0.9, 1} } }
 }
 
 Bubble_Entity :: entity @runtime_only @predicted {
@@ -542,13 +582,19 @@ Logic_Counter_Entity :: entity is Counting {
 Geometry_Owner_Entity :: entity @predicted is Switchable {
     switch_state: Enabled
     wipe_timer: entity @Editable
+    // A team wall: its geometry is not there for THIS team's movers and shots and solid for everyone else.
+    // Free_For_All is the plain switchable brush, passable by nobody.
+    passable_by: Team_Allegiance = .Free_For_All @Networked @Editable
 }
 
 // middle-mouse button ping.
 Ping_Marker_Entity :: entity @runtime_only {
     lifetime: f32 = 10.0
     pinged_by: entity
-    render: Render = { mesh = .Duck }
+    // The tick it was placed; the client's bob and pop are functions of the age this gives.
+    spawned_tick: u32 = 0 @Networked
+    render: Render = { mesh = .arrow,rotation = {0, 0, -0.7071068, 0.7071068} }
+
 }
 
 Logic_Timer_Entity :: entity is Timer {
@@ -589,4 +635,12 @@ Movement_Modifier_Entity :: entity @predicted is Switchable, Touchable {
     jump_speed_scale: f32 = 1.0   @Editable
     friction_scale:   f32 = 1.0   @Editable
     control_scale:    f32 = 1.0   @Editable
+}
+
+// Set where its owner stood (Fire_Resolution::Place); the owner's Teleport hitscan aims at it and is sent back.
+Remnant_Entity :: entity @runtime_only {
+    owner_uid:  entity
+    // The sphere the owner's teleport shot has to cross, centred on the hull it stood in. Generous on purpose.
+    hit_radius: f32 = 48.0
+    render:     Render = { mesh = .Duck }
 }

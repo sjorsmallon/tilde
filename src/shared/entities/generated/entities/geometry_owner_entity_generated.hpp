@@ -20,6 +20,7 @@ struct Geometry_Owner_Entity : Entity
 
   Enabled switch_state = {};
   shared::entity_uid_t wipe_timer = {};
+  Team_Allegiance passable_by = Team_Allegiance::Free_For_All;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

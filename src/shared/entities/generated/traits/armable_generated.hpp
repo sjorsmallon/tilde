@@ -37,6 +37,13 @@ struct Grant_Weapon_Data
 static_assert(std::is_trivially_copyable_v<Grant_Weapon_Data>,
               "a verb payload rides a union in a map row and a queue record");
 
+struct Take_Weapon_Data
+{
+  Weapon weapon = {};
+};
+static_assert(std::is_trivially_copyable_v<Take_Weapon_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
 // --- the handlers, written ONCE -------------------------------------
 //
 // `requires` is what buys this: one handler for every opting-in type
@@ -46,6 +53,7 @@ static_assert(std::is_trivially_copyable_v<Grant_Weapon_Data>,
 // Defined in src/server/traits/armable.cpp; a declared handler nobody defined
 // is a LINK error naming the symbol.
 void grant_weapon(Entity&, Inventory&, const Grant_Weapon_Data&, input_context_t&);
+void take_weapon(Entity&, Inventory&, const Take_Weapon_Data&, input_context_t&);
 
 // --- the dynamic half -----------------------------------------------
 //
@@ -55,5 +63,7 @@ void grant_weapon(Entity&, Inventory&, const Grant_Weapon_Data&, input_context_t
 // you need its fields, ask for the TRAIT when you need a verb.
 void grant_weapon(Entity&, const Grant_Weapon_Data&, input_context_t&);
 [[nodiscard]] bool try_grant_weapon(Entity&, const Grant_Weapon_Data&, input_context_t&);
+void take_weapon(Entity&, const Take_Weapon_Data&, input_context_t&);
+[[nodiscard]] bool try_take_weapon(Entity&, const Take_Weapon_Data&, input_context_t&);
 
 } // namespace entities

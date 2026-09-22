@@ -1,14 +1,19 @@
 #include "predicted_world.hpp"
 
+#include "canopy.hpp"
 #include "game_session.hpp"
 #include "spawned_platforms.hpp"
+#include "statues.hpp"
 
 namespace shared
 {
 
 void cut_disabled_geometry(game_session_t& session, predicted_world_storage_t& out)
 {
-  collect_disabled_geometry(session.entity_system, session.owner_of, out.disabled_geometry);
+  for (uint32_t team = 0; team < out.disabled_geometry.count; ++team)
+    collect_disabled_geometry(session.entity_system, session.owner_of,
+                              static_cast<entities::Team_Allegiance>(team),
+                              out.disabled_geometry.values[team]);
 }
 
 void cut_movement_volumes(game_session_t& session, const predicted_world_settings_t& settings,
@@ -31,6 +36,9 @@ void cut_movers(game_session_t& session, const predicted_world_settings_t& setti
                             {.tick_interval_seconds = settings.tick_interval_seconds(),
                              .gravity               = settings.gravity},
                             out.movers);
+  collect_canopies(session.entity_system, settings.tick, settings.state_tick,
+                   settings.tick_interval_seconds(), out.movers);
+  collect_statues(session.entity_system, out.movers);
 }
 
 void cut_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,

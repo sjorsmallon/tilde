@@ -2,6 +2,7 @@
 
 #include "entity_system.hpp"
 #include "subtick.hpp"
+#include "tween.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,38 +12,6 @@ namespace shared
 
 namespace
 {
-
-linalg::quatf slerp(const linalg::quatf& from, const linalg::quatf& to, float t)
-{
-  float cosine = linalg::dot(from, to);
-  linalg::quatf target = to;
-  if (cosine < 0.0f)
-  {
-    cosine = -cosine;
-    target = {-to.x, -to.y, -to.z, -to.w};
-  }
-  if (cosine > 0.9995f)
-    return linalg::nlerp(from, target, t);
-
-  const float angle       = std::acos(cosine);
-  const float sine        = std::sin(angle);
-  const float from_weight = std::sin((1.0f - t) * angle) / sine;
-  const float to_weight   = std::sin(t * angle) / sine;
-  return linalg::normalize(linalg::quatf{from.x * from_weight + target.x * to_weight,
-                                         from.y * from_weight + target.y * to_weight,
-                                         from.z * from_weight + target.z * to_weight,
-                                         from.w * from_weight + target.w * to_weight});
-}
-
-float ease(entities::Easing easing, float t)
-{
-  switch (easing)
-  {
-    case entities::Easing::Linear: return t;
-    case entities::Easing::Smooth: return t * t * (3.0f - 2.0f * t);
-  }
-  return t;
-}
 
 uint32_t elapsed_ticks(uint32_t segment_start_tick, uint32_t tick)
 {
@@ -148,7 +117,7 @@ path_pose_t transform_at(const path_segment_t& segment, uint32_t segment_start_t
       segment.traversal_ticks == 0
           ? 1.0f
           : (float)std::min(elapsed, segment.traversal_ticks) / (float)segment.traversal_ticks;
-  const float t = ease(segment.easing, linear_t);
+  const float t = apply_easing(segment.easing, linear_t);
 
   return {
       .position    = segment.from_position + (segment.to_position - segment.from_position) * t,

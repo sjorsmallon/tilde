@@ -1,6 +1,7 @@
 #include "entity_hitbox_overlay.hpp"
 
 #include "../shared/hitbox_rig.hpp"
+#include "../shared/remnant.hpp"
 #include "hitbox_debug_draw.hpp"
 
 namespace client
@@ -26,12 +27,18 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
                                            shared::hit_region_t::Torso);
       break;
     }
+    // A remnant's volume is a field too, through the one shared spelling.
+    case entities::entity_type::Remnant_Entity:
+      volume = shared::remnant_hit_volume(*static_cast<const entities::Remnant_Entity*>(entity));
+      break;
     case entities::entity_type::Player_Entity:
     case entities::entity_type::Rocket_Entity:
     case entities::entity_type::Hook_Entity:
     case entities::entity_type::Kooh_Entity:
+    case entities::entity_type::Ricochet_Entity:
     case entities::entity_type::Bubble_Entity:
     case entities::entity_type::Platform_Entity:
+    case entities::entity_type::Canopy_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Spectate_Entity:
     case entities::entity_type::Weapon_Entity:

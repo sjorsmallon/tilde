@@ -11,7 +11,7 @@
 namespace server
 {
 
-void update_bubbles(server_context_t& context, Span<const uint8_t> disabled_geometry)
+void update_bubbles(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
   const float tick_interval_seconds = static_cast<float>(get_tick_interval());
   const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
@@ -25,7 +25,7 @@ void update_bubbles(server_context_t& context, Span<const uint8_t> disabled_geom
     if (bubble.flight.launch_tick == 0)
       launch_fixed_arc_flight(context, bubble.projectile, bubble.position,
                               {.flight_seconds = bubble.flight_seconds, .clearance = bubble.radius},
-                              flight, disabled_geometry, bubble.flight);
+                              flight, world, bubble.flight);
 
     bubble.position = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position,
                                                  context.tick_number, flight);

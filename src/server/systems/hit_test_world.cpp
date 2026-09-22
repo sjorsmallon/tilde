@@ -33,8 +33,10 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Rocket_Entity:
   case entities::entity_type::Hook_Entity:
   case entities::entity_type::Kooh_Entity:
+  case entities::entity_type::Ricochet_Entity:
   case entities::entity_type::Bubble_Entity:
   case entities::entity_type::Platform_Entity:
+  case entities::entity_type::Canopy_Entity:
   case entities::entity_type::Physics_Body_Entity:
   case entities::entity_type::Particle_Emitter_Entity:
   case entities::entity_type::Sound_Emitter_Entity:
@@ -53,6 +55,7 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Mover_Entity:
   case entities::entity_type::Launcher_Entity:
   case entities::entity_type::Movement_Modifier_Entity:
+  case entities::entity_type::Remnant_Entity:
     break;
   }
 

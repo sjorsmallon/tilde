@@ -3,12 +3,14 @@
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/physics.hpp"
 #include "../shared/player_constants.hpp"
+#include "../shared/movement_override.hpp"
 #include "../shared/player_move.hpp"
 #include "systems/inventory_system.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "systems/game_rules_system.hpp"
 #include "../shared/subtick.hpp"
 #include "damage.hpp"
+#include "entity_lifecycle.hpp"
 #include "log.hpp"
 #include "server_context.hpp"
 #include "weapon_fire.hpp"
@@ -46,6 +48,39 @@ static void apply_pending_swaps(server_context_t& context)
                          swapped->velocity);
   }
   context.outgoing.pending_swaps.clear();
+}
+
+// Beside the swaps and before the damage pass, for the swap's reason. The
+// remnant is SPENT: a teleport is a return to where you stood, and standing
+// there again is the next set. Velocity is kept, so a fall or a run carries.
+static void apply_pending_teleports(server_context_t& context)
+{
+  shared::game_session_t& session = context.world.session;
+
+  for (const pending_teleport_t& teleport : context.outgoing.pending_teleports)
+  {
+    entities::Player_Entity* shooter =
+        session.entity_system.get<entities::Player_Entity>(teleport.shooter_uid);
+    const entities::Remnant_Entity* remnant =
+        session.entity_system.get<entities::Remnant_Entity>(teleport.remnant_uid);
+    if (shooter == nullptr || remnant == nullptr)
+    {
+      log_error("teleport of uid {} to remnant uid {} dropped: one of them is gone",
+                teleport.shooter_uid, teleport.remnant_uid);
+      continue;
+    }
+
+    if (shooter->health.current_health <= 0)
+      continue;
+
+    shooter->position = remnant->position;
+    set_kinematic_pose(*context.world.physics, shooter->entity_id,
+                       shooter->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
+                       shooter->velocity);
+
+    destroy_entity(context, teleport.remnant_uid);
+  }
+  context.outgoing.pending_teleports.clear();
 }
 
 // After the swaps, so the line between the two is the one they end the tick on.
@@ -116,6 +151,41 @@ static void apply_pending_tethers(server_context_t& context)
   context.outgoing.pending_tethers.clear();
 }
 
+// After the swaps, so the box freezes where the swap put them. A hit on a
+// player already frozen RELEASES them: the clock is spent and the next step
+// thaws through the one exit door, with the velocity the freeze holds. A Statue
+// is zeroed at attach; the step then falls it (movement_override.hpp).
+static void apply_pending_freezes(server_context_t& context)
+{
+  shared::game_session_t& session = context.world.session;
+
+  for (const pending_freeze_t& freeze : context.outgoing.pending_freezes)
+  {
+    entities::Player_Entity* target =
+        session.entity_system.get<entities::Player_Entity>(freeze.target_uid);
+    if (target == nullptr || target->health.current_health <= 0)
+      continue;
+
+    if (shared::override_freezes(target->movement.active_override))
+    {
+      target->movement.override_seconds_remaining = 0.f;
+      continue;
+    }
+
+    target->movement.active_override            = freeze.kind;
+    target->movement.override_target_uid        = freeze.shooter_uid;
+    target->movement.override_seconds_remaining = freeze.seconds;
+
+    if (freeze.kind == entities::Movement_Override::Statue)
+      shared::apply_impulse(shared::movement_settings_from(*context.cvars), target->velocity,
+                            target->movement,
+                            {.horizontal = shared::impulse_mode_t::Set,
+                             .vertical   = shared::impulse_mode_t::Set,
+                             .velocity   = {}});
+  }
+  context.outgoing.pending_freezes.clear();
+}
+
 static void apply_pending_hits(server_context_t& context)
 {
   for (const pending_hit_t &pending : context.outgoing.pending_hits)
@@ -168,8 +238,10 @@ static void finish_reloads_that_came_due(server_context_t& context)
 void update_hit_resolution(server_context_t& context)
 {
   apply_pending_swaps(context);
+  apply_pending_teleports(context);
   apply_pending_magnets(context);
   apply_pending_tethers(context);
+  apply_pending_freezes(context);
   apply_pending_hits(context);
   finish_reloads_that_came_due(context);
 }

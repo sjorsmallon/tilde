@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "../shared/entity_uid.hpp"
 #include "../shared/map_geometry.hpp"
 #include "frame_builder.hpp"
@@ -28,10 +30,22 @@ namespace client
 //
 // `moved_by` is a mover's world-from-rest matrix for geometry a mover owns, null for everything else;
 // moved geometry casts into the dynamic shadow maps, since its baked shadow stayed at rest.
+//
+// How a TEAM WALL is drawn: in its team's colour, and as a ghost -- a fresnel rim,
+// alpha-blended, casting no shadow, in place of its materials -- when the viewer
+// is the team that walks through it. Solid and tinted when the viewer is not,
+// so the wall says whose it is either way and is hidden from nobody.
+struct team_wall_tint_t
+{
+  color_t color    = colors::white;
+  bool    passable = false;
+};
+
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by = nullptr,
-                   const renderer::clock_wipe_t& clock_wipe = {});
+                   const renderer::clock_wipe_t& clock_wipe = {},
+                   std::optional<team_wall_tint_t> team_wall = {});
 
 // Rebuild the cached mesh for an object whose GENERATED form just changed -- a
 // brush point set or one of its face grids -- and re-upload it. Registers the

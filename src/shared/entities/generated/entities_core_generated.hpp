@@ -69,9 +69,13 @@ enum class Weapon : uint8_t
   Magnet = 8,
   Mock = 9,
   Platform = 10,
+  Remnant = 11,
+  Ricochet = 12,
+  Canopy = 13,
+  Statue = 14,
 };
 
-constexpr uint32_t Weapon_COUNT = 11;
+constexpr uint32_t Weapon_COUNT = 15;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -83,9 +87,11 @@ enum class Fire_Resolution : uint8_t
   Projectile = 2,
   Self_Impulse = 3,
   Zoom = 4,
+  Place = 5,
+  Canopy = 6,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 5;
+constexpr uint32_t Fire_Resolution_COUNT = 7;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);
@@ -236,9 +242,12 @@ enum class Easing : uint8_t
 {
   Linear = 0,
   Smooth = 1,
+  In_Cubic = 2,
+  Out_Cubic = 3,
+  In_Out_Cubic = 4,
 };
 
-constexpr uint32_t Easing_COUNT = 2;
+constexpr uint32_t Easing_COUNT = 5;
 
 const char* to_string(Easing value);
 template <> std::optional<Easing> try_from_string<Easing>(std::string_view text);
@@ -247,9 +256,11 @@ enum class Movement_Override : uint8_t
 {
   None = 0,
   Reel = 1,
+  Stasis = 2,
+  Statue = 3,
 };
 
-constexpr uint32_t Movement_Override_COUNT = 2;
+constexpr uint32_t Movement_Override_COUNT = 4;
 
 const char* to_string(Movement_Override value);
 template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text);
@@ -292,32 +303,35 @@ enum class entity_type : uint16_t
   Rocket_Entity = 5,
   Hook_Entity = 6,
   Kooh_Entity = 7,
-  Platform_Entity = 8,
-  Bubble_Entity = 9,
-  Physics_Body_Entity = 10,
-  Damageable_Entity = 11,
-  Particle_Emitter_Entity = 12,
-  Sound_Emitter_Entity = 13,
-  Point_Light_Entity = 14,
-  Spot_Light_Entity = 15,
-  Directional_Light_Entity = 16,
-  Trigger_Volume_Entity = 17,
-  Jump_Pad_Entity = 18,
-  Reflection_Volume_Entity = 19,
-  Game_Rules_Entity = 20,
-  Logic_Counter_Entity = 21,
-  Geometry_Owner_Entity = 22,
-  Ping_Marker_Entity = 23,
-  Logic_Timer_Entity = 24,
-  Path_Node_Entity = 25,
-  Mover_Entity = 26,
-  Launcher_Entity = 27,
-  Movement_Modifier_Entity = 28,
+  Ricochet_Entity = 8,
+  Platform_Entity = 9,
+  Canopy_Entity = 10,
+  Bubble_Entity = 11,
+  Physics_Body_Entity = 12,
+  Damageable_Entity = 13,
+  Particle_Emitter_Entity = 14,
+  Sound_Emitter_Entity = 15,
+  Point_Light_Entity = 16,
+  Spot_Light_Entity = 17,
+  Directional_Light_Entity = 18,
+  Trigger_Volume_Entity = 19,
+  Jump_Pad_Entity = 20,
+  Reflection_Volume_Entity = 21,
+  Game_Rules_Entity = 22,
+  Logic_Counter_Entity = 23,
+  Geometry_Owner_Entity = 24,
+  Ping_Marker_Entity = 25,
+  Logic_Timer_Entity = 26,
+  Path_Node_Entity = 27,
+  Mover_Entity = 28,
+  Launcher_Entity = 29,
+  Movement_Modifier_Entity = 30,
+  Remnant_Entity = 31,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 29;
+constexpr uint32_t ENTITY_TYPE_COUNT = 32;
 
 enum class component_type : uint16_t
 {

@@ -85,6 +85,45 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   return result;
 }
 
+// A stasis is a hold: the hull does not move and the velocity it came in with
+// is what it thaws with, through the one exit door. Counted down here so N
+// sub-steps thaw after the same total as one.
+[[nodiscard]] override_step_t step_stasis(const movement_settings_t& settings, move_state_t& state,
+                                          float dt)
+{
+  entities::Movement& movement = state.movement;
+
+  override_step_t result{};
+  result.holds = true;
+
+  movement.override_seconds_remaining -= dt;
+  if (movement.override_seconds_remaining <= 0.f)
+    end_override(settings, state, state.velocity, result);
+
+  return result;
+}
+
+// A statue is a body with no input: whatever velocity it has (zero at attach)
+// under the step's gravity, clipped by the walls like any flight, so a frozen
+// jumper drops and lands. It thaws with the velocity the fall left it.
+[[nodiscard]] override_step_t step_statue(const movement_settings_t& settings, move_state_t& state,
+                                          float dt)
+{
+  entities::Movement& movement = state.movement;
+
+  override_step_t result{};
+  result.moves  = true;
+  result.wanted = {.velocity          = {state.velocity.x, 0.f, state.velocity.z},
+                   .vertical_velocity = state.velocity.y,
+                   .gravity           = settings.shared.gravity};
+
+  movement.override_seconds_remaining -= dt;
+  if (movement.override_seconds_remaining <= 0.f)
+    end_override(settings, state, state.velocity, result);
+
+  return result;
+}
+
 } // namespace
 
 override_step_t step_override(const movement_settings_t& settings, move_state_t& state, float dt)
@@ -95,6 +134,10 @@ override_step_t step_override(const movement_settings_t& settings, move_state_t&
       return {};
     case entities::Movement_Override::Reel:
       return step_reel(settings, state, dt);
+    case entities::Movement_Override::Stasis:
+      return step_stasis(settings, state, dt);
+    case entities::Movement_Override::Statue:
+      return step_statue(settings, state, dt);
   }
   fatal_error("step_override: no arm for movement override {}",
               (int)state.movement.active_override);

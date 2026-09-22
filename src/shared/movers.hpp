@@ -32,6 +32,9 @@ struct mover_t
   path_pose_t                    pose_at_tick_start;
   path_pose_t                    pose_at_tick_end;
   aabb_bounds_t                  swept_bounds = {};
+  // A mover that closes on a hull it cannot push clear kills it (push_player_by_movers). A
+  // canopy does not: it takes its carry back and leaves the hull where it was.
+  bool                           crushes = true;
   std::vector<collision_piece_t> pieces;
 };
 

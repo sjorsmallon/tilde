@@ -32,6 +32,8 @@
 #include "../shared/entity_system.hpp"
 #include "../shared/movement_kernel.hpp"
 #include "../shared/player_move.hpp"
+#include "../shared/canopy.hpp"
+#include "../shared/statues.hpp"
 #include "../shared/spawned_platforms.hpp"
 
 #include <algorithm>
@@ -149,9 +151,10 @@ struct pad_probe_t
 // step-invariant, so only the release is what the pins below measure.
 struct hook_probe_t
 {
-  int  releases         = 0;
-  vec3 release_position = {};
-  vec3 release_velocity = {};
+  int                         releases         = 0;
+  entities::Movement_Override released_kind    = entities::Movement_Override::None;
+  vec3                        release_position = {};
+  vec3                        release_velocity = {};
 };
 
 // Run `total_dt` as `sub_steps` equal steps, feeding each step's output into
@@ -201,9 +204,10 @@ static move_result_t run_split(const cvar_state_t& cvars,
       out_pad->velocity_at_launch = velocity;
     }
     if (out_hook != nullptr &&
-        events.override_ended.kind == entities::Movement_Override::Reel)
+        events.override_ended.kind != entities::Movement_Override::None)
     {
       ++out_hook->releases;
+      out_hook->released_kind    = events.override_ended.kind;
       out_hook->release_position = events.override_ended.position;
       out_hook->release_velocity = events.override_ended.velocity;
     }
@@ -214,6 +218,11 @@ static move_result_t run_split(const cvar_state_t& cvars,
 static float horizontal_speed(const vec3& v)
 {
   return std::sqrt(v.x * v.x + v.z * v.z);
+}
+
+static bool same_vec3(const vec3& a, const vec3& b)
+{
+  return a.x == b.x && a.y == b.y && a.z == b.z;
 }
 
 // --- 1. gravity: the velocity half is already exact ---------------------------
@@ -1434,6 +1443,204 @@ static void test_a_spawned_platform_catches_a_hull(const cvar_state_t& cvars)
   check(engulfed.deepest_overlap_after_settling < 0.1f, "and the hull is pushed out of it rather than left inside");
 }
 
+// --- 16c. a canopy carries its rider by what the carrier moved, one tick behind, and crushes nobody ---
+struct canopy_ride_result_t
+{
+  vec3                 feet;
+  vec3                 carrier_feet;
+  shared::entity_uid_t canopy_uid       = shared::null_entity_uid;
+  shared::entity_uid_t ground_mover_uid = shared::null_entity_uid;
+  shared::entity_uid_t crushed_by       = shared::null_entity_uid;
+};
+
+// The server's order per tick: cut against the state the previous tick wrote, carry, step, then
+// the carrier moves and the canopy's pose pair is rewritten behind it (canopy.hpp).
+static canopy_ride_result_t ride_canopy(const cvar_state_t& cvars, const Bounding_Volume_Hierarchy& bvh,
+                                        const vec3& carrier_velocity, uint32_t ticks)
+{
+  shared::Entity_System      system;
+  const shared::entity_uid_t carrier_uid = system.spawn(entities::entity_type::Player_Entity);
+  entities::Player_Entity*   carrier     = system.get<entities::Player_Entity>(carrier_uid);
+  carrier->position = {0.f, 0.f, 0.f};
+  carrier->velocity = carrier_velocity;
+
+  const shared::entity_uid_t canopy_uid = system.spawn(entities::entity_type::Canopy_Entity);
+  entities::Canopy_Entity*   canopy     = system.get<entities::Canopy_Entity>(canopy_uid);
+  canopy->carrier_uid = carrier_uid;
+  shared::write_canopy_poses(*canopy, carrier->position);
+  shared::write_canopy_poses(*canopy, carrier->position);
+
+  // Standing on it from the start: a hull in the air above a canopy is carried by nothing, so a
+  // drop would cost the count below however many ticks the fall took.
+  entities::Movement movement{};
+  vec3 feet = canopy->position + vec3{0.f, canopy->half_extents.y, 0.f};
+  vec3 velocity{};
+  canopy_ride_result_t result{.canopy_uid = canopy_uid};
+  std::vector<shared::mover_t> movers;
+
+  for (uint32_t tick = 2; tick < 2 + ticks; ++tick)
+  {
+    movers.clear();
+    shared::collect_canopies(system, tick, tick - 1, tick_dt, movers);
+    const shared::predicted_world_t world{.movers = movers};
+
+    const mover_push_t push = push_player_by_movers(bvh, world, movement, feet, half_width, half_height);
+    feet = push.feet;
+    if (push.crushed_by != shared::null_entity_uid)
+      result.crushed_by = push.crushed_by;
+
+    const move_result_t moved = run_split(cvars, bvh, Move_Input{}, feet, velocity, tick_dt, 1,
+                                          &movement, {}, nullptr, {}, movers);
+    feet     = moved.position;
+    velocity = moved.velocity;
+
+    carrier->position = carrier->position + carrier_velocity * tick_dt;
+    shared::write_canopy_poses(*canopy, carrier->position);
+  }
+
+  result.feet             = feet;
+  result.carrier_feet     = carrier->position;
+  result.ground_mover_uid = movement.ground_mover_uid;
+  return result;
+}
+
+static void test_a_canopy_carries_its_rider_a_tick_behind(const cvar_state_t& cvars)
+{
+  printf("\n[pin] canopy: the rider is carried by the carrier's travel one tick behind, and is never crushed\n");
+
+  const entities::Canopy_Entity defaults{};
+  const float top = shared::canopy_center_for(defaults, {0.f, 0.f, 0.f}).y + defaults.half_extents.y;
+  const vec3  carrier_velocity{200.f, 0.f, 0.f};
+
+  const canopy_ride_result_t carried = ride_canopy(cvars, empty_world(), carrier_velocity, 90);
+  printf("    carried: feet (%.3f, %.3f), carrier x %.3f\n", carried.feet.x, carried.feet.y,
+         carried.carrier_feet.x);
+  check_near(carried.feet.y, top, 0.1f, "a hull dropped onto a canopy stands on its top");
+  check(carried.ground_mover_uid == carried.canopy_uid, "Movement::ground_mover_uid names the canopy");
+  check_near(carried.feet.x, carried.carrier_feet.x - carrier_velocity.x * tick_dt, 0.5f,
+             "the rider has travelled what the carrier travelled, less the one tick the cut trails by");
+
+  // The wall at x 112..144 is in the carrier's way and the carrier walks through it (nothing moves the
+  // carrier here): the canopy would carry its rider into the wall, takes the carry back instead, and
+  // leaves the rider behind to drop to the floor once it has passed.
+  const canopy_ride_result_t walled = ride_canopy(cvars, floor_and_wall_world(), carrier_velocity, 150);
+  printf("    walled:  feet (%.3f, %.3f), carrier x %.3f\n", walled.feet.x, walled.feet.y,
+         walled.carrier_feet.x);
+  check(walled.crushed_by == shared::null_entity_uid, "a canopy walked into a wall crushes nobody");
+  check(walled.feet.x < 112.f - half_width + 1.f, "the rider was left at the wall rather than pushed into it");
+  check(walled.feet.y < 1.f, "and dropped to the floor once the canopy moved on without them");
+}
+
+// --- 16d. a frozen player is a statue: stasis holds its momentum, statue falls, both are stood on ---
+static void test_a_frozen_player_is_a_statue(const cvar_state_t& cvars)
+{
+  printf("\n[pin] statue: stasis holds and thaws with its momentum, statue falls, and both are stood on\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const vec3  start{0.f, 500.f, 0.f};
+  const vec3  entry_velocity{300.f, 200.f, 0.f};
+  const float freeze_seconds = 0.5f;
+  Move_Input  jumping{};
+  jumping.jump_pressed = true;
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    movement.active_override            = entities::Movement_Override::Stasis;
+    movement.override_seconds_remaining = freeze_seconds;
+
+    hook_probe_t  probe{};
+    move_result_t result{start, entry_velocity};
+    for (int tick = 0; tick < 20; ++tick)
+      result = run_split(cvars, bvh, jumping, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    printf("    stasis N=%-2d  held at (%.3f, %.3f, %.3f) velocity (%.1f, %.1f, %.1f)\n", sub_steps,
+           result.position.x, result.position.y, result.position.z, result.velocity.x,
+           result.velocity.y, result.velocity.z);
+    check(same_vec3(result.position, start), "a stasis does not move, under gravity or input");
+    check(same_vec3(result.velocity, entry_velocity), "and keeps the velocity it was frozen with, exactly");
+    check(probe.releases == 0, "it has not thawed yet");
+    check(movement.air_jumps_used == 0, "a jump held through it spends nothing");
+
+    for (int tick = 20; tick < 40; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    check(probe.releases == 1, "the stasis thaws exactly once");
+    check(probe.released_kind == entities::Movement_Override::Stasis, "and says which kind let go");
+    check(same_vec3(probe.release_velocity, entry_velocity), "it thaws with the momentum it was frozen with");
+    check(movement.active_override == entities::Movement_Override::None, "thawing clears the override");
+    check(result.position.x > start.x && result.position.y > start.y,
+          "and the flight carries on from the hold as if nothing had happened");
+  }
+
+  const float gravity = cvars.g_gravity;
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    movement.active_override            = entities::Movement_Override::Statue;
+    movement.override_seconds_remaining = freeze_seconds;
+
+    hook_probe_t  probe{};
+    move_result_t result{start, {}};
+    for (int tick = 0; tick < 10; ++tick)
+      result = run_split(cvars, bvh, jumping, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    const float fallen = 10.f * tick_dt;
+    printf("    statue N=%-2d  fell to y %.3f at %.1f\n", sub_steps, result.position.y, result.velocity.y);
+    check_near(result.position.y, start.y - 0.5f * gravity * fallen * fallen, 0.05f,
+               "a statue falls the exact parabola from rest, whatever the step count");
+    check_near(result.velocity.y, -gravity * fallen, 0.01f, "at the speed gravity gives it");
+    check(result.position.x == start.x && result.position.z == start.z, "and drifts nowhere under input");
+    check(probe.releases == 0, "it has not thawed yet");
+
+    for (int tick = 10; tick < 40; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    check(probe.releases == 1, "the statue thaws exactly once");
+    check(probe.released_kind == entities::Movement_Override::Statue, "and says which kind let go");
+    // The exit carries what the thawing step OPENED with, so it is up to one step short of the whole fall.
+    check_near(probe.release_velocity.y, -gravity * freeze_seconds, 1.01f * gravity * tick_dt,
+               "it thaws with the fall it has gathered");
+  }
+
+  // Stood on: a frozen player at the origin is a box, a hull dropped onto its top stands there, and the
+  // frozen player's own step and push do not see the box they are inside.
+  shared::Entity_System      system;
+  const shared::entity_uid_t frozen_uid = system.spawn(entities::entity_type::Player_Entity);
+  entities::Player_Entity*   frozen     = system.get<entities::Player_Entity>(frozen_uid);
+  frozen->position                            = {0.f, 0.f, 0.f};
+  frozen->movement.active_override            = entities::Movement_Override::Stasis;
+  frozen->movement.override_seconds_remaining = 10.f;
+
+  std::vector<shared::mover_t> movers;
+  shared::collect_statues(system, movers);
+  check(movers.size() == 1, "a frozen player is one mover");
+  check(!movers.empty() && movers[0].uid == frozen_uid, "whose uid is the player's");
+
+  const float top = 2.f * half_height;
+  entities::Movement rider_movement{};
+  move_result_t      rider{{0.f, top + 8.f, 0.f}, {}};
+  for (int tick = 0; tick < 60; ++tick)
+    rider = run_split(cvars, bvh, Move_Input{}, rider.position, rider.velocity, tick_dt, 1,
+                      &rider_movement, {}, nullptr, {}, movers);
+  printf("    rider: feet y %.3f, ground mover %u\n", rider.position.y, rider_movement.ground_mover_uid);
+  check_near(rider.position.y, top, 0.1f, "a hull dropped onto a frozen player stands on its head");
+  check(rider_movement.ground_mover_uid == frozen_uid, "Movement::ground_mover_uid names the frozen player");
+
+  const move_result_t own = run_split(cvars, bvh, Move_Input{}, frozen->position, {}, tick_dt, 4,
+                                      &frozen->movement, {}, nullptr, {}, movers);
+  check(same_vec3(own.position, frozen->position), "the frozen player's own step is not pushed out of its box");
+  const shared::predicted_world_t world{.movers = movers};
+  const mover_push_t push = push_player_by_movers(bvh, world, frozen->movement, frozen->position,
+                                                  half_width, half_height);
+  check(same_vec3(push.feet, frozen->position) && push.crushed_by == shared::null_entity_uid,
+        "nor is it pushed or crushed by it");
+}
+
 // --- 17. pm_model instant: the velocity IS the input, ground and air --
 static cvar_state_t instant_cvars(const cvar_state_t& cvars)
 {
@@ -2217,6 +2424,8 @@ int main()
   test_a_mover_carries_its_rider(cvars);
   test_a_mover_crushes_against_a_ceiling(cvars);
   test_a_spawned_platform_catches_a_hull(cvars);
+  test_a_canopy_carries_its_rider_a_tick_behind(cvars);
+  test_a_frozen_player_is_a_statue(cvars);
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);
   test_instant_pad_launch_is_borrowed(cvars);

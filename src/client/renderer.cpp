@@ -680,6 +680,8 @@ struct gpu_light_t
 // chart reads only the tail past `baked_light_count`. The cost is the UBO: 64
 // lights is 4KB, comfortably inside the 16KB maxUniformBufferRange floor.
 constexpr uint32_t MAX_SCENE_LIGHTS = 64;
+// scene.glsl's MAX_RIPPLES; the size assert below keeps the two one number.
+constexpr uint32_t MAX_SCENE_RIPPLES = 16;
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -716,10 +718,17 @@ struct scene_uniform_t
   // none -- the probes' twin of a vertex's light_slots.
   int32_t     probe_visibility_slots[4]                     = {-1, -1, -1, -1};
   float       shadow_pcss[4]                                = {}; // x on/off, y radius cap in texels
+  // Team wall ripples (ripple.glsl): x = how many of `ripples` are live, y = the
+  // age one is dropped at (the shader fades to zero before it); per
+  // ripple the impact centre with its age in .w, then the face's plane as
+  // normal xyz and dot(normal, point) in .w.
+  float       ripple_settings[4]                            = {};
+  float       ripples[MAX_SCENE_RIPPLES][8]                 = {};
 };
 
 static_assert(sizeof(scene_uniform_t) ==
-                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80,
+                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
+                      32 * MAX_SCENE_RIPPLES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -6275,6 +6284,26 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   }
 
   scene.light_count = (int32_t)std::min<size_t>(pass.lights.size(), MAX_SCENE_LIGHTS);
+
+  // The NEWEST ripples when there are too many: the list is appended in time
+  // order, and a fresh impact is the one the eye is on.
+  const size_t ripple_count = std::min<size_t>(pass.ripples.size(), MAX_SCENE_RIPPLES);
+  const size_t first_ripple = pass.ripples.size() - ripple_count;
+  scene.ripple_settings[0]  = (float)ripple_count;
+  scene.ripple_settings[1]  = shared::RIPPLE_MAX_AGE_SECONDS;
+  for (size_t index = 0; index < ripple_count; ++index)
+  {
+    const shared::wall_ripple_t& ripple = pass.ripples[(uint32_t)(first_ripple + index)];
+    float*                       out    = scene.ripples[index];
+    out[0] = ripple.center.x;
+    out[1] = ripple.center.y;
+    out[2] = ripple.center.z;
+    out[3] = ripple.age_seconds;
+    out[4] = ripple.normal.x;
+    out[5] = ripple.normal.y;
+    out[6] = ripple.normal.z;
+    out[7] = linalg::dot(ripple.normal, ripple.center);
+  }
 
   // Clamped to what actually fits, or a chart naming slot 70 would index past
   // the array's end -- the shader's bound check reads this number and nothing

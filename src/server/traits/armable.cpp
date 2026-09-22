@@ -21,4 +21,13 @@ void grant_weapon(Entity& owner, Inventory& inventory, const Grant_Weapon_Data& 
               to_string(payload.weapon), to_string(payload.damage_type));
 }
 
+void take_weapon(Entity& owner, Inventory& inventory, const Take_Weapon_Data& payload,
+                 server::input_context_t& context)
+{
+  if (!server::try_take_weapon(context.server, owner, inventory, payload.weapon))
+    log_warning("take_weapon: {} carries no {} to take", owner.entity_id,
+                to_string(payload.weapon));
+}
+
+
 } // namespace entities

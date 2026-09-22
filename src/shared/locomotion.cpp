@@ -127,8 +127,8 @@ friction_step_t apply_friction(const movement_settings_t& settings, vec3 old_vel
 
 vec3 flat_wish_direction(const move_input_t& input)
 {
-  const vec3  front_xz = normalize(vec3{input.front.x, 0.f, input.front.z});
-  const vec3  right_xz = normalize(vec3{input.right.x, 0.f, input.right.z});
+  const vec3 front_xz = normalize(vec3{input.front.x, 0.f, input.front.z});
+  const vec3 right_xz = normalize(vec3{input.right.x, 0.f, input.right.z});
   const float forward  = (input.buttons.forward_pressed ? 1.f : 0.f) -
                         (input.buttons.backward_pressed ? 1.f : 0.f);
   const float sideways =

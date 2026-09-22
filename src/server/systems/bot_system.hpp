@@ -24,7 +24,7 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
 // walls for free. That is the test that the seam is real (prediction_def.md
 // ss1.4, ss4.3). Step 3 of the tick, beside the clients' inputs, because a bot's
 // input is input and its hits belong in the same step 4 (tick_def.md).
-void update_bots(server_context_t &context, const shared::predicted_world_t& world,
+void update_bots(server_context_t &context, const shared::predicted_world_storage_t& world_storage,
                  uint32_t current_tick, float dt);
 
 } // namespace server

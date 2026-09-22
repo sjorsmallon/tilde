@@ -48,9 +48,10 @@ bool try_place_ping(server_context_t& context, entities::Player_Entity& player, 
     return false;
   }
 
-  marker->position  = origin;
-  marker->pinged_by = player.entity_id;
-  marker->lifetime  = context.cvars->sv_ping_lifetime_seconds;
+  marker->position     = origin;
+  marker->pinged_by    = player.entity_id;
+  marker->lifetime     = context.cvars->sv_ping_lifetime_seconds;
+  marker->spawned_tick = context.tick_number;
 
   // Faces whoever pinged it, which on a floor ping is the difference between a
   // duck and the back of a duck. Derived from the ray rather than from the
