@@ -73,9 +73,10 @@ enum class Weapon : uint8_t
   Ricochet = 12,
   Canopy = 13,
   Statue = 14,
+  Modifier_Gun = 15,
 };
 
-constexpr uint32_t Weapon_COUNT = 15;
+constexpr uint32_t Weapon_COUNT = 16;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -327,11 +328,13 @@ enum class entity_type : uint16_t
   Launcher_Entity = 29,
   Movement_Modifier_Entity = 30,
   Remnant_Entity = 31,
+  Modifier_Shot_Entity = 32,
+  Timed_Movement_Modifier_Entity = 33,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 32;
+constexpr uint32_t ENTITY_TYPE_COUNT = 34;
 
 enum class component_type : uint16_t
 {
@@ -340,19 +343,20 @@ enum class component_type : uint16_t
   Playback = 2,
   Projectile = 3,
   Fixed_Arc_Flight = 4,
-  Health = 5,
-  Counter = 6,
-  Material = 7,
-  Render = 8,
-  Light = 9,
-  Movement = 10,
-  Inventory = 11,
-  Timer_State = 12,
-  Match = 13,
-  Path_Follow = 14,
+  Bounce = 5,
+  Health = 6,
+  Counter = 7,
+  Material = 8,
+  Render = 9,
+  Light = 10,
+  Movement = 11,
+  Inventory = 12,
+  Timer_State = 13,
+  Match = 14,
+  Path_Follow = 15,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 15;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 16;
 
 } // namespace entities
 
@@ -525,6 +529,17 @@ struct Fixed_Arc_Flight
   linalg::vec3f launch_position = {};
   uint32_t launch_tick = {};
   uint32_t flight_ticks = {};
+};
+
+struct Bounce
+{
+  static constexpr component_type static_component = component_type::Bounce;
+
+  linalg::vec3f velocity = {};
+  linalg::vec3f angular_velocity = {};
+  float restitution = 0.3f;
+  float friction = 4.0f;
+  bool at_rest = {};
 };
 
 struct Health

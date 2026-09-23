@@ -135,7 +135,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "the bitset is sized to the geometry list it was cut for");
 
   std::vector<shared::movement_modifier_t> modifiers;
-  shared::collect_movement_modifiers(system, modifiers);
+  shared::collect_movement_modifiers(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+                                     modifiers);
   std::set<entities::entity_type> types_that_produced_a_modifier;
   for (const shared::movement_modifier_t& modifier : modifiers)
   {
@@ -246,7 +247,8 @@ static void test_a_modifier_scales_the_settings_of_a_hull_inside_it()
   zone->run_speed_scale     = 2.f;
 
   std::vector<shared::movement_modifier_t> modifiers;
-  shared::collect_movement_modifiers(system, modifiers);
+  shared::collect_movement_modifiers(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+                                     modifiers);
   check(modifiers.size() == 1, "one zone, one modifier");
 
   const shared::movement_settings_t base{};
@@ -268,11 +270,65 @@ static void test_a_modifier_scales_the_settings_of_a_hull_inside_it()
         "a hull outside the box runs under the settings it came with");
 
   zone->switch_state.value = false;
-  shared::collect_movement_modifiers(system, modifiers);
+  shared::collect_movement_modifiers(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+                                     modifiers);
   const shared::movement_settings_t switched_off =
       shared::modified_movement_settings(base, modifiers, inside);
   check(modifiers.size() == 1 && switched_off.shared.gravity == base.shared.gravity,
         "a switched-off zone is still collected, and scales nothing");
+}
+
+static void test_a_timed_modifier_is_live_for_exactly_its_lifetime()
+{
+  printf("\n[pin] a shot's zone scales from the tick after its stamp until its lifetime runs out\n");
+
+  shared::Entity_System system;
+  const shared::entity_uid_t uid = system.spawn(entities::entity_type::Timed_Movement_Modifier_Entity);
+
+  entities::Timed_Movement_Modifier_Entity* zone =
+      system.get<entities::Timed_Movement_Modifier_Entity>(uid);
+  zone->position         = {0.f, 0.f, 0.f};
+  zone->half_extents     = {64.f, 64.f, 64.f};
+  zone->gravity_scale    = 0.5f;
+  zone->lifetime_seconds = 1.f;
+
+  const float tick_interval = 1.f / 60.f;
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval, .gravity = 800.f};
+  const shared::movement_settings_t base{};
+  const shared::aabb_bounds_t       inside{.min = {-16.f, 0.f, -16.f}, .max = {16.f, 72.f, 16.f}};
+
+  std::vector<shared::movement_modifier_t> modifiers;
+  const auto gravity_at = [&](uint32_t tick)
+  {
+    shared::collect_movement_modifiers(system, tick, flight, modifiers);
+    check(modifiers.size() == 1, "an unstamped or expired zone is still collected, as disabled");
+    return shared::modified_movement_settings(base, modifiers, inside).shared.gravity;
+  };
+
+  check(gravity_at(100) == base.shared.gravity, "a zone the server has not stamped scales nothing");
+
+  zone->spawned_tick = 100;
+  check(gravity_at(100) == base.shared.gravity, "the tick it was stamped in already ran its cut");
+  check(gravity_at(101) == 0.5f * base.shared.gravity, "live from the next tick");
+  check(gravity_at(160) == 0.5f * base.shared.gravity, "live through the last tick of its lifetime");
+  check(gravity_at(161) == base.shared.gravity, "and gone the tick after");
+  check(!shared::timed_movement_modifier_is_active_at(*zone, 161, tick_interval) &&
+            shared::timed_movement_modifier_is_active_at(*zone, 160, tick_interval),
+        "the reap asks the same predicate the cut does");
+
+  // A fired zone's box is wherever its arc puts it at the tick, and it is live in flight.
+  zone->projectile.weapon_id = entities::Weapon::Modifier_Gun;
+  zone->projectile.trigger   = entities::Fire_Trigger::Secondary;
+  zone->projectile.velocity  = {700.f, 0.f, 0.f};
+  zone->flight = {.launch_position = {0.f, 0.f, 0.f}, .launch_tick = 100, .flight_ticks = 60};
+  shared::collect_movement_modifiers(system, 130, flight, modifiers);
+  const shared::aabb_bounds_t at_launch = inside;
+  const shared::aabb_bounds_t along_the_arc{.min = {500.f, 0.f, -16.f}, .max = {532.f, 72.f, 16.f}};
+  check(shared::modified_movement_settings(base, modifiers, at_launch).shared.gravity == base.shared.gravity,
+        "halfway through its flight the zone has left where it was fired from");
+  check(shared::modified_movement_settings(base, modifiers, along_the_arc).shared.gravity ==
+            0.5f * base.shared.gravity,
+        "and is live where its arc has carried it");
 }
 
 static void test_a_switch_reaches_the_geometry_it_owns()
@@ -412,8 +468,11 @@ static void test_a_bubble_is_placed_by_the_tick_it_is_cut_for()
   check(!volume_at(11).enabled, "it is not armed at the muzzle");
   check(volume_at(10 + 12).enabled, "it is armed once arm_seconds have passed");
 
-  check(std::fabs(center_x(volume_at(10 + 30)) - 300.f) < 0.01f,
-        "half a second at 600 units a second is 300 units out");
+  check(std::fabs(center_x(volume_at(10 + 30)) - 450.f) < 0.01f,
+        "half the flight is three quarters of the path, easing out to rest");
+  check(center_x(volume_at(10 + 60)) - center_x(volume_at(10 + 59)) <
+            center_x(volume_at(10 + 1)) - center_x(volume_at(10 + 0)),
+        "it arrives slower than it left");
   check(std::fabs(center_x(volume_at(10 + 60)) - 600.f) < 0.01f &&
             center_x(volume_at(10 + 60)) == center_x(volume_at(10 + 600)),
         "it stops at flight_ticks and stays there");
@@ -481,6 +540,7 @@ int main()
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
   test_a_modifier_scales_the_settings_of_a_hull_inside_it();
+  test_a_timed_modifier_is_live_for_exactly_its_lifetime();
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
   test_a_switch_reaches_the_geometry_it_owns();

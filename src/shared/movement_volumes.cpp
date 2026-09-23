@@ -88,6 +88,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
 
       // @predicted, and feeds collect_movement_modifiers: it is read when the step OPENS, not tested after it.
       case entities::entity_type::Movement_Modifier_Entity:
+      case entities::entity_type::Timed_Movement_Modifier_Entity:
         break;
 
       // Every type that is not @predicted. Adding one makes this a compile
@@ -117,6 +118,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Path_Node_Entity:
       case entities::entity_type::Launcher_Entity:
       case entities::entity_type::Remnant_Entity:
+      case entities::entity_type::Modifier_Shot_Entity:
         break;
     }
   }

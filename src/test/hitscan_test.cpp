@@ -1,6 +1,6 @@
 // resolve_hitscan coverage, and the ray-vs-volume math under it.
 //
-// Pure-function tests: no server, no session, no physics_state_t, and no
+// Pure-function tests: no server, no session, no BVH, and no
 // skeleton. The volumes here are HAND-BUILT rather than posed off `rig.hitboxes`
 // -- resolve_hitscan takes placed volumes precisely so it does not need a rig,
 // and a test that loaded one would be testing the content of a model file. What

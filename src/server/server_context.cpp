@@ -28,13 +28,6 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
     shared::revert_cvars_to_defaults(*context.cvars, context.world.cvars_applied_by_map);
 
   // Session, the retained map, bots, trigger overlaps, pending deaths.
-  //
-  // This NULLS world.physics rather than rebuilding it: jolt_init() must have
-  // run before a physics_state_t exists, and g_server_context is a file-scope
-  // object, so a world that made its own could not be constructed at static
-  // init. The map load calls make_physics_state() on the next line; keeping the
-  // construction there is also what lets server_context_test assert the whole
-  // reset without standing Jolt up.
   shared::finish_replay_recording(context.world.replay_recorder);
   context.world = {};
   context.replication = {};

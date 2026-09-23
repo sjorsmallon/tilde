@@ -81,6 +81,8 @@ void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owne
       case entities::entity_type::Launcher_Entity:
       case entities::entity_type::Movement_Modifier_Entity:
       case entities::entity_type::Remnant_Entity:
+      case entities::entity_type::Modifier_Shot_Entity:
+      case entities::entity_type::Timed_Movement_Modifier_Entity:
         break;
 
       // A mover's switch freezes it rather than removing it, and its pieces are not in the tree anyway.

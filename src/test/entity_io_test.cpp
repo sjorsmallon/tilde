@@ -33,6 +33,7 @@
 #include "shared/game_session.hpp"
 #include "shared/lighting.hpp"
 #include "shared/map.hpp"
+#include "shared/weapons.hpp"
 
 #include <cstdio>
 #include <string>
@@ -962,6 +963,73 @@ void test_a_launchers_spread_is_the_same_pattern_every_attempt()
   check(varies, "and they are not all the same shot");
 }
 
+void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
+{
+  std::printf("connections: a launcher varies a bubble's speed, flight and rest inside the fractions\n");
+
+  wired_map_t wired = make_wired_map();
+
+  auto launcher_entity = std::make_shared<entities::Launcher_Entity>();
+  launcher_entity->position                 = {0.f, 300.f, 0.f};
+  launcher_entity->weapon                   = entities::Weapon::Bubble;
+  launcher_entity->speed_variation          = 0.5f;
+  launcher_entity->flight_seconds_variation = 0.25f;
+  launcher_entity->rest_seconds_variation   = 0.1f;
+  const shared::entity_uid_t launcher = wired.map.add_entity(launcher_entity);
+
+  wired.map.connections.push_back(wire(wired.trigger, entities::entity_signal::Touched, launcher,
+                                       entities::entity_action::Fire));
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, wired.map);
+
+  const shared::entity_uid_t toucher = place_player_in(context, {5000.f, 0.f, 0.f});
+
+  constexpr uint32_t SHOT_COUNT = 8;
+  for (uint32_t shot = 0; shot < SHOT_COUNT; ++shot)
+  {
+    move_player(context, toucher, {0.f, 0.f, 0.f});
+    run_one_tick(context);
+    move_player(context, toucher, {5000.f, 0.f, 0.f});
+    run_one_tick(context);
+  }
+
+  const float row_speed =
+      shared::fire_of(shared::WEAPON_DEFINITIONS[entities::Weapon::Bubble], entities::Fire_Trigger::Primary)
+          .projectile.speed;
+  const entities::Bubble_Entity defaults{};
+
+  uint32_t count   = 0;
+  bool     bounded = true;
+  bool     speed_varies = false, flight_varies = false, rest_varies = false;
+  float    first_speed = -1.f, first_flight = -1.f, first_rest = -1.f;
+  for (const entities::Bubble_Entity& bubble :
+       context.world.session.entity_system.entities_of<entities::Bubble_Entity>())
+  {
+    const float speed = linalg::length(bubble.projectile.velocity);
+    bounded = bounded && speed >= 0.5f * row_speed - 0.01f && speed <= 1.5f * row_speed + 0.01f &&
+              bubble.flight_seconds >= 0.75f * defaults.flight_seconds - 1e-4f &&
+              bubble.flight_seconds <= 1.25f * defaults.flight_seconds + 1e-4f &&
+              bubble.rest_seconds >= 0.9f * defaults.rest_seconds - 1e-4f &&
+              bubble.rest_seconds <= 1.1f * defaults.rest_seconds + 1e-4f;
+    if (count == 0)
+    {
+      first_speed  = speed;
+      first_flight = bubble.flight_seconds;
+      first_rest   = bubble.rest_seconds;
+    }
+    speed_varies  = speed_varies || std::abs(speed - first_speed) > 1.f;
+    flight_varies = flight_varies || std::abs(bubble.flight_seconds - first_flight) > 1e-3f;
+    rest_varies   = rest_varies || std::abs(bubble.rest_seconds - first_rest) > 1e-3f;
+    ++count;
+  }
+
+  check(count == SHOT_COUNT, "every Fire spawned a bubble");
+  check(bounded, "speed, flight and rest each stay inside their fraction of the base value");
+  check(speed_varies && flight_varies && rest_varies, "and each of the three varies across shots");
+}
+
 void test_a_disabled_trigger_releases_whoever_is_inside()
 {
   std::printf("connections: switching a trigger off is a Left, not a freeze\n");
@@ -1317,6 +1385,7 @@ int main()
   test_a_platform_crumbles_under_one_and_holds_under_two();
   test_a_launcher_fires_its_weapon_row_along_its_aim();
   test_a_launchers_spread_is_the_same_pattern_every_attempt();
+  test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions();
   test_the_toucher_is_the_activator();
   test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();

@@ -1,7 +1,8 @@
 #include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/physics.hpp"
+#include "../../shared/collision_detection.hpp"
+#include "../../shared/disabled_geometry.hpp"
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
 
@@ -12,11 +13,11 @@ namespace client::effects
 void on_rocket_explosion(client_context_t &context,
                          const shared::Rocket_Explosion &data)
 {
-  if (!context.world.physics_state)
+  if (!context.world.ready)
   {
-    log_error("rocket_explosion handler invoked with no client physics world — "
-              "an effect arrived before any map was loaded (context.world.ready "
-              "is false), so there is no surface to resolve the decal against");
+    log_error("rocket_explosion handler invoked with no client world -- an effect "
+              "arrived before any map was loaded, so there is no surface to "
+              "resolve the decal against");
     return;
   }
 
@@ -32,39 +33,38 @@ void on_rocket_explosion(client_context_t &context,
   {
     // Step out along the surface normal, then probe back toward the surface
     // a short distance past the original origin. The 4-unit step keeps the
-    // cast start clear of the wall; the 12-unit probe is well within typical
-    // rocket hull thickness so we still land on the surface.
-    constexpr float probe_step = 4.f;
+    // probe start clear of the wall; the 12-unit reach is well within typical
+    // rocket hull thickness so we still land on the surface. The map through
+    // the hidden set the draw uses: a decal belongs on a wall you can see,
+    // never on a gate that is switched off, and never on a player.
+    constexpr float probe_step  = 4.f;
     constexpr float probe_depth = 12.f;
-    constexpr float probe_radius = 4.f;
-    vec3f surface_normal = linalg::normalize(data.normal);
-    vec3f probe_from = data.origin + surface_normal * probe_step;
-    vec3f probe_to   = data.origin - surface_normal * probe_depth;
+    const vec3f     surface_normal = linalg::normalize(data.normal);
+    const vec3f     probe_from     = data.origin + surface_normal * probe_step;
 
-    hit_result_t hit;
-    // World geometry only -- the decal belongs on the surface the server
-    // described, not on whatever player happens to be standing in front of it.
-    // Front faces only, so a probe starting inside a wall doesn't return a
-    // fraction-0 hit with a flipped normal.
-    const query_filter_t filter{.layers     = query_layers_t::Static_Only,
-                                .back_faces = back_face_mode_t::Ignore};
-    bool surface_hit = cast_sphere(*context.world.physics_state,
-                                   probe_from, probe_to,
-                                   probe_radius, filter, hit);
+    shared::disabled_geometry_t hidden;
+    shared::collect_hidden_geometry(context.world.session.entity_system,
+                                    context.world.session.owner_of, hidden);
+
+    ray_hit_result_t hit;
+    const bool surface_hit = bvh_intersect_ray(context.world.session.bvh, probe_from,
+                                               surface_normal * -1.f, hit, hidden) &&
+                             hit.t <= probe_step + probe_depth;
 
     if (surface_hit)
     {
+      const vec3f decal_position = probe_from - surface_normal * hit.t;
       log_terminal("[CLIENT FX] rocket_explosion at ({:.1f},{:.1f},{:.1f}) "
                    "→ decal at ({:.1f},{:.1f},{:.1f}) n=({:.2f},{:.2f},{:.2f})",
                    data.origin.x, data.origin.y, data.origin.z,
-                   hit.position.x, hit.position.y, hit.position.z,
+                   decal_position.x, decal_position.y, decal_position.z,
                    hit.normal.x, hit.normal.y, hit.normal.z);
     }
     else
     {
-      // Server saw a surface but the client doesn't — usually means the
-      // client physics state is out of sync (mid-load, late connect). Log
-      // and fall through to a particle-only explosion.
+      // Server saw a surface but the client doesn't -- usually the client's
+      // world is out of sync (mid-load, late connect). Log and fall through
+      // to a particle-only explosion.
       log_terminal("[CLIENT FX] rocket_explosion at ({:.1f},{:.1f},{:.1f}) "
                    "→ server reported surface but local cast missed",
                    data.origin.x, data.origin.y, data.origin.z);

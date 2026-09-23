@@ -232,6 +232,10 @@ int main()
         entity_type::Movement_Modifier_Entity,
         // Through Render alone, like the ping marker.
         entity_type::Remnant_Entity,
+        // Through Projectile and Render, like the ricochet.
+        entity_type::Modifier_Shot_Entity,
+        // Every field of its own: a spawned zone has no map for the client to have read it from.
+        entity_type::Timed_Movement_Modifier_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

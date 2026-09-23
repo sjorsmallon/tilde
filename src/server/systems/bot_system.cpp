@@ -18,7 +18,7 @@
 namespace server
 {
 
-Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
+Bot_State spawn_bot(shared::game_session_t &session,
                     const entities::Player_Spawn_Entity &marker,
                     int32_t slot, bot_behavior_t type, bot_personality_t personality)
 {
@@ -39,13 +39,6 @@ Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
     bot->team_allegiance = marker.team_allegiance;
     bot->display_name.set(std::format("Bot {}", slot).c_str());
     place_player_at_spawn(session, *bot, marker);
-
-    register_kinematic_capsule(physics,
-                               bot_uid,
-                               bot->position +
-                                   vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                               shared::player_capsule_radius,
-                               shared::player_capsule_cylinder_half_height);
   }
 
   Bot_State state;
@@ -90,13 +83,13 @@ static vec3f advance_path(Bot_State &bot, const vec3f& bot_pos)
   return facing;
 }
 
-// The half of a bot's tick that is SIMULATION rather than decision: the move,
-// the cosmetics it produces, and the physics pose. Split out because a corpse
+// The half of a bot's tick that is SIMULATION rather than decision: the move
+// and the cosmetics it produces. Split out because a corpse
 // runs this and nothing else -- death takes the AI away, not the simulation,
 // which is the same split the human path makes in server_impl.cpp. Sharing the
 // one body is the point: a second player_move call for the dead case is how the
 // two drift apart.
-static void apply_bot_movement(server_context_t &context, physics_state_t &physics,
+static void apply_bot_movement(server_context_t &context,
                                const shared::game_session_t &session,
                                const shared::predicted_world_t &world,
                                entities::Player_Entity &bot_ent, const vec3f& front,
@@ -159,9 +152,6 @@ static void apply_bot_movement(server_context_t &context, physics_state_t &physi
         break;
     }
   }
-
-  set_kinematic_pose(physics, bot_ent.entity_id,
-                     moved.feet + vec3f{0.f, shared::player_capsule_center_offset, 0.f}, moved.velocity);
 }
 
 void update_bots(server_context_t &context,
@@ -170,7 +160,6 @@ void update_bots(server_context_t &context,
                  float             dt)
 {
   shared::game_session_t &session = context.world.session;
-  physics_state_t        &physics = *context.world.physics;
   std::vector<Bot_State> &bots    = context.world.bots;
 
   // Nothing fills a shared debug list here, and there is no longer one to fill:
@@ -210,7 +199,7 @@ void update_bots(server_context_t &context,
 
     if (bot_ent->health.current_health <= 0)
     {
-      apply_bot_movement(context, physics, session, world, *bot_ent,
+      apply_bot_movement(context, session, world, *bot_ent,
                          linalg::direction_from_angles(bot_ent->view_angle_yaw, 0.f),
                          Move_Input{}, bot.personality.move_speed, dt);
       continue;
@@ -398,7 +387,7 @@ void update_bots(server_context_t &context,
     }
 
     // ---- apply movement ----
-    apply_bot_movement(context, physics, session, world, *bot_ent, front, input,
+    apply_bot_movement(context, session, world, *bot_ent, front, input,
                        bot.personality.move_speed, dt);
 
     // Update facing direction so the client can visualise it. DEGREES, in

@@ -29,7 +29,8 @@ Weapon :: enum {
     Remnant,
     Ricochet,
     Canopy,
-    Statue
+    Statue,
+    Modifier_Gun
 }
     
 Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy }
@@ -94,6 +95,20 @@ Fixed_Arc_Flight :: component {
     // 0 until the type's system fixes the arc, in the tick it was fired.
     launch_tick:     u32                @Networked
     flight_ticks:    u32                @Networked
+}
+
+// Quake's MOVETYPE_BOUNCE, stepped by shared/bounce_body.hpp: a sphere under
+// gravity that reflects by `restitution`, slides to a stop by `friction` (the
+// fraction of its speed along a floor lost per second: 4 ends a throw inside a
+// second), and rests once slow on a floor. angular_velocity is cosmetic,
+// degrees per second about a world axis. The client interpolates; nothing
+// predicts a body.
+Bounce :: component {
+    velocity:         v3                @Networked
+    angular_velocity: v3
+    restitution:      f32 = 0.3
+    friction:         f32 = 4.0
+    at_rest:          bool              @Networked
 }
 
 Health :: component {
@@ -370,13 +385,14 @@ Weapon_Entity :: entity {
     ammo:             i32 = -1          @Fully_Serializable
     reserve_ammo:     i32 = -1          @Fully_Serializable
     weapon_id:        Weapon            @Fully_Serializable
-    // Null owner means the weapon lies in the world as a physics body, waiting to be picked up.
+    // Null owner means the weapon lies in the world as a bounce body, waiting to be picked up.
     owner_uid:        entity            @Networked
     next_fire_time:   u64
     pickup_allowed_tick: u32
     damage_type: Damage_Type = .Normal  @Editable
-    // The pickup reach and the thrown physics box.
+    // The pickup reach and the thrown body's radius (its largest half extent).
     volume:           Box_Volume = { half_extents = {40, 40, 40} }
+    bounce:           Bounce = { restitution = 0.2 }
     render:           Render = { mesh = .Error }
 }
 
@@ -458,14 +474,12 @@ Bubble_Entity :: entity @runtime_only @predicted {
 }
 
 Physics_Body_Entity :: entity {
-    // Jolt's shape and the editor's size box. Server-side simulation input;
-    // the visual size rides in render.scale, which the spawn path sets from
-    // the same extents.
+    // The mesh and the editor's size box; the body sweeps as a sphere of the
+    // largest half extent. The visual size rides in render.scale, which the
+    // spawn path sets from the same extents.
     shape:    Shape_Kind = .Box         @Editable
     size:     v3                        @Editable
-    // Kept @Networked for the interpolation item in todo.md: bodies currently
-    // snap to each snapshot, and velocity is what a lerp/extrapolate needs.
-    velocity: v3                        @Networked
+    bounce:   Bounce
     mass:     f32 = 10.0                @Editable
     render:   Render
 }
@@ -622,6 +636,11 @@ Launcher_Entity :: entity is Switchable, Firing {
     // Half-angles, each side of the aim. Derived from (uid, shots_fired), so every attempt sees the same pattern.
     spread_yaw_degrees:   f32 = 0.0         @Editable
     spread_pitch_degrees: f32 = 0.0         @Editable
+    // Fractions each side of the shot's own value, from the same hash: 0.25 is 75%..125%.
+    // Flight is the distance, rest the lifetime; both apply to a Bubble or a Platform only.
+    speed_variation:          f32 = 0.0     @Editable
+    flight_seconds_variation: f32 = 0.0     @Editable
+    rest_seconds_variation:   f32 = 0.0     @Editable
     shots_fired:  u32
     render:       Render = { mesh = .Box, scale = {16, 16, 16} }
 }
@@ -643,4 +662,33 @@ Remnant_Entity :: entity @runtime_only {
     // The sphere the owner's teleport shot has to cross, centred on the hull it stood in. Generous on purpose.
     hit_radius: f32 = 48.0
     render:     Render = { mesh = .Duck }
+}
+
+// The Modifier_Gun's LMB: flies an arc and, wherever it FIRST touches, leaves a Timed_Movement_Modifier_Entity
+// at construction (server/systems/modifier_shot_system.cpp). The zone's numbers are the zone's own defaults.
+Modifier_Shot_Entity :: entity @runtime_only {
+    projectile:       Projectile = { weapon_id = .Modifier_Gun }
+    lifetime:         f32 = 4.0
+    collision_radius: f32 = 8.0
+    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, material = { color = {0.5, 1, 0.5} } }
+}
+
+// A Movement_Modifier_Entity a shot left behind, or the Modifier_Gun's RMB fired directly: live from the tick
+// after spawned_tick until lifetime_seconds later, both replicated so the client predicts the expiry as it
+// predicts a landed platform's. A fired one flies a Fixed_Arc_Flight for flight_seconds, live the whole way,
+// through anything -- the arc is never clipped -- and sits where it stops. Every number is @Networked because
+// a spawned zone has no map for the client to have read it from. Drawn at half_extents.
+Timed_Movement_Modifier_Entity :: entity @runtime_only @predicted {
+    projectile:       Projectile = { weapon_id = .Modifier_Gun }
+    flight:           Fixed_Arc_Flight
+    flight_seconds:   f32 = 1.5
+    spawned_tick:     u32                       @Networked
+    lifetime_seconds: f32 = 6.0                 @Networked
+    half_extents:     v3 = {128, 128, 128}      @Networked
+    gravity_scale:    f32 = -1.0                @Networked
+    run_speed_scale:  f32 = 1.0                 @Networked
+    jump_speed_scale: f32 = 1.0                 @Networked
+    friction_scale:   f32 = 1.0                 @Networked
+    control_scale:    f32 = 1.0                 @Networked
+    render:           Render = { mesh = .Box, material = { shader_type = .Ghost, color = {0.5, 1, 0.5} } }
 }

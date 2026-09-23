@@ -14,7 +14,6 @@
 #include "../shared/network/server_transport_layer.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/network/udp_socket.hpp"
-#include "../shared/physics.hpp"
 #include "../shared/ghost.hpp"
 #include "../shared/network/ghost_transfer.hpp"
 #include "../shared/replay_recorder.hpp"
@@ -149,7 +148,6 @@ struct trigger_overlap_t
 struct world_t
 {
   shared::game_session_t session;
-  std::unique_ptr<physics_state_t> physics;
   shared::map_t current_map;
   std::string   current_map_path;
   uint32_t      map_content_hash = 0;

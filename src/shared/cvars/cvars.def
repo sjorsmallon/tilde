@@ -545,7 +545,6 @@ Debugging :: cvars {
     // feeds. 0 disables the draw without turning off the server's send.
     cl_shot_debug_seconds:     f32 = 4.0 @Client     "Seconds a shot-debug overlay stays on screen (0 = off)"
     debug_show_entity_counts:  bool = false @Client     "Per-type entity count overlay"
-    debug_show_physics_bodies: bool = false @Client     "Draw Jolt bodies and constraints (JPH_DEBUG_RENDERER builds)"
 
     net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"
 

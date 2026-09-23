@@ -7,9 +7,8 @@
 // belonging to a different scope. Both show up as a survivor assert failing, not
 // as a crash.
 //
-// No Jolt here. The test never constructs a physics_state_t — it only asserts
-// the unique_ptr is nulled — so jolt_init() is not needed and the reset stays
-// testable without standing a server up.
+// Nothing here stands a server up: the reset is a value operation and is
+// tested as one.
 
 #include "server/server_context.hpp"
 
@@ -133,7 +132,6 @@ void test_reset_state_in_preparation_for_new_map_load()
 
   // Cleared: everything keyed to the map we left.
   assert(context.world.session.map_name.empty());
-  assert(context.world.physics == nullptr);
   assert(context.world.current_map_path.empty());
   assert(context.world.map_content_hash == 0);
   assert(context.world.bots.empty());

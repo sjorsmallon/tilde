@@ -1,3 +1,4 @@
+#include "../../shared/bounce_body.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "rocket_system.hpp"
 #include "projectile_flight.hpp"
@@ -8,7 +9,6 @@
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 
-#include <unordered_set>
 #include <vector>
 
 namespace server
@@ -21,50 +21,21 @@ static void detonate(const entities::Rocket_Entity &rocket,
                      shared::entity_uid_t direct_hit_uid,
                      vec3f impact_normal)
 {
-  physics_state_t &physics = *context.world.physics;
   shared::game_session_t &session = context.world.session;
 
   if (rocket.damage_radius <= 0.f) return;
 
-  std::vector<hit_result_t> hits = find_all_bodies_overlapping_sphere(physics, rocket.position, rocket.damage_radius);
+  // Everything a projectile can land on is everything a blast can push, measured
+  // to each box's CENTER: a player's position is at the feet, and a contact
+  // point on a direct hit sits on the origin and gives a degenerate direction.
+  std::vector<shared::projectile_target_t> targets;
+  shared::collect_projectile_targets(session.entity_system, targets);
 
-  // One body may surface multiple contact points; only push it once.
-  std::unordered_set<shared::entity_uid_t> already_pushed;
-
-  for (const auto &h : hits)
+  for (const shared::projectile_target_t &target : targets)
   {
-    if (h.entity_id == 0) continue;
-    if (!already_pushed.insert(h.entity_id).second) continue;
-
-    // The type is asked ONE question -- "is this a player?" -- because that is
-    // the only thing the push branches on: a player is a kinematic capsule, so
-    // Jolt impulses are no-ops on it and an added velocity is clobbered by the
-    // next set_kinematic_pose, which makes its push a game-state write. Every
-    // other uid the overlap surfaced has a Jolt body and takes the delta
-    // directly, whatever it is -- a crate, a thrown weapon, a damageable.
-    entities::Player_Entity *player =
-        session.entity_system.get<entities::Player_Entity>(h.entity_id);
-
-    // Measured to the entity center, never to h.position: a surface contact
-    // point sits near the origin on a direct hit and gives a degenerate
-    // direction. A player's position is at the feet, so it carries the capsule
-    // offset; everything else is positioned at its own center.
-    vec3f entity_center;
-    if (player)
-    {
-      entity_center = player->position + vec3f{0.f, 38.f, 0.f};
-    }
-    else if (entities::Entity *entity = session.entity_system.try_find(h.entity_id))
-    {
-      entity_center = entity->position;
-    }
-    else
-    {
-      continue; // a body whose entity is already gone
-    }
-
-    const vec3f to_target = entity_center - rocket.position;
-    const float distance  = linalg::length(to_target);
+    const vec3f entity_center = (target.bounds.min + target.bounds.max) * 0.5f;
+    const vec3f to_target     = entity_center - rocket.position;
+    const float distance      = linalg::length(to_target);
     if (distance > rocket.damage_radius) continue;
 
     // Straight up when the center coincides with the origin: a zero direction
@@ -74,21 +45,33 @@ static void detonate(const entities::Rocket_Entity &rocket,
     const float falloff   = 1.f - (distance / rocket.damage_radius);
     const vec3f push      = direction * (rocket.knockback_force * falloff);
 
-    if (player)
+    // A player's push is a game-state write; a crate's or a dropped weapon's
+    // wakes its bounce body. A damageable is static and takes none.
+    if (entities::Player_Entity *player =
+            session.entity_system.get<entities::Player_Entity>(target.uid))
+    {
       shared::apply_impulse(shared::movement_settings_from(*context.cvars), player->velocity,
                             player->movement,
                             {.horizontal = shared::impulse_mode_t::Add,
                              .vertical   = shared::impulse_mode_t::Add,
                              .velocity   = push});
-    else
-      add_linear_velocity(physics, h.entity_id, push);
+    }
+    else if (entities::Physics_Body_Entity *body =
+                 session.entity_system.get<entities::Physics_Body_Entity>(target.uid))
+    {
+      shared::wake_bounce_body(body->bounce, push);
+    }
+    else if (entities::Weapon_Entity *weapon =
+                 session.entity_system.get<entities::Weapon_Entity>(target.uid))
+    {
+      shared::wake_bounce_body(weapon->bounce, push);
+    }
   }
 
   // Cosmetic explosion: announce the detonation through the cosmetic-events
   // channel. The server reports the world-space origin; the client handler
-  // does its own Static_Only cast_sphere against its local static geometry to
-  // resolve a surface contact for the decal — see plan §"Server emits, client
-  // traces locally."
+  // probes its own BVH along the normal to resolve a surface contact for the
+  // decal -- see plan §"Server emits, client traces locally."
   shared::Rocket_Explosion fx{};
   fx.origin           = rocket.position;
   fx.normal           = impact_normal; // {0,0,0} = airburst, no surface decal
@@ -115,7 +98,8 @@ static void detonate(const entities::Rocket_Entity &rocket,
   shared::fire_rocket_detonated(context.outgoing.events, detonated);
 }
 
-void update_rockets(server_context_t &context, float dt)
+void update_rockets(server_context_t &context, const shared::predicted_world_storage_t& world,
+                    float dt)
 {
   shared::game_session_t &session = context.world.session;
   Span<entities::Rocket_Entity> rockets =
@@ -128,6 +112,9 @@ void update_rockets(server_context_t &context, float dt)
   // removal -- which is why this used to have to sort descending and dedupe. A
   // uid names the same entity no matter what moved.
   std::vector<shared::entity_uid_t> uids_to_remove;
+
+  std::vector<shared::projectile_target_t> targets;
+  shared::collect_projectile_targets(session.entity_system, targets);
 
   for (uint32_t i = 0; i < rockets.size(); ++i)
   {
@@ -142,10 +129,10 @@ void update_rockets(server_context_t &context, float dt)
       continue;
     }
 
-    if (const std::optional<hit_result_t> hit =
-            fly_projectile(context, rocket, rocket.projectile, rocket.collision_radius, dt))
+    if (const std::optional<shared::projectile_hit_t> hit = fly_projectile(
+            context, world, targets, rocket, rocket.projectile, rocket.collision_radius, dt))
     {
-      detonate(rocket, context, hit->entity_id, hit->normal);
+      detonate(rocket, context, hit->entity_uid, hit->normal);
       uids_to_remove.push_back(rocket.entity_id);
     }
   }

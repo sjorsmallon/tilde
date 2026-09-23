@@ -237,10 +237,11 @@ static bool load_map_file_into_context(server_context_t &context,
 
   if (!loaded_map)
   {
-    if (!context.world.physics)
+    // No map has ever loaded: stand an empty world up once so the tick has a
+    // match to run, rather than leaving the server with nothing at all.
+    if (context.world.current_map_path.empty())
     {
       reset_state_in_preparation_for_new_map_load(context);
-      context.world.physics = make_physics_state();
       install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate),
                     false);
     }
@@ -249,7 +250,6 @@ static bool load_map_file_into_context(server_context_t &context,
 
   const bool replaces_a_started_match = match_has_started(context);
   reset_state_in_preparation_for_new_map_load(context);
-  context.world.physics = make_physics_state();
 
   world_t& world = context.world;
 
@@ -266,7 +266,6 @@ static bool load_map_file_into_context(server_context_t &context,
                 replaces_a_started_match);
   install_movers(context);
 
-  shared::populate_static_physics_bodies(*world.physics, server_map);
   
 
   // spawn players.
@@ -280,7 +279,7 @@ static bool load_map_file_into_context(server_context_t &context,
     {
       if (player_spawn.spawn_type == entities::Spawn_Type::Bot)
       {
-        world.bots.push_back(spawn_bot(world.session, *world.physics, player_spawn,
+        world.bots.push_back(spawn_bot(world.session, player_spawn,
                                        world.next_bot_slot, bot_behavior_t::Regular));
         world.next_bot_slot += 1;
         bot_spawn_count += 1;
@@ -331,13 +330,6 @@ bool init(cvars::cvar_state_t* cvar_state, cvars::command_table_t* cvar_command_
 
   // this is kind of a shit way to load a static upfront and I don't like it.
   shared::player_rig();
-
-  static bool jolt_initialized = false;
-  if (!jolt_initialized)
-  {
-    jolt_init();
-    jolt_initialized = true;
-  }
 
   if (!g_server_context.socket.open(network::server_port_number,
                                     network::server_receive_buffer_size_in_bytes))
@@ -492,7 +484,7 @@ void spawn_bot(Bot_Mode mode, const command_context_t &)
               "spawning the bot at origin",
               world.session.map_name);
 
-  world.bots.push_back(server::spawn_bot(world.session, *world.physics,
+  world.bots.push_back(server::spawn_bot(world.session,
                                          marker ? *marker : origin_fallback_spawn(),
                                          world.next_bot_slot++, type));
 
@@ -571,11 +563,6 @@ void spawn_cube(const command_context_t &command_context)
 
   server_context_t &server_context = g_server_context;
 
-  if (!server_context.world.physics)
-  {
-    log_error("spawn_cube: physics state not initialized");
-    return;
-  }
   auto drop_position =
       get_position_in_front_of(server_context, command_context.caller_slot);
   if (!drop_position)
@@ -620,11 +607,6 @@ void spawn_sphere(const command_context_t &command_context)
 
   server_context_t &server_context = g_server_context;
 
-  if (!server_context.world.physics)
-  {
-    log_error("spawn_sphere: physics state not initialized");
-    return;
-  }
   auto drop_position =
       get_position_in_front_of(server_context, command_context.caller_slot);
   if (!drop_position)

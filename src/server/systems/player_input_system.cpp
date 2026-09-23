@@ -3,7 +3,6 @@
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/network/subtick_codec.hpp"
-#include "../shared/physics.hpp"
 #include "../shared/player_constants.hpp"
 #include "../shared/player_move.hpp"
 #include "../shared/replay_recorder.hpp"
@@ -338,13 +337,6 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
           break;
       }
     }
-
-    // jolt nonsense.
-    if (!world_is_frozen)
-      set_kinematic_pose(
-        *context.world.physics,
-        player->entity_id,
-        player->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},player->velocity);
   }
 }
 

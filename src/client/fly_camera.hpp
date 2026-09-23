@@ -35,6 +35,9 @@ struct fly_camera_settings_t
 // held, Play_State sums the frame's motion edges.
 [[nodiscard]] fly_camera_input_t read_fly_camera_keys();
 
+// Keypad +/- scale the fly speed by one step each press, clamped, announced.
+void step_fly_speed_from_keypad(float& units_per_second);
+
 void fly_camera(camera_t& camera, const fly_camera_input_t& input,
                 const fly_camera_settings_t& settings, float dt);
 

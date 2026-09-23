@@ -136,6 +136,14 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
                                const vec3f& dir, float &out_t, float &out_t_exit,
                                vec3f& out_normal)
 {
+  return intersect_sphere_sweep_convex_hull(planes, origin, dir, 0.f, out_t, out_t_exit,
+                                            out_normal);
+}
+
+bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                                        const vec3f& dir, float radius, float& out_t,
+                                        float& out_t_exit, vec3f& out_normal)
+{
   if (planes.count == 0)
     return false;
 
@@ -150,7 +158,7 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
   for (const Plane &plane : planes)
   {
     const float denominator   = linalg::dot(dir, plane.normal);
-    const float signed_distance = linalg::dot(origin - plane.point, plane.normal);
+    const float signed_distance = linalg::dot(origin - plane.point, plane.normal) - radius;
 
     if (std::abs(denominator) < parallel_epsilon)
     {
@@ -179,8 +187,11 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
       return false;
   }
 
-  if (t_exit < 0.f)
-    return false; // hull is entirely behind the origin
+  // Behind the origin, or the origin sits ON the exit face heading out -- a body
+  // resting one radius off a floor is exactly there, and reading it as inside
+  // would hand back the far face and bounce it into the floor.
+  if (t_exit <= 0.f)
+    return false;
 
   // A closed hull always has a face opposing the ray, so an unset entry here
   // means the plane set was not one.
@@ -225,13 +236,18 @@ bool intersect_ray_primitive(const BVH_Primitive &prim, const vec3f &origin, con
 }
 
 // Every leaf primitive the ray reaches whose node entry is not past `cutoff()`.
+// `inflate` grows every node box by a sphere sweep's radius, so a leaf the
+// sphere reaches by its edge is visited; zero is the ray.
 template <typename Cutoff_T, typename Visit_T>
 void walk_ray(const Bounding_Volume_Hierarchy &bvh, const vec3f &origin, const vec3f &dir,
-              Span<const uint8_t> disabled_geometry, Cutoff_T cutoff, Visit_T visit)
+              Span<const uint8_t> disabled_geometry, Cutoff_T cutoff, Visit_T visit,
+              float inflate = 0.f)
 {
   std::vector<uint32_t> node_stack;
   node_stack.reserve(64);
   node_stack.push_back(bvh.root_node_idx);
+
+  const vec3f inflation{inflate, inflate, inflate};
 
   while (!node_stack.empty())
   {
@@ -239,7 +255,8 @@ void walk_ray(const Bounding_Volume_Hierarchy &bvh, const vec3f &origin, const v
     node_stack.pop_back();
 
     float t_node_hit;
-    if (!intersect_ray_aabb(origin, dir, node.aabb.min, node.aabb.max, t_node_hit))
+    if (!intersect_ray_aabb(origin, dir, node.aabb.min - inflation, node.aabb.max + inflation,
+                            t_node_hit))
       continue;
     if (t_node_hit > cutoff())
       continue;
@@ -285,6 +302,50 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
                out_hit = candidate;
            });
   return out_hit.hit;
+}
+
+std::optional<sweep_hit_t> bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh,
+                                            const vec3f& from, const vec3f& to, float radius,
+                                            Span<const uint8_t> disabled_geometry)
+{
+  if (bvh.nodes.empty())
+    return std::nullopt;
+
+  const vec3f dir = to - from;
+  if (linalg::dot(dir, dir) == 0.f)
+    return std::nullopt;
+
+  const vec3f inflation{radius, radius, radius};
+  std::optional<sweep_hit_t> nearest;
+  const auto cutoff = [&] { return nearest ? nearest->t : 1.f; };
+
+  walk_ray(
+      bvh, from, dir, disabled_geometry, cutoff,
+      [&](const BVH_Primitive &prim)
+      {
+        float t_prim;
+        float t_exit_prim;
+        vec3f normal_prim;
+        if (!intersect_ray_aabb(from, dir, prim.aabb.min - inflation, prim.aabb.max + inflation,
+                                t_prim, t_exit_prim, normal_prim))
+          return;
+        if (t_prim > cutoff())
+          return;
+        if (!prim.collision_planes.empty() &&
+            !intersect_sphere_sweep_convex_hull(prim.collision_planes, from, dir, radius, t_prim,
+                                                t_exit_prim, normal_prim))
+          return;
+
+        const float t = std::max(t_prim, 0.f);
+        if (t > 1.f)
+          return;
+        if (nearest && t >= nearest->t)
+          return;
+        nearest = sweep_hit_t{.t = t, .id = prim.id, .normal = normal_prim};
+      },
+      radius);
+
+  return nearest;
 }
 
 void bvh_intersect_ray_all(const Bounding_Volume_Hierarchy &bvh, const vec3f& origin,

@@ -25,6 +25,7 @@ struct Weapon_Entity : Entity
   uint32_t pickup_allowed_tick = {};
   Damage_Type damage_type = Damage_Type::Normal;
   Box_Volume volume = {.half_extents = {40.0f, 40.0f, 40.0f}};
+  Bounce bounce = {.restitution = 0.2f};
   Render render = {.mesh = assets::mesh_asset::Error};
 };
 

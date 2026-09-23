@@ -29,7 +29,7 @@ inline constexpr uint32_t to_abgr(color_t color)
 }
 
 // Inverse of to_abgr(). Only needed when an external library hands us a packed
-// value (e.g. Jolt's debug renderer).
+// value.
 inline constexpr color_t color_from_abgr(uint32_t packed)
 {
   return color_t{uint8_t(packed & 0xFF), uint8_t((packed >> 8) & 0xFF),

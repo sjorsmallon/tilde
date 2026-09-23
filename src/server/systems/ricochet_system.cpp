@@ -3,7 +3,6 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/movement_kernel.hpp"
-#include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../entity_lifecycle.hpp"
 #include "projectile_flight.hpp"
@@ -60,7 +59,8 @@ static float hull_support_along(const vec3f& normal)
 
 static void send_owner_to(server_context_t& context,
                           const shared::predicted_world_storage_t& world,
-                          const entities::Ricochet_Entity& ricochet, const hit_result_t& hit)
+                          const entities::Ricochet_Entity& ricochet,
+                          const shared::projectile_hit_t& hit)
 {
   entities::Player_Entity* owner =
       context.world.session.entity_system.get<entities::Player_Entity>(
@@ -74,8 +74,7 @@ static void send_owner_to(server_context_t& context,
   if (owner->health.current_health <= 0)
     return;
 
-  // Jolt's penetration axis can degenerate on a grazing contact; up is the one direction that
-  // always has a hull's worth of room above a surface you could reach.
+  // Every sweep normal is unit; up is the fallback for one that somehow is not.
   const vec3f normal = linalg::length(hit.normal) > 0.5f ? linalg::normalize(hit.normal)
                                                          : vec3f{0.f, 1.f, 0.f};
   // hit.position is the swept sphere's CENTRE at contact, a radius off the surface.
@@ -95,9 +94,6 @@ static void send_owner_to(server_context_t& context,
 
   // Velocity is kept, the remnant teleport's rule: a run or a fall carries across.
   owner->position = *feet;
-  set_kinematic_pose(*context.world.physics, owner->entity_id,
-                     owner->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                     owner->velocity);
 }
 
 void update_ricochets(server_context_t& context, const shared::predicted_world_storage_t& world,
@@ -106,6 +102,9 @@ void update_ricochets(server_context_t& context, const shared::predicted_world_s
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
   std::vector<shared::entity_uid_t> spent;
+
+  std::vector<shared::projectile_target_t> targets;
+  shared::collect_projectile_targets(entity_system, targets);
 
   for (entities::Ricochet_Entity& ricochet :
        entity_system.entities_of<entities::Ricochet_Entity>())
@@ -118,8 +117,8 @@ void update_ricochets(server_context_t& context, const shared::predicted_world_s
       continue;
     }
 
-    const std::optional<hit_result_t> hit =
-        fly_projectile(context, ricochet, ricochet.projectile, ricochet.collision_radius, dt);
+    const std::optional<shared::projectile_hit_t> hit = fly_projectile(
+        context, world, targets, ricochet, ricochet.projectile, ricochet.collision_radius, dt);
     if (!hit)
       continue;
 

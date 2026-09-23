@@ -2,7 +2,6 @@
 #include "entities/entity_reflection.hpp"
 #include "game_session.hpp"
 #include "shapes.hpp"
-#include "physics.hpp"
 
 namespace shared
 {
@@ -150,30 +149,6 @@ game_session_t build_session(const map_t &map)
   session.navmesh = map.navmesh;
 
   return session;
-}
-
-void populate_static_physics_bodies(physics_state_t &state, const map_t &map)
-{
-  for (const map_geometry_t &entry : map.geometry)
-  {
-    const map_entity_t *owner = map.find_by_uid(get_owner_uid(entry.value));
-    if (owner != nullptr && entities::entity_as<entities::Mover_Entity>(owner->entity.get()))
-      continue;
-
-    switch (get_kind(entry.value))
-    {
-    case geometry_kind_t::Static_Mesh:
-      // Skipped on purpose — see the note on the declaration.
-      break;
-
-    case geometry_kind_t::Brush:
-    {
-      const brush_geometry_t &brush = std::get<brush_geometry_t>(entry.value);
-      register_static_convex_hull(state, entry.uid, brush.hull_points);
-      break;
-    }
-    }
-  }
 }
 
 } // namespace shared

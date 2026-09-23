@@ -110,6 +110,7 @@ constexpr key_mapping_t key_mappings[] = {
     {key_t::Keypad_4, SDL_SCANCODE_KP_4}, {key_t::Keypad_5, SDL_SCANCODE_KP_5},
     {key_t::Keypad_6, SDL_SCANCODE_KP_6}, {key_t::Keypad_7, SDL_SCANCODE_KP_7},
     {key_t::Keypad_8, SDL_SCANCODE_KP_8}, {key_t::Keypad_9, SDL_SCANCODE_KP_9},
+    {key_t::Keypad_Plus, SDL_SCANCODE_KP_PLUS}, {key_t::Keypad_Minus, SDL_SCANCODE_KP_MINUS},
 };
 
 constexpr std::array<int, key_count> build_key_to_scancode()

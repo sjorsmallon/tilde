@@ -65,11 +65,15 @@ static void refresh_kooh_anchors(server_context_t& context)
   }
 }
 
-void update_koohs(server_context_t& context, float dt)
+void update_koohs(server_context_t& context, const shared::predicted_world_storage_t& world,
+                  float dt)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
   std::vector<shared::entity_uid_t> spent;
+
+  std::vector<shared::projectile_target_t> targets;
+  shared::collect_projectile_targets(entity_system, targets);
 
   for (entities::Kooh_Entity& kooh : entity_system.entities_of<entities::Kooh_Entity>())
   {
@@ -80,14 +84,14 @@ void update_koohs(server_context_t& context, float dt)
       continue;
     }
 
-    const std::optional<hit_result_t> hit =
-        fly_projectile(context, kooh, kooh.projectile, kooh.collision_radius, dt);
+    const std::optional<shared::projectile_hit_t> hit = fly_projectile(
+        context, world, targets, kooh, kooh.projectile, kooh.collision_radius, dt);
     if (!hit)
       continue;
 
     spent.push_back(kooh.entity_id);
 
-    entities::Player_Entity* victim  = entity_system.get<entities::Player_Entity>(hit->entity_id);
+    entities::Player_Entity* victim  = entity_system.get<entities::Player_Entity>(hit->entity_uid);
     entities::Player_Entity* shooter = entity_system.get<entities::Player_Entity>(kooh.projectile.owner_uid);
 
     const bool shooter_can_be_pulled = shooter != nullptr && shooter->health.current_health > 0;

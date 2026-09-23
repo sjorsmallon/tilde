@@ -19,7 +19,7 @@ struct Physics_Body_Entity : Entity
 
   Shape_Kind shape = Shape_Kind::Box;
   linalg::vec3f size = {};
-  linalg::vec3f velocity = {};
+  Bounce bounce = {};
   float mass = 10.0f;
   Render render = {};
 };

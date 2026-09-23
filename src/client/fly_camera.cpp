@@ -1,9 +1,32 @@
 #include "fly_camera.hpp"
 
+#include "hud/announcement.hpp"
 #include "../shared/math.hpp"
+
+#include <algorithm>
+#include <format>
 
 namespace client
 {
+
+void step_fly_speed_from_keypad(float& units_per_second)
+{
+  constexpr float SPEED_STEP_FACTOR = 1.25f;
+  constexpr float MIN_FLY_SPEED     = 50.0f;
+  constexpr float MAX_FLY_SPEED     = 20000.0f;
+
+  int steps = 0;
+  if (input::is_key_pressed(input::key_t::Keypad_Plus))
+    ++steps;
+  if (input::is_key_pressed(input::key_t::Keypad_Minus))
+    --steps;
+  if (steps == 0)
+    return;
+
+  const float factor = steps > 0 ? SPEED_STEP_FACTOR : 1.0f / SPEED_STEP_FACTOR;
+  units_per_second   = std::clamp(units_per_second * factor, MIN_FLY_SPEED, MAX_FLY_SPEED);
+  hud::set_announcement(std::format("Camera speed {:.0f}", units_per_second));
+}
 
 fly_camera_input_t read_fly_camera_keys()
 {

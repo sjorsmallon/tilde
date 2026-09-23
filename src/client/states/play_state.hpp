@@ -16,10 +16,6 @@
 #include "../skybox_selection.hpp"
 #include "../state_manager.hpp"
 #include "imgui.h"
-#include "physics.hpp"
-#ifdef JPH_DEBUG_RENDERER
-#include "../jolt_debug_renderer.hpp"
-#endif
 #include <deque>
 #include <memory>
 #include <vector>
@@ -120,6 +116,10 @@ private:
   // @Server, so it needs the forwarder that entering Connected installs.
   bool pending_match_join = false;
 
+  // Taken off client_context_t in on_enter, spent on the first frame we own a
+  // living body: a `setpos` before the join has admitted us moves nobody.
+  std::optional<camera_t> pending_spawn_view;
+
   // Storage, not state: refilled from the latest snapshot every frame the board
   // is up. Sized by the connection slot count because that IS the row bound --
   // one row per player, and a player needs a slot -- so collect_scoreboard_rows
@@ -132,9 +132,6 @@ private:
   int dt_history_index = 0;
   int dt_history_count = 0;
 
-#ifdef JPH_DEBUG_RENDERER
-  std::unique_ptr<client::jolt_debug_renderer_t> jolt_debug_renderer;
-#endif
 
   // Scratch for the debug_show_hitboxes overlay, reused across players and
   // frames. Unlike pose_storage this needs no stable address -- the volumes are

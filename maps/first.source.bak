@@ -9,7 +9,7 @@ cvars
   "mp_round_end_seconds" "0"
   "mp_round_seconds" "0"
   "next_map" "second"
-  "pm_air_acceleration" "7"
+  "pm_quake_air_acceleration" "7"
   "pm_maxspeed" "1000"
   "sv_skybox" "night_sky"
 }

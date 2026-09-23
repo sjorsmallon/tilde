@@ -9,8 +9,8 @@ namespace server
 
 bool destroy_entity(server_context_t &context, shared::entity_uid_t uid);
 
-// Give this client a body: a Player_Entity at a spawn marker, its inventory,
-// its team and its kinematic capsule. Returns the uid, or null_entity_uid if
+// Give this client a body: a Player_Entity at a spawn marker, its inventory
+// and its team. Returns the uid, or null_entity_uid if
 // the slot is out of range or the pool refused the spawn.
 //
 // Unconditional -- it does not ask whether the mode allows joining right now.

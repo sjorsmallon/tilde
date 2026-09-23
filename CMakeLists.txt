@@ -89,20 +89,6 @@ target_link_libraries(imgui PUBLIC
     Vulkan::Vulkan
 )
 
-# 5. Jolt Physics
-set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
-set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
-set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
-set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
-set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    JoltPhysics
-    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
-    GIT_TAG v5.2.0
-    SOURCE_SUBDIR Build  # Jolt's CMakeLists.txt lives in Build/, not the repo root
-)
-FetchContent_MakeAvailable(JoltPhysics)
-
 # 6. miniaudio (single-header audio backend)
 # Header-only: we don't use its CMakeLists (it builds tests/examples), just
 # populate the source and compile the implementation in our own TU
@@ -536,6 +522,11 @@ add_library(game_shared STATIC
     src/shared/mover_path.cpp
     src/shared/tween.cpp
     src/shared/movers.cpp
+    # The one sweep a flying thing asks, over the BVH and the predicted cut. collision_world_plan.md.
+    src/shared/projectile_sweep.hpp
+    src/shared/projectile_sweep.cpp
+    src/shared/bounce_body.hpp
+    src/shared/bounce_body.cpp
     src/shared/spawned_platforms.cpp
     src/shared/canopy.cpp
     src/shared/statues.cpp
@@ -543,8 +534,6 @@ add_library(game_shared STATIC
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
     src/shared/network/subtick_codec.cpp
-    src/shared/physics.hpp
-    src/shared/physics.cpp
     # Both channels' tables and fire helpers. Neither references a handler, so
     # they compile here with neither side present -- the two binder TUs are what
     # reference them, and those go into game_client below.
@@ -594,8 +583,7 @@ target_include_directories(game_shared PUBLIC
     # same directory glslc gets through -I below.
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders
 )
-target_link_libraries(game_shared PUBLIC libprotobuf Jolt)
-target_include_directories(game_shared PUBLIC ${joltphysics_SOURCE_DIR})
+target_link_libraries(game_shared PUBLIC libprotobuf)
 if(WIN32)
     # dbghelp turns the captured return addresses into names and file:line at
     # report time. PUBLIC so every module carrying the hook gets it too.
@@ -760,7 +748,6 @@ add_library(game_client SHARED
     # those handlers, so this DLL never references a server handler symbol --
     # and a missing/misspelled @Client handler is a link error on this target.
     ${CVAR_GEN_CLIENT_BINDINGS}
-    src/client/jolt_debug_renderer.cpp
     src/client/client_impl.cpp
     src/client/client_context.cpp
     src/client/raw_input_win32.cpp
@@ -944,6 +931,7 @@ add_library(game_server SHARED
     src/server/systems/hook_system.cpp
     src/server/systems/kooh_system.cpp
     src/server/systems/ricochet_system.cpp
+    src/server/systems/modifier_shot_system.cpp
     src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/player_input_system.cpp
@@ -955,6 +943,7 @@ add_library(game_server SHARED
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/physics_body_system.cpp
+    src/server/systems/bounce_body_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/respawn_system.cpp
 )
@@ -1180,6 +1169,16 @@ add_executable(movement_volumes_test src/test/movement_volumes_test.cpp)
 target_include_directories(movement_volumes_test PRIVATE src src/shared)
 target_link_libraries(movement_volumes_test PRIVATE game_shared)
 
+# A swept sphere stops where a hull would: the disabled set, the movers at their end pose.
+add_executable(projectile_sweep_test src/test/projectile_sweep_test.cpp)
+target_include_directories(projectile_sweep_test PRIVATE src src/shared)
+target_link_libraries(projectile_sweep_test PRIVATE game_shared)
+
+# A bounce body falls, returns, slides to rest, passes a switched-off brush, lands on a mover.
+add_executable(bounce_body_test src/test/bounce_body_test.cpp)
+target_include_directories(bounce_body_test PRIVATE src src/shared)
+target_link_libraries(bounce_body_test PRIVATE game_shared)
+
 # A team wall ripples once per entry, on the face entered, for the team that passes.
 add_executable(team_wall_ripples_test src/test/team_wall_ripples_test.cpp)
 target_include_directories(team_wall_ripples_test PRIVATE src src/shared)
@@ -1231,7 +1230,7 @@ target_link_libraries(hitbox_rig_test PRIVATE game_shared)
 
 # 24b. Lag compensation — the rewind path (shared/lag_compensation.cpp).
 # Links game_shared alone: the bracket check is pure arithmetic and the posing
-# half takes values, so no server_context_t, no socket and no Jolt. Loads the
+# half takes values, so no server_context_t and no socket. Loads the
 # real rig from resources/models, so it wants the project root as its cwd.
 add_executable(lag_compensation_test src/test/lag_compensation_test.cpp)
 target_include_directories(lag_compensation_test PRIVATE src src/shared)
@@ -1246,7 +1245,7 @@ target_include_directories(array_test PRIVATE src src/shared)
 
 # The allocation audit. Compiles memory_audit.cpp directly rather than linking
 # game_shared, the same way server_context_test does: the table logic is pure
-# struct manipulation and pulling in protobuf and Jolt to reach it would be
+# struct manipulation and pulling in protobuf to reach it would be
 # noise. The hook goes in too, so that under -DTILDE_MEMORY_AUDIT=ON the test
 # also proves a real `new` reaches the audit -- which is the one thing the
 # table-level checks cannot show.
@@ -1260,7 +1259,7 @@ endif()
 
 # Frame time distribution and CPU topology. Compiled directly for the same
 # reason memory_audit_test is: both are self-contained and pulling in protobuf
-# and Jolt to reach a histogram would be noise.
+# to reach a histogram would be noise.
 add_executable(frame_timing_test src/test/frame_timing_test.cpp
     src/shared/frame_timing.cpp
     src/shared/cpu_topology.cpp
@@ -1291,8 +1290,6 @@ target_link_libraries(server_context_test PRIVATE game_shared)
 # 26b. Game rules — the match FSM, the mode table and the win conditions.
 # Compiles the server sources directly, like server_context_test, rather than
 # linking game_server: none of this is on the module's GAME_SERVER_API surface.
-# Unlike that test it DOES stand Jolt up, because a round boundary moves every
-# player's kinematic capsule.
 # The rules FSM emits the match signals, so it links the queue and the generated
 # binder -- which references every handler, hence the whole handler list.
 set(MATCH_SERVER_SOURCES
@@ -1456,6 +1453,8 @@ set(GAME_TESTS
     entity_layout_test
     map_migration_test
     movement_volumes_test
+    projectile_sweep_test
+    bounce_body_test
     team_wall_ripples_test
     mover_path_test
     prefab_test

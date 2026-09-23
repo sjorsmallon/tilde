@@ -505,6 +505,8 @@ void Tool_Editor_State::update(float dt)
 
   if (input::is_key_pressed(input::key_t::F1))
     play_was_requested_by_key = true;
+  if (input::is_key_pressed(input::key_t::F2))
+    play_at_spawn_was_requested_by_key = true;
 
   // Update Camera
   if (!input::imgui_wants_mouse())
@@ -610,6 +612,8 @@ void Tool_Editor_State::update(float dt)
       snap_to_axis_view(mods.ctrl ? ViewMode::Left : ViewMode::Side);
     if (input::is_key_pressed(input::key_t::Keypad_7))
       snap_to_axis_view(mods.ctrl ? ViewMode::Bottom : ViewMode::TopDown);
+
+    step_fly_speed_from_keypad(state_manager::get_client_context().cvars->editor_speed);
 
     // Keypad 5 is Blender's ortho/perspective toggle, and having snapped to an
     // axis you immediately want it. Same effect as O, on the key the muscle
@@ -1168,8 +1172,10 @@ void Tool_Editor_State::draw_imgui_panels()
   }
 
   const bool toolbar_is_open = ImGui::BeginMainMenuBar();
-  bool       play_was_clicked = play_was_requested_by_key;
-  play_was_requested_by_key   = false;
+  bool       play_was_clicked = play_was_requested_by_key || play_at_spawn_was_requested_by_key;
+  const bool spawn_at_camera  = play_was_requested_by_key;
+  play_was_requested_by_key          = false;
+  play_at_spawn_was_requested_by_key = false;
   bool       back_to_menu_was_clicked = false;
   if (toolbar_is_open)
   {
@@ -1196,7 +1202,7 @@ void Tool_Editor_State::draw_imgui_panels()
 
     play_was_clicked |= ImGui::Button("play");
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("F1");
+      ImGui::SetTooltip("F1 at the camera, F2 at the spawn");
     back_to_menu_was_clicked = ImGui::Button("Back to Menu");
     ImGui::EndMainMenuBar();
   }
@@ -1224,7 +1230,10 @@ void Tool_Editor_State::draw_imgui_panels()
       // Clicking play in the editor means play, so the trip carries the
       // `join_game` a spectating connection would otherwise wait for you to
       // type. Play_State sends it once it is connected.
-      state_manager::get_client_context().requested_match_join = true;
+      client_context_t& client_context = state_manager::get_client_context();
+      client_context.requested_match_join = true;
+      if (spawn_at_camera)
+        client_context.requested_spawn_view = camera;
       state_manager::switch_to(game_state::play);
     }
   }

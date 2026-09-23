@@ -7,8 +7,6 @@
 // is wired to with its own amount, so a queued action's amount says which
 // signal fired.
 //
-// Jolt IS stood up here, unlike server_context_test: entering a round snaps
-// every player to a spawn marker, which moves their kinematic capsule.
 
 #include "server/entity_io_context.hpp"
 #include "server/entity_io_queue.hpp"
@@ -143,7 +141,6 @@ void stand_up(test_world_t& world, entities::Game_Mode mode)
 {
   world.context.cvars       = &world.cvars;
   world.context.tick_number = 1000;
-  world.context.world.physics = make_physics_state();
 
   world.cvars.sv_tickrate          = (float)tickrate;
   world.cvars.mp_warmup_seconds    = 0.f; // ends on a request, never on a clock
@@ -217,10 +214,6 @@ shared::entity_uid_t spawn_test_player(server_context_t& context,
   player->team_allegiance = team;
   player->health.max_health = health;
   player->health.current_health = health;
-
-  register_kinematic_capsule(*context.world.physics, uid, player->position,
-                             shared::player_capsule_radius,
-                             shared::player_capsule_cylinder_half_height);
   return uid;
 }
 
@@ -1244,7 +1237,6 @@ int main()
   std::printf("=== game_rules_test ===\n");
 
   std::setvbuf(stdout, nullptr, _IONBF, 0);
-  jolt_init();
 
   test_mode_table();
   test_gates();

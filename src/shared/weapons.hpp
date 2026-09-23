@@ -437,6 +437,25 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                 .leaves_bullet_impact = false}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+    // LMB delivers the zone to a surface by a shot; RMB fires the zone itself on a straight, unclipped fixed arc.
+    // Both rows are the flight alone: the zone's numbers are Timed_Movement_Modifier_Entity's own defaults.
+    {.weapon                  = entities::Weapon::Modifier_Gun,
+     .display_name            = "Modifier Gun",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 1.0f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 900.f,
+                                                .gravity_scale = 0.5f,
+                                                .spawns = entities::entity_type::Modifier_Shot_Entity}},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 700.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Timed_Movement_Modifier_Entity}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.

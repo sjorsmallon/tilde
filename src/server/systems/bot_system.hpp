@@ -5,7 +5,6 @@
 #include "../../shared/predicted_world.hpp"
 #include "../../shared/span.hpp"
 #include "../../shared/network/network_types.hpp"
-#include "../../shared/physics.hpp"
 #include "../bot_state.hpp"
 #include "../server_context.hpp"
 
@@ -13,7 +12,7 @@ namespace server
 {
 
 
-Bot_State spawn_bot(shared::game_session_t &session, physics_state_t &physics,
+Bot_State spawn_bot(shared::game_session_t &session,
                     const entities::Player_Spawn_Entity &marker,
                     int32_t slot, bot_behavior_t type = bot_behavior_t::Regular,
                     bot_personality_t personality = {});

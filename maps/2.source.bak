@@ -7,8 +7,8 @@ cvars
 {
   "g_gravity" "500"
   "next_map" "3"
-  "pm_model" "instant"
   "pm_maxspeed" "1000"
+  "pm_model" "instant"
   "sv_skybox" "night_sky"
 }
 materials
@@ -48,6 +48,18 @@ connections
     {
       "destination" "2"
       "keep_velocity" "false"
+    }
+  }
+  connection
+  {
+    "sender" "6"
+    "signal" "Left"
+    "target_kind" "Uid"
+    "target" "9"
+    "action" "Add"
+    override
+    {
+      "amount" "-1"
     }
   }
 }

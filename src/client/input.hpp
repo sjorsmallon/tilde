@@ -42,6 +42,7 @@ enum class key_t : uint16_t
   // with the tool hotkeys.
   Keypad_0, Keypad_1, Keypad_2, Keypad_3, Keypad_4,
   Keypad_5, Keypad_6, Keypad_7, Keypad_8, Keypad_9,
+  Keypad_Plus, Keypad_Minus,
   Count
 };
 

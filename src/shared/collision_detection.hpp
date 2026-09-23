@@ -4,6 +4,7 @@
 #include "plane.hpp"
 #include "span.hpp"
 #include <cmath>
+#include <optional>
 #include <vector>
 
 /*
@@ -116,6 +117,15 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
                                const vec3f& dir, float &out_t, float &out_t_exit,
                                vec3f& out_normal);
 
+// The same clip with every plane pushed out by `radius`: a SPHERE of that
+// radius swept along the ray, Quake's box trace. Exact against a face,
+// conservative at an edge or a corner by at most radius * (sqrt(2) - 1), which
+// is why there are no bevel planes -- collision_world_plan.md section 2 B.
+// `radius` zero is the ray test above.
+bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                                        const vec3f& dir, float radius, float& out_t,
+                                        float& out_t_exit, vec3f& out_normal);
+
 // A brush that is switched off this tick, by INDEX -- see
 // shared/disabled_geometry.hpp for why the switch is a parameter and not a bit
 // in the tree. Non-zero means "not there": the primitive is skipped as if it had
@@ -154,6 +164,26 @@ void bvh_intersect_aabb(const Bounding_Volume_Hierarchy &bvh, const shared::aabb
 // swallows.
 bool bvh_point_is_inside_solid(const Bounding_Volume_Hierarchy &bvh, const vec3f& point,
                                Span<const uint8_t> disabled_geometry = {});
+
+// What a swept sphere stopped at. `t` is along the SEGMENT [from, to], so the
+// sphere's center at the hit is from + (to - from) * t; zero means the origin
+// was already inside the solid (the normal is then the face it would have
+// entered through, which is what a projectile spawned in a wall bounces off).
+struct sweep_hit_t
+{
+  float        t;
+  Collision_Id id;
+  vec3f        normal;
+};
+
+// A sphere of `radius` swept from `from` to `to`, nearest entry first, through
+// the same disabled set every other query takes. A primitive carrying planes is
+// clipped by intersect_sphere_sweep_convex_hull; one without (the editor's BVH)
+// by its box inflated by the radius. Nothing past `to` is reported, and a
+// zero-length sweep answers nothing: there is no direction to enter along.
+[[nodiscard]] std::optional<sweep_hit_t>
+bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh, const vec3f& from, const vec3f& to,
+                 float radius, Span<const uint8_t> disabled_geometry = {});
 
 // Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the
 // hit distance when the ray crosses the triangle in front of the origin.

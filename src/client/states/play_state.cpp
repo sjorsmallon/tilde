@@ -17,7 +17,6 @@
 #include "../held_snapshot.hpp"
 #include "../event_handlers.hpp"
 #include "../../shared/cvars/cvar_console.hpp"
-#include "../../shared/physics.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/round_phase_rules.hpp"
 #include "../../shared/hit_region.hpp"
@@ -29,11 +28,9 @@
 #include "../../shared/tween.hpp"
 #include "../../shared/canopy.hpp"
 #include "../../shared/spawned_platforms.hpp"
+#include "../../shared/movement_modifiers.hpp"
 #include "../../shared/movement_volumes.hpp"
 #include "../../shared/weapons.hpp"
-#ifdef JPH_DEBUG_RENDERER
-#include <Jolt/Physics/Body/BodyManager.h>
-#endif
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
 #include "../../shared/timed_function.hpp"
@@ -619,9 +616,6 @@ static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
  // hash so we can verify we're running the same map as the server. 0 is a sentinel for not computed.
   ctx.world.map_content_hash = shared::compute_map_content_hash(map);
 
-  ctx.world.physics_state = make_physics_state();
-  shared::populate_static_physics_bodies(*ctx.world.physics_state, map);
-
   // The server announces this map's ghost once it sees us holding the map.
   ctx.world.ghost.reset();
   ctx.world.announced_ghost_hash = 0;
@@ -758,17 +752,9 @@ void Play_State::on_enter()
   // Read once and cleared: whoever asked for this trip asked for THIS trip.
   pending_match_join = ctx.requested_match_join;
   ctx.requested_match_join = false;
+  pending_spawn_view       = ctx.requested_spawn_view;
+  ctx.requested_spawn_view.reset();
 
-  // Jolt must be initialized before load_client_map builds a physics_state_t.
-  static bool jolt_initialized = false;
-  if (!jolt_initialized)
-  {
-    jolt_init();
-    jolt_initialized = true;
-  }
-  #ifdef JPH_DEBUG_RENDERER
-    jolt_debug_renderer = std::make_unique<client::jolt_debug_renderer_t>();
-  #endif
 
 
   const bool replay_requested = ctx.requested_replay.has_value();
@@ -864,9 +850,6 @@ void Play_State::on_exit()
 
   input::set_relative_mouse_mode(false);
 
-#ifdef JPH_DEBUG_RENDERER
-  jolt_debug_renderer.reset();
-#endif
 
   ctx.connection.phase = Connection_Phase::Disconnected;
   ctx.world = {};
@@ -1038,6 +1021,22 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   const bool noclip_active = ctx.cvars->cl_noclip;
   if (noclip_active && !noclip_was_active)
     noclip_camera = camera;
+
+  const entities::Player_Entity* spawned_player = try_find_my_player(ctx);
+  if (pending_spawn_view && spawned_player != nullptr &&
+      spawned_player->health.current_health > 0 && !noclip_active)
+  {
+    const vec3f feet = pending_spawn_view->position - vec3f{0.f, shared::player_eye_height, 0.f};
+    ctx.prediction.player_yaw           = pending_spawn_view->yaw;
+    ctx.prediction.player_pitch         = pending_spawn_view->pitch;
+    ctx.prediction.player_position      = feet;
+    ctx.prediction.player_velocity      = {};
+    ctx.prediction.visual_error_offset  = {};
+    const std::string setpos_line = std::format("setpos {} {} {}", feet.x, feet.y, feet.z);
+    console::get().execute_command(setpos_line.c_str());
+    pending_spawn_view.reset();
+  }
+
   if (!noclip_active && noclip_was_active)
   {
     // The body catches up with the camera: the aim is ours to write, the
@@ -1060,6 +1059,7 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
 
   if (noclip_active && gameplay_input_allowed)
   {
+    step_fly_speed_from_keypad(ctx.cvars->editor_speed);
     fly_camera_input_t fly_input = read_fly_camera_keys();
     if (connection_ui.mouse_captured)
     {
@@ -2738,9 +2738,6 @@ void Play_State::draw_imgui_panels()
     ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);
     ImGui::Checkbox("Hide Geometry", &ctx.cvars->debug_hide_geometry);
     ImGui::Checkbox("Show Entities", &ctx.cvars->debug_show_entity_counts);
-#ifdef JPH_DEBUG_RENDERER
-    ImGui::Checkbox("Show Physics Debug", &ctx.cvars->debug_show_physics_bodies);
-#endif
   }
   ImGui::End();
 
@@ -3085,6 +3082,22 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     {
       drawn_position = drawn_canopy_position(ctx, *canopy);
       drawn_scale    = canopy->half_extents * 2.0f;
+    }
+
+    // Drawn for exactly the ticks the predicted step reads it and where its flight puts it, so the box you
+    // see is the box that pulls.
+    if (const entities::Timed_Movement_Modifier_Entity* zone =
+            entities::entity_as<entities::Timed_Movement_Modifier_Entity>(&entity))
+    {
+      const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+      if (!shared::timed_movement_modifier_is_active_at(*zone, tick, 1.0f / tickrate))
+        continue;
+      const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
+                                                       .gravity               = ctx.cvars->g_gravity};
+      const vec3f at_tick = shared::flight_position_at(zone->projectile, zone->flight, zone->position, tick, flight);
+      const vec3f at_next = shared::flight_position_at(zone->projectile, zone->flight, zone->position, tick + 1, flight);
+      drawn_position = at_tick + (at_next - at_tick) * fraction;
+      drawn_scale    = zone->half_extents * 2.0f;
     }
 
     if (const entities::Ping_Marker_Entity* marker = entities::entity_as<entities::Ping_Marker_Entity>(&entity))
@@ -3481,24 +3494,6 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (const auto &fx : ctx.visuals.explosion_effects)
     scene.particles.push_back(
         explosion_parameters(fx.explosion_index, fx.position, fx.time_remaining, world_delta_seconds));
-
-  // Jolt physics debug overlay
-#ifdef JPH_DEBUG_RENDERER
-  if (ctx.cvars->debug_show_physics_bodies && ctx.world.physics_state && jolt_debug_renderer)
-  {
-    jolt_debug_renderer->set_debug_list(&scene.debug);
-    jolt_debug_renderer->SetCameraPos(
-        JPH::RVec3(camera.position.x, camera.position.y, camera.position.z));
-
-    JPH::BodyManager::DrawSettings draw_settings;
-    draw_settings.mDrawShape = true;
-    ctx.world.physics_state->physics_system.DrawBodies(draw_settings, jolt_debug_renderer.get());
-    ctx.world.physics_state->physics_system.DrawConstraints(jolt_debug_renderer.get());
-
-    jolt_debug_renderer->NextFrame();
-    jolt_debug_renderer->set_debug_list(nullptr);
-  }
-#endif
 
   scene.sky = skybox.resolve(ctx.cvars->sv_skybox.c_str());
 

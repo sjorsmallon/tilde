@@ -103,7 +103,7 @@ try_find_active_weapon(shared::game_session_t& session, const entities::Player_E
 [[nodiscard]] bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity& player,
                                            vec3f aim_direction, float tick_dt);
 
-// Reads thrown weapons back from Jolt and hands each to a living player whose slot for it is empty.
+// Hands each weapon lying in the world to a living player whose slot for it is empty.
 void update_dropped_weapons(server_context_t& context);
 
 } // namespace server

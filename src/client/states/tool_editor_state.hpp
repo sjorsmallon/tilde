@@ -78,6 +78,7 @@ private:
   std::optional<editor_tool_t> active_tool;
 
   bool play_was_requested_by_key = false;
+  bool play_at_spawn_was_requested_by_key = false;
 
   // Own state
   shared::map_t map;

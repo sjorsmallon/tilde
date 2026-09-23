@@ -20,7 +20,7 @@
 // is missing: the mutual-trade case (two shooters resolving against each other
 // in one tick both land damage). That fix is the input loop deferring damage to
 // a pass after itself, and the input loop is Tick() in server_impl.cpp — inside
-// the game_server DLL, behind no exported entry point, needing Jolt, a map and
+// the game_server DLL, behind no exported entry point, needing a map and
 // a socket to reach. There is no function to call. It is listed in todo.md as
 // the successor item, and the live check in lag_compensation_def.md §5 is what
 // exercises it today.

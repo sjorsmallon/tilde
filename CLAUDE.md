@@ -98,7 +98,7 @@ Tick()                    src/server/tick.cpp
     2 freeze what inputs read   the predicted world, then the hit-test world
     3 inputs              every client, then every bot. Shots are TESTED, not applied
     4 consequences        swaps, hits -> damage -> deaths, reloads
-    5 the rest of the world     rockets, physics, movers' riders; OBSERVERS last
+    5 the rest of the world     rockets, bounce bodies, movers' riders; OBSERVERS last
     6 deliver             deliver_pending_entity_actions, then the mover switches
   SEND                    server_send.cpp: the snapshot, the two batches, the replay
                           record, the changed cvars, the reliable blocks
@@ -1170,7 +1170,7 @@ friction, control — and `shared/movement_modifiers.{hpp,cpp}` is the whole of 
 - **A negative gravity is never grounded** (`player_move`'s `grounded` asks
   `gravity >= 0`), so a standing hull lifts. It falls UP and is pressed against
   the ceiling in air mode; walking on a ceiling is not built.
-- **Players and bots only.** Rockets, bubbles, platforms and Jolt read
+- **Players and bots only.** Rockets, bubbles, platforms and bounce bodies read
   `g_gravity`, and the editor's pad arc ignores a zone it passes through.
 - `apply_friction` answers a friction of zero with no decay; it divided by it.
 
@@ -1214,8 +1214,9 @@ toggle lands where movers cannot.
   nothing is off, which is what the bake's BVH, the editor's and every test pass.
   The DRAW follows the same bit through the same table, so what you walk through
   is what you cannot see. **The lightmap bake ignores it** — a brush baked into
-  the atlas leaves its shadow when it disappears — and so does Jolt, so a physics
-  crate still rests on a gate the player walks through.
+  the atlas leaves its shadow when it disappears. A bounce body reads the
+  `Free_For_All` view, so a crate falls through a switched-off gate and a team
+  wall is solid to it.
 - **A TEAM WALL IS THE SAME CUT WITH ONE MORE INPUT** (built 2026-09-22, never
   tried in game). `Geometry_Owner_Entity::passable_by` (`Team_Allegiance`,
   `@Networked @Editable`, `Free_For_All` meaning passable by NOBODY, the plain
@@ -1263,6 +1264,72 @@ toggle lands where movers cannot.
   remap the key through the same uid table as everything else; a brush tied
   outside a prefab is the "field that crosses" case and is cleared loudly.
 
+### One collision world — the projectile sweep and the bounce body
+
+Built 2026-09-23, never tried in game; `collision_world_plan.md` is the design
+of record and the deletion log. **JOLT IS GONE, and it was not replaced by
+box3d**: two descriptions of the map was the problem, not the engine. Jolt held
+a second copy of the world — no static meshes, a sculpted brush as its flat
+base hull, no movers, no platforms, no disabled set, no team walls — and
+everything that mattered (`player_move`, the hitscan clamp, the bake, the
+editor) read the other one, so a rocket flew through a lift and landed on a
+gate its shooter walked through. It was linked PUBLIC into `game_shared` to
+simulate two console toys and a thrown weapon.
+
+- **The rule: nothing but the bounce body SIMULATES, and everything QUERIES
+  `game_session_t::bvh` under a `predicted_world_t`.** The BVH stays the map's
+  SHAPE and is never written after `build_session`; the switch, the movers and
+  the volumes are the tick's STATE and travel as the cut. A projectile takes
+  the same view a mover takes, so it respects gates, lifts, landed platforms,
+  team walls and sculpted faces for free. box3d (MIT, alpha as of 2026-06-30)
+  is the door for stacking, constraints or ragdolls — as a simulation over ITS
+  copy with everything still querying ours — and it stays shut until one of
+  those is asked for.
+- **`shared::sweep_projectile(bvh, world, from, to, radius)` is the ONE
+  question a flying thing asks**, and `bvh_sweep_sphere` under it is Quake's
+  box trace: `intersect_sphere_sweep_convex_hull` pushes every plane out by the
+  radius and runs the ray clip (the ray clip IS that function at radius zero).
+  Exact on a face, conservative at an edge by at most `r(√2 − 1)`, which is why
+  there are no bevel planes and no GJK. The movers are swept at their END pose,
+  the pose `player_move` collides with; the nearer of map and movers wins.
+  `t = 0` is an origin already inside, with the face it would have entered
+  through. **An exit at `t <= 0` is a MISS**: a body resting exactly one radius
+  off a floor is ON the inflated face, and reading it as inside handed back the
+  far face and bounced it into the floor.
+- **Targets are the CURRENT entities, by the box each one physically is**
+  (`collect_projectile_targets`: a living player's hull, a living damageable's
+  volume, a body's size, a weapon lying in the world by its volume), swept as
+  inflated boxes with the shooter skipped by uid. Not the posed hitboxes — a
+  rocket is 12 units wide and does not need a limb — and not the frozen step-2
+  world, because projectiles fly in step 5 after everyone moved.
+  `fly_projectile` takes the OWNER's team view (`predicted_world_of`,
+  `Free_For_All` for nobody's): you shoot through what you can walk through,
+  for every resolution. Splash is a walk over the same target list measured to
+  each box's centre; the client's decal probe is `bvh_intersect_ray` through
+  the hidden set the draw uses.
+- **A crate and a dropped weapon are `MOVETYPE_BOUNCE`**
+  (`shared/bounce_body.{hpp,cpp}`, the `Bounce` component on
+  `Physics_Body_Entity` and `Weapon_Entity`): a sphere of the largest half
+  extent under `g_gravity`, swept by the same function, reflected by
+  `restitution`, slowed along a floor by `friction` — a fraction of the
+  tangential speed lost per SECOND (default 4), because per CONTACT a 400-unit
+  throw travelled 12 units — and at rest once slower than `BOUNCE_REST_SPEED`
+  on something floor-like. A contact leaves the body `BOUNCE_CONTACT_EPSILON`
+  off the face so the next sweep starts strictly outside it. `wake_bounce_body`
+  is the ONE way anything outside writes a velocity (the throw, a blast, a hit)
+  and takes the body out of rest. `Shape_Kind` picks the MESH and nothing else.
+  The tumble is cosmetic, `throw_spin_for` hashing an axis from the tick and
+  the uid so the server keeps no random state. `update_bounce_bodies` runs in
+  step 5 where `step_physics` sat, through the `Free_For_All` view — a body has
+  no team, so a team wall is solid to it and a switched-off gate is not there.
+  Server-simulated and replicated, never predicted: no input drives a body.
+- **Not built, on purpose**: body-vs-body collision and stacking (bodies pass
+  through each other), rotation from contacts, a resting body riding a mover
+  (`bounce_body_test` asserts it stays), a predicted body. The three untuned
+  numbers are the rest speed, the throw spin and the friction, all constants
+  until one has been felt. `projectile_sweep_test` and `bounce_body_test` are
+  the pins.
+
 ### The platform gun — a spawned solid is a mover that does not move
 
 Built 2026-09-21, never tried in game. `Platform_Entity` (`@runtime_only
@@ -1294,10 +1361,11 @@ ONE SOLID BOX from the tick it lands until `rest_seconds` later.
 - **The draw is the predicted state's**: Ghost shader in flight, the entity's
   material at rest with the clock wipe running landing-to-expiry, scale from
   `half_extents` rather than `render.scale`.
-- **Not done:** shots and rockets do not see it (`resolve_player_shot` tests the
-  BVH only — `mover_def.md` §5's "shots test the mover list" is not built for
-  movers either), Jolt does not see it, and it has no sound. It is world-axis
-  aligned whatever the aim.
+- **Not done:** shots do not see it (`resolve_player_shot` tests the BVH only —
+  `mover_def.md` §5's "shots test the mover list" is not built for movers
+  either), and it has no sound. Rockets and every other projectile DO see it:
+  a landed platform is a mover and `sweep_projectile` sweeps the movers. It is
+  world-axis aligned whatever the aim.
 
 ### The canopy — a mover whose poses are another player's positions
 
@@ -1335,7 +1403,8 @@ whole shared half and `server/systems/canopy_system.cpp` the server's.
   into a wall makes the push take its carry back rather than kill them. The
   carrier never meets their own canopy by CLEARANCE (24 units above the hull, more
   than any launch moves a hull in one tick), because `player_move` has no uid to
-  exclude it by. Shots and rockets do not see it, as with the landed platform.
+  exclude it by. Shots do not see it, as with the landed platform; a projectile
+  does, since a canopy is a mover.
 - `player_move_step_invariance_test` 16c pins the carry, the one-tick trail and
   the no-crush; `movement_volumes_test` pins that a canopy with a carrier is a
   mover.

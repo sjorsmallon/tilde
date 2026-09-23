@@ -8,7 +8,6 @@
 #include "entities/entity_reflection.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
-#include "physics.hpp"
 #include "server_context.hpp"
 #include "subtick.hpp"
 #include "systems/inventory_system.hpp"
@@ -456,9 +455,7 @@ int main()
   // the weapon it displaces has to be DESTROYED: a slot overwritten in place
   // leaves a Weapon_Entity nothing holds a handle to.
   {
-    jolt_init();
     server::server_context_t context;
-    context.world.physics = make_physics_state();
 
     const shared::entity_uid_t owner_uid =
         context.world.session.entity_system.spawn<entities::Player_Entity>();
@@ -495,8 +492,8 @@ int main()
         context.world.session.entity_system.get<entities::Weapon_Entity>(granted_uid);
     check(thrown != nullptr && thrown->owner_uid == shared::null_entity_uid,
           "...and the same weapon entity survives with no owner");
-    check(context.world.physics->entity_body_map.contains(granted_uid),
-          "...as a registered physics body");
+    check(thrown != nullptr && !thrown->bounce.at_rest && thrown->bounce.velocity.x > 900.f,
+          "...as a bounce body carrying the thrower's speed plus the throw");
     check(!server::try_throw_active_weapon(context, *owner, {1.f, 0.f, 0.f}, tick_dt),
           "throwing an empty hand does nothing");
 
@@ -509,8 +506,6 @@ int main()
     server::update_dropped_weapons(context);
     check(owner->inventory.weapons[slot] == granted_uid && thrown->owner_uid == owner_uid,
           "touching it after the delay puts the same weapon back in its slot");
-    check(!context.world.physics->entity_body_map.contains(granted_uid),
-          "...and removes its physics body");
 
     check(server::try_throw_active_weapon(context, *owner, {1.f, 0.f, 0.f}, tick_dt),
           "a picked-up weapon can be thrown again");

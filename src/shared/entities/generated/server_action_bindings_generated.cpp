@@ -835,6 +835,8 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Fire
   },
   {},   // Remnant_Entity
+  {},   // Modifier_Shot_Entity
+  {},   // Timed_Movement_Modifier_Entity
 };
 
 // The shared ACCEPTANCE mask and this table are two artifacts of one

@@ -50,7 +50,7 @@ constexpr Enum_Array<key_t, key_name_row_t> KEY_NAMES = {{
     {key_t::Keypad_0, "kp_0"}, {key_t::Keypad_1, "kp_1"}, {key_t::Keypad_2, "kp_2"},
     {key_t::Keypad_3, "kp_3"}, {key_t::Keypad_4, "kp_4"}, {key_t::Keypad_5, "kp_5"},
     {key_t::Keypad_6, "kp_6"}, {key_t::Keypad_7, "kp_7"}, {key_t::Keypad_8, "kp_8"},
-    {key_t::Keypad_9, "kp_9"},
+    {key_t::Keypad_9, "kp_9"},    {key_t::Keypad_Plus, "kp_plus"}, {key_t::Keypad_Minus, "kp_minus"},
 }};
 
 static_assert(rows_in_enum_order<&key_name_row_t::key>(KEY_NAMES),

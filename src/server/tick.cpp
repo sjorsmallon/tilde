@@ -7,7 +7,6 @@
 
 #include "../shared/frame_timing.hpp"
 #include "../shared/ghost.hpp"
-#include "../shared/physics.hpp"
 #include "../shared/player_animator.hpp"
 #include "../shared/predicted_world.hpp"
 #include "entity_io_queue.hpp"
@@ -27,9 +26,10 @@
 #include "systems/hook_system.hpp"
 #include "systems/kooh_system.hpp"
 #include "systems/ricochet_system.hpp"
+#include "systems/modifier_shot_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"
-#include "systems/physics_body_system.hpp"
+#include "systems/bounce_body_system.hpp"
 #include "systems/ping_system.hpp"
 #include "systems/player_input_system.hpp"
 #include "systems/respawn_system.hpp"
@@ -49,15 +49,6 @@ bool Tick()
 
   // A load frees the world, so it runs before anything holds a pointer into it.
   service_pending_map_change(context);
-
-  // Before RECEIVE, because admitting a player registers a kinematic capsule:
-  // the load above is the only thing that mints a physics state, so a null one
-  // here means init() failed and there is no tick to run.
-  if (!context.world.physics)
-  {
-    log_error("Server tick with no physics state — init() must have failed");
-    return false;
-  }
 
   const float tick_dt = static_cast<float>(get_tick_interval());
 
@@ -143,10 +134,12 @@ bool Tick()
       }
     }
 
-    update_rockets(context, tick_dt);
-    update_hooks(context, tick_dt);
-    update_koohs(context, tick_dt);
+    update_rockets(context, world, tick_dt);
+    update_hooks(context, world, tick_dt);
+    update_koohs(context, world, tick_dt);
     update_ricochets(context, world, tick_dt);
+    update_modifier_shots(context, world, tick_dt);
+    update_timed_movement_modifiers(context);
     update_bubbles(context, world);
     update_platforms(context, world);
     // After the inputs, so the pose it writes is where the carrier ended this tick (canopy.hpp).
@@ -158,8 +151,7 @@ bool Tick()
                     static_cast<uint32_t>(context.cvars->sv_tickrate),
                     context.cvars->map_respawn_delay_seconds);
 
-    step_physics(*context.world.physics, tick_dt);
-    update_physics_bodies(context.world.session, *context.world.physics);
+    update_bounce_bodies(context, world, tick_dt);
     update_dropped_weapons(context);
 
     // Observers last: they look at where things ended up and write nothing but

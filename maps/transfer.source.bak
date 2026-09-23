@@ -6,8 +6,8 @@ entity
 cvars
 {
   "g_gravity" "220"
-  "pm_air_acceleration" "7"
-  "pm_friction" "5"
+  "pm_quake_air_acceleration" "7"
+  "pm_quake_friction" "5"
   "pm_maxspeed" "500"
   "sv_skybox" "night_sky"
 }

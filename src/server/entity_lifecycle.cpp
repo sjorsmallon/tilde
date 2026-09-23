@@ -59,14 +59,6 @@ shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &conte
                slot, player->entity_id, player->position.x, player->position.y,
                player->position.z);
 
-  // Kinematic Jolt body so rockets and overlap queries can find this player.
-  register_kinematic_capsule(*context.world.physics,
-                             player_uid,
-                             player->position +
-                                 vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                             shared::player_capsule_radius,
-                             shared::player_capsule_cylinder_half_height);
-
   fire_player_spawned_event(context, *player);
   return player_uid;
 }
@@ -121,10 +113,8 @@ bool destroy_entity(server_context_t &context, shared::entity_uid_t uid)
     return false;
   }
 
-  unregister_physics_body(*context.world.physics, uid);
-
-  // Server-side side tables keyed by uid. Same leak as the Jolt body, different
-  // container: an entry that outlives the entity it names is only noticed when
+  // Server-side side tables keyed by uid: an entry that outlives the entity it
+  // names is only noticed when
   // something tries to resolve it. `death_tick_by_player_uid` recovers on its
   // own (update_respawns logs and drops an entry whose player is gone), so this
   // is not a live bug -- it is the same class of bug, so it gets torn down in

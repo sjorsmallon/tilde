@@ -5,7 +5,6 @@
 #include "map.hpp"
 #include "movers.hpp"
 #include "navmesh.hpp"
-#include "physics.hpp"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -127,14 +126,5 @@ inline constexpr entities::entity_type GEOMETRY_OWNER_TYPES[] = {
 };
 
 [[nodiscard]] bool entity_type_can_own_geometry(entities::entity_type type);
-
-// Register Jolt static bodies for the map's geometry (brushes,
-// both as their axis-aligned bound). Call after build_session on both
-// server and client when physics is needed.
-//
-// Static meshes are skipped: their collision shape would be the triangle mesh,
-// and registering their bounding box instead would put an invisible wall around
-// every prop. The BVH still picks them up, so player movement collides with them.
-void populate_static_physics_bodies(physics_state_t &state, const map_t &map);
 
 } // namespace shared

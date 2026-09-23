@@ -21,8 +21,8 @@ void schedule_respawn(server_context_t &context,
 
 // Drains the side table: for any entry where
 // `current_tick >= death_tick + respawn_delay_seconds * tickrate_hz`, resets
-// the player (position/orientation from a spawn marker, health, velocity),
-// reposes the kinematic capsule, and fires PLAYER_SPAWNED. Called once per
+// the player (position/orientation from a spawn marker, health, velocity)
+// and fires PLAYER_SPAWNED. Called once per
 // server tick after damage systems.
 //
 // The delay arrives as a VALUE, not as a cvar read: map_respawn_delay_seconds

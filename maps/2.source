@@ -11,11 +11,6 @@ cvars
   "pm_model" "instant"
   "sv_skybox" "night_sky"
 }
-materials
-{
-  "0" ""
-  "1" "resources/textures/glass_blue"
-}
 connections
 {
   connection
@@ -66,7 +61,7 @@ connections
 brush
 {
   "_uid" "1"
-  "vertices" "-752.571716 -184.153839 -640, -752.571716 -184.153839 640, -752.571716 -71.8461609 -640, -752.571716 -71.8461609 640, 1993.47217 -184.153839 -640, 1993.47217 -184.153839 640, 1993.47217 -71.8461609 -640, 1993.47217 -71.8461609 640"
+  "vertices" "-752.571777 -184.153839 -640, -752.571777 -184.153839 640, -752.571777 -71.8461609 -640, -752.571777 -71.8461609 640, 1993.47217 -184.153839 -640, 1993.47217 -184.153839 640, 1993.47217 -71.8461609 -640, 1993.47217 -71.8461609 640"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -76,8 +71,8 @@ brush
   face
   {
     "normal" "-1 0 0"
-    "distance" "752.571716"
-    "material" "1"
+    "distance" "752.571777"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
@@ -93,7 +88,7 @@ brush
   {
     "normal" "-0 -1 -0"
     "distance" "184.153839"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -109,7 +104,7 @@ brush
   {
     "normal" "0 0 -1"
     "distance" "640"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -125,7 +120,7 @@ brush
   {
     "normal" "-0 -0 1"
     "distance" "640"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -141,7 +136,7 @@ brush
   {
     "normal" "0 1 0"
     "distance" "-71.8461609"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -157,7 +152,7 @@ brush
   {
     "normal" "1 -0 -0"
     "distance" "1993.47217"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
@@ -197,7 +192,7 @@ brush
   {
     "normal" "-1 0 0"
     "distance" "-2790.53711"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
@@ -213,7 +208,7 @@ brush
   {
     "normal" "-0 -1 -0"
     "distance" "184.153839"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -229,7 +224,7 @@ brush
   {
     "normal" "0 0 -0.99999994"
     "distance" "640.000427"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -245,7 +240,7 @@ brush
   {
     "normal" "-0 -0 0.99999994"
     "distance" "640.000427"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -261,7 +256,7 @@ brush
   {
     "normal" "0 1 0"
     "distance" "-71.8461609"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -277,7 +272,7 @@ brush
   {
     "normal" "1 -0 -0"
     "distance" "4879.87305"
-    "material" "1"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"

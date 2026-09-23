@@ -1,7 +1,6 @@
 #include "systems/hit_resolution_system.hpp"
 
 #include "../shared/effects/generated/effects_generated.hpp"
-#include "../shared/physics.hpp"
 #include "../shared/player_constants.hpp"
 #include "../shared/movement_override.hpp"
 #include "../shared/player_move.hpp"
@@ -41,11 +40,6 @@ static void apply_pending_swaps(server_context_t& context)
 
     std::swap(shooter->position, target->position);
     std::swap(shooter->velocity, target->velocity);
-
-    for (entities::Player_Entity* swapped : {shooter, target})
-      set_kinematic_pose(*context.world.physics, swapped->entity_id,
-                         swapped->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                         swapped->velocity);
   }
   context.outgoing.pending_swaps.clear();
 }
@@ -74,9 +68,6 @@ static void apply_pending_teleports(server_context_t& context)
       continue;
 
     shooter->position = remnant->position;
-    set_kinematic_pose(*context.world.physics, shooter->entity_id,
-                       shooter->position + vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                       shooter->velocity);
 
     destroy_entity(context, teleport.remnant_uid);
   }

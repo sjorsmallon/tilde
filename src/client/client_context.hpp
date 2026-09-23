@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/audio_system.hpp"
+#include "camera.hpp"
 #include "remote_interpolation.hpp"
 #include "replay_playback.hpp"
 
@@ -13,7 +14,6 @@
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/map.hpp"
-#include "../shared/physics.hpp"
 #include "../shared/replay_recorder.hpp"
 #include "../shared/player_move.hpp"
 #include "../shared/round_phase_rules.hpp"
@@ -163,16 +163,6 @@ struct local_world_t
   // Verified against the server's CmdAccept.content_hash to detect a
   // client/server map mismatch. 0 = not computed (verification skipped).
   uint32_t map_content_hash = 0;
-
-  // Client-owned static physics world. Effect handlers (e.g. the
-  // rocket-explosion handler) cast against this to resolve surface contact
-  // locally. Null in editor / menu states and before the first map load.
-  //
-  // OWNED here, not borrowed. The unique_ptr used to live on Play_State with a
-  // raw copy in this slot, which made teardown ORDER load-bearing: on_exit had
-  // to null the borrow before dropping the owner, or a late effect dispatch
-  // would cast against a freed world.
-  std::unique_ptr<physics_state_t> physics_state;
 
   // The ghost the server last announced, out of our cache or off the wire; empty when there is none or it
   // is still on its way. The hash is what an arriving S2C_GhostData is checked against.
@@ -524,6 +514,10 @@ struct client_context_t
   //
   // Not in the connection group: it is set BEFORE on_enter, which resets that.
   bool requested_match_join = false;
+
+  // The editor camera F1 left from: the first living body this trip gets is
+  // moved there and aimed along it. Same one-trip lifetime as the join above.
+  std::optional<camera_t> requested_spawn_view;
 
   // What THIS client receives, one file per map per connection. Outside the
   // groups: both resets FINISH it rather than wipe it, so the index is written.

@@ -9,8 +9,8 @@ cvars
   "mp_round_end_seconds" "0"
   "mp_round_seconds" "0"
   "next_map" "firstdwdaw"
-  "pm_acceleration" "instant"
-  "pm_air_acceleration" "7"
+  "pm_model" "instant"
+  "pm_quake_air_acceleration" "7"
   "pm_maxspeed" "1000"
   "sv_replay_auto" "1"
   "sv_skybox" "night_sky"
@@ -2142,7 +2142,7 @@ entity
   "orientation" "0 -0.70710677 0 0.70710677"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Red"
 }
 entity
 {
@@ -2390,7 +2390,7 @@ entity
   "orientation" "0 -0.70710677 0 0.70710677"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Blu"
 }
 entity
 {

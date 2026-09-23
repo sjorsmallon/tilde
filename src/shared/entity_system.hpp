@@ -186,8 +186,8 @@ struct Entity_System
 
   // uid -> where it lives. This is the P7 handle mechanism: `entity_uid_t` is
   // the handle the rest of the codebase already passes around (Rocket_Entity::
-  // owner_id, physics_state_t's body maps, hit_result_t, snapshot_frame_t's
-  // keys), and this table is what finally makes it resolvable in one step
+  // owner_id, projectile_hit_t, snapshot_frame_t's keys), and this table is
+  // what finally makes it resolvable in one step
   // instead of a linear scan per system.
   std::unordered_map<entity_uid_t, entity_location_t> locations;
 
@@ -399,12 +399,11 @@ struct Entity_System
   //
   // This is the STORAGE primitive: it removes the value from its pool and
   // repairs the uid index, and that is all it does. Anything an entity owns
-  // outside the pool -- a Jolt body above all -- is torn down by the layer that
-  // knows about it. On the server that layer is
+  // outside the pool -- the server's side tables keyed by uid -- is torn down
+  // by the layer that knows about it. On the server that layer is
   // `server::destroy_entity(context, uid)` (src/server/entity_lifecycle.hpp),
   // and server code calls THAT, not this. Entity_System lives in game_shared and
-  // has no business knowing what physics_state_t is; see the header there for
-  // why that stayed true instead of becoming an installed callback.
+  // has no business knowing what the server keeps beside it.
   bool destroy(entity_uid_t uid);
 
   void reset();

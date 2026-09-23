@@ -1,3 +1,4 @@
+#include "../shared/bounce_body.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "damage.hpp"
 
@@ -42,9 +43,8 @@ static vec3f knockback_velocity_for(const damage_info_t &info, const vec3f& vict
   return to_victim * (info.knockback_force / distance);
 }
 
-// Player_Entity-specific path: write knockback velocity directly (Jolt impulses
-// are no-ops on kinematic capsules, and AddLinearVelocity gets clobbered by the
-// next set_kinematic_pose), subtract HP, detect the >0 → <=0 crossing.
+// Player_Entity-specific path: write knockback velocity directly, subtract HP,
+// detect the >0 → <=0 crossing.
 //
 // Takes a TOTAL rather than one hit, so the single-hit and batched paths cannot
 // disagree about what dying involves. `credited` names who the kill goes to and
@@ -151,9 +151,8 @@ static void apply_damage_to_player(server_context_t &context,
       knockback_velocity_for(info, player_knockback_center(player)), info);
 }
 
-// Physics_Body_Entity path: dynamic bodies take impulse, not HP. Matches the
-// pre-Jolt code's "knockback_force is a velocity delta" convention, so we
-// use AddLinearVelocity rather than AddImpulse (which would scale by mass).
+// Physics_Body_Entity path: a body takes a velocity delta, not HP --
+// knockback_force is a velocity, never scaled by mass.
 static void apply_damage_to_physics_body(server_context_t &context,
                                          const damage_info_t &info,
                                          entities::Physics_Body_Entity &body)
@@ -165,8 +164,7 @@ static void apply_damage_to_physics_body(server_context_t &context,
   const vec3f direction = (distance > 1e-4f)
                               ? to_body * (1.f / distance)
                               : vec3f{0.f, 1.f, 0.f};
-  add_linear_velocity(*context.world.physics, info.victim_uid,
-                      direction * info.knockback_force);
+  shared::wake_bounce_body(body.bounce, direction * info.knockback_force);
 }
 
 static float damage_scale_against(const entities::Damageable_Entity &damageable,

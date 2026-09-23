@@ -70,7 +70,7 @@ struct hitscan_result_t
 // Deliberately knows nothing about the world: the CALLER casts against the
 // world first (cast_ray) and passes the resulting distance as `max_range`, so
 // "a wall blocks the shot" is a clamp rather than a second comparison in here.
-// That keeps this a pure function -- no physics_state_t, no Jolt headers, no
+// That keeps this a pure function -- no BVH, no session, no
 // skeleton, and the test needs none of them.
 //
 // PRECONDITION: `direction` is normalized. Distances are measured in units of

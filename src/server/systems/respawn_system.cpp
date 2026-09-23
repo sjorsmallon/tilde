@@ -179,11 +179,6 @@ void respawn_all_players(server_context_t &context)
     place_player_at_spawn(context.world.session, player,
                           marker ? *marker : origin_fallback_spawn());
 
-    set_kinematic_pose(*context.world.physics, player.entity_id,
-                       player.position +
-                           vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                       vec3f{0.f, 0.f, 0.f});
-
     fire_player_spawned_event(context, player);
     ++rotation_index;
   }
@@ -248,15 +243,6 @@ void update_respawns(server_context_t &context,
       place_player_at_spawn(context.world.session, *player,
                             marker ? *marker : origin_fallback_spawn());
     }
-
-    // Move the kinematic Jolt capsule so subsequent overlap/swept queries
-    // this tick (rocket splash, trigger volumes) see the player at the new
-    // position, not the death position. Matches the offset
-    // register_kinematic_capsule uses at connect time.
-    set_kinematic_pose(*context.world.physics, uid,
-                       player->position +
-                           vec3f{0.f, shared::player_capsule_center_offset, 0.f},
-                       vec3f{0.f, 0.f, 0.f});
 
     fire_player_spawned_event(context, *player);
   }

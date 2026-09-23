@@ -23,8 +23,15 @@ struct fixed_arc_flight_settings_t
                                                          uint32_t                         ticks_since_launch,
                                                          const fixed_arc_flight_settings_t& settings)
 {
-  const float seconds = static_cast<float>(std::min(ticks_since_launch, flight.flight_ticks)) *
-                        settings.tick_interval_seconds;
+  if (flight.flight_ticks == 0)
+    return flight.launch_position;
+
+  // Quadratic ease-out along the ballistic arc: same path and endpoint, leaves at twice the speed and arrives at rest.
+  const float flight_seconds = static_cast<float>(flight.flight_ticks) * settings.tick_interval_seconds;
+  const float progress       = static_cast<float>(std::min(ticks_since_launch, flight.flight_ticks)) /
+                               static_cast<float>(flight.flight_ticks);
+  const float remaining      = 1.f - progress;
+  const float seconds        = flight_seconds * (1.f - remaining * remaining);
 
   return advance_projectile(projectile_parameters_of(projectile), settings.gravity,
                             flight.launch_position, projectile.velocity, seconds)

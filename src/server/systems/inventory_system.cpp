@@ -2,13 +2,11 @@
 
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/physics.hpp"
+#include "../../shared/bounce_body.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/shapes.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
-
-#include <Jolt/Physics/Body/BodyInterface.h>
 
 #include <algorithm>
 #include <cmath>
@@ -19,6 +17,7 @@ namespace server
 static constexpr float THROW_SPAWN_DISTANCE         = 32.f;
 static constexpr float THROW_SPEED                  = 400.f;
 static constexpr float THROW_UPWARD_SPEED           = 150.f;
+static constexpr float THROW_SPIN_DEGREES_PER_SECOND = 360.f;
 static constexpr float THROW_PICKUP_DELAY_SECONDS   = 0.75f;
 
 // The one place a weapon enters a hand. Every pickup or card-draw goes through here, so
@@ -260,8 +259,10 @@ bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity&
   weapon->pickup_allowed_tick =
       context.tick_number + static_cast<uint32_t>(std::ceil(THROW_PICKUP_DELAY_SECONDS / tick_dt));
 
-  register_dynamic_box(*context.world.physics, thrown_uid, position, weapon->volume.half_extents,
-                       velocity);
+  weapon->bounce.velocity         = {0.f, 0.f, 0.f};
+  weapon->bounce.angular_velocity =
+      shared::throw_spin_for(context.tick_number, thrown_uid, THROW_SPIN_DEGREES_PER_SECOND);
+  shared::wake_bounce_body(weapon->bounce, velocity);
   return true;
 }
 
@@ -279,8 +280,6 @@ static shared::aabb_bounds_t pickup_bounds_of(const entities::Weapon_Entity& wea
 void update_dropped_weapons(server_context_t& context)
 {
   shared::game_session_t& session = context.world.session;
-  physics_state_t&        physics = *context.world.physics;
-  JPH::BodyInterface&     body_interface = physics.physics_system.GetBodyInterface();
 
   Span<entities::Weapon_Entity> weapons = session.entity_system.entities_of<entities::Weapon_Entity>();
   Span<entities::Player_Entity> players = session.entity_system.entities_of<entities::Player_Entity>();
@@ -289,17 +288,6 @@ void update_dropped_weapons(server_context_t& context)
   {
     if (weapon.owner_uid != shared::null_entity_uid)
       continue;
-
-    const auto body = physics.entity_body_map.find(weapon.entity_id);
-    if (body != physics.entity_body_map.end())
-    {
-      const JPH::RVec3 jolt_position = body_interface.GetCenterOfMassPosition(body->second);
-      const JPH::Quat  jolt_rotation = body_interface.GetRotation(body->second);
-
-      weapon.position    = {jolt_position.GetX(), jolt_position.GetY(), jolt_position.GetZ()};
-      weapon.orientation = {jolt_rotation.GetX(), jolt_rotation.GetY(), jolt_rotation.GetZ(),
-                            jolt_rotation.GetW()};
-    }
 
     if (context.tick_number < weapon.pickup_allowed_tick)
       continue;
@@ -318,7 +306,6 @@ void update_dropped_weapons(server_context_t& context)
       if (!linalg::intersect_aabb_aabb(hull.min, hull.max, pickup.min, pickup.max))
         continue;
 
-      unregister_physics_body(physics, weapon.entity_id);
       weapon.owner_uid               = player.entity_id;
       player.inventory.weapons[slot] = weapon.entity_id;
       break;

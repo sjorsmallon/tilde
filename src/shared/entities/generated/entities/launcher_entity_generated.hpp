@@ -24,6 +24,9 @@ struct Launcher_Entity : Entity
   Fire_Trigger trigger = Fire_Trigger::Primary;
   float spread_yaw_degrees = 0.0f;
   float spread_pitch_degrees = 0.0f;
+  float speed_variation = 0.0f;
+  float flight_seconds_variation = 0.0f;
+  float rest_seconds_variation = 0.0f;
   uint32_t shots_fired = {};
   Render render = {.mesh = assets::mesh_asset::Box, .scale = {16.0f, 16.0f, 16.0f}};
 };
