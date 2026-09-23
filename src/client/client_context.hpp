@@ -99,21 +99,18 @@ struct Saved_Input
 static constexpr uint32_t MAX_PENDING_INPUTS = 128;
 
 // --- Remote player interpolation ---
-// The snapshot ring and the interpolation cursor both live in client/remote_interpolation.hpp,
+// The snapshot rings and the interpolation cursor both live in client/remote_interpolation.hpp,
 // which is where the reasoning is too. What is left here is the per-player
 // state around them: who the slot holds, and what the last sample rendered to.
+// The player's pose is read from replication_t::interpolated_entities by its
+// uid, the same ring every other replicated entity has.
 struct Remote_Player_State
 {
   int32_t slot_index = invalid_slot_idx;
   // Which entity currently occupies the slot. A slot can change occupant, and
-  // interpolating across that would lerp the new player in from the old
-  // player's last position.
+  // the death timer below must not carry across that.
   shared::entity_uid_t entity_uid = shared::null_entity_uid;
   bool active = false;
-  // Per player rather than one shared pair: "time since arrival" means something
-  // different for every entity, so the old global phase could only ever describe
-  // them all by accident. The ring is what the RENDER CLOCK indexes into.
-  client::interpolation_ring_t interpolation;
   vec3f render_position = {0, 0, 0};
   float render_yaw = 0.f;
   float render_pitch = 0.f;
@@ -415,6 +412,13 @@ struct replication_t
 {
   std::unordered_map<int32_t, Remote_Player_State> remote_players;
 
+  // One ring per replicated entity with a Render, players included and the
+  // local player excluded. Fed by the snapshot apply and read at the cursor by
+  // the draw, so a rocket, a crate and a remote body all move between ticks
+  // rather than in steps of one. Per entity rather than one shared pair: "time
+  // since arrival" means something different for every entity, so a global
+  // phase could only ever describe them all by accident.
+  client::interpolated_entities_t interpolated_entities;
 
   // WHERE ON THE SERVER'S TICK AXIS THE CLIENT IS DRAWING. One per connection:
   // every remote entity's ring is indexed by this same clock, which is what a

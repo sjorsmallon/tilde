@@ -16,6 +16,8 @@
 // uses.
 #include "../client/remote_interpolation.hpp"
 
+#include "../shared/entity_system.hpp"
+
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -293,6 +295,90 @@ static void test_drawn_history()
                   "and the newest frame is what a present-time press reads");
 }
 
+// ---------------------------------------------------------------------------
+// Every entity with a Render has a ring, not only the players. A rocket, a
+// crate and a hook all move in steps of one server tick otherwise, and the
+// orientation is what a tumbling crate turns by.
+// ---------------------------------------------------------------------------
+
+static void test_entity_rings()
+{
+  printf("\nrings for every entity with a Render\n");
+
+  {
+    interpolation_ring_t ring;
+    snapshot_pose_t older;
+    older.position    = {0.f, 0.f, 0.f};
+    older.orientation = linalg::from_axis_angle({0.f, 1.f, 0.f}, 170.f);
+    older.server_tick = 10;
+    snapshot_pose_t newer;
+    newer.position    = {10.f, 0.f, 0.f};
+    newer.orientation = linalg::from_axis_angle({0.f, 1.f, 0.f}, -170.f);
+    newer.server_tick = 11;
+    push_snapshot_pose(ring, older);
+    push_snapshot_pose(ring, newer);
+
+    const interpolation_result_t mid = sample_interpolated_pose(ring, 10.5);
+    check(mid.status == interpolation_status_t::interpolated, "a non-player ring brackets the cursor");
+    check_near(mid.pose.position.x, 5.f, 0.001f, "and lerps its position");
+    // 170 and -170 about Y are 20 degrees apart the short way and 340 the long
+    // way; the short way's midpoint is 180, the long way's is 0.
+    const quatf half_turn = linalg::from_axis_angle({0.f, 1.f, 0.f}, 180.f);
+    check_near(std::abs(linalg::dot(mid.pose.orientation, half_turn)), 1.f, 0.001f,
+               "and blends the orientation the short way round");
+  }
+
+  {
+    interpolation_ring_t ring;
+    snapshot_pose_t spawn;
+    spawn.position    = {100.f, 0.f, 0.f};
+    spawn.server_tick = 50;
+    push_snapshot_pose(ring, spawn);
+
+    const interpolation_result_t one = sample_interpolated_pose(ring, 47.0);
+    check(one.status == interpolation_status_t::starved, "a fresh spawn behind the cursor is starved");
+    check_near(one.pose.position.x, 100.f, 0.001f, "and is drawn at its spawn pose, not nowhere");
+
+    snapshot_pose_t next = spawn;
+    next.position.x  = 110.f;
+    next.server_tick = 51;
+    push_snapshot_pose(ring, next);
+    const interpolation_result_t two = sample_interpolated_pose(ring, 47.0);
+    check(two.status == interpolation_status_t::behind_ring, "two poses ahead of the cursor is behind_ring");
+    check_near(two.pose.position.x, 100.f, 0.001f, "and still draws the oldest until the cursor reaches it");
+  }
+
+  {
+    shared::Entity_System frame;
+    const shared::entity_uid_t rocket = frame.spawn<entities::Rocket_Entity>();
+    const shared::entity_uid_t crate  = frame.spawn<entities::Physics_Body_Entity>();
+    const shared::entity_uid_t me     = frame.spawn<entities::Player_Entity>();
+    const shared::entity_uid_t other  = frame.spawn<entities::Player_Entity>();
+    const shared::entity_uid_t spawn  = frame.spawn<entities::Player_Spawn_Entity>();
+    frame.get<entities::Rocket_Entity>(rocket)->position = {1.f, 2.f, 3.f};
+    frame.get<entities::Player_Entity>(other)->view_angle_yaw = 90.f;
+    frame.get<entities::Player_Entity>(other)->body_yaw       = 45.f;
+
+    client::interpolated_entities_t rings;
+    client::feed_interpolation_rings(rings, frame, 20, me);
+    check(rings.size() == 3, "one ring per entity with a Render, the local player excluded");
+    check(rings.contains(rocket) && rings.contains(crate) && rings.contains(other),
+          "the rocket, the crate and the remote player have one");
+    check(!rings.contains(me), "the local player has none");
+    check(!rings.contains(spawn), "an entity with no Render has none");
+    check_near(rings[rocket].newest().position.y, 2.f, 0.001f, "a ring holds the frame's position");
+    check_near(rings[other].newest().yaw, 90.f, 0.001f, "a player's ring carries the view yaw");
+    check_near(rings[other].newest().body_yaw, 45.f, 0.001f, "and the body yaw");
+    check_equal_u32(rings[rocket].newest().server_tick, 20, "stamped with the frame's tick");
+
+    frame.destroy(rocket);
+    client::feed_interpolation_rings(rings, frame, 21, me);
+    check(!rings.contains(rocket), "a frame that drops a uid erases its ring");
+    check(rings.size() == 2, "and nothing else's");
+    check_equal_u32(rings[crate].pushed, 2, "the survivors keep accumulating");
+  }
+}
+
 int main()
 {
   printf("remote_interpolation_test\n");
@@ -542,6 +628,7 @@ int main()
   }
 
   test_drawn_history();
+  test_entity_rings();
 
   printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
   return failures == 0 ? 0 : 1;

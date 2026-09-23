@@ -194,7 +194,8 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
     else
     {
       auto& remote_player = context.replication.remote_players[slot_index];
-      // don't lerp positions if the entity id changed (e.g. player disconnected and rejoined)
+      // A new occupant of the slot is a new ring by uid; what must not carry
+      // across is the death timer.
       if (remote_player.active && remote_player.entity_uid != player.entity_id)
       {
         remote_player = {};
@@ -203,10 +204,6 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       remote_player.active = true;
       remote_player.slot_index = slot_index;
       remote_player.entity_uid = player.entity_id;
-
-      push_snapshot_pose(remote_player.interpolation,
-                         {player.position, player.view_angle_yaw, player.view_angle_pitch,
-                          player.body_yaw, server_tick});
 
       // death_tick only moves on a death or a respawn, so this seeds the timer
       // that the render loop advances -- once per transition, not per snapshot.
@@ -221,6 +218,12 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       }
     }
   }
+
+  // Every entity with a Render, players included; our own body is predicted
+  // ahead and gets no ring. After the player loop, which is what resolves
+  // my_entity_uid for this frame.
+  client::feed_interpolation_rings(context.replication.interpolated_entities, decoded.frame.entities,
+                                   server_tick, context.connection.my_entity_uid);
 
   // record the live edge tick (as like a horizon to interpolate against)
   client::record_snapshot_tick(

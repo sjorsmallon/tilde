@@ -1,5 +1,6 @@
 #include "remote_interpolation.hpp"
 
+#include "../shared/entity_system.hpp"
 #include "../shared/math.hpp"
 
 #include <cmath>
@@ -62,9 +63,41 @@ void advance_interpolation_cursor(interpolation_cursor_t& cursor, float dt,
                        static_cast<double>(cursor.rate);
 }
 
+void feed_interpolation_rings(interpolated_entities_t& rings, shared::Entity_System& frame,
+                              uint32_t server_tick, shared::entity_uid_t excluded_uid)
+{
+  for (auto [entity, render] : frame.entities_with<entities::Render>())
+  {
+    (void)render;
+    if (entity.entity_id == excluded_uid)
+      continue;
+
+    snapshot_pose_t pose;
+    pose.position    = entity.position;
+    pose.orientation = entity.orientation;
+    pose.server_tick = server_tick;
+    if (const entities::Player_Entity* player = entities::entity_as<entities::Player_Entity>(&entity))
+    {
+      pose.yaw      = player->view_angle_yaw;
+      pose.pitch    = player->view_angle_pitch;
+      pose.body_yaw = player->body_yaw;
+    }
+    push_snapshot_pose(rings[entity.entity_id], pose);
+  }
+
+  for (auto it = rings.begin(); it != rings.end();)
+    it = frame.try_find(it->first) == nullptr ? rings.erase(it) : std::next(it);
+}
+
 static interpolated_pose_t drop_stamp(const snapshot_pose_t& pose)
 {
-  return {pose.position, pose.yaw, pose.pitch, pose.body_yaw};
+  interpolated_pose_t dropped;
+  dropped.position    = pose.position;
+  dropped.orientation = pose.orientation;
+  dropped.yaw         = pose.yaw;
+  dropped.pitch       = pose.pitch;
+  dropped.body_yaw    = pose.body_yaw;
+  return dropped;
 }
 
 interpolation_result_t sample_interpolated_pose(const interpolation_ring_t& ring, double cursor_tick)
@@ -97,6 +130,8 @@ interpolation_result_t sample_interpolated_pose(const interpolation_ring_t& ring
     pose.position.x = shared::lerp_clamped(older.position.x, newer.position.x, t);
     pose.position.y = shared::lerp_clamped(older.position.y, newer.position.y, t);
     pose.position.z = shared::lerp_clamped(older.position.z, newer.position.z, t);
+    // The short way round too, for the reason linalg.hpp gives beside nlerp.
+    pose.orientation = linalg::nlerp(older.orientation, newer.orientation, shared::clamp(t, 0.f, 1.f));
     // The SHORT way round, through the same function the server rewinds shots
     // with -- if the two disagreed, the silhouette drawn here would not be the
     // one hit-tested there.

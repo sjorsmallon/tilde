@@ -101,6 +101,26 @@ struct drawn_mover_poses_t
   shared::path_pose_t drawn;
 };
 
+struct drawn_pose_t
+{
+  vec3f position;
+  quatf orientation;
+};
+
+// The ring at the cursor when the entity has one, else the session's own pose. Every status the
+// sampler answers carries a pose to draw at -- a freshly spawned entity is drawn at its spawn pose
+// until the cursor reaches it, never nowhere.
+static drawn_pose_t drawn_pose_of(const client_context_t &ctx, const entities::Entity &entity)
+{
+  const auto ring = ctx.replication.interpolated_entities.find(entity.entity_id);
+  if (ring == ctx.replication.interpolated_entities.end() || ring->second.pushed == 0)
+    return {entity.position, entity.orientation};
+
+  const client::interpolation_result_t interpolated =
+      client::sample_interpolated_pose(ring->second, ctx.replication.interpolation_cursor.tick);
+  return {interpolated.pose.position, interpolated.pose.orientation};
+}
+
 // Drawn where the predicted step tests it, never at the snapshot's position a round trip behind.
 static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
@@ -2516,7 +2536,10 @@ void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame
     if (remote_player.death_tick != 0)
       remote_player.death_animation_seconds += world_dt;
 
-    if (!remote_player.active || remote_player.interpolation.pushed == 0)
+    if (!remote_player.active)
+      continue;
+    const auto ring = ctx.replication.interpolated_entities.find(remote_player.entity_uid);
+    if (ring == ctx.replication.interpolated_entities.end() || ring->second.pushed == 0)
       continue;
 
     double sample_tick = ctx.replication.interpolation_cursor.tick;
@@ -2524,20 +2547,20 @@ void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame
       sample_tick = *frame.first_person_view->seen_cursor_tick;
 
     const client::interpolation_result_t interpolated =
-        client::sample_interpolated_pose(remote_player.interpolation, sample_tick);
+        client::sample_interpolated_pose(ring->second, sample_tick);
 
     if (interpolated.status == client::interpolation_status_t::dry &&
         ctx.cvars->cl_interpolation_debug)
     {
       log_warning("[CLIENT] interpolation buffer dry for slot {} at render tick {:.2f} "
                   "(newest held {}); frozen. raise cl_interpolation_delay_ticks if frequent",
-                  slot, sample_tick, remote_player.interpolation.newest().server_tick);
+                  slot, sample_tick, ring->second.newest().server_tick);
     }
     if (interpolated.status == client::interpolation_status_t::behind_ring &&
         ctx.cvars->cl_interpolation_debug)
     {
       log_warning("[CLIENT] slot {} sampled at tick {:.2f}, older than the oldest pose held ({}); frozen",
-                  slot, sample_tick, remote_player.interpolation.oldest().server_tick);
+                  slot, sample_tick, ring->second.oldest().server_tick);
     }
 
     remote_player.render_position = interpolated.pose.position;
@@ -3056,7 +3079,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (!mesh.valid())
       continue;
 
-    vec3f              drawn_position = entity.position;
+    const drawn_pose_t drawn_pose     = drawn_pose_of(ctx, entity);
+    vec3f              drawn_position = drawn_pose.position;
     vec3f              drawn_scale    = render.scale;
     entities::Material drawn_material = render.material;
     renderer::clock_wipe_t clock_wipe = {};
@@ -3111,7 +3135,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     draw.mesh       = mesh;
     draw.clock_wipe = clock_wipe;
     draw.transform  = linalg::compose_transform(
-        drawn_position, linalg::compose_model_rotation(entity.orientation, render.rotation),
+        drawn_position, linalg::compose_model_rotation(drawn_pose.orientation, render.rotation),
         drawn_scale);
 
     // Same split the geometry surface path makes, and the editor preview with

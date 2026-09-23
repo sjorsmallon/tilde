@@ -1,10 +1,17 @@
 #pragma once
 
 #include "../shared/array.hpp"
+#include "../shared/entity_uid.hpp"
 #include "../shared/lag_compensation.hpp"
 #include "../shared/linalg.hpp"
 
 #include <cstdint>
+#include <unordered_map>
+
+namespace shared
+{
+struct Entity_System;
+}
 
 namespace client
 {
@@ -13,12 +20,18 @@ namespace client
 // snapshot. This is what the interpolator reads FROM; what it hands back is an
 // interpolated_pose_t, and the server_tick stamp is the whole difference --
 // this one says when it was true, that one is a pose at a time you asked for.
+//
+// ONE pose type for every entity: the three angles are a player's and stay zero
+// for anything else, the orientation is what a rocket, a crate or a hook turns
+// by. A smaller record for the non-players would be a second ring and a second
+// sampler for the same question.
 struct snapshot_pose_t
 {
-  vec3f    position  = {0, 0, 0};
-  float    yaw       = 0.f;
-  float    pitch     = 0.f;
-  float    body_yaw  = 0.f;
+  vec3f    position    = {0, 0, 0};
+  quatf    orientation = quatf::identity();
+  float    yaw         = 0.f;
+  float    pitch       = 0.f;
+  float    body_yaw    = 0.f;
   uint32_t server_tick = 0;
 };
 
@@ -43,6 +56,19 @@ struct interpolation_ring_t
 
 
 void push_snapshot_pose(interpolation_ring_t& ring, const snapshot_pose_t& pose);
+
+// One ring per replicated entity that carries a Render, keyed by uid; a remote
+// player is one entry like any other. A light gets a ring that never moves,
+// which costs INTERPOLATION_RING_CAPACITY poses and buys having no per-type
+// "does this move" flag to forget beside the field that actually does.
+using interpolated_entities_t = std::unordered_map<shared::entity_uid_t, interpolation_ring_t>;
+
+// The ONE writer of the rings: pushes this tick's pose for every entity in the
+// frame with a Render, a player's angles included, and erases the ring of every
+// uid the frame no longer carries. `excluded_uid` is the local player, who is
+// predicted ahead and never interpolated behind.
+void feed_interpolation_rings(interpolated_entities_t& rings, shared::Entity_System& frame,
+                              uint32_t server_tick, shared::entity_uid_t excluded_uid);
 
 
 // Where in the SERVER's tick history remote players are being drawn: a
@@ -82,10 +108,11 @@ void advance_interpolation_cursor(interpolation_cursor_t& cursor, float dt,
 
 struct interpolated_pose_t
 {
-  vec3f position = {0, 0, 0};
-  float yaw      = 0.f;
-  float pitch    = 0.f;
-  float body_yaw = 0.f;
+  vec3f position    = {0, 0, 0};
+  quatf orientation = quatf::identity();
+  float yaw         = 0.f;
+  float pitch       = 0.f;
+  float body_yaw    = 0.f;
 };
 
 enum class interpolation_status_t
