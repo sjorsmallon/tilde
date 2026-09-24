@@ -446,6 +446,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Kooh_Entity}, // runtime only
     {.type = entity_type::Ricochet_Entity}, // runtime only
     {.type = entity_type::Platform_Entity}, // runtime only
+    {.type = entity_type::Shrinking_Platform_Entity}, // runtime only
     {.type = entity_type::Canopy_Entity}, // runtime only
     {.type = entity_type::Bubble_Entity}, // runtime only
     {.type = entity_type::Physics_Body_Entity},

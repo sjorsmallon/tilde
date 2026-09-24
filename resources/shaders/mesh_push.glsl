@@ -6,7 +6,7 @@ layout(push_constant) uniform PushConstants {
     mat4 model;
     vec4 color;             // material base colour * draw tint; a is the output alpha
     vec4 clock_wipe_center; // xyz world, w = fraction wiped
-    vec4 clock_wipe_axis_x;
+    vec4 clock_wipe_axis_x; // w = dissolve threshold, 0 off (dissolve.glsl)
     vec4 clock_wipe_axis_y;
 } pc;
 

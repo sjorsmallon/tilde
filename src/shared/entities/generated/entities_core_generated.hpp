@@ -69,14 +69,15 @@ enum class Weapon : uint8_t
   Magnet = 8,
   Mock = 9,
   Platform = 10,
-  Remnant = 11,
-  Ricochet = 12,
-  Canopy = 13,
-  Statue = 14,
-  Modifier_Gun = 15,
+  Shrinking_Platform = 11,
+  Remnant = 12,
+  Ricochet = 13,
+  Canopy = 14,
+  Statue = 15,
+  Modifier_Gun = 16,
 };
 
-constexpr uint32_t Weapon_COUNT = 16;
+constexpr uint32_t Weapon_COUNT = 17;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -306,35 +307,36 @@ enum class entity_type : uint16_t
   Kooh_Entity = 7,
   Ricochet_Entity = 8,
   Platform_Entity = 9,
-  Canopy_Entity = 10,
-  Bubble_Entity = 11,
-  Physics_Body_Entity = 12,
-  Damageable_Entity = 13,
-  Particle_Emitter_Entity = 14,
-  Sound_Emitter_Entity = 15,
-  Point_Light_Entity = 16,
-  Spot_Light_Entity = 17,
-  Directional_Light_Entity = 18,
-  Trigger_Volume_Entity = 19,
-  Jump_Pad_Entity = 20,
-  Reflection_Volume_Entity = 21,
-  Game_Rules_Entity = 22,
-  Logic_Counter_Entity = 23,
-  Geometry_Owner_Entity = 24,
-  Ping_Marker_Entity = 25,
-  Logic_Timer_Entity = 26,
-  Path_Node_Entity = 27,
-  Mover_Entity = 28,
-  Launcher_Entity = 29,
-  Movement_Modifier_Entity = 30,
-  Remnant_Entity = 31,
-  Modifier_Shot_Entity = 32,
-  Timed_Movement_Modifier_Entity = 33,
+  Shrinking_Platform_Entity = 10,
+  Canopy_Entity = 11,
+  Bubble_Entity = 12,
+  Physics_Body_Entity = 13,
+  Damageable_Entity = 14,
+  Particle_Emitter_Entity = 15,
+  Sound_Emitter_Entity = 16,
+  Point_Light_Entity = 17,
+  Spot_Light_Entity = 18,
+  Directional_Light_Entity = 19,
+  Trigger_Volume_Entity = 20,
+  Jump_Pad_Entity = 21,
+  Reflection_Volume_Entity = 22,
+  Game_Rules_Entity = 23,
+  Logic_Counter_Entity = 24,
+  Geometry_Owner_Entity = 25,
+  Ping_Marker_Entity = 26,
+  Logic_Timer_Entity = 27,
+  Path_Node_Entity = 28,
+  Mover_Entity = 29,
+  Launcher_Entity = 30,
+  Movement_Modifier_Entity = 31,
+  Remnant_Entity = 32,
+  Modifier_Shot_Entity = 33,
+  Timed_Movement_Modifier_Entity = 34,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 34;
+constexpr uint32_t ENTITY_TYPE_COUNT = 35;
 
 enum class component_type : uint16_t
 {

@@ -1382,7 +1382,7 @@ static platform_drop_result_t drop_onto_spawned_platform(const cvar_state_t& cva
   out_platform_uid = system.spawn(entities::entity_type::Platform_Entity);
   entities::Platform_Entity* platform = system.get<entities::Platform_Entity>(out_platform_uid);
   platform->flight       = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 1, .flight_ticks = flight_ticks};
-  platform->rest_seconds = 60.f;
+  platform->solid_seconds = 60.f;
 
   entities::Movement movement{};
   vec3 feet = vec3{0.f, 100.f + platform->half_extents.y + drop_height, 0.f};

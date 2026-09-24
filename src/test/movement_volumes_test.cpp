@@ -87,6 +87,9 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     // A platform answers only once it has landed, as an owner answers only once it is off.
     if (entities::Platform_Entity* platform = system.get<entities::Platform_Entity>(spawned_uids.back()))
       platform->flight = {.launch_tick = 1, .flight_ticks = 0};
+    if (entities::Shrinking_Platform_Entity* platform =
+            system.get<entities::Shrinking_Platform_Entity>(spawned_uids.back()))
+      platform->flight = {.launch_tick = 1, .flight_ticks = 0};
   }
 
   // A canopy answers only for a carrier the system holds: the one player spawned above.
@@ -180,6 +183,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a mover entity is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Platform_Entity) > 0,
         "a landed platform is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Shrinking_Platform_Entity) > 0,
+        "a landed shrinking platform is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Canopy_Entity) > 0,
         "a canopy with a carrier is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Player_Entity) > 0,
@@ -508,15 +513,16 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
 
   platform->flight              = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 30};
   platform->projectile.velocity = {600.f, 0.f, 0.f};
-  platform->rest_seconds        = 2.f;
+  platform->solid_seconds       = 2.f;
   platform->half_extents        = {48.f, 4.f, 48.f};
 
   check(cut_at(10 + 29).empty(), "the last tick of the flight is still a ghost");
   check(cut_at(10 + 30).size() == 1, "the tick it lands is the tick it is solid");
   check(cut_at(10 + 30 + 119).size() == 1, "the last tick of its rest is still solid");
   check(cut_at(10 + 30 + 120).empty(), "two seconds at sixty hertz is 120 ticks of rest, and then it is gone");
-  check(shared::platform_has_expired_at(*platform, 10 + 30 + 120, flight.tick_interval_seconds) &&
-            !shared::platform_has_expired_at(*platform, 10 + 30 + 119, flight.tick_interval_seconds),
+  const shared::platform_view_t view = shared::platform_view_of(*platform);
+  check(shared::platform_has_vanished_at_tick(view, 10 + 30 + 120, flight.tick_interval_seconds) &&
+            !shared::platform_has_vanished_at_tick(view, 10 + 30 + 119, flight.tick_interval_seconds),
         "the server reaps it on the tick the cut drops it");
 
   const shared::mover_t& rested = cut_at(10 + 60)[0];
@@ -529,10 +535,51 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
             std::fabs(rested.swept_bounds.max.y - 104.f) < 0.01f,
         "the box sits where half a second at 600 units a second left it");
 
-  check(shared::platform_rest_fraction(*platform, 10 + 30, 0.f, flight.tick_interval_seconds) == 0.f &&
-            std::fabs(shared::platform_rest_fraction(*platform, 10 + 30 + 60, 0.f,
-                                                     flight.tick_interval_seconds) - 0.5f) < 1e-4f,
-        "the wipe runs from landing to expiry");
+  check(shared::platform_solid_fraction_elapsed(view, 10 + 30, 0.f, flight.tick_interval_seconds) == 0.f &&
+            std::fabs(shared::platform_solid_fraction_elapsed(view, 10 + 30 + 60, 0.f,
+                                                              flight.tick_interval_seconds) - 0.5f) < 1e-4f,
+        "the wipe runs from landing to vanishing");
+  check(std::fabs(shared::platform_dissolve_fraction(0.8f)) < 1e-4f &&
+            std::fabs(shared::platform_dissolve_fraction(0.9f) - 0.5f) < 1e-4f &&
+            std::fabs(shared::platform_dissolve_fraction(1.f) - 1.f) < 1e-4f,
+        "the dissolve runs over the last fifth");
+}
+
+static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
+{
+  printf("\n[pin] a shrinking platform's box shrinks toward half_extents_when_vanishing on the cut's clock\n");
+
+  shared::Entity_System               system;
+  const shared::entity_uid_t          uid      = system.spawn(entities::entity_type::Shrinking_Platform_Entity);
+  entities::Shrinking_Platform_Entity* platform = system.get<entities::Shrinking_Platform_Entity>(uid);
+
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+
+  platform->flight                      = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 0};
+  platform->projectile.velocity         = {0.f, 0.f, 0.f};
+  platform->solid_seconds               = 2.f;
+  platform->half_extents                = {64.f, 4.f, 64.f};
+  platform->half_extents_when_vanishing = {8.f, 4.f, 8.f};
+
+  const shared::platform_view_t view = shared::platform_view_of(*platform);
+
+  std::vector<shared::mover_t> movers;
+  const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
+  {
+    movers.clear();
+    shared::collect_spawned_platforms(system, tick, flight, movers);
+    return movers;
+  };
+
+  check(std::fabs(cut_at(10)[0].swept_bounds.max.x - 64.f) < 1e-4f, "it lands at half_extents");
+  check(std::fabs(cut_at(10 + 60)[0].swept_bounds.max.x - 36.f) < 1e-4f,
+        "halfway through its solid time it is halfway to half_extents_when_vanishing");
+  check(std::fabs(cut_at(10 + 119)[0].swept_bounds.max.y - 104.f) < 1e-4f, "y is held, so the top does not drop");
+  check(cut_at(10 + 120).empty(), "and it vanishes on the same tick a plain platform would");
+
+  const linalg::vec3f drawn = shared::platform_half_extents_at(view, 10 + 60, 0.5f, flight.tick_interval_seconds);
+  check(std::fabs(drawn.x - (64.f - 56.f * (60.5f / 120.f))) < 1e-4f,
+        "the draw reads the same lerp with the sub-tick fraction");
 }
 
 int main()
@@ -543,6 +590,7 @@ int main()
   test_a_timed_modifier_is_live_for_exactly_its_lifetime();
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
+  test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps();
   test_a_switch_reaches_the_geometry_it_owns();
   test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone();
   test_a_drawn_mover_carries_its_rider_by_the_same_fraction();

@@ -380,6 +380,9 @@ struct mesh_draw_t
   // Drawn as usual AND into one of the pass's outlines, in its view_pass_t colour.
   outline_t outline = outline_t::none;
   clock_wipe_t clock_wipe = {};
+  // A noise dissolve, 0 off and 1 wholly gone (resources/shaders/dissolve.glsl). Rides the
+  // clock wipe's pipeline bit, so it costs the wipe's pipeline and no other.
+  float dissolve = 0.0f;
 };
 
 // --- Debug drawing ---

@@ -26,6 +26,7 @@ Weapon :: enum {
     Magnet,
     Mock,
     Platform,
+    Shrinking_Platform,
     Remnant,
     Ricochet,
     Canopy,
@@ -432,15 +433,28 @@ Ricochet_Entity :: entity @runtime_only {
     render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, material = { color = {1, 0.45, 0.15} } }
 }
 
-// A ghost while it flies, a solid box from the tick it lands until rest_seconds later (shared/spawned_platforms.hpp).
+// A ghost while it flies, a solid box from the tick it lands until solid_seconds later (shared/spawned_platforms.hpp).
 Platform_Entity :: entity @runtime_only @predicted {
     projectile:     Projectile = { weapon_id = .Platform }
     flight:         Fixed_Arc_Flight
     flight_seconds: f32 = 0.6
-    rest_seconds:   f32 = 6.0
+    solid_seconds:  f32 = 6.0
     half_extents:   v3 = {64, 4, 64}
     // Drawn at half_extents, never at render.scale.
     render:         Render = { mesh = .Box, material = { color = {1, 0.75, 0.3} } }
+}
+
+// The platform that SHRINKS: lands at half_extents, shrinks toward half_extents_when_vanishing over solid_seconds,
+// collision and draw on the same clock, and dissolves over its last fifth. No clock wipe.
+Shrinking_Platform_Entity :: entity @runtime_only @predicted {
+    projectile:                  Projectile = { weapon_id = .Shrinking_Platform }
+    flight:                      Fixed_Arc_Flight
+    flight_seconds:              f32 = 0.6
+    solid_seconds:               f32 = 6.0
+    half_extents:                v3 = {64, 4, 64}
+    half_extents_when_vanishing: v3 = {8, 4, 8}
+    // Drawn at the shrunk half_extents, never at render.scale.
+    render:                      Render = { mesh = .Box, material = { color = {0.3, 0.9, 0.6} } }
 }
 
 // A slab held above its carrier for as long as the Canopy's button is down; other players stand on it and are

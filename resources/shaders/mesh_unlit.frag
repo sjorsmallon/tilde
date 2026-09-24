@@ -20,7 +20,7 @@ layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
 #include "alpha_cutout.glsl"
-#include "clock_wipe.glsl"
+#include "dissolve.glsl"
 
 void main() {
     // Same tint semantics as the lit path -- the material's base colour
@@ -29,6 +29,8 @@ void main() {
     float surfaceAlpha = fragAlpha * sampled.a;
     discard_below_alpha_cutoff(surfaceAlpha);
     discard_inside_clock_wipe(fragWorldPosition);
+    discard_below_dissolve(fragUV);
 
     outColor = vec4(sampled.rgb * fragColor, surfaceAlpha);
+    outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
 }

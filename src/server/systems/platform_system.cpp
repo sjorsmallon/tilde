@@ -11,17 +11,19 @@
 namespace server
 {
 
-void update_platforms(server_context_t& context, const shared::predicted_world_storage_t& world)
+namespace
 {
-  const float tick_interval_seconds = static_cast<float>(get_tick_interval());
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
-                                                   .gravity = context.cvars->g_gravity};
 
-  Span<entities::Platform_Entity> platforms = context.world.session.entity_system.entities_of<entities::Platform_Entity>();
+// Both platform types: latch the launch once, retire an owner's older one of the SAME type, reap on the tick the
+// cut drops it.
+template <typename Platform_T>
+void update_platforms_of(server_context_t& context, const shared::predicted_world_storage_t& world,
+                         const shared::fixed_arc_flight_settings_t& flight,
+                         std::vector<shared::entity_uid_t>& retired)
+{
+  Span<Platform_T> platforms = context.world.session.entity_system.entities_of<Platform_T>();
 
-  std::vector<shared::entity_uid_t> retired;
-
-  for (entities::Platform_Entity& platform : platforms)
+  for (Platform_T& platform : platforms)
   {
     if (platform.flight.launch_tick == 0)
     {
@@ -30,17 +32,31 @@ void update_platforms(server_context_t& context, const shared::predicted_world_s
                               {.flight_seconds = platform.flight_seconds, .clearance = clearance},
                               flight, world, platform.flight);
 
-      for (const entities::Platform_Entity& older : platforms)
+      for (const Platform_T& older : platforms)
         if (older.entity_id != platform.entity_id && older.flight.launch_tick != 0 &&
             older.projectile.owner_uid == platform.projectile.owner_uid)
           retired.push_back(older.entity_id);
     }
 
-    platform.position = shared::platform_box_at(platform, context.tick_number, flight).center;
+    const shared::platform_view_t view = shared::platform_view_of(platform);
+    platform.position = shared::platform_box_at_tick(view, context.tick_number, flight).center;
 
-    if (shared::platform_has_expired_at(platform, context.tick_number, tick_interval_seconds))
+    if (shared::platform_has_vanished_at_tick(view, context.tick_number, flight.tick_interval_seconds))
       retired.push_back(platform.entity_id);
   }
+}
+
+} // namespace
+
+void update_platforms(server_context_t& context, const shared::predicted_world_storage_t& world)
+{
+  const float tick_interval_seconds = static_cast<float>(get_tick_interval());
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
+                                                   .gravity = context.cvars->g_gravity};
+
+  std::vector<shared::entity_uid_t> retired;
+  update_platforms_of<entities::Platform_Entity>(context, world, flight, retired);
+  update_platforms_of<entities::Shrinking_Platform_Entity>(context, world, flight, retired);
 
   std::sort(retired.begin(), retired.end());
   retired.erase(std::unique(retired.begin(), retired.end()), retired.end());

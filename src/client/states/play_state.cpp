@@ -137,24 +137,27 @@ static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::
 struct drawn_platform_t
 {
   vec3f position;
+  vec3f half_extents;
   bool  is_solid;
-  bool  has_expired;
-  float rest_fraction;
+  bool  has_vanished;
+  float solid_fraction_elapsed;
 };
 
-static drawn_platform_t drawn_platform(const client_context_t &ctx, const entities::Platform_Entity &platform)
+static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared::platform_view_t &platform)
 {
   const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
   const float tick_interval_seconds = 1.0f / tickrate;
   const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
                                                    .gravity               = ctx.cvars->g_gravity};
-  const vec3f at_tick = shared::platform_box_at(platform, tick, flight).center;
-  const vec3f at_next = shared::platform_box_at(platform, tick + 1, flight).center;
-  return {.position      = at_tick + (at_next - at_tick) * fraction,
-          .is_solid      = shared::platform_is_solid_at(platform, tick, tick_interval_seconds),
-          .has_expired   = shared::platform_has_expired_at(platform, tick, tick_interval_seconds),
-          .rest_fraction = shared::platform_rest_fraction(platform, tick, fraction, tick_interval_seconds)};
+  const vec3f at_tick = shared::platform_box_at_tick(platform, tick, flight).center;
+  const vec3f at_next = shared::platform_box_at_tick(platform, tick + 1, flight).center;
+  return {.position     = at_tick + (at_next - at_tick) * fraction,
+          .half_extents = shared::platform_half_extents_at(platform, tick, fraction, tick_interval_seconds),
+          .is_solid     = shared::platform_is_solid_at_tick(platform, tick, tick_interval_seconds),
+          .has_vanished = shared::platform_has_vanished_at_tick(platform, tick, tick_interval_seconds),
+          .solid_fraction_elapsed =
+              shared::platform_solid_fraction_elapsed(platform, tick, fraction, tick_interval_seconds)};
 }
 
 // A bob above the surface and a pop-in, both functions of the age its spawned_tick gives.
@@ -3084,20 +3087,37 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     vec3f              drawn_scale    = render.scale;
     entities::Material drawn_material = render.material;
     renderer::clock_wipe_t clock_wipe = {};
+    float                  dissolve   = 0.0f;
 
     if (entity.type == entities::entity_type::Bubble_Entity)
       drawn_position = drawn_bubble_position(ctx, static_cast<const entities::Bubble_Entity&>(entity));
 
     if (const entities::Platform_Entity* platform = entities::entity_as<entities::Platform_Entity>(&entity))
     {
-      const drawn_platform_t drawn = drawn_platform(ctx, *platform);
-      if (drawn.has_expired)
+      const drawn_platform_t drawn = drawn_platform(ctx, shared::platform_view_of(*platform));
+      if (drawn.has_vanished)
         continue;
 
       drawn_position = drawn.position;
-      drawn_scale    = platform->half_extents * 2.0f;
+      drawn_scale    = drawn.half_extents * 2.0f;
       if (drawn.is_solid)
-        clock_wipe = {.center = drawn.position, .wiped = drawn.rest_fraction, .armed = true};
+        clock_wipe = {.center = drawn.position, .wiped = drawn.solid_fraction_elapsed, .armed = true};
+      else
+        drawn_material.shader_type = entities::Shader_Type::Ghost;
+    }
+
+    // Shrinks on the cut's clock and dissolves over its last fifth; no clock wipe.
+    if (const entities::Shrinking_Platform_Entity* platform =
+            entities::entity_as<entities::Shrinking_Platform_Entity>(&entity))
+    {
+      const drawn_platform_t drawn = drawn_platform(ctx, shared::platform_view_of(*platform));
+      if (drawn.has_vanished)
+        continue;
+
+      drawn_position = drawn.position;
+      drawn_scale    = drawn.half_extents * 2.0f;
+      if (drawn.is_solid)
+        dissolve = shared::platform_dissolve_fraction(drawn.solid_fraction_elapsed);
       else
         drawn_material.shader_type = entities::Shader_Type::Ghost;
     }
@@ -3134,6 +3154,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     renderer::mesh_draw_t draw{};
     draw.mesh       = mesh;
     draw.clock_wipe = clock_wipe;
+    draw.dissolve   = dissolve;
     draw.transform  = linalg::compose_transform(
         drawn_position, linalg::compose_model_rotation(drawn_pose.orientation, render.rotation),
         drawn_scale);

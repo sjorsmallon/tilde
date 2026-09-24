@@ -173,6 +173,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Kooh_Entity
   0u,   // Ricochet_Entity
   0u,   // Platform_Entity
+  0u,   // Shrinking_Platform_Entity
   0u,   // Canopy_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
@@ -235,6 +236,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Kooh_Entity
   0u,   // Ricochet_Entity
   0u,   // Platform_Entity
+  0u,   // Shrinking_Platform_Entity
   0u,   // Canopy_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity
@@ -289,6 +291,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Kooh_Entity
   0u,   // Ricochet_Entity
   0u,   // Platform_Entity
+  0u,   // Shrinking_Platform_Entity
   0u,   // Canopy_Entity
   0u,   // Bubble_Entity
   0u,   // Physics_Body_Entity

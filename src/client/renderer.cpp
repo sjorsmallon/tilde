@@ -255,7 +255,7 @@ struct pipeline_key_t
   pipeline_state_t state;
   vertex_layout_t  vertex_layout = vertex_layout_t::static_mesh;
   fill_mode_t      fill          = fill_mode_t::solid;
-  bool             clock_wiped   = false;
+  bool             discard_effects = false; // the clock wipe and the dissolve
 
   bool operator==(const pipeline_key_t &) const = default;
 };
@@ -270,7 +270,7 @@ struct pipeline_key_hash_t
            ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 6) |
            ((size_t)key.state.depth_write << 7) | ((size_t)key.vertex_layout << 8) |
            ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12) |
-           ((size_t)key.clock_wiped << 20);
+           ((size_t)key.discard_effects << 20);
   }
 };
 
@@ -651,7 +651,7 @@ struct mesh_push_constants_t
   float model[16];            // 64 bytes; the vertex shader derives the normal matrix from it
   float color[4];             // 16 bytes -- material base colour * draw tint, a = alpha
   float clock_wipe_center[4]; // 16 bytes -- xyz world, w = fraction wiped
-  float clock_wipe_axis_x[4]; // 16 bytes
+  float clock_wipe_axis_x[4]; // 16 bytes -- w = dissolve threshold, 0 off
   float clock_wipe_axis_y[4]; // 16 bytes
 };                            // = 128 bytes total
 
@@ -2015,14 +2015,14 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   {
     VkBool32 cutout;
     float    cutoff;
-    VkBool32 clock_wiped;
+    VkBool32 discard_effects;
   } alpha_specialization{key.state.blend_mode == blend_mode_t::cutout ? VK_TRUE : VK_FALSE,
-                         key.state.alpha_cutoff / 255.0f, key.clock_wiped ? VK_TRUE : VK_FALSE};
+                         key.state.alpha_cutoff / 255.0f, key.discard_effects ? VK_TRUE : VK_FALSE};
 
   const VkSpecializationMapEntry alpha_entries[3] = {
       {0, offsetof(alpha_specialization_t, cutout), sizeof(VkBool32)},
       {1, offsetof(alpha_specialization_t, cutoff), sizeof(float)},
-      {2, offsetof(alpha_specialization_t, clock_wiped), sizeof(VkBool32)}};
+      {2, offsetof(alpha_specialization_t, discard_effects), sizeof(VkBool32)}};
 
   VkSpecializationInfo alpha_info{};
   alpha_info.mapEntryCount = 3;
@@ -6233,6 +6233,11 @@ static void pack_clock_wipe(const clock_wipe_t& clock_wipe, mesh_push_constants_
   out.clock_wipe_center[3] = clock_wipe.wiped;
 }
 
+static void pack_dissolve(float dissolve, mesh_push_constants_t& out)
+{
+  out.clock_wipe_axis_x[3] = dissolve;
+}
+
 // Per pass, so a second viewport with its own camera gets its own block for free.
 static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
 {
@@ -6861,7 +6866,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
       const uint32_t pipeline_id = resolve_pipeline_id(
           {g_materials[material.index].pipeline_state, mesh.layout, draw.fill,
-           draw.clock_wipe.armed});
+           draw.clock_wipe.armed || draw.dissolve > 0.0f});
       if (pipeline_id == UINT32_MAX)
         continue;
 
@@ -6967,6 +6972,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
     push.color[2] = base.z * (draw.tint.b / 255.0f);
     push.color[3] = base.w * (draw.tint.a / 255.0f);
     pack_clock_wipe(draw.clock_wipe, push);
+    pack_dissolve(draw.dissolve, push);
 
     vkCmdPushConstants(cmd, g_mesh_pipeline_layout, MESH_PUSH_STAGES, 0, sizeof(push), &push);
     vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);

@@ -67,7 +67,9 @@ void vary_shot(const Launcher_Entity& launcher, Entity& shot)
   if (Bubble_Entity* bubble = entity_as<Bubble_Entity>(&shot))
     vary_timings(launcher, bubble->flight_seconds, bubble->rest_seconds);
   else if (Platform_Entity* platform = entity_as<Platform_Entity>(&shot))
-    vary_timings(launcher, platform->flight_seconds, platform->rest_seconds);
+    vary_timings(launcher, platform->flight_seconds, platform->solid_seconds);
+  else if (Shrinking_Platform_Entity* shrinking = entity_as<Shrinking_Platform_Entity>(&shot))
+    vary_timings(launcher, shrinking->flight_seconds, shrinking->solid_seconds);
 }
 
 } // namespace

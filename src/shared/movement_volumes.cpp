@@ -80,6 +80,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
 
       // @predicted, and feeds collect_spawned_platforms: a landed platform is solid, swept inside the step.
       case entities::entity_type::Platform_Entity:
+      case entities::entity_type::Shrinking_Platform_Entity:
         break;
 
       // @predicted, and feeds collect_canopies: a mover whose poses are its carrier's last two positions.

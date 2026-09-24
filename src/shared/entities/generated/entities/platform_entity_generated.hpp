@@ -20,7 +20,7 @@ struct Platform_Entity : Entity
   Projectile projectile = {.weapon_id = Weapon::Platform};
   Fixed_Arc_Flight flight = {};
   float flight_seconds = 0.6f;
-  float rest_seconds = 6.0f;
+  float solid_seconds = 6.0f;
   linalg::vec3f half_extents = {64.0f, 4.0f, 64.0f};
   Render render = {.mesh = assets::mesh_asset::Box, .material = {.color = {1.0f, 0.75f, 0.3f}}};
 };
