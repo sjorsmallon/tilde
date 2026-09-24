@@ -352,14 +352,6 @@ groups
     "name" "bubble_box"
     member
     {
-      "uid" "83"
-    }
-    member
-    {
-      "uid" "84"
-    }
-    member
-    {
       "uid" "85"
     }
     member
@@ -1628,7 +1620,7 @@ brush
 brush
 {
   "_uid" "68"
-  "vertices" "9593.67383 482.507324 -708.438843, 9593.67383 482.507324 1208.94604, 9593.67383 797.492676 -708.438843, 9593.67383 797.492676 1208.94604, 11696.0137 482.507324 -708.438843, 11696.0137 482.507324 1208.94604, 11696.0137 797.492676 -708.438843, 11696.0137 797.492676 1208.94604"
+  "vertices" "9586.375 482.507324 -708.438843, 9586.375 482.507324 1208.94604, 9586.375 797.492676 -708.438843, 9586.375 797.492676 1208.94604, 11696.0137 482.507324 -708.438843, 11696.0137 482.507324 1208.94604, 11696.0137 797.492676 -708.438843, 11696.0137 797.492676 1208.94604"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -1638,7 +1630,7 @@ brush
   face
   {
     "normal" "-1 0 0"
-    "distance" "-9593.67383"
+    "distance" "-9586.375"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -3777,26 +3769,6 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
-}
-entity
-{
-  "classname" "player_spawn_entity"
-  "_uid" "83"
-  "position" "38159.207 5481.3086 384.5"
-  "orientation" "0 0 0 1"
-  "name" ""
-  "spawn_type" "Human"
-  "team_allegiance" "Blu"
-}
-entity
-{
-  "classname" "player_spawn_entity"
-  "_uid" "84"
-  "position" "39822.707 7217.212 -896"
-  "orientation" "0 0 0 1"
-  "name" ""
-  "spawn_type" "Human"
-  "team_allegiance" "Red"
 }
 entity
 {
