@@ -20,7 +20,6 @@ struct Kooh_Entity : Entity
   Projectile projectile = {.weapon_id = Weapon::Kooh};
   float lifetime = 4.0f;
   float collision_radius = 25.0f;
-  bool reels_player = {};
   Render render = {.mesh = assets::mesh_asset::hookshot, .scale = {0.03f, 0.03f, 0.03f}};
 };
 

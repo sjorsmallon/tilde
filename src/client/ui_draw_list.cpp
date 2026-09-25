@@ -20,6 +20,12 @@ void ui_draw_list_t::clear()
   // first few frames.
   vertices.clear();
   batches.clear();
+  background_seconds.reset();
+}
+
+void ui_draw_list_t::background(float seconds)
+{
+  background_seconds = seconds;
 }
 
 void ui_draw_list_t::quad(linalg::vec2 min, linalg::vec2 max, linalg::vec2 uv_min,

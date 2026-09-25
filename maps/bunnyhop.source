@@ -9,9 +9,9 @@ cvars
   "mp_round_end_seconds" "0"
   "mp_round_seconds" "0"
   "next_map" "firstdwdaw"
+  "pm_maxspeed" "1000"
   "pm_model" "instant"
   "pm_quake_air_acceleration" "7"
-  "pm_maxspeed" "1000"
   "sv_replay_auto" "1"
   "sv_skybox" "night_sky"
 }
@@ -2812,6 +2812,8 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
 }
 entity
 {
@@ -2849,6 +2851,8 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
 }
 entity
 {
@@ -2931,4 +2935,48 @@ entity
   "traversal_seconds" "1"
   "wait_seconds" "0"
   "easing" "Linear"
+}
+entity
+{
+  "classname" "weapon_entity"
+  "_uid" "156"
+  "position" "-256 40 384"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "ammo" "-1"
+  "reserve_ammo" "-1"
+  "weapon_id" "Knife"
+  "damage_type" "Normal"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "40 40 40"
+  "render.mesh" "Error"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "weapon_entity"
+  "_uid" "157"
+  "position" "0 168 256"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "ammo" "-1"
+  "reserve_ammo" "-1"
+  "weapon_id" "Scout"
+  "damage_type" "Normal"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "40 40 40"
+  "render.mesh" "Error"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Lit"
+  "render.material.color" "1 1 1"
 }

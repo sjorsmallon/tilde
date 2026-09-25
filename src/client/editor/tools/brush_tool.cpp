@@ -568,7 +568,7 @@ void Brush_Tool::nudge_selected_brush(editor_context_t& ctx,
 
   transaction_t transaction;
   transaction.add_geometry_modified(selection.uid, before, *brush);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Nudge brush", std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -586,7 +586,7 @@ void Brush_Tool::delete_selected_brush(editor_context_t& ctx)
 
   transaction_t transaction;
   transaction.add_geometry_removed(uid, removed);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Delete brush", std::move(transaction));
 
   // Everything below is keyed to the brush that no longer exists.
   end_drag();
@@ -685,7 +685,7 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t& ctx)
 
   // One transaction however many pieces it took, so the L undoes as the one
   // edit it was.
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Extrude brush", std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -1096,7 +1096,7 @@ void Brush_Tool::on_mouse_up(editor_context_t& ctx,
       transaction_t transaction;
       transaction.add_geometry_modified(selection.uid, *drag.geometry_at_the_start_of_drag,
                                     *brush);
-      ctx.transaction_system.push(std::move(transaction));
+      ctx.transaction_system.push(drag.kind == Drag::Face ? "Move brush face" : "Move brush vertices", std::move(transaction));
 
       // A grid drag writes offsets rather than vertices, so it never went
       // through try_rebuild_selected_brush and nothing else flags the BVH --
@@ -1335,7 +1335,7 @@ void Brush_Tool::edit_face_surface(
 
   transaction_t transaction;
   transaction.add_geometry_modified(target.uid, before, *target.brush);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Edit face surface", std::move(transaction));
 }
 
 // ============================================================================
@@ -1423,7 +1423,7 @@ void Brush_Tool::end_grid_stroke(editor_context_t& ctx)
 
   transaction_t transaction;
   transaction.add_geometry_modified(selection.uid, *before, *brush);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Face grid stroke", std::move(transaction));
 
   // A sculpt moved the surface the player walks on; a paint moved no vertex.
   if (mode == Mode::Sculpt && ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -1688,7 +1688,7 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
     refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
     transaction_t transaction;
     transaction.add_geometry_modified(target.uid, before, *target.brush);
-    ctx.transaction_system.push(std::move(transaction));
+    ctx.transaction_system.push("Copy material to every face", std::move(transaction));
   }
 
   ImGui::Separator();
@@ -1756,7 +1756,7 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
 
         transaction_t transaction;
         transaction.add_geometry_modified(target.uid, before, *target.brush);
-        ctx.transaction_system.push(std::move(transaction));
+        ctx.transaction_system.push("Give every face this subdivision", std::move(transaction));
       }
     }
   }

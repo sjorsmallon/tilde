@@ -104,7 +104,7 @@ int main()
     const entities::Rocket_Entity pristine_rocket;
 
     entities::Rocket_Entity server_rocket;
-    server_rocket.damage_amount = pristine_rocket.damage_amount + 73.0f;
+    server_rocket.lifetime = pristine_rocket.lifetime + 73.0f;
     server_rocket.position      = {1.0f, 2.0f, 3.0f};
 
     network::Bit_Writer writer;
@@ -118,8 +118,8 @@ int main()
     // not @Networked, so the sender's 123 never lands and the receiver keeps
     // its own default. Both halves matter: the first catches the field riding
     // the wire, the second catches deserialize zeroing what it did not write.
-    assert(client_rocket.damage_amount != server_rocket.damage_amount);
-    assert(client_rocket.damage_amount == pristine_rocket.damage_amount);
+    assert(client_rocket.lifetime != server_rocket.lifetime);
+    assert(client_rocket.lifetime == pristine_rocket.lifetime);
 
     std::cout << "    PASSED!" << std::endl;
   }

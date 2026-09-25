@@ -45,6 +45,7 @@ public:
 private:
   // The rows, the tweens and the focus, rebuilt per visit -- see on_enter.
   ui::list_menu_t menu;
+  float           background_seconds = 0.0f;
 };
 
 } // namespace client

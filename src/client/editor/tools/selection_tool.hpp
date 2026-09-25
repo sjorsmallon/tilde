@@ -34,6 +34,8 @@ public:
                        pass_builder_t &draws) override;
 
   void on_draw_ui(editor_context_t& ctx) override;
+  void on_draw_inspector(editor_context_t& ctx) override;
+  void draw_selection_fields(editor_context_t& ctx);
 
   Span<const shared::entity_uid_t> selected_objects() const override { return selected_uids; }
 
@@ -68,6 +70,23 @@ private:
   uid_pick_t uid_pick;
   void commit_picked_field_uid(editor_context_t& ctx, const field_pick_target_t& target,
                                shared::entity_uid_t picked);
+
+  // The inspector's open edit. `before` is re-seeded every frame nothing is
+  // pending, so an undo or a gizmo drag is never mistaken for one; a widget
+  // held across frames commits as ONE transaction when ImGui lets go of it.
+  struct inspector_edit_t
+  {
+    std::vector<shared::entity_uid_t>              uids;
+    std::vector<std::shared_ptr<entities::Entity>> before;
+    std::string                                    field;
+    bool                                           pending = false;
+  };
+  inspector_edit_t inspector_edit;
+
+  [[nodiscard]] std::vector<entities::Entity*> collect_inspected_entities(const editor_context_t& ctx) const;
+  void seed_inspector_edit(Span<entities::Entity* const> inspected);
+  void settle_inspector_edit(editor_context_t& ctx);
+  void commit_inspector_edit(editor_context_t& ctx);
 
   // A press that MEANT something other than selecting, so its release must not
   // fall through to the selection branch. Two gestures set it: the connection
@@ -124,14 +143,15 @@ private:
 
   // Snapshot / commit for a multi-object drag, regime-agnostic at the call site.
   void capture_drag_snapshots(editor_context_t& ctx);
-  void commit_drag_snapshots(editor_context_t& ctx);
+  void commit_drag_snapshots(editor_context_t& ctx, std::string name);
 
   void apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t &drag);
 
   // The panel's buttons go through apply_gizmo_drag too, wrapped in their own
   // snapshot/commit. Sharing the application path is what stops a typed offset
   // and a dragged one meaning different things.
-  void apply_transform_as_one_edit(editor_context_t& ctx, const gizmo_drag_t &transform);
+  void apply_transform_as_one_edit(editor_context_t& ctx, const gizmo_drag_t &transform,
+                                   std::string name);
 
   // Drop the whole selection onto whatever is under it (End, or the inspector
   // button). One transform through apply_transform_as_one_edit, so a group
@@ -218,6 +238,21 @@ private:
   void ungroup_selection(editor_context_t& ctx);
   void ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid);
   void select_group(editor_context_t& ctx, shared::entity_uid_t group_uid);
+  void rename_group(editor_context_t& ctx, shared::entity_uid_t group_uid, std::string name);
+
+  // The ctrl/shift click: all of `picked` selected takes them out, else the
+  // rest come in. The viewport and the outliner both.
+  void toggle_in_selection(Span<const shared::entity_uid_t> picked);
+
+  // The inspector's group name field, re-seeded from the map while it is not
+  // being typed in.
+  struct group_name_edit_t
+  {
+    shared::entity_uid_t group_uid = shared::null_entity_uid;
+    Array<char, 96>      name;
+    bool                 active = false;
+  };
+  group_name_edit_t group_name_edit;
 
   // Hammer's "Ignore Groups" (Ctrl+W): picks take the object alone. Editor
   // state, never map data, and it survives switching tools.

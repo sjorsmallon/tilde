@@ -46,6 +46,9 @@ public:
   // UI (2D)
   virtual void on_draw_ui(editor_context_t& ctx) {}
 
+  // The sidebar's lower pane, drawn inside it: no window of its own.
+  virtual void on_draw_inspector(editor_context_t& ctx) {}
+
   // What this tool currently has selected, for panels OUTSIDE the tools that
   // colour by it -- the Map Info connection lines are the one caller. Empty for
   // every tool that has no selection, which is most of them.

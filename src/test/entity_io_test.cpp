@@ -25,6 +25,7 @@
 #include "server/entity_io_console.hpp"
 #include "server/entity_io_queue.hpp"
 #include "server/systems/game_rules_system.hpp"
+#include "server/systems/launcher_system.hpp"
 #include "server/systems/timer_system.hpp"
 #include "server/systems/trigger_system.hpp"
 #include "server/server_api.hpp"
@@ -963,6 +964,53 @@ void test_a_launchers_spread_is_the_same_pattern_every_attempt()
   check(varies, "and they are not all the same shot");
 }
 
+void test_a_launcher_with_an_interval_fires_on_its_own_clock()
+{
+  std::printf("connections: a launcher with a fire interval fires on its own, once per interval, while enabled\n");
+
+  shared::map_t map;
+  auto clocked = std::make_shared<entities::Launcher_Entity>();
+  clocked->weapon                = entities::Weapon::Rocket_Launcher;
+  clocked->fire_interval_seconds = 0.5f;
+  const shared::entity_uid_t clocked_uid = map.add_entity(clocked);
+
+  auto unclocked = std::make_shared<entities::Launcher_Entity>();
+  unclocked->weapon = entities::Weapon::Rocket_Launcher;
+  map.add_entity(unclocked);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, map);
+
+  const uint32_t interval_ticks = shared::ticks_from_seconds(0.5f, (float)tickrate);
+  constexpr uint32_t SHOT_COUNT = 4;
+  for (uint32_t tick = 0; tick < interval_ticks * SHOT_COUNT; ++tick)
+  {
+    ++context.tick_number;
+    update_launchers(context);
+  }
+
+  const auto rockets_of = [&](shared::entity_uid_t owner_uid) {
+    uint32_t count = 0;
+    for (const entities::Rocket_Entity& rocket :
+         context.world.session.entity_system.entities_of<entities::Rocket_Entity>())
+      if (rocket.projectile.owner_uid == owner_uid)
+        ++count;
+    return count;
+  };
+  check(rockets_of(clocked_uid) == SHOT_COUNT, "one rocket per interval, the first on the first tick");
+  check(context.world.session.entity_system.entities_of<entities::Rocket_Entity>().size() == SHOT_COUNT,
+        "a launcher with no interval fires nothing on its own");
+
+  context.world.session.entity_system.get<entities::Launcher_Entity>(clocked_uid)->switch_state.value = false;
+  for (uint32_t tick = 0; tick < interval_ticks * SHOT_COUNT; ++tick)
+  {
+    ++context.tick_number;
+    update_launchers(context);
+  }
+  check(rockets_of(clocked_uid) == SHOT_COUNT, "a disabled launcher's clock fires nothing");
+}
+
 void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
 {
   std::printf("connections: a launcher varies a bubble's speed, flight and rest inside the fractions\n");
@@ -1025,7 +1073,11 @@ void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
     ++count;
   }
 
-  check(count == SHOT_COUNT, "every Fire spawned a bubble");
+  check(SHOT_COUNT > shared::fire_of(shared::WEAPON_DEFINITIONS[entities::Weapon::Bubble],
+                                     entities::Fire_Trigger::Primary)
+                         .limit.max_alive,
+        "more shots than a player's alive limit");
+  check(count == SHOT_COUNT, "every Fire spawned a bubble: a launcher is not held to the alive limit");
   check(bounded, "speed, flight and rest each stay inside their fraction of the base value");
   check(speed_varies && flight_varies && rest_varies, "and each of the three varies across shots");
 }
@@ -1386,6 +1438,7 @@ int main()
   test_a_launcher_fires_its_weapon_row_along_its_aim();
   test_a_launchers_spread_is_the_same_pattern_every_attempt();
   test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions();
+  test_a_launcher_with_an_interval_fires_on_its_own_clock();
   test_the_toucher_is_the_activator();
   test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();

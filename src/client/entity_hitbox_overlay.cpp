@@ -63,6 +63,8 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     case entities::entity_type::Movement_Modifier_Entity:
     case entities::entity_type::Modifier_Shot_Entity:
     case entities::entity_type::Timed_Movement_Modifier_Entity:
+    case entities::entity_type::Weapon_Emancipation_Grill_Entity:
+    case entities::entity_type::Emancipated_Weapon_Entity:
     case entities::entity_type::Invalid:
       return false;
   }

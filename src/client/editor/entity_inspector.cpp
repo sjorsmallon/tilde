@@ -4,7 +4,10 @@
 #include "../../shared/log.hpp"
 #include "../../shared/map.hpp"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include <cfloat>
+#include <cstddef>
+#include <cstring>
 #include <format>
 #include <string>
 #include <vector>
@@ -16,14 +19,11 @@ namespace
 {
 
 // renders a leaf field. components are flattened inside an entity so you can just take offsets and walk the size.
-void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id,
+bool render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id,
                        shared::entity_uid_t uid, const shared::map_t* map, uid_pick_t* pick)
 {
   if (leaf.info->type != FIELD_TYPE_ENTITY_UID || map == nullptr || pick == nullptr)
-  {
-    render_field_widget(base + leaf.offset, *leaf.info, leaf.name.c_str(), id, map);
-    return;
-  }
+    return render_field_widget(base + leaf.offset, *leaf.info, leaf.name.c_str(), id, map);
 
   ImGui::PushID(id);
 
@@ -33,7 +33,8 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
 
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - pick_button_width - label_width -
                           ImGui::GetStyle().ItemSpacing.x);
-  draw_entity_uid_combo(*map, leaf.name.c_str(), *reinterpret_cast<shared::entity_uid_t*>(base + leaf.offset));
+  const bool changed =
+      draw_entity_uid_combo(*map, leaf.name.c_str(), *reinterpret_cast<shared::entity_uid_t*>(base + leaf.offset));
   
   ImGui::SameLine();
   if (picking_here)
@@ -48,6 +49,19 @@ void render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
     pick->arm_field(uid, leaf.offset);
   }
   ImGui::PopID();
+  return changed;
+}
+
+bool leaf_is_mixed(Span<entities::Entity* const> entities, const entities::leaf_field_t& leaf)
+{
+  const uint8_t* first = reinterpret_cast<const uint8_t*>(entities[0]) + leaf.offset;
+  for (uint32_t index = 1; index < entities.size(); ++index)
+  {
+    const uint8_t* other = reinterpret_cast<const uint8_t*>(entities[index]) + leaf.offset;
+    if (std::memcmp(first, other, leaf.info->size_in_bytes) != 0)
+      return true;
+  }
+  return false;
 }
 
 } // namespace
@@ -103,64 +117,65 @@ bool draw_entity_uid_combo(const shared::map_t& map, const char* label, shared::
   return picked;
 }
 
-void render_field_widget(void* field_ptr, const field_info_t& field, const char* label, int id,
+bool render_field_widget(void* field_ptr, const field_info_t& field, const char* label, int id,
                          const shared::map_t* map)
 {
   ImGui::PushID(id);
+  bool changed = false;
 
   switch (field.type)
   {
     case FIELD_TYPE_I8:
     case FIELD_TYPE_I16:
     case FIELD_TYPE_I32:
-      ImGui::InputInt(label, static_cast<int*>(field_ptr));
+      changed = ImGui::InputInt(label, static_cast<int*>(field_ptr));
       break;
 
     case FIELD_TYPE_U8:
-      ImGui::InputScalar(label, ImGuiDataType_U8, field_ptr);
+      changed = ImGui::InputScalar(label, ImGuiDataType_U8, field_ptr);
       break;
     case FIELD_TYPE_U16:
-      ImGui::InputScalar(label, ImGuiDataType_U16, field_ptr);
+      changed = ImGui::InputScalar(label, ImGuiDataType_U16, field_ptr);
       break;
     case FIELD_TYPE_U32:
-      ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
+      changed = ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
       break;
     case FIELD_TYPE_ENTITY_UID:
       if (map != nullptr)
-        draw_entity_uid_combo(*map, label, *static_cast<shared::entity_uid_t*>(field_ptr));
+        changed = draw_entity_uid_combo(*map, label, *static_cast<shared::entity_uid_t*>(field_ptr));
       else
-        ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
+        changed = ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
       break;
     case FIELD_TYPE_U64:
-      ImGui::InputScalar(label, ImGuiDataType_U64, field_ptr);
+      changed = ImGui::InputScalar(label, ImGuiDataType_U64, field_ptr);
       break;
     case FIELD_TYPE_I64:
-      ImGui::InputScalar(label, ImGuiDataType_S64, field_ptr);
+      changed = ImGui::InputScalar(label, ImGuiDataType_S64, field_ptr);
       break;
 
     case FIELD_TYPE_F32:
-      ImGui::DragFloat(label, static_cast<float *>(field_ptr), 0.1f);
+      changed = ImGui::DragFloat(label, static_cast<float *>(field_ptr), 0.1f);
       break;
     case FIELD_TYPE_F64:
-      ImGui::InputDouble(label, static_cast<double *>(field_ptr));
+      changed = ImGui::InputDouble(label, static_cast<double *>(field_ptr));
       break;
 
     case FIELD_TYPE_BOOL:
-      ImGui::Checkbox(label, static_cast<bool *>(field_ptr));
+      changed = ImGui::Checkbox(label, static_cast<bool *>(field_ptr));
       break;
 
     case FIELD_TYPE_V3:
-      ImGui::DragFloat3(label, static_cast<float *>(field_ptr), 0.1f);
+      changed = ImGui::DragFloat3(label, static_cast<float *>(field_ptr), 0.1f);
       break;
     case FIELD_TYPE_V4:
-      ImGui::DragFloat4(label, static_cast<float *>(field_ptr), 0.1f);
+      changed = ImGui::DragFloat4(label, static_cast<float *>(field_ptr), 0.1f);
       break;
     case FIELD_TYPE_V4I:
-      ImGui::InputInt4(label, static_cast<int *>(field_ptr));
+      changed = ImGui::InputInt4(label, static_cast<int *>(field_ptr));
       break;
 
     case FIELD_TYPE_QUAT:
-      edit_rotation_as_euler(label, *static_cast<linalg::quatf *>(field_ptr));
+      changed = edit_rotation_as_euler(label, *static_cast<linalg::quatf *>(field_ptr));
       break;
 
     case FIELD_TYPE_STRING:
@@ -172,6 +187,7 @@ void render_field_widget(void* field_ptr, const field_info_t& field, const char*
       if (ImGui::InputText(label, data, field.string_capacity + 1,
                            ImGuiInputTextFlags_EnterReturnsTrue))
       {
+        changed = true;
         *length_byte = (uint8_t)strlen(data);
         // Restore the canonical zero-padding invariant: ImGui writes a
         // terminator but leaves whatever was past it, and every baseline
@@ -192,6 +208,7 @@ void render_field_widget(void* field_ptr, const field_info_t& field, const char*
       if (ImGui::Combo(label, &current, info.value_names.data,
                        (int)info.value_names.size()))
       {
+        changed = true;
         *static_cast<uint8_t *>(field_ptr) = (uint8_t)current;
       }
       break;
@@ -211,7 +228,10 @@ void render_field_widget(void* field_ptr, const field_info_t& field, const char*
       int current = (int)stored;
 
       if (ImGui::Combo(label, &current, names.data(), (int)names.size()))
+      {
+        changed = true;
         *static_cast<uint16_t *>(field_ptr) = (uint16_t)current;
+      }
       break;
     }
 
@@ -223,6 +243,7 @@ void render_field_widget(void* field_ptr, const field_info_t& field, const char*
   }
 
   ImGui::PopID();
+  return changed;
 }
 
 bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
@@ -255,30 +276,78 @@ bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
   return true;
 }
 
-void render_entity_fields_in_an_imgui_window(entities::Entity* entity, shared::entity_uid_t uid,
-                                             const shared::map_t* map, uid_pick_t* pick)
+std::optional<std::string> render_entity_fields_in_an_imgui_window(
+    Span<entities::Entity* const> entities, shared::entity_uid_t uid, const shared::map_t* map,
+    uid_pick_t* pick)
 {
-  if (!entity) return;
+  if (entities.size() == 0)
+    return std::nullopt;
 
-  if (entity->type == entities::entity_type::Invalid)
+  entities::Entity* primary = entities[0];
+  if (primary->type == entities::entity_type::Invalid)
   {
     ImGui::Text("This entity carries an invalid type tag.");
-    return;
+    return std::nullopt;
+  }
+  for (entities::Entity* other : entities)
+  {
+    if (other->type != primary->type)
+      fatal_error("entity inspector: handed a {} beside a {} -- a multi-edit is one type",
+                  entities::classname_of(other), entities::classname_of(primary));
   }
 
-  const entities::entity_type_info_t& info = entities::entity_info(entity->type);
-  ImGui::Text("Class: %s", info.classname);
+  const entities::entity_type_info_t& info = entities::entity_info(primary->type);
+  const bool editing_many = entities.size() > 1;
+  if (editing_many)
+    ImGui::Text("Editing %u x %s", entities.size(), info.classname);
+  else
+    ImGui::Text("Class: %s", info.classname);
   ImGui::Separator();
 
-  uint8_t* base = reinterpret_cast<uint8_t*>(entity);
+  uint8_t* base = reinterpret_cast<uint8_t*>(primary);
+  std::optional<std::string> edited;
 
   // @Editable leaves, in declaration order — the same order the map file writes
   // and the .def declares, so the inspector reads like the source of truth does.
   const std::vector<entities::leaf_field_t> leaves =
-      entities::collect_leaf_fields(entity->type, entities::FIELD_FLAG_EDITABLE);
+      entities::collect_leaf_fields(primary->type, entities::FIELD_FLAG_EDITABLE);
 
   for (size_t index = 0; index < leaves.size(); ++index)
-    render_leaf_field(base, leaves[index], (int)index, uid, map, pick);
+  {
+    const entities::leaf_field_t& leaf = leaves[index];
+
+    // One absolute position would stack the selection on a point; the panel's offset moves it.
+    if (editing_many && leaf.offset == offsetof(entities::Entity, position))
+      continue;
+
+    const bool mixed = editing_many && leaf_is_mixed(entities, leaf);
+    if (mixed)
+    {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+    }
+
+    const bool changed = render_leaf_field(base, leaf, (int)index, uid, map, pick);
+
+    if (mixed)
+    {
+      ImGui::PopItemFlag();
+      ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Differs across the %u selected; showing the first. An edit sets them all.",
+                          entities.size());
+    }
+
+    if (!changed)
+      continue;
+
+    for (uint32_t other = 1; other < entities.size(); ++other)
+      std::memcpy(reinterpret_cast<uint8_t*>(entities[other]) + leaf.offset, base + leaf.offset,
+                  leaf.info->size_in_bytes);
+    edited = leaf.name;
+  }
+
+  return edited;
 }
 
 } // namespace client

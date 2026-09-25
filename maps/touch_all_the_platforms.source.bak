@@ -1,15 +1,16 @@
 entity
 {
   "classname" "worldspawn"
-  "name" "bunnyhop.source"
+  "name" "touch_all_the_platforms.source"
 }
 cvars
 {
   "g_gravity" "500"
+  "mp_round_end_seconds" "0"
+  "mp_round_seconds" "0"
   "next_map" "firstdwdaw"
-  "pm_air_acceleration" "7"
+  "pm_quake_air_acceleration" "7"
   "pm_maxspeed" "1000"
-  "sv_gamemode" "speedrun"
 }
 materials
 {
@@ -927,7 +928,7 @@ entity
   "orientation" "0 -0.70710677 0 0.70710677"
   "name" ""
   "spawn_type" "Human"
-  "team_allegiance" "Free_For_All"
+  "team_allegiance" "Red"
 }
 entity
 {
@@ -947,6 +948,7 @@ entity
   "position" "-3200 3712 3072"
   "orientation" "0 0 0 1"
   "name" ""
+  "match.mode" "speedrun"
 }
 entity
 {

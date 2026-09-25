@@ -6,27 +6,13 @@
 #include <optional>
 
 #include "array.hpp"
+#include "contact.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "player_move.hpp"
 #include "subtick.hpp"
 
 namespace shared
 {
-
-enum class hit_effect_t : uint8_t
-{
-  Damage,
-  Swap,
-  Magnet,
-  // Re-arms a Movement_Override::Reel on the SHOOTER toward the player it hit, so the pull is predicted.
-  Tether,
-  // Sends the SHOOTER to the Remnant_Entity it hit and spends it. Only the shooter's own remnants are targets.
-  Teleport,
-  // Freezes the player it hit for freeze_seconds as a box others stand on (shared/statues.hpp). Stasis holds
-  // them with their velocity kept; Statue zeroes it and lets gravity act. A second hit of either releases.
-  Stasis,
-  Statue
-};
 
 // Speed along the AIM at the moment of the press, and speed straight up. Two
 // numbers rather than one direction because the two abilities this exists for
@@ -45,26 +31,16 @@ struct self_impulse_t
   float          upward_speed;
 };
 
-// Fire_Resolution::Hitscan's parameters.
+// Fire_Resolution::Hitscan's parameters: the flight alone. What the shot does
+// on arrival is the button's contact_t.
 struct hitscan_t
 {
-  float        damage;
-  float        headshot_multiplier; // 1.0: no headshots
-  float        range;               // knife 50, scout map-length
-  // Swap exchanges position and velocity with a player target instead of damaging it.
-  hit_effect_t hit_effect;
-  // Magnet only: the speed each of the two players gains along the line between them, negative apart.
-  float        magnet_speed;
-  // Tether only: the reel's speed, and how long ONE hit keeps it alive (a lease the next held hit renews).
-  float        tether_speed;
-  float        tether_seconds;
-  // Stasis and Statue only: how long one hit freezes the player it hit.
-  float        freeze_seconds;
+  float range; // knife 50, scout map-length
   // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
   // the client -- the effect itself always fires, so the knife still sounds.
   // A BOOL rather than an "is this melee" test: a silenced pistol or a fist
   // would each want the same answer for an unrelated reason.
-  bool         leaves_bullet_impact;
+  bool  leaves_bullet_impact;
 };
 
 struct projectile_t
@@ -98,6 +74,19 @@ struct place_t
   entities::entity_type spawns;
 };
 
+// What a button does when its owner already has max_alive of its shots alive.
+enum class at_limit_t : uint8_t
+{
+  Replace_Oldest,
+};
+
+// How many shots off ONE button one player may have alive at once, landed ones included. 0 is no limit.
+struct alive_limit_t
+{
+  uint32_t   max_alive;
+  at_limit_t at_limit;
+};
+
 // What the weapon sounds like. Client-only facts, on the shared row (see
 // above). Missing is a declared absence, logged once per id by the audio
 // system, never a silent skip.
@@ -108,9 +97,10 @@ struct weapon_sounds_t
   assets::sound_asset world_impact;
 };
 
-// What ONE button does: the resolution and the parameters it reads. Both
-// buttons are this shape, so a secondary hitscan or a secondary projectile is
-// the same arm of the same switch as a primary one.
+// What ONE button does: the resolution and the parameters it reads, and what
+// the shot does when it ARRIVES. Both buttons are this shape, so a secondary
+// hitscan or a secondary projectile is the same arm of the same switch as a
+// primary one.
 struct weapon_fire_t
 {
   entities::Fire_Resolution resolution;
@@ -118,8 +108,13 @@ struct weapon_fire_t
   projectile_t              projectile;
   place_t                   place;
   self_impulse_t            self_impulse;
+  // What a Hitscan or a sweeping Projectile does on contact (update_contacts).
+  // None on a button whose shot never arrives anywhere: a fixed-arc projectile,
+  // a place, an impulse.
+  contact_t                 contact;
   // A button that stays down repeats at fire_interval_seconds (try_find_held_fire_time).
   bool                      fires_while_held;
+  alive_limit_t             limit;
 };
 
 struct weapon_definition_t
@@ -187,11 +182,9 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 50.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 50.f,
-                                                .hit_effect           = hit_effect_t::Damage,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 50.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Damage,
+                                                .damage = {.amount = 50.f, .headshot_multiplier = 1.0f}}},
      .sounds                  = {.fire         = assets::sound_asset::knife_slash1,
                                  .world_impact = assets::sound_asset::knife_hitwall1}},
     {.weapon                  = entities::Weapon::Scout,
@@ -202,11 +195,9 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 10,
      .reload_duration_seconds = 2.0f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 60.f,
-                                                .headshot_multiplier  = 2.0f,
-                                                .range                = 10000.f,
-                                                .hit_effect           = hit_effect_t::Damage,
-                                                .leaves_bullet_impact = true}},
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = true},
+                                 .contact    = {.effect = contact_effect_t::Damage,
+                                                .damage = {.amount = 60.f, .headshot_multiplier = 2.0f}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Zoom},
      .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
                                  .world_impact = assets::sound_asset::Missing}},
@@ -220,7 +211,9 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 600.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Rocket_Entity}},
+                                                .spawns = entities::entity_type::Rocket_Entity},
+                                 .contact    = {.effect  = contact_effect_t::Explode,
+                                                .explode = {.radius = 120.f, .knockback = 600.f}}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                        = entities::Weapon::Dash,
@@ -251,14 +244,11 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 0.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 10000.f,
-                                                .hit_effect           = hit_effect_t::Swap,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Swap}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
-    // The secondary is the same hook, fired as the reel (Hook_Entity::reels_target).
+    // The same hook on both buttons: the primary throws the player hit at the shooter, the secondary reels them in.
     {.weapon                  = entities::Weapon::Hook,
      .display_name            = "Hook",
      .slot                    = entities::Inventory_Slot::Secondary,
@@ -269,16 +259,21 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Hook_Entity}},
+                                                .spawns = entities::entity_type::Hook_Entity},
+                                 .contact    = {.effect = contact_effect_t::Throw,
+                                                .throw_ = {.subject = contact_subject_t::Target}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Hook_Entity}},
+                                                .spawns = entities::entity_type::Hook_Entity},
+                                 .contact    = {.effect = contact_effect_t::Reel,
+                                                .reel   = {.subject = contact_subject_t::Target,
+                                                           .seconds = 1.5f}}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Bubble,
      .display_name            = "Bubble",
-     .slot                    = entities::Inventory_Slot::Secondary,
+     .slot                    = entities::Inventory_Slot::Primary,
      .fire_interval_seconds   = 0.1f,
      .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
@@ -286,7 +281,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 500.f,
                                                 .gravity_scale = -0.5f,
-                                                .spawns = entities::entity_type::Bubble_Entity}},
+                                                .spawns = entities::entity_type::Bubble_Entity},
+                                 .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Kooh,
@@ -299,11 +295,16 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Kooh_Entity}},
+                                                .spawns = entities::entity_type::Kooh_Entity},
+                                 .contact    = {.effect = contact_effect_t::Throw,
+                                                .throw_ = {.subject = contact_subject_t::Shooter}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Kooh_Entity}},
+                                                .spawns = entities::entity_type::Kooh_Entity},
+                                 .contact    = {.effect = contact_effect_t::Reel,
+                                                .reel   = {.subject = contact_subject_t::Shooter,
+                                                           .seconds = 1.5f}}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 
@@ -315,22 +316,17 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 0.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 1500.f,
-                                                .hit_effect           = hit_effect_t::Magnet,
-                                                .magnet_speed         = 600.f,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 1500.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Magnet,
+                                                .magnet = {.speed = 600.f}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 0.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 1500.f,
-                                                .hit_effect           = hit_effect_t::Magnet,
-                                                .magnet_speed         = -600.f,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 1500.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Magnet,
+                                                .magnet = {.speed = -600.f}}},
      .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
                                  .world_impact = assets::sound_asset::Missing}},
-    // The fiddle row: both buttons repeat while held, a tether toward the player hit and a bullet stream.
+    // The fiddle row: both buttons repeat while held, a reel toward the player hit (a lease the next held
+    // hit renews) and a bullet stream.
     {.weapon                  = entities::Weapon::Mock,
      .display_name            = "Mock",
      .slot                    = entities::Inventory_Slot::Primary,
@@ -339,20 +335,15 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution       = entities::Fire_Resolution::Hitscan,
-                                 .hitscan          = {.damage               = 0.f,
-                                                      .headshot_multiplier  = 1.0f,
-                                                      .range                = 3000.f,
-                                                      .hit_effect           = hit_effect_t::Tether,
-                                                      .tether_speed         = 600.f,
-                                                      .tether_seconds       = 0.25f,
-                                                      .leaves_bullet_impact = false},
+                                 .hitscan          = {.range = 3000.f, .leaves_bullet_impact = false},
+                                 .contact          = {.effect = contact_effect_t::Reel,
+                                                      .reel   = {.subject = contact_subject_t::Shooter,
+                                                                 .seconds = 0.25f}},
                                  .fires_while_held = true},
      .secondary_fire          = {.resolution       = entities::Fire_Resolution::Hitscan,
-                                 .hitscan          = {.damage               = 8.f,
-                                                      .headshot_multiplier  = 2.0f,
-                                                      .range                = 10000.f,
-                                                      .hit_effect           = hit_effect_t::Damage,
-                                                      .leaves_bullet_impact = true},
+                                 .hitscan          = {.range = 10000.f, .leaves_bullet_impact = true},
+                                 .contact          = {.effect = contact_effect_t::Damage,
+                                                      .damage = {.amount = 8.f, .headshot_multiplier = 2.0f}},
                                  .fires_while_held = true},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
@@ -366,7 +357,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Platform_Entity}},
+                                                .spawns = entities::entity_type::Platform_Entity},
+                                 .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Shrinking_Platform,
@@ -379,7 +371,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Shrinking_Platform_Entity}},
+                                                .spawns = entities::entity_type::Shrinking_Platform_Entity},
+                                 .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 
@@ -392,12 +385,12 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Place,
                                  .place      = {.spawns = entities::entity_type::Remnant_Entity}},
+     // The teleport shot is aimed at the shooter's OWN remnants and at nothing else: a remnant is a marker,
+     // not a body, so it never soaks a bullet and nobody else's can be aimed at.
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 0.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 10000.f,
-                                                .hit_effect           = hit_effect_t::Teleport,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect  = contact_effect_t::Teleport,
+                                                .targets = contact_targets_t::Own_Remnants}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     {.weapon                  = entities::Weapon::Ricochet,
@@ -410,7 +403,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 900.f,
                                                 .gravity_scale = 1.f,
-                                                .spawns = entities::entity_type::Ricochet_Entity}},
+                                                .spawns = entities::entity_type::Ricochet_Entity},
+                                 .contact    = {.effect = contact_effect_t::Land}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     // A held LEVEL, not a shot: the primary's resolution says what the button means and
@@ -435,19 +429,15 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 0.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 10000.f,
-                                                .hit_effect           = hit_effect_t::Stasis,
-                                                .freeze_seconds       = 2.0f,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Freeze,
+                                                .freeze = {.kind    = entities::Movement_Override::Stasis,
+                                                           .seconds = 2.0f}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Hitscan,
-                                 .hitscan    = {.damage               = 0.f,
-                                                .headshot_multiplier  = 1.0f,
-                                                .range                = 10000.f,
-                                                .hit_effect           = hit_effect_t::Statue,
-                                                .freeze_seconds       = 2.0f,
-                                                .leaves_bullet_impact = false}},
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Freeze,
+                                                .freeze = {.kind    = entities::Movement_Override::Statue,
+                                                           .seconds = 2.0f}}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     // LMB delivers the zone to a surface by a shot; RMB fires the zone itself on a straight, unclipped fixed arc.
@@ -462,11 +452,14 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 900.f,
                                                 .gravity_scale = 0.5f,
-                                                .spawns = entities::entity_type::Modifier_Shot_Entity}},
+                                                .spawns = entities::entity_type::Modifier_Shot_Entity},
+                                 .contact    = {.effect = contact_effect_t::Leave_Zone},
+                                 .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Timed_Movement_Modifier_Entity}},
+                                                .spawns = entities::entity_type::Timed_Movement_Modifier_Entity},
+                                 .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 }};
@@ -542,32 +535,75 @@ static_assert(first_self_impulse_row_gated_by_more_than_movement() == entities::
               "Movement::seconds_until_impulse_ready, which is the only one the client can "
               "replay.");
 
-// THE THIRD CHECK: each button's parameters match its resolution. The struct a
-// resolution reads must be filled and the ones it does not read must be zero
-// -- a Swap on a Projectile fire or a range on a Self_Impulse fire is a number
-// nothing reads, which is the same silence as an unfilled row. None and Zoom
-// read nothing. The primary may be neither: an unfilled primary is a zeroed
-// one, and Zoom is the client's right-click toggle.
+// THE THIRD CHECK: each button's parameters match its resolution, and its
+// contact's numbers match its effect. The struct a resolution reads must be
+// filled and the ones it does not read must be zero -- a range on a
+// Self_Impulse fire is a number nothing reads, which is the same silence as an
+// unfilled row. The contact is union-shaped the same way over its effect. None
+// and Zoom read nothing. The primary may be neither: an unfilled primary is a
+// zeroed one, and Zoom is the client's right-click toggle.
+constexpr bool contact_parameters_match_effect(const contact_t& contact)
+{
+  const bool damage_is_zero  = contact.damage.amount == 0.f && contact.damage.headshot_multiplier == 0.f;
+  const bool magnet_is_zero  = contact.magnet.speed == 0.f;
+  const bool reel_is_zero    = contact.reel.subject == contact_subject_t::Target && contact.reel.seconds == 0.f;
+  const bool throw_is_zero   = contact.throw_.subject == contact_subject_t::Target;
+  const bool freeze_is_zero  = contact.freeze.kind == entities::Movement_Override::None &&
+                               contact.freeze.seconds == 0.f;
+  const bool explode_is_zero = contact.explode.radius == 0.f && contact.explode.knockback == 0.f;
+  const bool aims_at_bodies  = contact.targets == contact_targets_t::Bodies;
+
+  switch (contact.effect)
+  {
+  case contact_effect_t::None:
+  case contact_effect_t::Swap:
+  case contact_effect_t::Land:
+  case contact_effect_t::Leave_Zone:
+    return damage_is_zero && magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero &&
+           explode_is_zero && aims_at_bodies;
+  case contact_effect_t::Damage:
+    return contact.damage.amount > 0.f && contact.damage.headshot_multiplier > 0.f &&
+           magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero && explode_is_zero &&
+           aims_at_bodies;
+  case contact_effect_t::Magnet:
+    return contact.magnet.speed != 0.f && damage_is_zero && reel_is_zero && throw_is_zero &&
+           freeze_is_zero && explode_is_zero && aims_at_bodies;
+  case contact_effect_t::Reel:
+    return contact.reel.seconds > 0.f && damage_is_zero && magnet_is_zero && throw_is_zero &&
+           freeze_is_zero && explode_is_zero && aims_at_bodies;
+  case contact_effect_t::Throw:
+    return damage_is_zero && magnet_is_zero && reel_is_zero && freeze_is_zero &&
+           explode_is_zero && aims_at_bodies;
+  case contact_effect_t::Teleport:
+    return damage_is_zero && magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero &&
+           explode_is_zero && contact.targets == contact_targets_t::Own_Remnants;
+  case contact_effect_t::Freeze:
+    return (contact.freeze.kind == entities::Movement_Override::Stasis ||
+            contact.freeze.kind == entities::Movement_Override::Statue) &&
+           contact.freeze.seconds > 0.f && damage_is_zero && magnet_is_zero && reel_is_zero &&
+           throw_is_zero && explode_is_zero && aims_at_bodies;
+  case contact_effect_t::Explode:
+    return contact.explode.radius > 0.f && contact.explode.knockback > 0.f && damage_is_zero &&
+           magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero && aims_at_bodies;
+  }
+  return false;
+}
+
 constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
 {
   const hitscan_t&      hitscan    = fire.hitscan;
   const projectile_t&   projectile = fire.projectile;
   const place_t&        place      = fire.place;
   const self_impulse_t& impulse    = fire.self_impulse;
-  const bool hitscan_is_zero = hitscan.damage == 0.f && hitscan.headshot_multiplier == 0.f &&
-                               hitscan.range == 0.f && hitscan.hit_effect == hit_effect_t::Damage &&
-                               hitscan.magnet_speed == 0.f && hitscan.tether_speed == 0.f &&
-                               hitscan.tether_seconds == 0.f && !hitscan.leaves_bullet_impact;
-  const bool magnet_speed_matches_effect =
-      (hitscan.hit_effect == hit_effect_t::Magnet) == (hitscan.magnet_speed != 0.f);
-  const bool tether_matches_effect =
-      hitscan.hit_effect == hit_effect_t::Tether
-          ? hitscan.tether_speed > 0.f && hitscan.tether_seconds > 0.f
-          : hitscan.tether_speed == 0.f && hitscan.tether_seconds == 0.f;
+  const bool hitscan_is_zero    = hitscan.range == 0.f && !hitscan.leaves_bullet_impact;
   const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
                                   projectile.spawns == entities::entity_type::Invalid;
-  const bool impulse_is_zero = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
-  const bool place_is_zero   = place.spawns == entities::entity_type::Invalid;
+  const bool impulse_is_zero    = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
+  const bool place_is_zero      = place.spawns == entities::entity_type::Invalid;
+  const bool contact_is_none    = fire.contact.effect == contact_effect_t::None;
+  const bool contact_matches    = contact_parameters_match_effect(fire.contact);
+  const bool limit_is_zero      = fire.limit.max_alive == 0 &&
+                                  fire.limit.at_limit == at_limit_t::Replace_Oldest;
 
   switch (fire.resolution)
   {
@@ -576,19 +612,20 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   case entities::Fire_Resolution::Zoom:
   case entities::Fire_Resolution::Canopy:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
-           !fire.fires_while_held;
+           contact_is_none && contact_matches && !fire.fires_while_held && limit_is_zero;
   case entities::Fire_Resolution::Hitscan:
-    return hitscan.range > 0.f && hitscan.headshot_multiplier > 0.f &&
-           magnet_speed_matches_effect && tether_matches_effect && projectile_is_zero &&
-           place_is_zero && impulse_is_zero;
+    return hitscan.range > 0.f && !contact_is_none && contact_matches && projectile_is_zero &&
+           place_is_zero && impulse_is_zero && limit_is_zero;
   case entities::Fire_Resolution::Projectile:
     return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
-           hitscan_is_zero && place_is_zero && impulse_is_zero;
+           contact_matches && hitscan_is_zero && place_is_zero && impulse_is_zero;
   case entities::Fire_Resolution::Place:
     return place.spawns != entities::entity_type::Invalid && hitscan_is_zero &&
-           projectile_is_zero && impulse_is_zero && !fire.fires_while_held;
+           projectile_is_zero && impulse_is_zero && contact_is_none && contact_matches &&
+           !fire.fires_while_held && limit_is_zero;
   case entities::Fire_Resolution::Self_Impulse:
-    return hitscan_is_zero && projectile_is_zero && place_is_zero && !fire.fires_while_held;
+    return hitscan_is_zero && projectile_is_zero && place_is_zero && contact_is_none &&
+           contact_matches && !fire.fires_while_held && limit_is_zero;
   }
   return false;
 }
@@ -608,8 +645,8 @@ constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
         !(definition.fire_interval_seconds > 0.f))
       return row;
     for (const weapon_fire_t* fire : {&definition.primary_fire, &definition.secondary_fire})
-      if (fire->fires_while_held && fire->hitscan.hit_effect == hit_effect_t::Tether &&
-          !(fire->hitscan.tether_seconds > definition.fire_interval_seconds))
+      if (fire->fires_while_held && fire->contact.effect == contact_effect_t::Reel &&
+          !(fire->contact.reel.seconds > definition.fire_interval_seconds))
         return row;
   }
   return entities::Weapon_COUNT;
@@ -618,15 +655,22 @@ constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
 static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::Weapon_COUNT,
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "each fire of a WEAPON_DEFINITIONS row fills the parameter struct of its own "
-              "Fire_Resolution (hitscan: positive range and headshot_multiplier; projectile: "
-              "positive speed and a spawned entity type; place: a spawned entity type) and leaves the others zero, and the "
+              "Fire_Resolution (hitscan: positive range; projectile: positive speed and a spawned "
+              "entity type; place: a spawned entity type) and leaves the others zero, and the "
               "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
-              "so a value in another is a number nothing reads. fires_while_held is for a "
-              "Hitscan or Projectile fire on a row with a positive fire_interval_seconds: "
-              "with no interval a held trigger fires once per sub-tick step, which is a rate "
-              "set by how many edges the tick had. A held Tether's tether_seconds is LONGER "
-              "than the fire interval: it is a lease the next hit renews, and one that runs "
-              "out between two hits drops the reel ten times a second.");
+              "so a value in another is a number nothing reads. A Hitscan carries a contact "
+              "effect; a Projectile may; None, Zoom, Canopy, Place and Self_Impulse carry "
+              "contact_effect_t::None. The contact fills the sub-struct of its own effect "
+              "(Damage: positive amount and headshot_multiplier; Magnet: a non-zero speed; Reel: "
+              "positive seconds; Freeze: Stasis or Statue and positive seconds; Explode: positive "
+              "radius and knockback) and leaves the others zero; Teleport aims at Own_Remnants and "
+              "everything else at Bodies. fires_while_held is for a Hitscan or Projectile fire on "
+              "a row with a positive fire_interval_seconds: with no interval a held trigger fires "
+              "once per sub-tick step, which is a rate set by how many edges the tick had. A held "
+              "Reel's seconds is LONGER than the fire interval: it is a lease the next hit renews, "
+              "and one that runs out between two hits drops the reel ten times a second. An "
+              "alive limit is for a Projectile fire only: spawn_projectile is the one place "
+              "that enforces it.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {

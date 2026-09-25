@@ -131,6 +131,10 @@ const uint32_t tonemap_frag_spv[] =
 #include "tonemap.frag.spv.h"
     ;
 
+const uint32_t background_squares_frag_spv[] =
+#include "background_squares.frag.spv.h"
+    ;
+
 const uint32_t outline_mask_frag_spv[] =
 #include "outline_mask.frag.spv.h"
     ;
@@ -650,9 +654,9 @@ struct mesh_push_constants_t
 {
   float model[16];            // 64 bytes; the vertex shader derives the normal matrix from it
   float color[4];             // 16 bytes -- material base colour * draw tint, a = alpha
-  float clock_wipe_center[4]; // 16 bytes -- xyz world, w = fraction wiped
+  float clock_wipe_center[4]; // 16 bytes -- xyz world, w = fraction wiped; xyz = the peel's hole direction
   float clock_wipe_axis_x[4]; // 16 bytes -- w = dissolve threshold, 0 off
-  float clock_wipe_axis_y[4]; // 16 bytes
+  float clock_wipe_axis_y[4]; // 16 bytes -- w = peel front angle, 0 off
 };                            // = 128 bytes total
 
 constexpr VkShaderStageFlags MESH_PUSH_STAGES =
@@ -3185,6 +3189,124 @@ static void destroy_outline_resources()
     vkDestroyDescriptorPool(g_device, g_outline_pool, nullptr);
   if (g_outline_ds_layout)
     vkDestroyDescriptorSetLayout(g_device, g_outline_ds_layout, nullptr);
+}
+
+// --- The screen background ---
+//
+// A fullscreen fragment shader drawn in the present pass after the tonemap, for
+// screens with no scene. Display side of the curve for the UI's reason.
+
+struct background_push_constants_t
+{
+  linalg::vec2 resolution;
+  float        time = 0.0f;
+};
+
+static VkPipelineLayout g_background_pipeline_layout = VK_NULL_HANDLE;
+static VkPipeline       g_background_pipeline        = VK_NULL_HANDLE;
+
+static VkPipeline create_background_pipeline()
+{
+  const VkShaderModule vert_module =
+      create_shader_module_or_die(tonemap_vert_spv, sizeof(tonemap_vert_spv), "background vertex");
+  const VkShaderModule frag_module = create_shader_module_or_die(
+      background_squares_frag_spv, sizeof(background_squares_frag_spv), "background fragment");
+
+  VkPipelineShaderStageCreateInfo stages[] = {
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+       vert_module, "main", nullptr},
+      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewport_state{
+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+  viewport_state.viewportCount = 1;
+  viewport_state.scissorCount  = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth   = 1.0f;
+  rasterizer.cullMode    = VK_CULL_MODE_NONE;
+  rasterizer.frontFace   = HOUSE_FRONT_FACE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+
+  VkPipelineColorBlendAttachmentState blend_attachment{};
+  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments    = &blend_attachment;
+
+  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  dynamic_state.dynamicStateCount = 2;
+  dynamic_state.pDynamicStates    = dynamic_states;
+
+  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+  pipeline_info.stageCount          = 2;
+  pipeline_info.pStages             = stages;
+  pipeline_info.pVertexInputState   = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState      = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState   = &multisampling;
+  pipeline_info.pDepthStencilState  = &depth_stencil;
+  pipeline_info.pColorBlendState    = &color_blending;
+  pipeline_info.pDynamicState       = &dynamic_state;
+  pipeline_info.layout              = g_background_pipeline_layout;
+  pipeline_info.renderPass          = g_present_render_pass;
+  pipeline_info.subpass             = 0;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the background pipeline");
+
+  vkDestroyShaderModule(g_device, frag_module, nullptr);
+  vkDestroyShaderModule(g_device, vert_module, nullptr);
+  return pipeline;
+}
+
+static void create_background_resources()
+{
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  push_range.offset     = 0;
+  push_range.size       = sizeof(background_push_constants_t);
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_background_pipeline_layout) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the background pipeline layout");
+
+  g_background_pipeline = create_background_pipeline();
+}
+
+static void destroy_background_resources()
+{
+  if (g_background_pipeline)
+    vkDestroyPipeline(g_device, g_background_pipeline, nullptr);
+  if (g_background_pipeline_layout)
+    vkDestroyPipelineLayout(g_device, g_background_pipeline_layout, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -6238,6 +6360,17 @@ static void pack_dissolve(float dissolve, mesh_push_constants_t& out)
   out.clock_wipe_axis_x[3] = dissolve;
 }
 
+// After pack_clock_wipe: a peeling draw never wipes, so the centre slot is free for the hole.
+static void pack_peel(const peel_t& peel, mesh_push_constants_t& out)
+{
+  if (!peel.armed)
+    return;
+  out.clock_wipe_center[0] = peel.hole_direction.x;
+  out.clock_wipe_center[1] = peel.hole_direction.y;
+  out.clock_wipe_center[2] = peel.hole_direction.z;
+  out.clock_wipe_axis_y[3] = peel.front_angle;
+}
+
 // Per pass, so a second viewport with its own camera gets its own block for free.
 static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
 {
@@ -6866,7 +6999,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
       const uint32_t pipeline_id = resolve_pipeline_id(
           {g_materials[material.index].pipeline_state, mesh.layout, draw.fill,
-           draw.clock_wipe.armed || draw.dissolve > 0.0f});
+           draw.clock_wipe.armed || draw.dissolve > 0.0f || draw.peel.armed});
       if (pipeline_id == UINT32_MAX)
         continue;
 
@@ -6973,6 +7106,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
     push.color[3] = base.w * (draw.tint.a / 255.0f);
     pack_clock_wipe(draw.clock_wipe, push);
     pack_dissolve(draw.dissolve, push);
+    pack_peel(draw.peel, push);
 
     vkCmdPushConstants(cmd, g_mesh_pipeline_layout, MESH_PUSH_STAGES, 0, sizeof(push), &push);
     vkCmdDrawIndexed(cmd, submesh.index_count, 1, submesh.index_offset, 0, 0);
@@ -7448,8 +7582,32 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
 // -- which is exactly why it resets the viewport and scissor first: apply_viewport
 // left both set to the last pass's rect, and a HUD anchored to a corner of an
 // editor panel is not a HUD.
+static void record_background_draw(VkCommandBuffer cmd, float seconds)
+{
+  VkViewport viewport{};
+  viewport.width    = (float)g_swapchain_extent.width;
+  viewport.height   = (float)g_swapchain_extent.height;
+  viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+  VkRect2D scissor{};
+  scissor.extent = g_swapchain_extent;
+  vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_background_pipeline);
+
+  const background_push_constants_t push{
+      {(float)g_swapchain_extent.width, (float)g_swapchain_extent.height}, seconds};
+  vkCmdPushConstants(cmd, g_background_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                     sizeof(push), &push);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
 static void record_ui_draw_list(VkCommandBuffer cmd, const ui_draw_list_t &ui)
 {
+  if (ui.background_seconds)
+    record_background_draw(cmd, *ui.background_seconds);
+
   if (ui.vertices.empty() || g_ui_pipeline == VK_NULL_HANDLE)
     return;
 
@@ -8054,6 +8212,7 @@ bool init(SDL_Window *window)
   create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
   create_tonemap_resources();
   create_outline_resources(); // borrows the mesh pipeline layout and the HDR sampler
+  create_background_resources();
   create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
   create_default_resources();
@@ -8193,6 +8352,7 @@ void shutdown()
   destroy_ui_resources();
   destroy_tonemap_resources();
   destroy_outline_resources();
+  destroy_background_resources();
   destroy_skybox_resources();
   destroy_shadow_resources();
   cleanup_registered_resources();

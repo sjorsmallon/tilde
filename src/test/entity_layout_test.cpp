@@ -237,6 +237,9 @@ int main()
         entity_type::Modifier_Shot_Entity,
         // Every field of its own: a spawned zone has no map for the client to have read it from.
         entity_type::Timed_Movement_Modifier_Entity,
+        entity_type::Weapon_Emancipation_Grill_Entity,
+        // Through Render and its clock, like a spawned zone.
+        entity_type::Emancipated_Weapon_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

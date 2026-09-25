@@ -260,7 +260,7 @@ int main()
         log_error("Could not spawn rocket {}", index);
         return 1;
       }
-      rocket->damage_amount = (float)index; // a per-entity marker to identify it by
+      rocket->lifetime = (float)index; // a per-entity marker to identify it by
       if (rocket->entity_id != rocket_uids[index])
       {
         log_error("spawn() returned uid {} but the entity carries {}",
@@ -297,10 +297,10 @@ int main()
                   rocket_uids[index], index);
         return 1;
       }
-      if (rocket->entity_id != rocket_uids[index] || rocket->damage_amount != (float)index)
+      if (rocket->entity_id != rocket_uids[index] || rocket->lifetime != (float)index)
       {
         log_error("Rocket uid {} resolved to the wrong entity (got uid {}, marker {})",
-                  rocket_uids[index], rocket->entity_id, rocket->damage_amount);
+                  rocket_uids[index], rocket->entity_id, rocket->lifetime);
         return 1;
       }
     }

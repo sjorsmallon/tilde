@@ -3,6 +3,7 @@
 #include "../camera.hpp"
 #include "../editor/editor_bvh.hpp"
 #include "../editor/connection_lines.hpp"
+#include "../editor/editor_sidebar.hpp"
 #include "../editor/entity_outliner.hpp"
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
@@ -130,6 +131,7 @@ private:
   // data -- see entity_outliner.hpp. Cleared on every map load, which is the
   // ONE sync point: a load resets the uid space.
   entity_visibility_t entity_visibility;
+  editor_sidebar_t    sidebar;
 
   // The viewport's wiring view, driven by the Map Info panel's connection list.
   // Editor state, not a cvar: nothing outside the editor reads it and it has no
@@ -143,6 +145,8 @@ private:
 
   // When true, the editor ground grid is drawn.
   bool show_grid = false;
+  bool show_map_info = false;
+  bool show_edit_history = false;
 
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
@@ -174,6 +178,11 @@ private:
   // Points the camera down an axis, orthographic, centred on the active tool's
   // `view_focus` (world origin at map scale when it has no opinion).
   void snap_to_axis_view(ViewMode mode);
+
+  // Moves the camera `height` above the object (or the group's members) and
+  // looks at it, keeping the current heading. Orthographic views only recentre.
+  void go_to_object(shared::entity_uid_t uid, float height);
+  void rename_entity(shared::entity_uid_t uid, const std::string& name);
 
   bool          orbiting    = false;
   linalg::vec3f orbit_pivot = {0.0f, 0.0f, 0.0f};

@@ -88,7 +88,7 @@ file only states them.
 | Collision world, projectile sweep, bounce bodies | `collision_world_plan.md` |
 | Sub-tick input, raw input thread | `subtick_plan.md`, `raw_input_plan.md` |
 | Hitscan, lag compensation | `hitscan_plan.md`, `lag_compensation_def.md` |
-| Weapons, inventory | `weapon_inventory_plan.md` |
+| Weapons, inventory, contact effects | `weapon_inventory_plan.md`, `contact_effect_plan.md` |
 | Game modes, the match | `game_modes_def.md`, `match_def.md`, `timer_def.md` |
 | Reliable stream, transfers | `reliable_stream_def.md` |
 | Replays and ghosts | `replay_def.md`, `coop_ghost_plan.md` |
@@ -136,8 +136,9 @@ file only states them.
 
 `src/server/tick.cpp` is the ORDER and nothing else: receive, simulate, send.
 Simulate is six steps (match transition; freeze what inputs read; inputs;
-consequences; the rest of the world, observers last; deliver the action
-queue). Anything that grows a body is a system beside it. The client's
+consequences: the things inputs launched fly and push, then `update_contacts`
+acts; the rest of the world, observers last; deliver the action queue).
+Anything that grows a body is a system beside it. The client's
 `Play_State::update` is the same list, and the session's entities have exactly
 two writers on the client: the snapshot apply and teardown. Own-player
 prediction writes `ctx.prediction`.
@@ -196,9 +197,10 @@ prediction writes `ctx.prediction`.
   mutable parameter is the `Movement` component, every field of which is
   `@Networked`, and a reconciliation replay restarts it unconditionally from
   the latest snapshot. A jump is an edge, not a level.
-- `sweep_projectile` is the one question a flying thing asks; targets are the
-  current entities by the box each one physically is. A shot reads the
-  shooter's team view: you shoot through what you can walk through.
+- `sweep_projectile` is the one question a flying thing asks, a hitscan
+  included (radius zero), through the shooter's team view: you shoot through
+  what you can walk through. Targets are the current entities by the box each
+  one physically is.
 - Anything that writes a player velocity from outside `player_move` goes
   through `apply_impulse`; under the instant model that borrows speed for a
   timer, and a writer that forgets is erased next step.
@@ -254,6 +256,12 @@ prediction writes `ctx.prediction`.
   union-shaped over that discriminant. A `Self_Impulse` row carries no clocks
   (static_asserted): its gate is `Movement::seconds_until_impulse_ready`,
   applied at the server, the live prediction AND the replay.
+- What a shot does on ARRIVAL is the button's `contact_t` (`shared/contact.hpp`);
+  hitscan and every sweeping projectile push one `pending_contact_t` and
+  `update_contacts` is the one place that acts. The target's kind is asked of
+  the entity system at apply, never stored; null is the map and a mover is a
+  surface. The row is the one place a number lives; reel speed and arrive
+  radius are the `sv_hook_*` cvars.
 - A mode is a ROW of `GAME_MODES`; nothing switches on `Game_Mode`. The match
   is the `Game_Rules_Entity`; every transition is a request and `update_match`
   is the one place that performs one. `enter_phase` is the one writer of

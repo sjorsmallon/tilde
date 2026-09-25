@@ -133,7 +133,8 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
   }
 
   // Use the schema-based inspector for all fields
-  render_entity_fields_in_an_imgui_window(emitter);
+  entities::Entity* inspected = emitter;
+  (void)render_entity_fields_in_an_imgui_window(Span<entities::Entity* const>(&inspected, 1));
 
   ImGui::Separator();
   ImGui::Text("Quick Presets");

@@ -4,9 +4,9 @@
 #include "../../shared/log.hpp"
 #include "../../shared/map.hpp"
 #include "../../shared/map_geometry.hpp"
+#include "../../shared/span.hpp"
 #include <cstdint>
 #include <map>
-#include <stack>
 #include <string>
 #include <variant>
 #include <vector>
@@ -125,6 +125,9 @@ restore_entity(const entity_snapshot_t &snapshot)
 
 struct transaction_t
 {
+  // What the author did, in the History panel's words. Set by push; the diffs
+  // say WHAT changed, only the call site knows which gesture it was.
+  std::string              name;
   std::vector<edit_diff_t> diffs;
 
   bool empty() const { return diffs.empty(); }
@@ -241,41 +244,55 @@ struct transaction_t
 class Transaction_System
 {
 public:
-  void push(transaction_t txn)
+  void push(std::string name, transaction_t txn)
   {
     if (txn.empty())
       return;
-    undo_stack.push(std::move(txn));
-    while (!redo_stack.empty())
-      redo_stack.pop();
+    txn.name = std::move(name);
+    applied.push_back(std::move(txn));
+    undone.clear();
   }
 
   void undo(shared::map_t &map)
   {
-    if (undo_stack.empty())
+    if (applied.empty())
       return;
-    auto t = std::move(undo_stack.top());
-    undo_stack.pop();
+    transaction_t t = std::move(applied.back());
+    applied.pop_back();
     revert_transaction(map, t);
-    redo_stack.push(std::move(t));
+    undone.push_back(std::move(t));
   }
 
   void redo(shared::map_t &map)
   {
-    if (redo_stack.empty())
+    if (undone.empty())
       return;
-    auto t = std::move(redo_stack.top());
-    redo_stack.pop();
+    transaction_t t = std::move(undone.back());
+    undone.pop_back();
     apply_transaction(map, t);
-    undo_stack.push(std::move(t));
+    applied.push_back(std::move(t));
   }
 
-  bool can_undo() const { return !undo_stack.empty(); }
-  bool can_redo() const { return !redo_stack.empty(); }
+  // Undo or redo until exactly `applied_count` transactions are applied: the
+  // History panel's click. 0 is the map as it was loaded.
+  void jump_to(shared::map_t &map, size_t applied_count)
+  {
+    while (applied.size() > applied_count)
+      undo(map);
+    while (applied.size() < applied_count && !undone.empty())
+      redo(map);
+  }
+
+  bool can_undo() const { return !applied.empty(); }
+  bool can_redo() const { return !undone.empty(); }
+
+  // Oldest first. The next redo is undone_transactions().back().
+  Span<const transaction_t> applied_transactions() const { return applied; }
+  Span<const transaction_t> undone_transactions() const { return undone; }
 
 private:
-  std::stack<transaction_t> undo_stack;
-  std::stack<transaction_t> redo_stack;
+  std::vector<transaction_t> applied;
+  std::vector<transaction_t> undone;
 
   void apply_transaction(shared::map_t &map, const transaction_t &t)
   {

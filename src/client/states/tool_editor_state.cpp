@@ -6,11 +6,15 @@
 #include "../../shared/debug_collision.hpp"
 #include "../../shared/map_baker.hpp"
 #include "../editor/editor_bvh.hpp"
+#include "../editor/editor_object_bounds.hpp"
+#include "../../shared/map_group.hpp"
 #include "../editor/entity_editor_traits.hpp"
 #include "../editor/connection_lines.hpp"
 #include "../editor/entity_icons.hpp"
+#include "../editor/editor_sidebar.hpp"
 #include "../editor/entity_outliner.hpp"
 #include "../editor/geometry_editor.hpp"
+#include "../editor/history_panel.hpp"
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/brush_tool.hpp"
@@ -497,27 +501,60 @@ void Tool_Editor_State::update(float dt)
   // and so picking and rendering can never be a frame apart on it.
   camera.fov_degrees = state_manager::get_client_context().cvars->r_fov;
 
-  if (input::is_key_pressed(input::key_t::Escape))
-  {
-    state_manager::switch_to(game_state::main_menu);
-    return;
-  }
+  const bool typing = input::imgui_wants_text_input();
 
-  if (input::is_key_pressed(input::key_t::F1))
-    play_was_requested_by_key = true;
-  if (input::is_key_pressed(input::key_t::F2))
-    play_at_spawn_was_requested_by_key = true;
+  if (!typing)
+  {
+    if (input::is_key_pressed(input::key_t::Escape))
+    {
+      state_manager::switch_to(game_state::main_menu);
+      return;
+    }
+
+    if (input::is_key_pressed(input::key_t::F1))
+    {
+      if (input::current_modifiers().shift)
+        play_at_spawn_was_requested_by_key = true;
+      else
+        play_was_requested_by_key = true;
+    }
+    if (input::is_key_pressed(input::key_t::F2))
+      sidebar.outliner.rename_requested = true;
+  }
 
   // Update Camera
   if (!input::imgui_wants_mouse())
   {
     input::modifiers_t mods = input::current_modifiers();
 
-    if (input::is_key_pressed(input::key_t::Z))
+    if (!typing)
     {
-      if (mods.ctrl)
+      if (input::is_key_pressed(input::key_t::Z))
       {
-        if (mods.shift)
+        if (mods.ctrl)
+        {
+          if (mods.shift)
+          {
+            if (transaction_system.can_redo())
+            {
+              transaction_system.redo(map);
+              geometry_updated_flag = true;
+            }
+          }
+          else
+          {
+            if (transaction_system.can_undo())
+            {
+              transaction_system.undo(map);
+              geometry_updated_flag = true;
+            }
+          }
+        }
+      }
+
+      if (input::is_key_pressed(input::key_t::Y))
+      {
+        if (mods.ctrl)
         {
           if (transaction_system.can_redo())
           {
@@ -525,173 +562,153 @@ void Tool_Editor_State::update(float dt)
             geometry_updated_flag = true;
           }
         }
+      }
+
+      if (input::is_key_pressed(input::key_t::O))
+      {
+        camera.orthographic = !camera.orthographic;
+        if (camera.orthographic)
+        {
+          camera.yaw = iso_yaw;
+          camera.pitch = iso_pitch;
+        }
         else
         {
-          if (transaction_system.can_undo())
-          {
-            transaction_system.undo(map);
-            geometry_updated_flag = true;
-          }
+          view_mode = ViewMode::FreeCam;
         }
       }
-    }
 
-    if (input::is_key_pressed(input::key_t::Y))
-    {
-      if (mods.ctrl)
+      // Shift+Space: cycle through axis-aligned views
+      if (input::is_key_pressed(input::key_t::Space) && mods.shift)
       {
-        if (transaction_system.can_redo())
+        switch (view_mode)
         {
-          transaction_system.redo(map);
-          geometry_updated_flag = true;
+        case ViewMode::FreeCam:
+          view_mode = ViewMode::TopDown;
+          camera.orthographic = true;
+          camera.yaw = 0.0f;
+          camera.pitch = -89.0f;
+          camera.position.y = 1500.f;
+          hud::set_announcement("Top Down (-Y)");
+          break;
+        case ViewMode::TopDown:
+          view_mode = ViewMode::Front;
+          camera.orthographic = true;
+          camera.yaw = 0.0f;
+          camera.pitch = 0.0f;
+          hud::set_announcement("Front (+X)");
+          break;
+        case ViewMode::Front:
+          view_mode = ViewMode::Side;
+          camera.orthographic = true;
+          camera.yaw = 90.0f;
+          camera.pitch = 0.0f;
+          hud::set_announcement("Side (+Z)");
+          break;
+        case ViewMode::Side:
+        // The keypad-only views are not in the cycle -- Shift+Space would
+        // otherwise need seven steps to get back where it started. They drop
+        // straight out to Free Cam.
+        case ViewMode::Bottom:
+        case ViewMode::Back:
+        case ViewMode::Left:
+          view_mode = ViewMode::FreeCam;
+          camera.orthographic = false;
+          hud::set_announcement("Free Cam");
+          break;
         }
       }
-    }
 
-    if (input::is_key_pressed(input::key_t::O))
-    {
-      camera.orthographic = !camera.orthographic;
-      if (camera.orthographic)
+      // Keypad axis views, Blender-style: 1 front, 3 right, 7 top, Ctrl for the
+      // opposite side. Unlike Shift+Space these centre on what the active tool
+      // says it is looking at, which is the point of them.
+      if (input::is_key_pressed(input::key_t::Keypad_1))
+        snap_to_axis_view(mods.ctrl ? ViewMode::Back : ViewMode::Front);
+      if (input::is_key_pressed(input::key_t::Keypad_3))
+        snap_to_axis_view(mods.ctrl ? ViewMode::Left : ViewMode::Side);
+      if (input::is_key_pressed(input::key_t::Keypad_7))
+        snap_to_axis_view(mods.ctrl ? ViewMode::Bottom : ViewMode::TopDown);
+
+      step_fly_speed_from_keypad(state_manager::get_client_context().cvars->editor_speed);
+
+      // Keypad 5 is Blender's ortho/perspective toggle, and having snapped to an
+      // axis you immediately want it. Same effect as O, on the key the muscle
+      // memory reaches for.
+      if (input::is_key_pressed(input::key_t::Keypad_5))
       {
-        camera.yaw = iso_yaw;
-        camera.pitch = iso_pitch;
+        camera.orthographic = !camera.orthographic;
+        if (!camera.orthographic)
+          view_mode = ViewMode::FreeCam;
+        hud::set_announcement(camera.orthographic ? "Orthographic" : "Perspective");
       }
-      else
+
+      if (camera.orthographic && view_mode == ViewMode::FreeCam)
       {
-        view_mode = ViewMode::FreeCam;
+        if (input::is_key_pressed(input::key_t::Arrow_Right))
+          camera.yaw = fmodf(camera.yaw + 90.0f, 360.0f);
+        if (input::is_key_pressed(input::key_t::Arrow_Left))
+          camera.yaw = fmodf(camera.yaw - 90.0f + 360.0f, 360.0f);
       }
-    }
 
-    // Shift+Space: cycle through axis-aligned views
-    if (input::is_key_pressed(input::key_t::Space) && mods.shift)
-    {
-      switch (view_mode)
+      const auto announce_work_plane = [&]()
       {
-      case ViewMode::FreeCam:
-        view_mode = ViewMode::TopDown;
-        camera.orthographic = true;
-        camera.yaw = 0.0f;
-        camera.pitch = -89.0f;
-        camera.position.y = 1500.f;
-        hud::set_announcement("Top Down (-Y)");
-        break;
-      case ViewMode::TopDown:
-        view_mode = ViewMode::Front;
-        camera.orthographic = true;
-        camera.yaw = 0.0f;
-        camera.pitch = 0.0f;
-        hud::set_announcement("Front (+X)");
-        break;
-      case ViewMode::Front:
-        view_mode = ViewMode::Side;
-        camera.orthographic = true;
-        camera.yaw = 90.0f;
-        camera.pitch = 0.0f;
-        hud::set_announcement("Side (+Z)");
-        break;
-      case ViewMode::Side:
-      // The keypad-only views are not in the cycle -- Shift+Space would
-      // otherwise need seven steps to get back where it started. They drop
-      // straight out to Free Cam.
-      case ViewMode::Bottom:
-      case ViewMode::Back:
-      case ViewMode::Left:
-        view_mode = ViewMode::FreeCam;
-        camera.orthographic = false;
-        hud::set_announcement("Free Cam");
-        break;
-      }
-    }
-
-    // Keypad axis views, Blender-style: 1 front, 3 right, 7 top, Ctrl for the
-    // opposite side. Unlike Shift+Space these centre on what the active tool
-    // says it is looking at, which is the point of them.
-    if (input::is_key_pressed(input::key_t::Keypad_1))
-      snap_to_axis_view(mods.ctrl ? ViewMode::Back : ViewMode::Front);
-    if (input::is_key_pressed(input::key_t::Keypad_3))
-      snap_to_axis_view(mods.ctrl ? ViewMode::Left : ViewMode::Side);
-    if (input::is_key_pressed(input::key_t::Keypad_7))
-      snap_to_axis_view(mods.ctrl ? ViewMode::Bottom : ViewMode::TopDown);
-
-    step_fly_speed_from_keypad(state_manager::get_client_context().cvars->editor_speed);
-
-    // Keypad 5 is Blender's ortho/perspective toggle, and having snapped to an
-    // axis you immediately want it. Same effect as O, on the key the muscle
-    // memory reaches for.
-    if (input::is_key_pressed(input::key_t::Keypad_5))
-    {
-      camera.orthographic = !camera.orthographic;
-      if (!camera.orthographic)
-        view_mode = ViewMode::FreeCam;
-      hud::set_announcement(camera.orthographic ? "Orthographic" : "Perspective");
-    }
-
-    if (camera.orthographic && view_mode == ViewMode::FreeCam)
-    {
-      if (input::is_key_pressed(input::key_t::Arrow_Right))
-        camera.yaw = fmodf(camera.yaw + 90.0f, 360.0f);
-      if (input::is_key_pressed(input::key_t::Arrow_Left))
-        camera.yaw = fmodf(camera.yaw - 90.0f + 360.0f, 360.0f);
-    }
-
-    const auto announce_work_plane = [&]()
-    {
-      char buffer[64];
-      snprintf(buffer, sizeof(buffer), "Work plane: y = %.0f", context.work_plane_height);
-      hud::set_announcement(buffer);
-    };
-
-    if (input::is_key_pressed(input::key_t::Right_Bracket))
-    {
-      if (mods.shift)
-      {
-        context.work_plane_height += grid_settings.step();
-        announce_work_plane();
-      }
-      else
-      {
-        grid_settings.increase();
         char buffer[64];
-        snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+        snprintf(buffer, sizeof(buffer), "Work plane: y = %.0f", context.work_plane_height);
         hud::set_announcement(buffer);
-      }
-    }
-    if (input::is_key_pressed(input::key_t::Left_Bracket))
-    {
-      if (mods.shift)
-      {
-        context.work_plane_height -= grid_settings.step();
-        announce_work_plane();
-      }
-      else
-      {
-        grid_settings.decrease();
-        char buffer[64];
-        snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
-        hud::set_announcement(buffer);
-      }
-    }
+      };
 
-    if (input::is_key_pressed(input::key_t::Home))
-    {
-      if (mods.shift)
+      if (input::is_key_pressed(input::key_t::Right_Bracket))
       {
-        context.work_plane_height = 0.0f;
-        announce_work_plane();
-      }
-      else
-      {
-        context.bvh  = &editor_bvh.bvh;
-        context.grid = &grid_settings;
-        if (const std::optional<linalg::vec3> surface =
-                try_pick_surface_point(context, transform_viewport_state()))
+        if (mods.shift)
         {
-          context.work_plane_height = surface->y;
+          context.work_plane_height += grid_settings.step();
           announce_work_plane();
         }
         else
         {
-          hud::set_announcement("Work plane: no surface under the cursor");
+          grid_settings.increase();
+          char buffer[64];
+          snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+          hud::set_announcement(buffer);
+        }
+      }
+      if (input::is_key_pressed(input::key_t::Left_Bracket))
+      {
+        if (mods.shift)
+        {
+          context.work_plane_height -= grid_settings.step();
+          announce_work_plane();
+        }
+        else
+        {
+          grid_settings.decrease();
+          char buffer[64];
+          snprintf(buffer, sizeof(buffer), "Grid: %.0f", grid_settings.step());
+          hud::set_announcement(buffer);
+        }
+      }
+
+      if (input::is_key_pressed(input::key_t::Home))
+      {
+        if (mods.shift)
+        {
+          context.work_plane_height = 0.0f;
+          announce_work_plane();
+        }
+        else
+        {
+          context.bvh  = &editor_bvh.bvh;
+          context.grid = &grid_settings;
+          if (const std::optional<linalg::vec3> surface =
+                  try_pick_surface_point(context, transform_viewport_state()))
+          {
+            context.work_plane_height = surface->y;
+            announce_work_plane();
+          }
+          else
+          {
+            hud::set_announcement("Work plane: no surface under the cursor");
+          }
         }
       }
     }
@@ -725,11 +742,11 @@ void Tool_Editor_State::update(float dt)
     }
 
     const bool tool_captures_kb = active_tool && tools[*active_tool]->capture_keyboard();
-    fly_camera_input_t fly_input = read_fly_camera_keys();
+    fly_camera_input_t fly_input = typing ? fly_camera_input_t{} : read_fly_camera_keys();
     // Shift+Space cycles the axis views above; it is not "up".
     if (mods.shift)
       fly_input.up = false;
-    if (!tool_captures_kb && input::is_key_down(input::key_t::Q))
+    if (!typing && !tool_captures_kb && input::is_key_down(input::key_t::Q))
       fly_input.down = true;
 
     fly_camera_settings_t fly_settings;
@@ -763,7 +780,7 @@ void Tool_Editor_State::update(float dt)
       }
       if (fly_input.up)
         camera.ortho_height += speed;
-      if (input::is_key_down(input::key_t::C))
+      if (!typing && input::is_key_down(input::key_t::C))
         camera.ortho_height = std::max(camera.ortho_height - speed, 1.0f);
     }
   }
@@ -868,7 +885,7 @@ void Tool_Editor_State::update(float dt)
   // event pump, so no scancode polling. Ctrl+<digit> is resolved here rather
   // than in a tool, because switching tools has to work from every tool --
   // including from none, which is why this sits outside the block above.
-  if (!input::imgui_wants_text_input())
+  if (!typing)
   {
     for (const input::key_event_t &key_event : input::frame_key_events())
     {
@@ -901,119 +918,126 @@ void Tool_Editor_State::draw_imgui_panels()
     }
   }
 
-  ImGui::Begin("Map Info", nullptr, ImGuiWindowFlags_NoNav);
-  ImGui::Text("Map: %s", map.name.c_str());
-
   bool should_open_popup = false;
   bool should_open_load_popup = false;
   bool should_open_new_map_popup = false;
 
-  if (ImGui::Button("Save Map As..."))
-  {
-    hud::set_announcement("is the gerg ever open?");
-    // Popup for Save Map
-    should_open_popup = true;
-  }
-
-  if (ImGui::Button("Load Map..."))
-    should_open_load_popup = true;
-
-  if (ImGui::Button("New Map"))
-    should_open_new_map_popup = true;
-
-  ImGui::Checkbox("Solid Entities", &draw_entities_solid);
-  ImGui::Checkbox("Hide Geometry", &hide_geometry);
-  ImGui::Checkbox("Entity Icons", &show_entity_icons);
-  ImGui::Checkbox("Show Grid", &show_grid);
-  ImGui::SliderFloat("Camera Speed", &state_manager::get_client_context().cvars->editor_speed,
-                     100.0f, 5000.0f, "%.0f");
-
-  ImGui::Separator();
-
-  // Navmesh status
-  if (map.navmesh.valid())
-  {
-    int num_islands = 0;
-    for (const auto &p : map.navmesh.polygons)
-      if (p.island >= num_islands) num_islands = p.island + 1;
-    ImGui::TextColored({0.2f, 1.f, 0.4f, 1.f}, "Navmesh: %d vertices, %d polygons, %d islands",
-                       (int)map.navmesh.vertices.size(),
-                       (int)map.navmesh.polygons.size(),
-                       num_islands);
-  }
-  else
-  {
-    ImGui::TextDisabled("Navmesh: not baked");
-  }
-
-  constexpr float navmesh_cell_size_min = 128.f;
-  constexpr float navmesh_cell_size_max = 512.f;
-  ImGui::SliderFloat("Cell size", &navmesh_cell_size, navmesh_cell_size_min, navmesh_cell_size_max, "%.0f");
-
-  if (ImGui::Button("Bake Navmesh"))
-  {
-    std::string full_path = get_maps_dir() + map.name;
-    map.navmesh = {};
-    shared::bake_map(map, navmesh_cell_size);  // raw triangles only
-    m_raw_navmesh = map.navmesh;               // save before simplification
-    m_simplify_steps = 0;
-    shared::simplify_navmesh(map.navmesh);     // full simplify
-    if (shared::save_navmesh_sidecar(full_path, map.navmesh))
-      hud::set_announcement("Navmesh baked!");
-    else
-      hud::set_announcement("Navmesh bake failed (save map first?)");
-  }
-
-  // Step-by-step simplification for debugging.
-  if (m_raw_navmesh.valid())
-  {
-    ImGui::SameLine();
-    if (ImGui::Button("Simplify Step"))
-    {
-      map.navmesh = m_raw_navmesh;
-      ++m_simplify_steps;
-      shared::simplify_navmesh(map.navmesh, m_simplify_steps);
-    }
-    ImGui::SameLine();
-    ImGui::Text("(step %d)", m_simplify_steps);
-  }
-
-  ImGui::Checkbox("Show Navmesh",
-                  &state_manager::get_client_context().cvars->debug_show_navmesh);
-
-  // Collapsed by default: most maps carry no cvars at all, and the section is
-  // tall when they do. The header IS the checkbox -- a checkbox beside it would
-  // be a second control saying the same thing.
-  ImGui::Separator();
-  if (ImGui::CollapsingHeader("Map Cvars"))
-    draw_map_cvars_section(map, *state_manager::get_client_context().cvars,
-                           transaction_system);
-
-  // Run ONCE per frame, shared by the list and the viewport lines: two runs are
-  // two answers free to disagree about which row is red.
+  // Run ONCE per frame, shared by the Map Info list and the viewport lines: two
+  // runs are two answers free to disagree about which row is red. Outside the
+  // window, so the lines stay right while it is closed.
   const std::vector<shared::connection_refusal_t> connection_refusals =
       shared::validate_map_connections(map);
 
-  // Collapsed by default, for Map Cvars' reason: the wiring is not what you are
-  // looking at most of the time, and the list is tall when a map has one.
-  ImGui::Separator();
   hovered_connection = SIZE_MAX;
-  if (ImGui::CollapsingHeader("Connections"))
+
+  // Behind the toolbar's Map Info button; closed by default.
+  if (show_map_info)
   {
-    const std::optional<shared::entity_uid_t> clicked_sender =
-        draw_connection_overview(map, connection_refusals, connection_lines,
-                                 hovered_connection);
-
-    // The row's editable panel is the SENDER's, and that panel is the Selection
-    // tool's -- so a click has to land there whatever tool was active.
-    if (clicked_sender)
+    if (ImGui::Begin("Map Info", &show_map_info, ImGuiWindowFlags_NoNav))
     {
-      switch_tool(editor_tool_t::selection);
-      context.requested_selection = clicked_sender;
-    }
-  }
+      ImGui::Text("Map: %s", map.name.c_str());
 
-  ImGui::End();
+      if (ImGui::Button("Save Map As..."))
+      {
+        hud::set_announcement("is the gerg ever open?");
+        // Popup for Save Map
+        should_open_popup = true;
+      }
+
+      if (ImGui::Button("Load Map..."))
+        should_open_load_popup = true;
+
+      if (ImGui::Button("New Map"))
+        should_open_new_map_popup = true;
+
+      ImGui::Checkbox("Solid Entities", &draw_entities_solid);
+      ImGui::Checkbox("Hide Geometry", &hide_geometry);
+      ImGui::Checkbox("Entity Icons", &show_entity_icons);
+      ImGui::Checkbox("Show Grid", &show_grid);
+      ImGui::SliderFloat("Camera Speed", &state_manager::get_client_context().cvars->editor_speed,
+                         100.0f, 5000.0f, "%.0f");
+
+      ImGui::Separator();
+
+      // Navmesh status
+      if (map.navmesh.valid())
+      {
+        int num_islands = 0;
+        for (const auto &p : map.navmesh.polygons)
+          if (p.island >= num_islands) num_islands = p.island + 1;
+        ImGui::TextColored({0.2f, 1.f, 0.4f, 1.f}, "Navmesh: %d vertices, %d polygons, %d islands",
+                           (int)map.navmesh.vertices.size(),
+                           (int)map.navmesh.polygons.size(),
+                           num_islands);
+      }
+      else
+      {
+        ImGui::TextDisabled("Navmesh: not baked");
+      }
+
+      constexpr float navmesh_cell_size_min = 128.f;
+      constexpr float navmesh_cell_size_max = 512.f;
+      ImGui::SliderFloat("Cell size", &navmesh_cell_size, navmesh_cell_size_min, navmesh_cell_size_max, "%.0f");
+
+      if (ImGui::Button("Bake Navmesh"))
+      {
+        std::string full_path = get_maps_dir() + map.name;
+        map.navmesh = {};
+        shared::bake_map(map, navmesh_cell_size);  // raw triangles only
+        m_raw_navmesh = map.navmesh;               // save before simplification
+        m_simplify_steps = 0;
+        shared::simplify_navmesh(map.navmesh);     // full simplify
+        if (shared::save_navmesh_sidecar(full_path, map.navmesh))
+          hud::set_announcement("Navmesh baked!");
+        else
+          hud::set_announcement("Navmesh bake failed (save map first?)");
+      }
+
+      // Step-by-step simplification for debugging.
+      if (m_raw_navmesh.valid())
+      {
+        ImGui::SameLine();
+        if (ImGui::Button("Simplify Step"))
+        {
+          map.navmesh = m_raw_navmesh;
+          ++m_simplify_steps;
+          shared::simplify_navmesh(map.navmesh, m_simplify_steps);
+        }
+        ImGui::SameLine();
+        ImGui::Text("(step %d)", m_simplify_steps);
+      }
+
+      ImGui::Checkbox("Show Navmesh",
+                      &state_manager::get_client_context().cvars->debug_show_navmesh);
+
+      // Collapsed by default: most maps carry no cvars at all, and the section is
+      // tall when they do. The header IS the checkbox -- a checkbox beside it would
+      // be a second control saying the same thing.
+      ImGui::Separator();
+      if (ImGui::CollapsingHeader("Map Cvars"))
+        draw_map_cvars_section(map, *state_manager::get_client_context().cvars,
+                               transaction_system);
+
+      // Collapsed by default, for Map Cvars' reason: the wiring is not what you are
+      // looking at most of the time, and the list is tall when a map has one.
+      ImGui::Separator();
+      if (ImGui::CollapsingHeader("Connections"))
+      {
+        const std::optional<shared::entity_uid_t> clicked_sender =
+            draw_connection_overview(map, connection_refusals, connection_lines,
+                                     hovered_connection);
+
+        // The row's editable panel is the SENDER's, and that panel is the Selection
+        // tool's -- so a click has to land there whatever tool was active.
+        if (clicked_sender)
+        {
+          switch_tool(editor_tool_t::selection);
+          context.requested_selection = clicked_sender;
+        }
+      }
+    }
+    ImGui::End();
+  }
 
   if (should_open_popup)
   {
@@ -1193,6 +1217,20 @@ void Tool_Editor_State::draw_imgui_panels()
         ImGui::SetTooltip("Ctrl+%u", row + 1);
     }
 
+    ImGui::Separator();
+    const auto draw_window_toggle = [](const char* label, bool& open)
+    {
+      if (open)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+      const bool was_clicked = ImGui::Button(label);
+      if (open)
+        ImGui::PopStyleColor();
+      if (was_clicked)
+        open = !open;
+    };
+    draw_window_toggle("Map Info", show_map_info);
+    draw_window_toggle("Edit History", show_edit_history);
+
     const ImGuiStyle& style = ImGui::GetStyle();
     const float right_side_width = ImGui::CalcTextSize("play").x + ImGui::CalcTextSize("Back to Menu").x +
                                    style.FramePadding.x * 4.0f + style.ItemSpacing.x + style.WindowPadding.x;
@@ -1202,7 +1240,7 @@ void Tool_Editor_State::draw_imgui_panels()
 
     play_was_clicked |= ImGui::Button("play");
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("F1 at the camera, F2 at the spawn");
+      ImGui::SetTooltip("F1 at the camera, Shift+F1 at the spawn");
     back_to_menu_was_clicked = ImGui::Button("Back to Menu");
     ImGui::EndMainMenuBar();
   }
@@ -1243,26 +1281,23 @@ void Tool_Editor_State::draw_imgui_panels()
     state_manager::switch_to(game_state::main_menu);
   }
 
-  // Its own window rather than a Map Info section, unlike Connections: an
-  // outliner is exactly the thing you keep open while working. "Map" is not
-  // decoration -- a Player_Entity is @runtime_only and never sits in a map, so
-  // the word says which of the two kinds of entity this lists, and it reads as
-  // one family with Map Info and Map Cvars.
-  if (ImGui::Begin("Map Entities", nullptr, ImGuiWindowFlags_NoNav))
   {
-    const outliner_result_t outliner = draw_entity_outliner(
-        map, entity_visibility,
-        active_tool ? tools[*active_tool]->selected_objects() : Span<const shared::entity_uid_t>{});
+    const Span<const shared::entity_uid_t> selection =
+        active_tool ? tools[*active_tool]->selected_objects() : Span<const shared::entity_uid_t>{};
+    const outliner_result_t outliner = draw_editor_sidebar(
+        sidebar, context, entity_visibility, active_tool ? tools[*active_tool].get() : nullptr, selection);
 
     if (outliner.clicked_object)
     {
       switch_tool(editor_tool_t::selection);
-      context.requested_selection = outliner.clicked_object;
+      context.requested_selection         = outliner.clicked_object;
+      context.requested_selection_toggles = outliner.toggles;
     }
     if (outliner.clicked_group)
     {
       switch_tool(editor_tool_t::selection);
-      context.requested_group_selection = outliner.clicked_group;
+      context.requested_group_selection   = outliner.clicked_group;
+      context.requested_selection_toggles = outliner.toggles;
     }
     if (outliner.group_selection)
     {
@@ -1274,8 +1309,22 @@ void Tool_Editor_State::draw_imgui_panels()
       switch_tool(editor_tool_t::selection);
       context.requested_ungroup = outliner.ungroup;
     }
+    if (outliner.go_to)
+      go_to_object(*outliner.go_to, sidebar.outliner.go_to_height);
+    if (outliner.renamed_group)
+    {
+      switch_tool(editor_tool_t::selection);
+      context.requested_group_rename = outliner.renamed_group;
+      context.requested_group_name   = outliner.new_name;
+    }
+    if (outliner.renamed_entity)
+      rename_entity(*outliner.renamed_entity, outliner.new_name);
+    if (outliner.nothing_to_rename)
+      hud::set_announcement("Nothing to rename: select one entity or one whole group");
   }
-  ImGui::End();
+
+  if (show_edit_history && draw_history_panel(transaction_system, map, show_edit_history))
+    geometry_updated_flag = true;
 
   // Icons before the tool's own overlay, and both under the panels: the tool is
   // drawing what the CURSOR is about to do, which has to sit on top of a layer
@@ -1297,7 +1346,7 @@ void Tool_Editor_State::draw_imgui_panels()
   {
     ImGuiIO &io = ImGui::GetIO();
     float padding = 8.0f;
-    ImVec2 window_pos = ImVec2(io.DisplaySize.x - padding, io.DisplaySize.y - padding);
+    ImVec2 window_pos = ImVec2(io.DisplaySize.x - sidebar.width - padding, io.DisplaySize.y - padding);
     ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, ImVec2(1.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.5f);
     if (ImGui::Begin("##camera_pos", nullptr,
@@ -1309,6 +1358,63 @@ void Tool_Editor_State::draw_imgui_panels()
     }
     ImGui::End();
   }
+}
+
+void Tool_Editor_State::rename_entity(shared::entity_uid_t uid, const std::string& name)
+{
+  shared::map_entity_t* entry = map.find_by_uid(uid);
+  if (entry == nullptr || entry->entity == nullptr)
+  {
+    log_warning("editor: rename uid {} -- no such entity in the map", uid);
+    return;
+  }
+
+  const entity_snapshot_t before = snapshot_entity(entry->entity.get());
+  entry->entity->name.set(name.c_str());
+
+  transaction_t transaction;
+  transaction.add_modified_from_diff(uid, before, entry->entity.get());
+  transaction_system.push(std::format("Rename entity to {}", name), std::move(transaction));
+}
+
+void Tool_Editor_State::go_to_object(shared::entity_uid_t uid, float height)
+{
+  std::vector<shared::entity_uid_t> targets;
+  if (const shared::map_group_t* group = shared::find_group_by_uid(map, uid))
+  {
+    for (shared::entity_uid_t member : group->members)
+      if (map.has_object(member))
+        targets.push_back(member);
+  }
+  else if (map.has_object(uid))
+  {
+    targets.push_back(uid);
+  }
+  if (targets.empty())
+  {
+    log_warning("editor: go to uid {} -- nothing in the map to go to", uid);
+    return;
+  }
+
+  shared::aabb_bounds_t bounds = editor_object_bounds(map, targets[0]);
+  for (shared::entity_uid_t target : targets)
+    bounds = shared::union_aabb(bounds, editor_object_bounds(map, target));
+  const linalg::vec3 center = (bounds.min + bounds.max) * 0.5f;
+  const float        radius = linalg::length(bounds.max - bounds.min) * 0.5f;
+
+  if (camera.orthographic)
+  {
+    const camera_basis_t basis = get_orientation_vectors(camera);
+    camera.position = center - basis.forward * std::max(radius * 4.0f, 1024.0f);
+    return;
+  }
+
+  const float        yaw_radians = camera.yaw * 0.0174532925f;
+  const linalg::vec3 heading{std::cos(yaw_radians), 0.0f, std::sin(yaw_radians)};
+  const float        step_back = radius + height * 0.5f;
+  camera.position = linalg::vec3{center.x, bounds.max.y + height, center.z} - heading * step_back;
+  look_at(camera, center);
+  view_mode = ViewMode::FreeCam;
 }
 
 void Tool_Editor_State::build_frame(float delta_seconds,

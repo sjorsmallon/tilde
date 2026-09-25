@@ -27,6 +27,8 @@ struct Launcher_Entity : Entity
   float speed_variation = 0.0f;
   float flight_seconds_variation = 0.0f;
   float rest_seconds_variation = 0.0f;
+  float fire_interval_seconds = 0.0f;
+  uint32_t next_fire_tick = {};
   uint32_t shots_fired = {};
   Render render = {.mesh = assets::mesh_asset::Box, .scale = {16.0f, 16.0f, 16.0f}};
 };

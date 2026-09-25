@@ -364,6 +364,15 @@ struct clock_wipe_t
   bool armed = false;
 };
 
+// A hole eating a sphere from one point, world space: a fragment is gone once its angle from
+// hole_direction (measured from the model's origin) is under front_angle (resources/shaders/peel.glsl).
+struct peel_t
+{
+  linalg::vec3f hole_direction = {0.0f, 1.0f, 0.0f};
+  float         front_angle    = 0.0f; // radians, pi is the whole sphere
+  bool          armed          = false;
+};
+
 struct mesh_draw_t
 {
   mesh_handle_t                 mesh;
@@ -383,6 +392,8 @@ struct mesh_draw_t
   // A noise dissolve, 0 off and 1 wholly gone (resources/shaders/dissolve.glsl). Rides the
   // clock wipe's pipeline bit, so it costs the wipe's pipeline and no other.
   float dissolve = 0.0f;
+  // Rides the same pipeline bit and the clock wipe's push slots, so a draw wipes or peels, never both.
+  peel_t peel = {};
 };
 
 // --- Debug drawing ---
@@ -555,8 +566,12 @@ struct ui_draw_list_t
 {
   std::vector<ui_vertex_t> vertices;
   std::vector<ui_batch_t>  batches;
+  std::optional<float>     background_seconds;
 
   void clear(); // keeps capacity
+
+  // A fullscreen animated background under every quad of the frame.
+  void background(float seconds);
 
   void quad(linalg::vec2 min, linalg::vec2 max, linalg::vec2 uv_min, linalg::vec2 uv_max,
             color_t color, texture_handle_t texture = {});

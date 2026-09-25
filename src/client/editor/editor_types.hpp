@@ -124,6 +124,9 @@ struct editor_context_t
   // Selection tool, which owns the selection; a panel writing selected_uids
   // directly would be a second owner of it.
   std::optional<shared::entity_uid_t> requested_selection;
+  // The outliner's ctrl/shift click: requested_selection or
+  // requested_group_selection toggles into the selection instead of replacing it.
+  bool                                requested_selection_toggles = false;
 
   // A piece somebody outside the tools wants pasted -- the Placement tool's
   // prefab list is the one caller. Consumed and cleared by the Selection tool,
@@ -145,9 +148,11 @@ struct editor_context_t
   std::optional<shared::entity_uid_t> requested_group_selection;
   bool                                requested_group_of_selection = false;
   std::optional<shared::entity_uid_t> requested_ungroup;
+  std::optional<shared::entity_uid_t> requested_group_rename;
+  std::string                         requested_group_name;
 
   // What the author hid in the entity outliner, flattened per frame from the
-  // per-entity set and the per-type mask. Editor state and never map data: a
+  // per-entity set. Editor state and never map data: a
   // `hidden` field in map_t would either push an undo entry or bypass the
   // transaction system. See entity_outliner.hpp.
   Span<const shared::entity_uid_t> hidden_objects;

@@ -21,13 +21,17 @@ struct Bubble_Entity : Entity
   Fixed_Arc_Flight flight = {};
   uint32_t popped_tick = {};
   shared::entity_uid_t popped_by = {};
-  float linger_seconds = 0.25f;
+  linalg::vec3f popped_direction = {};
+  float swell_seconds = 0.08f;
+  float swell_scale = 1.2f;
+  float peel_seconds = 0.2f;
+  float linger_seconds = 0.35f;
   float flight_seconds = 1.0f;
   float rest_seconds = 8.0f;
   float arm_seconds = 0.2f;
   float radius = 32.0f;
   float bounce_speed = 700.0f;
-  Render render = {.mesh = assets::mesh_asset::Sphere, .scale = {64.0f, 64.0f, 64.0f}, .material = {.shader_type = Shader_Type::Ghost, .color = {0.55f, 0.85f, 1.0f}}};
+  Render render = {.mesh = assets::mesh_asset::high_res_sphere, .scale = {2.0f, 2.0f, 2.0f}, .material = {.shader_type = Shader_Type::Ghost, .color = {0.55f, 0.85f, 1.0f}}};
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

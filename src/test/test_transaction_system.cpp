@@ -42,7 +42,7 @@ void test_add_remove()
   {
     transaction_t transaction;
     transaction.add_created(added_uid, snapshot_entity(ent.get()));
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.entities.size() == 1);
@@ -68,7 +68,7 @@ void test_add_remove()
     transaction_t transaction;
     transaction.add_removed(added_uid, snapshot_entity(entry->entity.get()));
     map.remove_entity(added_uid);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.entities.empty());
@@ -105,7 +105,7 @@ void test_modify()
 
     transaction_t transaction;
     transaction.add_modified_from_diff(uid, before, entry->entity.get());
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.find_by_uid(uid)->entity->position.x == 10.0f);
@@ -142,7 +142,7 @@ void test_modify_thresholds()
     transaction.add_modified_from_diff(uid, snapshot_entity(entry->entity.get()),
                                    entry->entity.get());
     assert(transaction.diffs.empty());
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(!ts.can_undo());
 
@@ -155,7 +155,7 @@ void test_modify_thresholds()
     transaction_t transaction;
     transaction.add_modified_from_diff(uid, before, entry->entity.get());
     assert(transaction.diffs.size() == 1);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(ts.can_undo());
 
@@ -188,7 +188,7 @@ void test_modify_nested_field()
     transaction_t transaction;
     transaction.add_modified_from_diff(uid, before, entry->entity.get());
     assert(transaction.diffs.size() == 1);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   ts.undo(map);
@@ -221,7 +221,7 @@ void test_snapshot_is_exact()
     transaction_t transaction;
     transaction.add_removed(uid, snapshot_entity(map.find_by_uid(uid)->entity.get()));
     map.remove_entity(uid);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(map.entities.empty());
 
@@ -275,7 +275,7 @@ void test_batch_delete()
     map.remove_entity(uid2);
     map.remove_entity(uid3);
     assert(transaction.diffs.size() == 3);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.entities.empty());
@@ -317,7 +317,7 @@ void test_geometry_add_remove()
   {
     transaction_t transaction;
     transaction.add_geometry_created(uid, box);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.geometry.size() == 1);
@@ -338,7 +338,7 @@ void test_geometry_add_remove()
     transaction_t transaction;
     transaction.add_geometry_removed(uid, map.find_geometry_by_uid(uid)->value);
     map.remove_geometry(uid);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(map.geometry.empty());
 
@@ -368,7 +368,7 @@ void test_geometry_modify()
     transaction_t transaction;
     transaction.add_geometry_modified(uid, before,
                                   map.find_geometry_by_uid(uid)->value);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(ts.can_undo());
   assert(get_position(map.find_geometry_by_uid(uid)->value).x == 10.f);
@@ -399,7 +399,7 @@ void test_geometry_modify_thresholds()
     transaction_t transaction;
     transaction.add_geometry_modified(uid, unchanged, unchanged);
     assert(transaction.diffs.empty());
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(!ts.can_undo());
 
@@ -418,7 +418,7 @@ void test_geometry_modify_thresholds()
     transaction.add_geometry_modified(uid, before,
                                   map.find_geometry_by_uid(uid)->value);
     assert(transaction.diffs.size() == 1);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
   assert(ts.can_undo());
 
@@ -462,7 +462,7 @@ void test_geometry_face_grid()
     transaction.add_geometry_modified(uid, before,
                                   map.find_geometry_by_uid(uid)->value);
     assert(transaction.diffs.size() == 1);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   ts.undo(map);
@@ -511,7 +511,7 @@ void test_mixed_batch_delete()
     assert(map.remove_object(box2_uid));
 
     assert(transaction.diffs.size() == 3);
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.object_count() == 0);
@@ -543,7 +543,7 @@ void test_map_cvars()
     transaction_t transaction;
     transaction.add_map_cvars_modified(map.attached_cvars, {"g_gravity 200"});
     map.attached_cvars = {"g_gravity 200"};
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   // Edit the value.
@@ -551,7 +551,7 @@ void test_map_cvars()
     transaction_t transaction;
     transaction.add_map_cvars_modified(map.attached_cvars, {"g_gravity 120"});
     map.attached_cvars = {"g_gravity 120"};
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.attached_cvars.size() == 1);
@@ -583,7 +583,7 @@ void test_map_cvars()
     transaction_t transaction;
     transaction.add_map_cvars_modified(map.attached_cvars, {});
     map.attached_cvars = {};
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
 
     ts.undo(map);
     assert(map.attached_cvars.size() == 1);
@@ -620,14 +620,14 @@ void test_map_connections()
     transaction_t transaction;
     transaction.add_map_connections_modified(map.connections, {touched_enable});
     map.connections = {touched_enable};
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   {
     transaction_t transaction;
     transaction.add_map_connections_modified(map.connections, {touched_disable});
     map.connections = {touched_disable};
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
   }
 
   assert(map.connections.size() == 1);
@@ -688,7 +688,7 @@ void test_map_connections()
     transaction_t transaction;
     transaction.add_map_connections_modified(map.connections, {});
     map.connections = {};
-    ts.push(std::move(transaction));
+    ts.push("test", std::move(transaction));
 
     ts.undo(map);
     assert(map.connections.size() == 1);
@@ -698,8 +698,67 @@ void test_map_connections()
   std::cout << "Map Connections Passed." << std::endl;
 }
 
+void test_history_jump()
+{
+  std::cout << "Testing history jump..." << std::endl;
+  Transaction_System ts;
+  map_t map;
+
+  entity_uid_t uids[3] = {};
+  const char* names[3] = {"Place one", "Place two", "Place three"};
+  for (int index = 0; index < 3; ++index)
+  {
+    auto ent = make_test_entity((float)index);
+    uids[index] = map.add_entity(ent);
+    transaction_t transaction;
+    transaction.add_created(uids[index], snapshot_entity(ent.get()));
+    ts.push(names[index], std::move(transaction));
+  }
+
+  assert(ts.applied_transactions().size() == 3);
+  assert(ts.applied_transactions()[0].name == "Place one");
+  assert(ts.applied_transactions()[2].name == "Place three");
+
+  ts.jump_to(map, 1);
+  assert(map.entities.size() == 1);
+  assert(map.find_by_uid(uids[0]) != nullptr);
+  assert(ts.applied_transactions().size() == 1);
+  assert(ts.undone_transactions().size() == 2);
+  assert(ts.undone_transactions().back().name == "Place two");
+
+  ts.jump_to(map, 0);
+  assert(map.entities.empty());
+  assert(!ts.can_undo());
+
+  ts.jump_to(map, 3);
+  assert(map.entities.size() == 3);
+  assert(!ts.can_redo());
+
+  ts.jump_to(map, 99);
+  assert(ts.applied_transactions().size() == 3);
+
+  ts.jump_to(map, 2);
+  {
+    transaction_t empty;
+    ts.push("nothing", std::move(empty));
+  }
+  assert(ts.can_redo());
+
+  auto ent = make_test_entity(9.f);
+  const entity_uid_t branch_uid = map.add_entity(ent);
+  {
+    transaction_t transaction;
+    transaction.add_created(branch_uid, snapshot_entity(ent.get()));
+    ts.push("Branch", std::move(transaction));
+  }
+  assert(!ts.can_redo());
+  assert(ts.applied_transactions().size() == 3);
+  assert(ts.applied_transactions()[2].name == "Branch");
+}
+
 int main()
 {
+  test_history_jump();
   test_add_remove();
   test_modify();
   test_modify_thresholds();

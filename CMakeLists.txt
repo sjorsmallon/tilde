@@ -234,6 +234,7 @@ set(ENTITY_IO_HANDLERS
     src/server/entities/game_rules_entity.cpp
     src/server/entities/logic_counter_entity.cpp
     src/server/entities/launcher_entity.cpp
+    src/server/entities/remnant_entity.cpp
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${ENTITY_IO_HANDLERS} PROPERTIES
@@ -656,6 +657,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/outline.frag
     ${SHADER_SRC_DIR}/skybox.vert
     ${SHADER_SRC_DIR}/skybox.frag
+    ${SHADER_SRC_DIR}/background_squares.frag
 )
 # The lightmapped variants are the SAME sources compiled with -DLIGHTMAP, not
 # new files. A lightmap composes with lit, grid and blend alike, so a file per
@@ -682,6 +684,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/alpha_cutout.glsl
                     ${SHADER_SRC_DIR}/mesh_push.glsl
                     ${SHADER_SRC_DIR}/clock_wipe.glsl
+                    ${SHADER_SRC_DIR}/peel.glsl
                     ${SHADER_SRC_DIR}/ripple.glsl)
 
 set(SHADER_HEADERS "")
@@ -837,6 +840,8 @@ add_library(game_client SHARED
     src/client/editor/connection_panel.cpp
     src/client/editor/connection_lines.cpp
     src/client/editor/entity_outliner.cpp
+    src/client/editor/editor_sidebar.cpp
+    src/client/editor/history_panel.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
     src/client/render_assets.cpp
@@ -935,10 +940,12 @@ add_library(game_server SHARED
     src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/player_input_system.cpp
-    src/server/systems/hit_resolution_system.cpp
+    src/server/systems/contact_system.cpp
     src/server/systems/hit_test_world.cpp
     src/server/systems/trigger_system.cpp
     src/server/systems/timer_system.cpp
+    src/server/systems/launcher_system.cpp
+    src/server/systems/weapon_emancipation_grill_system.cpp
     src/server/systems/mover_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
@@ -1303,6 +1310,7 @@ set(MATCH_SERVER_SOURCES
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/mover_system.cpp
+    src/server/systems/launcher_system.cpp
     src/server/spawn_projectile.cpp
     src/server/entity_lifecycle.cpp)
 add_executable(game_rules_test src/test/game_rules_test.cpp ${MATCH_SERVER_SOURCES})
@@ -1333,6 +1341,7 @@ add_executable(entity_io_test src/test/entity_io_test.cpp
     src/server/systems/respawn_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/mover_system.cpp
+    src/server/systems/launcher_system.cpp
     src/server/spawn_projectile.cpp
     src/server/entity_lifecycle.cpp)
 target_include_directories(entity_io_test PRIVATE src src/shared src/server)

@@ -102,6 +102,8 @@ void Main_Menu_State::on_enter()
 
 void Main_Menu_State::update(float delta_seconds)
 {
+  background_seconds += delta_seconds;
+
   const linalg::vec2   screen_size = renderer::screen_size();
   const ui::ui_input_t input       = ui::gather_ui_input();
 
@@ -126,6 +128,8 @@ void Main_Menu_State::update(float delta_seconds)
 void Main_Menu_State::build_frame(float, std::vector<renderer::view_pass_t> &,
                                   renderer::ui_draw_list_t &ui_list)
 {
+  ui_list.background(background_seconds);
+
   const ui::ui_font_t *font = state_manager::get_client_context().font;
   if (!font)
   {

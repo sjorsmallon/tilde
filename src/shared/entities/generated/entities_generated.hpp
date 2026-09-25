@@ -44,6 +44,8 @@
 #include "entities/remnant_entity_generated.hpp"
 #include "entities/modifier_shot_entity_generated.hpp"
 #include "entities/timed_movement_modifier_entity_generated.hpp"
+#include "entities/weapon_emancipation_grill_entity_generated.hpp"
+#include "entities/emancipated_weapon_entity_generated.hpp"
 
 namespace entities
 {

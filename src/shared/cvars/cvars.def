@@ -112,8 +112,7 @@ Instant_Redirect_Movement :: cvars {
 // player_move -- which is what takes them off the wire and out of the pm_
 // family. The client predicts the reel from the replicated state instead.
 Hook :: cvars {
-    sv_hook_pull_speed:       f32 = 900.0  @Server  "Speed a hooked player is pulled toward whoever hooked them"
-    sv_hook_max_pull_seconds: f32 = 1.5    @Server  "Longest a hook reel lasts before it lets go on its own"
+    sv_hook_pull_speed:       f32 = 900.0  @Server  "Speed every reel pulls at; how long one lasts is the weapon row's contact"
     sv_hook_arrive_radius:    f32 = 48.0   @Server  "Distance from the anchor the reel lets go at"
 }
 

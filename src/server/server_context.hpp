@@ -201,50 +201,23 @@ struct replication_t
 
 using tick_input_t = network::Server_Inbox;
 
-// A hit that has been RESOLVED but not yet applied.
-struct pending_hit_t
+// A shot that has ARRIVED and not yet acted: a hitscan's or a projectile's,
+// pushed by the thing that flew and applied by update_contacts. It carries no
+// numbers -- what it does is the button's contact_t on the weapon row -- and
+// no kind: what the target IS is asked of the entity system at apply. A null
+// target is the map; a mover's uid is a surface too. `point` is ON the surface
+// or body struck, never a swept sphere's centre.
+struct pending_contact_t
 {
-  damage_info_t        info;
-  linalg::vec3f        impact_point{};
-  linalg::vec3f        impact_normal{};
-  shared::hit_region_t region = shared::hit_region_t::Torso;
-};
-
-struct pending_swap_t
-{
-  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
-  shared::entity_uid_t target_uid  = shared::null_entity_uid;
-};
-
-struct pending_magnet_t
-{
-  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
-  shared::entity_uid_t target_uid  = shared::null_entity_uid;
-  float                speed       = 0.f;
-};
-
-struct pending_tether_t
-{
-  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
-  shared::entity_uid_t target_uid  = shared::null_entity_uid;
-  float                speed       = 0.f;
-  float                seconds     = 0.f;
-};
-
-// The shooter goes to the remnant it hit, and the remnant is spent.
-struct pending_teleport_t
-{
-  shared::entity_uid_t shooter_uid = shared::null_entity_uid;
-  shared::entity_uid_t remnant_uid = shared::null_entity_uid;
-};
-
-// The target is frozen as `kind` for `seconds`, or released if it already was.
-struct pending_freeze_t
-{
-  shared::entity_uid_t        shooter_uid = shared::null_entity_uid;
-  shared::entity_uid_t        target_uid  = shared::null_entity_uid;
-  entities::Movement_Override kind        = entities::Movement_Override::None;
-  float                       seconds     = 0.f;
+  shared::entity_uid_t   shooter_uid = shared::null_entity_uid;
+  shared::entity_uid_t   target_uid  = shared::null_entity_uid;
+  linalg::vec3f          point{};
+  linalg::vec3f          normal{};
+  shared::hit_region_t   region      = shared::hit_region_t::Torso;
+  entities::Weapon       weapon      = entities::Weapon::Knife;
+  entities::Fire_Trigger trigger     = entities::Fire_Trigger::Primary;
+  // Per-instance state of the weapon that fired, read off the hand at fire time.
+  entities::Damage_Type  damage_type = entities::Damage_Type::Normal;
 };
 
 struct tick_output_t
@@ -253,17 +226,7 @@ struct tick_output_t
 
   shared::event_stream_t events;
 
-  std::vector<pending_hit_t> pending_hits;
-
-  std::vector<pending_swap_t> pending_swaps;
-
-  std::vector<pending_magnet_t> pending_magnets;
-
-  std::vector<pending_tether_t> pending_tethers;
-
-  std::vector<pending_teleport_t> pending_teleports;
-
-  std::vector<pending_freeze_t> pending_freezes;
+  std::vector<pending_contact_t> pending_contacts;
 };
 
 struct server_context_t

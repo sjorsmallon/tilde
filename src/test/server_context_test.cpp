@@ -69,18 +69,16 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   died.attacker_id = 7;
   shared::fire_player_died(context.outgoing.events, died);
 
-  // A hit the input loop resolved but has not applied. Normally drained the
-  // instant that loop closes; it is a group member so that a tick which died
-  // halfway cannot replay it.
-  pending_hit_t pending{};
-  pending.info.victim_uid   = 42;
-  pending.info.attacker_uid = 7;
-  pending.info.amount       = 35.f;
-  pending.impact_point      = {1.f, 2.f, 3.f};
-  pending.region            = shared::hit_region_t::Head;
-  context.outgoing.pending_hits.push_back(pending);
-  context.outgoing.pending_swaps.push_back({7, 42});
-  context.outgoing.pending_magnets.push_back({7, 42, 600.f});
+  // A contact a shot arrived at but has not acted on. Normally drained the
+  // instant update_contacts runs; it is a group member so that a tick which
+  // died halfway cannot replay it.
+  pending_contact_t pending{};
+  pending.shooter_uid = 7;
+  pending.target_uid  = 42;
+  pending.point       = {1.f, 2.f, 3.f};
+  pending.region      = shared::hit_region_t::Head;
+  pending.weapon      = entities::Weapon::Scout;
+  context.outgoing.pending_contacts.push_back(pending);
 
   // A map whose attached_cvars claimed two values. Set through the state the
   // context points at, exactly as apply_map_cvars_that_were_supplied_from_the_editor does.
@@ -168,11 +166,9 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.outgoing.effects.empty());
 
   assert(context.outgoing.events.empty());
-  // Damage resolved against the world we are leaving must not land in the one
-  // we are entering — the victim uid may not even exist there.
-  assert(context.outgoing.pending_hits.empty());
-  assert(context.outgoing.pending_swaps.empty());
-  assert(context.outgoing.pending_magnets.empty());
+  // A contact resolved against the world we are leaving must not act in the one
+  // we are entering — the target uid may not even exist there.
+  assert(context.outgoing.pending_contacts.empty());
 
   // The match went with the session; the next map load's install_match makes
   // the next one.
@@ -311,18 +307,14 @@ void test_clear_tick_groups()
   assert(context.incoming.map_data_requests.empty());
   assert(context.outgoing.effects.empty());
   assert(context.outgoing.events.empty());
-  assert(context.outgoing.pending_hits.empty());
-  assert(context.outgoing.pending_swaps.empty());
-  assert(context.outgoing.pending_magnets.empty());
+  assert(context.outgoing.pending_contacts.empty());
 
   // The reason these are functions and not `= {}` on the group: they run at the
   // tickrate, so the capacity has to survive. An `= {}` "simplification" fails
   // here rather than silently reintroducing a per-tick realloc.
   assert(context.incoming.developer_console_entries.capacity() > 0);
   assert(context.incoming.map_data_requests.capacity() > 0);
-  assert(context.outgoing.pending_hits.capacity() > 0);
-  assert(context.outgoing.pending_swaps.capacity() > 0);
-  assert(context.outgoing.pending_magnets.capacity() > 0);
+  assert(context.outgoing.pending_contacts.capacity() > 0);
   // Same intent, different member: a stream keeps its buffer's allocation.
   assert(context.outgoing.effects.writer.buffer.capacity() > 0);
   assert(context.outgoing.events.writer.buffer.capacity() > 0);

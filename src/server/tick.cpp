@@ -20,8 +20,8 @@
 #include "systems/bubble_system.hpp"
 #include "systems/canopy_system.hpp"
 #include "systems/platform_system.hpp"
+#include "systems/contact_system.hpp"
 #include "systems/game_rules_system.hpp"
-#include "systems/hit_resolution_system.hpp"
 #include "systems/hit_test_world.hpp"
 #include "systems/hook_system.hpp"
 #include "systems/kooh_system.hpp"
@@ -35,7 +35,9 @@
 #include "systems/respawn_system.hpp"
 #include "systems/rocket_system.hpp"
 #include "systems/timer_system.hpp"
+#include "systems/launcher_system.hpp"
 #include "systems/trigger_system.hpp"
+#include "systems/weapon_emancipation_grill_system.hpp"
 #include "timed_function.hpp"
 
 namespace server
@@ -103,7 +105,8 @@ bool Tick()
   }
 
   // 3. Inputs: every client, then every bot. A bot's input is input, and a bot
-  //    that shoots must land its hits in the same step 4 a client's do.
+  //    that shoots must land its hits in the same step 4 a client's do. A
+  //    hitscan is TESTED here and pushed as a contact, never applied.
   {
     FRAME_ZONE("server tick: player inputs");
     update_player_inputs(context, world);
@@ -113,10 +116,18 @@ bool Tick()
     update_bots(context, world, context.tick_number, tick_dt);
   }
 
-  // 4. Consequences of inputs.
+  // 4. Consequences of inputs. The things the inputs launched fly and push
+  //    their contacts first, then the one pass acts on every contact of the
+  //    tick. Nothing up to here mutates health, so two players who kill each
+  //    other in one tick both succeed.
   {
-    FRAME_ZONE("server tick: hit resolution");
-    update_hit_resolution(context);
+    FRAME_ZONE("server tick: contacts");
+    update_rockets(context, world, tick_dt);
+    update_hooks(context, world, tick_dt);
+    update_koohs(context, world, tick_dt);
+    update_ricochets(context, world, tick_dt);
+    update_modifier_shots(context, world, tick_dt);
+    update_contacts(context, world);
   }
 
   // 5. The rest of the world.
@@ -134,17 +145,14 @@ bool Tick()
       }
     }
 
-    update_rockets(context, world, tick_dt);
-    update_hooks(context, world, tick_dt);
-    update_koohs(context, world, tick_dt);
-    update_ricochets(context, world, tick_dt);
-    update_modifier_shots(context, world, tick_dt);
+    // First here so a zone a contact just left is stamped this same tick.
     update_timed_movement_modifiers(context);
     update_bubbles(context, world);
     update_platforms(context, world);
     // After the inputs, so the pose it writes is where the carrier ended this tick (canopy.hpp).
     update_canopies(context);
     update_ping_markers(context, tick_dt);
+    update_launchers(context);
 
     // respawn runs after death so we can correctly set next ticks etc.
     update_respawns(context, context.tick_number,
@@ -153,6 +161,7 @@ bool Tick()
 
     update_bounce_bodies(context, world, tick_dt);
     update_dropped_weapons(context);
+    update_weapon_emancipation_grills(context);
 
     // Observers last: they look at where things ended up and write nothing but
     // their own bookkeeping and the I/O queue.

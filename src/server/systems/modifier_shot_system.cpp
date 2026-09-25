@@ -1,8 +1,8 @@
 #include "modifier_shot_system.hpp"
 
 #include "../../shared/fixed_arc_flight.hpp"
-#include "../../shared/log.hpp"
 #include "../../shared/movement_modifiers.hpp"
+#include "../../shared/projectile_sweep.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 #include "projectile_flight.hpp"
@@ -14,26 +14,7 @@
 namespace server
 {
 
-// The zone at construction, centred on the contact; update_timed_movement_modifiers stamps it this same tick.
-static void leave_zone_at(server_context_t& context, const entities::Modifier_Shot_Entity& shot,
-                          const shared::projectile_hit_t& hit)
-{
-  shared::Entity_System& entity_system = context.world.session.entity_system;
-
-  const shared::entity_uid_t zone_uid =
-      entity_system.spawn(entities::entity_type::Timed_Movement_Modifier_Entity);
-  entities::Timed_Movement_Modifier_Entity* zone =
-      entity_system.get<entities::Timed_Movement_Modifier_Entity>(zone_uid);
-  if (zone == nullptr)
-  {
-    log_error("modifier shot uid {} landed, but there is no room to spawn its zone", shot.entity_id);
-    return;
-  }
-
-  zone->position             = hit.position;
-  zone->projectile.owner_uid = shot.projectile.owner_uid;
-}
-
+// Fly, push, destroy. The zone it leaves is the row's Leave_Zone contact.
 void update_modifier_shots(server_context_t& context, const shared::predicted_world_storage_t& world,
                            float dt)
 {
@@ -58,8 +39,9 @@ void update_modifier_shots(server_context_t& context, const shared::predicted_wo
     if (!hit)
       continue;
 
+    context.outgoing.pending_contacts.push_back(
+        contact_of_projectile_hit(shot.projectile, shot.collision_radius, *hit));
     spent.push_back(shot.entity_id);
-    leave_zone_at(context, shot, *hit);
   }
 
   for (const shared::entity_uid_t uid : spent)

@@ -206,7 +206,7 @@ void draw_map_cvars_section(shared::map_t &map, const cvars::cvar_state_t &live_
       return;
 
     map.attached_cvars = std::get<diff_map_cvars_t>(transaction.diffs.front()).after;
-    transactions.push(std::move(transaction));
+    transactions.push("Edit map cvars", std::move(transaction));
   };
 
   int row_to_remove = -1;

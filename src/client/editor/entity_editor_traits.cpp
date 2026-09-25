@@ -498,6 +498,8 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Remnant_Entity}, // runtime only
     {.type = entity_type::Modifier_Shot_Entity}, // runtime only
     {.type = entity_type::Timed_Movement_Modifier_Entity}, // runtime only
+    {.type = entity_type::Weapon_Emancipation_Grill_Entity, .color = colors::red, .draw_diagram = &box_volume_diagram},
+    {.type = entity_type::Emancipated_Weapon_Entity}, // runtime only
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

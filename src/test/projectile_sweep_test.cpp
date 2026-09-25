@@ -176,6 +176,28 @@ int main()
     check(moved && near(moved->position.y, 66.f), "a mover is collided with at its end pose");
   }
 
+  // The hitscan's world test IS this sweep at radius zero (contact_effect_plan.md D5), so a
+  // raised platform stops a round and the round names the platform it stopped at.
+  printf("a hitscan ray stops at a mover\n");
+  {
+    std::vector<shared::mover_t> movers = {
+        platform_resting_at({0.f, 50.f, 0.f}, {32.f, 8.f, 32.f})};
+    shared::predicted_world_t world{};
+    world.movers = movers;
+
+    const std::optional<shared::projectile_hit_t> ray =
+        shared::sweep_projectile(floor, world, {0.f, 200.f, 0.f}, {0.f, 0.f, 0.f}, 0.f);
+    check(ray.has_value(), "a ray from above the platform to the floor stops");
+    check(ray && ray->entity_uid == platform_uid, "at the platform, which it names");
+    check(ray && near(ray->position, {0.f, 58.f, 0.f}), "on the platform's top face itself");
+    check(ray && near(ray->t, 142.f / 200.f), "t is where the face sits along the segment");
+
+    const std::optional<shared::projectile_hit_t> without =
+        shared::sweep_projectile(floor, {}, {0.f, 200.f, 0.f}, {0.f, 0.f, 0.f}, 0.f);
+    check(without && without->entity_uid == shared::null_entity_uid && near(without->position.y, 0.f),
+          "with the platform absent the same ray reaches the floor");
+  }
+
   printf("two solids: the nearer wins whatever the primitive order\n");
   {
     const Bounding_Volume_Hierarchy two = world_of({

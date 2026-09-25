@@ -120,6 +120,25 @@ bool ungroup(map_t& map, entity_uid_t group_uid)
   return map.groups.size() != before;
 }
 
+bool try_rename_group(map_t& map, entity_uid_t group_uid, std::string name)
+{
+  if (name.empty())
+  {
+    log_warning("map groups: refused to rename group {} to an empty name", group_uid);
+    return false;
+  }
+  for (map_group_t& group : map.groups)
+  {
+    if (group.uid == group_uid)
+    {
+      group.name = std::move(name);
+      return true;
+    }
+  }
+  log_warning("map groups: refused to rename group {}, no group has that uid", group_uid);
+  return false;
+}
+
 size_t remap_group_members(map_group_t& group, const uid_remap_t& remap)
 {
   std::vector<entity_uid_t> remapped;

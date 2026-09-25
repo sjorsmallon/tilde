@@ -5,17 +5,21 @@
 #include "uid_pick.hpp"
 
 #include <optional>
+#include <string>
 
 namespace client
 {
 
-void render_entity_fields_in_an_imgui_window(
-    entities::Entity* entity,
+// Draws the @Editable fields of entities[0] and copies a leaf edited here onto
+// the rest, which must share its type; a multi-edit leaves out position.
+// Returns the leaf edited this frame.
+std::optional<std::string> render_entity_fields_in_an_imgui_window(
+    Span<entities::Entity* const> entities,
     shared::entity_uid_t uid = shared::null_entity_uid,
     const shared::map_t* map = nullptr,
-    uid_pick_t *pick = nullptr);
+    uid_pick_t* pick = nullptr);
 
-void render_field_widget(
+bool render_field_widget(
     void* field_bytes,
     const field_info_t &field,
     const char* label,

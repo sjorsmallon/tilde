@@ -288,8 +288,8 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                                               trigger_button.trigger, step_time, step_end_time);
 
         if (fire_time)
-          resolve_player_shot(context, client_slot, input, world.disabled_geometry, player,
-                              step.view.yaw, step.view.pitch, *fire_time, trigger_button.trigger);
+          resolve_player_shot(context, client_slot, input, world, player, step.view.yaw,
+                              step.view.pitch, *fire_time, trigger_button.trigger);
       }
     }
 

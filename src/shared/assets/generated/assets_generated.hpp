@@ -28,18 +28,25 @@ enum class mesh_asset : uint16_t
   hookshot = 7,
   magnet = 8,
   rocket = 9,
-  shattered_glass = 10,
-  stopwatch = 11,
-  target = 12,
-  Box = 13,
-  Leet_Full = 14,
-  Sphere = 15,
-  Error = 16,
-  Isosphere = 17,
-  Pyramid = 18,
+  sequence_1 = 10,
+  sequence_2 = 11,
+  sequence_3 = 12,
+  sequence_4 = 13,
+  sequence_5 = 14,
+  sequence_6 = 15,
+  sequence_7 = 16,
+  shattered_glass = 17,
+  stopwatch = 18,
+  target = 19,
+  Box = 20,
+  Leet_Full = 21,
+  Sphere = 22,
+  Error = 23,
+  Isosphere = 24,
+  Pyramid = 25,
 };
 
-constexpr uint32_t mesh_asset_COUNT = 19;
+constexpr uint32_t mesh_asset_COUNT = 26;
 
 const char* to_string(mesh_asset value);
 template <> std::optional<mesh_asset> try_from_string<mesh_asset>(std::string_view text);
@@ -211,12 +218,18 @@ enum class pbr_material : uint16_t
   glass_white = 8,
   harsh_bricks = 9,
   scuffed_plastic = 10,
-  sloppy_mortar_stone = 11,
-  stringy_marble = 12,
-  titanium_scuffed = 13,
+  scuffed_plastic_blue = 11,
+  scuffed_plastic_green = 12,
+  scuffed_plastic_indigo = 13,
+  scuffed_plastic_orange = 14,
+  scuffed_plastic_violet = 15,
+  scuffed_plastic_yellow = 16,
+  sloppy_mortar_stone = 17,
+  stringy_marble = 18,
+  titanium_scuffed = 19,
 };
 
-constexpr uint32_t pbr_material_COUNT = 14;
+constexpr uint32_t pbr_material_COUNT = 20;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

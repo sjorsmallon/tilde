@@ -98,6 +98,7 @@ public:
   [[nodiscard]] bool has_target() const { return targeted; }
   [[nodiscard]] bool is_hovered() const { return (bool)hovered; }
   [[nodiscard]] bool is_dragging() const { return (bool)dragged; }
+  [[nodiscard]] gizmo_handle_t dragged_handle() const { return dragged; }
 
   // Begin dragging whatever update_hover last landed on.
   [[nodiscard]] bool try_begin_drag(const linalg::ray_t &ray, const gizmo_view_t &view);

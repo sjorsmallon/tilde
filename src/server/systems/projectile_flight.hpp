@@ -20,4 +20,14 @@ fly_projectile(server_context_t& context, const shared::predicted_world_storage_
                Span<const shared::projectile_target_t> targets, entities::Entity& entity,
                entities::Projectile& projectile, float collision_radius, float dt);
 
+// What a flight's hit becomes for update_contacts: the sweep's centre moved a radius along the
+// normal onto the surface or body struck, the row and button off the Projectile.
+[[nodiscard]] pending_contact_t contact_of_projectile_hit(const entities::Projectile& projectile,
+                                                          float collision_radius,
+                                                          const shared::projectile_hit_t& hit);
+
+// A flight that ran out with no hit: a contact at the projectile with no normal and no target.
+[[nodiscard]] pending_contact_t contact_of_projectile_expiry(const entities::Entity& entity,
+                                                             const entities::Projectile& projectile);
+
 } // namespace server

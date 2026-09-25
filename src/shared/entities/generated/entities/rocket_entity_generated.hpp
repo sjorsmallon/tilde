@@ -19,9 +19,6 @@ struct Rocket_Entity : Entity
 
   Projectile projectile = {.weapon_id = Weapon::Rocket_Launcher};
   float lifetime = 5.0f;
-  float damage_amount = 50.0f;
-  float damage_radius = 120.0f;
-  float knockback_force = 600.0f;
   float collision_radius = 12.0f;
   Render render = {.mesh = assets::mesh_asset::rocket};
 };

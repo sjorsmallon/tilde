@@ -36,6 +36,7 @@
 #include "../../shared/timed_function.hpp"
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -131,6 +132,53 @@ static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::
   const vec3f at_tick = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position, tick, flight);
   const vec3f at_next = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position, tick + 1, flight);
   return at_tick + (at_next - at_tick) * fraction;
+}
+
+// The swell and the peel at the drawn tick, both clocked from the BURST. A timed pop bursts at its
+// expiry tick, which the client sees coming and swells ahead of; a bounce pop is learnt after the
+// fact, so it swells on notice and bursts swell_seconds later. A whole bubble swells and holds,
+// never peels: the peel waits for the snapshot that says popped.
+struct drawn_bubble_t
+{
+  float           scale;
+  renderer::peel_t peel;
+  bool            has_vanished;
+};
+
+static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
+{
+  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto seconds_since = [&](uint32_t anchor_tick) {
+    return (static_cast<float>(static_cast<int64_t>(tick) - static_cast<int64_t>(anchor_tick)) + fraction) / tickrate;
+  };
+
+  float seconds_to_burst;
+  if (bubble.popped_tick != 0)
+    seconds_to_burst = (bubble.popped_by == shared::null_entity_uid ? 0.0f : bubble.swell_seconds) -
+                       seconds_since(bubble.popped_tick);
+  else if (bubble.flight.launch_tick != 0)
+  {
+    const uint32_t expiry_tick = bubble.flight.launch_tick + bubble.flight.flight_ticks +
+                                 static_cast<uint32_t>(std::lround(bubble.rest_seconds * tickrate));
+    seconds_to_burst = std::max(0.0f, -seconds_since(expiry_tick));
+  }
+  else
+    seconds_to_burst = bubble.swell_seconds;
+
+  const float swell = bubble.swell_seconds > 0.0f
+                          ? std::clamp(1.0f - seconds_to_burst / bubble.swell_seconds, 0.0f, 1.0f)
+                          : 1.0f;
+  drawn_bubble_t drawn{.scale = 1.0f + (bubble.swell_scale - 1.0f) * swell * swell, .peel = {}, .has_vanished = false};
+
+  if (bubble.popped_tick == 0 || seconds_to_burst > 0.0f)
+    return drawn;
+
+  const float fraction_peeled = bubble.peel_seconds > 0.0f ? -seconds_to_burst / bubble.peel_seconds : 1.0f;
+  drawn.peel = {.hole_direction = bubble.popped_direction,
+                .front_angle    = std::min(fraction_peeled, 1.0f) * std::numbers::pi_v<float>,
+                .armed          = true};
+  drawn.has_vanished = fraction_peeled >= 1.0f;
+  return drawn;
 }
 
 // A ghost while it flies, solid with its rest wiping away once landed: the states the predicted step tests.
@@ -3082,15 +3130,24 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (!mesh.valid())
       continue;
 
-    const drawn_pose_t drawn_pose     = drawn_pose_of(ctx, entity);
-    vec3f              drawn_position = drawn_pose.position;
+    const drawn_pose_t drawn_pose        = drawn_pose_of(ctx, entity);
+    vec3f              drawn_position    = drawn_pose.position;
+    quatf              drawn_orientation = drawn_pose.orientation;
     vec3f              drawn_scale    = render.scale;
     entities::Material drawn_material = render.material;
     renderer::clock_wipe_t clock_wipe = {};
     float                  dissolve   = 0.0f;
+    renderer::peel_t       peel       = {};
 
-    if (entity.type == entities::entity_type::Bubble_Entity)
-      drawn_position = drawn_bubble_position(ctx, static_cast<const entities::Bubble_Entity&>(entity));
+    if (const entities::Bubble_Entity* bubble = entities::entity_as<entities::Bubble_Entity>(&entity))
+    {
+      const drawn_bubble_t drawn = drawn_bubble(ctx, *bubble);
+      if (drawn.has_vanished)
+        continue;
+      drawn_position = drawn_bubble_position(ctx, *bubble);
+      drawn_scale    = drawn_scale * drawn.scale;
+      peel           = drawn.peel;
+    }
 
     if (const entities::Platform_Entity* platform = entities::entity_as<entities::Platform_Entity>(&entity))
     {
@@ -3144,6 +3201,31 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       drawn_scale    = zone->half_extents * 2.0f;
     }
 
+    if (const entities::Weapon_Emancipation_Grill_Entity* zone =
+            entities::entity_as<entities::Weapon_Emancipation_Grill_Entity>(&entity))
+    {
+      drawn_position = drawn_position + zone->volume.position;
+      drawn_scale    = zone->volume.half_extents * 2.0f;
+    }
+
+    // Dissolves on the server's clock, read at the drawn tick so every client sees the same fizzle.
+    if (const entities::Emancipated_Weapon_Entity* fizzled =
+            entities::entity_as<entities::Emancipated_Weapon_Entity>(&entity))
+    {
+      const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+      const float elapsed_seconds =
+          (static_cast<float>(tick) - static_cast<float>(fizzled->spawned_tick) + fraction) / tickrate;
+      if (fizzled->lifetime_seconds <= 0.0f || elapsed_seconds >= fizzled->lifetime_seconds)
+        continue;
+      const float elapsed = std::max(elapsed_seconds, 0.0f);
+      const float gone    = elapsed / fizzled->lifetime_seconds;
+      dissolve            = gone;
+      // Rises at half speed to begin with and full speed by the end, the way smoke gathers pace.
+      drawn_position    = drawn_position + vec3f{0.0f, fizzled->rise_distance * gone * (0.5f + 0.5f * gone), 0.0f};
+      drawn_orientation = linalg::from_axis_angle({0.0f, 1.0f, 0.0f}, fizzled->spin_degrees_per_second * elapsed) *
+                          drawn_orientation;
+    }
+
     if (const entities::Ping_Marker_Entity* marker = entities::entity_as<entities::Ping_Marker_Entity>(&entity))
     {
       const drawn_ping_marker_t drawn = drawn_ping_marker(ctx, *marker);
@@ -3155,8 +3237,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     draw.mesh       = mesh;
     draw.clock_wipe = clock_wipe;
     draw.dissolve   = dissolve;
+    draw.peel       = peel;
     draw.transform  = linalg::compose_transform(
-        drawn_position, linalg::compose_model_rotation(drawn_pose.orientation, render.rotation),
+        drawn_position, linalg::compose_model_rotation(drawn_orientation, render.rotation),
         drawn_scale);
 
     // Same split the geometry surface path makes, and the editor preview with

@@ -15,11 +15,21 @@ namespace client
 
 class Transaction_System;
 
-// The selected entity's WIRING, over the map's one connection table. Draws
-// nothing when the selection is geometry or resolves to no entity -- geometry
-// has no type, so it emits nothing and accepts nothing.
+// The selected entity's WIRING, over the map's one connection table, drawn
+// into the current window (the sidebar's Connections tab). Draws nothing when
+// the selection is geometry or resolves to no entity -- geometry has no type,
+// so it emits nothing and accepts nothing.
 void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid,
                            Transaction_System &transactions, uid_pick_t &pick);
+
+struct connection_counts_t
+{
+  size_t outbound = 0;
+  size_t inbound  = 0;
+};
+
+// Rows this entity sends, and rows that name it by uid: the inbound list's rule.
+[[nodiscard]] connection_counts_t count_connections_of(const shared::map_t &map, shared::entity_uid_t uid);
 
 // How a row's receiver is SPELLED, for the author: "!activator", "!self", or
 // the entity's label. Public because the viewport's connection lines label a

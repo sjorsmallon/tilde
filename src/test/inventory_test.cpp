@@ -9,11 +9,13 @@
 #include "game_session.hpp"
 #include "log.hpp"
 #include "server_context.hpp"
+#include "spawn_projectile.hpp"
 #include "subtick.hpp"
 #include "systems/inventory_system.hpp"
 #include "weapons.hpp"
 
 #include <cstdio>
+#include <vector>
 
 namespace server
 {
@@ -519,6 +521,43 @@ int main()
     check(owner->inventory.weapons[slot] == replacement_uid &&
               thrown->owner_uid == shared::null_entity_uid,
           "a weapon is not picked up into a slot that is already full");
+  }
+
+  // --- a button's alive limit replaces the owner's oldest shot off that button, and nobody else's ---
+  {
+    server::server_context_t context;
+    shared::Entity_System& entity_system = context.world.session.entity_system;
+
+    const shared::weapon_definition_t& modifier_gun =
+        shared::get_weapon_definition(entities::Weapon::Modifier_Gun);
+    const uint32_t max_alive =
+        shared::fire_of(modifier_gun, entities::Fire_Trigger::Primary).limit.max_alive;
+    check(max_alive > 0, "the modifier gun's primary carries an alive limit");
+
+    const shared::entity_uid_t owner_uid = entity_system.spawn<entities::Player_Entity>();
+    const shared::entity_uid_t other_uid = entity_system.spawn<entities::Player_Entity>();
+    const vec3f origin    = {0.f, 0.f, 0.f};
+    const vec3f direction = {1.f, 0.f, 0.f};
+
+    const shared::entity_uid_t other_shot = server::spawn_projectile(
+        context, other_uid, modifier_gun, origin, direction, entities::Fire_Trigger::Primary);
+    const shared::entity_uid_t secondary_shot = server::spawn_projectile(
+        context, owner_uid, modifier_gun, origin, direction, entities::Fire_Trigger::Secondary);
+
+    std::vector<shared::entity_uid_t> shots;
+    for (uint32_t shot = 0; shot < max_alive + 1; ++shot)
+      shots.push_back(server::spawn_projectile(context, owner_uid, modifier_gun, origin, direction,
+                                               entities::Fire_Trigger::Primary));
+
+    uint32_t alive = 0;
+    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of<entities::Modifier_Shot_Entity>())
+      if (shot.projectile.owner_uid == owner_uid)
+        ++alive;
+    check(alive == max_alive, "firing past the limit keeps max_alive shots alive");
+    check(entity_system.try_find(shots.front()) == nullptr, "...and the one removed is the oldest");
+    check(entity_system.try_find(shots.back()) != nullptr, "...and the newest is alive");
+    check(entity_system.try_find(other_shot) != nullptr, "another owner's shot is not counted");
+    check(entity_system.try_find(secondary_shot) != nullptr, "the other button's shot is not counted");
   }
 
   printf("%s (%d failure%s)\n", failure_count == 0 ? "PASSED" : "FAILED", failure_count,

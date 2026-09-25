@@ -662,6 +662,51 @@ static int test_a_mirrored_glb_node_arrives_outward_in_engine_units()
   return 0;
 }
 
+// A glb material named after a material folder draws with that folder's maps,
+// and the exporter's flat base colour no longer tints them.
+static int test_a_glb_material_named_after_a_folder_takes_its_maps()
+{
+  const float    positions[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  const uint16_t indices[3]   = {0, 1, 2};
+  std::vector<uint8_t> binary(sizeof(positions) + sizeof(indices));
+  memcpy(binary.data(), positions, sizeof(positions));
+  memcpy(binary.data() + sizeof(positions), indices, sizeof(indices));
+
+  const std::string json =
+      R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],)"
+      R"("nodes":[{"mesh":0}],)"
+      R"("materials":[{"name":"harsh_bricks","pbrMetallicRoughness":{"baseColorFactor":[0.8,0.8,0.8,1]}},)"
+      R"({"name":"Material","pbrMetallicRoughness":{"baseColorFactor":[0.8,0.8,0.8,1]}}],)"
+      R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0},)"
+      R"({"attributes":{"POSITION":0},"indices":1,"material":1}]}],)"
+      R"("buffers":[{"byteLength":42}],)"
+      R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],)"
+      R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},)"
+      R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+
+  const std::vector<uint8_t>  glb  = make_glb(json, binary);
+  const assets::mesh_asset_t mesh = assets::decode_glb(
+      Span<const uint8_t>(glb.data(), (uint32_t)glb.size()), "named_material.glb");
+
+  const assets::pbr_material_asset_t* folder =
+      assets::get(assets::get_pbr_material(assets::pbr_material::harsh_bricks));
+  assert(folder != nullptr);
+  assert(mesh.materials.size() == 2);
+
+  const assets::material_t& named = mesh.materials[0];
+  assert(named.maps.albedo.index == folder->albedo.index);
+  assert(named.maps.normal.index == folder->normal.index);
+  assert(named.maps.orm.index == folder->occlusion_roughness_metallic.index);
+  assert(named.diffuse_color.x == 1.0f && named.diffuse_color.y == 1.0f && named.diffuse_color.z == 1.0f);
+
+  const assets::material_t& unnamed = mesh.materials[1];
+  assert(!unnamed.maps.albedo.valid());
+  assert(std::fabs(unnamed.diffuse_color.x - 0.8f) < 1e-5f);
+
+  printf("  PASS: test_a_glb_material_named_after_a_folder_takes_its_maps\n");
+  return 0;
+}
+
 // The Khronos duck through the manifest: its root node scales centimetres to
 // metres, and its accessor bounds say where every axis must land.
 static int test_the_duck_glb_arrives_through_the_manifest()
@@ -726,6 +771,7 @@ int main()
   test_classify_alpha_reads_the_three_classes();
   test_an_obj_without_normals_derives_them();
   test_a_mirrored_glb_node_arrives_outward_in_engine_units();
+  test_a_glb_material_named_after_a_folder_takes_its_maps();
   test_the_duck_glb_arrives_through_the_manifest();
   printf("All tests passed.\n");
   return 0;

@@ -332,11 +332,13 @@ enum class entity_type : uint16_t
   Remnant_Entity = 32,
   Modifier_Shot_Entity = 33,
   Timed_Movement_Modifier_Entity = 34,
+  Weapon_Emancipation_Grill_Entity = 35,
+  Emancipated_Weapon_Entity = 36,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 35;
+constexpr uint32_t ENTITY_TYPE_COUNT = 37;
 
 enum class component_type : uint16_t
 {

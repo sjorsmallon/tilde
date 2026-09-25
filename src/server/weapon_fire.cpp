@@ -1,6 +1,5 @@
 #include "weapon_fire.hpp"
 
-#include "../shared/collision_detection.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/lag_compensation.hpp"
 #include "../shared/log.hpp"
@@ -8,16 +7,18 @@
 #include "../shared/player_animator.hpp"
 #include "../shared/player_constants.hpp"
 #include "../shared/player_rig.hpp"
+#include "../shared/projectile_sweep.hpp"
 #include "../shared/remnant.hpp"
-#include "damage.hpp"
+#include "entities/remnant_entity.hpp"
 #include "send_protobuf_message.hpp"
 #include "server_api.hpp"
 #include "server_messages.hpp"
 #include "systems/inventory_system.hpp"
 
 #include <algorithm>
-#include <format>
 #include <limits>
+#include <optional>
+#include <vector>
 
 namespace server
 {
@@ -289,10 +290,54 @@ try_find_held_fire_time(shared::game_session_t& session, const entities::Player_
                                          player.inventory.deploy_complete_time, step_start, step_end);
 }
 
+// The volumes and targets a shot at the shooter's own remnants is tested against. The targets
+// point into the volumes, so the volumes are filled first and never grow after.
+struct remnant_targets_t
+{
+  std::vector<assets::posed_hitbox_t>   volumes;
+  std::vector<shared::hitscan_target_t> targets;
+};
+
+// What a delivery may land on, from the contact's declaration and nothing else
+// (contact_effect_plan.md D3). Bodies is the tick's posed set, which the caller may rewind.
+// Own_Remnants is the shooter's remnants: a remnant is a marker, not a body, so it never
+// soaks a bullet, nobody else's can be aimed at, and it does not move, so there is nothing
+// to rewind; the volume is the one the hitbox overlay draws.
+static Span<const shared::hitscan_target_t> hitscan_targets_of(server_context_t& context,
+                                                               const shared::contact_t& contact,
+                                                               const entities::Player_Entity& shooter,
+                                                               remnant_targets_t& remnants)
+{
+  switch (contact.targets)
+  {
+  case shared::contact_targets_t::Bodies:
+    return Span<const shared::hitscan_target_t>{context.posed_players.targets};
+
+  case shared::contact_targets_t::Own_Remnants:
+  {
+    std::vector<shared::entity_uid_t> uids;
+    for (const entities::Remnant_Entity& remnant :
+         context.world.session.entity_system.entities_of<entities::Remnant_Entity>())
+    {
+      if (remnant.owner_uid != shooter.entity_id)
+        continue;
+      uids.push_back(remnant.entity_id);
+      remnants.volumes.push_back(shared::remnant_hit_volume(remnant));
+    }
+    remnants.targets.reserve(uids.size());
+    for (size_t index = 0; index < uids.size(); ++index)
+      remnants.targets.push_back(shared::make_hitscan_target(
+          uids[index], Span<const assets::posed_hitbox_t>{remnants.volumes.data() + index, 1}));
+    return Span<const shared::hitscan_target_t>{remnants.targets};
+  }
+  }
+  return {};
+}
+
 void resolve_player_shot(
   server_context_t &context, int32_t client_slot,
   const game::C2S_ClientInput &input,
-  Span<const uint8_t> disabled_geometry,
+  const shared::predicted_world_t& world,
   entities::Player_Entity* player,
   float yaw, float pitch,
   shared::subtick_time_t fire_time,
@@ -331,22 +376,33 @@ void resolve_player_shot(
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
         return;
 
-      float range = fire.hitscan.range;
-      auto world_hit = ray_hit_result_t{};
-      
-      const bool shot_collided_with_static_geometry =
-          bvh_intersect_ray(context.world.session.bvh, eye, direction, world_hit,
-                            disabled_geometry) &&
-          world_hit.hit;
-
-      // clip the max range, since players outside of this range can't possibly be hit.
-      if (shot_collided_with_static_geometry)
-        range = std::min(range, world_hit.t);
+      // The world test is the one question every flying thing asks, at radius zero: the
+      // shooter's team view of the map AND the movers, so a raised platform stops a round
+      // and a lift takes the impact. The world hit clips the range; nothing past it can be hit.
+      const float range = fire.hitscan.range;
+      const std::optional<shared::projectile_hit_t> world_hit = shared::sweep_projectile(
+          context.world.session.bvh, world, eye, eye + direction * range, 0.f);
+      const float world_distance = world_hit ? world_hit->t * range : range;
 
       if (context.posed_players.built_for_tick != context.tick_number)
         fatal_error("hit volumes were posed for tick {} but this is tick {}; "
                     "pose_all_targets must run before the input loop",
                     context.posed_players.built_for_tick, context.tick_number);
+
+      // A frozen player is a mover the sweep stops at AND a body the hitboxes describe. Their
+      // box clips a shot at anyone behind them; their own hitboxes are read past it, so a
+      // statue still takes a headshot.
+      const bool surface_is_a_body =
+          world_hit && fire.contact.targets == shared::contact_targets_t::Bodies &&
+          context.world.session.entity_system.get<entities::Player_Entity>(world_hit->entity_uid) !=
+              nullptr;
+      const float body_range = surface_is_a_body ? range : world_distance;
+
+      remnant_targets_t remnants;
+      Span<const shared::hitscan_target_t> targets =
+          hitscan_targets_of(context, fire.contact, *player, remnants);
+      auto verdict     = shared::bracket_verdict_t{};
+      bool used_rewind = false;
 
       // --- Lag compensation ---
       // rewind the targets to the position that the shooter saw when they fired.
@@ -354,37 +410,8 @@ void resolve_player_shot(
       // spectator, a client's first shots before it holds two snapshots, a
       // refused bracket, or an endpoint that has aged out of the ring all
       // land there.
-      Span<const shared::hitscan_target_t> targets{context.posed_players.targets};
-      auto verdict = shared::bracket_verdict_t{};
-      bool used_rewind = false;
-
-      // A teleport shot is aimed at the shooter's OWN remnants and at nothing
-      // else: a remnant is a marker, not a body, so it never soaks a bullet and
-      // nobody else's can be aimed at. It does not move, so there is nothing to
-      // rewind; the volume is the one the hitbox overlay draws.
-      std::vector<assets::posed_hitbox_t>   remnant_volumes;
-      std::vector<shared::hitscan_target_t> remnant_targets;
-      const bool aims_at_remnants = fire.hitscan.hit_effect == shared::hit_effect_t::Teleport;
-      if (aims_at_remnants)
-      {
-        std::vector<shared::entity_uid_t> remnant_uids;
-        for (const entities::Remnant_Entity& remnant :
-             context.world.session.entity_system.entities_of<entities::Remnant_Entity>())
-        {
-          if (remnant.owner_uid != player->entity_id)
-            continue;
-          remnant_uids.push_back(remnant.entity_id);
-          remnant_volumes.push_back(shared::remnant_hit_volume(remnant));
-        }
-        remnant_targets.reserve(remnant_uids.size());
-        for (size_t index = 0; index < remnant_uids.size(); ++index)
-          remnant_targets.push_back(shared::make_hitscan_target(
-              remnant_uids[index],
-              Span<const assets::posed_hitbox_t>{remnant_volumes.data() + index, 1}));
-        targets = Span<const shared::hitscan_target_t>{remnant_targets};
-      }
-
-      if (context.cvars->sv_lag_compensation && !aims_at_remnants)
+      if (context.cvars->sv_lag_compensation &&
+          fire.contact.targets == shared::contact_targets_t::Bodies)
       {
 
         verdict = get_interpolation_bracket_for_input(context, client_slot, input);
@@ -416,8 +443,7 @@ void resolve_player_shot(
       }
 
       const shared::hitscan_result_t hit = shared::resolve_hitscan(
-          eye, direction, range, targets, player->entity_id);
-
+          eye, direction, body_range, targets, player->entity_id);
 
       if (context.cvars->sv_shot_debug)
         send_shot_debug(context, client_slot, input, shared::subtick_slot_of(fire_time), eye,
@@ -426,85 +452,34 @@ void resolve_player_shot(
                         used_rewind ? context.rewind_scratch : context.posed_players, targets,
                         hit, player->entity_id);
 
-      if (hit.hit_uid != shared::null_entity_uid)
+      // A body inside the clipped range, or the frozen player whose own box clipped it.
+      const bool hit_a_body =
+          hit.hit_uid != shared::null_entity_uid &&
+          (hit.distance <= world_distance || (world_hit && hit.hit_uid == world_hit->entity_uid));
+
+      // What arrived, and where. Tested here, acted on in update_contacts; the arm there
+      // asks what the target is. A shot into the void arrives nowhere and pushes nothing.
+      pending_contact_t contact{.shooter_uid = player->entity_id,
+                                .weapon      = active_weapon->weapon_id,
+                                .trigger     = trigger,
+                                .damage_type = active_weapon->damage_type};
+      if (hit_a_body)
       {
-        switch (fire.hitscan.hit_effect)
-        {
-          case shared::hit_effect_t::Damage:
-          {
-            // debug
-            {
-              broadcast_server_text_message(
-                context, std::format("Player {} hit player {} in the {}",
-                client_slot, hit.hit_uid,
-                to_string(hit.region)));
-
-            }
-            const bool was_headshot = (hit.region == shared::hit_region_t::Head);
-
-            auto damage_info = damage_info_t{};
-            damage_info.victim_uid = hit.hit_uid;
-            damage_info.attacker_uid = player->entity_id;
-            damage_info.inflictor_uid = player->entity_id;
-            damage_info.weapon_id = static_cast<uint16_t>(active_weapon->weapon_id);
-
-            int32_t damage_amount = fire.hitscan.damage * (was_headshot ? fire.hitscan.headshot_multiplier : 1.f);
-            damage_info.amount = damage_amount;
-            damage_info.source_position = eye;
-            damage_info.was_headshot = was_headshot;
-            damage_info.type = active_weapon->damage_type;
-
-            // we store all damage events and then before resolving, we can check majority contribution (if two people shoot at the same time, or whatever.)
-            context.outgoing.pending_hits.push_back(
-                {damage_info, hit.impact_point, hit.impact_normal, hit.region});
-            break;
-          }
-          case shared::hit_effect_t::Swap:
-          {
-            if (context.world.session.entity_system.get<entities::Player_Entity>(hit.hit_uid) != nullptr)
-              context.outgoing.pending_swaps.push_back({player->entity_id, hit.hit_uid});
-            break;
-          }
-          case shared::hit_effect_t::Magnet:
-          {
-            context.outgoing.pending_magnets.push_back(
-                {player->entity_id, hit.hit_uid, fire.hitscan.magnet_speed});
-            break;
-          }
-          case shared::hit_effect_t::Tether:
-          {
-            context.outgoing.pending_tethers.push_back(
-                {player->entity_id, hit.hit_uid, fire.hitscan.tether_speed,
-                 fire.hitscan.tether_seconds});
-            break;
-          }
-          case shared::hit_effect_t::Teleport:
-          {
-            context.outgoing.pending_teleports.push_back({player->entity_id, hit.hit_uid});
-            break;
-          }
-          case shared::hit_effect_t::Stasis:
-          case shared::hit_effect_t::Statue:
-          {
-            const entities::Movement_Override kind =
-                fire.hitscan.hit_effect == shared::hit_effect_t::Stasis
-                    ? entities::Movement_Override::Stasis
-                    : entities::Movement_Override::Statue;
-            context.outgoing.pending_freezes.push_back(
-                {player->entity_id, hit.hit_uid, kind, fire.hitscan.freeze_seconds});
-            break;
-          }
-        }
+        contact.target_uid = hit.hit_uid;
+        contact.point      = hit.impact_point;
+        contact.normal     = hit.impact_normal;
+        contact.region     = hit.region;
       }
-      else if (shot_collided_with_static_geometry && world_hit.t <= fire.hitscan.range)
+      else if (world_hit)
       {
-        auto shot_impact_fx = shared::Shot_Impact{};
-        shot_impact_fx.origin = eye + direction * world_hit.t;
-        shot_impact_fx.normal = world_hit.normal;
-        shot_impact_fx.weapon = static_cast<uint16_t>(active_weapon->weapon_id);
-        shot_impact_fx.trigger = static_cast<uint8_t>(trigger);
-        shared::fire_shot_impact(context.outgoing.effects, shot_impact_fx);
+        contact.target_uid = world_hit->entity_uid;
+        contact.point      = world_hit->position;
+        contact.normal     = world_hit->normal;
       }
+      else
+        break;
+
+      context.outgoing.pending_contacts.push_back(contact);
       break;
     }
     case entities::Fire_Resolution::Projectile:
@@ -522,7 +497,10 @@ void resolve_player_shot(
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
         return;
 
-      spawn_placed_entity(context, player->entity_id, weapon, player->position, yaw, trigger);
+      const shared::entity_uid_t placed_uid =
+          spawn_placed_entity(context, weapon, player->position, yaw, trigger);
+      if (context.world.session.entity_system.get<entities::Remnant_Entity>(placed_uid) != nullptr)
+        claim_remnant(context, placed_uid, player->entity_id);
       break;
     }
     case entities::Fire_Resolution::Self_Impulse:

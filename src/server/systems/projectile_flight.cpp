@@ -33,4 +33,29 @@ fly_projectile(server_context_t& context, const shared::predicted_world_storage_
   return hit;
 }
 
+pending_contact_t contact_of_projectile_hit(const entities::Projectile& projectile,
+                                            float collision_radius,
+                                            const shared::projectile_hit_t& hit)
+{
+  return {.shooter_uid = projectile.owner_uid,
+          .target_uid  = hit.entity_uid,
+          .point       = hit.position - hit.normal * collision_radius,
+          .normal      = hit.normal,
+          .region      = shared::hit_region_t::Torso,
+          .weapon      = projectile.weapon_id,
+          .trigger     = projectile.trigger};
+}
+
+pending_contact_t contact_of_projectile_expiry(const entities::Entity& entity,
+                                               const entities::Projectile& projectile)
+{
+  return {.shooter_uid = projectile.owner_uid,
+          .target_uid  = shared::null_entity_uid,
+          .point       = entity.position,
+          .normal      = {0.f, 0.f, 0.f},
+          .region      = shared::hit_region_t::Torso,
+          .weapon      = projectile.weapon_id,
+          .trigger     = projectile.trigger};
+}
+
 } // namespace server

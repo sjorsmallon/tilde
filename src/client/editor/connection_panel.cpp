@@ -445,6 +445,19 @@ std::string describe_connection_target(const shared::map_t &map, const shared::c
   return "<unknown>";
 }
 
+connection_counts_t count_connections_of(const shared::map_t &map, shared::entity_uid_t uid)
+{
+  connection_counts_t counts;
+  for (const shared::connection_t &row : map.connections)
+  {
+    if (row.sender == uid)
+      ++counts.outbound;
+    if (row.target_kind == shared::connection_target_t::Uid && row.target == uid)
+      ++counts.inbound;
+  }
+  return counts;
+}
+
 void commit_picked_connection_target(shared::map_t &map, Transaction_System &transactions,
                                      Span<const size_t> rows, shared::entity_uid_t target)
 {
@@ -467,7 +480,7 @@ void commit_picked_connection_target(shared::map_t &map, Transaction_System &tra
 
   transaction_t transaction;
   transaction.add_map_connections_modified(std::move(before), map.connections);
-  transactions.push(std::move(transaction));
+  transactions.push("Pick connection target", std::move(transaction));
 }
 
 void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid,
@@ -517,10 +530,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
   int row_to_remove = -1;
   bool add_requested = false;
 
-  if (ImGui::Begin("Connections", nullptr, ImGuiWindowFlags_NoFocusOnAppearing))
   {
-    ImGui::TextUnformatted(shared::describe_map_entity(map, selected_uid).c_str());
-
     const std::vector<entities::entity_signal> emitted = signals_emitted_by(sender.type);
     if (emitted.empty())
       ImGui::TextDisabled("%s announces nothing: just a target. Not a Sender.",
@@ -600,7 +610,6 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
     ImGui::SeparatorText("Inbound (read-only)");
     draw_inbound_list(map, selected_uid);
   }
-  ImGui::End();
 
   // Structural edits are deferred to here for the reason the cvar panel defers
   // its own: both of them replace the vector the loop above was walking.
@@ -641,7 +650,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
   {
     transaction_t transaction;
     transaction.add_map_connections_modified(std::move(*s_edit_baseline), map.connections);
-    transactions.push(std::move(transaction));
+    transactions.push("Edit connections", std::move(transaction));
     s_edit_baseline.reset();
   }
 }

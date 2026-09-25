@@ -4,7 +4,7 @@
 //
 //   1. EXCLUSIVE. group_objects pulls a member out of its old group and
 //      dissolves what shrinks below two, so no operation can leave one object
-//      in two groups.
+//      in two groups. A rename refuses an empty name and an unknown uid.
 //   2. INERT, not pruned. A deleted member stays in the list (undo brings it
 //      back grouped); expand_to_group answers only the live ones.
 //   3. The FILE. A group round-trips through the map text with its uid, its
@@ -93,6 +93,15 @@ int main()
   const entity_uid_t lonely[] = {a, 9999};
   if (group_objects(map, lonely, "lonely") != null_entity_uid)
     return fail("a group with one real member was not refused");
+
+  if (!try_rename_group(map, third, "renamed") || find_group_by_uid(map, third)->name != "renamed")
+    return fail("renaming the third group did not take");
+  if (try_rename_group(map, third, "") || find_group_by_uid(map, third)->name != "renamed")
+    return fail("an empty group name was not refused");
+  if (try_rename_group(map, 9999, "nobody"))
+    return fail("renaming a group that does not exist was not refused");
+  if (!try_rename_group(map, third, "third"))
+    return fail("renaming the third group back did not take");
 
   // ------------------------------------------------------------- 2. inert
   std::vector<entity_uid_t> picked;

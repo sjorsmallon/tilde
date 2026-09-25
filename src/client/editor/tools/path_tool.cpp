@@ -408,7 +408,7 @@ void Path_Tool::commit_drag(editor_context_t& ctx)
     if (const shared::map_entity_t* entry = ctx.map->find_by_uid(origin.uid))
       transaction.add_modified_from_diff(origin.uid, origin.entity_before, entry->entity.get());
   }
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Move path node", std::move(transaction));
   drag_origins.clear();
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -460,7 +460,7 @@ void Path_Tool::place_node(editor_context_t& ctx, const linalg::vec3& position)
     transaction.add_modified_from_diff(subject_mover, before, mover_entry->entity.get());
   }
 
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Place path node", std::move(transaction));
   active_node = uid;
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -487,7 +487,7 @@ void Path_Tool::delete_active_node(editor_context_t& ctx)
   std::vector<shared::connection_t> connections_before = ctx.map->connections;
   (void)shared::remove_connections_naming(ctx.map->connections, Span<const shared::entity_uid_t>(&removed, 1));
   transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Delete path node", std::move(transaction));
 
   active_node = previous != shared::null_entity_uid ? previous : next == removed ? shared::null_entity_uid : next;
 
@@ -504,7 +504,7 @@ void Path_Tool::start_mover_at_active_node(editor_context_t& ctx, shared::entity
   static_cast<entities::Mover_Entity&>(*entry->entity).follow.from = active_node;
   transaction_t transaction;
   transaction.add_modified_from_diff(mover, before, entry->entity.get());
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Start mover at node", std::move(transaction));
 }
 
 void Path_Tool::begin_field_edit(const editor_context_t& ctx, shared::entity_uid_t uid)
@@ -524,7 +524,7 @@ void Path_Tool::end_field_edit(editor_context_t& ctx)
   {
     transaction_t transaction;
     transaction.add_modified_from_diff(field_edit->uid, field_edit->before, entry->entity.get());
-    ctx.transaction_system.push(std::move(transaction));
+    ctx.transaction_system.push("Edit path node", std::move(transaction));
   }
   field_edit.reset();
 }

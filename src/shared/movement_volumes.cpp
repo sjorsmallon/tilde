@@ -92,6 +92,11 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Timed_Movement_Modifier_Entity:
         break;
 
+      // A box tested after the step by its own server system; nothing the move reads.
+      case entities::entity_type::Weapon_Emancipation_Grill_Entity:
+      case entities::entity_type::Emancipated_Weapon_Entity:
+        break;
+
       // Every type that is not @predicted. Adding one makes this a compile
       // error, which is the point.
       case entities::entity_type::Invalid:

@@ -5,11 +5,40 @@
 #include "../server_api.hpp"
 #include "fixed_arc_flight_launch.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
 namespace server
 {
+
+namespace
+{
+
+linalg::vec3f hashed_unit_vector(uint32_t seed)
+{
+  const float u        = std::fmod(static_cast<float>(seed) * 0.618034f, 1.0f);
+  const float v        = std::fmod(static_cast<float>(seed) * 0.324718f, 1.0f);
+  const float z        = 2.0f * u - 1.0f;
+  const float azimuth  = 2.0f * 3.14159265f * v;
+  const float ring     = std::sqrt(std::max(0.0f, 1.0f - z * z));
+  return {ring * std::cos(azimuth), z, ring * std::sin(azimuth)};
+}
+
+linalg::vec3f peel_direction_of(const server_context_t& context, const entities::Bubble_Entity& bubble,
+                                shared::entity_uid_t popped_by)
+{
+  const entities::Player_Entity* popper =
+      context.world.session.entity_system.get<entities::Player_Entity>(popped_by);
+  if (popper == nullptr)
+    return hashed_unit_vector(bubble.entity_id);
+  const linalg::vec3f offset = popper->position - bubble.position;
+  if (linalg::length(offset) < 1e-3f)
+    return {0.0f, 1.0f, 0.0f};
+  return linalg::normalize(offset);
+}
+
+} // namespace
 
 void update_bubbles(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
@@ -56,9 +85,9 @@ void pop_bubble(server_context_t& context, shared::entity_uid_t bubble_uid,
   if (bubble == nullptr || bubble->popped_tick != 0)
     return;
 
-  bubble->popped_tick    = context.tick_number;
-  bubble->popped_by      = popped_by;
-  bubble->render.visible = false;
+  bubble->popped_tick      = context.tick_number;
+  bubble->popped_by        = popped_by;
+  bubble->popped_direction = peel_direction_of(context, *bubble, popped_by);
 }
 
 } // namespace server

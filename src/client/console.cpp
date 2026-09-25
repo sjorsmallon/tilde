@@ -129,8 +129,8 @@ void console::load_bindings_from_file()
 
 void console::execute_pressed_bindings()
 {
-  if (should_draw)
-    return; // never fire bindings while the console is open
+  if (should_draw || input::imgui_wants_text_input())
+    return;
 
   for (const auto &[key, line] : bindings_)
   {

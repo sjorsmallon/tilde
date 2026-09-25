@@ -73,7 +73,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t& ctx)
     return;
   }
 
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Sculpt", std::move(transaction));
 }
 
 void Sculpting_Tool::on_update(editor_context_t& ctx,
@@ -306,7 +306,7 @@ void Sculpting_Tool::apply_size_clipboard(editor_context_t& ctx,
     transaction.add_modified_from_diff(uid, before_entity, entry->entity.get());
   }
 
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Paste size", std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;

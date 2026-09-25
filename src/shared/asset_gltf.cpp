@@ -528,6 +528,28 @@ asset_handle_t<texture_asset_t> emissive_of(glb_import_t& import, const tinygltf
   return register_dynamic_texture(composed_key, std::move(composed));
 }
 
+void take_material_folder(glb_import_t& import, material_t& material, pbr_material folder)
+{
+  const pbr_material_asset_t* resolved =
+      get(load_pbr_material(pbr_material_manifest()[(uint32_t)folder].path));
+  if (resolved == nullptr)
+    fatal_error("mesh '{}' material '{}' names material folder '{}', which did not load",
+                import.key, material.name, to_string(folder));
+
+  if (material.maps.albedo.valid())
+    note_ignored(import, "embedded maps of material '" + material.name + "' (its material folder wins)");
+
+  material.diffuse_color     = {1.0f, 1.0f, 1.0f};
+  material.opacity           = 1.0f;
+  material.maps.albedo       = resolved->albedo;
+  material.maps.normal       = resolved->normal;
+  material.maps.orm          = resolved->occlusion_roughness_metallic;
+  material.maps.height       = resolved->height;
+  material.maps.emissive     = resolved->emissive;
+  material.maps.alpha_mode   = resolved->alpha_mode;
+  material.maps.alpha_cutoff = resolved->alpha_cutoff;
+}
+
 void import_materials(glb_import_t& import)
 {
   const tinygltf::Model& model = import.model;
@@ -570,6 +592,13 @@ void import_materials(glb_import_t& import)
     material.maps.double_sided = source.doubleSided;
     if (source.normalTexture.index >= 0 && source.normalTexture.scale != 1.0)
       note_ignored(import, "normal map scale");
+
+    const std::optional<pbr_material> folder = try_from_string<pbr_material>(source.name);
+    if (folder && *folder != pbr_material::Missing)
+      take_material_folder(import, material, *folder);
+    else if (!material.maps.albedo.valid())
+      log_terminal("[glb] {}: material '{}' names no material folder and carries no albedo; drawn flat",
+                   import.key, material.name);
 
     import.mesh.materials.push_back(std::move(material));
   }

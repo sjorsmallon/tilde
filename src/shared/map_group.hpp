@@ -78,6 +78,9 @@ void add_group_with_uid(map_t& map, map_group_t group);
 // has that uid.
 bool ungroup(map_t& map, entity_uid_t group_uid);
 
+// Refuses with a line when no group has that uid or the name is empty.
+[[nodiscard]] bool try_rename_group(map_t& map, entity_uid_t group_uid, std::string name);
+
 // Rewrites the members through a remap, DROPPING the ones it does not map --
 // the intersection rule: a copy of part of a group is a group of that part.
 // Returns how many survived.

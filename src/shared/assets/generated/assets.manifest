@@ -12,6 +12,13 @@ class mesh_asset mesh_asset_t asset_types.hpp .obj .mesh .glb
   hookshot resources/glb/hookshot.glb
   magnet resources/glb/magnet.glb
   rocket resources/glb/rocket.glb
+  sequence_1 resources/glb/sequence_1.glb
+  sequence_2 resources/glb/sequence_2.glb
+  sequence_3 resources/glb/sequence_3.glb
+  sequence_4 resources/glb/sequence_4.glb
+  sequence_5 resources/glb/sequence_5.glb
+  sequence_6 resources/glb/sequence_6.glb
+  sequence_7 resources/glb/sequence_7.glb
   shattered_glass resources/glb/shattered_glass.glb
   stopwatch resources/glb/stopwatch.glb
   target resources/glb/target.glb
@@ -129,6 +136,12 @@ class pbr_material pbr_material_asset_t asset_types.hpp
   glass_white resources/textures/glass_white
   harsh_bricks resources/textures/harsh_bricks
   scuffed_plastic resources/textures/scuffed_plastic
+  scuffed_plastic_blue resources/textures/scuffed_plastic_blue
+  scuffed_plastic_green resources/textures/scuffed_plastic_green
+  scuffed_plastic_indigo resources/textures/scuffed_plastic_indigo
+  scuffed_plastic_orange resources/textures/scuffed_plastic_orange
+  scuffed_plastic_violet resources/textures/scuffed_plastic_violet
+  scuffed_plastic_yellow resources/textures/scuffed_plastic_yellow
   sloppy_mortar_stone resources/textures/sloppy_mortar_stone
   stringy_marble resources/textures/stringy_marble
   titanium_scuffed resources/textures/titanium_scuffed

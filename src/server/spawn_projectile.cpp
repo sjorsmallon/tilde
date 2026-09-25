@@ -12,6 +12,41 @@
 namespace server
 {
 
+namespace
+{
+
+// A player's shots only: a launcher is bounded by its own cadence. Uids are one monotonic space, so the lowest is the oldest.
+void make_room_under_alive_limit(server_context_t& context, shared::entity_uid_t owner_uid,
+                                 entities::Weapon weapon, entities::Fire_Trigger trigger,
+                                 const shared::alive_limit_t& limit)
+{
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+  if (limit.max_alive == 0 || entity_system.get<entities::Player_Entity>(owner_uid) == nullptr)
+    return;
+
+  std::vector<shared::entity_uid_t> alive;
+  for (auto [entity, projectile] : entity_system.entities_with<entities::Projectile>())
+  {
+    if (projectile.owner_uid == owner_uid && projectile.weapon_id == weapon &&
+        projectile.trigger == trigger)
+      alive.push_back(entity.entity_id);
+  }
+  if (alive.size() < limit.max_alive)
+    return;
+
+  std::sort(alive.begin(), alive.end());
+  const size_t over_by = alive.size() - limit.max_alive + 1;
+  switch (limit.at_limit)
+  {
+  case shared::at_limit_t::Replace_Oldest:
+    for (size_t index = 0; index < over_by; ++index)
+      destroy_entity(context, alive[index]);
+    break;
+  }
+}
+
+} // namespace
+
 shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_uid_t owner_uid,
                                       const shared::weapon_definition_t& weapon,
                                       const vec3f& origin, const vec3f& direction,
@@ -21,6 +56,8 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
   if (fire.resolution != entities::Fire_Resolution::Projectile)
     fatal_error("spawn_projectile: {}'s {} fire does not resolve as a projectile",
                 weapon.display_name, to_string(trigger));
+
+  make_room_under_alive_limit(context, owner_uid, weapon.weapon, trigger, fire.limit);
 
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
@@ -50,19 +87,10 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
   projectile->weapon_id = weapon.weapon;
   projectile->trigger   = trigger;
 
-  if (entities::Hook_Entity* hook = entities::entity_as<entities::Hook_Entity>(entity))
-    hook->reels_target = trigger == entities::Fire_Trigger::Secondary;
-
-  if (entities::Kooh_Entity* kooh = entities::entity_as<entities::Kooh_Entity>(entity))
-  {
-    log_terminal("spawn_projectile: kooh->reels_player = {}", (trigger == entities::Fire_Trigger::Secondary));
-    kooh->reels_player = (trigger == entities::Fire_Trigger::Secondary);
-  }
-
   return projectile_uid;
 }
 
-shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::entity_uid_t owner_uid,
+shared::entity_uid_t spawn_placed_entity(server_context_t& context,
                                          const shared::weapon_definition_t& weapon,
                                          const vec3f& feet, float yaw_degrees,
                                          entities::Fire_Trigger trigger)
@@ -73,21 +101,6 @@ shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::enti
                 weapon.display_name, to_string(trigger));
 
   shared::Entity_System& entity_system = context.world.session.entity_system;
-
-  // ONE remnant per owner, moved rather than added to: the ping marker's rule,
-  // for the ping marker's reason.
-  if (fire.place.spawns == entities::entity_type::Remnant_Entity)
-  {
-    std::vector<shared::entity_uid_t> superseded;
-    for (const entities::Remnant_Entity& remnant :
-         entity_system.entities_of<entities::Remnant_Entity>())
-    {
-      if (remnant.owner_uid == owner_uid)
-        superseded.push_back(remnant.entity_id);
-    }
-    for (shared::entity_uid_t uid : superseded)
-      destroy_entity(context, uid);
-  }
 
   const shared::entity_uid_t placed_uid = entity_system.spawn(fire.place.spawns);
   entities::Entity* entity = entity_system.try_find(placed_uid);
@@ -100,9 +113,6 @@ shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::enti
 
   entity->position    = feet;
   entity->orientation = linalg::from_view_angles(yaw_degrees, 0.f);
-
-  if (entities::Remnant_Entity* remnant = entities::entity_as<entities::Remnant_Entity>(entity))
-    remnant->owner_uid = owner_uid;
 
   return placed_uid;
 }

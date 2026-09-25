@@ -2224,7 +2224,7 @@ static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
     entities::Movement movement{};
     movement.active_override            = entities::Movement_Override::Reel;
     movement.override_target_position   = anchor;
-    movement.override_seconds_remaining = cvars.sv_hook_max_pull_seconds;
+    movement.override_seconds_remaining = 1.5f;
     movement.override_speed             = cvars.sv_hook_pull_speed;
     movement.override_arrive_radius     = cvars.sv_hook_arrive_radius;
 

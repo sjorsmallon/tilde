@@ -38,6 +38,19 @@ namespace client
 namespace
 {
 
+const char* gizmo_drag_name(gizmo_handle_t handle)
+{
+  switch (handle.kind)
+  {
+  case gizmo_handle_t::kind_t::None:            return "Gizmo drag";
+  case gizmo_handle_t::kind_t::Translate:       return "Move";
+  case gizmo_handle_t::kind_t::Translate_Plane: return "Move";
+  case gizmo_handle_t::kind_t::Rotate:          return "Rotate";
+  case gizmo_handle_t::kind_t::Reshape:         return "Reshape";
+  }
+  return "Gizmo drag";
+}
+
 // TWO radii, and the difference between them is the whole rule. An entity icon
 // is a few pixels wide and usually stands in front of a wall, so a ray that hit
 // the wall is not evidence the author meant the wall -- an entity CLOSE to the
@@ -129,7 +142,7 @@ void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx)
 
 // Push one transaction covering the whole drag, so Ctrl+Z undoes the move of all
 // selected objects at once rather than one at a time.
-void Selection_Tool::commit_drag_snapshots(editor_context_t& ctx)
+void Selection_Tool::commit_drag_snapshots(editor_context_t& ctx, std::string name)
 {
   if (drag_start_snapshots.empty() || !ctx.map)
   {
@@ -150,7 +163,7 @@ void Selection_Tool::commit_drag_snapshots(editor_context_t& ctx)
     if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       transaction.add_modified_from_diff(uid, snapshot.entity, entry->entity.get());
   }
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push(std::move(name), std::move(transaction));
   drag_start_snapshots.clear();
   drag_origins.clear();
 }
@@ -245,11 +258,11 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
 }
 
 void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
-                                                 const gizmo_drag_t &transform)
+                                                 const gizmo_drag_t &transform, std::string name)
 {
   capture_drag_snapshots(ctx);
   apply_gizmo_drag(ctx, transform);
-  commit_drag_snapshots(ctx);
+  commit_drag_snapshots(ctx, std::move(name));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -281,7 +294,8 @@ void Selection_Tool::snap_selection_to_surface_below(editor_context_t& ctx)
     return;
 
   apply_transform_as_one_edit(ctx, {.translation = {0.0f, -*drop, 0.0f},
-                                    .pivot = (bounds->min + bounds->max) * 0.5f});
+                                    .pivot = (bounds->min + bounds->max) * 0.5f},
+                              "Drop to surface");
 }
 
 void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
@@ -303,7 +317,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
                        panel_offset.z == 0.f);
   if (ImGui::Button("Apply offset"))
   {
-    apply_transform_as_one_edit(ctx, {.translation = panel_offset, .pivot = center});
+    apply_transform_as_one_edit(ctx, {.translation = panel_offset, .pivot = center}, "Offset");
     panel_offset = {0, 0, 0};
   }
   ImGui::EndDisabled();
@@ -326,7 +340,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
       gizmo_drag_t turn;
       turn.rotation = linalg::rotation_delta_from_axis_angle(axis, 90.f);
       turn.pivot          = center;
-      apply_transform_as_one_edit(ctx, turn);
+      apply_transform_as_one_edit(ctx, turn, std::format("Rotate 90 about {}", AXIS_LABELS[axis]));
     }
     ImGui::PopID();
   }
@@ -347,7 +361,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
       if (!shared::try_set_object_position(*ctx.map, origin.uid, snapped))
         log_error("selection tool: object {} vanished before it could be snapped", origin.uid);
     }
-    commit_drag_snapshots(ctx);
+    commit_drag_snapshots(ctx, "Snap to grid");
 
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -628,7 +642,7 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
   // -- the objects AND the wiring between them -- the same rule the
   // multi-object delete follows.
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push(clipboard_group_name.empty() ? std::string("Paste") : std::format("Place prefab {}", clipboard_group_name), std::move(transaction));
 
   // The copies become the selection: what you just placed is what the gizmo and
   // the arrow keys should be aimed at.
@@ -703,7 +717,7 @@ void Selection_Tool::tie_selection_to_owner(editor_context_t& ctx, shared::entit
     ++tied;
   }
 
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Tie to entity", std::move(transaction));
 
   selected_uids.clear();
   selected_uids.push_back(owner_uid);
@@ -814,7 +828,7 @@ void Selection_Tool::untie_selection(editor_context_t& ctx)
     return;
   }
 
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Untie", std::move(transaction));
   hud::set_announcement(std::format("Untied {} object(s)", untied));
 }
 
@@ -836,7 +850,7 @@ void Selection_Tool::group_selection(editor_context_t& ctx)
 
   transaction_t transaction;
   transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Group", std::move(transaction));
 
   hud::set_announcement(std::format("Grouped {} objects", selected_uids.size()));
 }
@@ -864,7 +878,7 @@ void Selection_Tool::ungroup_selection(editor_context_t& ctx)
 
   transaction_t transaction;
   transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Ungroup", std::move(transaction));
 
   hud::set_announcement(group_uids.size() == 1
                             ? std::string("Ungrouped")
@@ -897,7 +911,7 @@ void Selection_Tool::ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t 
 
   transaction_t transaction;
   transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
-  ctx.transaction_system.push(std::move(transaction));
+  ctx.transaction_system.push("Ungroup", std::move(transaction));
 }
 
 void Selection_Tool::select_group(editor_context_t& ctx, shared::entity_uid_t group_uid)
@@ -914,6 +928,42 @@ void Selection_Tool::select_group(editor_context_t& ctx, shared::entity_uid_t gr
   for (shared::entity_uid_t member : group->members)
     if (ctx.map->has_object(member))
       selected_uids.push_back(member);
+}
+
+void Selection_Tool::toggle_in_selection(Span<const shared::entity_uid_t> picked)
+{
+  const auto is_selected = [&](shared::entity_uid_t uid)
+  { return std::find(selected_uids.begin(), selected_uids.end(), uid) != selected_uids.end(); };
+
+  if (std::all_of(picked.begin(), picked.end(), is_selected))
+  {
+    std::erase_if(selected_uids, [&](shared::entity_uid_t uid)
+                  { return std::find(picked.begin(), picked.end(), uid) != picked.end(); });
+    return;
+  }
+  for (shared::entity_uid_t uid : picked)
+    if (!is_selected(uid))
+      selected_uids.push_back(uid);
+}
+
+void Selection_Tool::rename_group(editor_context_t& ctx, shared::entity_uid_t group_uid, std::string name)
+{
+  if (!ctx.map)
+    return;
+  const shared::map_group_t* group = shared::find_group_by_uid(*ctx.map, group_uid);
+  if (group != nullptr && group->name == name)
+    return;
+
+  std::vector<shared::map_group_t> before = ctx.map->groups;
+  if (!shared::try_rename_group(*ctx.map, group_uid, name))
+  {
+    hud::set_announcement("A group needs a name");
+    return;
+  }
+
+  transaction_t transaction;
+  transaction.add_map_groups_modified(std::move(before), ctx.map->groups);
+  ctx.transaction_system.push(std::format("Rename group to {}", name), std::move(transaction));
 }
 
 void Selection_Tool::arm_next_unbound_pick(editor_context_t& ctx)
@@ -1103,6 +1153,7 @@ void Selection_Tool::on_enable(editor_context_t& ctx)
 
 void Selection_Tool::on_disable(editor_context_t& ctx)
 {
+  commit_inspector_edit(ctx);
   hovered_uid = 0;
   editor_gizmo.clear_target();
   cancel_paste();
@@ -1112,6 +1163,8 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
 
 void Selection_Tool::on_draw_ui(editor_context_t& ctx)
 {
+  settle_inspector_edit(ctx);
+
   if (is_dragging_box)
   {
     ImDrawList *draw_list = ImGui::GetForegroundDrawList();
@@ -1139,218 +1192,6 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
     ImGui::GetForegroundDrawList()->AddText(
         ImVec2(viewport->Pos.x + (viewport->Size.x - size.x) * 0.5f, viewport->Pos.y + 40.0f),
         IM_COL32(255, 160, 0, 255), notice);
-  }
-
-  // Inspector — geometry gets its handwritten panel, entities the schema-driven
-  // one, and a multi-selection gets the transform panel in the same window. One
-  // object's fields are not a thing a group HAS, so the window shows what a
-  // group does have instead of showing nothing.
-  if (!selected_uids.empty() && ctx.map)
-  {
-    if (ImGui::Begin("Entity Inspector", nullptr, ImGuiWindowFlags_NoFocusOnAppearing))
-    {
-      const shared::entity_uid_t uid = selected_uids[0];
-
-      // The uid is what every log line, every bake table and every .source
-      // block names an object by, so it is the first thing the panel says.
-      if (selected_uids.size() > 1)
-        ImGui::Text("%zu objects selected, first uid %u", selected_uids.size(), uid);
-      else
-        ImGui::Text("uid %u", uid);
-
-      if (ImGui::Button("Snap to surface below (End)"))
-        snap_selection_to_surface_below(ctx);
-
-      // Groups. One line naming the group a single object is in, or how many
-      // groups a selection touches, and the two edits beside it.
-      {
-        std::vector<shared::entity_uid_t> touched;
-        for (shared::entity_uid_t selected : selected_uids)
-          if (const shared::map_group_t *group = shared::find_group_of(*ctx.map, selected))
-            if (std::find(touched.begin(), touched.end(), group->uid) == touched.end())
-              touched.push_back(group->uid);
-
-        if (touched.size() == 1)
-        {
-          const shared::map_group_t *group = shared::find_group_by_uid(*ctx.map, touched[0]);
-          ImGui::Text("Group \"%s\" (uid %u, %zu members)", group->name.c_str(), group->uid,
-                      group->members.size());
-        }
-        else if (touched.size() > 1)
-        {
-          ImGui::Text("%zu groups in this selection", touched.size());
-        }
-
-        if (selected_uids.size() > 1)
-        {
-          if (ImGui::Button("Group (Ctrl+G)"))
-            group_selection(ctx);
-          if (!touched.empty())
-            ImGui::SameLine();
-        }
-        if (!touched.empty() && ImGui::Button("Ungroup (Ctrl+Shift+G)"))
-          ungroup_selection(ctx);
-        ImGui::Checkbox("Ignore groups (Ctrl+W)", &ignoring_groups);
-
-        // The members, one row each, a click narrowing the selection to that
-        // one: the outliner's pick-inside-a-group, in the panel already on
-        // screen. Lists the whole group when the selection sits in exactly one,
-        // so a single grouped object shows its siblings; the selection itself
-        // otherwise. Goes through requested_selection like the outliner does,
-        // since selected_uids is being read by this very frame's panel.
-        std::vector<shared::entity_uid_t> members;
-        if (touched.size() == 1)
-          shared::expand_to_group(*ctx.map, selected_uids[0], members);
-        else
-          members = selected_uids;
-
-        if (members.size() > 1)
-        {
-          ImGui::Separator();
-          ImGui::Text("Members (%zu)", members.size());
-          const float row_height = ImGui::GetTextLineHeightWithSpacing();
-          const float list_height = row_height * static_cast<float>(members.size()) +
-                                    ImGui::GetStyle().FramePadding.y * 2.f;
-          if (ImGui::BeginListBox("##members", ImVec2(-FLT_MIN, list_height)))
-          {
-            for (shared::entity_uid_t member : members)
-            {
-              const bool is_selected =
-                  std::find(selected_uids.begin(), selected_uids.end(), member) !=
-                  selected_uids.end();
-              ImGui::PushID(static_cast<int>(member));
-              if (ImGui::Selectable(object_label(*ctx.map, member).c_str(), is_selected))
-                ctx.requested_selection = member;
-              ImGui::PopID();
-            }
-            ImGui::EndListBox();
-          }
-        }
-      }
-
-      // The tie. One line saying where the selection stands, and the two edits
-      // beside it -- the Map Cvars panel's argument: a thing nothing in the
-      // editor shows is a thing the next edit can silently drop, and an `owner`
-      // key is invisible everywhere else.
-      {
-        size_t tied_objects   = 0;
-        size_t untied_objects = 0;
-        for (shared::entity_uid_t selected : selected_uids)
-        {
-          const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected);
-          if (entry == nullptr)
-            continue;
-          if (shared::get_owner_uid(entry->value) != shared::null_entity_uid)
-            ++tied_objects;
-          else
-            ++untied_objects;
-        }
-
-        std::vector<shared::entity_uid_t> owned;
-        if (selected_uids.size() == 1)
-          collect_owned_geometry(ctx, selected_uids[0], owned);
-
-        if (tied_objects == 1 && selected_uids.size() == 1)
-        {
-          const shared::entity_uid_t owner =
-              shared::get_owner_uid(ctx.map->find_geometry_by_uid(selected_uids[0])->value);
-          ImGui::Text("Tied to entity %u", owner);
-          ImGui::SameLine();
-          if (ImGui::SmallButton("Select owner"))
-            ctx.requested_selection = owner;
-        }
-        else if (tied_objects > 0)
-        {
-          ImGui::Text("%zu of %zu selected objects are tied to an entity", tied_objects,
-                      tied_objects + untied_objects);
-        }
-
-        if (!owned.empty())
-          ImGui::Text("Switches %zu object(s)", owned.size());
-
-        if (untied_objects + tied_objects > 0)
-        {
-          std::vector<shared::entity_uid_t> owners;
-          collect_selected_geometry_owners(ctx, owners);
-          if (owners.size() == 1)
-          {
-            const shared::map_entity_t* owner = ctx.map->find_by_uid(owners[0]);
-            const std::string label =
-                std::format("Tie to {} {}", entities::entity_info(owner->entity->type).classname,
-                            owners[0]);
-            if (ImGui::Button(label.c_str()))
-              tie_selection_to_existing_entity(ctx);
-          }
-          else if (owners.size() > 1)
-          {
-            ImGui::TextDisabled("%zu owners selected -- keep one to tie to it", owners.size());
-          }
-          else
-          {
-            for (size_t index = 0; index < std::size(shared::GEOMETRY_OWNER_TYPES); ++index)
-            {
-              const entities::entity_type type = shared::GEOMETRY_OWNER_TYPES[index];
-              if (index > 0)
-                ImGui::SameLine();
-              const std::string label =
-                  std::format("Tie to new {}", entities::entity_info(type).classname);
-              if (ImGui::Button(label.c_str()))
-                tie_selection_to_new_entity(ctx, type);
-            }
-          }
-        }
-        if (tied_objects > 0 || !owned.empty())
-        {
-          if (ImGui::Button("Untie"))
-            untie_selection(ctx);
-        }
-      }
-      ImGui::Separator();
-
-      if (selected_uids.size() > 1)
-      {
-        draw_multi_selection_panel(ctx);
-      }
-      else if (shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
-      {
-        // Editing through the inspector is a series of single-frame edits, and
-        // ImGui reports "changed" per frame of a drag, so pushing a transaction
-        // here would flood the undo stack with one entry per frame. The BVH does
-        // need rebuilding though — bounds just moved.
-        //
-        // TODO(inspector-undo): bracket a slider drag with
-        // ImGui::IsItemActivated / IsItemDeactivatedAfterEdit and run it
-        // through capture_drag_snapshots / commit_drag_snapshots, the way the
-        // gizmo and the panel buttons already do, so it commits as one
-        // transaction. Pre-existing gap: the entity inspector never pushed
-        // transactions either.
-        if (draw_geometry_inspector(geometry->value,
-                                    ctx.object_collides(geometry->uid)))
-        {
-          if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-            *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
-        }
-      }
-      else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      {
-        draw_light_bake_status(ctx, uid, *entry->entity);
-        draw_reflection_volume_status(ctx, *entry->entity);
-        render_entity_fields_in_an_imgui_window(entry->entity.get(), uid, ctx.map, &uid_pick);
-      }
-
-      ImGui::Separator();
-      if (ImGui::Button("Save as prefab..."))
-      {
-        prefab_overwrite = false;
-        prefab_status.clear();
-        ImGui::OpenPopup("Save as prefab");
-      }
-      if (!prefab_status.empty())
-        ImGui::TextUnformatted(prefab_status.c_str());
-
-      draw_prefab_save_popup(ctx);
-    }
-    ImGui::End();
   }
 
   // The wiring gets a window of its own rather than a header under the fields:
@@ -1405,16 +1246,233 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
                               label.c_str(), IM_COL32(255, 226, 120, 255));
   }
 
-  if (ctx.map && selected_uids.size() == 1)
-  {
-    draw_connection_panel(*ctx.map, selected_uids[0], ctx.transaction_system,
-                          uid_pick);
-  }
-  else
-  {
+  if (selected_uids.size() != 1)
     uid_pick.disarm();
+}
+
+// The sidebar's lower pane. One entity alone gets Fields and Connections tabs;
+// an armed row pick holds the Connections tab, since that is where it is shown.
+void Selection_Tool::on_draw_inspector(editor_context_t& ctx)
+{
+  if (selected_uids.empty() || !ctx.map)
+    return;
+
+  const shared::entity_uid_t uid = selected_uids[0];
+  const shared::map_entity_t* entry = ctx.map->find_by_uid(uid);
+  if (selected_uids.size() != 1 || entry == nullptr || !entry->entity)
+  {
+    draw_selection_fields(ctx);
+    return;
   }
 
+  if (ImGui::BeginTabBar("##inspector_tabs"))
+  {
+    if (ImGui::BeginTabItem("Fields"))
+    {
+      draw_selection_fields(ctx);
+      ImGui::EndTabItem();
+    }
+
+    const connection_counts_t counts = count_connections_of(*ctx.map, uid);
+    const std::string label =
+        std::format("Connections ({} out, {} in)###connections", counts.outbound, counts.inbound);
+    const ImGuiTabItemFlags flags = uid_pick.is_row_pick() ? ImGuiTabItemFlags_SetSelected : 0;
+    if (ImGui::BeginTabItem(label.c_str(), nullptr, flags))
+    {
+      draw_connection_panel(*ctx.map, uid, ctx.transaction_system, uid_pick);
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
+  }
+  settle_inspector_edit(ctx);
+}
+
+// Groups, the tie, then the entity inspector or the geometry one; a
+// multi-selection gets the transform panel as well.
+void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
+{
+  const shared::entity_uid_t uid = selected_uids[0];
+
+  if (ImGui::Button("Snap to surface below (End)"))
+    snap_selection_to_surface_below(ctx);
+
+  // Groups. The name of the one group a selection sits in, editable, or how
+  // many groups it touches, and the two edits beside it.
+  {
+    std::vector<shared::entity_uid_t> touched;
+    for (shared::entity_uid_t selected : selected_uids)
+      if (const shared::map_group_t *group = shared::find_group_of(*ctx.map, selected))
+        if (std::find(touched.begin(), touched.end(), group->uid) == touched.end())
+          touched.push_back(group->uid);
+
+    if (touched.size() == 1)
+    {
+      const shared::map_group_t *group = shared::find_group_by_uid(*ctx.map, touched[0]);
+      if (group_name_edit.group_uid != group->uid || !group_name_edit.active)
+      {
+        group_name_edit.group_uid = group->uid;
+        group_name_edit.name      = {};
+        const size_t length = std::min(group->name.size(), (size_t)group_name_edit.name.size() - 1);
+        std::memcpy(group_name_edit.name.data, group->name.data(), length);
+      }
+      ImGui::InputText("Group name", group_name_edit.name.data, group_name_edit.name.size());
+      group_name_edit.active = ImGui::IsItemActive();
+      if (ImGui::IsItemDeactivatedAfterEdit())
+        rename_group(ctx, group->uid, group_name_edit.name.data);
+      ImGui::TextDisabled("group uid %u, %zu members", group->uid, group->members.size());
+    }
+    else if (touched.size() > 1)
+    {
+      ImGui::Text("%zu groups in this selection", touched.size());
+    }
+
+    if (selected_uids.size() > 1)
+    {
+      if (ImGui::Button("Group (Ctrl+G)"))
+        group_selection(ctx);
+      if (!touched.empty())
+        ImGui::SameLine();
+    }
+    if (!touched.empty() && ImGui::Button("Ungroup (Ctrl+Shift+G)"))
+      ungroup_selection(ctx);
+    ImGui::Checkbox("Ignore groups (Ctrl+W)", &ignoring_groups);
+  }
+
+  // The tie. One line saying where the selection stands, and the two edits
+  // beside it -- the Map Cvars panel's argument: a thing nothing in the
+  // editor shows is a thing the next edit can silently drop, and an `owner`
+  // key is invisible everywhere else.
+  {
+    size_t tied_objects   = 0;
+    size_t untied_objects = 0;
+    for (shared::entity_uid_t selected : selected_uids)
+    {
+      const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected);
+      if (entry == nullptr)
+        continue;
+      if (shared::get_owner_uid(entry->value) != shared::null_entity_uid)
+        ++tied_objects;
+      else
+        ++untied_objects;
+    }
+
+    std::vector<shared::entity_uid_t> owned;
+    if (selected_uids.size() == 1)
+      collect_owned_geometry(ctx, selected_uids[0], owned);
+
+    if (tied_objects == 1 && selected_uids.size() == 1)
+    {
+      const shared::entity_uid_t owner =
+          shared::get_owner_uid(ctx.map->find_geometry_by_uid(selected_uids[0])->value);
+      ImGui::Text("Tied to entity %u", owner);
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Select owner"))
+        ctx.requested_selection = owner;
+    }
+    else if (tied_objects > 0)
+    {
+      ImGui::Text("%zu of %zu selected objects are tied to an entity", tied_objects,
+                  tied_objects + untied_objects);
+    }
+
+    if (!owned.empty())
+      ImGui::Text("Switches %zu object(s)", owned.size());
+
+    if (untied_objects + tied_objects > 0)
+    {
+      std::vector<shared::entity_uid_t> owners;
+      collect_selected_geometry_owners(ctx, owners);
+      if (owners.size() == 1)
+      {
+        const shared::map_entity_t* owner = ctx.map->find_by_uid(owners[0]);
+        const std::string label =
+            std::format("Tie to {} {}", entities::entity_info(owner->entity->type).classname,
+                        owners[0]);
+        if (ImGui::Button(label.c_str()))
+          tie_selection_to_existing_entity(ctx);
+      }
+      else if (owners.size() > 1)
+      {
+        ImGui::TextDisabled("%zu owners selected -- keep one to tie to it", owners.size());
+      }
+      else
+      {
+        for (size_t index = 0; index < std::size(shared::GEOMETRY_OWNER_TYPES); ++index)
+        {
+          const entities::entity_type type = shared::GEOMETRY_OWNER_TYPES[index];
+          if (index > 0)
+            ImGui::SameLine();
+          const std::string label =
+              std::format("Tie to new {}", entities::entity_info(type).classname);
+          if (ImGui::Button(label.c_str()))
+            tie_selection_to_new_entity(ctx, type);
+        }
+      }
+    }
+    if (tied_objects > 0 || !owned.empty())
+    {
+      if (ImGui::Button("Untie"))
+        untie_selection(ctx);
+    }
+  }
+  ImGui::Separator();
+
+  const std::vector<entities::Entity*> inspected = collect_inspected_entities(ctx);
+
+  if (selected_uids.size() > 1)
+    draw_multi_selection_panel(ctx);
+
+  if (!inspected.empty())
+  {
+    if (selected_uids.size() == 1)
+    {
+      draw_light_bake_status(ctx, uid, *inspected[0]);
+      draw_reflection_volume_status(ctx, *inspected[0]);
+    }
+    else
+    {
+      ImGui::Separator();
+    }
+
+    if (!inspector_edit.pending)
+      seed_inspector_edit(inspected);
+    if (const std::optional<std::string> field =
+            render_entity_fields_in_an_imgui_window(inspected, uid, ctx.map, &uid_pick))
+    {
+      inspector_edit.pending = true;
+      inspector_edit.field   = *field;
+    }
+    settle_inspector_edit(ctx);
+  }
+  else if (shared::map_geometry_t *geometry =
+               selected_uids.size() == 1 ? ctx.map->find_geometry_by_uid(uid) : nullptr)
+  {
+    // Editing through the inspector is a series of single-frame edits, and
+    // ImGui reports "changed" per frame of a drag, so pushing a transaction
+    // here would flood the undo stack with one entry per frame. The BVH does
+    // need rebuilding though — bounds just moved.
+    //
+    // TODO(inspector-undo): the entity inspector's seed/settle, over a
+    // geometry value, so a slider drag commits as one transaction.
+    if (draw_geometry_inspector(geometry->value,
+                                ctx.object_collides(geometry->uid)))
+    {
+      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+    }
+  }
+
+  ImGui::Separator();
+  if (ImGui::Button("Save as prefab..."))
+  {
+    prefab_overwrite = false;
+    prefab_status.clear();
+    ImGui::OpenPopup("Save as prefab");
+  }
+  if (!prefab_status.empty())
+    ImGui::TextUnformatted(prefab_status.c_str());
+
+  draw_prefab_save_popup(ctx);
 }
 
 // Whether the map's bake has anything for this light, said where the author is
@@ -1620,9 +1678,13 @@ void Selection_Tool::on_update(editor_context_t& ctx,
   // list clicking a row. Consumed here because this tool owns the selection.
   if (ctx.requested_selection)
   {
-    selected_uids.clear();
+    std::vector<shared::entity_uid_t> picked;
     if (ctx.map && ctx.map->has_object(*ctx.requested_selection))
-      selected_uids.push_back(*ctx.requested_selection);
+      picked.push_back(*ctx.requested_selection);
+    if (ctx.requested_selection_toggles)
+      toggle_in_selection(picked);
+    else
+      selected_uids = std::move(picked);
     ctx.requested_selection.reset();
   }
 
@@ -1641,9 +1703,22 @@ void Selection_Tool::on_update(editor_context_t& ctx,
   // The outliner's group rows.
   if (ctx.requested_group_selection)
   {
-    select_group(ctx, *ctx.requested_group_selection);
+    if (ctx.requested_selection_toggles)
+    {
+      std::vector<shared::entity_uid_t> members;
+      if (const shared::map_group_t* group = shared::find_group_by_uid(*ctx.map, *ctx.requested_group_selection))
+        for (shared::entity_uid_t member : group->members)
+          if (ctx.map->has_object(member))
+            members.push_back(member);
+      toggle_in_selection(members);
+    }
+    else
+    {
+      select_group(ctx, *ctx.requested_group_selection);
+    }
     ctx.requested_group_selection.reset();
   }
+  ctx.requested_selection_toggles = false;
   if (ctx.requested_group_of_selection)
   {
     ctx.requested_group_of_selection = false;
@@ -1653,6 +1728,12 @@ void Selection_Tool::on_update(editor_context_t& ctx,
   {
     ungroup_by_uid(ctx, *ctx.requested_ungroup);
     ctx.requested_ungroup.reset();
+  }
+  if (ctx.requested_group_rename)
+  {
+    rename_group(ctx, *ctx.requested_group_rename, std::move(ctx.requested_group_name));
+    ctx.requested_group_rename.reset();
+    ctx.requested_group_name.clear();
   }
 
   // Hiding the selected thing drops it: a gizmo on something invisible is a
@@ -1834,13 +1915,95 @@ void Selection_Tool::commit_picked_field_uid(editor_context_t& ctx, const field_
     return;
   }
 
-  const entity_snapshot_t before = snapshot_entity(entry->entity.get());
-  uint8_t* base = reinterpret_cast<uint8_t*>(entry->entity.get());
-  std::memcpy(base + target.offset, &picked, sizeof(picked));
+  commit_inspector_edit(ctx);
+
+  const bool target_is_one_of_a_multi_edit =
+      std::find(selected_uids.begin(), selected_uids.end(), target.entity) != selected_uids.end() &&
+      !collect_inspected_entities(ctx).empty();
+  const std::vector<shared::entity_uid_t> written =
+      target_is_one_of_a_multi_edit ? selected_uids : std::vector<shared::entity_uid_t>{target.entity};
 
   transaction_t transaction;
-  transaction.add_modified_from_diff(target.entity, before, entry->entity.get());
-  ctx.transaction_system.push(std::move(transaction));
+  for (shared::entity_uid_t uid : written)
+  {
+    shared::map_entity_t* written_entry = ctx.map->find_by_uid(uid);
+    const entity_snapshot_t before = snapshot_entity(written_entry->entity.get());
+    uint8_t* base = reinterpret_cast<uint8_t*>(written_entry->entity.get());
+    std::memcpy(base + target.offset, &picked, sizeof(picked));
+    transaction.add_modified_from_diff(uid, before, written_entry->entity.get());
+  }
+  ctx.transaction_system.push("Pick entity", std::move(transaction));
+}
+
+// Every selected object, when the selection is ENTITIES of one type; empty
+// otherwise, which is what hides the fields for a mixed selection.
+std::vector<entities::Entity*> Selection_Tool::collect_inspected_entities(const editor_context_t& ctx) const
+{
+  std::vector<entities::Entity*> inspected;
+  for (shared::entity_uid_t uid : selected_uids)
+  {
+    shared::map_entity_t* entry = ctx.map->find_by_uid(uid);
+    if (entry == nullptr || !entry->entity)
+      return {};
+    if (!inspected.empty() && entry->entity->type != inspected[0]->type)
+      return {};
+    inspected.push_back(entry->entity.get());
+  }
+  return inspected;
+}
+
+void Selection_Tool::seed_inspector_edit(Span<entities::Entity* const> inspected)
+{
+  const bool same_entities = inspector_edit.uids == selected_uids &&
+                             inspector_edit.before.size() == inspected.size() &&
+                             inspector_edit.before[0]->type == inspected[0]->type;
+  if (!same_entities)
+  {
+    inspector_edit.uids = selected_uids;
+    inspector_edit.before.clear();
+    for (entities::Entity* entity : inspected)
+      inspector_edit.before.emplace_back(entities::clone_entity(entity), &entities::destroy_entity);
+    return;
+  }
+
+  const uint32_t size_in_bytes = entities::entity_info(inspected[0]->type).size_in_bytes;
+  for (uint32_t index = 0; index < inspected.size(); ++index)
+    std::memcpy(inspector_edit.before[index].get(), inspected[index], size_in_bytes);
+}
+
+void Selection_Tool::settle_inspector_edit(editor_context_t& ctx)
+{
+  if (inspector_edit.pending && !ImGui::IsAnyItemActive())
+    commit_inspector_edit(ctx);
+}
+
+void Selection_Tool::commit_inspector_edit(editor_context_t& ctx)
+{
+  if (!inspector_edit.pending)
+    return;
+  inspector_edit.pending = false;
+
+  transaction_t transaction;
+  for (size_t index = 0; index < inspector_edit.uids.size(); ++index)
+  {
+    const shared::map_entity_t* entry = ctx.map->find_by_uid(inspector_edit.uids[index]);
+    if (entry == nullptr || !entry->entity)
+    {
+      log_error("selection tool: entity {} vanished during an inspector edit -- its change is not undoable",
+                inspector_edit.uids[index]);
+      continue;
+    }
+    transaction.add_modified_from_diff(inspector_edit.uids[index], inspector_edit.before[index],
+                                       entry->entity.get());
+  }
+
+  const std::string name = inspector_edit.uids.size() == 1
+                               ? std::format("Edit {}", inspector_edit.field)
+                               : std::format("Edit {} on {}", inspector_edit.field, inspector_edit.uids.size());
+  ctx.transaction_system.push(name, std::move(transaction));
+
+  if (inspector_edit.uids.size() > 1)
+    hud::set_announcement(std::format("{} set on {} entities", inspector_edit.field, inspector_edit.uids.size()));
 }
 
 void Selection_Tool::on_mouse_down(editor_context_t& ctx,
@@ -2032,8 +2195,9 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
     // snapshot: one transaction covering every object the drag touched.
     if (editor_gizmo.is_dragging())
     {
+      const char* name = gizmo_drag_name(editor_gizmo.dragged_handle());
       editor_gizmo.end_drag();
-      commit_drag_snapshots(ctx);
+      commit_drag_snapshots(ctx, name);
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       return;
@@ -2042,7 +2206,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
     if (is_dragging_object)
     {
       is_dragging_object = false;
-      commit_drag_snapshots(ctx);
+      commit_drag_snapshots(ctx, "Move");
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
@@ -2108,27 +2272,12 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
         std::vector<shared::entity_uid_t> picked;
         append_pick(ctx, hovered_uid, picked);
 
-        const auto is_selected = [&](shared::entity_uid_t uid)
-        { return std::find(selected_uids.begin(), selected_uids.end(), uid) != selected_uids.end(); };
-
         // Ctrl and shift both mean ADD, and mean it identically: two spellings
         // of one gesture, because every other editor binds one or the other and
-        // nobody should have to find out which this one chose. On a group it
-        // toggles the group: all in means out, otherwise the rest come in.
+        // nobody should have to find out which this one chose.
         if (e.mods.shift || e.mods.ctrl)
         {
-          const bool all_selected = std::all_of(picked.begin(), picked.end(), is_selected);
-          if (all_selected)
-          {
-            std::erase_if(selected_uids, [&](shared::entity_uid_t uid)
-                          { return std::find(picked.begin(), picked.end(), uid) != picked.end(); });
-          }
-          else
-          {
-            for (shared::entity_uid_t uid : picked)
-              if (!is_selected(uid))
-                selected_uids.push_back(uid);
-          }
+          toggle_in_selection(picked);
         }
         // A plain click walks the click cycle. In the same place it takes the
         // entry after the selection -- the group, then the thing, then what is
@@ -2272,7 +2421,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
       }
       (void)shared::remove_connections_naming(ctx.map->connections, selected_uids);
       transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
-      ctx.transaction_system.push(std::move(transaction));
+      ctx.transaction_system.push("Delete", std::move(transaction));
 
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;

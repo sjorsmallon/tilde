@@ -397,22 +397,19 @@ Weapon_Entity :: entity {
     render:           Render = { mesh = .Error }
 }
 
+// The splash is the row's Explode contact (shared/weapons.hpp); the rocket is the flight alone.
 Rocket_Entity :: entity @runtime_only {
     projectile: Projectile = { weapon_id = .Rocket_Launcher }
     lifetime: f32 = 5.0
-    damage_amount: f32 = 50.0
-    damage_radius: f32 = 120.0
-    knockback_force: f32 = 600.0
     collision_radius: f32 = 12.0        @Networked
     render:          Render = { mesh = .rocket}
 }
 
+// Which button fired it is Projectile::trigger; what it does on contact is that button's contact_t.
 Hook_Entity :: entity @runtime_only {
     projectile:      Projectile = { weapon_id = .Hook }
     lifetime:         f32 = 4
     collision_radius: f32 = 25.0
-    // Set by the secondary trigger: reels the victim in over time instead of throwing them once.
-    reels_target:     bool
     render:           Render = { mesh = .hookshot, scale = {0.03, 0.03, 0.03} }
 }
 
@@ -420,8 +417,6 @@ Kooh_Entity:: entity @runtime_only {
     projectile:       Projectile = { weapon_id = .Kooh }
     lifetime: f32 = 4.0
     collision_radius: f32 = 25.0
-    // 
-    reels_player:     bool
     render:           Render = { mesh = .hookshot, scale = {0.03,0.03,0.03}}
 }
 
@@ -471,20 +466,29 @@ Canopy_Entity :: entity @runtime_only @predicted {
 Bubble_Entity :: entity @runtime_only @predicted {
     projectile:      Projectile = { weapon_id = .Bubble }
     flight:          Fixed_Arc_Flight
-    // 0 while whole. A popped bubble bounces nobody, draws nothing, and is reaped linger_seconds later.
+    // 0 while whole. A popped bubble bounces nobody, swells then peels away, and is reaped linger_seconds later.
     popped_tick:     u32                @Networked
     // Whoever bounced on it, who heard the pop off their own predicted step; null when it timed out.
     popped_by:       entity             @Networked
-    linger_seconds:  f32 = 0.25
+    // Unit vector from the centre to where the peel starts: the popper, or a hashed point on a timeout.
+    popped_direction: v3                @Networked
+    // The swell runs up to the burst: ahead of a timed pop, which the client sees coming, and on
+    // notice after a bounce pop. The peel runs from the burst. linger covers swell plus peel.
+    swell_seconds:   f32 = 0.08
+    swell_scale:     f32 = 1.2
+    peel_seconds:    f32 = 0.2
+    linger_seconds:  f32 = 0.35
     flight_seconds:  f32 = 1.0
-    rest_seconds:    f32 = 8.0
+    // Networked so the client can see the timed pop coming; a launcher varies it per shot.
+    rest_seconds:    f32 = 8.0          @Networked
 
     // there's some immunity after firing so you don't instantly get bounced.
     arm_seconds:     f32 = 0.2
     radius:          f32 = 32.0
     bounce_speed:    f32 = 700.0
 
-    render:          Render = { mesh = .Sphere, scale = {64, 64, 64}, material = { shader_type = .Ghost, color = {0.55, 0.85, 1} } }
+    //mesh = .Sphere, scale = {1, 64, 64}
+    render:          Render = { mesh = .high_res_sphere, scale = {2,2,2}, material = { shader_type = .Ghost, color = {0.55, 0.85, 1} } }
 }
 
 Physics_Body_Entity :: entity {
@@ -655,6 +659,9 @@ Launcher_Entity :: entity is Switchable, Firing {
     speed_variation:          f32 = 0.0     @Editable
     flight_seconds_variation: f32 = 0.0     @Editable
     rest_seconds_variation:   f32 = 0.0     @Editable
+    // 0 fires only on Fire; above 0 it also fires on its own, once per interval while enabled (launcher_system.cpp).
+    fire_interval_seconds:    f32 = 0.0     @Editable
+    next_fire_tick: u32
     shots_fired:  u32
     render:       Render = { mesh = .Box, scale = {16, 16, 16} }
 }
@@ -705,4 +712,26 @@ Timed_Movement_Modifier_Entity :: entity @runtime_only @predicted {
     friction_scale:   f32 = 1.0                 @Networked
     control_scale:    f32 = 1.0                 @Networked
     render:           Render = { mesh = .Box, material = { shader_type = .Ghost, color = {0.5, 1, 0.5} } }
+}
+
+// The material emancipation grill, for weapons. A player inside loses every weapon carried and a weapon
+// lying inside (thrown, waiting for a pickup) is taken; each becomes an Emancipated_Weapon_Entity where it
+// was. Touched / Left still emit like any volume's, so a counter or a sound can hang off it. Drawn at the
+// volume's half_extents, never at render.scale.
+Weapon_Emancipation_Grill_Entity :: entity is Switchable, Touchable {
+    switch_state: Enabled
+    volume:       Box_Volume = { half_extents = {64, 128, 8} }
+    render:       Render = { mesh = .Box, material = { shader_type = .Ghost, color = {1, 0.25, 0.2} } }
+}
+
+// A weapon the grill took: goes up in smoke where it left the hand, inert, rising rise_distance and turning
+// about the world's up while it dissolves over lifetime_seconds from spawned_tick, then dies. Every motion
+// is derived from the clock on the client, so nothing about it moves on the wire. The render is the taken
+// weapon's own, copied at the spawn.
+Emancipated_Weapon_Entity :: entity @runtime_only {
+    spawned_tick:            u32          @Networked
+    lifetime_seconds:        f32 = 2.0    @Networked
+    rise_distance:           f32 = 48.0   @Networked
+    spin_degrees_per_second: f32 = 90.0   @Networked
+    render:                  Render
 }

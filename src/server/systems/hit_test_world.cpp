@@ -59,6 +59,8 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Remnant_Entity:
   case entities::entity_type::Modifier_Shot_Entity:
   case entities::entity_type::Timed_Movement_Modifier_Entity:
+  case entities::entity_type::Weapon_Emancipation_Grill_Entity:
+  case entities::entity_type::Emancipated_Weapon_Entity:
     break;
   }
 
