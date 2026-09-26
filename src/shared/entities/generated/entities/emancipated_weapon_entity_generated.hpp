@@ -18,7 +18,7 @@ struct Emancipated_Weapon_Entity : Entity
   Emancipated_Weapon_Entity() { type = entity_type::Emancipated_Weapon_Entity; }
 
   uint32_t spawned_tick = {};
-  float lifetime_seconds = 2.0f;
+  float lifetime_seconds = 5.0f;
   float rise_distance = 48.0f;
   float spin_degrees_per_second = 90.0f;
   Render render = {};

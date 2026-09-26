@@ -11,6 +11,7 @@
 #include "reflection.glsl"
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
+#include "peel.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -45,6 +46,7 @@ void main() {
     discard_below_alpha_cutoff(surfaceAlpha);
     discard_inside_clock_wipe(fragWorldPosition);
     discard_below_dissolve(fragUV);
+    discard_inside_peel(fragWorldPosition);
 
     // A double-sided material draws unculled; its back is lit along the flipped normal.
     vec3 facing_normal = normalize(fragWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
@@ -214,6 +216,7 @@ void main() {
     outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, surfaceAlpha), fragWorldPosition),
                                         fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
+    outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
 #else
     // The non-PBR arm is Lambert against the SAME light list the PBR arm shades:
     // the analytic tail here, the chart's four slots and the atlas on a
@@ -253,5 +256,6 @@ void main() {
     outColor   = reflection_capture_debug(shadow_cascade_debug(vec4(color, surfaceAlpha), fragWorldPosition),
                                           fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
+    outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
 #endif
 }

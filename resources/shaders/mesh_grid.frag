@@ -21,6 +21,7 @@
 #include "reflection.glsl"
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
+#include "peel.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -68,6 +69,7 @@ void main() {
     discard_below_alpha_cutoff(surfaceAlpha);
     discard_inside_clock_wipe(fragWorldPosition);
     discard_below_dissolve(fragUV);
+    discard_inside_peel(fragWorldPosition);
 
     vec3  N = normalize(fragWorldNormal);
 
@@ -133,4 +135,5 @@ void main() {
         shadow_cascade_debug(vec4(mix(color, GRID_COLOR, ink), surfaceAlpha), fragWorldPosition),
         fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
+    outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
 }

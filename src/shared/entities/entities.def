@@ -730,7 +730,7 @@ Weapon_Emancipation_Grill_Entity :: entity is Switchable, Touchable {
 // weapon's own, copied at the spawn.
 Emancipated_Weapon_Entity :: entity @runtime_only {
     spawned_tick:            u32          @Networked
-    lifetime_seconds:        f32 = 2.0    @Networked
+    lifetime_seconds:        f32 = 5.0    @Networked
     rise_distance:           f32 = 48.0   @Networked
     spin_degrees_per_second: f32 = 90.0   @Networked
     render:                  Render
