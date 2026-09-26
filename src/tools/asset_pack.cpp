@@ -242,6 +242,28 @@ bool directory_is_excluded(const std::string& name)
   return false;
 }
 
+// A LEADING DOT IS AN OS OR TOOL ARTIFACT, NEVER AN ASSET -- .DS_Store from
+// Finder, ._name from AppleDouble, .gitkeep -- and it is skipped wherever it
+// sits: not enumerated, not packed, not recursed into.
+//
+// It is its own rule because neither table can express it. IGNORED_EXTENSIONS
+// cannot: ".DS_Store" HAS no extension -- a filename that begins with a period
+// and holds no other one is all stem -- so it reaches find_class_row with an
+// empty extension and is reported as an unknown one. EXCLUDED_DIRECTORIES
+// cannot: it is a file, and that list is consulted for directory names at the
+// resource root alone.
+//
+// It costs no reachable asset. name_is_mintable rejects a leading dot, so a
+// dotfile could only ever have been an error -- which is why this is a skip
+// rather than a hole in "an unknown extension is a loud error". What it buys
+// past the silence is the PACKAGE: a claimed file is packed without being
+// enumerated, so a Finder drop inside a material folder would otherwise ship in
+// assets.pkg and, in an embed build, in .rodata.
+bool name_is_hidden(const std::string& name)
+{
+  return !name.empty() && name[0] == '.';
+}
+
 // Basename minus extension, case preserved, and it must ALREADY be a valid C++
 // identifier. There is deliberately no mangling rule: the minted name is the
 // on-disk identity written into .source map files, so a mangling rule is a way
@@ -340,6 +362,9 @@ void walk_directory(const std::filesystem::path& root, const std::string& relati
   for (const std::filesystem::directory_entry& item :
        std::filesystem::directory_iterator(directory, failure))
   {
+    if (name_is_hidden(item.path().filename().generic_string()))
+      continue;
+
     if (item.is_regular_file())
       files.push_back(item.path());
     else if (item.is_directory())
@@ -559,6 +584,9 @@ int main(int argument_count, char** arguments)
   for (const std::filesystem::directory_entry& item :
        std::filesystem::directory_iterator(root, failure))
   {
+    if (name_is_hidden(item.path().filename().generic_string()))
+      continue;
+
     if (item.is_directory())
     {
       const std::string name = item.path().filename().generic_string();

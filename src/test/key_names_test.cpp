@@ -7,7 +7,10 @@
 #include <set>
 #include <string>
 
-using client::input::key_t;
+// NOT `using client::input::key_t;` -- POSIX declares its own key_t in
+// <sys/types.h>, which <cstdio> pulls in on macOS, so hoisting ours into the
+// global namespace makes every mention of it ambiguous. The alias is named.
+using input_key_t = client::input::key_t;
 
 namespace
 {
@@ -29,21 +32,21 @@ int main()
   std::printf("=== key_names_test ===\n");
 
   std::set<std::string_view> seen;
-  for (uint32_t index = 1; index < (uint32_t)key_t::Count; ++index)
+  for (uint32_t index = 1; index < (uint32_t)input_key_t::Count; ++index)
   {
-    const key_t            key  = (key_t)index;
+    const input_key_t      key  = (input_key_t)index;
     const std::string_view name = client::input::key_name(key);
     const std::string      label(name);
 
     check(!name.empty(), "key " + std::to_string(index) + " has a name");
     check(seen.insert(name).second, "'" + label + "' names one key");
 
-    const std::optional<key_t> parsed = client::input::try_key_from_name(name);
+    const std::optional<input_key_t> parsed = client::input::try_key_from_name(name);
     check(parsed && *parsed == key, "'" + label + "' parses back to its key");
   }
 
-  check(client::input::try_key_from_name("F3") == key_t::F3, "names are case-insensitive");
-  check(client::input::try_key_from_name("R") == key_t::R, "a capital letter binds its key");
+  check(client::input::try_key_from_name("F3") == input_key_t::F3, "names are case-insensitive");
+  check(client::input::try_key_from_name("R") == input_key_t::R, "a capital letter binds its key");
   check(!client::input::try_key_from_name("unknown"), "Unknown is not bindable");
   check(!client::input::try_key_from_name("f13"), "a key that does not exist is refused");
   check(!client::input::try_key_from_name(""), "an empty name is refused");
