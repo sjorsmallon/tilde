@@ -67,29 +67,28 @@
 namespace client
 {
 
-// The mover's half of a moving platform for input N, at the tick the server is
-// predicted to run it: the snapshot's tick plus the inputs since the one it acked.
-// Once per INPUT, before its steps, which is once per tick (mover_def.md ss12).
-static uint32_t predicted_tick_of_input(const client_context_t &ctx, int input_number)
+
+// input here is not subtick-input, it just means all input entries in this tick.
+static uint32_t get_predicted_server_tick_which_this_input_will_be_simulated_on(
+    const client_context_t &ctx, int input_number)
 {
   return ctx.prediction.latest_server_tick +
          static_cast<uint32_t>(input_number - ctx.prediction.latest_input_number_processed_by_server);
 }
 
-// Everything tick-pure is drawn between the tick the camera rides and the next
-// one, by the accumulator's fraction -- the same fraction the rider's camera is
-// carried by.
+
 struct drawn_tick_t
 {
-  uint32_t tick;
-  float    fraction;
-  float    tickrate;
+  uint32_t tick{};
+  float    fraction{};
+  float    tickrate{};
 };
 
 static drawn_tick_t drawn_tick_of(const client_context_t &ctx)
 {
   const float tickrate = static_cast<float>(ctx.connection.server_tickrate);
-  return {.tick     = predicted_tick_of_input(ctx, ctx.prediction.input_number - 1),
+  return {.tick     = get_predicted_server_tick_which_this_input_will_be_simulated_on(
+              ctx, ctx.prediction.input_number - 1),
           .fraction = ctx.connection.phase == Connection_Phase::Connected
                           ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
                           : 0.0f,
@@ -98,19 +97,17 @@ static drawn_tick_t drawn_tick_of(const client_context_t &ctx)
 
 struct drawn_mover_poses_t
 {
-  shared::path_pose_t at_tick;
-  shared::path_pose_t drawn;
+  shared::path_pose_t at_tick{};
+  shared::path_pose_t drawn{};
 };
 
 struct drawn_pose_t
 {
-  vec3f position;
-  quatf orientation;
+  vec3f position{};
+  quatf orientation{};
 };
 
-// The ring at the cursor when the entity has one, else the session's own pose. Every status the
-// sampler answers carries a pose to draw at -- a freshly spawned entity is drawn at its spawn pose
-// until the cursor reaches it, never nowhere.
+// sample correct interpolated pose.
 static drawn_pose_t drawn_pose_of(const client_context_t &ctx, const entities::Entity &entity)
 {
   const auto ring = ctx.replication.interpolated_entities.find(entity.entity_id);
@@ -122,27 +119,28 @@ static drawn_pose_t drawn_pose_of(const client_context_t &ctx, const entities::E
   return {interpolated.pose.position, interpolated.pose.orientation};
 }
 
-// Drawn where the predicted step tests it, never at the snapshot's position a round trip behind.
+// interpolate bubble position according to its fixed arc.
 static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
   const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
-                                                   .gravity               = ctx.cvars->g_gravity};
+  const shared::fixed_arc_flight_settings_t flight{
+    .tick_interval_seconds = 1.0f / tickrate,
+    .gravity               = ctx.cvars->g_gravity
+  };
+
   const vec3f at_tick = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position, tick, flight);
+
   const vec3f at_next = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position, tick + 1, flight);
+
   return at_tick + (at_next - at_tick) * fraction;
 }
 
-// The swell and the peel at the drawn tick, both clocked from the BURST. A timed pop bursts at its
-// expiry tick, which the client sees coming and swells ahead of; a bounce pop is learnt after the
-// fact, so it swells on notice and bursts swell_seconds later. A whole bubble swells and holds,
-// never peels: the peel waits for the snapshot that says popped.
 struct drawn_bubble_t
 {
-  float           scale;
-  renderer::peel_t peel;
-  bool            has_vanished;
+  float scale{};
+  renderer::peel_t peel{};
+  bool has_vanished{};
 };
 
 static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
@@ -152,43 +150,48 @@ static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::
     return (static_cast<float>(static_cast<int64_t>(tick) - static_cast<int64_t>(anchor_tick)) + fraction) / tickrate;
   };
 
-  float seconds_to_burst;
+  float seconds_to_burst = 0.f;
+
   if (bubble.popped_tick != 0)
     seconds_to_burst = (bubble.popped_by == shared::null_entity_uid ? 0.0f : bubble.swell_seconds) -
                        seconds_since(bubble.popped_tick);
   else if (bubble.flight.launch_tick != 0)
   {
-    const uint32_t expiry_tick = bubble.flight.launch_tick + bubble.flight.flight_ticks +
-                                 static_cast<uint32_t>(std::lround(bubble.rest_seconds * tickrate));
+    const uint32_t expiry_tick = bubble.flight.launch_tick + bubble.flight.flight_ticks + static_cast<uint32_t>(std::lround(bubble.rest_seconds * tickrate));
     seconds_to_burst = std::max(0.0f, -seconds_since(expiry_tick));
   }
   else
     seconds_to_burst = bubble.swell_seconds;
 
-  const float swell = bubble.swell_seconds > 0.0f
-                          ? std::clamp(1.0f - seconds_to_burst / bubble.swell_seconds, 0.0f, 1.0f)
-                          : 1.0f;
-  drawn_bubble_t drawn{.scale = 1.0f + (bubble.swell_scale - 1.0f) * swell * swell, .peel = {}, .has_vanished = false};
+  const float swell = bubble.swell_seconds > 0.0f ? std::clamp(1.0f - seconds_to_burst / bubble.swell_seconds, 0.0f, 1.0f) : 1.0f;
+  
+  drawn_bubble_t drawn{
+    .scale = 1.0f + (bubble.swell_scale - 1.0f) * swell * swell,
+    .peel = {},
+    .has_vanished = false
+  };
 
-  if (bubble.popped_tick == 0 || seconds_to_burst > 0.0f)
-    return drawn;
+  if (bubble.popped_tick == 0 || seconds_to_burst > 0.0f) return drawn;
 
   const float fraction_peeled = bubble.peel_seconds > 0.0f ? -seconds_to_burst / bubble.peel_seconds : 1.0f;
-  drawn.peel = {.hole_direction = bubble.popped_direction,
-                .front_angle    = std::min(fraction_peeled, 1.0f) * std::numbers::pi_v<float>,
-                .armed          = true};
+
+  drawn.peel = {
+    .hole_direction = bubble.popped_direction,
+    .front_angle = std::min(fraction_peeled, 1.0f) * std::numbers::pi_v<float>,
+    .armed = true};
+
   drawn.has_vanished = fraction_peeled >= 1.0f;
+
   return drawn;
 }
 
-// A ghost while it flies, solid with its rest wiping away once landed: the states the predicted step tests.
 struct drawn_platform_t
 {
-  vec3f position;
-  vec3f half_extents;
-  bool  is_solid;
-  bool  has_vanished;
-  float solid_fraction_elapsed;
+  vec3f position{};
+  vec3f half_extents{};
+  bool is_solid{};
+  bool has_vanished{};
+  float solid_fraction_elapsed{};
 };
 
 static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared::platform_view_t &platform)
@@ -196,23 +199,29 @@ static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared
   const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
   const float tick_interval_seconds = 1.0f / tickrate;
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
-                                                   .gravity               = ctx.cvars->g_gravity};
+  const shared::fixed_arc_flight_settings_t flight{
+    .tick_interval_seconds = tick_interval_seconds,
+    .gravity = ctx.cvars->g_gravity
+  };
+
   const vec3f at_tick = shared::platform_box_at_tick(platform, tick, flight).center;
   const vec3f at_next = shared::platform_box_at_tick(platform, tick + 1, flight).center;
-  return {.position     = at_tick + (at_next - at_tick) * fraction,
-          .half_extents = shared::platform_half_extents_at(platform, tick, fraction, tick_interval_seconds),
-          .is_solid     = shared::platform_is_solid_at_tick(platform, tick, tick_interval_seconds),
-          .has_vanished = shared::platform_has_vanished_at_tick(platform, tick, tick_interval_seconds),
-          .solid_fraction_elapsed =
-              shared::platform_solid_fraction_elapsed(platform, tick, fraction, tick_interval_seconds)};
+
+  return drawn_platform_t{
+    .position     = at_tick + (at_next - at_tick) * fraction,
+    .half_extents = shared::platform_half_extents_at(platform, tick, fraction, tick_interval_seconds),
+    .is_solid     = shared::platform_is_solid_at_tick(platform, tick, tick_interval_seconds),
+    .has_vanished = shared::platform_has_vanished_at_tick(platform, tick, tick_interval_seconds),
+    .solid_fraction_elapsed =
+              shared::platform_solid_fraction_elapsed(platform, tick, fraction, tick_interval_seconds)
+    };
 }
 
-// A bob above the surface and a pop-in, both functions of the age its spawned_tick gives.
+// embeds the height / scale of the marker so we can evaluate it over time.
 struct drawn_ping_marker_t
 {
-  float lift;
-  float scale;
+  float lift{}; // 0-8
+  float scale{}; // 0-1
 };
 
 static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const entities::Ping_Marker_Entity &marker)
@@ -222,11 +231,24 @@ static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const 
   const float age_seconds =
       (std::max(0.0f, (float)(int32_t)(tick - marker.spawned_tick)) + fraction) / tickrate;
 
-  constexpr shared::tween_t bob = {.from = 0.0f, .to = 8.0f, .duration = 0.6f, .easing = entities::Easing::In_Out_Cubic};
-  constexpr shared::tween_t pop = {.from = 0.0f, .to = 1.0f, .duration = 0.15f, .easing = entities::Easing::Out_Cubic};
+  constexpr shared::tween_t bob = {
+    .from = 0.0f,
+    .to = 8.0f,
+    .duration = 0.6f,
+    .easing = entities::Easing::In_Out_Cubic
+  };
 
-  return {.lift  = shared::evaluate(bob, shared::ping_pong(age_seconds, bob.duration)),
-          .scale = shared::evaluate(pop, age_seconds)};
+  constexpr shared::tween_t pop = {
+    .from = 0.0f,
+    .to = 1.0f,
+    .duration = 0.15f,
+    .easing = entities::Easing::Out_Cubic
+  };
+
+  return drawn_ping_marker_t{
+    .lift = shared::evaluate(bob, shared::ping_pong(age_seconds, bob.duration)),
+    .scale = shared::evaluate(pop, age_seconds)
+  };
 }
 
 static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const entities::Mover_Entity &mover)
@@ -242,18 +264,17 @@ static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const 
   const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
   const shared::Entity_System &system = ctx.world.session.entity_system;
-  const shared::path_links_t  &links  = ctx.world.session.path_links;
-  const shared::path_pose_t rest      = rest_frame_of(ctx, mover);
-  const shared::path_pose_t at_tick   = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
+  const shared::path_links_t &links  = ctx.world.session.path_links;
+  const shared::path_pose_t rest = rest_frame_of(ctx, mover);
+  const shared::path_pose_t at_tick = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
   const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
-  return {.at_tick = at_tick, .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)};
+  return drawn_mover_poses_t{
+    .at_tick = at_tick,
+    .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)
+  };
 }
 
-// Where OUR body is drawn this frame, and the one expression of it: the predicted feet carried
-// by the leftover accumulator for smooth motion between ticks, the decaying reconciliation
-// offset, and a ridden lift's carry, which lands once per tick and is in no velocity. The camera
-// stands on this and so does anything glued to our body -- a slab drawn off the raw tick-stepped
-// position judders against a camera that glides per frame.
+// where are we? what's the carry here?
 static vec3f drawn_local_feet(const client_context_t &ctx)
 {
   const float extrapolation_factor =
@@ -275,9 +296,7 @@ static vec3f drawn_local_feet(const client_context_t &ctx)
   return feet;
 }
 
-// Glued to the carrier's DRAWN body: our own drawn feet, a remote's interpolated feet. The
-// collision trails one tick behind that (canopy.hpp); the draw does not, because a slab hanging a
-// hand's width behind its carrier's head reads as a bug and the gap is under one tick of travel.
+// glued to the carrier to relieve snapping.
 static vec3f drawn_canopy_position(const client_context_t &ctx, const entities::Canopy_Entity &canopy)
 {
   const entities::Player_Entity *my_player = try_find_my_player(ctx);
@@ -309,27 +328,28 @@ static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared:
   const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
   const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-  return {.center = (bounds.min + bounds.max) * 0.5f,
-          .axis_x = linalg::rotate(owner->orientation, vec3f{1.0f, 0.0f, 0.0f}),
-          .axis_y = linalg::rotate(owner->orientation, vec3f{0.0f, 0.0f, 1.0f}),
-          .wiped  = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate),
-          .armed  = true};
+  return renderer::clock_wipe_t{
+    .center = (bounds.min + bounds.max) * 0.5f,
+    .axis_x = linalg::rotate(owner->orientation, vec3f{1.0f, 0.0f, 0.0f}),
+    .axis_y = linalg::rotate(owner->orientation, vec3f{0.0f, 0.0f, 1.0f}),
+    .wiped  = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate),
+    .armed  = true
+  };
 }
 
-// The cut is the CALLER's, one line above every call: this is the push alone,
-// so the two halves of tick_def.md step 2 read here exactly as they do in the
-// server's tick.
-static vec3f predict_mover_push(client_context_t &ctx, const shared::predicted_world_t &world,
-                                const entities::Movement &movement, const vec3f &feet)
+
+static vec3f predict_mover_push(
+  client_context_t &ctx,
+  const shared::predicted_world_t &world,
+  const entities::Movement &movement,
+  const vec3f &feet)
 {
   return push_player_by_movers(ctx.world.session.bvh, world, movement, feet,
                                shared::player_half_width, shared::player_half_height)
       .feet;
 }
 
-// Whether the local player may move itself right now, mirroring the server's
-// gate. True while the world has no match yet.
-//
+// check if we are allowed to move.
 // KNOWN LIMITATION: this is the CURRENT phase, while reconciliation replays
 // inputs from up to cl_max_unacked_inputs ticks ago, so a replay straddling a
 // freeze boundary applies the wrong gate for a few ticks.
@@ -340,14 +360,6 @@ static bool local_movement_is_allowed(const client_context_t &ctx)
 }
 
 
-// cadence for cvar 'net_snapshot_debug'.
-
-// cl_crosshair_* channels are unclamped u32, so we narrow / clamp/
-// Which movement button an input transition is, or 0 for one that is not
-// tracked (see Button::Subtick_Tracked). The bindings are the same ones the
-// polled bitfield above is built from -- deliberately restated rather than
-// factored out, because a table would have to be indexed by two different enums
-// and the polled half is a straight-line list of ifs.
 static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
 {
   if (edge.device == input::input_device_t::Mouse_Motion)
@@ -387,66 +399,30 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
   }
 }
 
-// Our own gunshot. Played off the trigger EDGE inside the tick that carries it,
-// not off the server's replicated last_fire_tick a round trip later -- the one
-// sound where that delay is most audible, which is why play_snapshot_edge_audio
-// skips our own slot.
-//
-// Edge, not held state: the server fires once per press
-// (`step.buttons & ~buttons_entering_step & Button::Fire` in its step loop), so
-// the old poll of `buttons & Button::Fire` played a shot every fire_interval for
-// as long as the trigger was down while the server fired exactly one. A row
-// with fires_while_held is the exception on both sides, and the only one.
-//
-// It re-runs the server's rate limit (weapons.hpp is shared, so it is the same
-// number) or click-spamming would bang faster than the server accepts. Being
-// dead is filtered too, off our own replicated health, as are the two magazine
-// gates: an EMPTY magazine off replicated ammo, and a reload in flight off the
-// locally predicted clock. Each of those is a way resolve_player_shot returns
-// without firing, and every one it does not reproduce is a bang with no bullet.
-//
-// One is still missing and cannot be had here: is_movement_allowed() is
-// game-rules state the client does not have, so during a countdown this plays a
-// shot the server drops. Audible only, and it cannot desync anything -- no
-// state is predicted.
-// Our own active Weapon_Entity out of the last snapshot, or nullptr.
-//
-// The same resolution the server does -- `weapons[active_slot]`, one index into
-// the stored forward list -- rather than a scan for a weapon claiming us as its
-// owner. FALLIBLE at every step for the reason everything decoded off the wire
-// is: active_slot is an enum with no range check, and the uid it selects is a
-// number a packet chose. An empty slot is a legal hand rather than a decode
-// failure, and lands here as the same nullptr. Callers want "no shot" out of
-// all of it.
-static const entities::Weapon_Entity *
-try_find_weapon_in_slot(const client_context_t &ctx, const entities::Player_Entity &player,
-                        entities::Inventory_Slot slot)
+
+static const entities::Weapon_Entity* 
+try_find_weapon_in_slot(
+  const client_context_t &ctx,
+  const entities::Player_Entity &player,
+  entities::Inventory_Slot slot)
 {
-  const uint32_t *weapon_uid = player.inventory.weapons.try_get(slot);
+  const uint32_t* weapon_uid = player.inventory.weapons.try_get(slot);
   if (weapon_uid == nullptr || *weapon_uid == shared::null_entity_uid)
     return nullptr;
 
   return ctx.world.session.entity_system.get<entities::Weapon_Entity>(*weapon_uid);
 }
 
-static const entities::Weapon_Entity *
+static const entities::Weapon_Entity* 
 try_find_active_weapon(const client_context_t &ctx, const entities::Player_Entity &player)
 {
   return try_find_weapon_in_slot(ctx, player, player.inventory.active_slot);
 }
 
-// The table row for whatever is in our own hand, or nullptr for an empty slot,
-// a body we have no snapshot of, or a weapon id this snapshot did not carry.
-//
-// Exists for the self-impulse prediction, which needs the row in two places
-// that do not share a scope: the live step loop and the reconciliation replay.
-// It reads the LATEST snapshot's active_slot in both, which is a round trip
-// stale -- the same staleness the predicted deploy clock beside it already
-// accepts, and the same fix (a predicted copy of active_slot) would settle
-// both. It costs a dash taken within a round trip of a switch BETWEEN two
-// impulse weapons of different strengths, which is not a state that exists yet.
-static const shared::weapon_definition_t *
-try_find_weapon_definition_held_by(const client_context_t &ctx, const entities::Player_Entity* player)
+static const shared::weapon_definition_t* 
+try_find_weapon_definition_for_active_weapon_held_by_player(
+  const client_context_t &ctx,
+  const entities::Player_Entity* player)
 {
   if (player == nullptr)
     return nullptr;
@@ -460,7 +436,7 @@ try_find_weapon_definition_held_by(const client_context_t &ctx, const entities::
   // get_weapon_definition, which is nothing in a release build.
   if ((uint32_t)held->weapon_id >= shared::WEAPON_DEFINITIONS.size())
   {
-    log_error("try_find_weapon_definition_held_by: weapon id {} is outside the Weapon enum "
+    log_error("try_find_weapon_definition_for_active_weapon_held_by_player: weapon id {} is outside the Weapon enum "
               "(count {}) -- corrupt or hostile snapshot",
               (uint32_t)held->weapon_id, shared::WEAPON_DEFINITIONS.size());
     return nullptr;
@@ -469,98 +445,77 @@ try_find_weapon_definition_held_by(const client_context_t &ctx, const entities::
   return &shared::get_weapon_definition(held->weapon_id);
 }
 
-static const shared::weapon_definition_t *
+static const shared::weapon_definition_t* 
 try_find_local_weapon_definition(const client_context_t &ctx)
 {
-  return try_find_weapon_definition_held_by(ctx, try_find_my_player(ctx));
+  return try_find_weapon_definition_for_active_weapon_held_by_player(ctx, try_find_my_player(ctx));
 }
 
-static void play_predicted_local_gunshot(client_context_t &ctx, entities::Fire_Trigger trigger,
-                                         bool button_was_already_down)
+static void play_predicted_local_gunshot(
+  client_context_t &ctx,
+  entities::Fire_Trigger trigger,
+  bool button_was_already_down)
 {
-  if (!ctx.audio)
-    return;
-
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player == nullptr)
-    return;
+  if (my_player == nullptr) return;
 
-  // WHAT IS IN THE HAND, resolved through the slot exactly as the server does.
-  // A null is an empty slot or a weapon this snapshot did not carry, and both
-  // mean no bang -- the second is one missing sound, not an assert.
   const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *my_player);
-  if (held == nullptr)
-    return;
+  if (held == nullptr) return;
 
-  // weapon_id came off the wire, and enum fields are deserialized without a
-  // range check, so it is looked up through try_fire_sound_for FIRST -- that
-  // bounds-checks and logs. get_weapon_definition only asserts, which is nothing
-  // in a release build, so it is reached only once the id is known good.
   const entities::Weapon my_weapon = held->weapon_id;
   const std::optional<assets::sound_asset> sound = try_fire_sound_for(my_weapon);
-  if (!sound)
-    return;
+  if (!sound) return;
 
   const shared::weapon_definition_t &weapon = shared::get_weapon_definition(my_weapon);
-  const shared::weapon_fire_t       &fire   = shared::fire_of(weapon, trigger);
+  const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
 
-  if (button_was_already_down && !fire.fires_while_held)
-    return;
+  if (button_was_already_down && !fire.fires_while_held) return;
 
   switch (fire.resolution)
   {
-  case entities::Fire_Resolution::None:
-  case entities::Fire_Resolution::Zoom:
-  case entities::Fire_Resolution::Canopy:
-    return;
-
-  // A self-impulse's one gate is the movement cooldown, which the server
-  // refuses on and the step loop below spends -- read here, before that step.
-  // It never passes through the shot clocks, on either button.
-  case entities::Fire_Resolution::Self_Impulse:
-    if (ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
+    case entities::Fire_Resolution::None:
+    case entities::Fire_Resolution::Zoom:
+    case entities::Fire_Resolution::Canopy: // nothing to do. no effect.
       return;
-    ctx.audio->play_2d(*sound);
-    return;
 
-  case entities::Fire_Resolution::Hitscan:
-  case entities::Fire_Resolution::Projectile:
-  case entities::Fire_Resolution::Place:
-    break;
+
+    case entities::Fire_Resolution::Self_Impulse:
+    {
+      if (ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
+      return;
+
+      ctx.audio.play_2d(*sound);
+      return;
+    }
+
+    // for these : something needs to happen.
+    case entities::Fire_Resolution::Hitscan:
+    case entities::Fire_Resolution::Projectile:
+    case entities::Fire_Resolution::Place: 
+      break;
   }
 
-  // THIS WEAPON's clock, not the player's. The server's gate is
-  // Weapon_Entity::next_fire_time, which is per weapon and keeps running while
-  // holstered; one clock here would silence a Scout because a Knife just swung,
-  // which is the client half of the bug the inventory work fixed.
-  const float *seconds_since_this_weapon_fired =
+  // if we can't even fire, return.
+  const float* seconds_since_this_weapon_fired =
       ctx.prediction.seconds_since_local_fire.try_get(my_weapon);
   if (seconds_since_this_weapon_fired == nullptr ||
       *seconds_since_this_weapon_fired < weapon.fire_interval_seconds)
     return;
 
-  // MID-DEPLOY. The server's second gate, and the one that belongs to the
-  // player rather than to any weapon: nothing fires until the weapon being
-  // raised is up.
+  // if we're mid deploy: also return.
   if (ctx.prediction.seconds_until_local_deploy_complete > 0.f)
     return;
 
-  // An EMPTY magazine, off the replicated ammo of the WEAPON we are holding --
-  // that is where the magazine lives now, so switching no longer hands us a
-  // fresh one. A round trip stale in principle; not in practice, because the
-  // rate gate above is longer than any round trip we care about, so the count
-  // cannot have moved since the snapshot that carried it. A magazine_size of 0
-  // is the knife, which has no magazine and is never empty.
-  //
+  // if the weapon is out of ammo, return.
   if (!shared::ammo_allows_a_shot(held->ammo))
     return;
 
-  // MID-RELOAD, off the local prediction rather than the server's deadline.
+  // if we're actively reloading: return.
   if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
     return;
 
   ctx.prediction.seconds_since_local_fire[my_weapon] = 0.f;
-  ctx.audio->play_2d(*sound);
+  ctx.audio.play_2d(*sound);
 }
 
 static uint8_t clamp_crosshair_color_channel(uint32_t value)
@@ -573,28 +528,20 @@ static uint8_t clamp_crosshair_color_channel(uint32_t value)
 // to send things to.
 static void forward_console_line_to_server(std::string_view line)
 {
-  auto &ctx = state_manager::get_client_context();
+  auto& ctx = state_manager::get_client_context();
   game::C2S_Command cmd;
   cmd.set_line(std::string(line));
-  // Reliably: a dropped console line is a line that silently does nothing, and
-  // unlike an input there is no next one restating it. The server's reply rides
-  // its own reliable stream back for the same reason.
+  // console lines cannot be dropped.
   network::queue_reliable_protobuf_message(ctx.transport_layer, cmd);
 }
 
 // message to the server we need the map data for the map name they just sent us to switch to.
-//
-// Reliably, and this is the request that closed the design out: a lost one left
-// us waiting for a transfer the server never started, and the ONLY thing that
-// used to heal it was the server's CmdChangeMap retransmit arriving and us
-// asking again. Exactly-once delivery is also why asking twice is no longer a
-// thing that happens -- begin_paced_transfer RESTARTS a transfer, so a duplicate
-// request threw away a download in progress.
 static void send_request_map_data(network::Client_Transport_Layer &transport,
                                   const std::string &map_name)
 {
-  shared::request_map_data_message_t msg{map_name};
-  network::Bit_Writer writer;
+  auto msg = shared::request_map_data_message_t{map_name};
+
+  auto writer = network::Bit_Writer{};
   shared::serialize_request_map_data(writer, msg);
   network::queue_reliable_client_message(
       transport,
@@ -604,8 +551,7 @@ static void send_request_map_data(network::Client_Transport_Layer &transport,
 
 bool Play_State::load_client_map(const std::string &map_path)
 {
-  // Also reachable mid-session on a server map change, which is not a state
-  // transition -- so it marks the frame itself rather than relying on switch_to.
+  // this is actually so stupid to exclude but it's whatever.
   frame_timing::exclude_current_frame("map load");
 
   if (map_path.empty())
@@ -625,37 +571,26 @@ bool Play_State::load_client_map(const std::string &map_path)
   return true;
 }
 
-bool Play_State::apply_map_package(const shared::map_package_t &package)
+bool Play_State::switch_to_map_provided_by_map_package(const shared::map_package_t &package)
 {
   frame_timing::exclude_current_frame("map package applied");
 
-  // The package IS the map, through the one inverse of build_map_package: text,
-  // name and every baked sidecar come off it there, so nothing here can be left
-  // surviving from the previous map.
   shared::map_t map = shared::make_map_from_package(package);
 
   switch_to_map(map);
   return true;
 }
 
-// Poses `camera` at one of the map's Player_Spectate_Entity markers — the
-// fixed positions a spectator watches from. `spot_index` is which, in map
-// declaration order (stable across a load, which is what makes cycling an
-// index rather than a lookup). False when the map declares none, leaving the
-// camera untouched; the caller decides whether that is worth saying out loud.
-//
-// Entity::orientation is the MODEL euler the editor's rotation gizmo writes, so
-// this IS a conversion — the same one the server's spawn path makes. Two earlier
-// spellings were both wrong: atan2-ing the orientation as if it were a direction
-// vector and assigning radians into a degrees field, and then copying .y/.x
-// across as yaw/pitch, which mirrored the yaw and read the roll as the pitch.
+// I dislike that this takes an index. I don't understand why.
 [[nodiscard]] static bool try_pose_camera_at_spectate_spot(
-    camera_t &camera, shared::game_session_t &session, int32_t spot_index)
+    camera_t &camera,
+    shared::game_session_t &session,
+    int32_t spot_index)
 {
   Span<entities::Player_Spectate_Entity> spectate_spots =
       session.entity_system.entities_of<entities::Player_Spectate_Entity>();
-  if (spectate_spots.empty())
-    return false;
+
+  if (spectate_spots.empty()) return false;
 
   const int32_t count = static_cast<int32_t>(spectate_spots.size());
   const entities::Player_Spectate_Entity &spot =
@@ -665,19 +600,18 @@ bool Play_State::apply_map_package(const shared::map_package_t &package)
 
   const linalg::view_angles_t facing = linalg::view_angles_from_direction(
       linalg::forward(spot.orientation));
-  camera.yaw   = facing.yaw_degrees;
+  camera.yaw = facing.yaw_degrees;
   camera.pitch = facing.pitch_degrees;
   return true;
 }
 
-// everything in ctx.world that is keyed to the map, replaced as a set.
+// world is the struture that hollds most of the session stuff.
 static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
 {
-
   //
   reset_state_in_preparation_for_new_map_load(ctx);
 
-  ctx.world.map     = map;
+  ctx.world.map = map;
   ctx.world.session = shared::build_session(map);
   ctx.world.session.map_name = map.name;
 
@@ -797,7 +731,7 @@ void Play_State::enter_replay_playback(shared::replay_t&& replay)
   ctx.connection.my_slot         = invalid_slot_idx;
   ctx.connection.spectating      = true;
 
-  if (!apply_map_package(package))
+  if (!switch_to_map_provided_by_map_package(package))
     return;
   if (ctx.world.map_content_hash != replay.header.map_content_hash)
     log_warning("replay: the embedded map hashes to {:#x}, the header says {:#x}",
@@ -901,8 +835,7 @@ void Play_State::on_exit()
 
   shared::finish_replay_recording(ctx.replay_recorder);
   end_replay_playback(ctx.replay, *ctx.cvars);
-  if (ctx.audio)
-    ctx.audio->set_muted(false);
+  ctx.audio.set_muted(false);
 
   if (ctx.connection.phase != Connection_Phase::Disconnected &&
       ctx.connection.phase != Connection_Phase::Replaying)
@@ -993,7 +926,7 @@ static void cut_predicted_world_for_input(client_context_t& ctx, play_frame_t& f
                                           int input_number)
 {
   const shared::predicted_world_settings_t settings{
-      .tick        = predicted_tick_of_input(ctx, input_number),
+      .tick        = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number),
       // The session's entities are the newest snapshot's, so that is the tick their state describes.
       .state_tick  = ctx.prediction.latest_server_tick,
       .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
@@ -1199,13 +1132,12 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
   frame.world_dt = ctx.connection.phase == Connection_Phase::Replaying
                              ? replay_world_dt(ctx.replay, dt)
                              : dt;
-  if (ctx.audio)
-    ctx.audio->set_muted(ctx.connection.phase == Connection_Phase::Replaying &&
-                         !replay_plays_at_normal_speed(ctx.replay));
+  ctx.audio.set_muted(ctx.connection.phase == Connection_Phase::Replaying &&
+                      !replay_plays_at_normal_speed(ctx.replay));
 
 
   // in case I forget again: poll_client_network already does all the reassembly for us.
-  // this iterates over fully constructed messages. that's why the apply_map_package
+  // this iterates over fully constructed messages. that's why the switch_to_map_provided_by_map_package
   // is just a single call. I confused myself with thinking that the map probably wouldnt'fit
   // in one packet.
   for (const auto &cmd : inbox.connection_messages)
@@ -1349,9 +1281,9 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
       continue;
     }
 
-    if (!apply_map_package(package))
+    if (!switch_to_map_provided_by_map_package(package))
     {
-      log_error("Failed to apply streamed map package '{}'.", data.map_name);
+      log_error("Failed to switch to map based on map package. supposed map name: '{}'.", data.map_name);
       continue;
     }
 
@@ -2497,23 +2429,19 @@ void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t 
 {
   // Local player's movement sounds — centered (2D), since it's us. Other
   // players' jumps/lands arrive as spatialized cosmetic effects from the server.
-  if (ctx.audio)
-  {
-    if (frame.move_events.jumped)
-      ctx.audio->play_2d(assets::sound_asset::player_jump);
-    if (frame.move_events.landed &&
-        frame.move_events.land_impact_speed >
-            ctx.cvars->pm_minimum_land_impact_speed)
-      ctx.audio->play_2d(assets::sound_asset::player_land_new);
+  if (frame.move_events.jumped)
+    ctx.audio.play_2d(assets::sound_asset::player_jump);
+  if (frame.move_events.landed &&
+      frame.move_events.land_impact_speed > ctx.cvars->pm_minimum_land_impact_speed)
+    ctx.audio.play_2d(assets::sound_asset::player_land_new);
 
-    if (frame.move_events.launched_by_pad)
-      ctx.audio->play_3d(frame.move_events.pad_kind == shared::movement_volume_kind_t::Bounce
-                             ? assets::sound_asset::bubble_pop
-                             : assets::sound_asset::twang,
-                         shared::movement_volume_origin(frame.predicted_world.movement_volumes,
-                                                        frame.move_events.pad_uid,
-                                                        ctx.prediction.player_position));
-  }
+  if (frame.move_events.launched_by_pad)
+    ctx.audio.play_3d(frame.move_events.pad_kind == shared::movement_volume_kind_t::Bounce
+                          ? assets::sound_asset::bubble_pop
+                          : assets::sound_asset::twang,
+                      shared::movement_volume_origin(frame.predicted_world.movement_volumes,
+                                                     frame.move_events.pad_uid,
+                                                     ctx.prediction.player_position));
 }
 
 // RENDER: the visual error decaying away, the interpolation cursor moving, and
@@ -2696,15 +2624,11 @@ void Play_State::update_audio_listener(client_context_t &ctx, play_frame_t &fram
   // carries the eye height, the inter-tick extrapolation and the reconciliation
   // smoothing, all of which spatialization should hear. Last, because it is the
   // only thing here that reads the camera rather than writing it.
-  if (ctx.audio)
-  {
-    const camera_basis_t listener_basis = get_orientation_vectors(camera);
-    const sound_attenuation_t attenuation = {ctx.cvars->sound_reference_distance,
-                                             ctx.cvars->sound_max_distance_cutoff,
-                                             ctx.cvars->sound_rolloff_factor};
-    ctx.audio->update(camera.position, listener_basis.forward, listener_basis.up,
-                      attenuation);
-  }
+  const camera_basis_t listener_basis = get_orientation_vectors(camera);
+  const sound_attenuation_t attenuation = {ctx.cvars->sound_reference_distance,
+                                           ctx.cvars->sound_max_distance_cutoff,
+                                           ctx.cvars->sound_rolloff_factor};
+  ctx.audio.update(camera.position, listener_basis.forward, listener_basis.up, attenuation);
 
 }
 
@@ -3662,7 +3586,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   {
     if (const ui::ui_font_t* font = ctx.font)
     {
-      const shared::weapon_definition_t* held_weapon = try_find_weapon_definition_held_by(ctx, viewed_player);
+      const shared::weapon_definition_t* held_weapon = try_find_weapon_definition_for_active_weapon_held_by_player(ctx, viewed_player);
       const entities::Weapon_Entity* held_entity =
           held_weapon != nullptr ? try_find_active_weapon(ctx, *viewed_player) : nullptr;
       hud::draw_weapon_name(ui, *font, renderer::screen_size(), renderer::display_scale(),

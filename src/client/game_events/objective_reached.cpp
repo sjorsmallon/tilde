@@ -32,10 +32,9 @@ void on_objective_reached(client_context_t &context, const shared::Objective_Rea
   }
   hud::set_announcement(text);
 
-  if (context.audio)
-    context.audio->play_2d(is_record ? assets::sound_asset::a_new_record
-                                     : assets::sound_asset::wow_incredible,
-                           1.0f);
+  context.audio.play_2d(is_record ? assets::sound_asset::a_new_record
+                                  : assets::sound_asset::wow_incredible,
+                        1.0f);
 }
 
 } // namespace client::game_events

@@ -491,10 +491,11 @@ struct client_context_t
 {
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
-  Audio_System* audio = nullptr;
-  // The HUD font. Borrowed, like `audio` above: client_impl.cpp owns it and
-  // neither reset touches it, because a font means the same thing in every map
-  // and on every connection.
+  // Inert until client_impl.cpp calls init(), and inert again after shutdown():
+  // every play_* on a system with no device is a no-op, so nobody checks.
+  Audio_System audio;
+  // The HUD font. Borrowed: client_impl.cpp owns it and neither reset touches
+  // it, because a font means the same thing in every map and on every connection.
   const ui::ui_font_t* font = nullptr;
 
   const shared::game_session_t* server_session = nullptr;

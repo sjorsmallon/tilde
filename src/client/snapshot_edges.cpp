@@ -61,7 +61,7 @@ void play_gunshots(client_context_t& context, const ::network::snapshot_frame_t&
 
     // The muzzle is at the eye, matching where the server casts the shot from.
     const vec3f muzzle = player.position + vec3f{0.f, shared::player_eye_height, 0.f};
-    context.audio->play_3d(*sound, muzzle);
+    context.audio.play_3d(*sound, muzzle);
   }
 }
 
@@ -94,7 +94,7 @@ void play_hitmarker(client_context_t& context, const ::network::snapshot_frame_t
   const assets::sound_asset sound = HEADSHOT_SOUNDS[next_variant % std::size(HEADSHOT_SOUNDS)];
   ++next_variant;
 
-  context.audio->play_2d(sound);
+  context.audio.play_2d(sound);
 }
 
 void play_breaks(client_context_t& context, const ::network::snapshot_frame_t& previous,
@@ -114,7 +114,7 @@ void play_breaks(client_context_t& context, const ::network::snapshot_frame_t& p
     const entities::Damageable_Entity* local =
         context.world.session.entity_system.get<entities::Damageable_Entity>(damageable.entity_id);
     if (local != nullptr)
-      context.audio->play_3d(break_sound_for(local->type), local->position);
+      context.audio.play_3d(break_sound_for(local->type), local->position);
   }
 }
 
@@ -135,7 +135,7 @@ void play_bubble_pops(client_context_t& context, const ::network::snapshot_frame
     if (bubble.popped_by == context.connection.my_entity_uid)
       continue;
 
-    context.audio->play_3d(assets::sound_asset::bubble_pop, bubble.position);
+    context.audio.play_3d(assets::sound_asset::bubble_pop, bubble.position);
   }
 }
 
@@ -179,7 +179,7 @@ void play_emitters(client_context_t& context, const ::network::snapshot_frame_t&
     if (emitter.playback.stop_count != before->playback.stop_count || switched_off)
     {
       for (const voice_handle_t voice : voices)
-        context.audio->stop(voice);
+        context.audio.stop(voice);
       voices.clear();
     }
 
@@ -187,11 +187,11 @@ void play_emitters(client_context_t& context, const ::network::snapshot_frame_t&
       continue;
 
     std::erase_if(voices,
-                  [&](const voice_handle_t voice) { return !context.audio->is_playing(voice); });
+                  [&](const voice_handle_t voice) { return !context.audio.is_playing(voice); });
     voices.push_back(local->spatial
-                         ? context.audio->play_3d_within(local->sound, local->position,
+                         ? context.audio.play_3d_within(local->sound, local->position,
                                                          local->range, local->volume)
-                         : context.audio->play_2d(local->sound, local->volume));
+                         : context.audio.play_2d(local->sound, local->volume));
   }
 }
 
@@ -234,9 +234,6 @@ void apply_snapshot_edges(client_context_t& context,
     return;
 
   announce_match_edges(*previous, current);
-
-  if (!context.audio)
-    return;
 
   play_gunshots(context, *previous, current);
   play_hitmarker(context, *previous, current);

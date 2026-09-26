@@ -1867,3 +1867,35 @@ struct render_component_t
     Span<material_t*> materials;
 };
 - vector profiling to see where memory is allocated in each frame and switch to an arena / frame-based buffer.
+## Naming: banish the `_of(` suffix
+
+`_of` carries no information when it means "build a T out of this" -- the name
+says the return type twice and never says what the transformation is. Convert
+those to a verb that names the work: `predicted_world_of` -> `cut_predicted_world`,
+`shadow_scene_of` -> `build_shadow_scene`, `try_light_of` -> `try_fold_entity_into_scene_light`,
+`move_input_of` / `aim_sweep_of` / `wish_of` / `ground_frame_of` / `drawn_tick_of` /
+`platform_view_of` / `fire_of` likewise. Prefer a name long enough to state the
+answer over a short one plus a comment explaining it (see
+`get_predicted_server_tick_which_this_input_will_be_simulated_on` in
+`src/client/states/play_state.cpp`).
+
+`_of` as plain English possession stays: `owner_of`, `player_of`, `position_of`,
+`index_of`, `luminance_of`, `radiance_of`, `centroid_of`, `entities_of`. Standard
+library spellings (`find_first_of`, `all_of`) are not ours to rename.
+
+About 130 distinct names, ~900 call sites; the conversion class is roughly 15 of
+them. CLAUDE.md and the design records name several of these directly and must be
+updated in the same pass.
+
+## Naming: `subtick_input_t` -> `tick_input_t`
+
+There is no such thing as a sub-tick input. One input IS one tick, sent once per
+tick and numbered by `input_number`; sub-tick edges are payload inside it and
+never advance that counter. The current name says the opposite, and
+`split_input_per_tick_into_subtick_steps` (the one place that states the taxonomy
+correctly) has to compensate with `_per_tick_`.
+
+After the rename, plain `input` always means the tick unit and `subtick_` always
+means inside one: edge, step, slot. Fallout:
+`split_input_per_tick_into_subtick_steps` -> `split_tick_input_into_subtick_steps`,
+`Saved_Input::input` -> `tick_input`. 60 occurrences over 10 files.

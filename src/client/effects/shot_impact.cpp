@@ -31,7 +31,7 @@ void play_world_impact(client_context_t& context, const shared::Shot_Impact& dat
     // The bullet decal, at data.origin facing data.normal: not built yet.
   }
 
-  context.audio->play_3d(*sound, data.origin);
+  context.audio.play_3d(*sound, data.origin);
 }
 
 void play_type_impact(client_context_t& context, const shared::Shot_Impact& data,
@@ -57,7 +57,7 @@ void play_type_impact(client_context_t& context, const shared::Shot_Impact& data
   // whole server where someone just got clipped in the head.
   const bool headshot = type == entities::entity_type::Player_Entity &&
                         static_cast<shared::hit_region_t>(data.region) == shared::hit_region_t::Head;
-  context.audio->play_3d(sound, data.origin, headshot ? 1.0f : 0.8f);
+  context.audio.play_3d(sound, data.origin, headshot ? 1.0f : 0.8f);
 }
 
 bool is_replicated_player(const client_context_t& context, shared::entity_uid_t uid)
@@ -73,9 +73,6 @@ bool is_replicated_player(const client_context_t& context, shared::entity_uid_t 
 // Player_Entity::last_hit_tick, because it is per-viewer and this is a broadcast.
 void on_shot_impact(client_context_t& context, const shared::Shot_Impact& data)
 {
-  if (!context.audio)
-    return;
-
   if (data.attached_entity == shared::null_entity_uid)
   {
     play_world_impact(context, data);
