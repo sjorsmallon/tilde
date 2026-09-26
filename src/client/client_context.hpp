@@ -164,7 +164,7 @@ struct local_world_t
   // The ghost the server last announced, out of our cache or off the wire; empty when there is none or it
   // is still on its way. The hash is what an arriving S2C_GhostData is checked against.
   std::optional<shared::ghost_t> ghost;
-  uint32_t                       announced_ghost_hash = 0;
+  uint32_t                       ghost_hash_the_server_announced = 0;
 
   // Session and physics are built; the world can be simulated and drawn. Was
   // Play_State::session_ready_for_simulation_and_rendering -- a fact ABOUT this

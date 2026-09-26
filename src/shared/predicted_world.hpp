@@ -12,13 +12,13 @@
 // that out loud at every call site.
 //
 // PREDICTED MEANS THE CLIENT CAN COMPUTE IT FOR ITSELF, from the tick number
-// and replicated state, which is why the cut functions here are the ones both
+// and replicated state, which is why the functions here are the ones both
 // sides run. A value only the server could build would be a value the client
 // has to be told, and being told is a round trip.
 //
-// Cut ONCE and then read-only while the inputs run: that is what makes the
+// Built ONCE and then read-only while the inputs run: that is what makes the
 // order players are processed in unable to matter. The one exception is the
-// client's replay, which re-cuts per replayed input because a bubble's bounds
+// client's replay, which rebuilds per replayed input because a bubble's bounds
 // and a mover's pose are functions of the TICK, and a replay walks several.
 
 #include "array.hpp"
@@ -58,14 +58,14 @@ struct predicted_world_t
 };
 
 // The STORAGE the three views are over, held by the caller across ticks so a
-// re-cut reuses the vectors rather than reallocating them. Separate from the
+// rebuild reuses the vectors rather than reallocating them. Separate from the
 // view because a view is what a callee takes and storage is what a caller
 // keeps; holding the spans inside the storage would make a copy of it dangle.
 //
 // The disabled set is ONE PER TEAM, because a team wall is not there for one
 // team's movers and solid for the rest (disabled_geometry.hpp). The team is the
-// only input, so three sets serve every player; the view a mover takes is cut
-// by `predicted_world_of(storage, team)` and player_move never learns the team.
+// only input, so three sets serve every player; the view a mover takes is
+// picked by `predicted_world_of(storage, team)` and player_move never learns the team.
 struct predicted_world_storage_t
 {
   Enum_Array<entities::Team_Allegiance, disabled_geometry_t> disabled_geometry;
@@ -88,14 +88,14 @@ struct predicted_world_storage_t
           .movers             = storage.movers};
 }
 
-// The tick a cut is FOR. `tick_interval_seconds` is DERIVED from the tickrate
+// The tick a build is FOR. `tick_interval_seconds` is DERIVED from the tickrate
 // rather than carried beside it: two spellings of one fact are two things that
 // can disagree, and the sides were spelling it differently -- the server cast a
 // double division to float, the client divided in float.
 struct predicted_world_settings_t
 {
   uint32_t tick        = 0;
-  // The tick the session's replicated state DESCRIBES, for the one cut that is a function of
+  // The tick the session's replicated state DESCRIBES, for the one part that is a function of
   // state another player's input wrote rather than of the tick (canopy.hpp): the server's is
   // tick - 1, the client's is its newest snapshot. Always older than `tick`.
   uint32_t state_tick  = 0;
@@ -105,18 +105,18 @@ struct predicted_world_settings_t
   [[nodiscard]] float tick_interval_seconds() const { return 1.0f / tickrate_hz; }
 };
 
-// The three cuts, and the one that runs all three. They are split because the
+// The three parts, and the one that runs all three. They are split because the
 // CADENCE differs and the reason is per part: the disabled set is a function of
-// replicated switches alone, so the client cuts it once a frame, while the
-// volumes and the movers are functions of the TICK and its replay re-cuts them
-// per input. The server runs one tick at a time and takes the whole cut.
-// The disabled cut fills EVERY team's set; picking one is the view's job.
-void cut_disabled_geometry(game_session_t& session, predicted_world_storage_t& out);
-void cut_movement_volumes(game_session_t& session, const predicted_world_settings_t& settings,
+// replicated switches alone, so the client collects it once a frame, while the
+// volumes and the movers are functions of the TICK and its replay rebuilds them
+// per input. The server runs one tick at a time and builds all three.
+// Picking one team's set out of every team's is the view's job.
+void collect_disabled_geometry_for_every_team(game_session_t& session, predicted_world_storage_t& out);
+void build_movement_volumes(game_session_t& session, const predicted_world_settings_t& settings,
                           predicted_world_storage_t& out);
-void cut_movers(game_session_t& session, const predicted_world_settings_t& settings,
+void build_movers(game_session_t& session, const predicted_world_settings_t& settings,
                 predicted_world_storage_t& out);
-void cut_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
+void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out);
 
 } // namespace shared

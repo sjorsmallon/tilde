@@ -55,7 +55,7 @@ void adopt_ghost(client_context_t& context, Span<const uint8_t> bytes, uint32_t 
 void apply_ghost_announcement(client_context_t& context, const shared::ghost_available_message_t& announced)
 {
   context.world.ghost.reset();
-  context.world.announced_ghost_hash = announced.ghost_hash;
+  context.world.ghost_hash_the_server_announced = announced.ghost_hash;
   if (announced.ghost_hash == 0)
     return;
 
@@ -79,10 +79,10 @@ void apply_ghost_announcement(client_context_t& context, const shared::ghost_ava
 
 void apply_ghost_data(client_context_t& context, const shared::ghost_data_message_t& data)
 {
-  if (data.ghost_hash != context.world.announced_ghost_hash)
+  if (data.ghost_hash != context.world.ghost_hash_the_server_announced)
   {
     log_terminal("ghost: received {:#x}, but the announced ghost is {:#x} by now; dropped", data.ghost_hash,
-                 context.world.announced_ghost_hash);
+                 context.world.ghost_hash_the_server_announced);
     return;
   }
 

@@ -606,7 +606,7 @@ bool Play_State::switch_to_map_provided_by_map_package(const shared::map_package
 }
 
 // world is the struture that hollds most of the session stuff.
-static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
+static void populate_client_world_from_map(client_context_t &ctx, const shared::map_t &map)
 {
   //
   reset_state_in_preparation_for_new_map_load(ctx);
@@ -623,10 +623,10 @@ static void set_client_world_to(client_context_t &ctx, const shared::map_t &map)
 
   // The server announces this map's ghost once it sees us holding the map.
   ctx.world.ghost.reset();
-  ctx.world.announced_ghost_hash = 0;
+  ctx.world.ghost_hash_the_server_announced = 0;
 }
 
-// Where we stand until the first snapshot says otherwise; the server overwrites all of it.
+// if we don't have a spawner, set us at 0,0,0.
 void Play_State::set_provisional_player_pose_for_new_map(client_context_t &ctx)
 {
   // place the camera at a spectate position (if it's there.)
@@ -656,19 +656,15 @@ void Play_State::set_provisional_player_pose_for_new_map(client_context_t &ctx)
   camera.position.z = ctx.prediction.player_position.z;
 }
 
-// The shared tail of both acquisition paths: this map becomes the live world.
+
 void Play_State::switch_to_map(const shared::map_t &map)
 {
   client_context_t &ctx = state_manager::get_client_context();
 
-  set_client_world_to(ctx, map);
+  populate_client_world_from_map(ctx, map);
   set_provisional_player_pose_for_new_map(ctx);
 
-  // The bake the session just adopted, made resident for the pass that draws
-  // it. Updated in place rather than re-registered: nothing in the renderer is
-  // ever unregistered, so a map switch would otherwise leak a whole atlas. A
-  // map with no bake leaves the old handle alone -- it generates no lightmap
-  // coordinates either, so nothing samples it.
+
   const shared::lightmap_t &lightmap = ctx.world.session.lightmap;
   if (!lightmap.irradiance_pages.empty())
   {
@@ -687,22 +683,15 @@ void Play_State::enter_connected_phase()
   auto &ctx  = state_manager::get_client_context();
 
   ctx.connection.phase = Connection_Phase::Connected;
-
-  // Forward @Server cvars and commands over the network. Installing this is
-  // what makes execute_console_line stop running them locally: a connected
-  // client does not own server state.
+  // function pointer to forward commands to server, otherwise they end up nowhere.
   ctx.commands->forward_to_server = &forward_console_line_to_server;
 
-  // A connection starts as a spectator and `join_game` is the ONE door into the
-  // match, so an editor "play" states its intent through that same door instead
-  // of getting a second one. Straight through the one dispatcher, which the
-  // line above has just told to forward @Server names upstream -- the same path
-  // the line takes when it is typed.
+  // autojoin_game when we enter connected phase.
   if (pending_match_join)
   {
     pending_match_join = false;
 
-    std::string reply;
+    auto reply = std::string{};
     const cvars::console_result_t result = cvars::execute_console_line(
         *ctx.cvars, *ctx.commands, "join_game", cvars::command_context_t{}, &reply);
 
@@ -716,7 +705,7 @@ void Play_State::enter_replay_playback(shared::replay_t&& replay)
 {
   auto &ctx = state_manager::get_client_context();
 
-  shared::map_package_t package;
+  auto package = shared::map_package_t{};
   std::vector<uint8_t> package_bytes(replay.map_package.data,
                                      replay.map_package.data + replay.map_package.size());
   if (!shared::deserialize_map_package(package_bytes, package))
@@ -728,11 +717,12 @@ void Play_State::enter_replay_playback(shared::replay_t&& replay)
   }
 
   ctx.connection.server_tickrate = replay.header.tickrate_hz;
-  ctx.connection.my_slot         = invalid_slot_idx;
-  ctx.connection.spectating      = true;
+  ctx.connection.my_slot = invalid_slot_idx;
+  ctx.connection.spectating = true;
 
-  if (!switch_to_map_provided_by_map_package(package))
-    return;
+  if (!switch_to_map_provided_by_map_package(package)) return;
+
+
   if (ctx.world.map_content_hash != replay.header.map_content_hash)
     log_warning("replay: the embedded map hashes to {:#x}, the header says {:#x}",
                 ctx.world.map_content_hash, replay.header.map_content_hash);
@@ -749,17 +739,15 @@ void Play_State::on_enter()
 {
   auto &ctx = state_manager::get_client_context();
 
-  // Our half of the connection reset: everything on this state that means
-  // nothing to a new connection. The context's three groups go below.
+  
   connection_ui = {};
   reset_for_new_connection(ctx);
 
   // Read once and cleared: whoever asked for this trip asked for THIS trip.
   pending_match_join = ctx.requested_match_join;
   ctx.requested_match_join = false;
-  pending_spawn_view       = ctx.requested_spawn_view;
+  pending_spawn_view = ctx.requested_spawn_view;
   ctx.requested_spawn_view.reset();
-
 
 
   const bool replay_requested = ctx.requested_replay.has_value();
@@ -793,9 +781,8 @@ void Play_State::on_enter()
 
   input::set_relative_mouse_mode(true);
 
-  // A replay has no server, including one that failed to start.
-  if (replay_requested)
-    return;
+  // replay has no server.
+  if (replay_requested) return;
 
   // --- Connect to server ---
   auto &transport = ctx.transport_layer;
@@ -810,9 +797,6 @@ void Play_State::on_enter()
     transport.socket.open(0, network::client_receive_buffer_size_in_bytes);
   }
 
-
-  // Whoever sent us here chose the endpoint (main menu Join Game, `connect`,
-  // or nobody -- in which case this is still the loopback default).
   transport.server_address = ctx.requested_server_address;
   log_terminal("Connecting to {}", transport.server_address.to_string());
 
@@ -845,9 +829,7 @@ void Play_State::on_exit()
     network::send_protobuf_message(transport, disconnect_cmd);
     ctx.connection.phase = Connection_Phase::Disconnected;
 
-    // Disconnected: @Server names have nowhere to go, and running them locally
-    // would be wrong in a networked build, so execute_console_line reports
-    // "not connected" instead.
+    //commands that should go to the server now just go nowhere.
     ctx.commands->forward_to_server = nullptr;
   }
   transport.socket.close();
@@ -866,50 +848,38 @@ void Play_State::on_exit()
 // to reiterate: input can be understood as a reaction on the previously presented frame.
 // input is gathered by a thread from hardware reads before entering this function, with the most precision that we can.
 // all edges (meaning: press / release) are recorded temporally.
-// One frame's resolved values, handed from step to step down Play_State::update.
-// Born at the top of that function and dead at the bottom -- a local, never a
-// member, because nothing in it survives a frame. Anything that must survive one
-// lives on client_context_t (the world, the prediction) or on Play_State (the
-// camera, the menus, the shot-debug ring).
+// the rest in this thing should only survive to the end of this fame.
 struct play_frame_t
 {
   float dt = 0.f;
-  // The WORLD's clock: the replay's pause and speed, or the frame's dt. Not
-  // interchangeable with dt -- the two differ exactly while a replay is
-  // scrubbed, which is when anything driven by one and not the other shows it.
+
+  // because replays can play back at different speeds, this dt can be larger or smaller.
   float world_dt = 0.f;
 
   // No console and no pause menu; and, for the body, no noclip either.
   bool body_input_allowed = false;
-  bool noclip_active      = false;
+  bool noclip_active = false;
   bool mouse_look_allowed = false;
 
-  float    fov_degrees          = 0.f;
-  float    mouse_sensitivity    = 0.f;
-  uint64_t buttons              = 0;
-  bool     local_player_is_dead = false;
+  float fov_degrees = 0.f;
+  float mouse_sensitivity = 0.f;
+  uint64_t buttons = 0;
+  bool local_player_is_dead = false;
 
-  // tick_def.md step 2, on the client's clock: cut out of our own session copy
-  // through the same shared functions the server's tick cuts it with. The view
-  // is OUR team's, since a team wall is not there for us and solid for the rest;
-  // a spectator has no team and passes no team wall.
-  shared::predicted_world_storage_t predicted_world_storage;
-  shared::predicted_world_t         predicted_world;
-  entities::Team_Allegiance         team = entities::Team_Allegiance::Free_For_All;
+  shared::predicted_world_storage_t predicted_world_storage{};
+  shared::predicted_world_t predicted_world{};
+  entities::Team_Allegiance team = entities::Team_Allegiance::Free_For_All;
 
-  // Coalesced across however many ticks were stepped this frame.
-  Move_Events move_events;
+  Move_Events move_events{};
 
-  // replay_def.md ss6: which player the replay is riding, sampled by the render
-  // half and read again by the camera.
-  std::optional<shared::replay_view_sample_t> first_person_view;
+  std::optional<shared::replay_view_sample_t> first_person_view{};
 };
 
 // The disabled set once per FRAME: it is a function of replicated switches
 // alone, so no tick names a different one (prediction_def.md ss4).
-static void cut_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
+static void collect_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
 {
-  shared::cut_disabled_geometry(ctx.world.session, frame.predicted_world_storage);
+  shared::collect_disabled_geometry_for_every_team(ctx.world.session, frame.predicted_world_storage);
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   frame.team = my_player != nullptr ? my_player->team_allegiance
                                     : entities::Team_Allegiance::Free_For_All;
@@ -922,7 +892,7 @@ static void cut_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t&
 // replayed input's tick: a switch that flipped inside the unacked window
 // mispredicts for that window and is corrected, which is what makes them need no
 // history (prediction_def.md ss1.4).
-static void cut_predicted_world_for_input(client_context_t& ctx, play_frame_t& frame,
+static void build_predicted_world_for_input(client_context_t& ctx, play_frame_t& frame,
                                           int input_number)
 {
   const shared::predicted_world_settings_t settings{
@@ -931,8 +901,8 @@ static void cut_predicted_world_for_input(client_context_t& ctx, play_frame_t& f
       .state_tick  = ctx.prediction.latest_server_tick,
       .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
       .gravity     = ctx.cvars->g_gravity};
-  shared::cut_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
-  shared::cut_movers(ctx.world.session, settings, frame.predicted_world_storage);
+  shared::build_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
+  shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
   frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage, frame.team);
 }
 
@@ -1463,7 +1433,7 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
 }
 
 // SIMULATE: re-run every input the server has not acked, from the state it last
-// told us, against the world cut above. The same two steps the live loop runs --
+// told us, against the world built above. The same two steps the live loop runs --
 // tick_def.md steps 2 and 3, through the same shared code -- which is what stops
 // a replay and a live step disagreeing.
 void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &frame)
@@ -1515,7 +1485,7 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
-      cut_predicted_world_for_input(ctx, frame, replayed);
+      build_predicted_world_for_input(ctx, frame, replayed);
       reconciled_position =
           predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
 
@@ -1743,7 +1713,7 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
 
 // The raw arrival stream, placed where it actually happened. RECEIVE by nature
 // and SIMULATE by position: it needs this frame's sensitivity and button poll,
-// which need the world to be ready, and the ready test sits above the cut. See
+// which need the world to be ready, and the ready test sits above the build. See
 // tick_def.md's client section.
 void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
                                                         play_frame_t &frame)
@@ -2210,7 +2180,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
 
         uint64_t buttons_entering_step = buttons_before_tick;
 
-        cut_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
+        build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
         ctx.prediction.player_position =
             predict_mover_push(ctx, frame.predicted_world, ctx.prediction.player_movement,
                                ctx.prediction.player_position);
@@ -2654,8 +2624,8 @@ void Play_State::update(float dt)
     return;
 
   // ----------------------------------------------------------------- SIMULATE
-  cut_disabled_geometry_for_frame(ctx, frame);
-  cut_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
+  collect_disabled_geometry_for_frame(ctx, frame);
+  build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
 
   reconcile_with_server(ctx, frame);
   resolve_aim_and_buttons(ctx, frame);
@@ -2949,8 +2919,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // The draw follows the SWITCH the sweep does, resolved through the same
   // table, so a gate you walk through is a gate you cannot see -- and only the
   // switch: a team wall is passable for one team and visible to everyone, so
-  // this is the hidden set, never a team's disabled set. Cut here rather
-  // than reused from the prediction cut above: this runs on the frame clock
+  // this is the hidden set, never a team's disabled set. Collected here
+  // rather than reused from the prediction build above: this runs on the frame clock
   // and that one on the tick clock, and a set held across the gap would draw
   // a gate one frame behind the wall you can already pass.
   shared::disabled_geometry_t hidden;
