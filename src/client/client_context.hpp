@@ -523,6 +523,10 @@ struct client_context_t
   // moved there and aimed along it. Same one-trip lifetime as the join above.
   std::optional<camera_t> requested_spawn_view;
 
+  // The reverse trip: the view play was showing when it went back to the
+  // editor, which the editor camera starts from instead of its default.
+  std::optional<camera_t> requested_editor_view;
+
   // What THIS client receives, one file per map per connection. Outside the
   // groups: both resets FINISH it rather than wipe it, so the index is written.
   shared::replay_recorder_t replay_recorder;

@@ -1031,6 +1031,7 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
         break;
 
       case pause_menu_item_t::return_to_editor:
+        ctx.requested_editor_view = camera;
         state_manager::switch_to(game_state::tool_editor);
         return true;
 
@@ -1062,7 +1063,7 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
 
     if (input::is_key_pressed(input::key_t::F1))
     {
-      // Otherwise, go back to the editor.
+      ctx.requested_editor_view = camera;
       state_manager::switch_to(game_state::tool_editor);
       return true;
     }

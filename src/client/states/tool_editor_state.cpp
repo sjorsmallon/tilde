@@ -295,12 +295,21 @@ void Tool_Editor_State::on_enter()
     }
   }
 
-  // Initialize Camera
-  camera.position.x = 0;
-  camera.position.y = 1024.f;
-  camera.position.z = 10;
-  camera.pitch = -30.0f;
-  camera.yaw = 0.0f;
+  client_context_t& client_context = state_manager::get_client_context();
+  if (client_context.requested_editor_view)
+  {
+    camera.position     = client_context.requested_editor_view->position;
+    camera.yaw          = client_context.requested_editor_view->yaw;
+    camera.pitch        = client_context.requested_editor_view->pitch;
+    camera.orthographic = false;
+    client_context.requested_editor_view.reset();
+  }
+  else
+  {
+    camera.position = {0.0f, 1024.0f, 10.0f};
+    camera.pitch    = -30.0f;
+    camera.yaw      = 0.0f;
+  }
   camera.fov_degrees = state_manager::get_client_context().cvars->r_fov;
   aspect = 1.77f; // Will update
   z_near = 0.1f;

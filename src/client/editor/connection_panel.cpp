@@ -225,6 +225,12 @@ void draw_signal_combo(shared::connection_t &row, const entities::Entity &sender
   }
 }
 
+bool row_takes_a_picked_entity(const shared::connection_t &row)
+{
+  return row.target_kind == shared::connection_target_t::Uid ||
+         row.target_kind == shared::connection_target_t::Unbound;
+}
+
 void draw_target_kind_combo(shared::connection_t &row)
 {
   const shared::connection_target_t kinds[] = {shared::connection_target_t::Uid,
@@ -585,8 +591,7 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
 
       draw_signal_combo(row, sender);
       draw_target_kind_combo(row);
-      if (row.target_kind == shared::connection_target_t::Uid ||
-          row.target_kind == shared::connection_target_t::Unbound)
+      if (row_takes_a_picked_entity(row))
         draw_target_entity_combo(map, row, s_selected_row, pick);
       draw_action_combo(map, row, sender);
       draw_payload_editor(map, row);
@@ -641,7 +646,8 @@ void draw_connection_panel(shared::map_t &map, shared::entity_uid_t selected_uid
       pick.disarm();
   }
 
-  if (pick.is_row_pick() && pick.row >= map.connections.size())
+  if (pick.is_row_pick() &&
+      (pick.row >= map.connections.size() || !row_takes_a_picked_entity(map.connections[pick.row])))
     pick.disarm();
 
   // Nothing is being held, so whatever the frame changed is finished. One
