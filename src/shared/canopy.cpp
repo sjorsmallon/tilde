@@ -22,6 +22,18 @@ void write_canopy_poses(entities::Canopy_Entity& canopy, const linalg::vec3f& ca
   canopy.position                  = canopy_center_for(canopy, carrier_feet);
 }
 
+linalg::vec3f canopy_position_at_tick(const entities::Canopy_Entity& canopy,
+                                      const linalg::vec3f& carrier_velocity, uint32_t tick,
+                                      uint32_t state_tick, float tick_interval_seconds)
+{
+  if (tick + 1 <= state_tick)
+    return canopy.position_at_previous_tick;
+  if (tick == state_tick)
+    return canopy.position;
+  return canopy.position +
+         carrier_velocity * (tick_interval_seconds * static_cast<float>(tick - state_tick));
+}
+
 canopy_poses_t canopy_poses_for_tick(const entities::Canopy_Entity& canopy,
                                      const linalg::vec3f& carrier_velocity, uint32_t tick,
                                      uint32_t state_tick, float tick_interval_seconds)
@@ -31,19 +43,10 @@ canopy_poses_t canopy_poses_for_tick(const entities::Canopy_Entity& canopy,
                 "state a cut reads is always older than the tick it is for",
                 tick, state_tick);
 
-  // pose(t): the previous position at state_tick - 1, the position at state_tick, and the
-  // position carried along the carrier's velocity for every tick past it.
-  const auto pose_at = [&](uint32_t t) -> linalg::vec3f
-  {
-    if (t + 1 <= state_tick)
-      return canopy.position_at_previous_tick;
-    if (t == state_tick)
-      return canopy.position;
-    return canopy.position +
-           carrier_velocity * (tick_interval_seconds * static_cast<float>(t - state_tick));
-  };
-
-  return {.start = pose_at(tick - 2), .end = pose_at(tick - 1)};
+  return {.start = canopy_position_at_tick(canopy, carrier_velocity, tick - 2, state_tick,
+                                           tick_interval_seconds),
+          .end   = canopy_position_at_tick(canopy, carrier_velocity, tick - 1, state_tick,
+                                           tick_interval_seconds)};
 }
 
 void collect_canopies(const Entity_System& system, uint32_t tick, uint32_t state_tick,

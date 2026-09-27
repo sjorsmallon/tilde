@@ -529,6 +529,8 @@ add_library(game_shared STATIC
     src/shared/bounce_body.hpp
     src/shared/bounce_body.cpp
     src/shared/spawned_platforms.cpp
+    src/shared/flight_path.hpp
+    src/shared/flight_path.cpp
     src/shared/canopy.cpp
     src/shared/statues.cpp
     src/shared/subtick.hpp
@@ -932,6 +934,7 @@ add_library(game_server SHARED
     src/server/systems/bubble_system.cpp
     src/server/systems/platform_system.cpp
     src/server/systems/canopy_system.cpp
+    src/server/systems/guided_rocket_system.cpp
     src/server/systems/fixed_arc_flight_launch.cpp
     src/server/systems/hook_system.cpp
     src/server/systems/kooh_system.cpp
@@ -1352,7 +1355,8 @@ target_link_libraries(entity_io_test PRIVATE game_shared)
 # declaration from dllimport into something a local definition can satisfy.
 target_compile_definitions(entity_io_test PRIVATE GAME_SERVER_EXPORTS)
 
-add_executable(inventory_test src/test/inventory_test.cpp ${MATCH_SERVER_SOURCES})
+add_executable(inventory_test src/test/inventory_test.cpp
+    src/server/systems/guided_rocket_system.cpp ${MATCH_SERVER_SOURCES})
 target_include_directories(inventory_test PRIVATE src src/shared src/server)
 target_link_libraries(inventory_test PRIVATE game_shared)
 target_compile_definitions(inventory_test PRIVATE GAME_SERVER_EXPORTS)
@@ -1373,6 +1377,10 @@ target_link_libraries(player_move_step_invariance_test PRIVATE game_shared)
 add_executable(projectile_step_test src/test/projectile_step_test.cpp)
 target_include_directories(projectile_step_test PRIVATE src src/shared)
 target_link_libraries(projectile_step_test PRIVATE game_shared)
+
+add_executable(flight_path_test src/test/flight_path_test.cpp)
+target_include_directories(flight_path_test PRIVATE src src/shared)
+target_link_libraries(flight_path_test PRIVATE game_shared)
 
 # 28b. Remote interpolation -- the render clock and the sample rings
 # (src/client/remote_interpolation.{hpp,cpp}). Compiles the module directly
@@ -1495,6 +1503,7 @@ set(GAME_TESTS
     key_names_test
     player_move_step_invariance_test
     projectile_step_test
+    flight_path_test
     subtick_test
     move_budget_test
     remote_interpolation_test)

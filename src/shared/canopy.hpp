@@ -51,6 +51,12 @@ constexpr float CANOPY_CLEARANCE_ABOVE_HULL = 24.f;
 // old end pose becomes the start pose. A fresh canopy is written twice so both poses are equal.
 void write_canopy_poses(entities::Canopy_Entity& canopy, const linalg::vec3f& carrier_feet);
 
+// Where the canopy is at the END of `tick`: the pair as written up to `state_tick`, the carrier's velocity past it.
+[[nodiscard]] linalg::vec3f canopy_position_at_tick(const entities::Canopy_Entity& canopy,
+                                                    const linalg::vec3f& carrier_velocity,
+                                                    uint32_t tick, uint32_t state_tick,
+                                                    float tick_interval_seconds);
+
 struct canopy_poses_t
 {
   linalg::vec3f start;

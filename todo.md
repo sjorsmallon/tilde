@@ -1533,6 +1533,30 @@ did not fix.
 
 # Networking
 
+- [ ] **A carried player is drawn off their place on the canopy, on the
+      carrier's screen.** Noted 2026-09-27, read from the code, never seen:
+      the slab is opaque and hides the rider from the carrier. NOT built, and
+      not worth building until one of the two triggers below happens.
+
+      The carrier's client draws the slab at the carrier's own PREDICTED body
+      (`drawn_canopy_position`, `play_state.cpp`) and the rider at their
+      INTERPOLATED pose, which is latency plus the interpolation delay in the
+      past. So the rider trails the slab by `carrier speed x that gap` (30 to
+      50 units at run speed, on a slab 96 wide) and keeps going the old way
+      for the length of the gap when the carrier turns. Sliding, not snapping.
+      Every other viewer draws both interpolated on one clock and sees them
+      move together.
+
+      Triggers: the slab becomes see-through, or a rider near the edge is seen
+      hanging off it from below.
+
+      The fix is the rule the rider's own view got the same day (the eye rides
+      the DRAWN slab, `update_drawn_carry_shift`), mirrored: draw a remote
+      player whose `Movement::ground_mover_uid` names a canopy at
+      `drawn slab + (their position - the canopy's position_at_previous_tick)`,
+      both out of the same snapshot frame. The previous-tick pose, because a
+      rider stands on where the canopy was a tick earlier (`canopy.hpp`).
+
 - [ ] **`poll_client_network` busy-spins for a full millisecond, every frame.**
       Found 2026-08-19 while explaining the frame loop; NOT investigated, and
       parked deliberately until the networking reading happens.

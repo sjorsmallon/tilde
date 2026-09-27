@@ -30,8 +30,10 @@ bool player_can_carry_a_canopy(server_context_t& context, const entities::Player
 entities::Canopy_Entity* try_find_canopy_of(shared::Entity_System& system, shared::entity_uid_t carrier_uid)
 {
   for (entities::Canopy_Entity& canopy : system.entities_of<entities::Canopy_Entity>())
-    if (canopy.carrier_uid == carrier_uid)
-      return &canopy;
+  {
+    if (canopy.carrier_uid == carrier_uid) return &canopy;
+  }
+    
   return nullptr;
 }
 

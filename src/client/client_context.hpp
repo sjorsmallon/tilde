@@ -383,6 +383,19 @@ struct prediction_t
   // which is where a mover is for it (mover_def.md ss12).
   uint32_t latest_server_tick = 0;
   bool received_server_update = false;
+
+  // The canopy player_position stands on and where the step that put it there guessed that canopy to be.
+  struct ridden_canopy_t
+  {
+    shared::entity_uid_t uid              = shared::null_entity_uid;
+    vec3f                guessed_position = {0, 0, 0};
+  };
+  std::optional<ridden_canopy_t> ridden_canopy;
+
+  // Drawn, never simulated: carries the eye from the guessed canopy to the drawn one. Written once per frame.
+  vec3f                drawn_carry_shift = {0, 0, 0};
+  shared::entity_uid_t drawn_carry_uid   = shared::null_entity_uid;
+
   vec3f visual_error_offset = {0, 0, 0};
   vec3f reconciliation_error = {0, 0, 0};      // HUD readout only
   float reconciliation_error_magnitude = 0.0f; // HUD readout only

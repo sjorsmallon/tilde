@@ -1533,6 +1533,93 @@ static void test_a_canopy_carries_its_rider_a_tick_behind(const cvar_state_t& cv
   check(walled.feet.y < 1.f, "and dropped to the floor once the canopy moved on without them");
 }
 
+// --- 16c2. a rider's place on a canopy survives an uneven carrier and a replay's guess ---
+static void test_a_rider_keeps_its_place_on_a_canopy(const cvar_state_t& cvars)
+{
+  printf("\n[pin] canopy: a rider's place on it survives an uneven carrier and a replay past the snapshot\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const vec3 carrier_velocity{300.f, 0.f, 0.f};
+
+  shared::Entity_System      system;
+  const shared::entity_uid_t carrier_uid = system.spawn(entities::entity_type::Player_Entity);
+  entities::Player_Entity*   carrier     = system.get<entities::Player_Entity>(carrier_uid);
+  carrier->position = {0.f, 0.f, 0.f};
+  carrier->velocity = carrier_velocity;
+
+  const shared::entity_uid_t canopy_uid = system.spawn(entities::entity_type::Canopy_Entity);
+  entities::Canopy_Entity*   canopy     = system.get<entities::Canopy_Entity>(canopy_uid);
+  canopy->carrier_uid = carrier_uid;
+  shared::write_canopy_poses(*canopy, carrier->position);
+  shared::write_canopy_poses(*canopy, carrier->position);
+
+  entities::Movement movement{};
+  vec3 feet = canopy->position + vec3{20.f, canopy->half_extents.y, -10.f};
+  vec3 velocity{};
+  std::vector<shared::mover_t> movers;
+
+  // Inputs run as they arrive, so a carrier takes none, one or two steps in a server tick.
+  const int      carrier_steps_per_tick[] = {1, 1, 1, 1, 1, 1, 1, 1, 0, 2, 1, 2, 0, 0, 2, 1};
+  const uint32_t server_ticks             = static_cast<uint32_t>(std::size(carrier_steps_per_tick));
+  const uint32_t settled_after            = 8;
+
+  vec3  place{};
+  float furthest_from_place = 0.f;
+  uint32_t state_tick = 1;
+
+  for (uint32_t index = 0; index < server_ticks; ++index)
+  {
+    const uint32_t tick = 2 + index;
+    movers.clear();
+    shared::collect_canopies(system, tick, tick - 1, tick_dt, movers);
+    const shared::predicted_world_t world{.movers = movers};
+
+    feet = push_player_by_movers(bvh, world, movement, feet, half_width, half_height).feet;
+    const move_result_t moved = run_split(cvars, bvh, Move_Input{}, feet, velocity, tick_dt, 1,
+                                          &movement, {}, nullptr, {}, movers);
+    feet     = moved.position;
+    velocity = moved.velocity;
+
+    carrier->position = carrier->position +
+                        carrier_velocity * (tick_dt * static_cast<float>(carrier_steps_per_tick[index]));
+    shared::write_canopy_poses(*canopy, carrier->position);
+    state_tick = tick;
+
+    const vec3 stood_at = feet - canopy->position_at_previous_tick;
+    if (index + 1 == settled_after)
+      place = stood_at;
+    if (index + 1 > settled_after)
+      furthest_from_place = std::max(furthest_from_place, linalg::length(stood_at - place));
+  }
+
+  printf("    server: place (%.3f, %.3f, %.3f), furthest from it %.4f\n", place.x, place.y, place.z,
+         furthest_from_place);
+  check(movement.ground_mover_uid == canopy_uid, "the rider is still on the canopy");
+  check(furthest_from_place < 0.01f, "a carrier that moves unevenly leaves its rider where they stood on it");
+
+  float furthest_in_replay = 0.f;
+  for (uint32_t tick = state_tick + 1; tick <= state_tick + 8; ++tick)
+  {
+    movers.clear();
+    shared::collect_canopies(system, tick, state_tick, tick_dt, movers);
+    const shared::predicted_world_t world{.movers = movers};
+
+    feet = push_player_by_movers(bvh, world, movement, feet, half_width, half_height).feet;
+    const move_result_t moved = run_split(cvars, bvh, Move_Input{}, feet, velocity, tick_dt, 1,
+                                          &movement, {}, nullptr, {}, movers);
+    feet     = moved.position;
+    velocity = moved.velocity;
+
+    const vec3 guessed = shared::canopy_position_at_tick(*canopy, carrier->velocity, tick - 1,
+                                                         state_tick, tick_dt);
+    furthest_in_replay = std::max(furthest_in_replay, linalg::length((feet - guessed) - place));
+  }
+
+  printf("    replay: furthest from it %.4f\n", furthest_in_replay);
+  check(furthest_in_replay < 0.01f,
+        "a replay past the snapshot stands its rider at the same place on the canopy it guesses");
+}
+
 // --- 16d. a frozen player is a statue: stasis holds its momentum, statue falls, both are stood on ---
 static void test_a_frozen_player_is_a_statue(const cvar_state_t& cvars)
 {
@@ -2541,6 +2628,7 @@ int main()
   test_a_mover_crushes_against_a_ceiling(cvars);
   test_a_spawned_platform_catches_a_hull(cvars);
   test_a_canopy_carries_its_rider_a_tick_behind(cvars);
+  test_a_rider_keeps_its_place_on_a_canopy(cvars);
   test_a_frozen_player_is_a_statue(cvars);
   test_a_pilot_holds_while_its_rocket_flies(cvars);
   test_instant_velocity_is_the_input(cvars);

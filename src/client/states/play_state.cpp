@@ -76,6 +76,29 @@ static uint32_t get_predicted_server_tick_which_this_input_will_be_simulated_on(
   return ctx.prediction.latest_server_tick + static_cast<uint32_t>(input_number - ctx.prediction.latest_input_number_processed_by_server);
 }
 
+// A step for tick T stands its rider on the canopy's position at T - 1 (canopy.hpp).
+[[nodiscard]] static std::optional<prediction_t::ridden_canopy_t> try_find_ridden_canopy(
+  const client_context_t &ctx,
+  const entities::Movement &movement,
+  int input_number)
+{
+  const shared::Entity_System &system = ctx.world.session.entity_system;
+  const entities::Canopy_Entity *canopy = system.get<entities::Canopy_Entity>(movement.ground_mover_uid);
+  if (canopy == nullptr)
+    return std::nullopt;
+
+  const entities::Player_Entity *carrier = system.get<entities::Player_Entity>(canopy->carrier_uid);
+  if (carrier == nullptr)
+    return std::nullopt;
+
+  const uint32_t tick = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number);
+  return prediction_t::ridden_canopy_t{
+    .uid              = canopy->entity_id,
+    .guessed_position = shared::canopy_position_at_tick(
+        *canopy, carrier->velocity, tick - 1, ctx.prediction.latest_server_tick,
+        1.0f / static_cast<float>(ctx.connection.server_tickrate))};
+}
+
 
 struct drawn_tick_t
 {
@@ -292,7 +315,8 @@ static vec3f drawn_local_feet(const client_context_t &ctx)
       ctx.connection.phase == Connection_Phase::Connected ? ctx.prediction.physics_accumulator : 0.f;
   vec3f feet = ctx.prediction.player_position +
                ctx.prediction.player_velocity * extrapolation_factor +
-               ctx.prediction.visual_error_offset;
+               ctx.prediction.visual_error_offset +
+               ctx.prediction.drawn_carry_shift;
 
   if (ctx.world.ready)
   {
@@ -375,6 +399,30 @@ static vec3f drawn_canopy_position(const client_context_t &ctx, const entities::
       return shared::canopy_center_for(canopy, remote_player.render_position);
 
   return canopy.position;
+}
+
+// The eye rides the DRAWN canopy; stepping onto or off one is eased through the error offset.
+static void update_drawn_carry_shift(client_context_t &ctx)
+{
+  vec3f                carry_shift{0.f, 0.f, 0.f};
+  shared::entity_uid_t carry_uid = shared::null_entity_uid;
+
+  if (ctx.prediction.ridden_canopy)
+  {
+    if (const entities::Canopy_Entity *canopy =
+            ctx.world.session.entity_system.get<entities::Canopy_Entity>(ctx.prediction.ridden_canopy->uid))
+    {
+      carry_shift = drawn_canopy_position(ctx, *canopy) - ctx.prediction.ridden_canopy->guessed_position;
+      carry_uid   = canopy->entity_id;
+    }
+  }
+
+  if (carry_uid != ctx.prediction.drawn_carry_uid)
+    ctx.prediction.visual_error_offset =
+        ctx.prediction.visual_error_offset + ctx.prediction.drawn_carry_shift - carry_shift;
+
+  ctx.prediction.drawn_carry_shift = carry_shift;
+  ctx.prediction.drawn_carry_uid   = carry_uid;
 }
 
 // The same clock the movers are drawn on, so a wipe and a lift agree about now.
@@ -1082,6 +1130,9 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
     ctx.prediction.player_position      = feet;
     ctx.prediction.player_velocity      = {};
     ctx.prediction.visual_error_offset  = {};
+    ctx.prediction.ridden_canopy        = {};
+    ctx.prediction.drawn_carry_shift    = {};
+    ctx.prediction.drawn_carry_uid      = shared::null_entity_uid;
     const std::string setpos_line = std::format("setpos {} {} {}", feet.x, feet.y, feet.z);
     console::get().execute_command(setpos_line.c_str());
     pending_spawn_view.reset();
@@ -1100,6 +1151,9 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
     ctx.prediction.player_position      = feet;
     ctx.prediction.player_velocity      = {};
     ctx.prediction.visual_error_offset  = {};
+    ctx.prediction.ridden_canopy        = {};
+    ctx.prediction.drawn_carry_shift    = {};
+    ctx.prediction.drawn_carry_uid      = shared::null_entity_uid;
     const std::string setpos_line = std::format("setpos {} {} {}", feet.x, feet.y, feet.z);
     console::get().execute_command(setpos_line.c_str());
   }
@@ -1546,6 +1600,8 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
     const shared::movement_settings_t move_settings = shared::movement_settings_from(*ctx.cvars);
 
+    int last_replayed_input = ctx.prediction.latest_input_number_processed_by_server;
+
     for (int replayed = ctx.prediction.latest_input_number_processed_by_server + 1;
          replayed < ctx.prediction.input_number; ++replayed)
     {
@@ -1553,6 +1609,7 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
       const auto &pending_input = ctx.prediction.pending_inputs[idx];
       if (pending_input.input_number != replayed)
         break;
+      last_replayed_input = replayed;
 
       // reconstruct the sub-tick input from the stored per-tick input.
       const shared::subtick_steps_t subtick_steps =
@@ -1616,9 +1673,20 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
     // disagreeing with the server's for as long as the player stayed airborne.
     ctx.prediction.player_movement = reconciled_movement;
 
-    vec3f error = {reconciled_position.x - ctx.prediction.player_position.x,
-                   reconciled_position.y - ctx.prediction.player_position.y,
-                   reconciled_position.z - ctx.prediction.player_position.z};
+    // On the same canopy before and after, the error is measured on the canopy: the guess of where it is moves both.
+    const std::optional<prediction_t::ridden_canopy_t> predicted_canopy = ctx.prediction.ridden_canopy;
+    const std::optional<prediction_t::ridden_canopy_t> reconciled_canopy =
+        try_find_ridden_canopy(ctx, reconciled_movement, last_replayed_input);
+    ctx.prediction.ridden_canopy = reconciled_canopy;
+
+    const bool on_the_same_canopy =
+        predicted_canopy && reconciled_canopy && predicted_canopy->uid == reconciled_canopy->uid;
+    const vec3f predicted_frame  = on_the_same_canopy ? predicted_canopy->guessed_position : vec3f{0, 0, 0};
+    const vec3f reconciled_frame = on_the_same_canopy ? reconciled_canopy->guessed_position : vec3f{0, 0, 0};
+    const vec3f predicted_place  = ctx.prediction.player_position - predicted_frame;
+    const vec3f reconciled_place = reconciled_position - reconciled_frame;
+
+    vec3f error = reconciled_place - predicted_place;
     float error_magnitude = linalg::length(error);
 
     ctx.prediction.reconciliation_error = error;
@@ -1637,13 +1705,15 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
     }
     else if (error_magnitude > QUANTIZATION_DEADZONE)
     {
-      ctx.prediction.visual_error_offset.x += ctx.prediction.player_position.x - reconciled_position.x;
-      ctx.prediction.visual_error_offset.y += ctx.prediction.player_position.y - reconciled_position.y;
-      ctx.prediction.visual_error_offset.z += ctx.prediction.player_position.z - reconciled_position.z;
+      ctx.prediction.visual_error_offset = ctx.prediction.visual_error_offset - error;
       ctx.prediction.player_position = reconciled_position;
       ctx.prediction.player_velocity = reconciled_velocity;
     }
-    // else: error is below quantization noise, that's fine.
+    else
+    {
+      // Below quantization noise: the place is kept, on the canopy where the replay now guesses it.
+      ctx.prediction.player_position = reconciled_frame + predicted_place;
+    }
   }
 }
 
@@ -2437,6 +2507,9 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             tick_events.pad_kind        = step_events.pad_kind;
           }
         }
+
+        ctx.prediction.ridden_canopy =
+            try_find_ridden_canopy(ctx, ctx.prediction.player_movement, ctx.prediction.input_number);
       }
 
       // Coalesce across the (possibly multiple) ticks stepped this frame:
@@ -2594,6 +2667,8 @@ void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame
     remote_player.body_yaw        = interpolated.pose.body_yaw;
   }
 
+  // After the pass above: the drawn canopy is its carrier's render_position.
+  update_drawn_carry_shift(ctx);
 }
 
 // The ONE place `camera` is written, and the order of the arms IS the priority
@@ -2775,6 +2850,9 @@ void Play_State::draw_imgui_panels()
                          vis_offset_mag, ctx.prediction.visual_error_offset.x, ctx.prediction.visual_error_offset.y, ctx.prediction.visual_error_offset.z);
     else
       ImGui::Text("vis offset: %7.3f", vis_offset_mag);
+
+    ImGui::Text("carry shift: %7.3f (canopy %u)", linalg::length(ctx.prediction.drawn_carry_shift),
+                ctx.prediction.drawn_carry_uid);
 
     ImGui::Separator();
     ImGui::Checkbox("Show Collision Planes", &ctx.cvars->debug_show_collisions);
