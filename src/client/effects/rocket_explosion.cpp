@@ -80,8 +80,7 @@ void on_rocket_explosion(client_context_t &context,
   fx.explosion_index = context.visuals.next_explosion_index++;
   context.visuals.explosion_effects.push_back(fx);
 
-  if (context.audio)
-    context.audio->play_3d(assets::sound_asset::rocket_explosion, data.origin);
+  context.audio.play_3d(assets::sound_asset::rocket_explosion, data.origin);
 }
 
 } // namespace client::effects

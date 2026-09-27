@@ -7801,6 +7801,21 @@ bool init(SDL_Window *window)
   std::print("[renderer] Requesting {} layers\n", instance_info.enabledLayerCount);
 
   VkResult instance_result = vkCreateInstance(&instance_info, nullptr, &g_instance);
+#ifndef NDEBUG
+  if (instance_result == VK_ERROR_LAYER_NOT_PRESENT && validation_available)
+  {
+    log_warning("[renderer] VK_LAYER_KHRONOS_validation is listed but its library could not be "
+                "loaded; retrying without validation");
+    validation_available = false;
+    instance_info.enabledLayerCount = 0;
+    instance_info.ppEnabledLayerNames = nullptr;
+    std::erase_if(extensions, [](const char *name)
+                  { return strcmp(name, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0; });
+    instance_info.enabledExtensionCount = (uint32_t)extensions.size();
+    instance_info.ppEnabledExtensionNames = extensions.data();
+    instance_result = vkCreateInstance(&instance_info, nullptr, &g_instance);
+  }
+#endif
   if (instance_result != VK_SUCCESS)
   {
     log_error("Failed to create Vulkan instance! VkResult = {}", (int)instance_result);

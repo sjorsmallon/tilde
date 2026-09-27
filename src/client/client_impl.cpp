@@ -32,7 +32,6 @@ static SDL_Window* g_window = nullptr;
 static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
 
-static std::unique_ptr<Audio_System> g_audio;
 static std::unique_ptr<ui::ui_font_t> g_ui_font;
 
 void set_asset_state(assets::asset_state_t *asset_state)
@@ -145,12 +144,9 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   state_manager::init();
   state_manager::switch_to(game_state::main_menu);
 
-  // Bring up audio and lend the shared context a borrowed pointer. A failed
-  // audio init is non-fatal — the engine becomes inert and play_* no-op — so
-  // a machine with no sound device still runs.
-  g_audio = std::make_unique<Audio_System>();
-  g_audio->init();
-  state_manager::get_client_context().audio = g_audio.get();
+  // A failed audio init is non-fatal: the system stays inert and every play_*
+  // is a no-op, so a machine with no sound device still runs.
+  state_manager::get_client_context().audio.init();
 
   return true;
 }
@@ -315,12 +311,7 @@ void shutdown()
 
   renderer::shutdown();
 
-  if (g_audio)
-  {
-    state_manager::get_client_context().audio = nullptr;
-    g_audio->shutdown();
-    g_audio.reset();
-  }
+  state_manager::get_client_context().audio.shutdown();
 
   if (g_window)
   {

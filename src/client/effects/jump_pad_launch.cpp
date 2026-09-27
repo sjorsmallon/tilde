@@ -14,8 +14,7 @@ void on_jump_pad_launch(client_context_t& context, const shared::Jump_Pad_Launch
   // no step to derive it from, so they play the server's.
   if (data.attached_entity == context.connection.my_entity_uid)
     return;
-  if (context.audio)
-    context.audio->play_3d(assets::sound_asset::twang, data.origin);
+  context.audio.play_3d(assets::sound_asset::twang, data.origin);
 }
 
 } // namespace client::effects

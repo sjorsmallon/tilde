@@ -85,10 +85,10 @@ struct client_slot_t
   // nothing that retransmits.
   bool map_ready = false;
 
-  // The ghost this client was last TOLD of, compared with world.announced_ghost once a tick: one test
-  // covers "the ghost changed" and "this client just became map_ready". 0 is "told there is none",
-  // which is also what a client that was told nothing holds.
-  uint32_t announced_ghost_hash = 0;
+  // Compared with world.announced_ghost once a tick: one test covers "the ghost changed" and "this
+  // client just became map_ready". 0 is "told there is none", which is also what a client that was
+  // told nothing holds.
+  uint32_t ghost_hash_told_to_this_client = 0;
 
   // A C2S_RequestGhost not yet answered. Held rather than refused while the slot's bulk transfer is
   // busy: a cold client reports the map a receipt interval before the server sees its last fragment

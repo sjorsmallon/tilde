@@ -19,8 +19,7 @@ namespace
 // otherwise play on into the next map with nothing left holding its handle.
 void silence(client_context_t& context)
 {
-  if (context.audio != nullptr)
-    context.audio->stop_all();
+  context.audio.stop_all();
 }
 
 } // namespace

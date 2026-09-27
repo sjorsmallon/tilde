@@ -278,7 +278,7 @@ static void service_ghost_transfers(server_context_t &context)
   // Not before map_ready: a client mid-load clears its ghost when the load finishes.
   for (connected_client_t row : connected_clients(context))
   {
-    if (!row.client.map_ready || row.client.announced_ghost_hash == announced.hash)
+    if (!row.client.map_ready || row.client.ghost_hash_told_to_this_client == announced.hash)
       continue;
 
     auto message = shared::ghost_available_message_t{};
@@ -291,7 +291,7 @@ static void service_ghost_transfers(server_context_t &context)
     network::queue_reliable_message(row.transport.reliable_stream,
                                     static_cast<network::uint8>(network::Message_Type::S2C_GhostAvailable),
                                     writer.buffer);
-    row.client.announced_ghost_hash = announced.hash;
+    row.client.ghost_hash_told_to_this_client = announced.hash;
   }
 }
 

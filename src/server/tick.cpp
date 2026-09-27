@@ -72,16 +72,16 @@ bool Tick()
     update_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
   }
 
-  // 2. Freeze what the inputs read. Cut once, never written again this tick,
+  // 2. Freeze what the inputs read. Built once, never written again this tick,
   //    which is what makes the order players are processed in unable to matter.
   //    The client builds the same value through the same shared functions --
   //    that is what "predicted" means (shared/predicted_world.hpp). The systems
-  //    take the STORAGE and cut each player's view by team, since a team wall is
+  //    take the STORAGE and pick each player's view by team, since a team wall is
   //    not there for one team and solid for the rest.
   auto predicted_world_storage = shared::predicted_world_storage_t{};
   {
     FRAME_ZONE("server tick: freeze the predicted world");
-    shared::cut_predicted_world(context.world.session,
+    shared::build_predicted_world(context.world.session,
                                 {.tick        = context.tick_number,
                                  .state_tick  = context.tick_number - 1,
                                  .tickrate_hz = context.cvars->sv_tickrate,
@@ -94,7 +94,7 @@ bool Tick()
     FRAME_ZONE("server tick: carry riders, advance movers");
     push_players_by_movers(context, world);
 
-    // After the cut: collect_movers read T-1 and T from the follow as it stood, so a
+    // After the build: collect_movers read T-1 and T from the follow as it stood, so a
     // segment boundary costs a rider no travel (mover_def.md ss13).
     update_movers(context);
   }

@@ -6718,7 +6718,7 @@ static void emit_cvar_text_conversion(FILE* out)
   fprintf(out, "  T           value  = {};\n");
   fprintf(out, "  const char* begin  = text.data();\n");
   fprintf(out, "  const char* end    = text.data() + text.size();\n");
-  fprintf(out, "  auto        result = std::from_chars(begin, end, value);\n");
+  fprintf(out, "  auto        result = try_parse_number(begin, end, value);\n");
   fprintf(out, "  if (result.ec != std::errc{} || result.ptr != end)\n");
   fprintf(out, "    return std::nullopt;\n");
   fprintf(out, "  return value;\n");
@@ -6800,9 +6800,9 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
 {
   write_generated_banner(out, program);
   fprintf(out, "#include \"%s\"\n\n", header_name);
-  fprintf(out, "#include \"log.hpp\"\n\n");
+  fprintf(out, "#include \"log.hpp\"\n");
+  fprintf(out, "#include \"parse_number.hpp\"\n\n");
   fprintf(out, "#include <cassert>\n");
-  fprintf(out, "#include <charconv>\n");
   fprintf(out, "#include <cstddef>\n");
   fprintf(out, "#include <cstring>\n");
   fprintf(out, "#include <format>\n");
@@ -7208,7 +7208,7 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
   fprintf(out, "#include \"%s\"\n\n", header_name);
 
   if (any_numeric)
-    fprintf(out, "#include <charconv>\n");
+    fprintf(out, "#include \"parse_number.hpp\"\n");
   if (any_bound)
     fprintf(out, "#include <format>\n#include <string>\n");
   if (any_parsed)
@@ -7253,7 +7253,7 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
       fprintf(out, "  T           value  = {};\n");
       fprintf(out, "  const char* begin  = text.data();\n");
       fprintf(out, "  const char* end    = text.data() + text.size();\n");
-      fprintf(out, "  auto        result = std::from_chars(begin, end, value);\n");
+      fprintf(out, "  auto        result = try_parse_number(begin, end, value);\n");
       fprintf(out, "  if (result.ec != std::errc{} || result.ptr != end)\n");
       fprintf(out, "    return std::nullopt;\n");
       fprintf(out, "  return value;\n");

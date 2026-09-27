@@ -1,6 +1,7 @@
 #include "run_times.hpp"
 
 #include "log.hpp"
+#include "parse_number.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -33,8 +34,7 @@ std::optional<uint32_t> try_parse_u32_token(std::string_view& line)
 {
   const size_t end = std::min(line.find(' '), line.size());
   uint32_t     value = 0;
-  const std::from_chars_result result =
-      std::from_chars(line.data(), line.data() + end, value);
+  const std::from_chars_result result = try_parse_number(line.data(), line.data() + end, value);
   if (result.ec != std::errc{} || result.ptr != line.data() + end || end == 0)
     return std::nullopt;
   line.remove_prefix(std::min(end + 1, line.size()));

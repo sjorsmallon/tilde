@@ -164,7 +164,7 @@ struct local_world_t
   // The ghost the server last announced, out of our cache or off the wire; empty when there is none or it
   // is still on its way. The hash is what an arriving S2C_GhostData is checked against.
   std::optional<shared::ghost_t> ghost;
-  uint32_t                       announced_ghost_hash = 0;
+  uint32_t                       ghost_hash_the_server_announced = 0;
 
   // Session and physics are built; the world can be simulated and drawn. Was
   // Play_State::session_ready_for_simulation_and_rendering -- a fact ABOUT this
@@ -491,10 +491,11 @@ struct client_context_t
 {
   cvars::cvar_state_t*    cvars    = nullptr;
   cvars::command_table_t* commands = nullptr;
-  Audio_System* audio = nullptr;
-  // The HUD font. Borrowed, like `audio` above: client_impl.cpp owns it and
-  // neither reset touches it, because a font means the same thing in every map
-  // and on every connection.
+  // Inert until client_impl.cpp calls init(), and inert again after shutdown():
+  // every play_* on a system with no device is a no-op, so nobody checks.
+  Audio_System audio;
+  // The HUD font. Borrowed: client_impl.cpp owns it and neither reset touches
+  // it, because a font means the same thing in every map and on every connection.
   const ui::ui_font_t* font = nullptr;
 
   const shared::game_session_t* server_session = nullptr;

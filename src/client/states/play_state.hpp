@@ -47,7 +47,7 @@ public:
 private:
 
   bool load_client_map(const std::string &map_path);
-  bool apply_map_package(const shared::map_package_t &package);
+  bool switch_to_map_provided_by_map_package(const shared::map_package_t &package);
   void switch_to_map(const shared::map_t &map);
   void set_provisional_player_pose_for_new_map(client_context_t &ctx);
 

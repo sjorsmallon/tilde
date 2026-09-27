@@ -49,7 +49,7 @@ void reset_state_in_preparation_for_new_map_load(server_context_t& context)
     // than a flag someone has to remember to clear later.
     client.map_ready          = false;
     // The client drops its ghost when it loads the map, so what it was told is no longer what it holds.
-    client.announced_ghost_hash = 0;
+    client.ghost_hash_told_to_this_client = 0;
     client.requested_ghost_hash = 0;
   }
 }

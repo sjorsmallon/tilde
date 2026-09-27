@@ -2,9 +2,9 @@
 
 #include "assets/generated/assets_generated.hpp"
 #include "log.hpp"
+#include "parse_number.hpp"
 
 #include <cassert>
-#include <charconv>
 #include <cstring>
 #include <format>
 
@@ -45,7 +45,7 @@ bool parse_integer(const std::string& text, bool is_signed, int64_t* out_value)
   if (is_signed)
   {
     int64_t value  = 0;
-    auto    result = std::from_chars(begin, end, value);
+    auto    result = try_parse_number(begin, end, value);
     if (result.ec != std::errc{})
       return false;
     *out_value = value;
@@ -53,7 +53,7 @@ bool parse_integer(const std::string& text, bool is_signed, int64_t* out_value)
   }
 
   uint64_t value  = 0;
-  auto     result = std::from_chars(begin, end, value);
+  auto     result = try_parse_number(begin, end, value);
   if (result.ec != std::errc{})
     return false;
   *out_value = (int64_t)value;
@@ -131,7 +131,7 @@ bool parse_float_components(const std::string& text, int32_t count, float* out_v
       ++cursor;
 
     float value  = 0.0f;
-    auto  result = std::from_chars(cursor, end, value);
+    auto  result = try_parse_number(cursor, end, value);
     if (result.ec != std::errc{})
       return false;
 
@@ -153,7 +153,7 @@ bool parse_integer_components(const std::string& text, int32_t count, int32_t* o
       ++cursor;
 
     int32_t value  = 0;
-    auto    result = std::from_chars(cursor, end, value);
+    auto    result = try_parse_number(cursor, end, value);
     if (result.ec != std::errc{})
       return false;
 
@@ -316,7 +316,7 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
         ++cursor;
 
       double value  = 0.0;
-      auto   result = std::from_chars(cursor, end, value);
+      auto   result = try_parse_number(cursor, end, value);
       if (result.ec != std::errc{})
         return false;
       std::memcpy(field_bytes, &value, sizeof(value));
