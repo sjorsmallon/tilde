@@ -65,3 +65,7 @@ cmake --build cmake_build
     export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib
     ```
     The code falls back gracefully if the layer isn't available, but you won't get validation messages.
+
+
+# attaching materials to objects in blender.
+if you don't care about modeling the gltf, you can export the gltf and use a material ingame to view it with. this requires you to create a material to the object, name it after a texture (e.g. scuffed_plastic) and in the export, in materials -> images -> don't export. that's it.

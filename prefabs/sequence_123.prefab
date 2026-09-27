@@ -1,0 +1,246 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "sequence_123.prefab"
+}
+connections
+{
+  connection
+  {
+    "sender" "158"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "164"
+    "action" "Enable"
+  }
+  connection
+  {
+    "sender" "164"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "166"
+    "action" "Enable"
+  }
+  connection
+  {
+    "sender" "158"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "168"
+    "action" "Add"
+    "fire_once" "1"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "164"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "168"
+    "action" "Add"
+    "fire_once" "1"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "166"
+    "signal" "Touched"
+    "target_kind" "Uid"
+    "target" "168"
+    "action" "Add"
+    "fire_once" "1"
+    override
+    {
+      "amount" "1"
+    }
+  }
+  connection
+  {
+    "sender" "168"
+    "signal" "Limit_Reached"
+    "target_kind" "Unbound"
+    "target" "172"
+    "action" "Disable"
+  }
+}
+groups
+{
+  group
+  {
+    "_uid" "174"
+    "name" "sequence_123"
+    member
+    {
+      "uid" "157"
+    }
+    member
+    {
+      "uid" "160"
+    }
+    member
+    {
+      "uid" "162"
+    }
+    member
+    {
+      "uid" "158"
+    }
+    member
+    {
+      "uid" "159"
+    }
+    member
+    {
+      "uid" "161"
+    }
+    member
+    {
+      "uid" "163"
+    }
+    member
+    {
+      "uid" "164"
+    }
+    member
+    {
+      "uid" "166"
+    }
+    member
+    {
+      "uid" "168"
+    }
+  }
+}
+static_mesh
+{
+  "_uid" "157"
+  "position" "750.437744 98.913208 109.282715"
+  "rotation" "0 0 0 1"
+  "scale" "1.000000 1.000000 1.000000"
+  "mesh_path" "resources/glb/sequence_1.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
+static_mesh
+{
+  "_uid" "160"
+  "position" "61.577393 39.369995 113.904297"
+  "rotation" "0 0 0 1"
+  "scale" "1.000000 1.000000 1.000000"
+  "mesh_path" "resources/glb/sequence_2.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
+static_mesh
+{
+  "_uid" "162"
+  "position" "-635.283447 80.573730 85.025391"
+  "rotation" "0 0.382683456 0 0.923879504"
+  "scale" "1.000000 1.000000 1.000000"
+  "mesh_path" "resources/glb/sequence_3.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "158"
+  "position" "751.35767 96.803955 109.045166"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "132.37514 10.106275 135.79643"
+}
+entity
+{
+  "classname" "point_light_entity"
+  "_uid" "159"
+  "position" "762.24365 174.5033 118.6875"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "56"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "256"
+}
+entity
+{
+  "classname" "point_light_entity"
+  "_uid" "161"
+  "position" "35.287354 237.05157 90.99756"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "56"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "335.6"
+}
+entity
+{
+  "classname" "point_light_entity"
+  "_uid" "163"
+  "position" "-659.09204 297.32507 57.586914"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "145.7"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "404.9"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "164"
+  "position" "60.079346 42.64795 111.20874"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "false"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "187.44595 42.1468 70.732216"
+}
+entity
+{
+  "classname" "trigger_volume_entity"
+  "_uid" "166"
+  "position" "-632.86304 75.30347 111.42456"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "false"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "255.36948 31.63446 131.88899"
+}
+entity
+{
+  "classname" "logic_counter_entity"
+  "_uid" "168"
+  "position" "-67.562256 377.01044 214.13599"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "counter.value" "0"
+  "counter.limit" "3"
+}
