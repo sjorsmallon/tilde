@@ -1,5 +1,23 @@
 # TODO
 
+- latency injection for testing (loopback?)
+
+**Surfing is not quite CS yet: aiming back UP the ramp feels wrong.** The
+flying branch of `slide` clips the whole velocity against a wall as one vector
+with no rescale (2026-09-20, `test_surf_ramp_projects_the_fall`), which gives
+the g*sin(theta) slide down and the sideways lift. What it does not reproduce,
+by feel, is turning the aim back up the ramp: in CS that climbs, here it does
+not feel like it does. Not measured. Candidates, in the order to test: the
+`cs` air push (30 u/s cap along the push's OWN direction) is being cut by
+`clip_horizontal_speed` before the wall sees it, so an uphill push loses its
+y before the clip could turn it into climb; the per-slot aim sweep pushes
+along a HORIZONTAL wish, where Source pushes along the wish and then clips,
+which on a ramp is the same only for a push parallel to the face; and the
+ramp-plane clip happens once per step while Source's TryPlayerMove re-clips up
+to four times. Raised 2026-09-20 off the first surf.
+
+
+
 **Keyboard-driven navigation into the editor and its panels.** Reaching the
 Lightmap tool's buttons takes a mouse click on a main-menu row and clicks on
 ImGui buttons whose positions are only known from a screenshot, so nothing can
@@ -1361,6 +1379,14 @@ did not fix.
       handle and drew nothing. Assign a mesh in `entities.def` (server log:
       `Rocket spawned ... mesh='Missing'`).
 - [ ] Arrow / spear projectile.
+- [ ] MAYBE: a `base_velocity: v3` field on `Movement_Modifier_Entity` (2026-09-21),
+      for conveyors and updrafts. It is ADDED after the scales in
+      `modified_movement_settings`' caller rather than being a scale, so it is
+      the first thing in a zone that is not a `movement_settings_t` member:
+      either a `base_velocity` on the settings that `slide` adds to the travel,
+      or a second return value. Conveyor wants it grounded-only, an updraft
+      wants it always, which may be two fields or a flag. Look at the zones in
+      a map first.
 - [x] ~~`entities::Weapon_Kind::Hitscan` has no weapon using it~~ — done
       2026-08-29, and the answer was "drop it, and `Melee` and `Sniper` with it".
       The enum was the fire-RESOLUTION axis conflated with weapon flavour: four
@@ -1578,13 +1604,13 @@ did not fix.
       client there and delete the `my_entity_uid` check. Until then a
       misprediction has no correction path: the sound already played for
       something that didn't happen server-side.
-- [ ] Client-side dynamic-entity prediction. The networked client's Jolt world
-      holds only static geometry; remote players are snapshot-interpolated and
-      rockets / cubes snap, but none of them are simulated. Cosmetic effects
-      sidestep this by casting against static geometry only (`cast_sphere` with
-      `query_layers_t::Static_Only`). Projectile prediction would need dynamic
-      bodies in the client's Jolt world; until then, server-side casts whose
-      results ride in the effect payload are the right shape.
+- [ ] Client-side dynamic-entity prediction. Remote players are
+      snapshot-interpolated and rockets / bounce bodies snap; none of them are
+      simulated on the client. Cosmetic effects sidestep this by probing the
+      client's own BVH. A projectile is a pure function of its launch and the
+      one collision world both sides hold, so predicting one is now possible;
+      until then, server-side answers riding in the effect payload are the
+      right shape.
 - [ ] **Cosmetic effects as a third `.def` family — long-term, do NOT start
       until the trigger fires.** *(Decided in principle 2026-07-31.)* The model:
       an effect is a **`@Client` command fired by the server** — typed
@@ -1634,11 +1660,19 @@ did not fix.
       geometry (can't read the new blocks). The package hash catches the
       mismatch; verify the failure is loud rather than an empty world.
 
-# Physics / Jolt
+# Bounce bodies (collision_world_plan.md)
 
-- [ ] Capsule shape: `physics_body_system` rejects `Shape_Kind::Capsule` —
-      `register_dynamic_capsule` doesn't exist yet (Jolt has
-      `JPH::CapsuleShape`).
+- [ ] **The LOOK.** A thrown weapon and a `spawn_cube` have not been seen in
+      game since the bounce body replaced Jolt (2026-09-23). The untuned
+      constants: `BOUNCE_REST_SPEED` 20, `BOUNCE_REST_NORMAL_Y` 0.7, the
+      throw spin 360 deg/s, `Bounce::friction` 4 per second,
+      `Bounce::restitution` 0.3 (0.2 for a weapon).
+- [ ] Bodies pass through each other; nothing stacks. The day a level needs a
+      stack, that is the box3d door -- a simulation over ITS copy of the world
+      with everything still querying ours.
+- [ ] A resting body does not ride a mover (`bounce_body_test` asserts it).
+      The mover's carry is `push_player_by_movers`' and could be applied to a
+      resting body by the same displacement.
 
 # Audio
 
@@ -1660,6 +1694,59 @@ did not fix.
       site, and only the call site knows that MY gunshot matters and the same
       id fired across the map does not. Low priority; noted 2026-08-27.
 
+- [ ] **Sound events: one generic NAME-to-definition layer, Source 2's shape.**
+      Noted 2026-09-19 out of the bubble-pop discussion; the user thinks this
+      is the correct long-term system. Nothing built.
+
+      The shape, in three parts:
+
+      1. **The name.** A closed `sound_event` enum (`Bubble_Pop`, `Player_Jump`,
+         `Pad_Launch`, ...). It names WHAT happened, never a file. It is NOT
+         `sound_asset`: a `sound_asset` id is one wav, one to one, so sending
+         one from the server is `Play_Sound{wav}` with an extra step, which
+         `impact_sound_plan.md` §1 already rejected.
+      2. **The definition, client-side only.** One table keyed by `sound_event`:
+         `{ samples: Span<sound_asset>, volume, pitch range, falloff range,
+         spatial, priority }`. Random variant pick, pitch jitter and the
+         must-play / may-play class from the item above all live HERE, which is
+         the home that item's open question was looking for. Starts as a
+         constexpr `Enum_Array` with `rows_in_enum_order`; becomes a
+         hot-reloaded data file once a sound designer exists.
+      3. **The message.** ONE effect member, `Sound_Event { event, origin,
+         source_entity }`, and ONE handler. The handler does the "I predicted
+         this, skip the server's copy" comparison (`source_entity == me`) once,
+         for every sound, where today each handler repeats it
+         (`jump_pad_launch.cpp`). The predicted side plays through the same
+         table, so both paths agree on what `Bubble_Pop` sounds like.
+
+      Decisions to open with, not settle by default:
+
+      - **Where the enum lives.** The message is in `effects.def`, the emitter
+        entity wants to name one too (`Sound_Emitter_Entity::sound` is a
+        `sound_asset` today and would become a `sound_event`), and the `.def`
+        families are fenced: an event field can only name an enum of its own
+        `.def`. Either the enum becomes a shared declaration `def_gen` copies
+        into each program (the asset manifest's route), or it is a `u16` on the
+        wire resolved by `try_get`.
+      - **Delivery.** The effect channel is unreliable, which is right for an
+        impact and wrong for anything that MUST be heard. A sound that must
+        arrive is still a STATE EDGE on the snapshot (`popped_tick`,
+        `play_count`, `last_fire_tick`), and the edge watcher plays through the
+        same table. The generic message does not replace the edges.
+      - **What stays a named effect.** Anything with more than one consumer:
+        `Shot_Impact` drives the sound, the decal and the particles from one
+        fire. A sound-only event has one consumer, so the server would fire the
+        sound and the particles as two messages in lockstep (Valve does exactly
+        that). Convert only the members whose ONLY consumer is a sound:
+        `Jump`, `Land`, `Footstep`, `Jump_Pad_Launch` today.
+      - **The existing tables fold in.** `ENTITY_TYPE_SOUNDS`, `WEAPON_SOUNDS`
+        and `HEADSHOT_SOUNDS` become lookups that answer a `sound_event`, not a
+        `sound_asset`, so variants and volume stop being per-call-site.
+
+      Trigger: build it when the next sound would cost a new effect member
+      whose only consumer is a sound. Four such members exist already, so the
+      next one is the trigger.
+
 # Correctness / consistency
 
 - [x] **Displacements have no real collision** — DONE 2026-08-30 by deleting
@@ -1667,15 +1754,6 @@ did not fix.
       (geometry_def.md Track D), and a subdivided face collides as the surface
       it draws as: `try_build_subdivided_face_columns` emits one convex piece
       per grid triangle, all sharing the object's `Collision_Id`.
-- [ ] **Static meshes are skipped in Jolt** (confirmed 2026-08-03 —
-      `populate_static_physics_bodies` registers only brushes, as convex hulls
-      of their BASE point set). So the BVH holds both geometry kinds and Jolt
-      holds one, and Jolt's copy of a brush is its base hull rather than its
-      displaced surface. Anything querying Jolt for level geometry — rockets
-      today — passes through static meshes, and lands on the undisplaced hull of
-      a sculpted brush. Hitscan deliberately clamps against the BVH for exactly
-      this reason. Only becomes load-bearing when a `Physics_Body_Entity` has to
-      rest on terrain; no map contains one yet.
 - [ ] **Navmesh polygon LOOKUP is planar; the mesh and A* are not.** The mesh
       is 3D — `nav_vertex_t::pos` is a `vec3f`, and both the A* heuristic and
       its edge costs use full 3D `euclidean_distance_between` over polygon
