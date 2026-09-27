@@ -20,6 +20,8 @@
 #include "entities/ricochet_entity_generated.hpp"
 #include "entities/platform_entity_generated.hpp"
 #include "entities/shrinking_platform_entity_generated.hpp"
+#include "entities/extending_platform_entity_generated.hpp"
+#include "entities/guided_rocket_entity_generated.hpp"
 #include "entities/canopy_entity_generated.hpp"
 #include "entities/bubble_entity_generated.hpp"
 #include "entities/physics_body_entity_generated.hpp"

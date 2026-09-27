@@ -37,6 +37,8 @@ static target_shape_t target_shape_of(entities::entity_type type,
   case entities::entity_type::Bubble_Entity:
   case entities::entity_type::Platform_Entity:
   case entities::entity_type::Shrinking_Platform_Entity:
+  case entities::entity_type::Extending_Platform_Entity:
+  case entities::entity_type::Guided_Rocket_Entity:
   case entities::entity_type::Canopy_Entity:
   case entities::entity_type::Physics_Body_Entity:
   case entities::entity_type::Particle_Emitter_Entity:

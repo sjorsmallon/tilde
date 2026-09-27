@@ -22,6 +22,7 @@
 #include "systems/platform_system.hpp"
 #include "systems/contact_system.hpp"
 #include "systems/game_rules_system.hpp"
+#include "systems/guided_rocket_system.hpp"
 #include "systems/hit_test_world.hpp"
 #include "systems/hook_system.hpp"
 #include "systems/kooh_system.hpp"
@@ -151,6 +152,8 @@ bool Tick()
     update_platforms(context, world);
     // After the inputs, so the pose it writes is where the carrier ended this tick (canopy.hpp).
     update_canopies(context);
+    // After the inputs, so the rocket is where its pilot's last step flew it.
+    update_guided_rockets(context, tick_dt);
     update_ping_markers(context, tick_dt);
     update_launchers(context);
 

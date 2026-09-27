@@ -89,6 +89,7 @@ file only states them.
 | Sub-tick input, raw input thread | `subtick_plan.md`, `raw_input_plan.md` |
 | Hitscan, lag compensation | `hitscan_plan.md`, `lag_compensation_def.md` |
 | Weapons, inventory, contact effects | `weapon_inventory_plan.md`, `contact_effect_plan.md` |
+| Guided rocket, the path it leaves | `guided_rocket_plan.md` |
 | Game modes, the match | `game_modes_def.md`, `match_def.md`, `timer_def.md` |
 | Reliable stream, transfers | `reliable_stream_def.md` |
 | Replays and ghosts | `replay_def.md`, `coop_ghost_plan.md` |
@@ -214,6 +215,10 @@ prediction writes `ctx.prediction`.
   unchanged; removal is a per-record bit. Both ends keep a
   `Snapshot_History` ring. A frame IS an `Entity_System`; which types ride is
   derived from `@Networked`.
+- A float on the wire is rounded to 1/32 (`write_coord`). What a predicted
+  step adopts with no tolerance is declared `f32_exact` / `v3_exact` and rides
+  raw: every float in `Movement`, a spawned zone's numbers. A rounded clock is
+  two ticks wide, and the replay ends it a tick off the server.
 - The reliable stream is one block outstanding per direction, bytes framed as
   `[type u8][length u32][payload]`, acked on every datagram through each
   side's ONE send choke point (`send_packet_to_server`,
@@ -252,10 +257,14 @@ prediction writes `ctx.prediction`.
 
 - The inventory is keyed by SLOT; the `Weapon_Entity` says which weapon it is.
   Both mouse buttons are a `weapon_fire_t` and `Fire_Resolution` is the axis
-  (`None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy`). A row is
-  union-shaped over that discriminant. A `Self_Impulse` row carries no clocks
-  (static_asserted): its gate is `Movement::seconds_until_impulse_ready`,
-  applied at the server, the live prediction AND the replay.
+  (`None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot`). A
+  row is union-shaped over that discriminant. A `Self_Impulse` or `Pilot` row
+  carries no clocks (static_asserted): its gate is
+  `Movement::seconds_until_impulse_ready`, applied at the server, the live
+  prediction AND the replay.
+- A `Pilot` flight is a `Movement_Override`, flown inside `player_move`: the
+  rocket is `Movement::override_target_position`, and `Guided_Rocket_Entity`
+  is a follower that flies nothing. The client's camera rides the prediction.
 - What a shot does on ARRIVAL is the button's `contact_t` (`shared/contact.hpp`);
   hitscan and every sweeping projectile push one `pending_contact_t` and
   `update_contacts` is the one place that acts. The target's kind is asked of

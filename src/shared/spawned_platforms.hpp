@@ -2,7 +2,9 @@
 
 // The platform gun's half of the mover cut: a landed platform is one box piece at a pose that does not move.
 // Two types land this way -- Platform_Entity and Shrinking_Platform_Entity -- and both are read through one
-// view, so the cut and the draw share one clock and one box.
+// view, so the cut and the draw share one clock and one box. The third, Extending_Platform_Entity, never
+// flies: it is set down at the eye facing the aim and grows along its forward, so it has its own clock and
+// an oriented box, read below through the same rule that the cut and the draw share one of each.
 
 #include "aabb.hpp"
 #include "entities/generated/entities_generated.hpp"
@@ -58,7 +60,43 @@ constexpr float PLATFORM_DISSOLVE_OVER_LAST_FRACTION = 0.2f;
 [[nodiscard]] aabb_t platform_box_at_tick(const platform_view_t& platform, uint32_t tick,
                                           const fixed_arc_flight_settings_t& settings);
 
-// APPENDS, after collect_movers has sized the list for the map's own movers.
+// The extending platform: one tick's growth long on the tick the sweep answered (spawned_tick), growing
+// along its forward at extend_speed until it is `length` long, solid the whole way, gone solid_seconds
+// after it is grown. Every clock is a function of the tick and replicated state alone. It grows THROUGH a
+// hull in its path: its cut never crushes.
+struct extending_platform_box_t
+{
+  linalg::vec3f center;
+  linalg::vec3f half_extents;
+  linalg::quatf orientation;
+};
+
+// Whole ticks from spawned_tick until it is grown, at least one.
+[[nodiscard]] uint32_t extending_platform_extend_ticks(const entities::Extending_Platform_Entity& platform,
+                                                       float tick_interval_seconds);
+
+[[nodiscard]] bool extending_platform_is_solid_at_tick(const entities::Extending_Platform_Entity& platform,
+                                                       uint32_t tick, float tick_interval_seconds);
+
+[[nodiscard]] bool extending_platform_has_vanished_at_tick(
+    const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_interval_seconds);
+
+// How far along its forward it reaches at `tick`; `tick_fraction` is how far into the tick the draw is.
+[[nodiscard]] float extending_platform_length_at(const entities::Extending_Platform_Entity& platform,
+                                                 uint32_t tick, float tick_fraction,
+                                                 float tick_interval_seconds);
+
+// 0 until it is grown, 1 as it vanishes: the dissolve's clock.
+[[nodiscard]] float extending_platform_solid_fraction_elapsed(
+    const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_fraction,
+    float tick_interval_seconds);
+
+// The box it is at `tick`, from its set-down point along its forward; the cut reads it at fraction 0.
+[[nodiscard]] extending_platform_box_t extending_platform_box_at(
+    const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_fraction,
+    float tick_interval_seconds);
+
+// APPENDS, after collect_movers has sized the list for the map's own movers. All three platform types.
 void collect_spawned_platforms(const Entity_System& system, uint32_t tick,
                                const fixed_arc_flight_settings_t& settings, std::vector<mover_t>& out);
 

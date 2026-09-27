@@ -394,6 +394,13 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
 
 collision_piece_t piece_from_aabb(const aabb_t &aabb);
 
+// A box of `half_extents` about `center`, turned by `orientation`: six planes and six faces in world space.
+collision_piece_t piece_from_oriented_box(const linalg::vec3 &center, const linalg::vec3 &half_extents,
+                                          const linalg::quatf &orientation);
+
+// The world-axis half-extents of that box once turned.
+linalg::vec3 oriented_box_reach(const linalg::vec3 &half_extents, const linalg::quatf &orientation);
+
 // The box a static mesh collides as: its mesh bounds under its scale, turned by
 // its orientation. Answered whether or not `collides` is set, so the editor can
 // pick and draw the box of a mesh that has its collision switched off.

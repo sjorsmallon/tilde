@@ -6,6 +6,7 @@
 // on this side reaches them through it.
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/events/generated/events_generated.hpp"
+#include "../shared/flight_path.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/lag_compensation.hpp"
@@ -161,6 +162,9 @@ struct world_t
   std::set<trigger_overlap_t> previous_tick_trigger_overlaps;
 
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
+
+  // The polyline each live Guided_Rocket_Entity has flown so far, solidified or dropped the tick it is destroyed.
+  std::unordered_map<shared::entity_uid_t, shared::flight_path_t> flight_path_by_rocket_uid;
 
   // Entity I/O: every action a connection has requested and not yet delivered,
   // paid in step 6 of the tick -- after every system, before the snapshot

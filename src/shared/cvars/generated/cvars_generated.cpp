@@ -2,9 +2,9 @@
 #include "cvars_generated.hpp"
 
 #include "log.hpp"
+#include "parse_number.hpp"
 
 #include <cassert>
-#include <charconv>
 #include <cstddef>
 #include <cstring>
 #include <format>
@@ -1385,7 +1385,7 @@ template <typename T> std::optional<T> try_parse_whole(std::string_view text)
   T           value  = {};
   const char* begin  = text.data();
   const char* end    = text.data() + text.size();
-  auto        result = std::from_chars(begin, end, value);
+  auto        result = try_parse_number(begin, end, value);
   if (result.ec != std::errc{} || result.ptr != end)
     return std::nullopt;
   return value;

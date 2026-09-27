@@ -90,6 +90,13 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     if (entities::Shrinking_Platform_Entity* platform =
             system.get<entities::Shrinking_Platform_Entity>(spawned_uids.back()))
       platform->flight = {.launch_tick = 1, .flight_ticks = 0};
+    // An extending platform answers only once its sweep has, which is the tick it is set down.
+    if (entities::Extending_Platform_Entity* platform =
+            system.get<entities::Extending_Platform_Entity>(spawned_uids.back()))
+    {
+      platform->spawned_tick = 1;
+      platform->length       = 100.f;
+    }
   }
 
   // A canopy answers only for a carrier the system holds: the one player spawned above.
@@ -582,6 +589,79 @@ static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
         "the draw reads the same lerp with the sub-tick fraction");
 }
 
+static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_whole_way()
+{
+  printf("\n[pin] an extending platform is one tick long the tick it is set down, grows to its length, and is gone solid_seconds after\n");
+
+  shared::Entity_System                system;
+  const shared::entity_uid_t           uid      = system.spawn(entities::entity_type::Extending_Platform_Entity);
+  entities::Extending_Platform_Entity* platform = system.get<entities::Extending_Platform_Entity>(uid);
+
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+  const float                               dt = flight.tick_interval_seconds;
+
+  std::vector<shared::mover_t> movers;
+  const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
+  {
+    movers.clear();
+    shared::collect_spawned_platforms(system, tick, flight, movers);
+    return movers;
+  };
+
+  check(cut_at(1).empty(), "a platform whose sweep has not answered yet is not solid");
+
+  // Twenty units a tick along +X from the origin's eye height, three hundred to go: fifteen ticks of growth.
+  platform->position       = {0.f, 100.f, 0.f};
+  platform->orientation    = linalg::quatf::identity();
+  platform->spawned_tick   = 10;
+  platform->length         = 300.f;
+  platform->extend_speed   = 1200.f;
+  platform->solid_seconds  = 2.f;
+  platform->half_width     = 32.f;
+  platform->half_thickness = 4.f;
+
+  check(shared::extending_platform_extend_ticks(*platform, dt) == 15, "three hundred at twenty a tick is fifteen ticks");
+  check(cut_at(9).empty(), "the tick before it was set down it is not there");
+  check(cut_at(10).size() == 1 && std::fabs(cut_at(10)[0].swept_bounds.max.x - 20.f) < 1e-3f &&
+            std::fabs(cut_at(10)[0].swept_bounds.min.x) < 1e-3f,
+        "the tick it is set down it is one tick's growth long, from its set-down point forward");
+  check(std::fabs(cut_at(10 + 5)[0].swept_bounds.max.x - 120.f) < 1e-3f, "six ticks in it is six ticks long");
+  check(std::fabs(cut_at(10 + 14)[0].swept_bounds.max.x - 300.f) < 1e-3f, "on its grown age it is its length");
+  check(std::fabs(cut_at(10 + 40)[0].swept_bounds.max.x - 300.f) < 1e-3f, "and it grows no further");
+
+  const shared::mover_t& grown = cut_at(10 + 14)[0];
+  check(grown.uid == uid, "the mover names the platform");
+  check(!grown.crushes, "it grows through a hull in its path rather than crushing it");
+  check(grown.pieces.size() == 1 && grown.pieces[0].planes.size() == 6, "it is one box");
+  check(std::fabs(grown.swept_bounds.max.y - 104.f) < 1e-3f && std::fabs(grown.swept_bounds.min.y - 96.f) < 1e-3f &&
+            std::fabs(grown.swept_bounds.max.z - 32.f) < 1e-3f,
+        "its thickness is about the aim line and its width to either side");
+  check(linalg::length(grown.pose_at_tick_end.position - grown.pose_at_tick_start.position) == 0.f,
+        "its two poses are equal, so the push carries nobody");
+
+  check(cut_at(10 + 14 + 119).size() == 1, "the last tick of its solid time it is still there");
+  check(cut_at(10 + 14 + 120).empty(), "two seconds after it is grown it is gone");
+  check(shared::extending_platform_has_vanished_at_tick(*platform, 10 + 14 + 120, dt) &&
+            !shared::extending_platform_has_vanished_at_tick(*platform, 10 + 14 + 119, dt),
+        "the server reaps it on the tick the cut drops it");
+
+  check(std::fabs(shared::extending_platform_length_at(*platform, 10 + 2, 0.5f, dt) - 70.f) < 1e-3f &&
+            std::fabs(shared::extending_platform_box_at(*platform, 10 + 2, 0.5f, dt).center.x - 35.f) < 1e-3f,
+        "the draw reads the same growth with the sub-tick fraction");
+  check(shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 5, 0.f, dt) == 0.f &&
+            shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 14, 0.f, dt) == 0.f &&
+            std::fabs(shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 14 + 60, 0.f, dt) - 0.5f) <
+                1e-4f,
+        "the dissolve clock starts when it is grown");
+
+  // Pitched straight up: the same box turned, so the cut's bounds turn with it.
+  platform->orientation = linalg::from_axis_angle({0.f, 0.f, 1.f}, 90.f);
+  const shared::mover_t& upright = cut_at(10 + 14)[0];
+  check(std::fabs(upright.swept_bounds.max.y - 400.f) < 1e-2f && std::fabs(upright.swept_bounds.min.y - 100.f) < 1e-2f &&
+            std::fabs(upright.swept_bounds.max.x - 4.f) < 1e-2f && std::fabs(upright.swept_bounds.max.z - 32.f) < 1e-2f,
+        "turned to face up it reaches up, and its thickness lies across the aim");
+}
+
 int main()
 {
   test_every_predicted_type_feeds_exactly_one_collect();
@@ -591,6 +671,7 @@ int main()
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
   test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps();
+  test_an_extending_platform_grows_along_its_forward_and_is_solid_the_whole_way();
   test_a_switch_reaches_the_geometry_it_owns();
   test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone();
   test_a_drawn_mover_carries_its_rider_by_the_same_fraction();

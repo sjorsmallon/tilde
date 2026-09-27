@@ -70,10 +70,10 @@ namespace client
 
 // input here is not subtick-input, it just means all input entries in this tick.
 static uint32_t get_predicted_server_tick_which_this_input_will_be_simulated_on(
-    const client_context_t &ctx, int input_number)
+  const client_context_t &ctx,
+  int input_number)
 {
-  return ctx.prediction.latest_server_tick +
-         static_cast<uint32_t>(input_number - ctx.prediction.latest_input_number_processed_by_server);
+  return ctx.prediction.latest_server_tick + static_cast<uint32_t>(input_number - ctx.prediction.latest_input_number_processed_by_server);
 }
 
 
@@ -87,12 +87,11 @@ struct drawn_tick_t
 static drawn_tick_t drawn_tick_of(const client_context_t &ctx)
 {
   const float tickrate = static_cast<float>(ctx.connection.server_tickrate);
-  return {.tick     = get_predicted_server_tick_which_this_input_will_be_simulated_on(
-              ctx, ctx.prediction.input_number - 1),
-          .fraction = ctx.connection.phase == Connection_Phase::Connected
-                          ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f)
-                          : 0.0f,
-          .tickrate = tickrate};
+  return drawn_tick_t{
+    .tick     = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, ctx.prediction.input_number - 1),
+    .fraction = ctx.connection.phase == Connection_Phase::Connected ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f) : 0.0f,
+    .tickrate = tickrate
+  };
 }
 
 struct drawn_mover_poses_t
@@ -112,11 +111,19 @@ static drawn_pose_t drawn_pose_of(const client_context_t &ctx, const entities::E
 {
   const auto ring = ctx.replication.interpolated_entities.find(entity.entity_id);
   if (ring == ctx.replication.interpolated_entities.end() || ring->second.pushed == 0)
-    return {entity.position, entity.orientation};
+  {
 
-  const client::interpolation_result_t interpolated =
-      client::sample_interpolated_pose(ring->second, ctx.replication.interpolation_cursor.tick);
-  return {interpolated.pose.position, interpolated.pose.orientation};
+    return drawn_pose_t{
+      .position = entity.position,
+      .orientation = entity.orientation
+    };
+  }
+
+  const client::interpolation_result_t interpolated_pose = client::sample_interpolated_pose(ring->second, ctx.replication.interpolation_cursor.tick);
+  return drawn_pose_t{
+    .position = interpolated_pose.pose.position,
+    .orientation = interpolated_pose.pose.orientation
+  };
 }
 
 // interpolate bubble position according to its fixed arc.
@@ -153,15 +160,19 @@ static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::
   float seconds_to_burst = 0.f;
 
   if (bubble.popped_tick != 0)
-    seconds_to_burst = (bubble.popped_by == shared::null_entity_uid ? 0.0f : bubble.swell_seconds) -
-                       seconds_since(bubble.popped_tick);
+  {
+    seconds_to_burst = (bubble.popped_by == shared::null_entity_uid ? 0.0f : bubble.swell_seconds) - seconds_since(bubble.popped_tick);
+  }
+
   else if (bubble.flight.launch_tick != 0)
   {
     const uint32_t expiry_tick = bubble.flight.launch_tick + bubble.flight.flight_ticks + static_cast<uint32_t>(std::lround(bubble.rest_seconds * tickrate));
     seconds_to_burst = std::max(0.0f, -seconds_since(expiry_tick));
   }
   else
+  {
     seconds_to_burst = bubble.swell_seconds;
+  }
 
   const float swell = bubble.swell_seconds > 0.0f ? std::clamp(1.0f - seconds_to_burst / bubble.swell_seconds, 0.0f, 1.0f) : 1.0f;
   
@@ -178,7 +189,8 @@ static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::
   drawn.peel = {
     .hole_direction = bubble.popped_direction,
     .front_angle = std::min(fraction_peeled, 1.0f) * std::numbers::pi_v<float>,
-    .armed = true};
+    .armed = true
+  };
 
   drawn.has_vanished = fraction_peeled >= 1.0f;
 
@@ -208,19 +220,18 @@ static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared
   const vec3f at_next = shared::platform_box_at_tick(platform, tick + 1, flight).center;
 
   return drawn_platform_t{
-    .position     = at_tick + (at_next - at_tick) * fraction,
+    .position = at_tick + (at_next - at_tick) * fraction,
     .half_extents = shared::platform_half_extents_at(platform, tick, fraction, tick_interval_seconds),
-    .is_solid     = shared::platform_is_solid_at_tick(platform, tick, tick_interval_seconds),
+    .is_solid = shared::platform_is_solid_at_tick(platform, tick, tick_interval_seconds),
     .has_vanished = shared::platform_has_vanished_at_tick(platform, tick, tick_interval_seconds),
-    .solid_fraction_elapsed =
-              shared::platform_solid_fraction_elapsed(platform, tick, fraction, tick_interval_seconds)
+    .solid_fraction_elapsed = shared::platform_solid_fraction_elapsed(platform, tick, fraction, tick_interval_seconds)
     };
 }
 
 // embeds the height / scale of the marker so we can evaluate it over time.
 struct drawn_ping_marker_t
 {
-  float lift{}; // 0-8
+  float lift{}; // 0-8 (arbitrary but this is what is applied in drawn_ping_marker.)
   float scale{}; // 0-1
 };
 
@@ -263,8 +274,8 @@ static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const 
 {
   const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
 
-  const shared::Entity_System &system = ctx.world.session.entity_system;
-  const shared::path_links_t &links  = ctx.world.session.path_links;
+  const shared::Entity_System& system = ctx.world.session.entity_system;
+  const shared::path_links_t& links  = ctx.world.session.path_links;
   const shared::path_pose_t rest = rest_frame_of(ctx, mover);
   const shared::path_pose_t at_tick = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
   const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
@@ -296,10 +307,66 @@ static vec3f drawn_local_feet(const client_context_t &ctx)
   return feet;
 }
 
+static bool local_player_rides_a_rocket(const client_context_t &ctx)
+{
+  return ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot;
+}
+
+// The predicted rocket, carried past the tick along the aim the next step will fly it on.
+static vec3f drawn_piloted_rocket(const client_context_t &ctx)
+{
+  const entities::Movement &movement = ctx.prediction.player_movement;
+  const float seconds_past_tick =
+      ctx.connection.phase == Connection_Phase::Connected ? ctx.prediction.physics_accumulator : 0.f;
+  const float seconds_flown =
+      std::min(seconds_past_tick, std::max(0.f, movement.override_seconds_remaining));
+
+  return movement.override_target_position +
+         linalg::direction_from_angles(ctx.prediction.player_yaw, ctx.prediction.player_pitch) *
+             (movement.override_speed * seconds_flown);
+}
+
+// The ride starts and ends here: the launch aim is kept when it starts and handed back when it ends.
+static void follow_pilot_flight(client_context_t &ctx)
+{
+  prediction_t &prediction = ctx.prediction;
+
+  const bool riding = local_player_rides_a_rocket(ctx);
+  if (riding && !prediction.aim_at_pilot_launch)
+    prediction.aim_at_pilot_launch = {.yaw = prediction.player_yaw, .pitch = prediction.player_pitch};
+
+  if (!riding && prediction.aim_at_pilot_launch)
+  {
+    prediction.player_yaw   = prediction.aim_at_pilot_launch->yaw;
+    prediction.player_pitch = prediction.aim_at_pilot_launch->pitch;
+    prediction.aim_at_pilot_launch.reset();
+  }
+}
+
+// What a trigger press does to our OWN movement, in the server's order: a pilot lets go, else the row's impulse or launch.
+static void apply_trigger_press_to_own_movement(const shared::movement_settings_t &settings,
+                                                const shared::weapon_definition_t *weapon,
+                                                entities::Fire_Trigger trigger,
+                                                const shared::subtick_view_t &view, const vec3f &feet,
+                                                entities::Movement &movement, vec3f &velocity)
+{
+  if (shared::try_end_pilot_flight(movement))
+    return;
+  if (weapon == nullptr)
+    return;
+
+  (void)shared::try_apply_self_impulse(settings, *weapon, trigger,
+                                       linalg::direction_from_angles(view.yaw, view.pitch), movement,
+                                       velocity);
+  (void)shared::try_begin_pilot_flight(
+      *weapon, trigger, feet + vec3f{0.f, shared::player_eye_height, 0.f}, movement);
+}
+
 // glued to the carrier to relieve snapping.
 static vec3f drawn_canopy_position(const client_context_t &ctx, const entities::Canopy_Entity &canopy)
 {
-  const entities::Player_Entity *my_player = try_find_my_player(ctx);
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+
   if (my_player != nullptr && my_player->entity_id == canopy.carrier_uid)
     return shared::canopy_center_for(canopy, drawn_local_feet(ctx));
 
@@ -319,8 +386,8 @@ static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared:
   if (owner == nullptr || owner->wipe_timer == shared::null_entity_uid)
     return {};
 
-  const entities::Entity *timer = system.try_find(owner->wipe_timer);
-  const entities::Timer_State *timer_state =
+  const entities::Entity* timer = system.try_find(owner->wipe_timer);
+  const entities::Timer_State* timer_state =
       timer != nullptr ? entities::get_component<entities::Timer_State>(timer) : nullptr;
   if (timer_state == nullptr)
     return {};
@@ -344,9 +411,7 @@ static vec3f predict_mover_push(
   const entities::Movement &movement,
   const vec3f &feet)
 {
-  return push_player_by_movers(ctx.world.session.bvh, world, movement, feet,
-                               shared::player_half_width, shared::player_half_height)
-      .feet;
+  return push_player_by_movers(ctx.world.session.bvh, world, movement, feet, shared::player_half_width, shared::player_half_height).feet;
 }
 
 // check if we are allowed to move.
@@ -483,6 +548,16 @@ static void play_predicted_local_gunshot(
     {
       if (ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
       return;
+
+      ctx.audio.play_2d(*sound);
+      return;
+    }
+
+    case entities::Fire_Resolution::Pilot:
+    {
+      if (ctx.prediction.player_movement.active_override != entities::Movement_Override::None ||
+          ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
+        return;
 
       ctx.audio.play_2d(*sound);
       return;
@@ -1519,16 +1594,16 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
         // a few lines up -- so a dash the server has already applied is not
         // applied twice, and one it has not seen yet is applied here on the
         // same cooldown the server will charge.
-        if ((replay_pressed_in_this_step & Button::Fire) && replayed_weapon != nullptr)
-          (void)shared::try_apply_self_impulse(
-              move_settings, *replayed_weapon, entities::Fire_Trigger::Primary,
-              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
-              reconciled_movement, reconciled_velocity);
-        if ((replay_pressed_in_this_step & Button::Secondary_Fire) && replayed_weapon != nullptr)
-          (void)shared::try_apply_self_impulse(
-              move_settings, *replayed_weapon, entities::Fire_Trigger::Secondary,
-              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
-              reconciled_movement, reconciled_velocity);
+        if (replay_pressed_in_this_step & Button::Fire)
+          apply_trigger_press_to_own_movement(move_settings, replayed_weapon,
+                                              entities::Fire_Trigger::Primary, step.view,
+                                              reconciled_position, reconciled_movement,
+                                              reconciled_velocity);
+        if (replay_pressed_in_this_step & Button::Secondary_Fire)
+          apply_trigger_press_to_own_movement(move_settings, replayed_weapon,
+                                              entities::Fire_Trigger::Secondary, step.view,
+                                              reconciled_position, reconciled_movement,
+                                              reconciled_velocity);
       }
     }
     
@@ -2299,20 +2374,18 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
           {
             const shared::weapon_definition_t *held_definition =
                 try_find_local_weapon_definition(ctx);
-            if (held_definition != nullptr)
-            {
-              const vec3f aim = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
-              const shared::movement_settings_t move_settings =
-                  shared::movement_settings_from(*ctx.cvars);
-              if (fire_pressed_in_this_step)
-                (void)shared::try_apply_self_impulse(
-                    move_settings, *held_definition, entities::Fire_Trigger::Primary, aim,
-                    ctx.prediction.player_movement, ctx.prediction.player_velocity);
-              if (secondary_fire_pressed_in_this_step)
-                (void)shared::try_apply_self_impulse(
-                    move_settings, *held_definition, entities::Fire_Trigger::Secondary, aim,
-                    ctx.prediction.player_movement, ctx.prediction.player_velocity);
-            }
+            const shared::movement_settings_t move_settings =
+                shared::movement_settings_from(*ctx.cvars);
+            if (fire_pressed_in_this_step)
+              apply_trigger_press_to_own_movement(
+                  move_settings, held_definition, entities::Fire_Trigger::Primary, step.view,
+                  ctx.prediction.player_position, ctx.prediction.player_movement,
+                  ctx.prediction.player_velocity);
+            if (secondary_fire_pressed_in_this_step)
+              apply_trigger_press_to_own_movement(
+                  move_settings, held_definition, entities::Fire_Trigger::Secondary, step.view,
+                  ctx.prediction.player_position, ctx.prediction.player_movement,
+                  ctx.prediction.player_velocity);
           }
 
           // Stashed HERE, and here specifically: after the step the press
@@ -2547,7 +2620,9 @@ void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
   camera.yaw         = ctx.prediction.player_yaw;
   camera.pitch       = ctx.prediction.player_pitch;
 
-  camera.position = drawn_local_feet(ctx) + vec3f{0.f, shared::player_eye_height, 0.f};
+  camera.position = local_player_rides_a_rocket(ctx)
+                        ? drawn_piloted_rocket(ctx)
+                        : drawn_local_feet(ctx) + vec3f{0.f, shared::player_eye_height, 0.f};
 
   if (frame.noclip_active)
   {
@@ -2631,6 +2706,7 @@ void Play_State::update(float dt)
   resolve_aim_and_buttons(ctx, frame);
   place_input_edges_on_the_tick_timeline(ctx, frame);
   run_predicted_ticks(ctx, frame);
+  follow_pilot_flight(ctx);
   play_local_movement_sounds(ctx, frame);
 
   // ------------------------------------------------------------------- RENDER
@@ -2942,7 +3018,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                 !ctx.connection.spectating && !ctx.cvars->cl_noclip &&
                                 ctx.cvars->cl_spectate_slot < 0;
   if (camera_is_my_eye)
-    draw_player_blob_shadow(camera.position - vec3f{0.f, shared::player_eye_height, 0.f});
+    draw_player_blob_shadow(drawn_local_feet(ctx));
 
   if (!ctx.cvars->debug_hide_geometry)
   {
@@ -3004,6 +3080,11 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       continue;
     if (entity.type == entities::entity_type::Weapon_Entity &&
         static_cast<const entities::Weapon_Entity&>(entity).owner_uid != shared::null_entity_uid)
+      continue;
+    // The pilot rides the predicted flight; the replicated rocket is everyone else's.
+    if (entity.type == entities::entity_type::Guided_Rocket_Entity &&
+        static_cast<const entities::Guided_Rocket_Entity&>(entity).pilot_uid ==
+            ctx.connection.my_entity_uid)
       continue;
 
     // The same sphere rocket_system sweeps the flight path with.
@@ -3072,6 +3153,24 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         dissolve = shared::platform_dissolve_fraction(drawn.solid_fraction_elapsed);
       else
         drawn_material.shader_type = entities::Shader_Type::Ghost;
+    }
+
+    // Grows along its aim on the cut's clock, at the box the cut sweeps; dissolves over its last fifth.
+    if (const entities::Extending_Platform_Entity* platform =
+            entities::entity_as<entities::Extending_Platform_Entity>(&entity))
+    {
+      const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+      const float tick_interval_seconds = 1.0f / tickrate;
+      if (!shared::extending_platform_is_solid_at_tick(*platform, tick, tick_interval_seconds))
+        continue;
+
+      const shared::extending_platform_box_t box =
+          shared::extending_platform_box_at(*platform, tick, fraction, tick_interval_seconds);
+      drawn_position    = box.center;
+      drawn_orientation = box.orientation;
+      drawn_scale       = box.half_extents * 2.0f;
+      dissolve          = shared::platform_dissolve_fraction(shared::extending_platform_solid_fraction_elapsed(
+          *platform, tick, fraction, tick_interval_seconds));
     }
 
     if (const entities::Canopy_Entity* canopy = entities::entity_as<entities::Canopy_Entity>(&entity))

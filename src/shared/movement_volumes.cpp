@@ -81,6 +81,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       // @predicted, and feeds collect_spawned_platforms: a landed platform is solid, swept inside the step.
       case entities::entity_type::Platform_Entity:
       case entities::entity_type::Shrinking_Platform_Entity:
+      case entities::entity_type::Extending_Platform_Entity:
         break;
 
       // @predicted, and feeds collect_canopies: a mover whose poses are its carrier's last two positions.
@@ -108,6 +109,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Hook_Entity:
       case entities::entity_type::Kooh_Entity:
       case entities::entity_type::Ricochet_Entity:
+      case entities::entity_type::Guided_Rocket_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:
       case entities::entity_type::Particle_Emitter_Entity:

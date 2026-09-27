@@ -9,7 +9,7 @@
 // there is nothing to register.
 #include "cvars_generated.hpp"
 
-#include <charconv>
+#include "parse_number.hpp"
 #include <format>
 #include <string>
 #include <optional>
@@ -46,7 +46,7 @@ template <typename T> std::optional<T> try_parse_whole(std::string_view text)
   T           value  = {};
   const char* begin  = text.data();
   const char* end    = text.data() + text.size();
-  auto        result = std::from_chars(begin, end, value);
+  auto        result = try_parse_number(begin, end, value);
   if (result.ec != std::errc{} || result.ptr != end)
     return std::nullopt;
   return value;

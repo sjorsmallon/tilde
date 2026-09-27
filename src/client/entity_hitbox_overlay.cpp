@@ -39,6 +39,8 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
     case entities::entity_type::Bubble_Entity:
     case entities::entity_type::Platform_Entity:
     case entities::entity_type::Shrinking_Platform_Entity:
+    case entities::entity_type::Extending_Platform_Entity:
+    case entities::entity_type::Guided_Rocket_Entity:
     case entities::entity_type::Canopy_Entity:
     case entities::entity_type::Player_Spawn_Entity:
     case entities::entity_type::Player_Spectate_Entity:

@@ -1,11 +1,14 @@
 #include "platform_system.hpp"
 
+#include "../../shared/predicted_world.hpp"
+#include "../../shared/projectile_sweep.hpp"
 #include "../../shared/spawned_platforms.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 #include "fixed_arc_flight_launch.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 namespace server
@@ -46,6 +49,44 @@ void update_platforms_of(server_context_t& context, const shared::predicted_worl
   }
 }
 
+// The one sweep, the tick it was set down: a sphere of its half thickness from its set-down point along its
+// forward through its owner's team view, which is what it would grow into. It stops at the map and at
+// movers and passes through bodies: a bridge fired under someone is still a bridge. Too short to be a box
+// and it is gone the tick it was fired.
+void update_extending_platforms(server_context_t& context, const shared::predicted_world_storage_t& world,
+                                float tick_interval_seconds, std::vector<shared::entity_uid_t>& retired)
+{
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+
+  for (entities::Extending_Platform_Entity& platform :
+       entity_system.entities_of<entities::Extending_Platform_Entity>())
+  {
+    if (platform.spawned_tick == 0)
+    {
+      const entities::Player_Entity* owner =
+          entity_system.get<entities::Player_Entity>(platform.projectile.owner_uid);
+      const shared::predicted_world_t view = shared::predicted_world_of(
+          world, owner != nullptr ? owner->team_allegiance : entities::Team_Allegiance::Free_For_All);
+
+      const vec3f to = platform.position + linalg::forward(platform.orientation) * platform.max_length;
+      const std::optional<shared::projectile_hit_t> hit = shared::sweep_projectile(
+          context.world.session.bvh, view, platform.position, to, platform.half_thickness);
+      const float length = hit ? hit->t * platform.max_length : platform.max_length;
+
+      if (length < 2.f * platform.half_thickness)
+      {
+        retired.push_back(platform.entity_id);
+        continue;
+      }
+      platform.length       = length;
+      platform.spawned_tick = context.tick_number;
+    }
+
+    if (shared::extending_platform_has_vanished_at_tick(platform, context.tick_number, tick_interval_seconds))
+      retired.push_back(platform.entity_id);
+  }
+}
+
 } // namespace
 
 void update_platforms(server_context_t& context, const shared::predicted_world_storage_t& world)
@@ -57,6 +98,7 @@ void update_platforms(server_context_t& context, const shared::predicted_world_s
   std::vector<shared::entity_uid_t> retired;
   update_platforms_of<entities::Platform_Entity>(context, world, flight, retired);
   update_platforms_of<entities::Shrinking_Platform_Entity>(context, world, flight, retired);
+  update_extending_platforms(context, world, tick_interval_seconds, retired);
 
   std::sort(retired.begin(), retired.end());
   retired.erase(std::unique(retired.begin(), retired.end()), retired.end());

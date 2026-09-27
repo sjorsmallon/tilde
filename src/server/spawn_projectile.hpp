@@ -18,11 +18,14 @@ shared::entity_uid_t spawn_projectile(
     entities::Fire_Trigger trigger = entities::Fire_Trigger::Primary);
 
 // The one place a Fire_Resolution::Place fire becomes an entity: set down at
-// `feet`, facing `yaw_degrees`, with no flight. Names no type either; a type's
-// own placement rule (a remnant is one per owner) is the type's, applied by
-// the caller on the uid this returns.
+// `position` facing `orientation`, with no flight; the caller resolves the
+// row's anchor to both. A type that carries a Projectile is stamped with its
+// owner and its row, and is counted under the row's alive limit. Names no
+// type either; a type's own placement rule (a remnant is one per owner) is
+// the type's, applied by the caller on the uid this returns.
 shared::entity_uid_t spawn_placed_entity(
-    server_context_t& context, const shared::weapon_definition_t& weapon, const vec3f& feet,
-    float yaw_degrees, entities::Fire_Trigger trigger = entities::Fire_Trigger::Primary);
+    server_context_t& context, shared::entity_uid_t owner_uid,
+    const shared::weapon_definition_t& weapon, const vec3f& position, const quatf& orientation,
+    entities::Fire_Trigger trigger = entities::Fire_Trigger::Primary);
 
 } // namespace server

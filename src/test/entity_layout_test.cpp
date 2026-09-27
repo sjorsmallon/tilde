@@ -207,6 +207,9 @@ int main()
         entity_type::Ricochet_Entity,
         entity_type::Platform_Entity,
         entity_type::Shrinking_Platform_Entity,
+        entity_type::Extending_Platform_Entity,
+        // Through its pilot and Render.
+        entity_type::Guided_Rocket_Entity,
         // Through its carrier and its pose pair, which the client's mover cut reads.
         entity_type::Canopy_Entity,
         entity_type::Bubble_Entity,
@@ -269,6 +272,7 @@ int main()
               entity_type_is_predicted(entity_type::Bubble_Entity) &&
               entity_type_is_predicted(entity_type::Platform_Entity) &&
               entity_type_is_predicted(entity_type::Shrinking_Platform_Entity) &&
+              entity_type_is_predicted(entity_type::Extending_Platform_Entity) &&
               entity_type_is_predicted(entity_type::Canopy_Entity) &&
               !entity_type_is_predicted(entity_type::Point_Light_Entity),
           "@predicted is the jump pad, the brush entity, the mover, the bubble, the platform and the canopy, and not the light");

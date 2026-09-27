@@ -105,16 +105,18 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   // The jump is the one ability every model shares, and it is spent HERE
   // rather than in one of them: a charge is state, and two models spending it
   // two ways is the divergence the replay cannot see.
-  // A frozen player has no input, so a press spends no charge.
-  const shared::jump_t jump =
-      frozen ? shared::jump_t{.velocity = state.velocity} : shared::try_jump(settings, grounded, state, input);
+  // A frozen player and a pilot have no input, so a press spends no charge.
+  const shared::jump_t jump = shared::override_ignores_input(state.movement.active_override)
+                                  ? shared::jump_t{.velocity = state.velocity}
+                                  : shared::try_jump(settings, grounded, state, input);
 
   // AN OVERRIDE replaces the model while it is live and exits as an impulse.
   // It is a branch rather than a velocity written from outside because the
   // player it happens to predicts their own movement: an unpredicted pull
   // rubber-bands them for a round trip, which is the problem prediction_def.md
   // §1 solved for pads.
-  const shared::override_step_t over = shared::step_override(settings, state, dt);
+  const shared::override_step_t over =
+      shared::step_override(settings, bvh, world, state, input.front, dt);
 
   shared::settled_move_t settled;
   if (over.holds)

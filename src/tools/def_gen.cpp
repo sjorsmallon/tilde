@@ -386,6 +386,9 @@ enum type_kind_t : uint8_t
   TYPE_V4,
   TYPE_V4I,
   TYPE_QUAT,
+  // A float and a vec3f the wire carries UNROUNDED: what a predicted step reads.
+  TYPE_F32_EXACT,
+  TYPE_V3_EXACT,
   TYPE_STRING,    // capacity lives in type_reference_t::capacity
   TYPE_ASSET,     // mesh_asset / texture_asset, closed sets from the asset manifest
   // A uid naming another entity, `shared::entity_uid_t`. Trait verb payloads
@@ -422,6 +425,8 @@ static const char* type_kind_name(type_kind_t kind)
     case TYPE_V4:         return "v4";
     case TYPE_V4I:        return "v4i";
     case TYPE_QUAT:       return "quat";
+    case TYPE_F32_EXACT:  return "f32_exact";
+    case TYPE_V3_EXACT:   return "v3_exact";
     case TYPE_STRING:     return "string";
     case TYPE_ASSET:      return "asset";
     case TYPE_ENTITY:     return "entity";
@@ -1221,6 +1226,8 @@ static type_kind_t builtin_type_kind(string_view_t name)
   if (string_view_matches(name, "v4"))     return TYPE_V4;
   if (string_view_matches(name, "v4i"))    return TYPE_V4I;
   if (string_view_matches(name, "quat"))   return TYPE_QUAT;
+  if (string_view_matches(name, "f32_exact")) return TYPE_F32_EXACT;
+  if (string_view_matches(name, "v3_exact"))  return TYPE_V3_EXACT;
   if (string_view_matches(name, "string")) return TYPE_STRING;
   if (string_view_matches(name, "entity")) return TYPE_ENTITY;
 
@@ -3212,6 +3219,8 @@ static bool channel_type_is_allowed(type_kind_t kind)
     case TYPE_V4:
     case TYPE_V4I:
     case TYPE_QUAT:
+    case TYPE_F32_EXACT:
+    case TYPE_V3_EXACT:
     case TYPE_STRING:
     case TYPE_ENUM:
       return true;
@@ -3436,11 +3445,11 @@ static const char* default_form_for_type(const type_reference_t* type)
 {
   switch (type->kind)
   {
-    case TYPE_F32: case TYPE_F64:
+    case TYPE_F32: case TYPE_F64: case TYPE_F32_EXACT:
     case TYPE_U8:  case TYPE_U16: case TYPE_U32: case TYPE_U64:
     case TYPE_I8:  case TYPE_I16: case TYPE_I32: case TYPE_I64: return "a number";
     case TYPE_BOOL:                                             return "true or false";
-    case TYPE_V3: case TYPE_V4: case TYPE_V4I:                   return "a '{x, y, z}' vector";
+    case TYPE_V3: case TYPE_V4: case TYPE_V4I: case TYPE_V3_EXACT: return "a '{x, y, z}' vector";
     case TYPE_QUAT:                                             return "an '{x, y, z, w}' quaternion";
     case TYPE_STRING:                                           return "a quoted string";
     case TYPE_ENUM: case TYPE_ASSET:                            return "a '.Name' literal";
@@ -3466,7 +3475,8 @@ static const char* default_kind_mismatch(default_kind_t kind, const type_referen
     case DEFAULT_NONE: matches = true; break;
 
     case DEFAULT_NUMBER:
-      matches = type->kind == TYPE_F32 || type->kind == TYPE_F64 || type->kind == TYPE_U8 ||
+      matches = type->kind == TYPE_F32 || type->kind == TYPE_F64 ||
+                type->kind == TYPE_F32_EXACT || type->kind == TYPE_U8 ||
                 type->kind == TYPE_U16 || type->kind == TYPE_U32 || type->kind == TYPE_U64 ||
                 type->kind == TYPE_I8 || type->kind == TYPE_I16 || type->kind == TYPE_I32 ||
                 type->kind == TYPE_I64;
@@ -3474,7 +3484,7 @@ static const char* default_kind_mismatch(default_kind_t kind, const type_referen
 
     case DEFAULT_VECTOR:
       matches = type->kind == TYPE_V3 || type->kind == TYPE_V4 || type->kind == TYPE_V4I ||
-                type->kind == TYPE_QUAT;
+                type->kind == TYPE_QUAT || type->kind == TYPE_V3_EXACT;
       break;
 
     case DEFAULT_ENUM_LITERAL:
@@ -3495,7 +3505,8 @@ static int32_t vector_component_count(type_kind_t kind)
 {
   switch (kind)
   {
-    case TYPE_V3:  return 3;
+    case TYPE_V3:
+    case TYPE_V3_EXACT: return 3;
     case TYPE_V4:
     case TYPE_V4I:
     case TYPE_QUAT: return 4;
@@ -4323,6 +4334,8 @@ static void write_cpp_element_type(FILE* out, const type_reference_t* type)
     case TYPE_V4:   fprintf(out, "linalg::vec4f"); return;
     case TYPE_V4I:  fprintf(out, "linalg::vec4i"); return;
     case TYPE_QUAT: fprintf(out, "linalg::quatf"); return;
+    case TYPE_F32_EXACT: fprintf(out, "float");         return;
+    case TYPE_V3_EXACT:  fprintf(out, "linalg::vec3f"); return;
 
     case TYPE_STRING:
       fprintf(out, "network::pascal_string_t<%d>", type->capacity);
@@ -4368,6 +4381,8 @@ static const char* field_type_enum_name(type_kind_t kind)
     case TYPE_V4:        return "FIELD_TYPE_V4";
     case TYPE_V4I:       return "FIELD_TYPE_V4I";
     case TYPE_QUAT:      return "FIELD_TYPE_QUAT";
+    case TYPE_F32_EXACT: return "FIELD_TYPE_F32_EXACT";
+    case TYPE_V3_EXACT:  return "FIELD_TYPE_V3_EXACT";
     case TYPE_STRING:    return "FIELD_TYPE_STRING";
     case TYPE_ASSET:     return "FIELD_TYPE_ASSET";
     // A uid IS a u32 and every walker takes the u32 arm for it -- the text
@@ -4494,7 +4509,8 @@ static void write_default_value(FILE* out, const program_t* program, const type_
     case DEFAULT_NUMBER:
       switch (type->kind)
       {
-        case TYPE_F32: write_float_literal(out, value->numbers[0], true);  return;
+        case TYPE_F32:
+        case TYPE_F32_EXACT: write_float_literal(out, value->numbers[0], true); return;
         case TYPE_F64: write_float_literal(out, value->numbers[0], false); return;
         default:       fprintf(out, "%lld", (long long)value->numbers[0]); return;
       }

@@ -182,6 +182,7 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
   switch (field.type)
   {
     case FIELD_TYPE_F32:
+    case FIELD_TYPE_F32_EXACT:
     {
       float value = 0.0f;
       std::memcpy(&value, field_bytes, sizeof(value));
@@ -221,6 +222,7 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
     }
 
     case FIELD_TYPE_V3:
+    case FIELD_TYPE_V3_EXACT:
     {
       float values[3] = {};
       std::memcpy(values, field_bytes, sizeof(values));
@@ -300,6 +302,7 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
   switch (field.type)
   {
     case FIELD_TYPE_F32:
+    case FIELD_TYPE_F32_EXACT:
     {
       float value = 0.0f;
       if (!parse_float_components(text, 1, &value))
@@ -337,6 +340,7 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
     }
 
     case FIELD_TYPE_V3:
+    case FIELD_TYPE_V3_EXACT:
     {
       float values[3] = {};
       if (!parse_float_components(text, 3, values))

@@ -63,6 +63,8 @@ void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owne
       case entities::entity_type::Bubble_Entity:
       case entities::entity_type::Platform_Entity:
       case entities::entity_type::Shrinking_Platform_Entity:
+      case entities::entity_type::Extending_Platform_Entity:
+      case entities::entity_type::Guided_Rocket_Entity:
       case entities::entity_type::Canopy_Entity:
       case entities::entity_type::Physics_Body_Entity:
       case entities::entity_type::Damageable_Entity:

@@ -31,10 +31,12 @@ Weapon :: enum {
     Ricochet,
     Canopy,
     Statue,
-    Modifier_Gun
+    Modifier_Gun,
+    Extending_Platform,
+    Guided_Rocket
 }
-    
-Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy }
+
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot }
 Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -60,7 +62,8 @@ Easing :: enum { Linear, Smooth, In_Cubic, Out_Cubic, In_Out_Cubic }
 // the generic override_* fields below and adds only what none of them says.
 // Stasis holds the hull with its velocity kept; Statue zeroes it and lets gravity keep acting. Both are
 // a Movement_Override so the frozen player predicts their own hold (shared/movement_override.hpp).
-Movement_Override :: enum { None, Reel, Stasis, Statue }
+// Pilot holds the hull while a rocket flies along the player's aim: override_target_position is the rocket.
+Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot }
 
 // ---------------------------------------------------------------------------
 // COMPONENTS
@@ -149,18 +152,19 @@ Light :: component {
     casts_shadows: bool = true      @Editable
 }
 
+// Every float in here is EXACT on the wire: the replay adopts this component with no tolerance.
 Movement :: component {
     air_jumps_used: u8                  @Networked
     is_grounded: bool                   @Networked
-    time_since_grounded_seconds: f32    @Networked
+    time_since_grounded_seconds: f32_exact    @Networked
     jump_was_held: bool                 @Networked
-    seconds_until_impulse_ready: f32    @Networked
-    seconds_until_speed_returns_to_base_speed: f32  @Networked
+    seconds_until_impulse_ready: f32_exact    @Networked
+    seconds_until_speed_returns_to_base_speed: f32_exact  @Networked
 
     // pm_model instant_momentum's memory: the horizontal speed the body
     // CARRIES, which is where an impulse lands under that model and what its
     // drag bleeds. Zero under every other model, which owns its own memory.
-    momentum: v3                        @Networked
+    momentum: v3_exact                  @Networked
 
     pad_contact_uid: u32                @Networked
     ground_mover_uid: entity            @Networked
@@ -172,10 +176,11 @@ Movement :: component {
     // because player_move is pure and cannot resolve one.
     active_override: Movement_Override = .None  @Networked
     override_target_uid: entity                 @Networked
-    override_target_position: v3                @Networked
-    override_seconds_remaining: f32             @Networked
-    override_speed: f32                         @Networked
-    override_arrive_radius: f32                 @Networked
+    override_target_position: v3_exact          @Networked
+    override_seconds_remaining: f32_exact       @Networked
+    override_speed: f32_exact                   @Networked
+    // The reel's arrival sphere, the pilot's rocket.
+    override_radius: f32_exact                  @Networked
 }
 
 Inventory :: component {
@@ -452,7 +457,33 @@ Shrinking_Platform_Entity :: entity @runtime_only @predicted {
     render:                      Render = { mesh = .Box, material = { color = {0.3, 0.9, 0.6} } }
 }
 
-// A slab held above its carrier for as long as the Canopy's button is down; other players stand on it and are
+// The platform that EXTENDS: set down at the shooter's eye facing their aim, it grows along its forward at
+// extend_speed until it reaches `length`, one sweep's answer at fire time (server/systems/platform_system.cpp),
+// then stays solid_seconds and dissolves over its last fifth. Solid while it grows and grown through anyone in
+// its path, never crushing. Drawn at the box it is, never at render.scale.
+Extending_Platform_Entity :: entity @runtime_only @predicted {
+    projectile:     Projectile = { weapon_id = .Extending_Platform }
+    // The tick the sweep answered; 0 until it has.
+    spawned_tick:   u32        @Networked
+    // How far it reaches along its forward once grown.
+    length:         f32_exact  @Networked
+    max_length:     f32 = 1024.0
+    extend_speed:   f32 = 1200.0
+    solid_seconds:  f32 = 6.0
+    half_width:     f32 = 32.0
+    half_thickness: f32 = 4.0
+    render:         Render = { mesh = .Box, material = { color = {0.95, 0.55, 0.85} } }
+}
+
+// What everyone but the pilot sees of a Pilot override; it follows the pilot's Movement and flies nothing itself.
+Guided_Rocket_Entity :: entity @runtime_only {
+    pilot_uid: entity          @Networked
+    // The row the flight was launched off, which says what it leaves behind.
+    weapon_id: Weapon = .Guided_Rocket
+    render:    Render = { mesh = .rocket }
+}
+
+// A slab held above its carrier from one press of the Canopy's button to the next; other players stand on it and are
 // carried by the carrier's own movement. A mover whose two poses are the carrier's last two positions (shared/canopy.hpp).
 Canopy_Entity :: entity @runtime_only @predicted {
     carrier_uid:               entity          @Networked
@@ -704,13 +735,13 @@ Timed_Movement_Modifier_Entity :: entity @runtime_only @predicted {
     flight:           Fixed_Arc_Flight
     flight_seconds:   f32 = 1.5
     spawned_tick:     u32                       @Networked
-    lifetime_seconds: f32 = 6.0                 @Networked
-    half_extents:     v3 = {128, 128, 128}      @Networked
-    gravity_scale:    f32 = -1.0                @Networked
-    run_speed_scale:  f32 = 1.0                 @Networked
-    jump_speed_scale: f32 = 1.0                 @Networked
-    friction_scale:   f32 = 1.0                 @Networked
-    control_scale:    f32 = 1.0                 @Networked
+    lifetime_seconds: f32_exact = 6.0           @Networked
+    half_extents:     v3_exact = {128, 128, 128} @Networked
+    gravity_scale:    f32_exact = -1.0          @Networked
+    run_speed_scale:  f32_exact = 1.0           @Networked
+    jump_speed_scale: f32_exact = 1.0           @Networked
+    friction_scale:   f32_exact = 1.0           @Networked
+    control_scale:    f32_exact = 1.0           @Networked
     render:           Render = { mesh = .Box, material = { shader_type = .Ghost, color = {0.5, 1, 0.5} } }
 }
 

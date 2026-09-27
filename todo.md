@@ -1515,6 +1515,22 @@ did not fix.
       first, spectating wants the second, and both start by writing wire bytes
       to disk, which is why the format is the wire format and not a proto.
 
+- [ ] **Draw the local player's own body when the camera is not its eye**
+      (noted 2026-09-27, from `guided_rocket_plan.md`). Riding a guided rocket
+      you look back at where you stand and nobody is there: only the blob
+      shadow marks the spot. The local player has no draw path. The model loop
+      in `play_state.cpp` walks `ctx.replication.remote_players` and skips
+      `my_slot`, and our own slot is never in that map anyway
+      (`held_snapshot.cpp` fills it in the `else` of the is-this-me test, and
+      `feed_interpolation_rings` excludes `my_entity_uid`). So it is not a
+      skip to lift: the pose has to come from the PREDICTION
+      (`drawn_local_feet`, `player_yaw` / `player_pitch`, a body yaw advanced
+      locally by `advance_body_yaw`), and the model draw has to become a
+      function of a pose rather than of a `Remote_Player_State`. The condition
+      is `local_player_rides_a_rocket` today; noclip and a future third-person
+      or killcam view are the same question. While piloting, the aim the body
+      is drawn at should be `aim_at_pilot_launch`, not the rocket's heading.
+
 # Networking
 
 - [ ] **`poll_client_network` busy-spins for a full millisecond, every frame.**

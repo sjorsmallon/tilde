@@ -34,8 +34,11 @@ struct override_step_t
 
 // Step 2's override half: the exhaustive switch over what is live. Clears the
 // override when it is spent, which is why the state is taken by reference.
+// The shape, the world and the aim are the pilot's: its rocket sweeps one and flies along the other.
 [[nodiscard]] override_step_t step_override(const movement_settings_t& settings,
-                                            move_state_t& state, float dt);
+                                            const Bounding_Volume_Hierarchy& bvh,
+                                            const predicted_world_t& world, move_state_t& state,
+                                            const vec3& aim_direction, float dt);
 
 // A frozen hull is a MOVER other players stand on (shared/statues.hpp), so the
 // step must not collide with its own: the kernel sees no movers while this is
@@ -44,6 +47,12 @@ struct override_step_t
 [[nodiscard]] constexpr bool override_freezes(entities::Movement_Override kind)
 {
   return kind == entities::Movement_Override::Stasis || kind == entities::Movement_Override::Statue;
+}
+
+// The hull takes no input while one of these is live, so a jump press spends no charge.
+[[nodiscard]] constexpr bool override_ignores_input(entities::Movement_Override kind)
+{
+  return override_freezes(kind) || kind == entities::Movement_Override::Pilot;
 }
 
 } // namespace shared

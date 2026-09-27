@@ -90,15 +90,17 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
   return projectile_uid;
 }
 
-shared::entity_uid_t spawn_placed_entity(server_context_t& context,
+shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::entity_uid_t owner_uid,
                                          const shared::weapon_definition_t& weapon,
-                                         const vec3f& feet, float yaw_degrees,
+                                         const vec3f& position, const quatf& orientation,
                                          entities::Fire_Trigger trigger)
 {
   const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Place)
     fatal_error("spawn_placed_entity: {}'s {} fire does not resolve as a placement",
                 weapon.display_name, to_string(trigger));
+
+  make_room_under_alive_limit(context, owner_uid, weapon.weapon, trigger, fire.limit);
 
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
@@ -111,8 +113,15 @@ shared::entity_uid_t spawn_placed_entity(server_context_t& context,
     return shared::null_entity_uid;
   }
 
-  entity->position    = feet;
-  entity->orientation = linalg::from_view_angles(yaw_degrees, 0.f);
+  entity->position    = position;
+  entity->orientation = orientation;
+
+  if (entities::Projectile* projectile = entities::get_component<entities::Projectile>(entity))
+  {
+    projectile->owner_uid = owner_uid;
+    projectile->weapon_id = weapon.weapon;
+    projectile->trigger   = trigger;
+  }
 
   return placed_uid;
 }

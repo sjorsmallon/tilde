@@ -238,6 +238,9 @@ struct prediction_t
   float player_pitch = 0.0f;
   float physics_accumulator = 0.0f;
 
+  // The aim a Pilot flight was launched with, handed back when the ride ends; empty while not riding.
+  std::optional<shared::subtick_view_t> aim_at_pilot_launch;
+
   // Our own Player_Entity::health, off the last snapshot. Prediction reads it:
   // the server stops steering a dead player, so a client that kept feeding its
   // own input into player_move would predict a walk the server never runs and

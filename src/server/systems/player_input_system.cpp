@@ -280,6 +280,14 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
         if (!allowed_to_move || world_is_frozen)
           continue;
 
+        // A pilot's hands are on the rocket: a press lets go of it and nothing fires.
+        if (player->movement.active_override == entities::Movement_Override::Pilot)
+        {
+          if (trigger_button.pressed_in_this_step)
+            (void)shared::try_end_pilot_flight(player->movement);
+          continue;
+        }
+
         std::optional<shared::subtick_time_t> fire_time;
         if (trigger_button.pressed_in_this_step)
           fire_time = step_time;

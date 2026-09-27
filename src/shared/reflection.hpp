@@ -32,6 +32,9 @@ enum field_type_t : uint8_t
   FIELD_TYPE_ENTITY_UID,
   FIELD_TYPE_V3, FIELD_TYPE_V4, FIELD_TYPE_V4I, FIELD_TYPE_QUAT,
   FIELD_TYPE_STRING, FIELD_TYPE_ASSET, FIELD_TYPE_ENUM, FIELD_TYPE_COMPONENT,
+  // A float and a vec3f in every way but one: the wire carries them UNROUNDED, because a
+  // predicted step reads them and a replay restarted from a rounded one ends a tick off.
+  FIELD_TYPE_F32_EXACT, FIELD_TYPE_V3_EXACT,
 };
 
 // One declared enum, as a walker sees it: no type, just the names. Value N is

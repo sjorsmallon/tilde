@@ -32,6 +32,8 @@
 #include "../shared/entity_system.hpp"
 #include "../shared/movement_kernel.hpp"
 #include "../shared/player_move.hpp"
+#include "../shared/player_constants.hpp"
+#include "../shared/weapons.hpp"
 #include "../shared/canopy.hpp"
 #include "../shared/statues.hpp"
 #include "../shared/spawned_platforms.hpp"
@@ -1641,6 +1643,120 @@ static void test_a_frozen_player_is_a_statue(const cvar_state_t& cvars)
         "nor is it pushed or crushed by it");
 }
 
+// --- 16e. a pilot holds while its rocket flies the aim, to a wall, the time, or a second press ---
+static void test_a_pilot_holds_while_its_rocket_flies(const cvar_state_t& cvars)
+{
+  printf("\n[pin] pilot: the hull holds, the rocket flies the aim at one speed, and lets go once\n");
+
+  const shared::weapon_definition_t& weapon =
+      shared::get_weapon_definition(entities::Weapon::Guided_Rocket);
+  const shared::pilot_t& pilot = weapon.primary_fire.pilot;
+  const vec3  eye_above_feet{0.f, shared::player_eye_height, 0.f};
+  Move_Input  jumping{};
+  jumping.jump_pressed = true;
+
+  {
+    entities::Movement movement{};
+    check(!shared::try_begin_pilot_flight(shared::get_weapon_definition(entities::Weapon::Dash),
+                                          entities::Fire_Trigger::Primary, {}, movement),
+          "a row that is not a pilot launches nothing");
+
+    movement.seconds_until_impulse_ready = 0.5f;
+    check(!shared::try_begin_pilot_flight(weapon, entities::Fire_Trigger::Primary, {}, movement),
+          "a launch waits for the movement gate");
+
+    movement.seconds_until_impulse_ready = 0.f;
+    movement.active_override             = entities::Movement_Override::Stasis;
+    check(!shared::try_begin_pilot_flight(weapon, entities::Fire_Trigger::Primary, {}, movement),
+          "and for whatever override is already live");
+    check(!shared::try_end_pilot_flight(movement), "a press lets go of a pilot flight and of nothing else");
+  }
+
+  const Bounding_Volume_Hierarchy empty = empty_world();
+  const vec3 start{0.f, 500.f, 0.f};
+  const vec3 entry_velocity{300.f, 200.f, 0.f};
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    check(shared::try_begin_pilot_flight(weapon, entities::Fire_Trigger::Primary,
+                                         start + eye_above_feet, movement),
+          "the press launches");
+    check(movement.seconds_until_impulse_ready == weapon.self_impulse_cooldown_seconds,
+          "and charges the one gate");
+
+    hook_probe_t  probe{};
+    move_result_t result{start, entry_velocity};
+    for (int tick = 0; tick < 30; ++tick)
+      result = run_split(cvars, empty, jumping, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    printf("    free N=%-2d  rocket at x %.3f, hull at (%.3f, %.3f)\n", sub_steps,
+           movement.override_target_position.x, result.position.x, result.position.y);
+    check(same_vec3(result.position, start) && same_vec3(result.velocity, entry_velocity),
+          "the hull holds where it was with the velocity it had");
+    check(movement.air_jumps_used == 0, "a jump held through the flight spends nothing");
+    check_near(movement.override_target_position.x, start.x + pilot.speed * 30.f * tick_dt, 0.05f,
+               "the rocket has flown its speed along the aim, whatever the step count");
+    check(probe.releases == 0, "it has not let go yet");
+
+    for (int tick = 30; tick < 200; ++tick)
+      result = run_split(cvars, empty, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &movement, {}, nullptr, {}, {}, &probe);
+
+    check(probe.releases == 1, "the flight ends exactly once");
+    check(probe.released_kind == entities::Movement_Override::Pilot, "and says which kind let go");
+    check(same_vec3(probe.release_velocity, entry_velocity), "the hull gets its momentum back");
+    check_near(movement.override_target_position.x, start.x + pilot.speed * pilot.seconds, 0.5f,
+               "the whole flight is the speed times the lifetime");
+    check(result.position.x > start.x, "and the hull's own flight carries on from the hold");
+  }
+
+  const Bounding_Volume_Hierarchy walled = floor_and_wall_world();
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    check(shared::try_begin_pilot_flight(weapon, entities::Fire_Trigger::Primary, eye_above_feet,
+                                         movement),
+          "the press launches");
+
+    hook_probe_t  probe{};
+    move_result_t result{{0.f, 0.f, 0.f}, {}};
+    for (int tick = 0; tick < 60; ++tick)
+      result = run_split(cvars, walled, Move_Input{}, result.position, result.velocity, tick_dt,
+                         sub_steps, &movement, {}, nullptr, {}, {}, &probe);
+
+    printf("    wall N=%-2d  rocket stopped at x %.3f\n", sub_steps, movement.override_target_position.x);
+    check_near(movement.override_target_position.x, 112.f - pilot.radius, 0.05f,
+               "the rocket stops a radius short of the wall");
+    check(probe.releases == 1 && movement.active_override == entities::Movement_Override::None,
+          "and the wall ends the flight");
+  }
+
+  {
+    entities::Movement movement{};
+    check(shared::try_begin_pilot_flight(weapon, entities::Fire_Trigger::Primary,
+                                         start + eye_above_feet, movement),
+          "the press launches");
+
+    hook_probe_t  probe{};
+    move_result_t result{start, entry_velocity};
+    for (int tick = 0; tick < 10; ++tick)
+      result = run_split(cvars, empty, Move_Input{}, result.position, result.velocity, tick_dt, 1,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    const vec3 rocket_at_the_press = movement.override_target_position;
+    check(shared::try_end_pilot_flight(movement), "a second press lets go");
+    result = run_split(cvars, empty, Move_Input{}, result.position, result.velocity, tick_dt, 1,
+                       &movement, {}, nullptr, {}, {}, &probe);
+
+    check(probe.releases == 1 && movement.active_override == entities::Movement_Override::None,
+          "and the next step ends the flight");
+    check(same_vec3(movement.override_target_position, rocket_at_the_press),
+          "with the rocket where it was at the press");
+  }
+}
+
 // --- 17. pm_model instant: the velocity IS the input, ground and air --
 static cvar_state_t instant_cvars(const cvar_state_t& cvars)
 {
@@ -2226,7 +2342,7 @@ static void test_hook_reel_arrival_is_step_invariant(const cvar_state_t& cvars)
     movement.override_target_position   = anchor;
     movement.override_seconds_remaining = 1.5f;
     movement.override_speed             = cvars.sv_hook_pull_speed;
-    movement.override_arrive_radius     = cvars.sv_hook_arrive_radius;
+    movement.override_radius     = cvars.sv_hook_arrive_radius;
 
     hook_probe_t  hook{};
     move_result_t result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
@@ -2308,7 +2424,7 @@ static void test_hook_reel_timeout_is_step_invariant(const cvar_state_t& cvars)
     movement.override_target_position   = anchor;
     movement.override_seconds_remaining = pull_seconds;
     movement.override_speed             = cvars.sv_hook_pull_speed;
-    movement.override_arrive_radius     = cvars.sv_hook_arrive_radius;
+    movement.override_radius     = cvars.sv_hook_arrive_radius;
 
     hook_probe_t  hook{};
     move_result_t result{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
@@ -2426,6 +2542,7 @@ int main()
   test_a_spawned_platform_catches_a_hull(cvars);
   test_a_canopy_carries_its_rider_a_tick_behind(cvars);
   test_a_frozen_player_is_a_statue(cvars);
+  test_a_pilot_holds_while_its_rocket_flies(cvars);
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);
   test_instant_pad_launch_is_borrowed(cvars);

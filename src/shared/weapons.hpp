@@ -8,6 +8,8 @@
 #include "array.hpp"
 #include "contact.hpp"
 #include "entities/generated/entities_generated.hpp"
+#include "flight_path.hpp"
+#include "player_constants.hpp"
 #include "player_move.hpp"
 #include "subtick.hpp"
 
@@ -67,12 +69,60 @@ inline projectile_step_t advance_projectile(const projectile_t& projectile, floa
           .velocity = velocity + acceleration * dt};
 }
 
-// Fire_Resolution::Place's parameters: the type set down where the shooter STANDS, facing their yaw, with no
-// flight. A teleport destination has to fit a hull, and where you stood is the one place known to.
+// Where a Fire_Resolution::Place fire is set down. Feet: where the shooter STANDS, facing their yaw; a
+// teleport destination has to fit a hull, and where you stood is the one place known to. Eye: at the
+// shooter's eye, facing the whole aim, for a type that grows or reaches from there.
+enum class place_anchor_t : uint8_t
+{
+  Feet,
+  Eye,
+};
+
+// Fire_Resolution::Place's parameters: the type set down at the anchor with no flight. The type's own
+// system does whatever it does from there.
 struct place_t
 {
   entities::entity_type spawns;
+  place_anchor_t        anchor;
 };
+
+// What a piloted flight leaves behind when it ends.
+enum class pilot_leaves_t : uint8_t
+{
+  Nothing,
+  // A polyline of platforms under the rocket's line (flight_path.hpp), one path per pilot.
+  Path,
+};
+
+// Fire_Resolution::Pilot's parameters: the rocket the shooter rides, written into Movement at the press.
+struct pilot_t
+{
+  float                  speed;
+  float                  radius;
+  float                  seconds;
+  pilot_leaves_t         leaves;
+  flight_path_settings_t path;
+};
+
+constexpr bool flight_path_settings_are_zero(const flight_path_settings_t& path)
+{
+  return path.turn_degrees == 0.f && path.shortest_segment == 0.f && path.longest_segment == 0.f &&
+         path.joint_overlap == 0.f && path.drop == 0.f;
+}
+
+constexpr bool pilot_path_matches_what_it_leaves(const pilot_t& pilot)
+{
+  switch (pilot.leaves)
+  {
+  case pilot_leaves_t::Nothing:
+    return flight_path_settings_are_zero(pilot.path);
+  case pilot_leaves_t::Path:
+    return pilot.path.turn_degrees > 0.f && pilot.path.shortest_segment > 0.f &&
+           pilot.path.longest_segment > pilot.path.shortest_segment &&
+           pilot.path.joint_overlap >= 0.f;
+  }
+  return false;
+}
 
 // What a button does when its owner already has max_alive of its shots alive.
 enum class at_limit_t : uint8_t
@@ -108,6 +158,7 @@ struct weapon_fire_t
   projectile_t              projectile;
   place_t                   place;
   self_impulse_t            self_impulse;
+  pilot_t                   pilot;
   // What a Hitscan or a sweeping Projectile does on contact (update_contacts).
   // None on a button whose shot never arrives anywhere: a fixed-arc projectile,
   // a place, an impulse.
@@ -162,7 +213,7 @@ struct weapon_definition_t
   // secondary only: the client toggles its FOV off it and nothing else.
   weapon_fire_t primary_fire;
   weapon_fire_t secondary_fire;
-  // Seconds before EITHER impulse may be taken again. THE gate -- see
+  // Seconds before EITHER impulse, or a pilot's next flight, may be taken again. THE gate -- see
   // try_apply_self_impulse and the static_assert below for why it is not
   // fire_interval_seconds. Shared by both buttons, because Movement carries one
   // countdown and a second one is a second thing the replay has to restart.
@@ -407,8 +458,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .contact    = {.effect = contact_effect_t::Land}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
-    // A held LEVEL, not a shot: the primary's resolution says what the button means and
-    // canopy_system reads the button itself, so the row has no clocks (canopy.hpp).
+    // A toggle, not a shot: a press raises or lowers the canopy (canopy_system), so the row has no clocks.
     {.weapon                  = entities::Weapon::Canopy,
      .display_name            = "Canopy",
      .slot                    = entities::Inventory_Slot::Secondary,
@@ -462,6 +512,43 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+    // Set down at the eye facing the aim; how far it grows is one sweep at fire time, and every other
+    // number is Extending_Platform_Entity's own default.
+    {.weapon                  = entities::Weapon::Extending_Platform,
+     .display_name            = "Extending Platform",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 1.0f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Place,
+                                 .place      = {.spawns = entities::entity_type::Extending_Platform_Entity,
+                                                .anchor = place_anchor_t::Eye},
+                                 .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
+    // The shooter rides the rocket: the body holds, the aim is the heading, a second press lets go.
+    // The path lies an eye's height under the flight, so the flight is the view of whoever walks it.
+    {.weapon                        = entities::Weapon::Guided_Rocket,
+     .display_name                  = "Guided Rocket",
+     .slot                          = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds         = 0.f,
+     .deploy_duration_seconds       = 0.f,
+     .magazine_size                 = 0,
+     .reload_duration_seconds       = 0.f,
+     .primary_fire                  = {.resolution = entities::Fire_Resolution::Pilot,
+                                       .pilot      = {.speed   = 600.f,
+                                                      .radius  = 8.f,
+                                                      .seconds = 3.f,
+                                                      .leaves  = pilot_leaves_t::Path,
+                                                      .path    = {.turn_degrees     = 10.f,
+                                                                  .shortest_segment = 32.f,
+                                                                  .longest_segment  = 192.f,
+                                                                  .joint_overlap    = 8.f,
+                                                                  .drop = player_eye_height + 4.f}}},
+     .self_impulse_cooldown_seconds = 1.f,
+     .sounds                        = {.fire         = assets::sound_asset::Missing,
+                                       .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -511,7 +598,9 @@ constexpr uint32_t first_self_impulse_row_gated_by_more_than_movement()
     const uint32_t row = static_cast<uint32_t>(definition.weapon);
     const bool any_impulse =
         definition.primary_fire.resolution == entities::Fire_Resolution::Self_Impulse ||
-        definition.secondary_fire.resolution == entities::Fire_Resolution::Self_Impulse;
+        definition.secondary_fire.resolution == entities::Fire_Resolution::Self_Impulse ||
+        definition.primary_fire.resolution == entities::Fire_Resolution::Pilot ||
+        definition.secondary_fire.resolution == entities::Fire_Resolution::Pilot;
     const bool any_shot = fire_passes_through_shot_clocks(definition.primary_fire) ||
                           fire_passes_through_shot_clocks(definition.secondary_fire);
 
@@ -528,7 +617,7 @@ constexpr uint32_t first_self_impulse_row_gated_by_more_than_movement()
 
 static_assert(first_self_impulse_row_gated_by_more_than_movement() == entities::Weapon_COUNT,
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
-              "a row firing a self-impulse on either button carries a positive "
+              "a row firing a self-impulse or a pilot on either button carries a positive "
               "self_impulse_cooldown_seconds and a row with none carries zero, and a row on "
               "which no button is Hitscan or Projectile carries zero fire_interval_seconds, "
               "zero deploy_duration_seconds and no magazine: the only gate an impulse has is "
@@ -600,6 +689,10 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
                                   projectile.spawns == entities::entity_type::Invalid;
   const bool impulse_is_zero    = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
   const bool place_is_zero      = place.spawns == entities::entity_type::Invalid;
+  const bool pilot_is_zero      = fire.pilot.speed == 0.f && fire.pilot.radius == 0.f &&
+                                  fire.pilot.seconds == 0.f &&
+                                  fire.pilot.leaves == pilot_leaves_t::Nothing &&
+                                  flight_path_settings_are_zero(fire.pilot.path);
   const bool contact_is_none    = fire.contact.effect == contact_effect_t::None;
   const bool contact_matches    = contact_parameters_match_effect(fire.contact);
   const bool limit_is_zero      = fire.limit.max_alive == 0 &&
@@ -607,24 +700,30 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
 
   switch (fire.resolution)
   {
-  // Canopy reads nothing either: the button is a level canopy_system reads for itself.
+  // Canopy reads nothing either: a press toggles the canopy and carries no numbers.
   case entities::Fire_Resolution::None:
   case entities::Fire_Resolution::Zoom:
   case entities::Fire_Resolution::Canopy:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
-           contact_is_none && contact_matches && !fire.fires_while_held && limit_is_zero;
+           pilot_is_zero && contact_is_none && contact_matches && !fire.fires_while_held &&
+           limit_is_zero;
   case entities::Fire_Resolution::Hitscan:
     return hitscan.range > 0.f && !contact_is_none && contact_matches && projectile_is_zero &&
-           place_is_zero && impulse_is_zero && limit_is_zero;
+           place_is_zero && impulse_is_zero && pilot_is_zero && limit_is_zero;
   case entities::Fire_Resolution::Projectile:
     return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
-           contact_matches && hitscan_is_zero && place_is_zero && impulse_is_zero;
+           contact_matches && hitscan_is_zero && place_is_zero && impulse_is_zero && pilot_is_zero;
   case entities::Fire_Resolution::Place:
     return place.spawns != entities::entity_type::Invalid && hitscan_is_zero &&
-           projectile_is_zero && impulse_is_zero && contact_is_none && contact_matches &&
-           !fire.fires_while_held && limit_is_zero;
+           projectile_is_zero && impulse_is_zero && pilot_is_zero && contact_is_none &&
+           contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Self_Impulse:
-    return hitscan_is_zero && projectile_is_zero && place_is_zero && contact_is_none &&
+    return hitscan_is_zero && projectile_is_zero && place_is_zero && pilot_is_zero &&
+           contact_is_none && contact_matches && !fire.fires_while_held && limit_is_zero;
+  case entities::Fire_Resolution::Pilot:
+    return fire.pilot.speed > 0.f && fire.pilot.radius > 0.f && fire.pilot.seconds > 0.f &&
+           pilot_path_matches_what_it_leaves(fire.pilot) && hitscan_is_zero &&
+           projectile_is_zero && place_is_zero && impulse_is_zero && contact_is_none &&
            contact_matches && !fire.fires_while_held && limit_is_zero;
   }
   return false;
@@ -656,10 +755,11 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "each fire of a WEAPON_DEFINITIONS row fills the parameter struct of its own "
               "Fire_Resolution (hitscan: positive range; projectile: positive speed and a spawned "
-              "entity type; place: a spawned entity type) and leaves the others zero, and the "
+              "entity type; place: a spawned entity type; pilot: positive speed, radius and "
+              "seconds, and path numbers only when it leaves a Path) and leaves the others zero, and the "
               "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
               "so a value in another is a number nothing reads. A Hitscan carries a contact "
-              "effect; a Projectile may; None, Zoom, Canopy, Place and Self_Impulse carry "
+              "effect; a Projectile may; None, Zoom, Canopy, Place, Self_Impulse and Pilot carry "
               "contact_effect_t::None. The contact fills the sub-struct of its own effect "
               "(Damage: positive amount and headshot_multiplier; Magnet: a non-zero speed; Reel: "
               "positive seconds; Freeze: Stasis or Statue and positive seconds; Explode: positive "
@@ -669,8 +769,8 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "once per sub-tick step, which is a rate set by how many edges the tick had. A held "
               "Reel's seconds is LONGER than the fire interval: it is a lease the next hit renews, "
               "and one that runs out between two hits drops the reel ten times a second. An "
-              "alive limit is for a Projectile fire only: spawn_projectile is the one place "
-              "that enforces it.");
+              "alive limit is for a Projectile or Place fire only: spawn_projectile and "
+              "spawn_placed_entity are the two places that enforce it.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {
@@ -822,6 +922,55 @@ inline const projectile_t& projectile_parameters_of(const entities::Projectile& 
   }
 
   movement.seconds_until_impulse_ready = weapon.self_impulse_cooldown_seconds;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Pilot
+// ---------------------------------------------------------------------------
+
+// The press that launches: the self-impulse's three callers and its one gate.
+[[nodiscard]] inline bool try_begin_pilot_flight(const weapon_definition_t& weapon,
+                                                 entities::Fire_Trigger trigger, const vec3f& eye,
+                                                 entities::Movement& movement)
+{
+  const weapon_fire_t& fire = fire_of(weapon, trigger);
+  if (fire.resolution != entities::Fire_Resolution::Pilot)
+    return false;
+
+  if (movement.active_override != entities::Movement_Override::None)
+    return false;
+
+  if (movement.seconds_until_impulse_ready > 0.f)
+    return false;
+
+  movement.active_override            = entities::Movement_Override::Pilot;
+  movement.override_target_uid        = null_entity_uid;
+  movement.override_target_position   = eye;
+  movement.override_seconds_remaining = fire.pilot.seconds;
+  movement.override_speed             = fire.pilot.speed;
+  movement.override_radius            = fire.pilot.radius;
+
+  movement.seconds_until_impulse_ready = weapon.self_impulse_cooldown_seconds;
+  return true;
+}
+
+// The row half a flight was launched off: the primary when both are pilots, nothing when neither is.
+[[nodiscard]] constexpr const pilot_t* try_find_pilot_of(const weapon_definition_t& weapon)
+{
+  for (const weapon_fire_t* fire : {&weapon.primary_fire, &weapon.secondary_fire})
+    if (fire->resolution == entities::Fire_Resolution::Pilot)
+      return &fire->pilot;
+  return nullptr;
+}
+
+// Any trigger press while a flight is live lets go of it, whatever is in the hand; the next step ends it.
+[[nodiscard]] inline bool try_end_pilot_flight(entities::Movement& movement)
+{
+  if (movement.active_override != entities::Movement_Override::Pilot)
+    return false;
+
+  movement.override_seconds_remaining = 0.f;
   return true;
 }
 

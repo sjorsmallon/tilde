@@ -1,6 +1,8 @@
 #include "movement_override.hpp"
 #include "log.hpp"
+#include "projectile_sweep.hpp"
 #include <algorithm>
+#include <optional>
 
 namespace shared
 {
@@ -56,7 +58,7 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   // Arrival is tested BEFORE the step, so the radius is the distance the reel
   // stops at rather than one a step can carry the hull past. The model takes
   // the step that follows.
-  if (distance_to_anchor <= movement.override_arrive_radius)
+  if (distance_to_anchor <= movement.override_radius)
   {
     end_override(settings, state, state.velocity, result);
     return result;
@@ -66,7 +68,7 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   const vec3 velocity  = direction * movement.override_speed;
 
   const float seconds_pulled     = std::min(dt, movement.override_seconds_remaining);
-  const float distance_remaining = distance_to_anchor - movement.override_arrive_radius;
+  const float distance_remaining = distance_to_anchor - movement.override_radius;
 
   // No gravity and no speed limit: the velocity IS the reel, so anything else
   // would be a second author of it. Walls are the kernel's, as they are for
@@ -124,9 +126,43 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   return result;
 }
 
+// The hull holds and the rocket flies: constant speed along the step's aim, stopped by the map and the movers.
+[[nodiscard]] override_step_t step_pilot(const movement_settings_t& settings,
+                                         const Bounding_Volume_Hierarchy& bvh,
+                                         const predicted_world_t& world, move_state_t& state,
+                                         const vec3& aim_direction, float dt)
+{
+  entities::Movement& movement = state.movement;
+
+  override_step_t result{};
+  result.holds = true;
+
+  if (movement.override_seconds_remaining <= 0.f)
+  {
+    end_override(settings, state, state.velocity, result);
+    return result;
+  }
+
+  const float seconds_flown = std::min(dt, movement.override_seconds_remaining);
+  const vec3  from          = movement.override_target_position;
+  const vec3  to            = from + aim_direction * (movement.override_speed * seconds_flown);
+
+  const std::optional<projectile_hit_t> hit =
+      sweep_projectile(bvh, world, from, to, movement.override_radius);
+  movement.override_target_position = hit ? hit->position : to;
+
+  movement.override_seconds_remaining -= dt;
+  if (hit || movement.override_seconds_remaining <= 0.f)
+    end_override(settings, state, state.velocity, result);
+
+  return result;
+}
+
 } // namespace
 
-override_step_t step_override(const movement_settings_t& settings, move_state_t& state, float dt)
+override_step_t step_override(const movement_settings_t& settings,
+                              const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
+                              move_state_t& state, const vec3& aim_direction, float dt)
 {
   switch (state.movement.active_override)
   {
@@ -138,6 +174,8 @@ override_step_t step_override(const movement_settings_t& settings, move_state_t&
       return step_stasis(settings, state, dt);
     case entities::Movement_Override::Statue:
       return step_statue(settings, state, dt);
+    case entities::Movement_Override::Pilot:
+      return step_pilot(settings, bvh, world, state, aim_direction, dt);
   }
   fatal_error("step_override: no arm for movement override {}",
               (int)state.movement.active_override);

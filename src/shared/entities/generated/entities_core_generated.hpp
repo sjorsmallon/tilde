@@ -75,9 +75,11 @@ enum class Weapon : uint8_t
   Canopy = 14,
   Statue = 15,
   Modifier_Gun = 16,
+  Extending_Platform = 17,
+  Guided_Rocket = 18,
 };
 
-constexpr uint32_t Weapon_COUNT = 17;
+constexpr uint32_t Weapon_COUNT = 19;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -91,9 +93,10 @@ enum class Fire_Resolution : uint8_t
   Zoom = 4,
   Place = 5,
   Canopy = 6,
+  Pilot = 7,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 7;
+constexpr uint32_t Fire_Resolution_COUNT = 8;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);
@@ -260,9 +263,10 @@ enum class Movement_Override : uint8_t
   Reel = 1,
   Stasis = 2,
   Statue = 3,
+  Pilot = 4,
 };
 
-constexpr uint32_t Movement_Override_COUNT = 4;
+constexpr uint32_t Movement_Override_COUNT = 5;
 
 const char* to_string(Movement_Override value);
 template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text);
@@ -308,37 +312,39 @@ enum class entity_type : uint16_t
   Ricochet_Entity = 8,
   Platform_Entity = 9,
   Shrinking_Platform_Entity = 10,
-  Canopy_Entity = 11,
-  Bubble_Entity = 12,
-  Physics_Body_Entity = 13,
-  Damageable_Entity = 14,
-  Particle_Emitter_Entity = 15,
-  Sound_Emitter_Entity = 16,
-  Point_Light_Entity = 17,
-  Spot_Light_Entity = 18,
-  Directional_Light_Entity = 19,
-  Trigger_Volume_Entity = 20,
-  Jump_Pad_Entity = 21,
-  Reflection_Volume_Entity = 22,
-  Game_Rules_Entity = 23,
-  Logic_Counter_Entity = 24,
-  Geometry_Owner_Entity = 25,
-  Ping_Marker_Entity = 26,
-  Logic_Timer_Entity = 27,
-  Path_Node_Entity = 28,
-  Mover_Entity = 29,
-  Launcher_Entity = 30,
-  Movement_Modifier_Entity = 31,
-  Remnant_Entity = 32,
-  Modifier_Shot_Entity = 33,
-  Timed_Movement_Modifier_Entity = 34,
-  Weapon_Emancipation_Grill_Entity = 35,
-  Emancipated_Weapon_Entity = 36,
+  Extending_Platform_Entity = 11,
+  Guided_Rocket_Entity = 12,
+  Canopy_Entity = 13,
+  Bubble_Entity = 14,
+  Physics_Body_Entity = 15,
+  Damageable_Entity = 16,
+  Particle_Emitter_Entity = 17,
+  Sound_Emitter_Entity = 18,
+  Point_Light_Entity = 19,
+  Spot_Light_Entity = 20,
+  Directional_Light_Entity = 21,
+  Trigger_Volume_Entity = 22,
+  Jump_Pad_Entity = 23,
+  Reflection_Volume_Entity = 24,
+  Game_Rules_Entity = 25,
+  Logic_Counter_Entity = 26,
+  Geometry_Owner_Entity = 27,
+  Ping_Marker_Entity = 28,
+  Logic_Timer_Entity = 29,
+  Path_Node_Entity = 30,
+  Mover_Entity = 31,
+  Launcher_Entity = 32,
+  Movement_Modifier_Entity = 33,
+  Remnant_Entity = 34,
+  Modifier_Shot_Entity = 35,
+  Timed_Movement_Modifier_Entity = 36,
+  Weapon_Emancipation_Grill_Entity = 37,
+  Emancipated_Weapon_Entity = 38,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 37;
+constexpr uint32_t ENTITY_TYPE_COUNT = 39;
 
 enum class component_type : uint16_t
 {
@@ -612,7 +618,7 @@ struct Movement
   linalg::vec3f override_target_position = {};
   float override_seconds_remaining = {};
   float override_speed = {};
-  float override_arrive_radius = {};
+  float override_radius = {};
 };
 
 struct Inventory

@@ -105,7 +105,7 @@ static void attach_reel(server_context_t& context, entities::Player_Entity& reel
   reeled.movement.override_target_position   = reel_anchor_of(anchor);
   reeled.movement.override_seconds_remaining = seconds;
   reeled.movement.override_speed             = context.cvars->sv_hook_pull_speed;
-  reeled.movement.override_arrive_radius     = context.cvars->sv_hook_arrive_radius;
+  reeled.movement.override_radius     = context.cvars->sv_hook_arrive_radius;
 }
 
 // The arc that lands `thrown` on `destination` after the flight time, gravity included.

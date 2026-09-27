@@ -43,6 +43,8 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Canopy",
   "Statue",
   "Modifier_Gun",
+  "Extending_Platform",
+  "Guided_Rocket",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -53,6 +55,7 @@ constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
   "Zoom",
   "Place",
   "Canopy",
+  "Pilot",
 };
 
 constexpr const char* Fire_Trigger_VALUE_NAMES[] = {
@@ -144,13 +147,14 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
   "Reel",
   "Stasis",
   "Statue",
+  "Pilot",
 };
 
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 17}},
-  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 7}},
+  {"Weapon", {Weapon_VALUE_NAMES, 19}},
+  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 8}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
@@ -163,7 +167,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Round_End_Reason", {Round_End_Reason_VALUE_NAMES, 6}},
   {"Match_Request", {Match_Request_VALUE_NAMES, 5}},
   {"Easing", {Easing_VALUE_NAMES, 5}},
-  {"Movement_Override", {Movement_Override_VALUE_NAMES, 4}},
+  {"Movement_Override", {Movement_Override_VALUE_NAMES, 5}},
 };
 
 namespace
@@ -537,7 +541,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "time_since_grounded_seconds",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Movement, time_since_grounded_seconds),
    .size_in_bytes = (uint32_t)sizeof(Movement::time_since_grounded_seconds),
    .flags = 1u,
@@ -555,7 +559,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "seconds_until_impulse_ready",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Movement, seconds_until_impulse_ready),
    .size_in_bytes = (uint32_t)sizeof(Movement::seconds_until_impulse_ready),
    .flags = 1u,
@@ -564,7 +568,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "seconds_until_speed_returns_to_base_speed",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Movement, seconds_until_speed_returns_to_base_speed),
    .size_in_bytes = (uint32_t)sizeof(Movement::seconds_until_speed_returns_to_base_speed),
    .flags = 1u,
@@ -573,7 +577,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "momentum",
-   .type = FIELD_TYPE_V3,
+   .type = FIELD_TYPE_V3_EXACT,
    .offset = (uint32_t)offsetof(Movement, momentum),
    .size_in_bytes = (uint32_t)sizeof(Movement::momentum),
    .flags = 1u,
@@ -618,7 +622,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "override_target_position",
-   .type = FIELD_TYPE_V3,
+   .type = FIELD_TYPE_V3_EXACT,
    .offset = (uint32_t)offsetof(Movement, override_target_position),
    .size_in_bytes = (uint32_t)sizeof(Movement::override_target_position),
    .flags = 1u,
@@ -627,7 +631,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "override_seconds_remaining",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Movement, override_seconds_remaining),
    .size_in_bytes = (uint32_t)sizeof(Movement::override_seconds_remaining),
    .flags = 1u,
@@ -636,7 +640,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "override_speed",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Movement, override_speed),
    .size_in_bytes = (uint32_t)sizeof(Movement::override_speed),
    .flags = 1u,
@@ -644,10 +648,10 @@ constexpr field_info_t Movement_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "override_arrive_radius",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Movement, override_arrive_radius),
-   .size_in_bytes = (uint32_t)sizeof(Movement::override_arrive_radius),
+  {.name = "override_radius",
+   .type = FIELD_TYPE_F32_EXACT,
+   .offset = (uint32_t)offsetof(Movement, override_radius),
+   .size_in_bytes = (uint32_t)sizeof(Movement::override_radius),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1860,6 +1864,192 @@ constexpr field_info_t Shrinking_Platform_Entity_FIELDS[] = {
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Shrinking_Platform_Entity, render),
    .size_in_bytes = (uint32_t)sizeof(Shrinking_Platform_Entity::render),
+   .flags = 0u,
+   .component_id = 9,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t Extending_Platform_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "projectile",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, projectile),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::projectile),
+   .flags = 0u,
+   .component_id = 3,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "spawned_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, spawned_tick),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::spawned_tick),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "length",
+   .type = FIELD_TYPE_F32_EXACT,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, length),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::length),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "max_length",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, max_length),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::max_length),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "extend_speed",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, extend_speed),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::extend_speed),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "solid_seconds",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, solid_seconds),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::solid_seconds),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "half_width",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, half_width),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::half_width),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "half_thickness",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, half_thickness),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::half_thickness),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::render),
+   .flags = 0u,
+   .component_id = 9,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
+constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "pilot_uid",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, pilot_uid),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::pilot_uid),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "weapon_id",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, weapon_id),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::weapon_id),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[2]},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::render),
    .flags = 0u,
    .component_id = 9,
    .string_capacity = NOT_A_STRING,
@@ -3846,7 +4036,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "lifetime_seconds",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, lifetime_seconds),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::lifetime_seconds),
    .flags = 1u,
@@ -3855,7 +4045,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "half_extents",
-   .type = FIELD_TYPE_V3,
+   .type = FIELD_TYPE_V3_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, half_extents),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::half_extents),
    .flags = 1u,
@@ -3864,7 +4054,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "gravity_scale",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, gravity_scale),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::gravity_scale),
    .flags = 1u,
@@ -3873,7 +4063,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "run_speed_scale",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, run_speed_scale),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::run_speed_scale),
    .flags = 1u,
@@ -3882,7 +4072,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "jump_speed_scale",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, jump_speed_scale),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::jump_speed_scale),
    .flags = 1u,
@@ -3891,7 +4081,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "friction_scale",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, friction_scale),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::friction_scale),
    .flags = 1u,
@@ -3900,7 +4090,7 @@ constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "control_scale",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Timed_Movement_Modifier_Entity, control_scale),
    .size_in_bytes = (uint32_t)sizeof(Timed_Movement_Modifier_Entity::control_scale),
    .flags = 1u,
@@ -4098,6 +4288,8 @@ Entity* construct_Kooh_Entity(void* memory) { return new (memory) Kooh_Entity();
 Entity* construct_Ricochet_Entity(void* memory) { return new (memory) Ricochet_Entity(); }
 Entity* construct_Platform_Entity(void* memory) { return new (memory) Platform_Entity(); }
 Entity* construct_Shrinking_Platform_Entity(void* memory) { return new (memory) Shrinking_Platform_Entity(); }
+Entity* construct_Extending_Platform_Entity(void* memory) { return new (memory) Extending_Platform_Entity(); }
+Entity* construct_Guided_Rocket_Entity(void* memory) { return new (memory) Guided_Rocket_Entity(); }
 Entity* construct_Canopy_Entity(void* memory) { return new (memory) Canopy_Entity(); }
 Entity* construct_Bubble_Entity(void* memory) { return new (memory) Bubble_Entity(); }
 Entity* construct_Physics_Body_Entity(void* memory) { return new (memory) Physics_Body_Entity(); }
@@ -4135,6 +4327,8 @@ Entity* as_base_Kooh_Entity(void* memory) { return static_cast<Entity*>((Kooh_En
 Entity* as_base_Ricochet_Entity(void* memory) { return static_cast<Entity*>((Ricochet_Entity*)memory); }
 Entity* as_base_Platform_Entity(void* memory) { return static_cast<Entity*>((Platform_Entity*)memory); }
 Entity* as_base_Shrinking_Platform_Entity(void* memory) { return static_cast<Entity*>((Shrinking_Platform_Entity*)memory); }
+Entity* as_base_Extending_Platform_Entity(void* memory) { return static_cast<Entity*>((Extending_Platform_Entity*)memory); }
+Entity* as_base_Guided_Rocket_Entity(void* memory) { return static_cast<Entity*>((Guided_Rocket_Entity*)memory); }
 Entity* as_base_Canopy_Entity(void* memory) { return static_cast<Entity*>((Canopy_Entity*)memory); }
 Entity* as_base_Bubble_Entity(void* memory) { return static_cast<Entity*>((Bubble_Entity*)memory); }
 Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>((Physics_Body_Entity*)memory); }
@@ -4174,6 +4368,8 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"ricochet_entity", "Ricochet", {Ricochet_Entity_FIELDS, 8}, (uint32_t)sizeof(Ricochet_Entity), (uint32_t)alignof(Ricochet_Entity), 520u, true, true, false, construct_Ricochet_Entity, as_base_Ricochet_Entity},
   {"platform_entity", "Platform", {Platform_Entity_FIELDS, 10}, (uint32_t)sizeof(Platform_Entity), (uint32_t)alignof(Platform_Entity), 536u, true, true, true, construct_Platform_Entity, as_base_Platform_Entity},
   {"shrinking_platform_entity", "Shrinking Platform", {Shrinking_Platform_Entity_FIELDS, 11}, (uint32_t)sizeof(Shrinking_Platform_Entity), (uint32_t)alignof(Shrinking_Platform_Entity), 536u, true, true, true, construct_Shrinking_Platform_Entity, as_base_Shrinking_Platform_Entity},
+  {"extending_platform_entity", "Extending Platform", {Extending_Platform_Entity_FIELDS, 13}, (uint32_t)sizeof(Extending_Platform_Entity), (uint32_t)alignof(Extending_Platform_Entity), 520u, true, true, true, construct_Extending_Platform_Entity, as_base_Extending_Platform_Entity},
+  {"guided_rocket_entity", "Guided Rocket", {Guided_Rocket_Entity_FIELDS, 7}, (uint32_t)sizeof(Guided_Rocket_Entity), (uint32_t)alignof(Guided_Rocket_Entity), 512u, true, true, false, construct_Guided_Rocket_Entity, as_base_Guided_Rocket_Entity},
   {"canopy_entity", "Canopy", {Canopy_Entity_FIELDS, 8}, (uint32_t)sizeof(Canopy_Entity), (uint32_t)alignof(Canopy_Entity), 512u, true, true, true, construct_Canopy_Entity, as_base_Canopy_Entity},
   {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 19}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 536u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
   {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 544u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
@@ -4214,6 +4410,8 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {-1, -1, -1, (int32_t)offsetof(Ricochet_Entity, projectile), -1, -1, -1, -1, -1, (int32_t)offsetof(Ricochet_Entity, render), -1, -1, -1, -1, -1, -1}, // Ricochet_Entity
   {-1, -1, -1, (int32_t)offsetof(Platform_Entity, projectile), (int32_t)offsetof(Platform_Entity, flight), -1, -1, -1, -1, (int32_t)offsetof(Platform_Entity, render), -1, -1, -1, -1, -1, -1}, // Platform_Entity
   {-1, -1, -1, (int32_t)offsetof(Shrinking_Platform_Entity, projectile), (int32_t)offsetof(Shrinking_Platform_Entity, flight), -1, -1, -1, -1, (int32_t)offsetof(Shrinking_Platform_Entity, render), -1, -1, -1, -1, -1, -1}, // Shrinking_Platform_Entity
+  {-1, -1, -1, (int32_t)offsetof(Extending_Platform_Entity, projectile), -1, -1, -1, -1, -1, (int32_t)offsetof(Extending_Platform_Entity, render), -1, -1, -1, -1, -1, -1}, // Extending_Platform_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Guided_Rocket_Entity, render), -1, -1, -1, -1, -1, -1}, // Guided_Rocket_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Canopy_Entity, render), -1, -1, -1, -1, -1, -1}, // Canopy_Entity
   {-1, -1, -1, (int32_t)offsetof(Bubble_Entity, projectile), (int32_t)offsetof(Bubble_Entity, flight), -1, -1, -1, -1, (int32_t)offsetof(Bubble_Entity, render), -1, -1, -1, -1, -1, -1}, // Bubble_Entity
   {-1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, bounce), -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1, -1, -1, -1}, // Physics_Body_Entity
@@ -4268,7 +4466,7 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Weapon_Emancipation_Grill_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 30;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 32;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4278,6 +4476,8 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Ricochet_Entity,
   entity_type::Platform_Entity,
   entity_type::Shrinking_Platform_Entity,
+  entity_type::Extending_Platform_Entity,
+  entity_type::Guided_Rocket_Entity,
   entity_type::Canopy_Entity,
   entity_type::Bubble_Entity,
   entity_type::Physics_Body_Entity,
@@ -4363,6 +4563,8 @@ const char* to_string(Weapon value)
     case Weapon::Canopy: return "Canopy";
     case Weapon::Statue: return "Statue";
     case Weapon::Modifier_Gun: return "Modifier_Gun";
+    case Weapon::Extending_Platform: return "Extending_Platform";
+    case Weapon::Guided_Rocket: return "Guided_Rocket";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -4387,6 +4589,8 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Canopy") return Weapon::Canopy;
   if (text == "Statue") return Weapon::Statue;
   if (text == "Modifier_Gun") return Weapon::Modifier_Gun;
+  if (text == "Extending_Platform") return Weapon::Extending_Platform;
+  if (text == "Guided_Rocket") return Weapon::Guided_Rocket;
   return std::nullopt;
 }
 
@@ -4401,6 +4605,7 @@ const char* to_string(Fire_Resolution value)
     case Fire_Resolution::Zoom: return "Zoom";
     case Fire_Resolution::Place: return "Place";
     case Fire_Resolution::Canopy: return "Canopy";
+    case Fire_Resolution::Pilot: return "Pilot";
   }
   assert(false && "invalid Fire_Resolution");
   return "";
@@ -4415,6 +4620,7 @@ template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std:
   if (text == "Zoom") return Fire_Resolution::Zoom;
   if (text == "Place") return Fire_Resolution::Place;
   if (text == "Canopy") return Fire_Resolution::Canopy;
+  if (text == "Pilot") return Fire_Resolution::Pilot;
   return std::nullopt;
 }
 
@@ -4690,6 +4896,7 @@ const char* to_string(Movement_Override value)
     case Movement_Override::Reel: return "Reel";
     case Movement_Override::Stasis: return "Stasis";
     case Movement_Override::Statue: return "Statue";
+    case Movement_Override::Pilot: return "Pilot";
   }
   assert(false && "invalid Movement_Override");
   return "";
@@ -4701,6 +4908,7 @@ template <> std::optional<Movement_Override> try_from_string<Movement_Override>(
   if (text == "Reel") return Movement_Override::Reel;
   if (text == "Stasis") return Movement_Override::Stasis;
   if (text == "Statue") return Movement_Override::Statue;
+  if (text == "Pilot") return Movement_Override::Pilot;
   return std::nullopt;
 }
 
@@ -4759,6 +4967,8 @@ Entity* create_entity(entity_type type)
     case entity_type::Ricochet_Entity: return new Ricochet_Entity();
     case entity_type::Platform_Entity: return new Platform_Entity();
     case entity_type::Shrinking_Platform_Entity: return new Shrinking_Platform_Entity();
+    case entity_type::Extending_Platform_Entity: return new Extending_Platform_Entity();
+    case entity_type::Guided_Rocket_Entity: return new Guided_Rocket_Entity();
     case entity_type::Canopy_Entity: return new Canopy_Entity();
     case entity_type::Bubble_Entity: return new Bubble_Entity();
     case entity_type::Physics_Body_Entity: return new Physics_Body_Entity();
@@ -4816,6 +5026,8 @@ void destroy_entity(Entity* entity)
     case entity_type::Ricochet_Entity: delete static_cast<Ricochet_Entity*>(entity); return;
     case entity_type::Platform_Entity: delete static_cast<Platform_Entity*>(entity); return;
     case entity_type::Shrinking_Platform_Entity: delete static_cast<Shrinking_Platform_Entity*>(entity); return;
+    case entity_type::Extending_Platform_Entity: delete static_cast<Extending_Platform_Entity*>(entity); return;
+    case entity_type::Guided_Rocket_Entity: delete static_cast<Guided_Rocket_Entity*>(entity); return;
     case entity_type::Canopy_Entity: delete static_cast<Canopy_Entity*>(entity); return;
     case entity_type::Bubble_Entity: delete static_cast<Bubble_Entity*>(entity); return;
     case entity_type::Physics_Body_Entity: delete static_cast<Physics_Body_Entity*>(entity); return;
@@ -4856,6 +5068,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xc39c0aeeu;
+const uint32_t SCHEMA_HASH = 0x1a0c9b53u;
 
 } // namespace entities

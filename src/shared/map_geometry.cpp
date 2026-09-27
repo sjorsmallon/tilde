@@ -259,16 +259,7 @@ static_mesh_box_t static_mesh_box_of(const static_mesh_geometry_t &static_mesh)
 linalg::vec3 static_mesh_world_half_extents(const static_mesh_geometry_t &static_mesh,
                                             const linalg::vec3 &half_extents)
 {
-  linalg::vec3 reach{0.f, 0.f, 0.f};
-  const linalg::vec3 axes[3] = {{half_extents.x, 0.f, 0.f},
-                                {0.f, half_extents.y, 0.f},
-                                {0.f, 0.f, half_extents.z}};
-  for (const linalg::vec3 &axis : axes)
-  {
-    const linalg::vec3 turned = linalg::rotate(static_mesh.orientation, axis);
-    reach = reach + linalg::vec3{std::abs(turned.x), std::abs(turned.y), std::abs(turned.z)};
-  }
-  return reach;
+  return oriented_box_reach(half_extents, static_mesh.orientation);
 }
 
 // Convert local box geometry to the world-space aabb_t the shapes.hpp helpers
@@ -358,6 +349,40 @@ collision_piece_t piece_from_aabb(const aabb_t &aabb)
   piece.bounds        = get_bounds(aabb);
   piece.planes        = compute_collision_planes(aabb);
   piece.face_polygons = compute_face_polygons(aabb);
+  return piece;
+}
+
+linalg::vec3 oriented_box_reach(const linalg::vec3 &half_extents, const linalg::quatf &orientation)
+{
+  linalg::vec3 reach{0.f, 0.f, 0.f};
+  const linalg::vec3 axes[3] = {{half_extents.x, 0.f, 0.f},
+                                {0.f, half_extents.y, 0.f},
+                                {0.f, 0.f, half_extents.z}};
+  for (const linalg::vec3 &axis : axes)
+  {
+    const linalg::vec3 turned = linalg::rotate(orientation, axis);
+    reach = reach + linalg::vec3{std::abs(turned.x), std::abs(turned.y), std::abs(turned.z)};
+  }
+  return reach;
+}
+
+collision_piece_t piece_from_oriented_box(const linalg::vec3 &center, const linalg::vec3 &half_extents,
+                                          const linalg::quatf &orientation)
+{
+  collision_piece_t piece = piece_from_aabb(to_world_aabb({0.f, 0.f, 0.f}, half_extents));
+
+  for (Plane &plane : piece.planes)
+  {
+    plane.point  = center + linalg::rotate(orientation, plane.point);
+    plane.normal = linalg::rotate(orientation, plane.normal);
+  }
+
+  for (std::vector<linalg::vec3> &polygon : piece.face_polygons)
+    for (linalg::vec3 &corner : polygon)
+      corner = center + linalg::rotate(orientation, corner);
+
+  const linalg::vec3 reach = oriented_box_reach(half_extents, orientation);
+  piece.bounds = {center - reach, center + reach};
   return piece;
 }
 
@@ -667,22 +692,7 @@ try_build_boundary_pyramids(const brush_polyhedron_t &displaced,
 collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh)
 {
   const static_mesh_box_t box = static_mesh_box_of(static_mesh);
-
-  collision_piece_t piece = piece_from_aabb(to_world_aabb({0.f, 0.f, 0.f}, box.half_extents));
-
-  for (Plane &plane : piece.planes)
-  {
-    plane.point  = box.center + linalg::rotate(static_mesh.orientation, plane.point);
-    plane.normal = linalg::rotate(static_mesh.orientation, plane.normal);
-  }
-
-  for (std::vector<linalg::vec3> &polygon : piece.face_polygons)
-    for (linalg::vec3 &corner : polygon)
-      corner = box.center + linalg::rotate(static_mesh.orientation, corner);
-
-  const linalg::vec3 reach = static_mesh_world_half_extents(static_mesh, box.half_extents);
-  piece.bounds = {box.center - reach, box.center + reach};
-  return piece;
+  return piece_from_oriented_box(box.center, box.half_extents, static_mesh.orientation);
 }
 
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,

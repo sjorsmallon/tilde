@@ -188,6 +188,35 @@ int main()
   }
 
   {
+    std::cout << "  [Subtest] What a predicted step reads crosses the wire unrounded..." << std::endl;
+
+    // 0.015 s is under half of 1/32: rounded, the clock arrives as 0 and the replay ends a tick early.
+    entities::Player_Entity server_state;
+    server_state.position                            = {10.015f, 0.f, 0.f};
+    server_state.movement.override_seconds_remaining = 0.015f;
+    server_state.movement.seconds_until_impulse_ready = 1.f / 3.f;
+    server_state.movement.time_since_grounded_seconds = 0.123456f;
+    server_state.movement.override_speed              = 600.1f;
+    server_state.movement.override_target_position    = {1.015f, -2.007f, 3.3333f};
+
+    entities::Player_Entity client_state;
+    transmit(server_state, nullptr, client_state);
+
+    assert(client_state.movement.override_seconds_remaining == 0.015f);
+    assert(client_state.movement.seconds_until_impulse_ready == 1.f / 3.f);
+    assert(client_state.movement.time_since_grounded_seconds == 0.123456f);
+    assert(client_state.movement.override_speed == 600.1f);
+    assert(client_state.movement.override_target_position.x == 1.015f);
+    assert(client_state.movement.override_target_position.y == -2.007f);
+    assert(client_state.movement.override_target_position.z == 3.3333f);
+
+    // A position is drawn and corrected against a tolerance, so it still rounds to 1/32.
+    assert(client_state.position.x == 10.f);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
     std::cout << "  [Subtest] Delta against an acked baseline is exact..." << std::endl;
 
     entities::Player_Entity server_state;

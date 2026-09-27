@@ -8,12 +8,16 @@
 #include "entities/entity_reflection.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
+#include "player_constants.hpp"
 #include "server_context.hpp"
 #include "spawn_projectile.hpp"
 #include "subtick.hpp"
+#include "systems/guided_rocket_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "weapons.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -558,6 +562,94 @@ int main()
     check(entity_system.try_find(shots.back()) != nullptr, "...and the newest is alive");
     check(entity_system.try_find(other_shot) != nullptr, "another owner's shot is not counted");
     check(entity_system.try_find(secondary_shot) != nullptr, "the other button's shot is not counted");
+  }
+
+  // --- a piloted flight is followed by one rocket and leaves one path, which the next flight replaces ---
+  {
+    server::server_context_t context;
+    shared::Entity_System& entity_system = context.world.session.entity_system;
+
+    const float tick_interval_seconds = 1.f / 60.f;
+    const shared::weapon_definition_t& guided_rocket =
+        shared::get_weapon_definition(entities::Weapon::Guided_Rocket);
+    const shared::pilot_t& row = guided_rocket.primary_fire.pilot;
+    const vec3f eye = {0.f, shared::player_eye_height, 0.f};
+
+    const shared::entity_uid_t pilot_uid = entity_system.spawn<entities::Player_Entity>();
+    const auto pilot = [&]() { return entity_system.get<entities::Player_Entity>(pilot_uid); };
+    pilot()->last_fire_weapon = entities::Weapon::Guided_Rocket;
+
+    const auto count_segments = [&]() {
+      uint32_t count = 0;
+      for (const entities::Extending_Platform_Entity& platform :
+           entity_system.entities_of<entities::Extending_Platform_Entity>())
+        if (platform.projectile.owner_uid == pilot_uid)
+          ++count;
+      return count;
+    };
+
+    const auto fly = [&](uint32_t first_tick, uint32_t tick_count) {
+      pilot()->movement.seconds_until_impulse_ready = 0.f;
+      check(shared::try_begin_pilot_flight(guided_rocket, entities::Fire_Trigger::Primary, eye,
+                                           pilot()->movement),
+            "the press launches");
+      for (uint32_t tick = 0; tick < tick_count; ++tick)
+      {
+        pilot()->movement.override_target_position =
+            eye + vec3f{10.f * static_cast<float>(tick + 1), 0.f, 0.f};
+        context.tick_number = first_tick + tick;
+        server::update_guided_rockets(context, tick_interval_seconds);
+      }
+    };
+
+    fly(100, 60);
+    Span<entities::Guided_Rocket_Entity> rockets =
+        entity_system.entities_of<entities::Guided_Rocket_Entity>();
+    check(rockets.size() == 1 && rockets[0].pilot_uid == pilot_uid, "a pilot has exactly one rocket");
+    check(rockets.size() == 1 && rockets[0].position.x == 600.f &&
+              rockets[0].position.y == shared::player_eye_height,
+          "and it is where the pilot's movement flew it");
+    check(count_segments() == 0, "a flight leaves nothing while it is live");
+
+    pilot()->movement.active_override = entities::Movement_Override::None;
+    context.tick_number               = 160;
+    server::update_guided_rockets(context, tick_interval_seconds);
+
+    check(entity_system.entities_of<entities::Guided_Rocket_Entity>().empty(),
+          "the rocket goes the tick the flight has ended");
+    check(count_segments() == 3, "600 units of straight flight is three segments");
+    check(context.world.flight_path_by_rocket_uid.empty(), "and the recording goes with the rocket");
+
+    uint32_t earliest = 0xffffffffu;
+    uint32_t latest   = 0;
+    for (const entities::Extending_Platform_Entity& platform :
+         entity_system.entities_of<entities::Extending_Platform_Entity>())
+    {
+      earliest = std::min(earliest, platform.spawned_tick);
+      latest   = std::max(latest, platform.spawned_tick);
+      check(platform.position.y == shared::player_eye_height - row.path.drop,
+            "a segment lies the row's drop under the flight");
+      check(platform.length == 200.f + row.path.joint_overlap, "as long as its edge and the overlap");
+    }
+    const uint32_t extend_ticks = static_cast<uint32_t>(
+        std::ceil((200.f + row.path.joint_overlap) /
+                  (entities::Extending_Platform_Entity{}.extend_speed * tick_interval_seconds)));
+    check(earliest == 160, "the first segment starts growing the tick the flight ended");
+    check(latest == 160 + 2 * extend_ticks, "and each next one the tick the one before it is grown");
+
+    fly(300, 30);
+    pilot()->movement.active_override = entities::Movement_Override::None;
+    context.tick_number               = 330;
+    server::update_guided_rockets(context, tick_interval_seconds);
+    check(count_segments() == 2, "a second flight replaces the path the first one left");
+
+    fly(400, 30);
+    pilot()->health.current_health = 0;
+    context.tick_number            = 430;
+    server::update_guided_rockets(context, tick_interval_seconds);
+    check(pilot()->movement.override_seconds_remaining == 0.f, "a dead pilot's flight is let go");
+    check(entity_system.entities_of<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
+    check(count_segments() == 2, "and it leaves no path of its own");
   }
 
   printf("%s (%d failure%s)\n", failure_count == 0 ? "PASSED" : "FAILED", failure_count,

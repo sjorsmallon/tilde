@@ -154,6 +154,7 @@ bool render_field_widget(void* field_ptr, const field_info_t& field, const char*
       break;
 
     case FIELD_TYPE_F32:
+    case FIELD_TYPE_F32_EXACT:
       changed = ImGui::DragFloat(label, static_cast<float *>(field_ptr), 0.1f);
       break;
     case FIELD_TYPE_F64:
@@ -165,6 +166,7 @@ bool render_field_widget(void* field_ptr, const field_info_t& field, const char*
       break;
 
     case FIELD_TYPE_V3:
+    case FIELD_TYPE_V3_EXACT:
       changed = ImGui::DragFloat3(label, static_cast<float *>(field_ptr), 0.1f);
       break;
     case FIELD_TYPE_V4:

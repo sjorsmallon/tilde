@@ -22,13 +22,18 @@
 //   i64                write_var_int64
 //   string<N>          a length byte, then that many characters
 //   quat               four RAW 32-bit floats
+//   f32_exact          one RAW 32-bit float
+//   v3_exact           three RAW 32-bit floats
 //
-// A field needing full float precision does not belong on this wire, and `quat`
-// is the ONE exception with the reason written at its arm: its components live
-// in [-1, 1], so write_coord's 5-bit fraction is 3.6 degrees of angular error
-// and a value too far off unit for to_mat4 to be a rotation. Compressing it
-// properly is a smallest-three encoding, which rotation_def.md §5 defers to
-// whenever snapshot delta compression is the thing being worked on.
+// Rounding is the default and RAW is asked for by TYPE, for one of two reasons.
+// `quat`: its components live in [-1, 1], so write_coord's 5-bit fraction is 3.6
+// degrees of angular error and a value too far off unit for to_mat4 to be a
+// rotation. Compressing it properly is a smallest-three encoding, which
+// rotation_def.md §5 defers to whenever snapshot delta compression is the thing
+// being worked on. `f32_exact` / `v3_exact`: a PREDICTED step reads the value.
+// The client's replay restarts from what the wire carried, and 1/32 of a second
+// is two ticks, so a rounded clock runs out a tick off the server's. Anything
+// drawn or interpolated stays rounded.
 
 #include "../reflection.hpp"
 #include "bitstream.hpp"

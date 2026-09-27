@@ -13,6 +13,7 @@
 #include "send_protobuf_message.hpp"
 #include "server_api.hpp"
 #include "server_messages.hpp"
+#include "systems/canopy_system.hpp"
 #include "systems/inventory_system.hpp"
 
 #include <algorithm>
@@ -364,11 +365,13 @@ void resolve_player_shot(
 
   switch (fire.resolution)
   {
-    // Nothing on this button, or the client's scope: no shot and no fire mark. A canopy is a
-    // held LEVEL that canopy_system reads off the slot's last input, so the press is nothing too.
+    // Nothing on this button, or the client's scope: no shot and no fire mark.
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
+      return;
+
     case entities::Fire_Resolution::Canopy:
+      toggle_canopy(context, *player);
       return;
 
     case entities::Fire_Resolution::Hitscan:
@@ -497,8 +500,20 @@ void resolve_player_shot(
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
         return;
 
-      const shared::entity_uid_t placed_uid =
-          spawn_placed_entity(context, weapon, player->position, yaw, trigger);
+      vec3f placed_position    = player->position;
+      quatf placed_orientation = linalg::from_view_angles(yaw, 0.f);
+      switch (fire.place.anchor)
+      {
+      case shared::place_anchor_t::Feet:
+        break;
+      case shared::place_anchor_t::Eye:
+        placed_position    = eye;
+        placed_orientation = linalg::from_view_angles(yaw, pitch);
+        break;
+      }
+
+      const shared::entity_uid_t placed_uid = spawn_placed_entity(
+          context, player->entity_id, weapon, placed_position, placed_orientation, trigger);
       if (context.world.session.entity_system.get<entities::Remnant_Entity>(placed_uid) != nullptr)
         claim_remnant(context, placed_uid, player->entity_id);
       break;
@@ -508,6 +523,12 @@ void resolve_player_shot(
       if (!shared::try_apply_self_impulse(shared::movement_settings_from(*context.cvars), weapon,
                                           trigger, direction, player->movement,
                                           player->velocity))
+        return;
+      break;
+    }
+    case entities::Fire_Resolution::Pilot:
+    {
+      if (!shared::try_begin_pilot_flight(weapon, trigger, eye, player->movement))
         return;
       break;
     }

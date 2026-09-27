@@ -113,6 +113,24 @@ void write_field(Bit_Writer& writer, const uint8_t* base, const field_info_t& fi
       return;
     }
 
+    // RAW for the predicted step's reason: a clock rounded to 1/32 of a second is two ticks wide.
+    case FIELD_TYPE_F32_EXACT:
+    {
+      uint32_t word = 0;
+      std::memcpy(&word, bytes, sizeof(word));
+      writer.write_bits(word, 32);
+      return;
+    }
+
+    case FIELD_TYPE_V3_EXACT:
+    {
+      uint32_t words[3] = {};
+      std::memcpy(words, bytes, sizeof(words));
+      for (uint32_t word : words)
+        writer.write_bits(word, 32);
+      return;
+    }
+
     case FIELD_TYPE_V4I:
     {
       int32_t values[4] = {};
@@ -259,6 +277,22 @@ bool read_field(Bit_Reader& reader, uint8_t* base, const field_info_t& field, ui
     case FIELD_TYPE_QUAT:
     {
       uint32_t words[4] = {};
+      for (uint32_t& word : words)
+        word = reader.read_bits(32);
+      std::memcpy(bytes, words, sizeof(words));
+      return true;
+    }
+
+    case FIELD_TYPE_F32_EXACT:
+    {
+      const uint32_t word = reader.read_bits(32);
+      std::memcpy(bytes, &word, sizeof(word));
+      return true;
+    }
+
+    case FIELD_TYPE_V3_EXACT:
+    {
+      uint32_t words[3] = {};
       for (uint32_t& word : words)
         word = reader.read_bits(32);
       std::memcpy(bytes, words, sizeof(words));
