@@ -1,6 +1,9 @@
 # Build directory
 build/
 cmake_build/
+cmake_build_audit/
+cmake_build_embed/
+cmake_build_verify/
 build_verify/
 build_meson/
 build*/
@@ -23,3 +26,5 @@ imgui.ini
 
 /*.md
 !todo.md
+
+replay/
