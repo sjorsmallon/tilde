@@ -71,10 +71,12 @@ inline projectile_step_t advance_projectile(const projectile_t& projectile, floa
 
 // Where a Fire_Resolution::Place fire is set down. Feet: where the shooter STANDS, facing their yaw; a
 // teleport destination has to fit a hull, and where you stood is the one place known to. Eye: at the
-// shooter's eye, facing the whole aim, for a type that grows or reaches from there.
+// shooter's eye, facing the whole aim, for a type that grows or reaches from there. Chest: Eye's facing from
+// player_chest_height, low enough to step onto and high enough to clear the floor the shooter stands on.
 enum class place_anchor_t : uint8_t
 {
   Feet,
+  Chest,
   Eye,
 };
 
@@ -107,7 +109,7 @@ struct pilot_t
 constexpr bool flight_path_settings_are_zero(const flight_path_settings_t& path)
 {
   return path.turn_degrees == 0.f && path.shortest_segment == 0.f && path.longest_segment == 0.f &&
-         path.joint_overlap == 0.f && path.drop == 0.f;
+         path.joint_overlap == 0.f && path.drop == 0.f && path.half_width == 0.f;
 }
 
 constexpr bool pilot_path_matches_what_it_leaves(const pilot_t& pilot)
@@ -119,7 +121,7 @@ constexpr bool pilot_path_matches_what_it_leaves(const pilot_t& pilot)
   case pilot_leaves_t::Path:
     return pilot.path.turn_degrees > 0.f && pilot.path.shortest_segment > 0.f &&
            pilot.path.longest_segment > pilot.path.shortest_segment &&
-           pilot.path.joint_overlap >= 0.f;
+           pilot.path.joint_overlap >= 0.f && pilot.path.half_width > 0.f;
   }
   return false;
 }
@@ -207,6 +209,8 @@ struct weapon_definition_t
   // unfilled row, since a zeroed tail row is not at its own index.
   int32_t magazine_size;
   float   reload_duration_seconds;
+  // The magazine fills when its carrier stands on the MAP and never by a reload.
+  bool    refills_on_ground;
 
   // The left and the right mouse button. The switch in resolve_player_shot is
   // over one of these and reads exactly one of its three structs. Zoom is a
@@ -336,6 +340,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+
     {.weapon                  = entities::Weapon::Kooh,
      .display_name            = "Kooh",
      .slot                    = entities::Inventory_Slot::Secondary,
@@ -398,27 +403,31 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .fires_while_held = true},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+
     {.weapon                  = entities::Weapon::Platform,
      .display_name            = "Platform",
-     .slot                    = entities::Inventory_Slot::Secondary,
+     .slot                    = entities::Inventory_Slot::Primary,
      .fire_interval_seconds   = 1.0f,
      .deploy_duration_seconds = 0.f,
-     .magazine_size           = 0,
+     .magazine_size           = 2,
      .reload_duration_seconds = 0.f,
+     .refills_on_ground       = true,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
                                                 .spawns = entities::entity_type::Platform_Entity},
-                                 .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
+                                 .limit      = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+
     {.weapon                  = entities::Weapon::Shrinking_Platform,
      .display_name            = "Shrinking Platform",
      .slot                    = entities::Inventory_Slot::Secondary,
      .fire_interval_seconds   = 1.0f,
      .deploy_duration_seconds = 0.f,
-     .magazine_size           = 0,
+     .magazine_size           = 3,
      .reload_duration_seconds = 0.f,
+     .refills_on_ground       = true,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
@@ -461,7 +470,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
     // A toggle, not a shot: a press raises or lowers the canopy (canopy_system), so the row has no clocks.
     {.weapon                  = entities::Weapon::Canopy,
      .display_name            = "Canopy",
-     .slot                    = entities::Inventory_Slot::Secondary,
+     .slot                    = entities::Inventory_Slot::Primary,
      .fire_interval_seconds   = 0.f,
      .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
@@ -494,7 +503,7 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
     // Both rows are the flight alone: the zone's numbers are Timed_Movement_Modifier_Entity's own defaults.
     {.weapon                  = entities::Weapon::Modifier_Gun,
      .display_name            = "Modifier Gun",
-     .slot                    = entities::Inventory_Slot::Secondary,
+     .slot                    = entities::Inventory_Slot::Primary,
      .fire_interval_seconds   = 1.0f,
      .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
@@ -512,32 +521,33 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
-    // Set down at the eye facing the aim; how far it grows is one sweep at fire time, and every other
+    // Set down at the chest facing the aim; how far it grows is one sweep at fire time, and every other
     // number is Extending_Platform_Entity's own default.
     {.weapon                  = entities::Weapon::Extending_Platform,
      .display_name            = "Extending Platform",
-     .slot                    = entities::Inventory_Slot::Secondary,
+     .slot                    = entities::Inventory_Slot::Primary,
      .fire_interval_seconds   = 1.0f,
      .deploy_duration_seconds = 0.f,
-     .magazine_size           = 0,
+     .magazine_size           = 2,
      .reload_duration_seconds = 0.f,
+     .refills_on_ground       = true,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Place,
                                  .place      = {.spawns = entities::entity_type::Extending_Platform_Entity,
-                                                .anchor = place_anchor_t::Eye},
-                                 .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
+                                                .anchor = place_anchor_t::Chest},
+                                 .limit      = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     // The shooter rides the rocket: the body holds, the aim is the heading, a second press lets go.
     // The path lies an eye's height under the flight, so the flight is the view of whoever walks it.
     {.weapon                        = entities::Weapon::Guided_Rocket,
      .display_name                  = "Guided Rocket",
-     .slot                          = entities::Inventory_Slot::Secondary,
+     .slot                          = entities::Inventory_Slot::Primary,
      .fire_interval_seconds         = 0.f,
      .deploy_duration_seconds       = 0.f,
      .magazine_size                 = 0,
      .reload_duration_seconds       = 0.f,
      .primary_fire                  = {.resolution = entities::Fire_Resolution::Pilot,
-                                       .pilot      = {.speed   = 600.f,
+                                       .pilot      = {.speed   = 700.f,
                                                       .radius  = 8.f,
                                                       .seconds = 3.f,
                                                       .leaves  = pilot_leaves_t::Path,
@@ -545,7 +555,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                                   .shortest_segment = 32.f,
                                                                   .longest_segment  = 192.f,
                                                                   .joint_overlap    = 8.f,
-                                                                  .drop = player_eye_height + 4.f}}},
+                                                                  .drop = player_eye_height + 4.f,
+                                                                  .half_width = 46.f}}},
      .self_impulse_cooldown_seconds = 1.f,
      .sounds                        = {.fire         = assets::sound_asset::Missing,
                                        .world_impact = assets::sound_asset::Missing}},
@@ -743,6 +754,9 @@ constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
     if ((definition.primary_fire.fires_while_held || definition.secondary_fire.fires_while_held) &&
         !(definition.fire_interval_seconds > 0.f))
       return row;
+    if (definition.refills_on_ground &&
+        !(definition.magazine_size > 0 && definition.reload_duration_seconds == 0.f))
+      return row;
     for (const weapon_fire_t* fire : {&definition.primary_fire, &definition.secondary_fire})
       if (fire->fires_while_held && fire->contact.effect == contact_effect_t::Reel &&
           !(fire->contact.reel.seconds > definition.fire_interval_seconds))
@@ -770,7 +784,9 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "Reel's seconds is LONGER than the fire interval: it is a lease the next hit renews, "
               "and one that runs out between two hits drops the reel ten times a second. An "
               "alive limit is for a Projectile or Place fire only: spawn_projectile and "
-              "spawn_placed_entity are the two places that enforce it.");
+              "spawn_placed_entity are the two places that enforce it. A row that "
+              "refills_on_ground carries a magazine and zero reload_duration_seconds: the "
+              "ground is its only reload.");
 
 constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 {
@@ -822,8 +838,8 @@ constexpr bool ammo_allows_a_shot(int32_t ammo)
 constexpr bool reload_may_start(const weapon_definition_t& weapon, int32_t ammo,
                                 int32_t reserve_ammo)
 {
-  return weapon.magazine_size > 0 && ammo >= 0 && ammo < weapon.magazine_size &&
-         reserve_ammo != 0;
+  return !weapon.refills_on_ground && weapon.magazine_size > 0 && ammo >= 0 &&
+         ammo < weapon.magazine_size && reserve_ammo != 0;
 }
 
 struct magazine_t

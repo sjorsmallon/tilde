@@ -103,6 +103,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `ripples` are live, the newest last; y = the age a ripple is dropped at.
     vec4   ripple_settings;
     Ripple ripples[MAX_RIPPLES];
+    // x = seconds the pass has been drawing for, for what animates by itself.
+    vec4   clock;
 } scene;
 
 #endif // SCENE_GLSL

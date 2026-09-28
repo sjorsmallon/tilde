@@ -43,7 +43,7 @@ Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 //@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
 Damage_Type :: enum { Normal, Orange, Teal }
 
-Shader_Type :: enum { Lit, Unlit, Ghost }
+Shader_Type :: enum { Lit, Unlit, Ghost, Procedural_Blending }
 Shape_Kind :: enum { Sphere, Box }
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 
@@ -439,7 +439,7 @@ Platform_Entity :: entity @runtime_only @predicted {
     flight:         Fixed_Arc_Flight
     flight_seconds: f32 = 0.6
     solid_seconds:  f32 = 6.0
-    half_extents:   v3 = {64, 4, 64}
+    half_extents:   v3 = {128, 4, 128}
     // Drawn at half_extents, never at render.scale.
     render:         Render = { mesh = .Box, material = { color = {1, 0.75, 0.3} } }
 }
@@ -457,7 +457,7 @@ Shrinking_Platform_Entity :: entity @runtime_only @predicted {
     render:                      Render = { mesh = .Box, material = { color = {0.3, 0.9, 0.6} } }
 }
 
-// The platform that EXTENDS: set down at the shooter's eye facing their aim, it grows along its forward at
+// The platform that EXTENDS: set down at the shooter's chest facing their aim, it grows along its forward at
 // extend_speed until it reaches `length`, one sweep's answer at fire time (server/systems/platform_system.cpp),
 // then stays solid_seconds and dissolves over its last fifth. Solid while it grows and grown through anyone in
 // its path, never crushing. Drawn at the box it is, never at render.scale.
@@ -470,7 +470,8 @@ Extending_Platform_Entity :: entity @runtime_only @predicted {
     max_length:     f32 = 1024.0
     extend_speed:   f32 = 1200.0
     solid_seconds:  f32 = 6.0
-    half_width:     f32 = 32.0
+    // The Extending Platform's own; a guided rocket's path writes its row's.
+    half_width:     f32_exact = 32.0 @Networked
     half_thickness: f32 = 4.0
     render:         Render = { mesh = .Box, material = { color = {0.95, 0.55, 0.85} } }
 }
@@ -755,6 +756,7 @@ Weapon_Emancipation_Grill_Entity :: entity is Switchable, Touchable {
     render:       Render = { mesh = .Box, material = { shader_type = .Ghost, color = {1, 0.25, 0.2} } }
 }
 
+
 // A weapon the grill took: goes up in smoke where it left the hand, inert, rising rise_distance and turning
 // about the world's up while it dissolves over lifetime_seconds from spawned_tick, then dies. Every motion
 // is derived from the clock on the client, so nothing about it moves on the wire. The render is the taken
@@ -765,4 +767,10 @@ Emancipated_Weapon_Entity :: entity @runtime_only {
     rise_distance:           f32 = 48.0   @Networked
     spin_degrees_per_second: f32 = 90.0   @Networked
     render:                  Render
+}
+
+Void_Entity :: entity is Switchable, Touchable {
+    switch_state: Enabled
+    volume : Box_Volume = { half_extents = {64, 128, 8} }
+    render:  Render = { mesh = .Box, material = { shader_type = .Procedural_Blending, color = {1, 1, 1} } }
 }

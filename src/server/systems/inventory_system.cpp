@@ -202,6 +202,34 @@ void reload_magazine(entities::Weapon_Entity& weapon)
   weapon.reserve_ammo = reloaded.reserve_ammo;
 }
 
+void refill_magazines_on_ground(shared::game_session_t& session, const entities::Player_Entity& player)
+{
+  if (!player.movement.is_grounded || player.movement.ground_mover_uid != shared::null_entity_uid)
+    return;
+
+  for (uint32_t index = 0; index < enum_traits<entities::Inventory_Slot>::count; ++index)
+  {
+    const entities::Inventory_Slot slot       = (entities::Inventory_Slot)index;
+    const shared::entity_uid_t     weapon_uid = player.inventory.weapons[slot];
+    if (weapon_uid == shared::null_entity_uid)
+      continue;
+
+    entities::Weapon_Entity* weapon_entity =
+        session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
+    if (weapon_entity == nullptr)
+    {
+      log_error("refill_magazines_on_ground: player {} holds uid {} in {}, which resolves to nothing",
+                player.entity_id, weapon_uid, to_string(slot));
+      continue;
+    }
+
+    const shared::weapon_definition_t& definition =
+        shared::get_weapon_definition(weapon_entity->weapon_id);
+    if (definition.refills_on_ground)
+      weapon_entity->ammo = definition.magazine_size;
+  }
+}
+
 entities::Weapon_Entity* try_find_active_weapon(shared::game_session_t&          session,
                                                 const entities::Player_Entity& player)
 {

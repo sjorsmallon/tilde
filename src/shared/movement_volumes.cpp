@@ -128,6 +128,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       case entities::entity_type::Launcher_Entity:
       case entities::entity_type::Remnant_Entity:
       case entities::entity_type::Modifier_Shot_Entity:
+      case entities::entity_type::Void_Entity:
         break;
     }
   }

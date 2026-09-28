@@ -62,6 +62,7 @@ static_assert(!shared::reload_may_start(SCOUT, 3, 0));
 static_assert(!shared::reload_may_start(SCOUT, -1, -1));
 static_assert(!shared::reload_may_start(SCOUT, SCOUT.magazine_size, 30));
 static_assert(!shared::reload_may_start(KNIFE, 0, 30));
+static_assert(!shared::reload_may_start(shared::get_weapon_definition(entities::Weapon::Platform), 0, -1));
 static_assert(shared::ammo_allows_a_shot(-1) && shared::ammo_allows_a_shot(1) &&
               !shared::ammo_allows_a_shot(0));
 
@@ -635,6 +636,7 @@ int main()
       check(platform.position.y == shared::player_eye_height - row.path.drop,
             "a segment lies the row's drop under the flight");
       check(platform.length == 200.f + row.path.joint_overlap, "as long as its edge and the overlap");
+      check(platform.half_width == row.path.half_width, "and as wide as the row says");
     }
     const uint32_t extend_ticks = static_cast<uint32_t>(
         std::ceil((200.f + row.path.joint_overlap) /
@@ -655,6 +657,55 @@ int main()
     check(pilot()->movement.override_seconds_remaining == 0.f, "a dead pilot's flight is let go");
     check(entity_system.entities_of<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
     check(count_segments() == 2, "and it leaves no path of its own");
+  }
+
+  // --- a refills_on_ground magazine fills on the map, and nowhere else ---
+  {
+    server::server_context_t context;
+    shared::Entity_System& entity_system = context.world.session.entity_system;
+
+    const shared::weapon_definition_t& platform =
+        shared::get_weapon_definition(entities::Weapon::Platform);
+
+    const shared::entity_uid_t carrier_uid = entity_system.spawn<entities::Player_Entity>();
+    grant_test_loadout(context.world.session, carrier_uid);
+    entities::Player_Entity* carrier = entity_system.get<entities::Player_Entity>(carrier_uid);
+
+    const shared::entity_uid_t platform_uid = server::try_grant_weapon(
+        context, *carrier, carrier->inventory, entities::Weapon::Platform);
+    carrier = entity_system.get<entities::Player_Entity>(carrier_uid);
+
+    const auto platform_ammo = [&]() {
+      return entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo;
+    };
+    const auto knife_ammo = [&]() {
+      return entity_system
+          .get<entities::Weapon_Entity>(carrier->inventory.weapons[entities::Inventory_Slot::Melee])
+          ->ammo;
+    };
+
+    check(platform_ammo() == platform.magazine_size, "a granted platform gun starts full");
+
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo = 0;
+
+    carrier->movement.is_grounded      = false;
+    carrier->movement.ground_mover_uid = shared::null_entity_uid;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 0, "nothing refills in the air");
+
+    carrier->movement.is_grounded      = true;
+    carrier->movement.ground_mover_uid = platform_uid;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 0, "standing on a mover is not standing on the ground");
+
+    carrier->movement.ground_mover_uid = shared::null_entity_uid;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == platform.magazine_size, "the map under the feet fills the magazine");
+    check(knife_ammo() == shared::UNLIMITED_AMMO, "and a row that does not ask for it is left alone");
+
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo = 0;
+    server::refill_inventory(context.world.session, *carrier);
+    check(platform_ammo() == 0, "a respawn's reload does not fill it: the ground does");
   }
 
   printf("%s (%d failure%s)\n", failure_count == 0 ? "PASSED" : "FAILED", failure_count,

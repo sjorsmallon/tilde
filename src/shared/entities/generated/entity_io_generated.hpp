@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The TYPE layer of entity I/O: what an entity can be TOLD and what it
 // ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a
@@ -202,6 +202,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Timed_Movement_Modifier_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Weapon_Emancipation_Grill_Entity
   0u,   // Emancipated_Weapon_Entity
+  trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Void_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -269,6 +270,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Timed_Movement_Modifier_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Weapon_Emancipation_Grill_Entity
   0u,   // Emancipated_Weapon_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Void_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -328,6 +330,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Timed_Movement_Modifier_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Weapon_Emancipation_Grill_Entity
   0u,   // Emancipated_Weapon_Entity
+  signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Void_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)

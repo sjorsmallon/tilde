@@ -77,6 +77,7 @@ constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SO
     {entities::entity_type::Timed_Movement_Modifier_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Weapon_Emancipation_Grill_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Emancipated_Weapon_Entity, {}, assets::sound_asset::Missing},
+    {entities::entity_type::Void_Entity, {}, assets::sound_asset::Missing},
 }};
 
 static_assert(rows_in_enum_order<&entity_type_sounds_t::type>(ENTITY_TYPE_SOUNDS),

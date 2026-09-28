@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Every entity's defaults, as the constructor its header declares. They are
 // out of line so that tuning a value is a change to this one TU rather than
@@ -106,7 +106,7 @@ Platform_Entity::Platform_Entity()
     flight{},
     flight_seconds(0.6f),
     solid_seconds(6.0f),
-    half_extents({64.0f, 4.0f, 64.0f}),
+    half_extents({128.0f, 4.0f, 128.0f}),
     render({.mesh = assets::mesh_asset::Box, .material = {.color = {1.0f, 0.75f, 0.3f}}})
 {
   type = entity_type::Platform_Entity;
@@ -406,6 +406,14 @@ Emancipated_Weapon_Entity::Emancipated_Weapon_Entity()
     render{}
 {
   type = entity_type::Emancipated_Weapon_Entity;
+}
+
+Void_Entity::Void_Entity()
+  : switch_state{},
+    volume({.half_extents = {64.0f, 128.0f, 8.0f}}),
+    render({.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Procedural_Blending, .color = {1.0f, 1.0f, 1.0f}}})
+{
+  type = entity_type::Void_Entity;
 }
 
 } // namespace entities

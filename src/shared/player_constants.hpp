@@ -33,6 +33,9 @@ constexpr float player_half_height = 36.f;
 // this one.
 constexpr float player_eye_height = 64.f;
 
+// Where a placed thing that reaches along the aim starts (place_anchor_t::Chest), above the FEET.
+constexpr float player_chest_height = 48.f;
+
 // The standing hull as world bounds, from a position at the FEET.
 //
 // The parameterized overload is what player_move tests movement volumes with:

@@ -95,6 +95,10 @@ const uint32_t mesh_ghost_frag_spv[] =
 #include "mesh_ghost.frag.spv.h"
     ;
 
+const uint32_t mesh_procedural_blending_frag_spv[] =
+#include "mesh_procedural_blending.frag.spv.h"
+    ;
+
 const uint32_t mesh_grid_frag_spv[] =
 #include "mesh_grid.frag.spv.h"
     ;
@@ -728,11 +732,12 @@ struct scene_uniform_t
   // normal xyz and dot(normal, point) in .w.
   float       ripple_settings[4]                            = {};
   float       ripples[MAX_SCENE_RIPPLES][8]                 = {};
+  float       clock[4]                                      = {}; // x seconds, view_pass_t::seconds
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES,
+                      32 * MAX_SCENE_RIPPLES + 16,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -1975,6 +1980,10 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   case shader_t::ghost:
     frag_spv  = mesh_ghost_frag_spv;
     frag_size = sizeof(mesh_ghost_frag_spv);
+    break;
+  case shader_t::procedural_blending:
+    frag_spv  = mesh_procedural_blending_frag_spv;
+    frag_size = sizeof(mesh_procedural_blending_frag_spv);
     break;
   case shader_t::grid:
     frag_spv  = lightmapped ? mesh_grid_lightmapped_frag_spv : mesh_grid_frag_spv;
@@ -6442,6 +6451,8 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     out[6] = ripple.normal.z;
     out[7] = linalg::dot(ripple.normal, ripple.center);
   }
+
+  scene.clock[0] = pass.seconds;
 
   // Clamped to what actually fits, or a chart naming slot 70 would index past
   // the array's end -- the shader's bound check reads this number and nothing

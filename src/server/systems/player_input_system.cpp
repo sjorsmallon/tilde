@@ -227,6 +227,9 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
         player->velocity = moved.velocity;
         player->movement = moved.movement;
 
+        if (!is_dead)
+          refill_magazines_on_ground(context.world.session, *player);
+
         // check what movement events happened so we can fire events and track some state.
         move_events.jumped |= step_events.jumped;
         if (step_events.landed &&

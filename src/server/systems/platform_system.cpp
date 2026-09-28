@@ -22,8 +22,8 @@ namespace server
 namespace
 {
 
-// Both platform types: latch the launch once, retire an owner's older one of the SAME type, reap on the tick the
-// cut drops it.
+// Both platform types: latch the launch once, reap on the tick the cut drops it. How many one owner keeps is the
+// row's alive limit.
 template <typename Platform_T>
 void update_platforms_of(server_context_t& context, const shared::predicted_world_storage_t& world,
                          const shared::fixed_arc_flight_settings_t& flight,
@@ -39,11 +39,6 @@ void update_platforms_of(server_context_t& context, const shared::predicted_worl
       launch_fixed_arc_flight(context, platform.projectile, platform.position,
                               {.flight_seconds = platform.flight_seconds, .clearance = clearance},
                               flight, world, platform.flight);
-
-      for (const Platform_T& older : platforms)
-        if (older.entity_id != platform.entity_id && older.flight.launch_tick != 0 &&
-            older.projectile.owner_uid == platform.projectile.owner_uid)
-          retired.push_back(older.entity_id);
     }
 
     const shared::platform_view_t view = shared::platform_view_of(platform);

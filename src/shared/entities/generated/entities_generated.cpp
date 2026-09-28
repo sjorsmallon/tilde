@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 #include "entities_generated.hpp"
 #include <cassert>
 #include <cstddef>
@@ -81,6 +81,7 @@ constexpr const char* Shader_Type_VALUE_NAMES[] = {
   "Lit",
   "Unlit",
   "Ghost",
+  "Procedural_Blending",
 };
 
 constexpr const char* Shape_Kind_VALUE_NAMES[] = {
@@ -158,7 +159,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
-  {"Shader_Type", {Shader_Type_VALUE_NAMES, 3}},
+  {"Shader_Type", {Shader_Type_VALUE_NAMES, 4}},
   {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 2}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
@@ -1963,10 +1964,10 @@ constexpr field_info_t Extending_Platform_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
   {.name = "half_width",
-   .type = FIELD_TYPE_F32,
+   .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Extending_Platform_Entity, half_width),
    .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::half_width),
-   .flags = 0u,
+   .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -4259,6 +4260,72 @@ constexpr field_info_t Emancipated_Weapon_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Void_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Void_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Void_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Void_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Void_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Void_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "volume",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Void_Entity, volume),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::volume),
+   .flags = 0u,
+   .component_id = 0,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Void_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Void_Entity::render),
+   .flags = 0u,
+   .component_id = 9,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -4316,6 +4383,7 @@ Entity* construct_Modifier_Shot_Entity(void* memory) { return new (memory) Modif
 Entity* construct_Timed_Movement_Modifier_Entity(void* memory) { return new (memory) Timed_Movement_Modifier_Entity(); }
 Entity* construct_Weapon_Emancipation_Grill_Entity(void* memory) { return new (memory) Weapon_Emancipation_Grill_Entity(); }
 Entity* construct_Emancipated_Weapon_Entity(void* memory) { return new (memory) Emancipated_Weapon_Entity(); }
+Entity* construct_Void_Entity(void* memory) { return new (memory) Void_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -4355,6 +4423,7 @@ Entity* as_base_Modifier_Shot_Entity(void* memory) { return static_cast<Entity*>
 Entity* as_base_Timed_Movement_Modifier_Entity(void* memory) { return static_cast<Entity*>((Timed_Movement_Modifier_Entity*)memory); }
 Entity* as_base_Weapon_Emancipation_Grill_Entity(void* memory) { return static_cast<Entity*>((Weapon_Emancipation_Grill_Entity*)memory); }
 Entity* as_base_Emancipated_Weapon_Entity(void* memory) { return static_cast<Entity*>((Emancipated_Weapon_Entity*)memory); }
+Entity* as_base_Void_Entity(void* memory) { return static_cast<Entity*>((Void_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -4396,6 +4465,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"timed_movement_modifier_entity", "Timed Movement Modifier", {Timed_Movement_Modifier_Entity_FIELDS, 16}, (uint32_t)sizeof(Timed_Movement_Modifier_Entity), (uint32_t)alignof(Timed_Movement_Modifier_Entity), 536u, true, true, true, construct_Timed_Movement_Modifier_Entity, as_base_Timed_Movement_Modifier_Entity},
   {"weapon_emancipation_grill_entity", "Weapon Emancipation Grill", {Weapon_Emancipation_Grill_Entity_FIELDS, 7}, (uint32_t)sizeof(Weapon_Emancipation_Grill_Entity), (uint32_t)alignof(Weapon_Emancipation_Grill_Entity), 515u, false, true, false, construct_Weapon_Emancipation_Grill_Entity, as_base_Weapon_Emancipation_Grill_Entity},
   {"emancipated_weapon_entity", "Emancipated Weapon", {Emancipated_Weapon_Entity_FIELDS, 9}, (uint32_t)sizeof(Emancipated_Weapon_Entity), (uint32_t)alignof(Emancipated_Weapon_Entity), 512u, true, true, false, construct_Emancipated_Weapon_Entity, as_base_Emancipated_Weapon_Entity},
+  {"void_entity", "Void", {Void_Entity_FIELDS, 7}, (uint32_t)sizeof(Void_Entity), (uint32_t)alignof(Void_Entity), 515u, false, true, false, construct_Void_Entity, as_base_Void_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][16] = {
@@ -4438,9 +4508,10 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {-1, -1, -1, (int32_t)offsetof(Timed_Movement_Modifier_Entity, projectile), (int32_t)offsetof(Timed_Movement_Modifier_Entity, flight), -1, -1, -1, -1, (int32_t)offsetof(Timed_Movement_Modifier_Entity, render), -1, -1, -1, -1, -1, -1}, // Timed_Movement_Modifier_Entity
   {(int32_t)offsetof(Weapon_Emancipation_Grill_Entity, volume), (int32_t)offsetof(Weapon_Emancipation_Grill_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Emancipation_Grill_Entity, render), -1, -1, -1, -1, -1, -1}, // Weapon_Emancipation_Grill_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Emancipated_Weapon_Entity, render), -1, -1, -1, -1, -1, -1}, // Emancipated_Weapon_Entity
+  {(int32_t)offsetof(Void_Entity, volume), (int32_t)offsetof(Void_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Void_Entity, render), -1, -1, -1, -1, -1, -1}, // Void_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 22;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 23;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -4464,9 +4535,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Launcher_Entity,
   entity_type::Movement_Modifier_Entity,
   entity_type::Weapon_Emancipation_Grill_Entity,
+  entity_type::Void_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 32;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 33;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4500,6 +4572,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Timed_Movement_Modifier_Entity,
   entity_type::Weapon_Emancipation_Grill_Entity,
   entity_type::Emancipated_Weapon_Entity,
+  entity_type::Void_Entity,
 };
 
 } // namespace
@@ -4693,6 +4766,7 @@ const char* to_string(Shader_Type value)
     case Shader_Type::Lit: return "Lit";
     case Shader_Type::Unlit: return "Unlit";
     case Shader_Type::Ghost: return "Ghost";
+    case Shader_Type::Procedural_Blending: return "Procedural_Blending";
   }
   assert(false && "invalid Shader_Type");
   return "";
@@ -4703,6 +4777,7 @@ template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_
   if (text == "Lit") return Shader_Type::Lit;
   if (text == "Unlit") return Shader_Type::Unlit;
   if (text == "Ghost") return Shader_Type::Ghost;
+  if (text == "Procedural_Blending") return Shader_Type::Procedural_Blending;
   return std::nullopt;
 }
 
@@ -4995,6 +5070,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Timed_Movement_Modifier_Entity: return new Timed_Movement_Modifier_Entity();
     case entity_type::Weapon_Emancipation_Grill_Entity: return new Weapon_Emancipation_Grill_Entity();
     case entity_type::Emancipated_Weapon_Entity: return new Emancipated_Weapon_Entity();
+    case entity_type::Void_Entity: return new Void_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -5054,6 +5130,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Timed_Movement_Modifier_Entity: delete static_cast<Timed_Movement_Modifier_Entity*>(entity); return;
     case entity_type::Weapon_Emancipation_Grill_Entity: delete static_cast<Weapon_Emancipation_Grill_Entity*>(entity); return;
     case entity_type::Emancipated_Weapon_Entity: delete static_cast<Emancipated_Weapon_Entity*>(entity); return;
+    case entity_type::Void_Entity: delete static_cast<Void_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -5068,6 +5145,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x1a0c9b53u;
+const uint32_t SCHEMA_HASH = 0x9344ca08u;
 
 } // namespace entities

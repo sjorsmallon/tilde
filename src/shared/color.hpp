@@ -91,4 +91,5 @@ inline constexpr color_t gold{255, 204, 0};
 inline constexpr color_t pink{255, 0, 136};
 inline constexpr color_t hot_pink{255, 0, 203};
 inline constexpr color_t grey{68, 68, 68};
+inline constexpr color_t purple{108, 59, 170};
 } // namespace colors

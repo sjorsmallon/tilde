@@ -125,7 +125,9 @@ enum class shader_t : uint8_t
   // Cook-Torrance over the pass's real lights and all four of the material's maps.
   pbr,
   // Unlit tint with a fresnel-rim alpha; pair with blend_mode_t::alpha.
-  ghost
+  ghost,
+  // Unlit tint over an animated noise pattern that reads no texture; runs on view_pass_t::seconds.
+  procedural_blending
 };
 
 // The renderer's copy of assets::alpha_mode_t; fixed per material at
@@ -665,6 +667,8 @@ struct view_pass_t
   // shader reads them all and confines each to the face it names. Past
   // MAX_SCENE_RIPPLES the oldest are dropped.
   Span<const shared::wall_ripple_t>         ripples   = {};
+  // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
+  float                                     seconds   = 0.0f;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
   Span<const custom_draw_t>                 custom    = {};     // escape hatch, see above
   color_t                                   selected_outline_color = colors::white;

@@ -250,6 +250,7 @@ int main()
         entity_type::Weapon_Emancipation_Grill_Entity,
         // Through Render and its clock, like a spawned zone.
         entity_type::Emancipated_Weapon_Entity,
+        entity_type::Void_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

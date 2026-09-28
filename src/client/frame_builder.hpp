@@ -19,6 +19,7 @@ struct pass_builder_t
   // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
   std::vector<shared::wall_ripple_t>                   ripples;
   std::vector<renderer::custom_draw_t>                 custom;
+  float                                                seconds = 0.0f;
 
   // The baked atlas every lightmapped draw in this pass samples. Set when the
   // map is loaded and left alone by begin_frame -- it belongs to the world, not
@@ -78,6 +79,7 @@ struct pass_builder_t
     ripples.clear();
     custom.clear();
     debug.retire(delta_seconds);
+    seconds += delta_seconds;
   }
 
   renderer::view_pass_t to_pass() const
@@ -89,6 +91,7 @@ struct pass_builder_t
     pass.lights            = lights.entries;
     pass.baked_light_count = lights.baked_count;
     pass.ripples           = ripples;
+    pass.seconds           = seconds;
     pass.debug_channel = debug_channel;
     pass.particles = particles;
     pass.custom    = custom;

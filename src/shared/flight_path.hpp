@@ -23,6 +23,8 @@ struct flight_path_settings_t
   float joint_overlap;
   // How far below the rocket's line the segments lie.
   float drop;
+  // Half of how wide each segment is, across its edge.
+  float half_width;
 };
 
 struct flight_path_t
@@ -36,6 +38,7 @@ struct flight_path_segment_t
   linalg::vec3f start;
   linalg::quatf orientation;
   float         length;
+  float         half_width;
 };
 
 [[nodiscard]] flight_path_t begin_flight_path(const linalg::vec3f& position, const linalg::vec3f& heading);

@@ -31,7 +31,8 @@ constexpr shared::flight_path_settings_t SETTINGS = {.turn_degrees     = 10.f,
                                                      .shortest_segment = 32.f,
                                                      .longest_segment  = 192.f,
                                                      .joint_overlap    = 8.f,
-                                                     .drop             = 68.f};
+                                                     .drop             = 68.f,
+                                                     .half_width       = 20.f};
 constexpr float TRAVEL_PER_TICK = 10.f;
 
 int main()
@@ -57,6 +58,7 @@ int main()
     check(segments.size() == 3, "one segment per edge");
     check(near(segments[0].start, {0.f, 32.f, 0.f}), "set down the drop below the rocket's line");
     check(near(segments[0].length, 208.f), "as long as its edge and the joint overlap");
+    check(segments[0].half_width == 20.f, "as wide as the settings say");
     check(near(linalg::forward(segments[0].orientation), heading), "facing along its edge");
   }
 

@@ -64,7 +64,8 @@ segments_of_flight_path(Span<const linalg::vec3f> vertices, const flight_path_se
     segments.push_back(
         {.start       = vertices[index - 1] + dropped,
          .orientation = linalg::from_view_angles(facing.yaw_degrees, facing.pitch_degrees),
-         .length      = length + settings.joint_overlap});
+         .length      = length + settings.joint_overlap,
+         .half_width  = settings.half_width});
   }
   return segments;
 }

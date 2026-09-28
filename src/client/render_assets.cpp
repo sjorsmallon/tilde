@@ -72,6 +72,9 @@ renderer::pipeline_state_t state_for(const entities::Material &material)
     state.shader     = renderer::shader_t::ghost;
     state.blend_mode = renderer::blend_mode_t::alpha;
     break;
+  case entities::Shader_Type::Procedural_Blending:
+    state.shader = renderer::shader_t::procedural_blending;
+    break;
   }
   return state;
 }

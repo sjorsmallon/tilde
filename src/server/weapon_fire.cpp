@@ -508,6 +508,10 @@ void resolve_player_shot(
       {
       case shared::place_anchor_t::Feet:
         break;
+      case shared::place_anchor_t::Chest:
+        placed_position    = player->position + vec3f{0.f, shared::player_chest_height, 0.f};
+        placed_orientation = linalg::from_view_angles(yaw, pitch);
+        break;
       case shared::place_anchor_t::Eye:
         placed_position    = eye;
         placed_orientation = linalg::from_view_angles(yaw, pitch);

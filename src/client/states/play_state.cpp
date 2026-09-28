@@ -3281,6 +3281,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       drawn_scale    = zone->volume.half_extents * 2.0f;
     }
 
+    if (const entities::Void_Entity* zone = entities::entity_as<entities::Void_Entity>(&entity))
+    {
+      drawn_position = drawn_position + zone->volume.position;
+      drawn_scale    = zone->volume.half_extents * 2.0f;
+    }
+
     // Dissolves on the server's clock, read at the drawn tick so every client sees the same fizzle.
     if (const entities::Emancipated_Weapon_Entity* fizzled =
             entities::entity_as<entities::Emancipated_Weapon_Entity>(&entity))

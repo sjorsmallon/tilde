@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/effects/effects.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/effects/effects.def by def_gen. Do not edit.
 #include "effects/generated/effects_generated.hpp"
 
 #include "log.hpp"

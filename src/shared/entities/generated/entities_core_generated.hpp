@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The entity family's CORE: the declared enums, the components and
 // the base every entity derives from. Everything ONE entity's struct
@@ -143,9 +143,10 @@ enum class Shader_Type : uint8_t
   Lit = 0,
   Unlit = 1,
   Ghost = 2,
+  Procedural_Blending = 3,
 };
 
-constexpr uint32_t Shader_Type_COUNT = 3;
+constexpr uint32_t Shader_Type_COUNT = 4;
 
 const char* to_string(Shader_Type value);
 template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_view text);
@@ -340,11 +341,12 @@ enum class entity_type : uint16_t
   Timed_Movement_Modifier_Entity = 36,
   Weapon_Emancipation_Grill_Entity = 37,
   Emancipated_Weapon_Entity = 38,
+  Void_Entity = 39,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 39;
+constexpr uint32_t ENTITY_TYPE_COUNT = 40;
 
 enum class component_type : uint16_t
 {

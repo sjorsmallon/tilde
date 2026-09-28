@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Every entity type, on top of the tables that span the set. Include
 // this ONLY to switch over the closed set; include
@@ -49,3 +49,4 @@
 #include "entities/timed_movement_modifier_entity_generated.hpp"
 #include "entities/weapon_emancipation_grill_entity_generated.hpp"
 #include "entities/emancipated_weapon_entity_generated.hpp"
+#include "entities/void_entity_generated.hpp"
