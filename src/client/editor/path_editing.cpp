@@ -1,3 +1,5 @@
+#include "entities/generated/entities/mover_entity_generated.hpp"
+#include "entities/generated/entities/path_node_entity_generated.hpp"
 #include "path_editing.hpp"
 
 #include "../../shared/map_connection.hpp"

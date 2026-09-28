@@ -17,6 +17,7 @@
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/weapons.hpp"
+#include "entities/generated/entities_generated.hpp"
 
 #include <cassert>
 #include <iostream>

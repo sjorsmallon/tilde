@@ -1,7 +1,6 @@
 #include "lightmap_lights.hpp"
 
 #include "brush.hpp"
-#include "entities/generated/entities_generated.hpp"
 #include "lightmap_bake.hpp"
 #include "lightmap_trace.hpp"
 #include "log.hpp"

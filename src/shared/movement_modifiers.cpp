@@ -1,6 +1,6 @@
+#include "entities/generated/entities/movement_modifier_entity_generated.hpp"
 #include "movement_modifiers.hpp"
 
-#include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 #include "fixed_arc_flight.hpp"
 #include "shapes.hpp"

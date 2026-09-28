@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../server_context.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 namespace server
 {

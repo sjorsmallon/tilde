@@ -9,6 +9,7 @@
 #include "../shared/ghost.hpp"
 #include "../shared/player_animator.hpp"
 #include "../shared/predicted_world.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_io_queue.hpp"
 #include "log.hpp"
 #include "server_api.hpp"

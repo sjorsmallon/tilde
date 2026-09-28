@@ -7,6 +7,7 @@
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"
 #include "../server_messages.hpp"
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
 
 #include <algorithm>
 #include <cmath>

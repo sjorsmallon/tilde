@@ -7,6 +7,7 @@
 #include "../../shared/player_move.hpp"
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 namespace entities
 {

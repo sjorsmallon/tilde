@@ -1,6 +1,7 @@
 #pragma once
 
 #include "collision_detection.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "entity_system.hpp"
 #include "map.hpp"
 #include "movers.hpp"

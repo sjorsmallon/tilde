@@ -1,4 +1,7 @@
 #include "../../shared/entities/entity_reflection.hpp"
+#include "entities/generated/entities/particle_emitter_entity_generated.hpp"
+#include "entities/generated/entities/player_spawn_entity_generated.hpp"
+#include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "tool_editor_state.hpp"
 
 #include "../particle_emitter_parameters.hpp"

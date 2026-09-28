@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/entity_uid.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "server_context.hpp"
 
 namespace server

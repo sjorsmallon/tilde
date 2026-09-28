@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../../shared/entities/generated/entities_generated.hpp"
 #include "../../shared/entity_uid.hpp"
 #include "../../shared/game_session.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 
 namespace server
 {

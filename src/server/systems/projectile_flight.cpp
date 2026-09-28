@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "projectile_flight.hpp"
 
 #include "../../shared/weapons.hpp"

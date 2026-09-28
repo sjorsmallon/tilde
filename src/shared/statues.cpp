@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "statues.hpp"
 
 #include "entity_system.hpp"

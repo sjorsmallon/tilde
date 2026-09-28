@@ -1,3 +1,8 @@
+#include "entities/generated/entities/bubble_entity_generated.hpp"
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/sound_emitter_entity_generated.hpp"
 #include "snapshot_edges.hpp"
 
 #include "../shared/log.hpp"

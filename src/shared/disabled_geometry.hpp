@@ -23,7 +23,7 @@
 // different question: a team wall is visible to everyone, so the draw asks for
 // the switch alone (collect_hidden_geometry) and never for a team's set.
 
-#include "entities/generated/entities_core_generated.hpp"
+#include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entity_uid.hpp"
 #include "span.hpp"
 

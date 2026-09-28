@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "systems/mover_system.hpp"
 
 #include "../shared/entities/generated/traits/path_following_generated.hpp"

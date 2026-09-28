@@ -11,6 +11,11 @@
 //      the saved file no longer contains the legacy form.
 
 #include "../shared/entities/entity_reflection.hpp"
+#include "entities/generated/entities/directional_light_entity_generated.hpp"
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
+#include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/spot_light_entity_generated.hpp"
+#include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "game_session.hpp"

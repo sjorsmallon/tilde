@@ -1,8 +1,8 @@
 #include "animation_tool.hpp"
 #include "../../render_assets.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 
 #include "../../../shared/cvars/generated/cvars_generated.hpp"
-#include "../../../shared/entities/generated/entities_generated.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/model_format.hpp"
 #include "../../../shared/player_animator.hpp"

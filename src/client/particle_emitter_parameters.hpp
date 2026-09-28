@@ -9,7 +9,7 @@
 // view pass now, so the renderer sequences compute before the render pass
 // itself and there is exactly one fill per emitter per frame.
 
-#include "../shared/entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/particle_emitter_entity_generated.hpp"
 #include "renderer.hpp"
 
 namespace client

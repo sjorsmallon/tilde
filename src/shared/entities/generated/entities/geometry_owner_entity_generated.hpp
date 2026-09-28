@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Geometry_Owner_Entity: what it IS, and what it can be TOLD.
 //
@@ -16,11 +16,11 @@ struct Geometry_Owner_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Geometry_Owner_Entity;
 
-  Geometry_Owner_Entity() { type = entity_type::Geometry_Owner_Entity; }
+  Geometry_Owner_Entity();
 
-  Enabled switch_state = {};
-  shared::entity_uid_t wipe_timer = {};
-  Team_Allegiance passable_by = Team_Allegiance::Free_For_All;
+  Enabled switch_state;
+  shared::entity_uid_t wipe_timer;
+  Team_Allegiance passable_by;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

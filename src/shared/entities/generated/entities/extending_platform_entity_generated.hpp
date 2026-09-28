@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Extending_Platform_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,17 +15,17 @@ struct Extending_Platform_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Extending_Platform_Entity;
 
-  Extending_Platform_Entity() { type = entity_type::Extending_Platform_Entity; }
+  Extending_Platform_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Extending_Platform};
-  uint32_t spawned_tick = {};
-  float length = {};
-  float max_length = 1024.0f;
-  float extend_speed = 1200.0f;
-  float solid_seconds = 6.0f;
-  float half_width = 32.0f;
-  float half_thickness = 4.0f;
-  Render render = {.mesh = assets::mesh_asset::Box, .material = {.color = {0.95f, 0.55f, 0.85f}}};
+  Projectile projectile;
+  uint32_t spawned_tick;
+  float length;
+  float max_length;
+  float extend_speed;
+  float solid_seconds;
+  float half_width;
+  float half_thickness;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

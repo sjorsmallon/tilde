@@ -1,4 +1,5 @@
 #include "connection_panel.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 
 #include "../../shared/entities/generated/entity_io_generated.hpp"
 #include "../../shared/log.hpp"

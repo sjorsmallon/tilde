@@ -1,3 +1,8 @@
+#include "entities/generated/entities/emancipated_weapon_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/weapon_emancipation_grill_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "weapon_emancipation_grill_system.hpp"
 
 #include "../../shared/entities/generated/entities/emancipated_weapon_entity_generated.hpp"

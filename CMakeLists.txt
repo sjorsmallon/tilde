@@ -193,7 +193,9 @@ add_executable(asset_pack src/tools/asset_pack.cpp src/shared/asset_package.cpp)
 set(ENTITY_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/entities.def)
 set(ENTITY_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/entities/generated)
 set(ENTITY_GEN_HEADER ${ENTITY_GEN_OUT_DIR}/entities_generated.hpp)
+set(ENTITY_GEN_TABLES_HEADER ${ENTITY_GEN_OUT_DIR}/entities_tables_generated.hpp)
 set(ENTITY_GEN_SOURCE ${ENTITY_GEN_OUT_DIR}/entities_generated.cpp)
+set(ENTITY_GEN_DEFAULTS ${ENTITY_GEN_OUT_DIR}/entities_defaults_generated.cpp)
 # The wiring system's TYPE layer -- what an entity can be TOLD, as against what
 # it IS. A second pair rather than more of the two above because they answer
 # different questions and are read by different people; they share one namespace
@@ -334,15 +336,23 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 # disagrees with a full build. The manifest is mixed in too, and it is an INPUT
 # here rather than an output: asset_pack owns it.
 #
+# The OUTPUT is a stamp, not the generated files. def_gen only replaces a file
+# whose bytes changed, so an untouched header keeps its mtime and the objects
+# that include it stay built. Were the files themselves the OUTPUT, an untouched
+# one would stay older than the .def and make would rerun def_gen every build.
+# They are BYPRODUCTS so cmake knows they are generated and cleans them; the
+# compiler's own depfile is what makes each header a dependency of the objects
+# that include it. Every target that compiles a generated source, or links
+# game_shared, orders itself after generate_definitions.
+#
 # The per-entity and per-trait headers under generated/entities and
-# generated/traits are written by this same run and are deliberately NOT listed
-# as outputs: the list would be a hand-maintained mirror of entities.def, which
-# is the exact drift the one-walk rule deleted from the asset pipeline. Listing
-# the umbrellas is enough -- def_gen rewrites every file each run, and a
-# compiler's own depfile is what makes a per-type header a dependency of the
-# objects that include it.
+# generated/traits are written by this same run and are deliberately NOT listed:
+# the list would be a hand-maintained mirror of entities.def, which is the exact
+# drift the one-walk rule deleted from the asset pipeline.
+set(DEF_GEN_STAMP ${CMAKE_BINARY_DIR}/def_gen.stamp)
 add_custom_command(
-    OUTPUT ${ENTITY_GEN_HEADER} ${ENTITY_GEN_SOURCE}
+    OUTPUT ${DEF_GEN_STAMP}
+    BYPRODUCTS ${ENTITY_GEN_HEADER} ${ENTITY_GEN_TABLES_HEADER} ${ENTITY_GEN_SOURCE} ${ENTITY_GEN_DEFAULTS}
            ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
            ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
            ${ASSET_GEN_STATE_HEADER} ${ASSET_GEN_BINDINGS}
@@ -354,11 +364,13 @@ add_custom_command(
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
             --emit
             --asset-manifest ${ASSET_MANIFEST_FILE}
+    COMMAND ${CMAKE_COMMAND} -E touch ${DEF_GEN_STAMP}
     DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
             ${ASSET_MANIFEST_FILE}
     COMMENT "Generating definitions from entities.def, cvars.def, effects.def, events.def and the asset manifest..."
 )
+add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 
 
 # --- Components ---
@@ -395,6 +407,7 @@ add_library(game_shared STATIC
     # link error rather than a silent gap.
     ${ASSET_GEN_BINDINGS}
     ${ENTITY_GEN_SOURCE}
+    ${ENTITY_GEN_DEFAULTS}
     ${ENTITY_IO_GEN_SOURCE}
     # The cvar tables and text conversion. Holds no reference to any command
     # handler, so it compiles here without either side being present -- the two
@@ -554,6 +567,7 @@ add_library(game_shared STATIC
     src/shared/network/ghost_transfer.cpp
     src/shared/network/cvar_mirror.cpp
 )
+add_dependencies(game_shared generate_definitions)
 
 # Protobuf Generation
 if(TARGET protoc)
@@ -1158,11 +1172,13 @@ target_link_libraries(navmesh_test PRIVATE game_shared)
 # memcmp diffing) and derived-to-base conversion, which the inheritance layout
 # was chosen to preserve.
 add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE}
+                                  ${ENTITY_GEN_DEFAULTS}
                                  ${ENTITY_IO_GEN_SOURCE}
                                   ${ASSET_GEN_SOURCE}
                                   src/shared/entities/entity_reflection.cpp
                                   src/shared/reflection.cpp)
 target_include_directories(entity_layout_test PRIVATE src/shared)
+add_dependencies(entity_layout_test generate_definitions)
 
 
 add_executable(map_migration_test src/test/map_migration_test.cpp)

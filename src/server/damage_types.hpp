@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/entity_uid.hpp"
 #include "../shared/hit_region.hpp"
 #include "../shared/linalg.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 
 #include <cstdint>
 

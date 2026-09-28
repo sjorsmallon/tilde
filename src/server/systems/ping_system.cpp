@@ -1,3 +1,5 @@
+#include "entities/generated/entities/ping_marker_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "ping_system.hpp"
 
 #include "../../shared/collision_detection.hpp"

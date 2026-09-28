@@ -2,7 +2,7 @@
 
 #include "aabb.hpp"
 #include "array.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
 #include "plane.hpp"
 #include <algorithm>

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "entities/generated/entities/launcher_entity_generated.hpp"
+
 namespace entities
 {
 struct Launcher_Entity;

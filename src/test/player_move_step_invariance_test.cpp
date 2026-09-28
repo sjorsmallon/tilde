@@ -37,6 +37,9 @@
 #include "../shared/canopy.hpp"
 #include "../shared/statues.hpp"
 #include "../shared/spawned_platforms.hpp"
+#include "entities/generated/entities/canopy_entity_generated.hpp"
+#include "entities/generated/entities/platform_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 #include <algorithm>
 #include <cmath>

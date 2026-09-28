@@ -3,6 +3,8 @@
 #include "../../shared/events/generated/events_generated.hpp"
 #include "../game_mode.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/player_spawn_entity_generated.hpp"
 
 #include <cstdint>
 

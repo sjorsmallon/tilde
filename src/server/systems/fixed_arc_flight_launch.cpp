@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "fixed_arc_flight_launch.hpp"
 
 #include "../../shared/collision_detection.hpp"

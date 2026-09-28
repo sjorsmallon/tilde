@@ -2,6 +2,7 @@
 
 #include "../game_mode.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
 
 #include <cstdint>
 

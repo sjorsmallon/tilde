@@ -1,7 +1,7 @@
+#include "entities/generated/entities/reflection_volume_entity_generated.hpp"
 #include "lightmap_reflections.hpp"
 
 #include "entities/entity_reflection.hpp"
-#include "entities/generated/entities_generated.hpp"
 #include "log.hpp"
 #include "map_geometry.hpp"
 #include "shapes.hpp"

@@ -1,6 +1,8 @@
+#include "entities/generated/entities/bubble_entity_generated.hpp"
+#include "entities/generated/entities/platform_entity_generated.hpp"
+#include "entities/generated/entities/shrinking_platform_entity_generated.hpp"
 #include "systems/launcher_system.hpp"
 
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/entity_system.hpp"
 #include "../shared/game_session.hpp"
 #include "../shared/hash.hpp"

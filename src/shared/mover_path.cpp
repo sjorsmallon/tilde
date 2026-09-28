@@ -1,3 +1,4 @@
+#include "entities/generated/entities/path_node_entity_generated.hpp"
 #include "mover_path.hpp"
 
 #include "entity_system.hpp"

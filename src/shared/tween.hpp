@@ -6,7 +6,7 @@
 // nothing advances an offset per frame. The mover's path segment and the UI's
 // node animations both go through here, so there is one Easing and one curve.
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
 
 namespace shared

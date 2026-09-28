@@ -1,4 +1,5 @@
 #include "client_context.hpp"
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
 
 #include "../shared/network/cvar_mirror.hpp"
 

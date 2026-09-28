@@ -2,6 +2,10 @@
 // and the @Server command handlers the generated binder calls. The TICK is in
 // tick.cpp -- tick_def.md is the design of record for what runs in what order.
 
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/player_spawn_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "server_impl.hpp"
 
 #include "../shared/collision_detection.hpp"

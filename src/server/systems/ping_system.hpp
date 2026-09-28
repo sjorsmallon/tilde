@@ -4,6 +4,7 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/span.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 namespace server
 {

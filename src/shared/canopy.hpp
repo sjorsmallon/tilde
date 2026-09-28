@@ -29,7 +29,7 @@
 // A canopy crushes nobody (mover_t::crushes). A carrier walking their rider into a wall leaves
 // the rider where they were rather than killing them.
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/canopy_entity_generated.hpp"
 #include "entity_uid.hpp"
 #include "movers.hpp"
 

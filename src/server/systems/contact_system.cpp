@@ -1,3 +1,10 @@
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/remnant_entity_generated.hpp"
+#include "entities/generated/entities/timed_movement_modifier_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "systems/contact_system.hpp"
 
 #include "../shared/bounce_body.hpp"

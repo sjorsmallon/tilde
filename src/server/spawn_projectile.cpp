@@ -1,3 +1,5 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "spawn_projectile.hpp"
 
 #include "../shared/entity_system.hpp"

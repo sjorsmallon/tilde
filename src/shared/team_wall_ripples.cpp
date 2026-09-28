@@ -1,7 +1,7 @@
+#include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "team_wall_ripples.hpp"
 
 #include "disabled_geometry.hpp"
-#include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 #include "log.hpp"
 #include "map_geometry.hpp"

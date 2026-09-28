@@ -1,7 +1,6 @@
 #include "weapon_fire_audio.hpp"
 
 #include "../shared/assets/generated/assets_generated.hpp"
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/log.hpp"
 #include "../shared/weapons.hpp"
 

@@ -7,7 +7,9 @@
 // an oriented box, read below through the same rule that the cut and the draw share one of each.
 
 #include "aabb.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/extending_platform_entity_generated.hpp"
+#include "entities/generated/entities/platform_entity_generated.hpp"
+#include "entities/generated/entities/shrinking_platform_entity_generated.hpp"
 #include "fixed_arc_flight.hpp"
 #include "movers.hpp"
 

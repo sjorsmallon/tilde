@@ -1,7 +1,14 @@
 // Verifies the properties the inheritance layout was chosen for, plus the
 // factory / placeable-type surface the generator emits on top of it.
 #include "entities/entity_reflection.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/particle_emitter_entity_generated.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/rocket_entity_generated.hpp"
+#include "entities/generated/entities/spot_light_entity_generated.hpp"
+#include "entities/generated/entities/trigger_volume_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "entities/generated/entity_io_generated.hpp"
 #include <cstdio>
 #include <cstring>

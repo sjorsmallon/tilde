@@ -1,5 +1,6 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "disabled_geometry.hpp"
+#include "entities/generated/entities_generated.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
 #include "map.hpp" // shared::create_entity_by_classname

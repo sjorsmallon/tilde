@@ -15,6 +15,7 @@
 //   5. The CARRIERS. Copy keeps the intersection, paste mints fresh uids and
 //      remaps the members onto them, twice gives two groups.
 
+#include "entities/generated/entities_core_generated.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "map_piece.hpp"

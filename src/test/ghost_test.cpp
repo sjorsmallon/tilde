@@ -1,5 +1,6 @@
 // shared/ghost -- the .ghost file, the always-on capture it is cut from, and the sampler.
 
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "shared/ghost.hpp"
 #include "shared/network/ghost_transfer.hpp"
 

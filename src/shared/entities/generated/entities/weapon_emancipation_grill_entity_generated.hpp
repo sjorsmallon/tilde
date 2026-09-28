@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Weapon_Emancipation_Grill_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,11 +17,11 @@ struct Weapon_Emancipation_Grill_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Weapon_Emancipation_Grill_Entity;
 
-  Weapon_Emancipation_Grill_Entity() { type = entity_type::Weapon_Emancipation_Grill_Entity; }
+  Weapon_Emancipation_Grill_Entity();
 
-  Enabled switch_state = {};
-  Box_Volume volume = {.half_extents = {64.0f, 128.0f, 8.0f}};
-  Render render = {.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Ghost, .color = {1.0f, 0.25f, 0.2f}}};
+  Enabled switch_state;
+  Box_Volume volume;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

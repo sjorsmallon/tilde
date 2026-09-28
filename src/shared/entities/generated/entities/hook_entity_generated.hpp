@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Hook_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,12 +15,12 @@ struct Hook_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Hook_Entity;
 
-  Hook_Entity() { type = entity_type::Hook_Entity; }
+  Hook_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Hook};
-  float lifetime = 4.0f;
-  float collision_radius = 25.0f;
-  Render render = {.mesh = assets::mesh_asset::hookshot, .scale = {0.03f, 0.03f, 0.03f}};
+  Projectile projectile;
+  float lifetime;
+  float collision_radius;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

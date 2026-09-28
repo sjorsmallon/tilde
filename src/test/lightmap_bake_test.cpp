@@ -8,6 +8,9 @@
 #include "../shared/lightmap_sidecar.hpp"
 #include "../shared/lightmap_solve.hpp"
 #include "../shared/lightmap_trace.hpp"
+#include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/reflection_volume_entity_generated.hpp"
+#include "entities/generated/entities/spot_light_entity_generated.hpp"
 
 #include <optional>
 

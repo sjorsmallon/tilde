@@ -1,3 +1,4 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "history_panel.hpp"
 
 #include "../../shared/entities/entity_reflection.hpp"

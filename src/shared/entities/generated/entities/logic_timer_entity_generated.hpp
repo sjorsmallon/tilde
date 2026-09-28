@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Logic_Timer_Entity: what it IS, and what it can be TOLD.
 //
@@ -16,9 +16,9 @@ struct Logic_Timer_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Logic_Timer_Entity;
 
-  Logic_Timer_Entity() { type = entity_type::Logic_Timer_Entity; }
+  Logic_Timer_Entity();
 
-  Timer_State timer = {};
+  Timer_State timer;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

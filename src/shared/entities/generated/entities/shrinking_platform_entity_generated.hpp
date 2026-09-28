@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Shrinking_Platform_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,15 +15,15 @@ struct Shrinking_Platform_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Shrinking_Platform_Entity;
 
-  Shrinking_Platform_Entity() { type = entity_type::Shrinking_Platform_Entity; }
+  Shrinking_Platform_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Shrinking_Platform};
-  Fixed_Arc_Flight flight = {};
-  float flight_seconds = 0.6f;
-  float solid_seconds = 6.0f;
-  linalg::vec3f half_extents = {64.0f, 4.0f, 64.0f};
-  linalg::vec3f half_extents_when_vanishing = {8.0f, 4.0f, 8.0f};
-  Render render = {.mesh = assets::mesh_asset::Box, .material = {.color = {0.3f, 0.9f, 0.6f}}};
+  Projectile projectile;
+  Fixed_Arc_Flight flight;
+  float flight_seconds;
+  float solid_seconds;
+  linalg::vec3f half_extents;
+  linalg::vec3f half_extents_when_vanishing;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

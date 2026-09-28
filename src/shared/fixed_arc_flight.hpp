@@ -2,7 +2,7 @@
 
 // A fixed arc's position as a pure function of the tick: server, live step and replay place it identically.
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
 #include "weapons.hpp"
 

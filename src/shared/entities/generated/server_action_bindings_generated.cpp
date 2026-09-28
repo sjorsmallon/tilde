@@ -1,10 +1,11 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The dispatch table and its shims. A shim is the ONLY code that names a
 // union member or downcasts an entity: it adapts the table's uniform call
 // into one handler's typed one. A declared handler nobody defined is a
 // LINK error naming the symbol -- there is no registration and no bind
 // step, so "forgot to register" is not representable.
+#include "entities_generated.hpp"
 #include "entity_io_generated.hpp"
 #include "entity_io_queue.hpp"
 #include "entities/entity_reflection.hpp"

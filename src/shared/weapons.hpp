@@ -7,7 +7,7 @@
 
 #include "array.hpp"
 #include "contact.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "flight_path.hpp"
 #include "player_constants.hpp"
 #include "player_move.hpp"

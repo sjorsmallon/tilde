@@ -1,3 +1,4 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "map_piece.hpp"
 
 #include "entities/entity_reflection.hpp"

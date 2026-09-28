@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/effects/effects.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/effects/effects.def by def_gen. Do not edit.
 //
 // The receiving side's seam. Every handler below is REFERENCED here and
 // DEFINED by hand, so a missing, misspelled or wrongly typed one fails at

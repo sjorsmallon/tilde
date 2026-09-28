@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Physics_Body_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,13 +15,13 @@ struct Physics_Body_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Physics_Body_Entity;
 
-  Physics_Body_Entity() { type = entity_type::Physics_Body_Entity; }
+  Physics_Body_Entity();
 
-  Shape_Kind shape = Shape_Kind::Box;
-  linalg::vec3f size = {};
-  Bounce bounce = {};
-  float mass = 10.0f;
-  Render render = {};
+  Shape_Kind shape;
+  linalg::vec3f size;
+  Bounce bounce;
+  float mass;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

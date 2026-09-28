@@ -2,6 +2,7 @@
 
 #include "array.hpp"
 #include "entities/entity_reflection.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 // ENTITY_TRAIT_MASKS and component_list_t, for entities_with_trait<Trait_T>().
 #include "entities/generated/entity_io_generated.hpp"
 #include "log.hpp"

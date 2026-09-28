@@ -1,7 +1,7 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "server_receive.hpp"
 
 #include "../shared/cvars/cvar_console.hpp"
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/network/bitstream.hpp"
 #include "../shared/network/cvar_mirror.hpp"
 #include "../shared/network/ghost_transfer.hpp"

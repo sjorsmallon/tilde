@@ -3,6 +3,7 @@
 // The per-tick cut of the geometry that moves, beside the movement volumes and the disabled set. mover_def.md ss5.
 
 #include "aabb.hpp"
+#include "entities/generated/entities/mover_entity_generated.hpp"
 #include "entity_uid.hpp"
 #include "map_geometry.hpp"
 #include "mover_path.hpp"

@@ -19,6 +19,7 @@
 // the file the prefab lands in is the same file format a map lands in.
 
 #include "asset.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "map_connection.hpp"

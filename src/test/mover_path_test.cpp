@@ -1,5 +1,5 @@
 // mover_def.md ss9 step 1: a mover's pose is a pure function of its trajectory and the chain.
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/path_node_entity_generated.hpp"
 #include "entity_system.hpp"
 #include "mover_path.hpp"
 

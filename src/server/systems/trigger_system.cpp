@@ -15,6 +15,8 @@
 // Linear scan O(volumes x touchers), unchanged. The canonical replacement is
 // Jolt sensor bodies in the broadphase; see "Spatial query strategy" in
 // src/client/editor/readme.md for the migration trigger.
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "trigger_system.hpp"
 
 #include "../../shared/entities/generated/entities/jump_pad_entity_generated.hpp"

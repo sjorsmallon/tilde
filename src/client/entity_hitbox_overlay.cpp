@@ -1,3 +1,5 @@
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/remnant_entity_generated.hpp"
 #include "entity_hitbox_overlay.hpp"
 
 #include "../shared/hitbox_rig.hpp"

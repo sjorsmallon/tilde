@@ -7,7 +7,7 @@
 // each other, nothing stacks, and the tumble is cosmetic.
 
 #include "collision_detection.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
 #include "predicted_world.hpp"
 

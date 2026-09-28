@@ -1,4 +1,6 @@
 #include "bounce_body_system.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 
 #include "../../shared/bounce_body.hpp"
 

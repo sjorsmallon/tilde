@@ -5,7 +5,7 @@
 // design; ss11 is why this is a shared header rather than a static in the solve.
 
 #include "array.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "lightmap.hpp"
 #include "linalg.hpp"
 

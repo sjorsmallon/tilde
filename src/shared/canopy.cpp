@@ -1,4 +1,5 @@
 #include "canopy.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 #include "entity_system.hpp"
 #include "log.hpp"

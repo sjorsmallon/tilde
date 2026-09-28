@@ -4605,6 +4605,49 @@ static void write_field_members(FILE* out, const program_t* program,
   }
 }
 
+// The struct's field list with no initializers: the defaults are written by
+// an out-of-line constructor instead, so a default change is a .cpp change
+// and the header every includer sees stays put.
+static void write_field_declarations(FILE* out, const program_t* program,
+                                     const declaration_t* declaration)
+{
+  for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+  {
+    const field_t* field = &program->fields[declaration->first_field + offset];
+
+    fprintf(out, "  ");
+    write_cpp_type(out, &field->type);
+    fprintf(out, " %.*s;\n", field->name.length, field->name.data);
+  }
+}
+
+// The mem-initializer list carrying what write_field_members would have put
+// on the field lines. A value is direct-initialized in parentheses, which
+// reads a braced literal (a vector, a component override) as one argument;
+// a field with no default is value-initialized in braces, which is what `= {}`
+// meant.
+static void write_constructor_initializers(FILE* out, const program_t* program,
+                                           const declaration_t* declaration)
+{
+  for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+  {
+    const field_t* field = &program->fields[declaration->first_field + offset];
+
+    fprintf(out, offset == 0 ? "  : " : ",\n    ");
+    fprintf(out, "%.*s", field->name.length, field->name.data);
+    if (field->default_value.kind == DEFAULT_NONE)
+    {
+      fprintf(out, "{}");
+      continue;
+    }
+    fprintf(out, "(");
+    write_default_initializer(out, program, field);
+    fprintf(out, ")");
+  }
+  if (declaration->field_count > 0)
+    fprintf(out, "\n");
+}
+
 // Components may hold other components by value, so a component must be
 // emitted after everything it contains. Declaration order does not guarantee
 // that, hence the post-order walk. Cycles are already rejected by resolve.
@@ -4949,24 +4992,24 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
 // entity type, and the tables that span the whole set. Everything that was
 // hand-written against this header still is -- what moved out is the part
 // that is ABOUT one type, which is now where that type is.
-static void emit_generated_header(FILE* out, const program_t* program)
+// The umbrella: every entity type plus the tables. It is for the few places
+// that switch over the closed set; everything else includes the ONE type it
+// names, or the tables header, so that a change to one type's header
+// recompiles the files that use that type and not the build.
+static void emit_generated_header(FILE* out, const program_t* program, const char* tables_header)
 {
-  int32_t base_index = find_base_declaration(program);
-  string_view_t base_name = {};
-  if (base_index >= 0)
-    base_name = program->declarations[base_index].name;
-
   fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
   fprintf(out, "//\n");
-  fprintf(out, "// Every entity type, and the tables that span the set. Include this\n");
-  fprintf(out, "// to get all of them; include entities/<type>_generated.hpp to get ONE,\n");
-  fprintf(out, "// which is also where that type's handlers are declared.\n");
+  fprintf(out, "// Every entity type, on top of the tables that span the set. Include\n");
+  fprintf(out, "// this ONLY to switch over the closed set; include\n");
+  fprintf(out, "// entities/<type>_generated.hpp to get one type, and %s\n", tables_header);
+  fprintf(out, "// for the tables and factories without any type.\n");
   fprintf(out, "//\n");
   fprintf(out, "// The includes below are relative to THIS file rather than to\n");
   fprintf(out, "// src/shared: a quoted include is resolved against the including\n");
   fprintf(out, "// file's own directory first.\n");
   fprintf(out, "#pragma once\n\n");
-  fprintf(out, "#include \"entities_core_generated.hpp\"\n");
+  fprintf(out, "#include \"%s\"\n", tables_header);
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -4977,7 +5020,26 @@ static void emit_generated_header(FILE* out, const program_t* program)
     write_lower_into(declaration->name, lowered, sizeof(lowered));
     fprintf(out, "#include \"entities/%s_generated.hpp\"\n", lowered);
   }
-  fprintf(out, "\n");
+}
+
+// The tables that span the set, declared over the core alone: the reflection
+// records, the factories and SCHEMA_HASH. Nothing here needs a concrete
+// entity type complete, so nothing that includes this sees one.
+static void emit_entities_tables_header(FILE* out, const program_t* program)
+{
+  int32_t base_index = find_base_declaration(program);
+  string_view_t base_name = {};
+  if (base_index >= 0)
+    base_name = program->declarations[base_index].name;
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// The tables that span the entity set, and the factories over them, with\n");
+  fprintf(out, "// no entity type complete. Include this for entity_info, create_entity or\n");
+  fprintf(out, "// SCHEMA_HASH; include entities/<type>_generated.hpp for a type; include\n");
+  fprintf(out, "// entities_generated.hpp only to switch over the closed set.\n");
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"entities_core_generated.hpp\"\n\n");
   fprintf(out, "namespace entities\n{\n\n");
 
   // --- reflection record types ---
@@ -6499,15 +6561,17 @@ static void emit_cvars_header(FILE* out, const program_t* program, const field_t
   fprintf(out, "//\n");
   fprintf(out, "// Declaration order is the .def's order, which is also the config-file\n");
   fprintf(out, "// save order -- so a saved config is diffable.\n");
+  fprintf(out, "// The defaults are the constructor, defined in cvars_generated.cpp: a\n");
+  fprintf(out, "// default is tuned far more often than a cvar is added, and an in-class\n");
+  fprintf(out, "// initializer would make every tuning a change to this header.\n");
   fprintf(out, "struct cvar_state_t\n{\n");
+  fprintf(out, "  cvar_state_t();\n\n");
   for (int32_t index = 0; index < cvar_count; ++index)
   {
     const field_t* cvar = cvars[index];
     fprintf(out, "  ");
     write_cpp_type(out, &cvar->type);
-    fprintf(out, " %.*s = ", cvar->name.length, cvar->name.data);
-    write_default_initializer(out, program, cvar);
-    fprintf(out, ";\n");
+    fprintf(out, " %.*s;\n", cvar->name.length, cvar->name.data);
   }
   fprintf(out, "};\n\n");
 
@@ -6825,6 +6889,23 @@ static void emit_cvars_source(FILE* out, const program_t* program, const char* h
   fprintf(out, "#include <optional>\n\n");
 
   fprintf(out, "namespace cvars\n{\n\n");
+
+  fprintf(out, "cvar_state_t::cvar_state_t()\n");
+  for (int32_t index = 0; index < cvar_count; ++index)
+  {
+    const field_t* cvar = cvars[index];
+    fprintf(out, index == 0 ? "  : " : ",\n    ");
+    fprintf(out, "%.*s", cvar->name.length, cvar->name.data);
+    if (cvar->default_value.kind == DEFAULT_NONE)
+    {
+      fprintf(out, "{}");
+      continue;
+    }
+    fprintf(out, "(");
+    write_default_initializer(out, program, cvar);
+    fprintf(out, ")");
+  }
+  fprintf(out, "%s{\n}\n\n", cvar_count > 0 ? "\n" : "");
 
   // --- tables ---
   fprintf(out, "namespace\n{\n\n");
@@ -8722,11 +8803,18 @@ static void emit_entity_struct_header(FILE* out, const program_t* program,
     // dynamic_cast: one integer compare, no RTTI walk.
     fprintf(out, "  static constexpr entity_type static_type = entity_type::%.*s;\n\n",
             entity->name.length, entity->name.data);
-    fprintf(out, "  %.*s() { type = entity_type::%.*s; }\n\n", entity->name.length,
-            entity->name.data, entity->name.length, entity->name.data);
+    // Defined in entities_defaults_generated.cpp with every field's default
+    // in its initializer list. Out of line on purpose: a default is tuned far
+    // more often than a layout changes, and an in-class initializer would make
+    // every tuning a change to a header most of the build includes.
+    fprintf(out, "  %.*s();\n\n", entity->name.length, entity->name.data);
+    write_field_declarations(out, program, entity);
+  }
+  else
+  {
+    write_field_members(out, program, entity);
   }
 
-  write_field_members(out, program, entity);
   fprintf(out, "};\n\n");
 
   // --- the invariants pooled storage rests on ---
@@ -9322,7 +9410,8 @@ static void emit_entity_io_source(FILE* out, const program_t* program, const cha
 // Everything that
 // REFERENCES a handler lives here, so entity_io_generated.cpp compiles into
 // game_shared with no handler present and the client DLL never names one.
-static void emit_action_bindings(FILE* out, const program_t* program, const char* io_header,
+static void emit_action_bindings(FILE* out, const program_t* program, const char* entity_header,
+                                 const char* io_header,
                                  const char* server_seam_header)
 {
   const field_t**       actions       = (const field_t**)malloc((size_t)(program->field_count + 1) * sizeof(void*));
@@ -9342,6 +9431,7 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
   fprintf(out, "// into one handler's typed one. A declared handler nobody defined is a\n");
   fprintf(out, "// LINK error naming the symbol -- there is no registration and no bind\n");
   fprintf(out, "// step, so \"forgot to register\" is not representable.\n");
+  fprintf(out, "#include \"%s\"\n", entity_header);
   fprintf(out, "#include \"%s\"\n", io_header);
   fprintf(out, "#include \"%s\"\n", server_seam_header);
   fprintf(out, "#include \"entities/entity_reflection.hpp\"\n");
@@ -9677,6 +9767,20 @@ static bool name_says_generated(const char* name)
   return false;
 }
 
+// A generated file is emitted beside its final name and only moved over it
+// when the bytes differ. An untouched file keeps its mtime, and the mtime is
+// what the build reads to decide which objects to recompile.
+struct generated_file_t
+{
+  FILE* file;
+  char  final_path[1024];
+  char  temporary_path[1024];
+};
+
+static generated_file_t open_generated_files[8];
+static int32_t          replaced_generated_file_count  = 0;
+static int32_t          unchanged_generated_file_count = 0;
+
 static FILE* open_generated_file(const char* directory, const char* name, char* out_path,
                                  size_t path_size)
 {
@@ -9691,10 +9795,128 @@ static FILE* open_generated_file(const char* directory, const char* name, char* 
 
   snprintf(out_path, path_size, "%s/%s", directory, name);
 
-  FILE* file = fopen(out_path, "wb");
+  generated_file_t* slot = nullptr;
+  for (generated_file_t& candidate : open_generated_files)
+  {
+    if (candidate.file == nullptr)
+    {
+      slot = &candidate;
+      break;
+    }
+  }
+  if (slot == nullptr)
+  {
+    fprintf(stderr, "error: too many generated files open at once while emitting '%s'\n",
+            out_path);
+    return nullptr;
+  }
+
+  snprintf(slot->final_path, sizeof(slot->final_path), "%s", out_path);
+  snprintf(slot->temporary_path, sizeof(slot->temporary_path), "%s.tmp", out_path);
+  slot->file = fopen(slot->temporary_path, "wb");
+  if (slot->file == nullptr)
+    fprintf(stderr, "error: cannot write '%s'\n", slot->temporary_path);
+  return slot->file;
+}
+
+static bool file_holds_bytes(const char* path, const char* bytes, int32_t length)
+{
+  FILE* file = fopen(path, "rb");
   if (file == nullptr)
-    fprintf(stderr, "error: cannot write '%s'\n", out_path);
-  return file;
+    return false;
+
+  bool   matches = true;
+  char   buffer[4096];
+  int32_t offset = 0;
+  while (matches)
+  {
+    size_t read = fread(buffer, 1, sizeof(buffer), file);
+    if (read == 0)
+      break;
+    if (offset + (int32_t)read > length || memcmp(buffer, bytes + offset, read) != 0)
+      matches = false;
+    offset += (int32_t)read;
+  }
+  fclose(file);
+  return matches && offset == length;
+}
+
+static bool close_generated_file(FILE* file)
+{
+  generated_file_t* slot = nullptr;
+  for (generated_file_t& candidate : open_generated_files)
+  {
+    if (candidate.file == file)
+    {
+      slot = &candidate;
+      break;
+    }
+  }
+  assert(slot != nullptr && "close_generated_file on a FILE* open_generated_file did not hand out");
+
+  fclose(file);
+  slot->file = nullptr;
+
+  char*   contents = nullptr;
+  int32_t length   = 0;
+  if (!read_entire_file(slot->temporary_path, &contents, &length))
+    return false;
+  const bool unchanged = file_holds_bytes(slot->final_path, contents, length);
+  free(contents);
+
+  std::error_code error_code;
+  if (unchanged)
+  {
+    std::filesystem::remove(slot->temporary_path, error_code);
+    ++unchanged_generated_file_count;
+    return true;
+  }
+
+  std::filesystem::rename(slot->temporary_path, slot->final_path, error_code);
+  if (error_code)
+  {
+    fprintf(stderr, "error: cannot replace '%s': %s\n", slot->final_path,
+            error_code.message().c_str());
+    return false;
+  }
+  ++replaced_generated_file_count;
+  return true;
+}
+
+// One TU holding every entity constructor. The header declares the
+// constructor and lists the fields bare; the values live here, so editing a
+// default recompiles this file and relinks, and nothing that merely includes
+// the entity's header notices.
+static void emit_entity_defaults_source(FILE* out, const program_t* program,
+                                        const char* header_name)
+{
+  const int32_t        base_index = find_base_declaration(program);
+  const declaration_t* base       = base_index >= 0 ? &program->declarations[base_index] : nullptr;
+
+  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  fprintf(out, "//\n");
+  fprintf(out, "// Every entity's defaults, as the constructor its header declares. They are\n");
+  fprintf(out, "// out of line so that tuning a value is a change to this one TU rather than\n");
+  fprintf(out, "// to a header the build includes almost everywhere. The base's own\n");
+  fprintf(out, "// fields keep their in-class initializers; `type` is the one the derived\n");
+  fprintf(out, "// constructor overwrites.\n");
+  fprintf(out, "#include \"%s\"\n\n", header_name);
+  fprintf(out, "namespace entities\n{\n\n");
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* entity = &program->declarations[index];
+    if (entity->kind != DECLARATION_ENTITY || base == nullptr)
+      continue;
+
+    fprintf(out, "%.*s::%.*s()\n", entity->name.length, entity->name.data, entity->name.length,
+            entity->name.data);
+    write_constructor_initializers(out, program, entity);
+    fprintf(out, "{\n  type = entity_type::%.*s;\n}\n\n", entity->name.length,
+            entity->name.data);
+  }
+
+  fprintf(out, "} // namespace entities\n");
 }
 
 // The entity family is the one that emits into SUBDIRECTORIES: one header per
@@ -9707,6 +9929,7 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
 {
   const char* core_header    = "entities_core_generated.hpp";
   const char* header_name    = "entities_generated.hpp";
+  const char* tables_header  = "entities_tables_generated.hpp";
   const char* io_core_header = "entity_io_core_generated.hpp";
   const char* io_header_name = "entity_io_generated.hpp";
   char        path[1024];
@@ -9724,13 +9947,15 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
   if (core_file == nullptr)
     return false;
   emit_entities_core_header(core_file, program);
-  fclose(core_file);
+  if (!close_generated_file(core_file))
+    return false;
 
   FILE* io_core_file = open_generated_file(output_dir, io_core_header, path, sizeof(path));
   if (io_core_file == nullptr)
     return false;
   emit_entity_io_core_header(io_core_file, program, core_header);
-  fclose(io_core_file);
+  if (!close_generated_file(io_core_file))
+    return false;
 
   // Traits BEFORE entities only because that is the include order; nothing
   // reads what the previous file wrote.
@@ -9750,7 +9975,8 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
     if (trait_file == nullptr)
       return false;
     emit_trait_header(trait_file, program, trait, core_header, io_core_header);
-    fclose(trait_file);
+    if (!close_generated_file(trait_file))
+    return false;
     ++trait_count;
   }
 
@@ -9770,46 +9996,67 @@ static bool emit_entity_family(const program_t* program, const char* output_dir,
     if (entity_file == nullptr)
       return false;
     emit_entity_struct_header(entity_file, program, entity, core_header);
-    fclose(entity_file);
+    if (!close_generated_file(entity_file))
+    return false;
     ++entity_count;
   }
+
+  FILE* tables_file = open_generated_file(output_dir, tables_header, path, sizeof(path));
+  if (tables_file == nullptr)
+    return false;
+  emit_entities_tables_header(tables_file, program);
+  if (!close_generated_file(tables_file))
+    return false;
 
   FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
   if (header_file == nullptr)
     return false;
-  emit_generated_header(header_file, program);
-  fclose(header_file);
+  emit_generated_header(header_file, program, tables_header);
+  if (!close_generated_file(header_file))
+    return false;
 
   FILE* source_file = open_generated_file(output_dir, "entities_generated.cpp", path, sizeof(path));
   if (source_file == nullptr)
     return false;
   emit_generated_source(source_file, program, header_name, schema_hash);
-  fclose(source_file);
+  if (!close_generated_file(source_file))
+    return false;
+
+  FILE* defaults_file =
+      open_generated_file(output_dir, "entities_defaults_generated.cpp", path, sizeof(path));
+  if (defaults_file == nullptr)
+    return false;
+  emit_entity_defaults_source(defaults_file, program, header_name);
+  if (!close_generated_file(defaults_file))
+    return false;
 
   FILE* io_header_file = open_generated_file(output_dir, io_header_name, path, sizeof(path));
   if (io_header_file == nullptr)
     return false;
-  emit_entity_io_header(io_header_file, program, header_name, io_core_header);
-  fclose(io_header_file);
+  emit_entity_io_header(io_header_file, program, tables_header, io_core_header);
+  if (!close_generated_file(io_header_file))
+    return false;
 
   FILE* io_source_file =
       open_generated_file(output_dir, "entity_io_generated.cpp", path, sizeof(path));
   if (io_source_file == nullptr)
     return false;
   emit_entity_io_source(io_source_file, program, io_header_name);
-  fclose(io_source_file);
+  if (!close_generated_file(io_source_file))
+    return false;
 
   FILE* bindings_file =
       open_generated_file(output_dir, "server_action_bindings_generated.cpp", path, sizeof(path));
   if (bindings_file == nullptr)
     return false;
-  emit_action_bindings(bindings_file, program, io_header_name, "entity_io_queue.hpp");
-  fclose(bindings_file);
+  emit_action_bindings(bindings_file, program, header_name, io_header_name, "entity_io_queue.hpp");
+  if (!close_generated_file(bindings_file))
+    return false;
 
   fprintf(stderr,
-          "def_gen: wrote %s/{entities,entity_io}_core_generated.hpp, "
-          "entities_generated.{hpp,cpp}, entity_io_generated.{hpp,cpp}, "
-          "server_action_bindings_generated.cpp, %d trait header%s and %d entity header%s\n",
+          "def_gen: emitted %s/{entities,entity_io}_core_generated.hpp, entities_tables_generated.hpp, "
+          "entities_generated.{hpp,cpp}, entities_defaults_generated.cpp, "
+          "entity_io_generated.{hpp,cpp}, server_action_bindings_generated.cpp, %d trait header%s and %d entity header%s\n",
           output_dir, trait_count, trait_count == 1 ? "" : "s", entity_count,
           entity_count == 1 ? "" : "s");
   return true;
@@ -9829,31 +10076,79 @@ static bool emit_asset_artifacts(const program_t* manifest, const char* output_d
   if (header_file == nullptr)
     return false;
   emit_assets_header(header_file, manifest);
-  fclose(header_file);
+  if (!close_generated_file(header_file))
+    return false;
 
   FILE* source_file = open_generated_file(output_dir, "assets_generated.cpp", path, sizeof(path));
   if (source_file == nullptr)
     return false;
   emit_assets_source(source_file, manifest, id_header);
-  fclose(source_file);
+  if (!close_generated_file(source_file))
+    return false;
 
   FILE* state_file = open_generated_file(output_dir, state_header, path, sizeof(path));
   if (state_file == nullptr)
     return false;
   emit_asset_state_header(state_file, manifest, id_header);
-  fclose(state_file);
+  if (!close_generated_file(state_file))
+    return false;
 
   FILE* bindings_file =
       open_generated_file(output_dir, "assets_bindings_generated.cpp", path, sizeof(path));
   if (bindings_file == nullptr)
     return false;
   emit_assets_bindings(bindings_file, manifest, state_header);
-  fclose(bindings_file);
+  if (!close_generated_file(bindings_file))
+    return false;
 
   fprintf(stderr,
-          "def_gen: wrote %s/assets_generated.{hpp,cpp}, asset_state_generated.hpp and "
+          "def_gen: emitted %s/assets_generated.{hpp,cpp}, asset_state_generated.hpp and "
           "assets_bindings_generated.cpp\n",
           output_dir);
+  return true;
+}
+
+static bool emit_cvar_files(const program_t* program, const char* output_dir,
+                            const field_t* const* cvars, int32_t cvar_count,
+                            const field_t* const* commands, int32_t command_count)
+{
+  const char* header_name = "cvars_generated.hpp";
+  char        path[1024];
+
+  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  if (header_file == nullptr)
+    return false;
+  emit_cvars_header(header_file, program, cvars, cvar_count, commands, command_count);
+  if (!close_generated_file(header_file))
+    return false;
+
+  FILE* source_file = open_generated_file(output_dir, "cvars_generated.cpp", path, sizeof(path));
+  if (source_file == nullptr)
+    return false;
+  emit_cvars_source(source_file, program, header_name, cvars, cvar_count, commands, command_count);
+  if (!close_generated_file(source_file))
+    return false;
+
+  FILE* server_file =
+      open_generated_file(output_dir, "server_command_bindings_generated.cpp", path, sizeof(path));
+  if (server_file == nullptr)
+    return false;
+  emit_command_bindings(server_file, program, header_name, commands, command_count, true);
+  if (!close_generated_file(server_file))
+    return false;
+
+  FILE* client_file =
+      open_generated_file(output_dir, "client_command_bindings_generated.cpp", path, sizeof(path));
+  if (client_file == nullptr)
+    return false;
+  emit_command_bindings(client_file, program, header_name, commands, command_count, false);
+  if (!close_generated_file(client_file))
+    return false;
+
+  fprintf(stderr,
+          "def_gen: emitted %s/cvars_generated.{hpp,cpp} and the two command binder TUs "
+          "(%d cvars, %d commands)\n",
+          output_dir, cvar_count, command_count);
   return true;
 }
 
@@ -9868,47 +10163,7 @@ static bool emit_cvar_family(const program_t* program, const char* output_dir)
   int32_t command_count =
       collect_cvar_lines(program, DECLARATION_COMMANDS, commands, program->field_count + 1);
 
-  const char* header_name = "cvars_generated.hpp";
-  char        path[1024];
-  bool        wrote       = false;
-
-  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
-  if (header_file != nullptr)
-  {
-    emit_cvars_header(header_file, program, cvars, cvar_count, commands, command_count);
-    fclose(header_file);
-
-    FILE* source_file = open_generated_file(output_dir, "cvars_generated.cpp", path, sizeof(path));
-    if (source_file != nullptr)
-    {
-      emit_cvars_source(source_file, program, header_name, cvars, cvar_count, commands,
-                        command_count);
-      fclose(source_file);
-
-      FILE* server_file =
-          open_generated_file(output_dir, "server_command_bindings_generated.cpp", path, sizeof(path));
-      if (server_file != nullptr)
-      {
-        emit_command_bindings(server_file, program, header_name, commands, command_count, true);
-        fclose(server_file);
-
-        FILE* client_file =
-            open_generated_file(output_dir, "client_command_bindings_generated.cpp", path, sizeof(path));
-        if (client_file != nullptr)
-        {
-          emit_command_bindings(client_file, program, header_name, commands, command_count, false);
-          fclose(client_file);
-          wrote = true;
-        }
-      }
-    }
-  }
-
-  if (wrote)
-    fprintf(stderr,
-            "def_gen: wrote %s/cvars_generated.{hpp,cpp} and the two command binder TUs "
-            "(%d cvars, %d commands)\n",
-            output_dir, cvar_count, command_count);
+  const bool wrote = emit_cvar_files(program, output_dir, cvars, cvar_count, commands, command_count);
 
   free(cvars);
   free(commands);
@@ -10224,21 +10479,24 @@ static bool emit_event_family(const program_t* program, const char* output_dir)
   if (header_file == nullptr)
     return false;
   emit_events_header(header_file, program);
-  fclose(header_file);
+  if (!close_generated_file(header_file))
+    return false;
 
   FILE* source_file = open_generated_file(output_dir, source_name, path, sizeof(path));
   if (source_file == nullptr)
     return false;
   emit_events_source(source_file, program, header_path);
-  fclose(source_file);
+  if (!close_generated_file(source_file))
+    return false;
 
   FILE* bindings_file = open_generated_file(output_dir, bindings_name, path, sizeof(path));
   if (bindings_file == nullptr)
     return false;
   emit_event_bindings(bindings_file, program, header_path);
-  fclose(bindings_file);
+  if (!close_generated_file(bindings_file))
+    return false;
 
-  fprintf(stderr, "def_gen: wrote %s/%s_generated.{hpp,cpp} and %s\n", output_dir, stem,
+  fprintf(stderr, "def_gen: emitted %s/%s_generated.{hpp,cpp} and %s\n", output_dir, stem,
           bindings_name);
   return true;
 }
@@ -10503,5 +10761,8 @@ int main(int argument_count, char** arguments)
       return 1;
   }
 
+  fprintf(stderr, "def_gen: replaced %d generated file%s, %d unchanged\n",
+          replaced_generated_file_count, replaced_generated_file_count == 1 ? "" : "s",
+          unchanged_generated_file_count);
   return 0;
 }

@@ -1,4 +1,5 @@
 #include "../../../shared/entities/entity_reflection.hpp"
+#include "entities/generated/entities/particle_emitter_entity_generated.hpp"
 #include "particle_editor_tool.hpp"
 #include "../entity_inspector.hpp"
 #include "../../renderer.hpp"

@@ -1,4 +1,5 @@
 #include "../../../shared/entities/entity_reflection.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "placement_tool.hpp"
 #include <format>
 #include <vector>

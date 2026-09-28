@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Trigger_Volume_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,10 +17,10 @@ struct Trigger_Volume_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Trigger_Volume_Entity;
 
-  Trigger_Volume_Entity() { type = entity_type::Trigger_Volume_Entity; }
+  Trigger_Volume_Entity();
 
-  Enabled switch_state = {};
-  Box_Volume volume = {.half_extents = {64.0f, 64.0f, 64.0f}};
+  Enabled switch_state;
+  Box_Volume volume;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

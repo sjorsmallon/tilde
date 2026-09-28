@@ -1,3 +1,4 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "entity_snapshot.hpp"
 
 #include "../log.hpp"

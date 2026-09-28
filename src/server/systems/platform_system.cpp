@@ -1,3 +1,8 @@
+#include "entities/generated/entities/extending_platform_entity_generated.hpp"
+#include "entities/generated/entities/platform_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/shrinking_platform_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "platform_system.hpp"
 
 #include "../../shared/predicted_world.hpp"

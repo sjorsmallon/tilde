@@ -1,6 +1,9 @@
 #include "../shared/bounce_body.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "damage.hpp"
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 #include "../shared/entities/generated/entities/damageable_entity_generated.hpp"
 #include "../shared/entities/generated/entities/player_entity_generated.hpp"

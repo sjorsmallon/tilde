@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "game_rules_system.hpp"
 
 #include "../../shared/entities/generated/entities/game_rules_entity_generated.hpp"

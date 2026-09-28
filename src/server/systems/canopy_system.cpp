@@ -1,4 +1,7 @@
 #include "canopy_system.hpp"
+#include "entities/generated/entities/canopy_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 
 #include "../../shared/canopy.hpp"
 #include "../../shared/log.hpp"

@@ -13,7 +13,7 @@
 // that draw those already share that one function. This is the fields-only
 // half, and the two meet at hitbox_debug_draw.hpp, which knows neither.
 
-#include "../shared/entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "frame_builder.hpp"
 
 namespace client

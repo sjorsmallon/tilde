@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Weapon_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,18 +15,18 @@ struct Weapon_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Weapon_Entity;
 
-  Weapon_Entity() { type = entity_type::Weapon_Entity; }
+  Weapon_Entity();
 
-  int32_t ammo = -1;
-  int32_t reserve_ammo = -1;
-  Weapon weapon_id = {};
-  shared::entity_uid_t owner_uid = {};
-  uint64_t next_fire_time = {};
-  uint32_t pickup_allowed_tick = {};
-  Damage_Type damage_type = Damage_Type::Normal;
-  Box_Volume volume = {.half_extents = {40.0f, 40.0f, 40.0f}};
-  Bounce bounce = {.restitution = 0.2f};
-  Render render = {.mesh = assets::mesh_asset::Error};
+  int32_t ammo;
+  int32_t reserve_ammo;
+  Weapon weapon_id;
+  shared::entity_uid_t owner_uid;
+  uint64_t next_fire_time;
+  uint32_t pickup_allowed_tick;
+  Damage_Type damage_type;
+  Box_Volume volume;
+  Bounce bounce;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

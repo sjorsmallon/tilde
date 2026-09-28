@@ -1,7 +1,8 @@
+#include "entities/generated/entities/bubble_entity_generated.hpp"
+#include "entities/generated/entities/jump_pad_entity_generated.hpp"
 #include "movement_volumes.hpp"
 
 #include "fixed_arc_flight.hpp"
-#include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 #include "shapes.hpp"
 

@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Player_Entity: what it IS, and what it can be TOLD.
 //
@@ -19,31 +19,31 @@ struct Player_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Player_Entity;
 
-  Player_Entity() { type = entity_type::Player_Entity; }
+  Player_Entity();
 
-  float view_angle_yaw = {};
-  float view_angle_pitch = {};
-  float body_yaw = {};
-  Health health = {.current_health = 100, .max_health = 100};
-  uint32_t death_tick = {};
-  uint32_t last_fire_tick = {};
-  Weapon last_fire_weapon = Weapon::Knife;
-  uint64_t reload_complete_time = {};
-  uint32_t last_empty_fire_warning_tick = {};
-  shared::entity_uid_t checkpoint_uid = {};
-  uint32_t last_hit_tick = {};
-  bool last_hit_was_headshot = {};
-  int32_t client_slot_index = {};
-  bool ready = {};
-  bool wants_to_skip_freeze = {};
-  network::pascal_string_t<32> display_name = {};
-  int32_t kills = {};
-  int32_t deaths = {};
-  linalg::vec3f velocity = {};
-  Inventory inventory = {};
-  Movement movement = {};
-  Render render = {.mesh = assets::mesh_asset::Leet_Full};
-  Team_Allegiance team_allegiance = Team_Allegiance::Free_For_All;
+  float view_angle_yaw;
+  float view_angle_pitch;
+  float body_yaw;
+  Health health;
+  uint32_t death_tick;
+  uint32_t last_fire_tick;
+  Weapon last_fire_weapon;
+  uint64_t reload_complete_time;
+  uint32_t last_empty_fire_warning_tick;
+  shared::entity_uid_t checkpoint_uid;
+  uint32_t last_hit_tick;
+  bool last_hit_was_headshot;
+  int32_t client_slot_index;
+  bool ready;
+  bool wants_to_skip_freeze;
+  network::pascal_string_t<32> display_name;
+  int32_t kills;
+  int32_t deaths;
+  linalg::vec3f velocity;
+  Inventory inventory;
+  Movement movement;
+  Render render;
+  Team_Allegiance team_allegiance;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

@@ -1,5 +1,4 @@
 #include "../../shared/effects/generated/effects_generated.hpp"
-#include "../../shared/entities/generated/entities_generated.hpp"
 #include "../../shared/hit_region.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/span.hpp"
@@ -8,6 +7,8 @@
 #include "../client_context.hpp"
 #include "../entity_type_audio.hpp"
 #include "../weapon_fire_audio.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 #include <optional>
 

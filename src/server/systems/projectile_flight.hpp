@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../shared/entities/generated/entities_generated.hpp"
 #include "../../shared/predicted_world.hpp"
 #include "../../shared/projectile_sweep.hpp"
 #include "../../shared/span.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 
 #include <optional>
 

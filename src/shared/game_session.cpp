@@ -1,5 +1,6 @@
 #define ENTITIES_WANT_INCLUDES
 #include "entities/entity_reflection.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "game_session.hpp"
 #include "shapes.hpp"
 

@@ -10,7 +10,7 @@
 //
 // Little-endian, packed, pose index 0 = the Live phase's first tick. track_count IS the party size.
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "linalg.hpp"
 #include "span.hpp"
 

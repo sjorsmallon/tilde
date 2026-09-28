@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Guided_Rocket_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,11 +15,11 @@ struct Guided_Rocket_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Guided_Rocket_Entity;
 
-  Guided_Rocket_Entity() { type = entity_type::Guided_Rocket_Entity; }
+  Guided_Rocket_Entity();
 
-  shared::entity_uid_t pilot_uid = {};
-  Weapon weapon_id = Weapon::Guided_Rocket;
-  Render render = {.mesh = assets::mesh_asset::rocket};
+  shared::entity_uid_t pilot_uid;
+  Weapon weapon_id;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

@@ -1,3 +1,5 @@
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "map.hpp"
 #include "asset.hpp"
 #include "log.hpp"

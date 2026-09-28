@@ -1,5 +1,6 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "client/editor/transaction_system.hpp"
+#include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "shared/map.hpp"
 #include <cassert>
 #include <cmath>

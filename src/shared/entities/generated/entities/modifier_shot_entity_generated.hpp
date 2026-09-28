@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Modifier_Shot_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,12 +15,12 @@ struct Modifier_Shot_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Modifier_Shot_Entity;
 
-  Modifier_Shot_Entity() { type = entity_type::Modifier_Shot_Entity; }
+  Modifier_Shot_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Modifier_Gun};
-  float lifetime = 4.0f;
-  float collision_radius = 8.0f;
-  Render render = {.mesh = assets::mesh_asset::Sphere, .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {0.5f, 1.0f, 0.5f}}};
+  Projectile projectile;
+  float lifetime;
+  float collision_radius;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

@@ -1,4 +1,7 @@
 #define ENTITIES_WANT_INCLUDES
+#include "entities/generated/entities/directional_light_entity_generated.hpp"
+#include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "lighting.hpp"
 
 #include "entities/entity_reflection.hpp"

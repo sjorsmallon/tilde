@@ -1,4 +1,7 @@
 #include "bubble_system.hpp"
+#include "entities/generated/entities/bubble_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 
 #include "../../shared/fixed_arc_flight.hpp"
 #include "../entity_lifecycle.hpp"

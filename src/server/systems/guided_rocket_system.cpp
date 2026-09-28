@@ -1,3 +1,7 @@
+#include "entities/generated/entities/extending_platform_entity_generated.hpp"
+#include "entities/generated/entities/guided_rocket_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "guided_rocket_system.hpp"
 
 #include "../../shared/flight_path.hpp"

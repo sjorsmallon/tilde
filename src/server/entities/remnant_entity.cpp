@@ -1,3 +1,5 @@
+#include "entities/generated/entities/remnant_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "remnant_entity.hpp"
 
 #include "../../shared/log.hpp"

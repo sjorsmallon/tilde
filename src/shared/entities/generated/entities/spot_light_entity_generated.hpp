@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Spot_Light_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,13 +17,13 @@ struct Spot_Light_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Spot_Light_Entity;
 
-  Spot_Light_Entity() { type = entity_type::Spot_Light_Entity; }
+  Spot_Light_Entity();
 
-  Enabled switch_state = {};
-  Light light = {};
-  float range = 512.0f;
-  float inner_degrees = 20.0f;
-  float outer_degrees = 35.0f;
+  Enabled switch_state;
+  Light light;
+  float range;
+  float inner_degrees;
+  float outer_degrees;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

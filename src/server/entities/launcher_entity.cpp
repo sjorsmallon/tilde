@@ -1,8 +1,8 @@
 #include "../../shared/entities/generated/entities/launcher_entity_generated.hpp"
-#include "../../shared/entities/generated/entities_generated.hpp"
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"
 #include "../systems/launcher_system.hpp"
+#include "entities/generated/entities/launcher_entity_generated.hpp"
 
 namespace entities
 {

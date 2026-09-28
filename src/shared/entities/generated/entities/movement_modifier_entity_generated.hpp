@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Movement_Modifier_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,15 +17,15 @@ struct Movement_Modifier_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Movement_Modifier_Entity;
 
-  Movement_Modifier_Entity() { type = entity_type::Movement_Modifier_Entity; }
+  Movement_Modifier_Entity();
 
-  Enabled switch_state = {};
-  Box_Volume volume = {.half_extents = {128.0f, 128.0f, 128.0f}};
-  float gravity_scale = 1.0f;
-  float run_speed_scale = 1.0f;
-  float jump_speed_scale = 1.0f;
-  float friction_scale = 1.0f;
-  float control_scale = 1.0f;
+  Enabled switch_state;
+  Box_Volume volume;
+  float gravity_scale;
+  float run_speed_scale;
+  float jump_speed_scale;
+  float friction_scale;
+  float control_scale;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

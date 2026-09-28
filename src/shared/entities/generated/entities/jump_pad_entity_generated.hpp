@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Jump_Pad_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,12 +17,12 @@ struct Jump_Pad_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Jump_Pad_Entity;
 
-  Jump_Pad_Entity() { type = entity_type::Jump_Pad_Entity; }
+  Jump_Pad_Entity();
 
-  Enabled switch_state = {};
-  Box_Volume volume = {.half_extents = {32.0f, 8.0f, 32.0f}};
-  float launch_speed = 900.0f;
-  Render render = {.mesh = assets::mesh_asset::Duck};
+  Enabled switch_state;
+  Box_Volume volume;
+  float launch_speed;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

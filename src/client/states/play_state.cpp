@@ -1,6 +1,7 @@
 #include "../../shared/frame_timing.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/network/entity_serialization.hpp"
+#include "entities/generated/entities_generated.hpp"
 #include "play_state.hpp"
 #include "../audio/audio_system.hpp"
 #include "../console.hpp"

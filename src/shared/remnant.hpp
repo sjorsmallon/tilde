@@ -1,6 +1,6 @@
 #pragma once
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/remnant_entity_generated.hpp"
 #include "hitbox_rig.hpp"
 #include "player_constants.hpp"
 

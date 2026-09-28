@@ -1,6 +1,9 @@
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "projectile_sweep.hpp"
 
-#include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 #include "player_constants.hpp"
 #include "shapes.hpp"

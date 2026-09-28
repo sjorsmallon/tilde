@@ -2,7 +2,7 @@
 // inside it last frame, is one impact on the face it came through -- and
 // nothing else is.
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entity_system.hpp"
 #include "map_geometry.hpp"
 #include "team_wall_ripples.hpp"

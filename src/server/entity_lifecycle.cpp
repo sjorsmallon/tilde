@@ -1,3 +1,5 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/player_spawn_entity_generated.hpp"
 #include "entity_lifecycle.hpp"
 
 #include "../shared/log.hpp"

@@ -2,7 +2,7 @@
 
 // A mover's pose is a pure function of its Path_Follow, the node chain and the tick. mover_def.md.
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
 

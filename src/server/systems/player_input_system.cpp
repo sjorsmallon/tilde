@@ -1,3 +1,5 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "systems/player_input_system.hpp"
 
 #include "../shared/cvars/generated/cvars_generated.hpp"

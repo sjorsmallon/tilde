@@ -1,3 +1,4 @@
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "physics_body_system.hpp"
 
 #include "../../shared/bounce_body.hpp"

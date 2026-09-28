@@ -1,3 +1,6 @@
+#include "entities/generated/entities/modifier_shot_entity_generated.hpp"
+#include "entities/generated/entities/timed_movement_modifier_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "modifier_shot_system.hpp"
 
 #include "../../shared/fixed_arc_flight.hpp"

@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Rocket_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,12 +15,12 @@ struct Rocket_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Rocket_Entity;
 
-  Rocket_Entity() { type = entity_type::Rocket_Entity; }
+  Rocket_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Rocket_Launcher};
-  float lifetime = 5.0f;
-  float collision_radius = 12.0f;
-  Render render = {.mesh = assets::mesh_asset::rocket};
+  Projectile projectile;
+  float lifetime;
+  float collision_radius;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

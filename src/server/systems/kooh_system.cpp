@@ -1,3 +1,5 @@
+#include "entities/generated/entities/kooh_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "kooh_system.hpp"
 
 #include "../../shared/projectile_sweep.hpp"

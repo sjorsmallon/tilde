@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Timed_Movement_Modifier_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,20 +15,20 @@ struct Timed_Movement_Modifier_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Timed_Movement_Modifier_Entity;
 
-  Timed_Movement_Modifier_Entity() { type = entity_type::Timed_Movement_Modifier_Entity; }
+  Timed_Movement_Modifier_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Modifier_Gun};
-  Fixed_Arc_Flight flight = {};
-  float flight_seconds = 1.5f;
-  uint32_t spawned_tick = {};
-  float lifetime_seconds = 6.0f;
-  linalg::vec3f half_extents = {128.0f, 128.0f, 128.0f};
-  float gravity_scale = -1.0f;
-  float run_speed_scale = 1.0f;
-  float jump_speed_scale = 1.0f;
-  float friction_scale = 1.0f;
-  float control_scale = 1.0f;
-  Render render = {.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Ghost, .color = {0.5f, 1.0f, 0.5f}}};
+  Projectile projectile;
+  Fixed_Arc_Flight flight;
+  float flight_seconds;
+  uint32_t spawned_tick;
+  float lifetime_seconds;
+  linalg::vec3f half_extents;
+  float gravity_scale;
+  float run_speed_scale;
+  float jump_speed_scale;
+  float friction_scale;
+  float control_scale;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

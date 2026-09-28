@@ -13,7 +13,6 @@
 // aim clips and the authored `.hitboxes` file, all of which are small text.
 // Radius derivation is the only part that needs vertices, and it is tool-time.
 
-#include "entities/generated/entities_generated.hpp"
 #include "hitbox_rig.hpp"
 #include "linalg.hpp"
 #include "player_animator.hpp"

@@ -14,6 +14,8 @@
 
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/rocket_entity_generated.hpp"
 
 #include <cassert>
 #include <iostream>

@@ -1,3 +1,6 @@
+#include "entities/generated/entities/damageable_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "systems/hit_test_world.hpp"
 
 #include "../shared/entities/generated/entities_generated.hpp"

@@ -1,6 +1,6 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "entity_outliner.hpp"
 
-#include "../../shared/entities/generated/entities_generated.hpp"
 #include "../../shared/map.hpp"
 #include "../../shared/map_group.hpp"
 

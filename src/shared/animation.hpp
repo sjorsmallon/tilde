@@ -9,7 +9,7 @@
 //                                                             │  (* inverse_bind)
 //                                                      skinning matrices
 #include "array.hpp"
-#include "entities/generated/entities_generated.hpp" // entities::Aim_Pose
+#include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
 #include "skeleton.hpp"
 #include "span.hpp"

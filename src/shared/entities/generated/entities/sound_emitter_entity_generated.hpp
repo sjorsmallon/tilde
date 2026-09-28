@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Sound_Emitter_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,15 +17,15 @@ struct Sound_Emitter_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Sound_Emitter_Entity;
 
-  Sound_Emitter_Entity() { type = entity_type::Sound_Emitter_Entity; }
+  Sound_Emitter_Entity();
 
-  Enabled switch_state = {};
-  Playback playback = {};
-  assets::sound_asset sound = {};
-  float volume = 1.0f;
-  bool loop = false;
-  bool spatial = true;
-  float range = 1024.0f;
+  Enabled switch_state;
+  Playback playback;
+  assets::sound_asset sound;
+  float volume;
+  bool loop;
+  bool spatial;
+  float range;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

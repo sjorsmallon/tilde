@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "lag_compensation.hpp"
 
 #include "linalg.hpp"

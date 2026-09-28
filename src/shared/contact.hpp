@@ -1,6 +1,7 @@
 #pragma once
 
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities_core_generated.hpp"
+
 
 #include <cstdint>
 

@@ -1,6 +1,5 @@
 #include "disabled_geometry.hpp"
 
-#include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
 
 namespace shared

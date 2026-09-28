@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Emancipated_Weapon_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,13 +15,13 @@ struct Emancipated_Weapon_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Emancipated_Weapon_Entity;
 
-  Emancipated_Weapon_Entity() { type = entity_type::Emancipated_Weapon_Entity; }
+  Emancipated_Weapon_Entity();
 
-  uint32_t spawned_tick = {};
-  float lifetime_seconds = 5.0f;
-  float rise_distance = 48.0f;
-  float spin_degrees_per_second = 90.0f;
-  Render render = {};
+  uint32_t spawned_tick;
+  float lifetime_seconds;
+  float rise_distance;
+  float spin_degrees_per_second;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

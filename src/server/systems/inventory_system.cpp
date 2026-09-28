@@ -1,3 +1,4 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "inventory_system.hpp"
 
 #include "../../shared/linalg.hpp"

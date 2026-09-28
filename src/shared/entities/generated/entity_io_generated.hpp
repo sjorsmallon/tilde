@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The TYPE layer of entity I/O: what an entity can be TOLD and what it
 // ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a
@@ -9,7 +9,7 @@
 // entities/<type>_generated.hpp, and both are reachable from here.
 #pragma once
 
-#include "entities_generated.hpp"
+#include "entities_tables_generated.hpp"
 #include "entity_io_core_generated.hpp"
 // Every trait, INCLUDING one no entity opts into yet: action_data_t's union
 // names every payload, and a trait nothing opts into is reachable through no

@@ -7,6 +7,7 @@
 #include "../../shared/network/network_types.hpp"
 #include "../bot_state.hpp"
 #include "../server_context.hpp"
+#include "entities/generated/entities/player_spawn_entity_generated.hpp"
 
 namespace server
 {

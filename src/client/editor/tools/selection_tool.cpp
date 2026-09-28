@@ -1,4 +1,6 @@
 #include "../../../shared/entities/entity_reflection.hpp"
+#include "entities/generated/entities/reflection_volume_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "selection_tool.hpp"
 #include "../../hud/announcement.hpp"
 #include "../../renderer.hpp"

@@ -31,6 +31,7 @@
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/player_rig.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 #include <cmath>
 #include <cstdio>

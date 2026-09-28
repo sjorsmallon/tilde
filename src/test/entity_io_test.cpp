@@ -21,6 +21,7 @@
 //      map's, and a target destroyed during the delay is dropped rather than
 //      fatal.
 
+#include "entities/generated/entities_generated.hpp"
 #include "server/damage.hpp"
 #include "server/entity_io_console.hpp"
 #include "server/entity_io_queue.hpp"

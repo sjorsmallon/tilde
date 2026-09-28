@@ -2,7 +2,8 @@
 // player's hull would, through the same disabled set and the same mover list.
 #include "collision_detection.hpp"
 #include "disabled_geometry.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_system.hpp"
 #include "player_constants.hpp"
 #include "map_geometry.hpp"

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../../shared/entities/generated/entities_generated.hpp"
 #include "../../shared/span.hpp"
 #include "../renderer.hpp"
 #include "../ui/font.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 
 #include <cstdint>
 #include <string>

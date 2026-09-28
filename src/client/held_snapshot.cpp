@@ -1,3 +1,6 @@
+#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "held_snapshot.hpp"
 
 #include "../shared/cvars/generated/cvars_generated.hpp"

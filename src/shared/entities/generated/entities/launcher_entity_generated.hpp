@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Launcher_Entity: what it IS, and what it can be TOLD.
 //
@@ -17,20 +17,20 @@ struct Launcher_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Launcher_Entity;
 
-  Launcher_Entity() { type = entity_type::Launcher_Entity; }
+  Launcher_Entity();
 
-  Enabled switch_state = {};
-  Weapon weapon = Weapon::Bubble;
-  Fire_Trigger trigger = Fire_Trigger::Primary;
-  float spread_yaw_degrees = 0.0f;
-  float spread_pitch_degrees = 0.0f;
-  float speed_variation = 0.0f;
-  float flight_seconds_variation = 0.0f;
-  float rest_seconds_variation = 0.0f;
-  float fire_interval_seconds = 0.0f;
-  uint32_t next_fire_tick = {};
-  uint32_t shots_fired = {};
-  Render render = {.mesh = assets::mesh_asset::Box, .scale = {16.0f, 16.0f, 16.0f}};
+  Enabled switch_state;
+  Weapon weapon;
+  Fire_Trigger trigger;
+  float spread_yaw_degrees;
+  float spread_pitch_degrees;
+  float speed_variation;
+  float flight_seconds_variation;
+  float rest_seconds_variation;
+  float fire_interval_seconds;
+  uint32_t next_fire_tick;
+  uint32_t shots_fired;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

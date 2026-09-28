@@ -2,6 +2,7 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "bot_system.hpp"
 #include "bubble_system.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "inventory_system.hpp"
 
 #include "../entity_lifecycle.hpp"

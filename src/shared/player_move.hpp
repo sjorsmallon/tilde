@@ -2,7 +2,6 @@
 #include "collision_detection.hpp"
 #include "cvars/generated/cvars_generated.hpp"
 #include "debug_collision.hpp"
-#include "entities/generated/entities_generated.hpp"
 #include "movement_settings.hpp"
 #include "movement_volumes.hpp"
 #include "movers.hpp"

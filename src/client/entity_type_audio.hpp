@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../shared/assets/generated/assets_generated.hpp"
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/span.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 
 namespace client
 {

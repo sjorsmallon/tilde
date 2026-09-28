@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Particle_Emitter_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,26 +15,26 @@ struct Particle_Emitter_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Particle_Emitter_Entity;
 
-  Particle_Emitter_Entity() { type = entity_type::Particle_Emitter_Entity; }
+  Particle_Emitter_Entity();
 
-  assets::texture_asset sprite = assets::texture_asset::Smoke;
-  float emit_rate = 20.0f;
-  int32_t max_particles = 64;
-  float lifetime_min = 0.5f;
-  float lifetime_max = 1.5f;
-  float velocity_min = 2.0f;
-  float velocity_max = 5.0f;
-  float spread = 0.5f;
-  linalg::vec3f gravity = {0.0f, 0.5f, 0.0f};
-  float drag = 0.3f;
-  float size_start = 0.5f;
-  float size_end = 2.0f;
-  float rotation_speed_min = -1.0f;
-  float rotation_speed_max = 1.0f;
-  linalg::vec3f color_start = {1.0f, 1.0f, 1.0f};
-  linalg::vec3f color_end = {0.5f, 0.5f, 0.5f};
-  float alpha_start = 0.8f;
-  float alpha_end = 0.0f;
+  assets::texture_asset sprite;
+  float emit_rate;
+  int32_t max_particles;
+  float lifetime_min;
+  float lifetime_max;
+  float velocity_min;
+  float velocity_max;
+  float spread;
+  linalg::vec3f gravity;
+  float drag;
+  float size_start;
+  float size_end;
+  float rotation_speed_min;
+  float rotation_speed_max;
+  linalg::vec3f color_start;
+  linalg::vec3f color_end;
+  float alpha_start;
+  float alpha_end;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

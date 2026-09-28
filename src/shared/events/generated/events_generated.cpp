@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/events/events.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/events/events.def by def_gen. Do not edit.
 #include "events/generated/events_generated.hpp"
 
 #include "log.hpp"

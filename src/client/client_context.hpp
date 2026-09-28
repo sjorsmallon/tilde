@@ -2,6 +2,7 @@
 
 #include "audio/audio_system.hpp"
 #include "camera.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "remote_interpolation.hpp"
 #include "replay_playback.hpp"
 

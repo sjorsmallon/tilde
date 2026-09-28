@@ -6,6 +6,11 @@
 // Knife swing, and swinging a Knife (0.5s) delayed a Scout that had been
 // holstered and idle for a minute. Both directions are checked below.
 #include "entities/entity_reflection.hpp"
+#include "entities/generated/entities/extending_platform_entity_generated.hpp"
+#include "entities/generated/entities/guided_rocket_entity_generated.hpp"
+#include "entities/generated/entities/modifier_shot_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
 #include "player_constants.hpp"

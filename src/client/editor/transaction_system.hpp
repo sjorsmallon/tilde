@@ -5,6 +5,7 @@
 #include "../../shared/map.hpp"
 #include "../../shared/map_geometry.hpp"
 #include "../../shared/span.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include <cstdint>
 #include <map>
 #include <string>

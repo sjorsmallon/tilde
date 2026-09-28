@@ -8,6 +8,7 @@
 // signal fired.
 //
 
+#include "entities/generated/entities_generated.hpp"
 #include "server/entity_io_context.hpp"
 #include "server/entity_io_queue.hpp"
 #include "server/entity_lifecycle.hpp"

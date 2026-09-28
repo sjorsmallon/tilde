@@ -1,6 +1,6 @@
+#include "entities/generated/entities_tables_generated.hpp"
 #include "replay_recorder.hpp"
 
-#include "entities/generated/entities_generated.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "network/cvar_mirror.hpp"

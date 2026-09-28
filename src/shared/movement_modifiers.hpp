@@ -6,7 +6,7 @@
 // before they run.
 
 #include "aabb.hpp"
-#include "entities/generated/entities_generated.hpp"
+#include "entities/generated/entities/timed_movement_modifier_entity_generated.hpp"
 #include "entity_uid.hpp"
 #include "movement_settings.hpp"
 #include "span.hpp"

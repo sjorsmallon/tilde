@@ -1,5 +1,6 @@
 #include "../../shared/entities/generated/entities/spot_light_entity_generated.hpp"
 #include "../entity_io_context.hpp"
+#include "entities/generated/entities/spot_light_entity_generated.hpp"
 
 namespace entities
 {

@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Damageable_Entity: what it IS, and what it can be TOLD.
 //
@@ -16,12 +16,12 @@ struct Damageable_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Damageable_Entity;
 
-  Damageable_Entity() { type = entity_type::Damageable_Entity; }
+  Damageable_Entity();
 
-  Health health = {};
-  Box_Volume volume = {.half_extents = {16.0f, 32.0f, 16.0f}};
-  Damage_Type weakness = Damage_Type::Orange;
-  Render render = {};
+  Health health;
+  Box_Volume volume;
+  Damage_Type weakness;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

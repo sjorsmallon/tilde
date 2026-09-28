@@ -1,5 +1,7 @@
 #pragma once
 
+#include "generated/entities_tables_generated.hpp"
+
 // entity_reflection -- everything the generated tables can do that is not worth
 // generating.
 //
@@ -19,7 +21,6 @@
 // event's fields go through the same two -- and anything that knows what a map
 // file looks like (map.cpp).
 
-#include "generated/entities_generated.hpp"
 
 #include <cstdint>
 #include <string>

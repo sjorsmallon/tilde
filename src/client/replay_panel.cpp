@@ -1,7 +1,7 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "replay_panel.hpp"
 
 #include "../shared/asset.hpp"
-#include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/run_times.hpp"
 #include "client_context.hpp"
 #include "renderer.hpp"

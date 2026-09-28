@@ -1,3 +1,5 @@
+#include "entities/generated/entities/remnant_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "weapon_fire.hpp"
 
 #include "../shared/hitscan.hpp"

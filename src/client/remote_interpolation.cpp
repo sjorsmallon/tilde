@@ -1,3 +1,4 @@
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "remote_interpolation.hpp"
 
 #include "../shared/entity_system.hpp"

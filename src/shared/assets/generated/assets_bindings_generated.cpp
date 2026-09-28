@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/assets/generated/assets.manifest by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/assets/generated/assets.manifest by def_gen. Do not edit.
 //
 // The seam between the manifest and the loaders, and it is a SYMBOL
 // REFERENCE rather than a table: every decode_* and make_missing_* below is

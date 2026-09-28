@@ -1,3 +1,5 @@
+#include "entities/generated/entities/ricochet_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "ricochet_system.hpp"
 
 #include "../../shared/projectile_sweep.hpp"

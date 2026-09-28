@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Platform_Entity: what it IS, and what it can be TOLD.
 //
@@ -15,14 +15,14 @@ struct Platform_Entity : Entity
 {
   static constexpr entity_type static_type = entity_type::Platform_Entity;
 
-  Platform_Entity() { type = entity_type::Platform_Entity; }
+  Platform_Entity();
 
-  Projectile projectile = {.weapon_id = Weapon::Platform};
-  Fixed_Arc_Flight flight = {};
-  float flight_seconds = 0.6f;
-  float solid_seconds = 6.0f;
-  linalg::vec3f half_extents = {64.0f, 4.0f, 64.0f};
-  Render render = {.mesh = assets::mesh_asset::Box, .material = {.color = {1.0f, 0.75f, 0.3f}}};
+  Projectile projectile;
+  Fixed_Arc_Flight flight;
+  float flight_seconds;
+  float solid_seconds;
+  linalg::vec3f half_extents;
+  Render render;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

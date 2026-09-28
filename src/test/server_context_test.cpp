@@ -10,6 +10,8 @@
 // Nothing here stands a server up: the reset is a value operation and is
 // tested as one.
 
+#include "entities/generated/entities/game_rules_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "server/server_context.hpp"
 
 #include <cassert>
