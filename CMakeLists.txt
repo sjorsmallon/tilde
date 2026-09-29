@@ -345,21 +345,40 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 # that include it. Every target that compiles a generated source, or links
 # game_shared, orders itself after generate_definitions.
 #
-# The per-entity and per-trait headers under generated/entities and
-# generated/traits are written by this same run and are deliberately NOT listed:
-# the list would be a hand-maintained mirror of entities.def, which is the exact
-# drift the one-walk rule deleted from the asset pipeline.
+# EVERY generated header has to be a byproduct, or ninja never looks at it
+# again: it plans from the mtimes it reads BEFORE def_gen runs, so a header it
+# does not know def_gen writes is still old in that plan, and the objects that
+# include only that header are rebuilt one build late, against a struct whose
+# size has already changed under them. The per-entity and per-trait headers are
+# therefore GLOBBED rather than listed: a list would be a hand-maintained mirror
+# of entities.def, which is the exact drift the one-walk rule deleted from the
+# asset pipeline. A header for a type added since the last configure is picked
+# up by CONFIGURE_DEPENDS on the next build, and nothing could have been stale
+# against a header that did not exist.
+file(GLOB_RECURSE DEF_GEN_GLOBBED_HEADERS CONFIGURE_DEPENDS
+    ${ENTITY_GEN_OUT_DIR}/*_generated.hpp
+    ${ASSET_GEN_OUT_DIR}/*_generated.hpp
+    ${CVAR_GEN_OUT_DIR}/*_generated.hpp
+    ${EFFECT_GEN_OUT_DIR}/*_generated.hpp
+    ${EVENT_GEN_OUT_DIR}/*_generated.hpp
+)
+set(DEF_GEN_BYPRODUCTS
+    ${ENTITY_GEN_HEADER} ${ENTITY_GEN_TABLES_HEADER} ${ENTITY_GEN_SOURCE} ${ENTITY_GEN_DEFAULTS}
+    ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
+    ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
+    ${ASSET_GEN_STATE_HEADER} ${ASSET_GEN_BINDINGS}
+    ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
+    ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
+    ${EFFECT_GEN_HEADER} ${EFFECT_GEN_SOURCE} ${EFFECT_GEN_CLIENT_BINDINGS}
+    ${EVENT_GEN_HEADER} ${EVENT_GEN_SOURCE} ${EVENT_GEN_CLIENT_BINDINGS}
+    ${DEF_GEN_GLOBBED_HEADERS}
+)
+list(REMOVE_DUPLICATES DEF_GEN_BYPRODUCTS)
+
 set(DEF_GEN_STAMP ${CMAKE_BINARY_DIR}/def_gen.stamp)
 add_custom_command(
     OUTPUT ${DEF_GEN_STAMP}
-    BYPRODUCTS ${ENTITY_GEN_HEADER} ${ENTITY_GEN_TABLES_HEADER} ${ENTITY_GEN_SOURCE} ${ENTITY_GEN_DEFAULTS}
-           ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
-           ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
-           ${ASSET_GEN_STATE_HEADER} ${ASSET_GEN_BINDINGS}
-           ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
-           ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
-           ${EFFECT_GEN_HEADER} ${EFFECT_GEN_SOURCE} ${EFFECT_GEN_CLIENT_BINDINGS}
-           ${EVENT_GEN_HEADER} ${EVENT_GEN_SOURCE} ${EVENT_GEN_CLIENT_BINDINGS}
+    BYPRODUCTS ${DEF_GEN_BYPRODUCTS}
     COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
             --emit

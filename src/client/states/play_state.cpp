@@ -31,6 +31,7 @@
 #include "../../shared/spawned_platforms.hpp"
 #include "../../shared/movement_modifiers.hpp"
 #include "../../shared/movement_volumes.hpp"
+#include "../../shared/weapon_instance.hpp"
 #include "../../shared/weapons.hpp"
 #include "../../shared/asset.hpp"
 #include "../../shared/debug_collision.hpp"
@@ -2395,7 +2396,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
               const shared::weapon_definition_t &held =
                   shared::get_weapon_definition(held_entity->weapon_id);
               if (ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
-                  shared::reload_may_start(held, held_entity->ammo, held_entity->reserve_ammo))
+                  shared::reload_may_start(held, shared::magazine_of(*held_entity)))
                 ctx.prediction.seconds_until_local_reload_complete =
                     held.reload_duration_seconds;
             }

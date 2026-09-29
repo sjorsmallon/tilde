@@ -19,6 +19,7 @@
 #include "subtick.hpp"
 #include "systems/guided_rocket_system.hpp"
 #include "systems/inventory_system.hpp"
+#include "weapon_instance.hpp"
 #include "weapons.hpp"
 
 #include <algorithm>
@@ -52,17 +53,24 @@ static constexpr Array<entities::Weapon, 5> TEST_LOADOUT = {{
 constexpr const shared::weapon_definition_t& SCOUT = shared::get_weapon_definition(entities::Weapon::Scout);
 constexpr const shared::weapon_definition_t& KNIFE = shared::get_weapon_definition(entities::Weapon::Knife);
 
-static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = -1}).ammo == SCOUT.magazine_size);
-static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = -1}).reserve_ammo == -1);
-static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = 4}).ammo == 7);
-static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = 4}).reserve_ammo == 0);
-static_assert(shared::reloaded_magazine(SCOUT, {.ammo = 3, .reserve_ammo = 30}).reserve_ammo ==
-              30 - (SCOUT.magazine_size - 3));
-static_assert(!shared::reload_may_start(SCOUT, 3, 0));
-static_assert(!shared::reload_may_start(SCOUT, -1, -1));
-static_assert(!shared::reload_may_start(SCOUT, SCOUT.magazine_size, 30));
-static_assert(!shared::reload_may_start(KNIFE, 0, 30));
-static_assert(!shared::reload_may_start(shared::get_weapon_definition(entities::Weapon::Platform), 0, -1));
+constexpr const shared::weapon_definition_t& PLATFORM =
+    shared::get_weapon_definition(entities::Weapon::Platform);
+
+static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).ammo == 10);
+static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).reserve_ammo == -1);
+static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).ammo == 7);
+static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).reserve_ammo == 0);
+static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 30}).reserve_ammo == 23);
+static_assert(shared::reloaded_magazine(SCOUT, {.size = 5, .ammo = 3, .reserve_ammo = -1}).ammo == 5);
+static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 0}));
+static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = -1, .reserve_ammo = -1}));
+static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 10, .reserve_ammo = 30}));
+static_assert(!shared::reload_may_start(KNIFE, {.size = 0, .ammo = 0, .reserve_ammo = 30}));
+static_assert(!shared::reload_may_start(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}));
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = 0, .reserve_ammo = -1}) == 5);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = -1, .reserve_ammo = -1}) == -1);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 4, .reserve_ammo = -1}) == 4);
+static_assert(shared::ammo_after_ground_refill(SCOUT, {.size = 10, .ammo = 0, .reserve_ammo = -1}) == 0);
 static_assert(shared::ammo_allows_a_shot(-1) && shared::ammo_allows_a_shot(1) &&
               !shared::ammo_allows_a_shot(0));
 
@@ -76,7 +84,7 @@ static void grant_test_loadout(shared::game_session_t& session, shared::entity_u
     entities::Weapon_Entity* weapon_entity =
         session.entity_system.get<entities::Weapon_Entity>(weapon_uid);
     weapon_entity->weapon_id = weapon;
-    weapon_entity->ammo      = shared::full_magazine_of(definition);
+    shared::write_weapon_kind_counts(*weapon_entity);
     weapon_entity->owner_uid = player_uid;
 
     entities::Player_Entity* player = session.entity_system.get<entities::Player_Entity>(player_uid);
@@ -533,16 +541,25 @@ int main()
           "a weapon is not picked up into a slot that is already full");
   }
 
-  // --- a button's alive limit replaces the owner's oldest shot off that button, and nobody else's ---
+  // --- the weapon's alive limit replaces the owner's oldest shot off that button, and nobody else's ---
   {
     server::server_context_t context;
     shared::Entity_System& entity_system = context.world.session.entity_system;
 
     const shared::weapon_definition_t& modifier_gun =
         shared::get_weapon_definition(entities::Weapon::Modifier_Gun);
-    const uint32_t max_alive =
-        shared::fire_of(modifier_gun, entities::Fire_Trigger::Primary).limit.max_alive;
-    check(max_alive > 0, "the modifier gun's primary carries an alive limit");
+
+    entities::Weapon_Entity held;
+    held.weapon_id = entities::Weapon::Modifier_Gun;
+    shared::write_weapon_kind_counts(held);
+    check(shared::alive_limit_of(held).max_alive == modifier_gun.limit.max_alive &&
+              modifier_gun.limit.max_alive > 0,
+          "a modifier gun is born with its kind's alive limit");
+
+    held.max_alive = 4;
+    const shared::alive_limit_t limit = shared::alive_limit_of(held);
+    const uint32_t max_alive          = limit.max_alive;
+    check(max_alive == 4, "and the limit a shot reads is the one written on the weapon");
 
     const shared::entity_uid_t owner_uid = entity_system.spawn<entities::Player_Entity>();
     const shared::entity_uid_t other_uid = entity_system.spawn<entities::Player_Entity>();
@@ -550,14 +567,14 @@ int main()
     const vec3f direction = {1.f, 0.f, 0.f};
 
     const shared::entity_uid_t other_shot = server::spawn_projectile(
-        context, other_uid, modifier_gun, origin, direction, entities::Fire_Trigger::Primary);
+        context, other_uid, modifier_gun, origin, direction, entities::Fire_Trigger::Primary, limit);
     const shared::entity_uid_t secondary_shot = server::spawn_projectile(
-        context, owner_uid, modifier_gun, origin, direction, entities::Fire_Trigger::Secondary);
+        context, owner_uid, modifier_gun, origin, direction, entities::Fire_Trigger::Secondary, limit);
 
     std::vector<shared::entity_uid_t> shots;
     for (uint32_t shot = 0; shot < max_alive + 1; ++shot)
       shots.push_back(server::spawn_projectile(context, owner_uid, modifier_gun, origin, direction,
-                                               entities::Fire_Trigger::Primary));
+                                               entities::Fire_Trigger::Primary, limit));
 
     uint32_t alive = 0;
     for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of<entities::Modifier_Shot_Entity>())
@@ -568,6 +585,51 @@ int main()
     check(entity_system.try_find(shots.back()) != nullptr, "...and the newest is alive");
     check(entity_system.try_find(other_shot) != nullptr, "another owner's shot is not counted");
     check(entity_system.try_find(secondary_shot) != nullptr, "the other button's shot is not counted");
+
+    held.max_alive = 0;
+    for (uint32_t shot = 0; shot < 3; ++shot)
+      server::spawn_projectile(context, owner_uid, modifier_gun, origin, direction,
+                               entities::Fire_Trigger::Primary, shared::alive_limit_of(held));
+    alive = 0;
+    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of<entities::Modifier_Shot_Entity>())
+      if (shot.projectile.owner_uid == owner_uid)
+        ++alive;
+    check(alive == max_alive + 3, "a weapon written to 0 has no limit");
+  }
+
+  // --- a weapon from a file that never said takes its kind's counts, once ---
+  {
+    entities::Weapon_Entity typed;
+    typed.weapon_id = entities::Weapon::Platform;
+    typed.ammo      = 1;
+    shared::convert_weapon_without_counts(typed);
+    check(typed.magazine_size == 1 && typed.ammo == 1,
+          "a ground-refill gun keeps the ammo its author typed as its magazine");
+    check(typed.max_alive == static_cast<int32_t>(PLATFORM.limit.max_alive),
+          "and takes its kind's alive limit");
+
+    entities::Weapon_Entity untouched;
+    untouched.weapon_id = entities::Weapon::Platform;
+    shared::convert_weapon_without_counts(untouched);
+    check(untouched.magazine_size == PLATFORM.magazine_size &&
+              untouched.ammo == PLATFORM.magazine_size,
+          "one nobody typed a count into is its kind's, and full");
+
+    entities::Weapon_Entity scout;
+    scout.weapon_id = entities::Weapon::Scout;
+    scout.ammo      = 3;
+    shared::convert_weapon_without_counts(scout);
+    check(scout.magazine_size == SCOUT.magazine_size && scout.ammo == 3,
+          "a reloading gun found half empty is still its kind's size");
+
+    entities::Weapon_Entity authored;
+    authored.weapon_id     = entities::Weapon::Platform;
+    authored.ammo          = -1;
+    authored.magazine_size = 5;
+    authored.max_alive     = 0;
+    shared::convert_weapon_without_counts(authored);
+    check(authored.magazine_size == 5 && authored.ammo == -1 && authored.max_alive == 0,
+          "a weapon that carries its counts is left as written");
   }
 
   // --- a piloted flight is followed by one rocket and leaves one path, which the next flight replaces ---
@@ -664,8 +726,7 @@ int main()
     server::server_context_t context;
     shared::Entity_System& entity_system = context.world.session.entity_system;
 
-    const shared::weapon_definition_t& platform =
-        shared::get_weapon_definition(entities::Weapon::Platform);
+    const shared::weapon_definition_t& platform = PLATFORM;
 
     const shared::entity_uid_t carrier_uid = entity_system.spawn<entities::Player_Entity>();
     grant_test_loadout(context.world.session, carrier_uid);
@@ -706,6 +767,14 @@ int main()
     entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo = 0;
     server::refill_inventory(context.world.session, *carrier);
     check(platform_ammo() == 0, "a respawn's reload does not fill it: the ground does");
+
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->magazine_size = 5;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 5, "the ground fills to the size written on the weapon, not the row's");
+
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo = shared::UNLIMITED_AMMO;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == shared::UNLIMITED_AMMO, "and an unlimited one stays unlimited");
   }
 
   printf("%s (%d failure%s)\n", failure_count == 0 ? "PASSED" : "FAILED", failure_count,

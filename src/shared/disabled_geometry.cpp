@@ -29,71 +29,13 @@ void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owne
     if (owner_of[index] == null_entity_uid)
       continue;
 
-    const entities::Entity* entity = system.try_find(owner_of[index]);
-    if (entity == nullptr)
+    // Only a Geometry_Owner_Entity removes its pieces; a mover's switch freezes it and its pieces are not in the tree.
+    const entities::Geometry_Owner_Entity* owner =
+        entities::entity_as<entities::Geometry_Owner_Entity>(system.try_find(owner_of[index]));
+    if (owner == nullptr)
       continue;
 
-    // ONE exhaustive switch over entity_type, the shape collect_movement_volumes
-    // already has and for its reason: reading a switch off an owner is per-type
-    // logic, so the generator cannot write it and -Werror=switch is what polices
-    // a type added with no arm.
-    switch (entity->type)
-    {
-      case entities::entity_type::Geometry_Owner_Entity:
-      {
-        const entities::Geometry_Owner_Entity* owner =
-            entities::entity_as<entities::Geometry_Owner_Entity>(entity);
-        out[index] = owner_blocks(*owner) ? 0 : 1;
-        break;
-      }
-
-      // Every type that cannot own geometry. build_session already reported the
-      // tie and left owner_of null, so reaching one of these means the entity at
-      // that uid changed type, which nothing does.
-      case entities::entity_type::Invalid:
-      case entities::entity_type::Player_Spawn_Entity:
-      case entities::entity_type::Player_Spectate_Entity:
-      case entities::entity_type::Player_Entity:
-      case entities::entity_type::Weapon_Entity:
-      case entities::entity_type::Rocket_Entity:
-      case entities::entity_type::Hook_Entity:
-      case entities::entity_type::Kooh_Entity:
-      case entities::entity_type::Ricochet_Entity:
-      case entities::entity_type::Bubble_Entity:
-      case entities::entity_type::Platform_Entity:
-      case entities::entity_type::Shrinking_Platform_Entity:
-      case entities::entity_type::Extending_Platform_Entity:
-      case entities::entity_type::Guided_Rocket_Entity:
-      case entities::entity_type::Canopy_Entity:
-      case entities::entity_type::Physics_Body_Entity:
-      case entities::entity_type::Damageable_Entity:
-      case entities::entity_type::Particle_Emitter_Entity:
-      case entities::entity_type::Sound_Emitter_Entity:
-      case entities::entity_type::Point_Light_Entity:
-      case entities::entity_type::Spot_Light_Entity:
-      case entities::entity_type::Directional_Light_Entity:
-      case entities::entity_type::Trigger_Volume_Entity:
-      case entities::entity_type::Jump_Pad_Entity:
-      case entities::entity_type::Reflection_Volume_Entity:
-      case entities::entity_type::Game_Rules_Entity:
-      case entities::entity_type::Logic_Counter_Entity:
-      case entities::entity_type::Ping_Marker_Entity:
-      case entities::entity_type::Logic_Timer_Entity:
-      case entities::entity_type::Path_Node_Entity:
-      case entities::entity_type::Launcher_Entity:
-      case entities::entity_type::Movement_Modifier_Entity:
-      case entities::entity_type::Remnant_Entity:
-      case entities::entity_type::Modifier_Shot_Entity:
-      case entities::entity_type::Timed_Movement_Modifier_Entity:
-      case entities::entity_type::Weapon_Emancipation_Grill_Entity:
-      case entities::entity_type::Emancipated_Weapon_Entity:
-      case entities::entity_type::Void_Entity:
-        break;
-
-      // A mover's switch freezes it rather than removing it, and its pieces are not in the tree anyway.
-      case entities::entity_type::Mover_Entity:
-        break;
-    }
+    out[index] = owner_blocks(*owner) ? 0 : 1;
   }
 }
 

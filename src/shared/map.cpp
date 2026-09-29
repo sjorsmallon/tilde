@@ -6,6 +6,7 @@
 #include "lightmap_sidecar.hpp"
 #include "map_blocks.hpp"
 #include "player_constants.hpp"
+#include "weapon_instance.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1579,6 +1580,9 @@ map_t parse_map_from_string(const std::string &content)
     }
 
     read_entity_fields(*new_entity, classname, properties);
+
+    if (entities::Weapon_Entity* weapon = entities::entity_as<entities::Weapon_Entity>(new_entity.get()))
+      convert_weapon_without_counts(*weapon);
 
     if (uid != 0)
       out_map.add_entity_with_uid(uid, new_entity);

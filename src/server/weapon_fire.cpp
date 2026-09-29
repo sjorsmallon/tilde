@@ -494,7 +494,8 @@ void resolve_player_shot(
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
         return;
 
-      spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger);
+      spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger,
+                       shared::alive_limit_of(*active_weapon));
       break;
     }
     case entities::Fire_Resolution::Place:
@@ -519,7 +520,8 @@ void resolve_player_shot(
       }
 
       const shared::entity_uid_t placed_uid = spawn_placed_entity(
-          context, player->entity_id, weapon, placed_position, placed_orientation, trigger);
+          context, player->entity_id, weapon, placed_position, placed_orientation, trigger,
+          shared::alive_limit_of(*active_weapon));
       if (context.world.session.entity_system.get<entities::Remnant_Entity>(placed_uid) != nullptr)
         claim_remnant(context, placed_uid, player->entity_id);
       break;

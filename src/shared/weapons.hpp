@@ -132,7 +132,7 @@ enum class at_limit_t : uint8_t
   Replace_Oldest,
 };
 
-// How many shots off ONE button one player may have alive at once, landed ones included. 0 is no limit.
+// How many shots off ONE button one carrier may have alive at once, landed ones included. 0 is no limit.
 struct alive_limit_t
 {
   uint32_t   max_alive;
@@ -167,7 +167,6 @@ struct weapon_fire_t
   contact_t                 contact;
   // A button that stays down repeats at fire_interval_seconds (try_find_held_fire_time).
   bool                      fires_while_held;
-  alive_limit_t             limit;
 };
 
 struct weapon_definition_t
@@ -211,6 +210,8 @@ struct weapon_definition_t
   float   reload_duration_seconds;
   // The magazine fills when its carrier stands on the MAP and never by a reload.
   bool    refills_on_ground;
+  // magazine_size and limit.max_alive are what a weapon of this kind is BORN with; the one a shot reads is the Weapon_Entity's.
+  alive_limit_t limit;
 
   // The left and the right mouse button. The switch in resolve_player_shot is
   // over one of these and reads exactly one of its three structs. Zoom is a
@@ -333,11 +334,11 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
      .reload_duration_seconds = 2.5f,
+     .limit                   = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest},
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 500.f,
                                                 .gravity_scale = -0.5f,
-                                                .spawns = entities::entity_type::Bubble_Entity},
-                                 .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
+                                                .spawns = entities::entity_type::Bubble_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 
@@ -412,11 +413,11 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 2,
      .reload_duration_seconds = 0.f,
      .refills_on_ground       = true,
+     .limit                   = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest},
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Platform_Entity},
-                                 .limit      = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest}},
+                                                .spawns = entities::entity_type::Platform_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 
@@ -428,11 +429,11 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 3,
      .reload_duration_seconds = 0.f,
      .refills_on_ground       = true,
+     .limit                   = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest},
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Shrinking_Platform_Entity},
-                                 .limit      = {.max_alive = 3, .at_limit = at_limit_t::Replace_Oldest}},
+                                                .spawns = entities::entity_type::Shrinking_Platform_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
 
@@ -508,17 +509,16 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .deploy_duration_seconds = 0.f,
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
+     .limit                   = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest},
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 900.f,
                                                 .gravity_scale = 0.5f,
                                                 .spawns = entities::entity_type::Modifier_Shot_Entity},
-                                 .contact    = {.effect = contact_effect_t::Leave_Zone},
-                                 .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
+                                 .contact    = {.effect = contact_effect_t::Leave_Zone}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Timed_Movement_Modifier_Entity},
-                                 .limit      = {.max_alive = 2, .at_limit = at_limit_t::Replace_Oldest}},
+                                                .spawns = entities::entity_type::Timed_Movement_Modifier_Entity}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     // Set down at the chest facing the aim; how far it grows is one sweep at fire time, and every other
@@ -531,10 +531,10 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 2,
      .reload_duration_seconds = 0.f,
      .refills_on_ground       = true,
+     .limit                   = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest},
      .primary_fire            = {.resolution = entities::Fire_Resolution::Place,
                                  .place      = {.spawns = entities::entity_type::Extending_Platform_Entity,
-                                                .anchor = place_anchor_t::Chest},
-                                 .limit      = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest}},
+                                                .anchor = place_anchor_t::Chest}},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
     // The shooter rides the rocket: the body holds, the aim is the heading, a second press lets go.
@@ -706,8 +706,6 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
                                   flight_path_settings_are_zero(fire.pilot.path);
   const bool contact_is_none    = fire.contact.effect == contact_effect_t::None;
   const bool contact_matches    = contact_parameters_match_effect(fire.contact);
-  const bool limit_is_zero      = fire.limit.max_alive == 0 &&
-                                  fire.limit.at_limit == at_limit_t::Replace_Oldest;
 
   switch (fire.resolution)
   {
@@ -716,11 +714,10 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   case entities::Fire_Resolution::Zoom:
   case entities::Fire_Resolution::Canopy:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
-           pilot_is_zero && contact_is_none && contact_matches && !fire.fires_while_held &&
-           limit_is_zero;
+           pilot_is_zero && contact_is_none && contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Hitscan:
     return hitscan.range > 0.f && !contact_is_none && contact_matches && projectile_is_zero &&
-           place_is_zero && impulse_is_zero && pilot_is_zero && limit_is_zero;
+           place_is_zero && impulse_is_zero && pilot_is_zero;
   case entities::Fire_Resolution::Projectile:
     return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
            contact_matches && hitscan_is_zero && place_is_zero && impulse_is_zero && pilot_is_zero;
@@ -730,14 +727,20 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
            contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Self_Impulse:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && pilot_is_zero &&
-           contact_is_none && contact_matches && !fire.fires_while_held && limit_is_zero;
+           contact_is_none && contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Pilot:
     return fire.pilot.speed > 0.f && fire.pilot.radius > 0.f && fire.pilot.seconds > 0.f &&
            pilot_path_matches_what_it_leaves(fire.pilot) && hitscan_is_zero &&
            projectile_is_zero && place_is_zero && impulse_is_zero && contact_is_none &&
-           contact_matches && !fire.fires_while_held && limit_is_zero;
+           contact_matches && !fire.fires_while_held;
   }
   return false;
+}
+
+constexpr bool fire_spawns_an_entity(const weapon_fire_t& fire)
+{
+  return fire.resolution == entities::Fire_Resolution::Projectile ||
+         fire.resolution == entities::Fire_Resolution::Place;
 }
 
 constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
@@ -756,6 +759,9 @@ constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
       return row;
     if (definition.refills_on_ground &&
         !(definition.magazine_size > 0 && definition.reload_duration_seconds == 0.f))
+      return row;
+    if (definition.limit.max_alive > 0 && !fire_spawns_an_entity(definition.primary_fire) &&
+        !fire_spawns_an_entity(definition.secondary_fire))
       return row;
     for (const weapon_fire_t* fire : {&definition.primary_fire, &definition.secondary_fire})
       if (fire->fires_while_held && fire->contact.effect == contact_effect_t::Reel &&
@@ -783,7 +789,7 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "once per sub-tick step, which is a rate set by how many edges the tick had. A held "
               "Reel's seconds is LONGER than the fire interval: it is a lease the next hit renews, "
               "and one that runs out between two hits drops the reel ten times a second. An "
-              "alive limit is for a Projectile or Place fire only: spawn_projectile and "
+              "alive limit is for a row with a Projectile or Place fire: spawn_projectile and "
               "spawn_placed_entity are the two places that enforce it. A row that "
               "refills_on_ground carries a magazine and zero reload_duration_seconds: the "
               "ground is its only reload.");
@@ -822,7 +828,7 @@ try_find_held_fire_time(const weapon_fire_t& fire, subtick_time_t next_fire_time
   return fire_time;
 }
 
-// Negative ammo or reserve is UNLIMITED; both are per weapon INSTANCE and authored in the map.
+// Negative ammo or reserve is UNLIMITED; every count is per weapon INSTANCE and authored in the map.
 inline constexpr int32_t UNLIMITED_AMMO = -1;
 
 constexpr int32_t full_magazine_of(const weapon_definition_t& weapon)
@@ -835,30 +841,41 @@ constexpr bool ammo_allows_a_shot(int32_t ammo)
   return ammo != 0;
 }
 
-constexpr bool reload_may_start(const weapon_definition_t& weapon, int32_t ammo,
-                                int32_t reserve_ammo)
-{
-  return !weapon.refills_on_ground && weapon.magazine_size > 0 && ammo >= 0 &&
-         ammo < weapon.magazine_size && reserve_ammo != 0;
-}
-
+// One weapon's three counts, read off its Weapon_Entity.
 struct magazine_t
 {
+  int32_t size;
   int32_t ammo;
   int32_t reserve_ammo;
 };
 
+constexpr bool reload_may_start(const weapon_definition_t& weapon, const magazine_t& magazine)
+{
+  return !weapon.refills_on_ground && magazine.size > 0 && magazine.ammo >= 0 &&
+         magazine.ammo < magazine.size && magazine.reserve_ammo != 0;
+}
+
 constexpr magazine_t reloaded_magazine(const weapon_definition_t& weapon, magazine_t magazine)
 {
-  if (!reload_may_start(weapon, magazine.ammo, magazine.reserve_ammo))
+  if (!reload_may_start(weapon, magazine))
     return magazine;
 
-  const int32_t missing = weapon.magazine_size - magazine.ammo;
+  const int32_t missing = magazine.size - magazine.ammo;
   if (magazine.reserve_ammo < 0)
-    return {.ammo = weapon.magazine_size, .reserve_ammo = magazine.reserve_ammo};
+    return {.size = magazine.size, .ammo = magazine.size, .reserve_ammo = magazine.reserve_ammo};
 
   const int32_t moved = missing < magazine.reserve_ammo ? missing : magazine.reserve_ammo;
-  return {.ammo = magazine.ammo + moved, .reserve_ammo = magazine.reserve_ammo - moved};
+  return {.size         = magazine.size,
+          .ammo         = magazine.ammo + moved,
+          .reserve_ammo = magazine.reserve_ammo - moved};
+}
+
+// An unlimited magazine stays unlimited and a fuller one stays fuller: the ground only ever raises.
+constexpr int32_t ammo_after_ground_refill(const weapon_definition_t& weapon, const magazine_t& magazine)
+{
+  if (!weapon.refills_on_ground || magazine.ammo < 0 || magazine.ammo >= magazine.size)
+    return magazine.ammo;
+  return magazine.size;
 }
 
 // How a live projectile flies: the row that fired it, the button it came off.

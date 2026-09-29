@@ -2,6 +2,8 @@
 #include "entities/generated/entities/remnant_entity_generated.hpp"
 #include "entity_hitbox_overlay.hpp"
 
+#include "../shared/damageable.hpp"
+#include "../shared/entities/entity_reflection.hpp"
 #include "../shared/hitbox_rig.hpp"
 #include "../shared/remnant.hpp"
 #include "hitbox_debug_draw.hpp"
@@ -14,65 +16,17 @@ bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &
   if (!entity)
     return false;
 
+  // Each volume comes through the spelling the server's fire path tests, so the box you see is the box that gets hit.
   assets::posed_hitbox_t volume{};
 
-  switch (entity->type)
-  {
-    // The one entity whose hit volume is a FIELD. Built through the same
-    // make_box_hit_volume the server's fire path builds it with, so the box you
-    // see is the box that gets tested.
-    case entities::entity_type::Damageable_Entity:
-    {
-      const entities::Damageable_Entity* damageable = static_cast<const entities::Damageable_Entity*>(entity);
-      volume = assets::make_box_hit_volume(damageable->position + damageable->volume.position,
-                                           damageable->volume.half_extents,
-                                           shared::hit_region_t::Torso);
-      break;
-    }
-    // A remnant's volume is a field too, through the one shared spelling.
-    case entities::entity_type::Remnant_Entity:
-      volume = shared::remnant_hit_volume(*static_cast<const entities::Remnant_Entity*>(entity));
-      break;
-    case entities::entity_type::Player_Entity:
-    case entities::entity_type::Rocket_Entity:
-    case entities::entity_type::Hook_Entity:
-    case entities::entity_type::Kooh_Entity:
-    case entities::entity_type::Ricochet_Entity:
-    case entities::entity_type::Bubble_Entity:
-    case entities::entity_type::Platform_Entity:
-    case entities::entity_type::Shrinking_Platform_Entity:
-    case entities::entity_type::Extending_Platform_Entity:
-    case entities::entity_type::Guided_Rocket_Entity:
-    case entities::entity_type::Canopy_Entity:
-    case entities::entity_type::Player_Spawn_Entity:
-    case entities::entity_type::Player_Spectate_Entity:
-    case entities::entity_type::Weapon_Entity:
-    case entities::entity_type::Particle_Emitter_Entity:
-    case entities::entity_type::Trigger_Volume_Entity:
-    case entities::entity_type::Sound_Emitter_Entity:
-    case entities::entity_type::Reflection_Volume_Entity:
-    case entities::entity_type::Game_Rules_Entity:
-    case entities::entity_type::Point_Light_Entity:
-    case entities::entity_type::Spot_Light_Entity:
-    case entities::entity_type::Directional_Light_Entity:
-    case entities::entity_type::Physics_Body_Entity:
-    case entities::entity_type::Logic_Counter_Entity:
-    case entities::entity_type::Jump_Pad_Entity:
-    case entities::entity_type::Geometry_Owner_Entity:
-    case entities::entity_type::Ping_Marker_Entity:
-    case entities::entity_type::Logic_Timer_Entity:
-    case entities::entity_type::Path_Node_Entity:
-    case entities::entity_type::Mover_Entity:
-    case entities::entity_type::Launcher_Entity:
-    case entities::entity_type::Movement_Modifier_Entity:
-    case entities::entity_type::Modifier_Shot_Entity:
-    case entities::entity_type::Timed_Movement_Modifier_Entity:
-    case entities::entity_type::Weapon_Emancipation_Grill_Entity:
-    case entities::entity_type::Emancipated_Weapon_Entity:
-    case entities::entity_type::Void_Entity:
-    case entities::entity_type::Invalid:
-      return false;
-  }
+  if (const entities::Damageable_Entity* damageable =
+          entities::entity_as<entities::Damageable_Entity>(entity))
+    volume = shared::damageable_hit_volume(*damageable);
+  else if (const entities::Remnant_Entity* remnant =
+               entities::entity_as<entities::Remnant_Entity>(entity))
+    volume = shared::remnant_hit_volume(*remnant);
+  else
+    return false;
 
   // Both halves draw when occluded, because a hit volume lives INSIDE the model
   // it belongs to -- depth-tested only, the overlay would be the few slivers

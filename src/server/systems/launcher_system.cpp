@@ -99,8 +99,9 @@ void fire_launcher_shot(server_context_t& context, entities::Launcher_Entity& la
     return;
   }
 
-  const shared::entity_uid_t shot_uid = spawn_projectile(
-      context, launcher.entity_id, *weapon, launcher.position, aim_of_shot(launcher), launcher.trigger);
+  const shared::entity_uid_t shot_uid =
+      spawn_projectile(context, launcher.entity_id, *weapon, launcher.position, aim_of_shot(launcher),
+                       launcher.trigger, NO_ALIVE_LIMIT);
   if (entities::Entity* shot = context.world.session.entity_system.try_find(shot_uid))
     vary_shot(launcher, *shot);
   ++launcher.shots_fired;

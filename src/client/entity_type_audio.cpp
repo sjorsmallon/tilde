@@ -1,7 +1,5 @@
 #include "entity_type_audio.hpp"
 
-#include "../shared/array.hpp"
-
 namespace client
 {
 
@@ -24,7 +22,7 @@ constexpr assets::sound_asset TARGET_BREAK_SOUNDS[] = {
 
 constexpr assets::sound_asset NO_IMPACT_SOUND_ON_DISK_YET[] = {assets::sound_asset::Missing};
 
-// An EMPTY impact list is a type no shot can land on.
+// A type with NO ROW is a type no shot can land on; a shot on a brush or a mover lands on world geometry.
 struct entity_type_sounds_t
 {
   entities::entity_type           type;
@@ -32,68 +30,52 @@ struct entity_type_sounds_t
   assets::sound_asset             break_sound;
 };
 
-constexpr Enum_Array<entities::entity_type, entity_type_sounds_t> ENTITY_TYPE_SOUNDS = {{
-    {entities::entity_type::Invalid, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Player_Spawn_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Player_Spectate_Entity, {}, assets::sound_asset::Missing},
+constexpr entity_type_sounds_t ENTITY_TYPE_SOUNDS[] = {
     {entities::entity_type::Player_Entity, FLESH_IMPACT_SOUNDS, assets::sound_asset::Missing},
-    {entities::entity_type::Weapon_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Rocket_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Hook_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Kooh_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Ricochet_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Platform_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Shrinking_Platform_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Extending_Platform_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Guided_Rocket_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Canopy_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Bubble_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Physics_Body_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
     {entities::entity_type::Damageable_Entity, TARGET_BREAK_SOUNDS, assets::sound_asset::target_break},
-    {entities::entity_type::Particle_Emitter_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Sound_Emitter_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Point_Light_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Spot_Light_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Directional_Light_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Trigger_Volume_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Jump_Pad_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
-    {entities::entity_type::Reflection_Volume_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Game_Rules_Entity, {}, assets::sound_asset::Missing},
     {entities::entity_type::Logic_Counter_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::sound_asset::Missing},
-    // A shot lands on the BRUSH, which is world geometry and has its own impact
-    // sound; the entity behind it is never what a ray reports.
-    {entities::entity_type::Geometry_Owner_Entity, {}, assets::sound_asset::Missing},
-    // A ping marker is scenery: no shot is tested against it, so no shot can
-    // land on it.
-    {entities::entity_type::Ping_Marker_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Logic_Timer_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Path_Node_Entity, {}, assets::sound_asset::Missing},
-    // A shot lands on the mover's brush, as with Geometry_Owner_Entity.
-    {entities::entity_type::Mover_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Launcher_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Movement_Modifier_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Remnant_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Modifier_Shot_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Timed_Movement_Modifier_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Weapon_Emancipation_Grill_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Emancipated_Weapon_Entity, {}, assets::sound_asset::Missing},
-    {entities::entity_type::Void_Entity, {}, assets::sound_asset::Missing},
-}};
+};
 
-static_assert(rows_in_enum_order<&entity_type_sounds_t::type>(ENTITY_TYPE_SOUNDS),
-              "ENTITY_TYPE_SOUNDS rows are not in entity_type order -- the lookup indexes "
-              "by enum value, so a row out of place plays another type's sound.");
+constexpr entity_type_sounds_t SOUNDS_OF_A_TYPE_WITH_NO_ROW = {
+    entities::entity_type::Invalid, {}, assets::sound_asset::Missing};
+
+constexpr bool every_row_names_a_different_type()
+{
+  for (const entity_type_sounds_t& row : ENTITY_TYPE_SOUNDS)
+  {
+    uint32_t rows_naming_this_type = 0;
+    for (const entity_type_sounds_t& other : ENTITY_TYPE_SOUNDS)
+      rows_naming_this_type += other.type == row.type ? 1 : 0;
+    if (rows_naming_this_type != 1)
+      return false;
+  }
+  return true;
+}
+
+static_assert(every_row_names_a_different_type(),
+              "ENTITY_TYPE_SOUNDS names one entity_type twice -- the lookup returns the first "
+              "row, so the second is never played.");
+
+const entity_type_sounds_t& sounds_of(entities::entity_type type)
+{
+  for (const entity_type_sounds_t& row : ENTITY_TYPE_SOUNDS)
+    if (row.type == type)
+      return row;
+  return SOUNDS_OF_A_TYPE_WITH_NO_ROW;
+}
 
 } // namespace
 
 Span<const assets::sound_asset> impact_sounds_for(entities::entity_type type)
 {
-  return ENTITY_TYPE_SOUNDS[type].impact;
+  return sounds_of(type).impact;
 }
 
 assets::sound_asset break_sound_for(entities::entity_type type)
 {
-  return ENTITY_TYPE_SOUNDS[type].break_sound;
+  return sounds_of(type).break_sound;
 }
 
 } // namespace client

@@ -4,6 +4,7 @@
 #include "../shared/game_session.hpp"
 #include "../shared/predicted_world.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/weapon_instance.hpp"
 #include "../shared/weapons.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "server_context.hpp"

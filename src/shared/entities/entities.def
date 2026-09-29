@@ -391,6 +391,10 @@ Weapon_Entity :: entity {
     ammo:             i32 = -1          @Fully_Serializable
     reserve_ammo:     i32 = -1          @Fully_Serializable
     weapon_id:        Weapon            @Fully_Serializable
+    // What a reload or the ground fills `ammo` to; 0 is no magazine. Negative is a file that never said (shared/weapon_instance.hpp).
+    magazine_size:    i32 = -1          @Fully_Serializable
+    // How many shots off one button the carrier keeps alive, landed ones included; 0 is no limit. Negative as above.
+    max_alive:        i32 = -1          @Editable
     // Null owner means the weapon lies in the world as a bounce body, waiting to be picked up.
     owner_uid:        entity            @Networked
     next_fire_time:   u64

@@ -54,6 +54,8 @@ Weapon_Entity::Weapon_Entity()
   : ammo(-1),
     reserve_ammo(-1),
     weapon_id{},
+    magazine_size(-1),
+    max_alive(-1),
     owner_uid{},
     next_fire_time{},
     pickup_allowed_tick{},

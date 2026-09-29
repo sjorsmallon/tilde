@@ -353,7 +353,7 @@ void update_bots(server_context_t &context,
           // Rocket_Entity pool, not the Player_Entity one they point into.
           spawn_projectile(context, bot_ent->entity_id,
                            shared::get_weapon_definition(entities::Weapon::Rocket_Launcher), eye,
-                           aim_dir);
+                           aim_dir, entities::Fire_Trigger::Primary, NO_ALIVE_LIMIT);
         }
         break;
       }

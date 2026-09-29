@@ -6,6 +6,7 @@
 #include "../../../shared/editor_grid.hpp"
 #include "../../../shared/map.hpp"
 #include "../../../shared/shapes.hpp"
+#include "../../../shared/weapon_instance.hpp"
 #include "../../hud/announcement.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../geometry_editor.hpp"
@@ -194,6 +195,9 @@ void Placement_Tool::select_placeable(int index)
   entity_to_place = shared::make_entity(placeable.entity_type);
   if (!entity_to_place)
     log_error("select_placeable: no entity registered for \"{}\"", placeable.label);
+
+  if (entities::Weapon_Entity* weapon = entities::entity_as<entities::Weapon_Entity>(entity_to_place.get()))
+    shared::write_weapon_kind_counts(*weapon);
 }
 
 void Placement_Tool::on_key_down(editor_context_t& ctx, const key_event_t& e)

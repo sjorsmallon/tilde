@@ -3,6 +3,7 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "systems/hit_test_world.hpp"
 
+#include "../shared/damageable.hpp"
 #include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/player_animator.hpp"
@@ -15,97 +16,68 @@
 namespace server
 {
 
+enum class target_kind_t : uint8_t
+{
+  Rigged_Player,
+  Box,
+};
+
 struct target_shape_t
 {
   uint32_t volume_count = 0;
   bool     has_pose = false; // so we know if we have to reconstruct.
 };
 
-static target_shape_t target_shape_of(entities::entity_type type,
-                                      const shared::player_rig_t &rig)
+// The ONE place a Mortal type says what kind of target it is; the two switches below are exhaustive over the kinds.
+static target_kind_t target_kind_of(entities::entity_type type)
 {
-  switch (type)
-  {
-  case entities::entity_type::Player_Entity:     return {rig.volume_count(), true};
-  case entities::entity_type::Damageable_Entity: return {1, false};
+  if (type == entities::entity_type::Player_Entity)
+    return target_kind_t::Rigged_Player;
+  if (type == entities::entity_type::Damageable_Entity)
+    return target_kind_t::Box;
 
-  case entities::entity_type::Invalid:
-  case entities::entity_type::Player_Spawn_Entity:
-  case entities::entity_type::Player_Spectate_Entity:
-  case entities::entity_type::Weapon_Entity:
-  case entities::entity_type::Rocket_Entity:
-  case entities::entity_type::Hook_Entity:
-  case entities::entity_type::Kooh_Entity:
-  case entities::entity_type::Ricochet_Entity:
-  case entities::entity_type::Bubble_Entity:
-  case entities::entity_type::Platform_Entity:
-  case entities::entity_type::Shrinking_Platform_Entity:
-  case entities::entity_type::Extending_Platform_Entity:
-  case entities::entity_type::Guided_Rocket_Entity:
-  case entities::entity_type::Canopy_Entity:
-  case entities::entity_type::Physics_Body_Entity:
-  case entities::entity_type::Particle_Emitter_Entity:
-  case entities::entity_type::Sound_Emitter_Entity:
-  case entities::entity_type::Point_Light_Entity:
-  case entities::entity_type::Spot_Light_Entity:
-  case entities::entity_type::Directional_Light_Entity:
-  case entities::entity_type::Trigger_Volume_Entity:
-  case entities::entity_type::Jump_Pad_Entity:
-  case entities::entity_type::Reflection_Volume_Entity:
-  case entities::entity_type::Game_Rules_Entity:
-  case entities::entity_type::Logic_Counter_Entity:
-  case entities::entity_type::Geometry_Owner_Entity:
-  case entities::entity_type::Ping_Marker_Entity:
-  case entities::entity_type::Logic_Timer_Entity:
-  case entities::entity_type::Path_Node_Entity:
-  case entities::entity_type::Mover_Entity:
-  case entities::entity_type::Launcher_Entity:
-  case entities::entity_type::Movement_Modifier_Entity:
-  case entities::entity_type::Remnant_Entity:
-  case entities::entity_type::Modifier_Shot_Entity:
-  case entities::entity_type::Timed_Movement_Modifier_Entity:
-  case entities::entity_type::Weapon_Emancipation_Grill_Entity:
-  case entities::entity_type::Emancipated_Weapon_Entity:
-  case entities::entity_type::Void_Entity:
-    break;
+  fatal_error("target_kind_of: {} is Mortal and has no hit volumes; name its kind here",
+              entities::entity_info(type).classname);
+}
+
+static target_shape_t target_shape_of(target_kind_t kind, const shared::player_rig_t &rig)
+{
+  switch (kind)
+  {
+  case target_kind_t::Rigged_Player: return {rig.volume_count(), true};
+  case target_kind_t::Box:           return {1, false};
   }
 
-  fatal_error("target_shape_of: {} is Mortal and has no hit volumes; add an arm",
-              entities::entity_info(type).classname);
+  fatal_error("target_shape_of: target kind {} is not a target_kind_t", (uint32_t)kind);
 }
 
 // Write one target's volumes into `slice`, and its pose if it has one.
 static void build_target_volumes(const entities::Entity &entity,
+  target_kind_t kind,
   const shared::player_rig_t &rig,
   const aim_settings_t &settings,
   const Span<assets::posed_hitbox_t> posed_hitboxes,
   std::vector<shared::player_pose_t> &poses)
 {
-  if (const entities::Player_Entity* player = entities::entity_as<entities::Player_Entity>(&entity))
+  switch (kind)
   {
-    const shared::player_pose_t pose{.feet_position = player->position,
-                                     .body_yaw      = player->body_yaw,
-                                     .view_yaw      = player->view_angle_yaw,
-                                     .view_pitch    = player->view_angle_pitch};
+  case target_kind_t::Rigged_Player:
+  {
+    const entities::Player_Entity &player = static_cast<const entities::Player_Entity &>(entity);
+    const shared::player_pose_t pose{.feet_position = player.position,
+                                     .body_yaw      = player.body_yaw,
+                                     .view_yaw      = player.view_angle_yaw,
+                                     .view_pitch    = player.view_angle_pitch};
 
     shared::compute_player_hitboxes(rig, pose, settings, posed_hitboxes);
     poses.push_back(pose);
     return;
   }
-
-  if (const entities::Damageable_Entity* damageable =
-          entities::entity_as<entities::Damageable_Entity>(&entity))
-  {
-    // this is actually malformed because orientation is just blatantly ignored.
-    posed_hitboxes[0] = assets::make_box_hit_volume(damageable->position + damageable->volume.position,
-                                           damageable->volume.half_extents,
-                                           shared::hit_region_t::Torso);
+  case target_kind_t::Box:
+    posed_hitboxes[0] = shared::damageable_hit_volume(
+        static_cast<const entities::Damageable_Entity &>(entity));
     return;
   }
-
-  fatal_error("build_target_volumes: {} is Mortal and target_shape_of gave it volumes, but "
-              "nothing here builds them",
-              entities::entity_info(entity.type).classname);
 }
 
 void pose_all_targets(server_context_t &context)
@@ -130,7 +102,7 @@ void pose_all_targets(server_context_t &context)
     // alraedy dead?
     if (health.current_health <= 0) continue;
 
-    const target_shape_t shape = target_shape_of(entity.type, rig);
+    const target_shape_t shape = target_shape_of(target_kind_of(entity.type), rig);
     total_volume_count += shape.volume_count;
     total_target_count += 1;
     posed_target_count += shape.has_pose ? 1 : 0;
@@ -156,14 +128,15 @@ void pose_all_targets(server_context_t &context)
       if (health.current_health <= 0)
         continue;
 
-      const target_shape_t shape = target_shape_of(entity.type, rig);
+      const target_kind_t  kind  = target_kind_of(entity.type);
+      const target_shape_t shape = target_shape_of(kind, rig);
       if (shape.has_pose != should_be_posed)
         continue;
 
       const Span<assets::posed_hitbox_t> slice{posed.volumes.data() + next_volume, shape.volume_count};
       next_volume += shape.volume_count;
 
-      build_target_volumes(entity, rig, settings, slice, posed.poses);
+      build_target_volumes(entity, kind, rig, settings, slice, posed.poses);
       posed.targets.push_back(shared::make_hitscan_target(
           entity.entity_id, Span<const assets::posed_hitbox_t>{slice}));
     }

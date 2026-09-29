@@ -23,7 +23,7 @@ namespace
 {
 
 // Both platform types: latch the launch once, reap on the tick the cut drops it. How many one owner keeps is the
-// row's alive limit.
+// firing weapon's alive limit.
 template <typename Platform_T>
 void update_platforms_of(server_context_t& context, const shared::predicted_world_storage_t& world,
                          const shared::fixed_arc_flight_settings_t& flight,

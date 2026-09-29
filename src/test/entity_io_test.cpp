@@ -1074,9 +1074,7 @@ void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
     ++count;
   }
 
-  check(SHOT_COUNT > shared::fire_of(shared::WEAPON_DEFINITIONS[entities::Weapon::Bubble],
-                                     entities::Fire_Trigger::Primary)
-                         .limit.max_alive,
+  check(SHOT_COUNT > shared::WEAPON_DEFINITIONS[entities::Weapon::Bubble].limit.max_alive,
         "more shots than a player's alive limit");
   check(count == SHOT_COUNT, "every Fire spawned a bubble: a launcher is not held to the alive limit");
   check(bounded, "speed, flight and rest each stay inside their fraction of the base value");

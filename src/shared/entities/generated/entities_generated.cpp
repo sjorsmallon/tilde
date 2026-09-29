@@ -1312,6 +1312,24 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[2]},
+  {.name = "magazine_size",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Weapon_Entity, magazine_size),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::magazine_size),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "max_alive",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Weapon_Entity, max_alive),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::max_alive),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "owner_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Weapon_Entity, owner_uid),
@@ -4430,7 +4448,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, false, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 27}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 6720u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 14}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 545u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 16}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 545u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 8}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 520u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"hook_entity", "Hook", {Hook_Entity_FIELDS, 8}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 520u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
   {"kooh_entity", "Kooh", {Kooh_Entity_FIELDS, 8}, (uint32_t)sizeof(Kooh_Entity), (uint32_t)alignof(Kooh_Entity), 520u, true, true, false, construct_Kooh_Entity, as_base_Kooh_Entity},
@@ -5145,6 +5163,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x9344ca08u;
+const uint32_t SCHEMA_HASH = 0x032d3039u;
 
 } // namespace entities

@@ -20,6 +20,8 @@ struct Weapon_Entity : Entity
   int32_t ammo;
   int32_t reserve_ammo;
   Weapon weapon_id;
+  int32_t magazine_size;
+  int32_t max_alive;
   shared::entity_uid_t owner_uid;
   uint64_t next_fire_time;
   uint32_t pickup_allowed_tick;

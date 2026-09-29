@@ -24,6 +24,7 @@
 #include "map.hpp"
 #include "map_connection.hpp"
 #include "map_piece.hpp"
+#include "weapon_instance.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -137,6 +138,10 @@ int main()
       ->owner_uid = trigger;
   entities::entity_as<entities::Weapon_Entity>(source.find_by_uid(stray_weapon)->entity.get())
       ->owner_uid = crate;
+  // As the placement tool sets one down: a weapon with no counts is a legacy file's, and the reader converts it.
+  for (const entity_uid_t weapon_uid : {owned_weapon, stray_weapon})
+    write_weapon_kind_counts(
+        *entities::entity_as<entities::Weapon_Entity>(source.find_by_uid(weapon_uid)->entity.get()));
 
   brush_geometry_t floor_brush = make_box_brush({200.f, 8.f, -100.f}, {64.f, 8.f, 64.f});
   sync_face_surfaces(floor_brush);

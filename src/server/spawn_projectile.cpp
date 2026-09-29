@@ -17,13 +17,13 @@ namespace server
 namespace
 {
 
-// A player's shots only: a launcher is bounded by its own cadence. Uids are one monotonic space, so the lowest is the oldest.
+// Uids are one monotonic space, so the lowest is the oldest.
 void make_room_under_alive_limit(server_context_t& context, shared::entity_uid_t owner_uid,
                                  entities::Weapon weapon, entities::Fire_Trigger trigger,
                                  const shared::alive_limit_t& limit)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
-  if (limit.max_alive == 0 || entity_system.get<entities::Player_Entity>(owner_uid) == nullptr)
+  if (limit.max_alive == 0)
     return;
 
   std::vector<shared::entity_uid_t> alive;
@@ -52,14 +52,15 @@ void make_room_under_alive_limit(server_context_t& context, shared::entity_uid_t
 shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_uid_t owner_uid,
                                       const shared::weapon_definition_t& weapon,
                                       const vec3f& origin, const vec3f& direction,
-                                      entities::Fire_Trigger trigger)
+                                      entities::Fire_Trigger trigger,
+                                      const shared::alive_limit_t& limit)
 {
   const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Projectile)
     fatal_error("spawn_projectile: {}'s {} fire does not resolve as a projectile",
                 weapon.display_name, to_string(trigger));
 
-  make_room_under_alive_limit(context, owner_uid, weapon.weapon, trigger, fire.limit);
+  make_room_under_alive_limit(context, owner_uid, weapon.weapon, trigger, limit);
 
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
@@ -95,14 +96,15 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
 shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::entity_uid_t owner_uid,
                                          const shared::weapon_definition_t& weapon,
                                          const vec3f& position, const quatf& orientation,
-                                         entities::Fire_Trigger trigger)
+                                         entities::Fire_Trigger trigger,
+                                         const shared::alive_limit_t& limit)
 {
   const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Place)
     fatal_error("spawn_placed_entity: {}'s {} fire does not resolve as a placement",
                 weapon.display_name, to_string(trigger));
 
-  make_room_under_alive_limit(context, owner_uid, weapon.weapon, trigger, fire.limit);
+  make_room_under_alive_limit(context, owner_uid, weapon.weapon, trigger, limit);
 
   shared::Entity_System& entity_system = context.world.session.entity_system;
 

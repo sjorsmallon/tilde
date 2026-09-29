@@ -262,6 +262,12 @@ prediction writes `ctx.prediction`.
   carries no clocks (static_asserted): its gate is
   `Movement::seconds_until_impulse_ready`, applied at the server, the live
   prediction AND the replay.
+- A weapon's COUNTS (`magazine_size`, `max_alive`, `ammo`) are the
+  `Weapon_Entity`'s, authored in the editor. The row's are what a weapon of
+  that kind is born with, read only by `write_weapon_kind_counts`
+  (`shared/weapon_instance.hpp`): a grant, a placement, a changed `weapon_id`.
+  `max_alive` is one number counted per button; launchers and bots pass
+  `NO_ALIVE_LIMIT`. The ground only ever raises `ammo`, so -1 stays unlimited.
 - A `Pilot` flight is a `Movement_Override`, flown inside `player_move`: the
   rocket is `Movement::override_target_position`, and `Guided_Rocket_Entity`
   is a follower that flies nothing. The client's camera rides the prediction.

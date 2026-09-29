@@ -25,6 +25,7 @@
 #include "../../../shared/shapes.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/shader_math.hpp"
+#include "../../../shared/weapon_instance.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,14 @@ namespace client
 
 namespace
 {
+
+// A changed weapon_id is a new kind of weapon: it takes that kind's counts, inside the same undo step.
+void write_kind_counts_of_weapons(Span<entities::Entity* const> inspected)
+{
+  for (entities::Entity* entity : inspected)
+    if (entities::Weapon_Entity* weapon = entities::entity_as<entities::Weapon_Entity>(entity))
+      shared::write_weapon_kind_counts(*weapon);
+}
 
 const char* gizmo_drag_name(gizmo_handle_t handle)
 {
@@ -1443,6 +1452,8 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
     {
       inspector_edit.pending = true;
       inspector_edit.field   = *field;
+      if (*field == "weapon_id")
+        write_kind_counts_of_weapons(inspected);
     }
     settle_inspector_edit(ctx);
   }

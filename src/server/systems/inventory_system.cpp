@@ -6,6 +6,7 @@
 #include "../../shared/bounce_body.hpp"
 #include "../../shared/player_constants.hpp"
 #include "../../shared/shapes.hpp"
+#include "../../shared/weapon_instance.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
 
@@ -53,7 +54,7 @@ static constexpr float THROW_PICKUP_DELAY_SECONDS   = 0.75f;
   }
 
   weapon_entity->weapon_id   = weapon;
-  weapon_entity->ammo        = shared::full_magazine_of(definition);
+  shared::write_weapon_kind_counts(*weapon_entity);
   weapon_entity->owner_uid   = owner.entity_id;
   weapon_entity->damage_type = damage_type;
 
@@ -195,8 +196,7 @@ void cancel_reload(entities::Player_Entity& player)
 void reload_magazine(entities::Weapon_Entity& weapon)
 {
   const shared::magazine_t reloaded = shared::reloaded_magazine(
-      shared::get_weapon_definition(weapon.weapon_id),
-      {.ammo = weapon.ammo, .reserve_ammo = weapon.reserve_ammo});
+      shared::get_weapon_definition(weapon.weapon_id), shared::magazine_of(weapon));
 
   weapon.ammo         = reloaded.ammo;
   weapon.reserve_ammo = reloaded.reserve_ammo;
@@ -223,10 +223,8 @@ void refill_magazines_on_ground(shared::game_session_t& session, const entities:
       continue;
     }
 
-    const shared::weapon_definition_t& definition =
-        shared::get_weapon_definition(weapon_entity->weapon_id);
-    if (definition.refills_on_ground)
-      weapon_entity->ammo = definition.magazine_size;
+    weapon_entity->ammo = shared::ammo_after_ground_refill(
+        shared::get_weapon_definition(weapon_entity->weapon_id), shared::magazine_of(*weapon_entity));
   }
 }
 

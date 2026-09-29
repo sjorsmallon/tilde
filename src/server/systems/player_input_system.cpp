@@ -11,6 +11,7 @@
 #include "../shared/round_phase_rules.hpp"
 #include "systems/game_rules_system.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/weapon_instance.hpp"
 #include "../shared/weapons.hpp"
 #include "log.hpp"
 #include "move_budget.hpp"
@@ -196,7 +197,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
           const shared::weapon_definition_t &held =
               shared::get_weapon_definition(held_entity->weapon_id);
           if (!is_reloading(*player) &&
-              shared::reload_may_start(held, held_entity->ammo, held_entity->reserve_ammo))
+              shared::reload_may_start(held, shared::magazine_of(*held_entity)))
           {
             player->reload_complete_time = shared::subtick_time_after(
                 step_time, held.reload_duration_seconds, tick_dt);
