@@ -223,13 +223,14 @@ enum class pbr_material : uint16_t
   scuffed_plastic_indigo = 13,
   scuffed_plastic_orange = 14,
   scuffed_plastic_violet = 15,
-  scuffed_plastic_yellow = 16,
-  sloppy_mortar_stone = 17,
-  stringy_marble = 18,
-  titanium_scuffed = 19,
+  scuffed_plastic_white = 16,
+  scuffed_plastic_yellow = 17,
+  sloppy_mortar_stone = 18,
+  stringy_marble = 19,
+  titanium_scuffed = 20,
 };
 
-constexpr uint32_t pbr_material_COUNT = 20;
+constexpr uint32_t pbr_material_COUNT = 21;
 
 const char* to_string(pbr_material value);
 template <> std::optional<pbr_material> try_from_string<pbr_material>(std::string_view text);

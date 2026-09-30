@@ -112,6 +112,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   cel_shadow_tint;
     // x = r_cel_hatch, y = r_cel_hatch_spacing, z = r_cel_hatch_edge, w = r_cel_hatch_width.
     vec4   cel_hatch;
+    // x = r_cel_speckle, y = r_cel_speckle_spacing, z = r_cel_speckle_density, w = r_cel_speckle_radius.
+    vec4   cel_speckle;
 } scene;
 
 #endif // SCENE_GLSL

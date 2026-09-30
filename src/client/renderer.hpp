@@ -691,6 +691,10 @@ struct look_settings_t
   float   cel_hatch_spacing_pixels = 8.0f; // r_cel_hatch_spacing
   float   cel_hatch_width_pixels   = 1.0f; // r_cel_hatch_width
   float   cel_hatch_edge           = 0.5f; // r_cel_hatch_edge
+  float   cel_speckle                = 0.0f;  // r_cel_speckle
+  float   cel_speckle_spacing_pixels = 10.0f; // r_cel_speckle_spacing
+  float   cel_speckle_density        = 0.33f; // r_cel_speckle_density
+  float   cel_speckle_radius         = 0.2f;  // r_cel_speckle_radius
   bool    ink              = false; // r_ink
   float   ink_threshold    = 4.0f;  // r_ink_threshold
   int     ink_width_pixels = 1;     // r_ink_width

@@ -155,6 +155,7 @@ constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"scuffed_plastic_indigo", "resources/textures/scuffed_plastic_indigo"},
   {"scuffed_plastic_orange", "resources/textures/scuffed_plastic_orange"},
   {"scuffed_plastic_violet", "resources/textures/scuffed_plastic_violet"},
+  {"scuffed_plastic_white", "resources/textures/scuffed_plastic_white"},
   {"scuffed_plastic_yellow", "resources/textures/scuffed_plastic_yellow"},
   {"sloppy_mortar_stone", "resources/textures/sloppy_mortar_stone"},
   {"stringy_marble", "resources/textures/stringy_marble"},

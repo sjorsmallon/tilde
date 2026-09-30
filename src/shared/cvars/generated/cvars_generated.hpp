@@ -232,6 +232,10 @@ struct cvar_state_t
   float r_cel_hatch_spacing;
   float r_cel_hatch_width;
   float r_cel_hatch_edge;
+  float r_cel_speckle;
+  float r_cel_speckle_spacing;
+  float r_cel_speckle_density;
+  float r_cel_speckle_radius;
   bool r_ink;
   float r_ink_threshold;
   float r_ink_crease_degrees;
@@ -390,34 +394,38 @@ enum class cvar_id : uint16_t
   r_cel_hatch_spacing = 120,
   r_cel_hatch_width = 121,
   r_cel_hatch_edge = 122,
-  r_ink = 123,
-  r_ink_threshold = 124,
-  r_ink_crease_degrees = 125,
-  r_ink_width = 126,
-  r_fxaa = 127,
-  r_fxaa_subpixel = 128,
-  r_look_panel = 129,
-  sv_skybox = 130,
-  debug_show_collisions = 131,
-  debug_show_hitboxes = 132,
-  debug_show_navmesh = 133,
-  debug_show_box_volumes = 134,
-  debug_hide_geometry = 135,
-  cl_shot_debug_seconds = 136,
-  debug_show_entity_counts = 137,
-  net_snapshot_debug = 138,
-  sv_event_debug = 139,
-  cl_event_debug = 140,
-  sv_reliable_debug = 141,
-  sv_io_debug = 142,
-  replay_keyframe_seconds = 143,
-  sv_replay_auto = 144,
-  sv_ghost_record = 145,
+  r_cel_speckle = 123,
+  r_cel_speckle_spacing = 124,
+  r_cel_speckle_density = 125,
+  r_cel_speckle_radius = 126,
+  r_ink = 127,
+  r_ink_threshold = 128,
+  r_ink_crease_degrees = 129,
+  r_ink_width = 130,
+  r_fxaa = 131,
+  r_fxaa_subpixel = 132,
+  r_look_panel = 133,
+  sv_skybox = 134,
+  debug_show_collisions = 135,
+  debug_show_hitboxes = 136,
+  debug_show_navmesh = 137,
+  debug_show_box_volumes = 138,
+  debug_hide_geometry = 139,
+  cl_shot_debug_seconds = 140,
+  debug_show_entity_counts = 141,
+  net_snapshot_debug = 142,
+  sv_event_debug = 143,
+  cl_event_debug = 144,
+  sv_reliable_debug = 145,
+  sv_io_debug = 146,
+  replay_keyframe_seconds = 147,
+  sv_replay_auto = 148,
+  sv_ghost_record = 149,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 146;
+constexpr uint32_t CVAR_COUNT = 150;
 
 enum class command_id : uint16_t
 {

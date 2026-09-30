@@ -84,6 +84,56 @@ float hatch_coverage(vec3 world_position, vec3 N)
     return max(coarse, fine * (1.0 - fade));
 }
 
+float cel_speckle_strength() { return scene.cel_speckle.x; } // r_cel_speckle
+float cel_speckle_spacing()  { return scene.cel_speckle.y; } // r_cel_speckle_spacing, pixels
+float cel_speckle_density()  { return scene.cel_speckle.z; } // r_cel_speckle_density
+float cel_speckle_radius()   { return scene.cel_speckle.w; } // r_cel_speckle_radius, of a cell
+
+const vec3 CEL_SPECKLE_COLOR = vec3(0.0);
+
+vec2 speckle_plane(vec3 world_position, vec3 N)
+{
+    vec3 facing = abs(N);
+    return facing.x >= facing.y && facing.x >= facing.z ? world_position.yz
+           : facing.y >= facing.z                       ? world_position.xz
+                                                        : world_position.xy;
+}
+
+vec2 speckle_hash(vec2 cell_id)
+{
+    vec3 p = fract(vec3(cell_id.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.xx + p.yz) * p.zy);
+}
+
+// At most one dot per cell, at a random spot, present in r_cel_speckle_density of the cells.
+float speckle_dot(vec2 plane, float cell_size, float pixels_per_cell)
+{
+    vec2  cell_id = floor(plane / cell_size);
+    float present = step(speckle_hash(cell_id + 31.0).x, cel_speckle_density());
+    vec2  centre  = cell_id + mix(vec2(cel_speckle_radius()), vec2(1.0 - cel_speckle_radius()),
+                                  speckle_hash(cell_id + 17.0));
+    float pixels_to_edge = (length(plane / cell_size - centre) - cel_speckle_radius()) * pixels_per_cell;
+    return present * (1.0 - smoothstep(-0.5, 0.5, pixels_to_edge));
+}
+
+// Cells a fixed size ON SCREEN, pinned to the world like the hatching: the cell
+// doubles as a face recedes, the finer set fading out as it does.
+float speckle_coverage(vec3 world_position, vec3 N)
+{
+    vec2  plane           = speckle_plane(world_position, N);
+    float world_per_pixel = max(max(fwidth(plane.x), fwidth(plane.y)), 1e-6);
+
+    float level     = log2(world_per_pixel * cel_speckle_spacing());
+    float octave    = floor(level);
+    float fade      = level - octave;
+    float cell_size = exp2(octave);
+
+    float fine   = speckle_dot(plane, cell_size, cell_size / world_per_pixel);
+    float coarse = speckle_dot(plane, 2.0 * cell_size, 2.0 * cell_size / world_per_pixel);
+    return max(coarse, fine * (1.0 - fade));
+}
+
 float luminance(vec3 color)
 {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
@@ -93,7 +143,12 @@ float luminance(vec3 color)
 // Hatched where the direct light adds less than r_cel_hatch_edge times the ambient.
 vec3 compose_cel(Surface surface, vec3 direct, vec3 ambient, vec3 world_position)
 {
-    vec3 color = surface.albedo * (direct + ambient);
+    vec3 albedo = surface.albedo;
+    if (cel_speckle_strength() > 0.0)
+        albedo = mix(albedo, CEL_SPECKLE_COLOR,
+                     speckle_coverage(world_position, surface.geometric_normal) * cel_speckle_strength());
+
+    vec3 color = albedo * (direct + ambient);
     if (cel_hatch_strength() <= 0.0)
         return color;
 

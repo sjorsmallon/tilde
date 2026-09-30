@@ -267,6 +267,10 @@ bool Tick()
     look.cel_hatch_spacing_pixels = cvars.r_cel_hatch_spacing;
     look.cel_hatch_width_pixels   = cvars.r_cel_hatch_width;
     look.cel_hatch_edge           = cvars.r_cel_hatch_edge;
+    look.cel_speckle                = cvars.r_cel_speckle;
+    look.cel_speckle_spacing_pixels = cvars.r_cel_speckle_spacing;
+    look.cel_speckle_density        = cvars.r_cel_speckle_density;
+    look.cel_speckle_radius         = cvars.r_cel_speckle_radius;
     look.ink              = cvars.r_stylized && cvars.r_ink;
     look.ink_threshold    = cvars.r_ink_threshold;
     look.ink_width_pixels = cvars.r_ink_width;

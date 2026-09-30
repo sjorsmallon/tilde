@@ -744,11 +744,12 @@ struct scene_uniform_t
   float       look[4]                                       = {}; // x 1 when r_cel shades the frame, y terminator, z shadow edge, w softness
   float       cel_shadow_tint[4]                            = {};
   float       cel_hatch[4]                                  = {}; // x strength, y spacing px, z edge, w width px
+  float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of a cell
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 48,
+                      32 * MAX_SCENE_RIPPLES + 16 + 64,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -8609,6 +8610,10 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_hatch[1]       = std::max(look.cel_hatch_spacing_pixels, 2.0f);
     scene.cel_hatch[2]       = look.cel_hatch_edge;
     scene.cel_hatch[3]       = std::max(look.cel_hatch_width_pixels, 0.0f);
+    scene.cel_speckle[0]     = std::clamp(look.cel_speckle, 0.0f, 1.0f);
+    scene.cel_speckle[1]     = std::max(look.cel_speckle_spacing_pixels, 2.0f);
+    scene.cel_speckle[2]     = std::clamp(look.cel_speckle_density, 0.0f, 1.0f);
+    scene.cel_speckle[3]     = std::clamp(look.cel_speckle_radius, 0.0f, 0.5f);
     assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
     prepared.scene_block_offset = write_scene_block(scene);
     g_prepared_passes.push_back(prepared);
