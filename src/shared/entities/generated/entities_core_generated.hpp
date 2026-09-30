@@ -94,9 +94,10 @@ enum class Fire_Resolution : uint8_t
   Place = 5,
   Canopy = 6,
   Pilot = 7,
+  Recall = 8,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 8;
+constexpr uint32_t Fire_Resolution_COUNT = 9;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);

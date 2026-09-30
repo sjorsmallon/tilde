@@ -56,6 +56,7 @@ constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
   "Place",
   "Canopy",
   "Pilot",
+  "Recall",
 };
 
 constexpr const char* Fire_Trigger_VALUE_NAMES[] = {
@@ -155,7 +156,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
   {"Weapon", {Weapon_VALUE_NAMES, 19}},
-  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 8}},
+  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 9}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
@@ -1777,6 +1778,15 @@ constexpr field_info_t Platform_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "half_extents_at_launch",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Platform_Entity, half_extents_at_launch),
+   .size_in_bytes = (uint32_t)sizeof(Platform_Entity::half_extents_at_launch),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Platform_Entity, render),
@@ -1865,6 +1875,15 @@ constexpr field_info_t Shrinking_Platform_Entity_FIELDS[] = {
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Shrinking_Platform_Entity, half_extents),
    .size_in_bytes = (uint32_t)sizeof(Shrinking_Platform_Entity::half_extents),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "half_extents_at_launch",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Shrinking_Platform_Entity, half_extents_at_launch),
+   .size_in_bytes = (uint32_t)sizeof(Shrinking_Platform_Entity::half_extents_at_launch),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1995,6 +2014,15 @@ constexpr field_info_t Extending_Platform_Entity_FIELDS[] = {
    .offset = (uint32_t)offsetof(Extending_Platform_Entity, half_thickness),
    .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::half_thickness),
    .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "passable_seconds",
+   .type = FIELD_TYPE_F32_EXACT,
+   .offset = (uint32_t)offsetof(Extending_Platform_Entity, passable_seconds),
+   .size_in_bytes = (uint32_t)sizeof(Extending_Platform_Entity::passable_seconds),
+   .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -4453,9 +4481,9 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"hook_entity", "Hook", {Hook_Entity_FIELDS, 8}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 520u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
   {"kooh_entity", "Kooh", {Kooh_Entity_FIELDS, 8}, (uint32_t)sizeof(Kooh_Entity), (uint32_t)alignof(Kooh_Entity), 520u, true, true, false, construct_Kooh_Entity, as_base_Kooh_Entity},
   {"ricochet_entity", "Ricochet", {Ricochet_Entity_FIELDS, 8}, (uint32_t)sizeof(Ricochet_Entity), (uint32_t)alignof(Ricochet_Entity), 520u, true, true, false, construct_Ricochet_Entity, as_base_Ricochet_Entity},
-  {"platform_entity", "Platform", {Platform_Entity_FIELDS, 10}, (uint32_t)sizeof(Platform_Entity), (uint32_t)alignof(Platform_Entity), 536u, true, true, true, construct_Platform_Entity, as_base_Platform_Entity},
-  {"shrinking_platform_entity", "Shrinking Platform", {Shrinking_Platform_Entity_FIELDS, 11}, (uint32_t)sizeof(Shrinking_Platform_Entity), (uint32_t)alignof(Shrinking_Platform_Entity), 536u, true, true, true, construct_Shrinking_Platform_Entity, as_base_Shrinking_Platform_Entity},
-  {"extending_platform_entity", "Extending Platform", {Extending_Platform_Entity_FIELDS, 13}, (uint32_t)sizeof(Extending_Platform_Entity), (uint32_t)alignof(Extending_Platform_Entity), 520u, true, true, true, construct_Extending_Platform_Entity, as_base_Extending_Platform_Entity},
+  {"platform_entity", "Platform", {Platform_Entity_FIELDS, 11}, (uint32_t)sizeof(Platform_Entity), (uint32_t)alignof(Platform_Entity), 536u, true, true, true, construct_Platform_Entity, as_base_Platform_Entity},
+  {"shrinking_platform_entity", "Shrinking Platform", {Shrinking_Platform_Entity_FIELDS, 12}, (uint32_t)sizeof(Shrinking_Platform_Entity), (uint32_t)alignof(Shrinking_Platform_Entity), 536u, true, true, true, construct_Shrinking_Platform_Entity, as_base_Shrinking_Platform_Entity},
+  {"extending_platform_entity", "Extending Platform", {Extending_Platform_Entity_FIELDS, 14}, (uint32_t)sizeof(Extending_Platform_Entity), (uint32_t)alignof(Extending_Platform_Entity), 520u, true, true, true, construct_Extending_Platform_Entity, as_base_Extending_Platform_Entity},
   {"guided_rocket_entity", "Guided Rocket", {Guided_Rocket_Entity_FIELDS, 7}, (uint32_t)sizeof(Guided_Rocket_Entity), (uint32_t)alignof(Guided_Rocket_Entity), 512u, true, true, false, construct_Guided_Rocket_Entity, as_base_Guided_Rocket_Entity},
   {"canopy_entity", "Canopy", {Canopy_Entity_FIELDS, 8}, (uint32_t)sizeof(Canopy_Entity), (uint32_t)alignof(Canopy_Entity), 512u, true, true, true, construct_Canopy_Entity, as_base_Canopy_Entity},
   {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 19}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 536u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
@@ -4697,6 +4725,7 @@ const char* to_string(Fire_Resolution value)
     case Fire_Resolution::Place: return "Place";
     case Fire_Resolution::Canopy: return "Canopy";
     case Fire_Resolution::Pilot: return "Pilot";
+    case Fire_Resolution::Recall: return "Recall";
   }
   assert(false && "invalid Fire_Resolution");
   return "";
@@ -4712,6 +4741,7 @@ template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std:
   if (text == "Place") return Fire_Resolution::Place;
   if (text == "Canopy") return Fire_Resolution::Canopy;
   if (text == "Pilot") return Fire_Resolution::Pilot;
+  if (text == "Recall") return Fire_Resolution::Recall;
   return std::nullopt;
 }
 
@@ -5163,6 +5193,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x032d3039u;
+const uint32_t SCHEMA_HASH = 0x4039114du;
 
 } // namespace entities

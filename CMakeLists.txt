@@ -561,6 +561,7 @@ add_library(game_shared STATIC
     src/shared/bounce_body.hpp
     src/shared/bounce_body.cpp
     src/shared/spawned_platforms.cpp
+    src/shared/color_map.hpp
     src/shared/flight_path.hpp
     src/shared/flight_path.cpp
     src/shared/canopy.cpp
@@ -689,6 +690,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/ui.frag
     ${SHADER_SRC_DIR}/tonemap.vert
     ${SHADER_SRC_DIR}/tonemap.frag
+    ${SHADER_SRC_DIR}/fxaa.frag
     ${SHADER_SRC_DIR}/outline_mask.frag
     ${SHADER_SRC_DIR}/outline.frag
     ${SHADER_SRC_DIR}/skybox.vert
@@ -713,6 +715,14 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
                     ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl
                     ${SHADER_SRC_DIR}/direct_light.glsl
+                    ${SHADER_SRC_DIR}/surface.glsl
+                    ${SHADER_SRC_DIR}/surface_normal.glsl
+                    ${SHADER_SRC_DIR}/shading.glsl
+                    ${SHADER_SRC_DIR}/shading_lambert.glsl
+                    ${SHADER_SRC_DIR}/shading_pbr.glsl
+                    ${SHADER_SRC_DIR}/shading_cel.glsl
+                    ${SHADER_SRC_DIR}/light_gather.glsl
+                    ${SHADER_SRC_DIR}/debug_channels.glsl
                     ${SHADER_SRC_DIR}/reflection.glsl
                     ${SHADER_SRC_DIR}/lightmap_bake.glsl
                     ${SHADER_SRC_DIR}/lightmap_scene.glsl
@@ -821,6 +831,7 @@ add_library(game_client SHARED
     src/client/held_snapshot.cpp
     src/client/replay_playback.cpp
     src/client/replay_panel.cpp
+    src/client/look_panel.cpp
     src/client/ghost_playback.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp

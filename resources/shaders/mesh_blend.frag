@@ -6,8 +6,10 @@
 // different one. Layer 0's weight is what the others leave.
 
 #include "scene.glsl"
-#include "direct_light.glsl"
-#include "reflection.glsl"
+#include "surface.glsl"
+#include "surface_normal.glsl"
+#include "light_gather.glsl"
+#include "debug_channels.glsl"
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
@@ -20,6 +22,7 @@ layout(location = 4) in float      fragBlendWeight1;
 layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outSurfaceNormal;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
@@ -33,10 +36,6 @@ layout(set = 0, binding = 4) uniform sampler2D emissiveMap;
 // descriptor machinery.
 layout(set = 2, binding = 0) uniform sampler2D blendAlbedo1;
 
-#ifdef LIGHTMAP
-#include "lightmap.glsl"
-#endif
-
 void main() {
     float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
     discard_below_alpha_cutoff(surfaceAlpha);
@@ -45,38 +44,8 @@ void main() {
     discard_inside_peel(fragWorldPosition);
 
     vec3 N = normalize(fragWorldNormal);
-
-    if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
-    {
-        outColor = shadow_visibility_debug_color(fragWorldPosition, N);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_DIRECT_LIGHT) != 0)
-    {
-        vec3 direct = analytic_tail_diffuse(N, fragWorldPosition);
-#ifdef LIGHTMAP
-        direct += lightmap_direct_diffuse(N, fragWorldPosition);
-#endif
-        outColor = vec4(direct, 1.0);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
-    {
-#ifdef LIGHTMAP
-        vec3 baked = lightmap_residual_diffuse() + lightmap_indirect_diffuse(N);
-#else
-        vec3 baked = vec3(0.0); // this path reads no probes; its fill is the fixed fake sun
-#endif
-        outColor = vec4(baked, 1.0);
-        return;
-    }
-    // As mesh_grid.frag: no roughness here, so the captures as a mirror.
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
-    {
-        outColor = reflection_debug_color(fragWorldPosition, N,
-                                          normalize(scene.camera_position.xyz - fragWorldPosition), 0.0);
-        return;
-    }
+    vec3 V = normalize(scene.camera_position.xyz - fragWorldPosition);
+    outSurfaceNormal = store_surface_normal(N);
 
     float weight1 = clamp(fragBlendWeight1, 0.0, 1.0);
     float weight0 = clamp(1.0 - weight1, 0.0, 1.0);
@@ -84,31 +53,29 @@ void main() {
     vec3 layers = texture(albedo, fragUV).rgb * weight0 +
                   texture(blendAlbedo1, fragUV).rgb * weight1;
 
-    vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
-    vec3  ambient = scene.ambient.rgb;
-    float diffuse = max(dot(N, -sunDir), 0.0);
-
-#ifdef LIGHTMAP
-    // The four lights this face's chart kept, shaded analytically against the
-    // real light direction, the residual irradiance of the ones it dropped, and
-    // the path-traced bounce.
-    vec3 lighting = lightmap_direct_diffuse(N, fragWorldPosition) +
-                    lightmap_residual_diffuse() + lightmap_indirect_diffuse(N) + ambient;
-#else
-    vec3 lighting = ambient + vec3(diffuse * 0.85);
-#endif
-    // The tail through its shadow maps, as mesh_grid.frag.
-    lighting += analytic_tail_diffuse(N, fragWorldPosition);
-
+    Surface surface;
+    surface.albedo    = layers * fragColor;
+    surface.normal    = N;
+    surface.geometric_normal = N;
+    surface.uv        = fragUV;
+    surface.roughness = 0.0;
+    surface.metallic  = 0.0;
+    surface.occlusion = 1.0;
     // LAYER 0's emissive only, weighted by its own coverage -- so where layer 1
     // covers the surface, layer 0 stops glowing. That is also the layer the bake
     // reads (surface_at resolves layer 0), so the two agree.
+    surface.emissive  = texture(emissiveMap, fragUV).rgb * weight0;
+
+    if (showing_debug_channel())
+    {
+        outColor = debug_channel_color(surface, N, fragWorldPosition, V, albedo);
+        return;
+    }
+
+    vec3 color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V);
+
     outColor = reflection_capture_debug(
-        shadow_cascade_debug(vec4(layers * fragColor * lighting +
-                                      texture(emissiveMap, fragUV).rgb * weight0,
-                                  surfaceAlpha),
-                             fragWorldPosition),
-        fragWorldPosition);
+        shadow_cascade_debug(vec4(color, surfaceAlpha), fragWorldPosition), fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
 }

@@ -680,6 +680,29 @@ struct tonemap_settings_t
   // Multiplies the HDR value before the curve. r_exposure.
   float exposure = 1.0f;
 };
+struct look_settings_t
+{
+  bool    cel              = false; // r_cel
+  float   cel_terminator   = 0.05f; // r_cel_terminator
+  float   cel_shadow_edge  = 0.5f;  // r_cel_shadow_edge
+  float   cel_softness     = 0.03f; // r_cel_softness
+  linalg::vec3f cel_shadow_tint = {0.8f, 0.85f, 1.0f}; // r_cel_shadow_red, _green, _blue
+  float   cel_hatch                = 0.0f; // r_cel_hatch
+  float   cel_hatch_spacing_pixels = 8.0f; // r_cel_hatch_spacing
+  float   cel_hatch_width_pixels   = 1.0f; // r_cel_hatch_width
+  float   cel_hatch_edge           = 0.5f; // r_cel_hatch_edge
+  bool    ink              = false; // r_ink
+  float   ink_threshold    = 4.0f;  // r_ink_threshold
+  int     ink_width_pixels = 1;     // r_ink_width
+  float   ink_crease_degrees = 30.0f; // r_ink_crease_degrees
+};
+
+struct antialiasing_settings_t
+{
+  bool  fxaa          = true;  // r_fxaa
+  float fxaa_subpixel = 0.25f; // r_fxaa_subpixel, 0 to 1
+};
+
 constexpr uint32_t MAX_SHADOW_LAYERS = 16;
 
 struct shadow_settings_t
@@ -716,17 +739,20 @@ struct shadow_settings_t
 };
 
 // Executes the whole frame: particle compute, the scene pass into an HDR target,
-// every view pass in order, then the present pass -- tonemap, the screen-space
-// UI, ImGui composite -- then submit and present. The pass structure is internal.
+// every view pass in order, the tonemap and the ink into a display-format
+// target, then the present pass -- antialiasing, the screen-space UI, ImGui
+// composite -- then submit and present. The pass structure is internal.
 //
 // `ui` is a reference and not a pointer, unlike view_pass_t::debug: screen-space
 // UI is per-FRAME and always present, where a debug list is optional per pass. It
-// is composited AFTER the tonemap and BEFORE ImGui. After the tonemap because UI
-// colour is authored in display space and a white 1.0 element through the curve
-// arrives grey; before ImGui so the dev console and the editor panels sit on top
-// of the HUD, which is the precedence you want the moment the console is open.
+// is composited AFTER the tonemap and the antialiasing and BEFORE ImGui. After the
+// tonemap because UI colour is authored in display space and a white 1.0 element
+// through the curve arrives grey; before ImGui so the dev console and the editor
+// panels sit on top of the HUD, which is the precedence you want the moment the
+// console is open.
 void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
-                  const tonemap_settings_t &tonemap, const shadow_settings_t &shadows);
+                  const tonemap_settings_t &tonemap, const look_settings_t &look,
+                  const antialiasing_settings_t &antialiasing, const shadow_settings_t &shadows);
 
 // --- Utilities ---
 
@@ -810,6 +836,8 @@ constexpr VkFrontFace HOUSE_FRONT_FACE = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 VkDevice         get_VkDevice();
 VkPhysicalDevice get_VkPhysicalDevice();
 VkRenderPass     get_VkRenderPass();
+// A pipeline built for get_VkRenderPass() declares this many blend states: its colour, then a zero write mask each.
+constexpr uint32_t SCENE_COLOR_ATTACHMENT_COUNT = 2;
 uint32_t         get_current_frame_index();
 uint32_t         get_max_frames_in_flight();
 

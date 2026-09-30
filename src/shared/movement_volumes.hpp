@@ -55,11 +55,7 @@ struct movement_volume_t
   linalg::vec3f          launch_velocity = {};
 };
 
-// ONE exhaustive switch over entity_type: a @predicted type has an arm that
-// produces a volume, every other type produces nothing, and -Werror=switch
-// polices it. The generator cannot write this -- flattening a pad into a launch
-// velocity is per-type logic -- which is why @predicted is a flag with one rule
-// rather than an emitter.
+// One loop per type that IS a volume. That every @predicted type feeds exactly one collect is pinned by movement_volumes_test.
 void collect_movement_volumes(Entity_System&                    system,
                               const movement_volume_settings_t& settings,
                               std::vector<movement_volume_t>&   out);

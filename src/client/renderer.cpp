@@ -23,6 +23,7 @@
 #include "skinning.hpp"
 #include "vertex.hpp"
 #include <algorithm>
+#include <bit>
 #include <limits>
 #include <cmath>
 #include <math.h> // For tan, sqrt, etc.
@@ -135,6 +136,10 @@ const uint32_t tonemap_frag_spv[] =
 #include "tonemap.frag.spv.h"
     ;
 
+const uint32_t fxaa_frag_spv[] =
+#include "fxaa.frag.spv.h"
+    ;
+
 const uint32_t background_squares_frag_spv[] =
 #include "background_squares.frag.spv.h"
     ;
@@ -184,6 +189,9 @@ static VkPipeline g_debug_line_occluded_pipeline = VK_NULL_HANDLE;
 static VkPipeline g_debug_face_occluded_pipeline = VK_NULL_HANDLE;
 
 static bool g_supports_wireframe = false;
+
+static constexpr float WANTED_TEXTURE_ANISOTROPY = 8.0f;
+static float g_texture_anisotropy = 0.0f;
 
 // Ray query for the lightmap bake (lightmap_gpu_plan.md step 4). Optional: a
 // device without it records WHY, and the bake keeps the CPU reference path --
@@ -733,11 +741,14 @@ struct scene_uniform_t
   float       ripple_settings[4]                            = {};
   float       ripples[MAX_SCENE_RIPPLES][8]                 = {};
   float       clock[4]                                      = {}; // x seconds, view_pass_t::seconds
+  float       look[4]                                       = {}; // x 1 when r_cel shades the frame, y terminator, z shadow edge, w softness
+  float       cel_shadow_tint[4]                            = {};
+  float       cel_hatch[4]                                  = {}; // x strength, y spacing px, z edge, w width px
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16,
+                      32 * MAX_SCENE_RIPPLES + 16 + 48,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -816,17 +827,59 @@ static VkFormat g_depth_format = VK_FORMAT_D32_SFLOAT;
 // curve would arrive grey. Two render passes is what forces the split.
 constexpr VkFormat HDR_TARGET_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-// One HDR target per frame in flight, unlike the shared depth buffer: frame N's
-// tonemap READS what frame N's scene pass wrote, so a single target would let
-// frame N+1's scene pass overwrite it mid-read.
-static VkImage        g_hdr_image[MAX_FRAMES_IN_FLIGHT]          = {};
-static VkDeviceMemory g_hdr_memory[MAX_FRAMES_IN_FLIGHT]         = {};
-static VkImageView    g_hdr_view[MAX_FRAMES_IN_FLIGHT]           = {};
-static VkFramebuffer  g_scene_framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
-static VkSampler      g_hdr_sampler                              = VK_NULL_HANDLE;
+// A swapchain-sized colour image one pass writes and a later pass samples. One
+// per frame in flight, unlike the shared depth buffer: frame N's tonemap READS
+// what frame N's scene pass wrote, so a single target would let frame N+1's
+// scene pass overwrite it mid-read.
+struct screen_target_t
+{
+  const char*    name                               = "";
+  VkFormat       format                             = VK_FORMAT_UNDEFINED;
+  VkImage        images[MAX_FRAMES_IN_FLIGHT]       = {};
+  VkDeviceMemory memories[MAX_FRAMES_IN_FLIGHT]     = {};
+  VkImageView    views[MAX_FRAMES_IN_FLIGHT]        = {};
+  VkFramebuffer  framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
+};
 
-static VkRenderPass g_scene_render_pass   = VK_NULL_HANDLE;
-static VkRenderPass g_present_render_pass = VK_NULL_HANDLE;
+// A fullscreen fragment shader over sampled inputs, recorded into the pass it was built for.
+struct fullscreen_draw_t
+{
+  VkDescriptorSetLayout set_layout                 = VK_NULL_HANDLE;
+  VkDescriptorPool      pool                       = VK_NULL_HANDLE;
+  VkDescriptorSet       sets[MAX_FRAMES_IN_FLIGHT] = {};
+  VkPipelineLayout      pipeline_layout            = VK_NULL_HANDLE;
+  VkPipeline            pipeline                   = VK_NULL_HANDLE;
+};
+
+static screen_target_t g_hdr_target{"HDR scene", HDR_TARGET_FORMAT};
+
+// A swapchain-sized colour image the scene pass writes beside the HDR target, per frame in flight for the same reason.
+struct screen_image_t
+{
+  const char*    name                           = "";
+  VkFormat       format                         = VK_FORMAT_UNDEFINED;
+  VkImage        images[MAX_FRAMES_IN_FLIGHT]   = {};
+  VkDeviceMemory memories[MAX_FRAMES_IN_FLIGHT] = {};
+  VkImageView    views[MAX_FRAMES_IN_FLIGHT]    = {};
+};
+
+// What opaque surfaces hand the ink (tonemap.frag). A row is one more output location in the scene shaders.
+constexpr uint32_t    SCENE_NORMAL_IMAGE    = 0;
+static screen_image_t g_scene_data_images[] = {
+    {"scene normal", VK_FORMAT_R8G8B8A8_UNORM},
+};
+constexpr uint32_t SCENE_DATA_IMAGE_COUNT = SCENE_COLOR_ATTACHMENT_COUNT - 1;
+static_assert(std::size(g_scene_data_images) == SCENE_DATA_IMAGE_COUNT,
+              "SCENE_COLOR_ATTACHMENT_COUNT is the HDR target plus every scene data image.");
+
+// Past the curve and the ink, in the swapchain's own format: what the antialiasing reads.
+static screen_target_t g_tonemapped_target{"tonemapped frame"};
+static VkSampler       g_screen_nearest_sampler = VK_NULL_HANDLE;
+static VkSampler       g_screen_linear_sampler  = VK_NULL_HANDLE;
+
+static VkRenderPass g_scene_render_pass      = VK_NULL_HANDLE;
+static VkRenderPass g_tonemapped_render_pass = VK_NULL_HANDLE;
+static VkRenderPass g_present_render_pass    = VK_NULL_HANDLE;
 
 // The selection outline: a per-frame mask the outlined draws render into after the
 // scene pass, against the scene's depth, and the present pass edge-detects it.
@@ -834,17 +887,10 @@ constexpr VkFormat OUTLINE_MASK_FORMAT         = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr float    OUTLINE_SELECTED_RADIUS_PIXELS = 3.f;
 constexpr float    OUTLINE_HOVERED_RADIUS_PIXELS  = 3.f;
 constexpr float    OUTLINE_OCCLUDED_ALPHA      = 0.35f;
-static VkImage        g_outline_mask_image[MAX_FRAMES_IN_FLIGHT]        = {};
-static VkDeviceMemory g_outline_mask_memory[MAX_FRAMES_IN_FLIGHT]       = {};
-static VkImageView    g_outline_mask_view[MAX_FRAMES_IN_FLIGHT]         = {};
-static VkFramebuffer  g_outline_mask_framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
-static VkRenderPass   g_outline_mask_render_pass                        = VK_NULL_HANDLE;
-static VkPipeline     g_outline_mask_pipelines[2][2][2]                 = {}; // [skinned][hovered][visible]
-static VkDescriptorSetLayout g_outline_ds_layout                        = VK_NULL_HANDLE;
-static VkDescriptorPool      g_outline_pool                             = VK_NULL_HANDLE;
-static VkDescriptorSet       g_outline_sets[MAX_FRAMES_IN_FLIGHT]       = {};
-static VkPipelineLayout      g_outline_pipeline_layout                  = VK_NULL_HANDLE;
-static VkPipeline            g_outline_pipeline                         = VK_NULL_HANDLE;
+static screen_target_t   g_outline_mask_target{"outline mask", OUTLINE_MASK_FORMAT};
+static VkRenderPass      g_outline_mask_render_pass        = VK_NULL_HANDLE;
+static VkPipeline        g_outline_mask_pipelines[2][2][2] = {}; // [skinned][hovered][visible]
+static fullscreen_draw_t g_outline_draw;
 
 // --- Shadow maps (lighting_def.md gate 9) ---
 //
@@ -1003,43 +1049,13 @@ static QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
 
 // Forward declarations
 static void create_depth_resources();
-static void create_hdr_targets();
-static void create_outline_targets();
-static void write_tonemap_descriptor_sets();
-static void write_outline_descriptor_sets();
+static void create_screen_targets();
+static void destroy_screen_targets();
+static void write_screen_target_inputs();
 
 static void cleanup_swapchain()
 {
-  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
-  {
-    if (g_scene_framebuffers[frame] != VK_NULL_HANDLE)
-      vkDestroyFramebuffer(g_device, g_scene_framebuffers[frame], nullptr);
-    if (g_hdr_view[frame] != VK_NULL_HANDLE)
-      vkDestroyImageView(g_device, g_hdr_view[frame], nullptr);
-    if (g_hdr_image[frame] != VK_NULL_HANDLE)
-      vkDestroyImage(g_device, g_hdr_image[frame], nullptr);
-    if (g_hdr_memory[frame] != VK_NULL_HANDLE)
-      vkFreeMemory(g_device, g_hdr_memory[frame], nullptr);
-
-    g_scene_framebuffers[frame] = VK_NULL_HANDLE;
-    g_hdr_view[frame]           = VK_NULL_HANDLE;
-    g_hdr_image[frame]          = VK_NULL_HANDLE;
-    g_hdr_memory[frame]         = VK_NULL_HANDLE;
-
-    if (g_outline_mask_framebuffers[frame] != VK_NULL_HANDLE)
-      vkDestroyFramebuffer(g_device, g_outline_mask_framebuffers[frame], nullptr);
-    if (g_outline_mask_view[frame] != VK_NULL_HANDLE)
-      vkDestroyImageView(g_device, g_outline_mask_view[frame], nullptr);
-    if (g_outline_mask_image[frame] != VK_NULL_HANDLE)
-      vkDestroyImage(g_device, g_outline_mask_image[frame], nullptr);
-    if (g_outline_mask_memory[frame] != VK_NULL_HANDLE)
-      vkFreeMemory(g_device, g_outline_mask_memory[frame], nullptr);
-
-    g_outline_mask_framebuffers[frame] = VK_NULL_HANDLE;
-    g_outline_mask_view[frame]         = VK_NULL_HANDLE;
-    g_outline_mask_image[frame]        = VK_NULL_HANDLE;
-    g_outline_mask_memory[frame]       = VK_NULL_HANDLE;
-  }
+  destroy_screen_targets();
 
   // Destroy depth resources
   if (g_depth_view != VK_NULL_HANDLE)
@@ -1214,40 +1230,11 @@ static void create_swapchain()
   }
 }
 
-// The scene framebuffer is per FRAME IN FLIGHT and the present one is per
-// SWAPCHAIN IMAGE, which is why the two loops count differently: an HDR target
-// belongs to the frame that renders it, a swapchain image to whatever the
-// presentation engine handed back.
-static void create_framebuffers()
+// The present framebuffer is per SWAPCHAIN IMAGE where a screen target's is per
+// FRAME IN FLIGHT: a target belongs to the frame that renders it, a swapchain
+// image to whatever the presentation engine handed back.
+static void create_swapchain_framebuffers()
 {
-  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
-  {
-    VkImageView attachments[] = {g_hdr_view[frame], g_depth_view};
-
-    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    framebuffer_info.renderPass      = g_scene_render_pass;
-    framebuffer_info.attachmentCount = 2;
-    framebuffer_info.pAttachments    = attachments;
-    framebuffer_info.width           = g_swapchain_extent.width;
-    framebuffer_info.height          = g_swapchain_extent.height;
-    framebuffer_info.layers          = 1;
-
-    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr,
-                            &g_scene_framebuffers[frame]) != VK_SUCCESS)
-    {
-      fatal_error("[renderer] could not create the scene framebuffer");
-    }
-
-    VkImageView outline_attachments[] = {g_outline_mask_view[frame], g_depth_view};
-    framebuffer_info.renderPass       = g_outline_mask_render_pass;
-    framebuffer_info.pAttachments     = outline_attachments;
-    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr,
-                            &g_outline_mask_framebuffers[frame]) != VK_SUCCESS)
-    {
-      fatal_error("[renderer] could not create the outline mask framebuffer");
-    }
-  }
-
   g_swapchain_framebuffers.resize(g_swapchain_image_views.size());
   for (size_t i = 0; i < g_swapchain_image_views.size(); i++)
   {
@@ -1279,11 +1266,9 @@ static void rebuild_swapchain()
   cleanup_swapchain();
   create_swapchain();
   create_depth_resources();
-  create_hdr_targets();
-  create_outline_targets();
-  create_framebuffers();
-  write_tonemap_descriptor_sets();
-  write_outline_descriptor_sets();
+  create_screen_targets();
+  create_swapchain_framebuffers();
+  write_screen_target_inputs();
 }
 
 // --- Internal AABB Functions ---
@@ -1355,7 +1340,7 @@ static void create_depth_resources()
   imageInfo.arrayLayers = 1;
   imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
   imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-  imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+  imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -1405,90 +1390,137 @@ static void create_depth_resources()
   }
 }
 
-// Sized to the swapchain and rebuilt with it. SAMPLED as well as
-// COLOR_ATTACHMENT: the tonemap pass reads back what the scene pass wrote.
-static void create_hdr_targets()
+static void create_screen_image(const char* name, VkFormat format, VkImage& image,
+                                VkDeviceMemory& memory, VkImageView& view)
 {
+  VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.imageType     = VK_IMAGE_TYPE_2D;
+  image_info.format        = format;
+  image_info.extent        = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
+  image_info.mipLevels     = 1;
+  image_info.arrayLayers   = 1;
+  image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+  if (vkCreateImage(g_device, &image_info, nullptr, &image) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} target", name);
+
+  VkMemoryRequirements requirements;
+  vkGetImageMemoryRequirements(g_device, image, &requirements);
+
+  VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  allocation.allocationSize  = requirements.size;
+  allocation.memoryTypeIndex =
+      find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(g_device, &allocation, nullptr, &memory) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the {} target", name);
+
+  vkBindImageMemory(g_device, image, memory, 0);
+
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+  view_info.format           = format;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  if (vkCreateImageView(g_device, &view_info, nullptr, &view) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} target view", name);
+}
+
+static void destroy_screen_image(VkImage& image, VkDeviceMemory& memory, VkImageView& view)
+{
+  vkDestroyImageView(g_device, view, nullptr);
+  vkDestroyImage(g_device, image, nullptr);
+  vkFreeMemory(g_device, memory, nullptr);
+
+  view   = VK_NULL_HANDLE;
+  image  = VK_NULL_HANDLE;
+  memory = VK_NULL_HANDLE;
+}
+
+// Sized to the swapchain and rebuilt with it. A null depth_view makes the framebuffer
+// colour-only; `data_images` are created here too and follow the depth in the framebuffer.
+static void create_screen_target(screen_target_t& target, VkRenderPass render_pass,
+                                 VkImageView depth_view, Span<screen_image_t> data_images)
+{
+  if (data_images.size() > SCENE_DATA_IMAGE_COUNT)
+    fatal_error("[renderer] the {} target was given {} data images and a framebuffer holds {}",
+                target.name, data_images.size(), SCENE_DATA_IMAGE_COUNT);
+
   for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
   {
-    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    image_info.imageType     = VK_IMAGE_TYPE_2D;
-    image_info.format        = HDR_TARGET_FORMAT;
-    image_info.extent        = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
-    image_info.mipLevels     = 1;
-    image_info.arrayLayers   = 1;
-    image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
-    image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    create_screen_image(target.name, target.format, target.images[frame], target.memories[frame],
+                        target.views[frame]);
 
-    if (vkCreateImage(g_device, &image_info, nullptr, &g_hdr_image[frame]) != VK_SUCCESS)
-      fatal_error("[renderer] could not create the HDR scene target");
+    VkImageView attachments[2 + SCENE_DATA_IMAGE_COUNT];
+    uint32_t    attachment_count   = 0;
+    attachments[attachment_count++] = target.views[frame];
+    if (depth_view != VK_NULL_HANDLE)
+      attachments[attachment_count++] = depth_view;
+    for (screen_image_t& image : data_images)
+    {
+      create_screen_image(image.name, image.format, image.images[frame], image.memories[frame],
+                          image.views[frame]);
+      attachments[attachment_count++] = image.views[frame];
+    }
 
-    VkMemoryRequirements requirements;
-    vkGetImageMemoryRequirements(g_device, g_hdr_image[frame], &requirements);
-
-    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation.allocationSize  = requirements.size;
-    allocation.memoryTypeIndex =
-        find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(g_device, &allocation, nullptr, &g_hdr_memory[frame]) != VK_SUCCESS)
-      fatal_error("[renderer] could not allocate the HDR scene target");
-
-    vkBindImageMemory(g_device, g_hdr_image[frame], g_hdr_memory[frame], 0);
-
-    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    view_info.image            = g_hdr_image[frame];
-    view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format           = HDR_TARGET_FORMAT;
-    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (vkCreateImageView(g_device, &view_info, nullptr, &g_hdr_view[frame]) != VK_SUCCESS)
-      fatal_error("[renderer] could not create the HDR scene target view");
+    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass      = render_pass;
+    framebuffer_info.attachmentCount = attachment_count;
+    framebuffer_info.pAttachments    = attachments;
+    framebuffer_info.width           = g_swapchain_extent.width;
+    framebuffer_info.height          = g_swapchain_extent.height;
+    framebuffer_info.layers          = 1;
+    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr, &target.framebuffers[frame]) !=
+        VK_SUCCESS)
+      fatal_error("[renderer] could not create the {} framebuffer", target.name);
   }
 }
 
-static void create_outline_targets()
+static void destroy_screen_target(screen_target_t& target, Span<screen_image_t> data_images)
 {
   for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
   {
-    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    image_info.imageType     = VK_IMAGE_TYPE_2D;
-    image_info.format        = OUTLINE_MASK_FORMAT;
-    image_info.extent        = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
-    image_info.mipLevels     = 1;
-    image_info.arrayLayers   = 1;
-    image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
-    image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    vkDestroyFramebuffer(g_device, target.framebuffers[frame], nullptr);
+    target.framebuffers[frame] = VK_NULL_HANDLE;
 
-    if (vkCreateImage(g_device, &image_info, nullptr, &g_outline_mask_image[frame]) != VK_SUCCESS)
-      fatal_error("[renderer] could not create the outline mask");
-
-    VkMemoryRequirements requirements;
-    vkGetImageMemoryRequirements(g_device, g_outline_mask_image[frame], &requirements);
-
-    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation.allocationSize  = requirements.size;
-    allocation.memoryTypeIndex =
-        find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(g_device, &allocation, nullptr, &g_outline_mask_memory[frame]) !=
-        VK_SUCCESS)
-      fatal_error("[renderer] could not allocate the outline mask");
-
-    vkBindImageMemory(g_device, g_outline_mask_image[frame], g_outline_mask_memory[frame], 0);
-
-    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    view_info.image            = g_outline_mask_image[frame];
-    view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format           = OUTLINE_MASK_FORMAT;
-    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (vkCreateImageView(g_device, &view_info, nullptr, &g_outline_mask_view[frame]) !=
-        VK_SUCCESS)
-      fatal_error("[renderer] could not create the outline mask view");
+    destroy_screen_image(target.images[frame], target.memories[frame], target.views[frame]);
+    for (screen_image_t& image : data_images)
+      destroy_screen_image(image.images[frame], image.memories[frame], image.views[frame]);
   }
+}
+
+static void create_screen_targets()
+{
+  create_screen_target(g_hdr_target, g_scene_render_pass, g_depth_view, g_scene_data_images);
+  create_screen_target(g_tonemapped_target, g_tonemapped_render_pass, VK_NULL_HANDLE, {});
+  create_screen_target(g_outline_mask_target, g_outline_mask_render_pass, g_depth_view, {});
+}
+
+static void destroy_screen_targets()
+{
+  destroy_screen_target(g_hdr_target, g_scene_data_images);
+  destroy_screen_target(g_tonemapped_target, {});
+  destroy_screen_target(g_outline_mask_target, {});
+}
+
+// The scene pass's blend states: the pipeline's own for the HDR colour, then every data image, written whole or left alone.
+using scene_blend_attachments_t =
+    Array<VkPipelineColorBlendAttachmentState, SCENE_COLOR_ATTACHMENT_COUNT>;
+
+static scene_blend_attachments_t
+scene_blend_attachments(const VkPipelineColorBlendAttachmentState& color, bool writes_data_images)
+{
+  scene_blend_attachments_t states;
+  states[0] = color;
+  for (uint32_t index = 1; index < SCENE_COLOR_ATTACHMENT_COUNT; ++index)
+    states[index].colorWriteMask =
+        writes_data_images ? VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+                           : 0;
+  return states;
 }
 
 // --- Debug primitive recording ---
@@ -1611,11 +1643,13 @@ static VkPipeline create_debug_pipeline(const debug_pipeline_options_t &options)
   blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
   blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
   blend_attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+  const scene_blend_attachments_t blend_attachments =
+      scene_blend_attachments(blend_attachment, false);
 
   VkPipelineColorBlendStateCreateInfo color_blending{
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  color_blending.attachmentCount = 1;
-  color_blending.pAttachments    = &blend_attachment;
+  color_blending.attachmentCount = blend_attachments.size();
+  color_blending.pAttachments    = blend_attachments.data;
 
   VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                                      VK_DYNAMIC_STATE_DEPTH_BIAS};
@@ -2145,10 +2179,17 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
   blend_attachment.colorBlendOp        = VK_BLEND_OP_ADD;
 
+  // Only what covers what is behind it hands the ink a surface; mesh_ghost.frag has no such output.
+  const bool writes_data_images = !wireframe && key.state.depth_write &&
+                                  key.state.blend_mode != blend_mode_t::alpha &&
+                                  key.state.shader != shader_t::ghost;
+  const scene_blend_attachments_t blend_attachments =
+      scene_blend_attachments(blend_attachment, writes_data_images);
+
   VkPipelineColorBlendStateCreateInfo color_blending{
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  color_blending.attachmentCount = 1;
-  color_blending.pAttachments    = &blend_attachment;
+  color_blending.attachmentCount = blend_attachments.size();
+  color_blending.pAttachments    = blend_attachments.data;
 
   VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dynamic_state{
@@ -2662,64 +2703,103 @@ static void destroy_ui_resources()
     vkDestroyPipelineLayout(g_device, g_ui_pipeline_layout, nullptr);
 }
 
-// --- The tonemap pass ---
-//
-// lighting_def.md decision J. Inline tonemapping does not compose: a scene where
-// `pbr` maps and `grid` does not carries two response curves, and the operator
-// has to see a pixel's FINAL radiance where a forward shader sees only its own
-// draw. So the curve runs here, once, over everything the scene pass wrote.
-
-struct tonemap_push_constants_t
+static VkShaderModule create_shader_module_or_die(const uint32_t* code, size_t size,
+                                                  const char* what)
 {
-  float exposure = 1.0f;
-};
-
-static VkDescriptorSetLayout g_tonemap_ds_layout                  = VK_NULL_HANDLE;
-static VkDescriptorPool      g_tonemap_pool                       = VK_NULL_HANDLE;
-static VkDescriptorSet       g_tonemap_sets[MAX_FRAMES_IN_FLIGHT] = {};
-static VkPipelineLayout      g_tonemap_pipeline_layout            = VK_NULL_HANDLE;
-static VkPipeline            g_tonemap_pipeline                   = VK_NULL_HANDLE;
-
-// Called at init and again after every swapchain rebuild, which hands out new
-// HDR image views. A no-op before the sets exist, which is what lets
-// rebuild_swapchain call it unconditionally.
-static void write_tonemap_descriptor_sets()
-{
-  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
-  {
-    if (g_tonemap_sets[frame] == VK_NULL_HANDLE)
-      continue;
-
-    VkDescriptorImageInfo image{};
-    image.sampler     = g_hdr_sampler;
-    image.imageView   = g_hdr_view[frame];
-    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet          = g_tonemap_sets[frame];
-    write.dstBinding      = 0;
-    write.descriptorCount = 1;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo      = &image;
-    vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
-  }
+  VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  info.codeSize         = size;
+  info.pCode            = code;
+  VkShaderModule module = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(g_device, &info, nullptr, &module) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} shader module", what);
+  return module;
 }
 
-static VkPipeline create_tonemap_pipeline()
-{
-  VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-  vert_info.codeSize = sizeof(tonemap_vert_spv);
-  vert_info.pCode    = tonemap_vert_spv;
-  VkShaderModule vert_module = VK_NULL_HANDLE;
-  if (vkCreateShaderModule(g_device, &vert_info, nullptr, &vert_module) != VK_SUCCESS)
-    fatal_error("[renderer] could not create the tonemap vertex shader module");
+// --- Fullscreen draws ---
+//
+// tonemap.vert derives a covering triangle from gl_VertexIndex, so a draw is a
+// fragment shader, the targets it samples (bindings 0..input_count-1 of set 0)
+// and a fragment push-constant block.
 
-  VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-  frag_info.codeSize = sizeof(tonemap_frag_spv);
-  frag_info.pCode    = tonemap_frag_spv;
-  VkShaderModule frag_module = VK_NULL_HANDLE;
-  if (vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module) != VK_SUCCESS)
-    fatal_error("[renderer] could not create the tonemap fragment shader module");
+constexpr uint32_t MAX_FULLSCREEN_DRAW_INPUTS = 4;
+
+struct fullscreen_draw_settings_t
+{
+  const char*          name               = "";
+  Span<const uint32_t> fragment_code      = {};
+  VkRenderPass         render_pass        = VK_NULL_HANDLE;
+  uint32_t             input_count        = 0;
+  uint32_t             push_constant_size = 0;
+  bool                 alpha_blend        = false;
+};
+
+static fullscreen_draw_t create_fullscreen_draw(const fullscreen_draw_settings_t& settings)
+{
+  if (settings.input_count > MAX_FULLSCREEN_DRAW_INPUTS)
+    fatal_error("[renderer] the {} draw wants {} inputs and a fullscreen draw holds {}",
+                settings.name, settings.input_count, MAX_FULLSCREEN_DRAW_INPUTS);
+
+  fullscreen_draw_t draw{};
+
+  if (settings.input_count > 0)
+  {
+    VkDescriptorSetLayoutBinding bindings[MAX_FULLSCREEN_DRAW_INPUTS] = {};
+    for (uint32_t binding = 0; binding < settings.input_count; ++binding)
+    {
+      bindings[binding].binding         = binding;
+      bindings[binding].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      bindings[binding].descriptorCount = 1;
+      bindings[binding].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo set_layout_info{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    set_layout_info.bindingCount = settings.input_count;
+    set_layout_info.pBindings    = bindings;
+    if (vkCreateDescriptorSetLayout(g_device, &set_layout_info, nullptr, &draw.set_layout) !=
+        VK_SUCCESS)
+      fatal_error("[renderer] could not create the {} descriptor set layout", settings.name);
+
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   settings.input_count * MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes    = &pool_size;
+    if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &draw.pool) != VK_SUCCESS)
+      fatal_error("[renderer] could not create the {} descriptor pool", settings.name);
+
+    VkDescriptorSetLayout set_layouts[MAX_FRAMES_IN_FLIGHT];
+    for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+      set_layouts[frame] = draw.set_layout;
+
+    VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocation.descriptorPool     = draw.pool;
+    allocation.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocation.pSetLayouts        = set_layouts;
+    if (vkAllocateDescriptorSets(g_device, &allocation, draw.sets) != VK_SUCCESS)
+      fatal_error("[renderer] could not allocate the {} descriptor sets", settings.name);
+  }
+
+  VkPushConstantRange push_range{};
+  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  push_range.offset     = 0;
+  push_range.size       = settings.push_constant_size;
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount         = settings.input_count > 0 ? 1 : 0;
+  layout_info.pSetLayouts            = &draw.set_layout;
+  layout_info.pushConstantRangeCount = settings.push_constant_size > 0 ? 1 : 0;
+  layout_info.pPushConstantRanges    = &push_range;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &draw.pipeline_layout) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} pipeline layout", settings.name);
+
+  const VkShaderModule vert_module =
+      create_shader_module_or_die(tonemap_vert_spv, sizeof(tonemap_vert_spv), settings.name);
+  const VkShaderModule frag_module = create_shader_module_or_die(
+      settings.fragment_code.data, settings.fragment_code.size() * sizeof(uint32_t),
+      settings.name);
 
   VkPipelineShaderStageCreateInfo stages[] = {
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
@@ -2727,8 +2807,6 @@ static VkPipeline create_tonemap_pipeline()
       {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
        VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
 
-  // No vertex input at all: the vertex shader derives a covering triangle from
-  // gl_VertexIndex, so there is no buffer to bind and none to keep in sync.
   VkPipelineVertexInputStateCreateInfo vertex_input{
       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
 
@@ -2758,6 +2836,16 @@ static VkPipeline create_tonemap_pipeline()
   VkPipelineColorBlendAttachmentState blend_attachment{};
   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  if (settings.alpha_blend)
+  {
+    blend_attachment.blendEnable         = VK_TRUE;
+    blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.colorBlendOp        = VK_BLEND_OP_ADD;
+    blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
+  }
 
   VkPipelineColorBlendStateCreateInfo color_blending{
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
@@ -2781,103 +2869,199 @@ static VkPipeline create_tonemap_pipeline()
   pipeline_info.pDepthStencilState  = &depth_stencil;
   pipeline_info.pColorBlendState    = &color_blending;
   pipeline_info.pDynamicState       = &dynamic_state;
-  pipeline_info.layout              = g_tonemap_pipeline_layout;
-  pipeline_info.renderPass          = g_present_render_pass;
+  pipeline_info.layout              = draw.pipeline_layout;
+  pipeline_info.renderPass          = settings.render_pass;
   pipeline_info.subpass             = 0;
 
-  VkPipeline pipeline = VK_NULL_HANDLE;
-  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
-      VK_SUCCESS)
-  {
-    fatal_error("[renderer] could not create the tonemap pipeline");
-  }
+  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr,
+                                &draw.pipeline) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} pipeline", settings.name);
 
   vkDestroyShaderModule(g_device, frag_module, nullptr);
   vkDestroyShaderModule(g_device, vert_module, nullptr);
-  return pipeline;
+  return draw;
 }
+
+static void destroy_fullscreen_draw(fullscreen_draw_t& draw)
+{
+  vkDestroyPipeline(g_device, draw.pipeline, nullptr);
+  vkDestroyPipelineLayout(g_device, draw.pipeline_layout, nullptr);
+  vkDestroyDescriptorPool(g_device, draw.pool, nullptr);
+  vkDestroyDescriptorSetLayout(g_device, draw.set_layout, nullptr);
+  draw = {};
+}
+
+static void write_fullscreen_draw_inputs(const fullscreen_draw_t& draw, int frame,
+                                         Span<const VkDescriptorImageInfo> inputs)
+{
+  if (inputs.size() > MAX_FULLSCREEN_DRAW_INPUTS)
+    fatal_error("[renderer] {} inputs written to a fullscreen draw that holds {}", inputs.size(),
+                MAX_FULLSCREEN_DRAW_INPUTS);
+
+  VkWriteDescriptorSet writes[MAX_FULLSCREEN_DRAW_INPUTS] = {};
+  for (uint32_t binding = 0; binding < inputs.size(); ++binding)
+  {
+    writes[binding].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[binding].dstSet          = draw.sets[frame];
+    writes[binding].dstBinding      = binding;
+    writes[binding].descriptorCount = 1;
+    writes[binding].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[binding].pImageInfo      = &inputs[binding];
+  }
+  vkUpdateDescriptorSets(g_device, inputs.size(), writes, 0, nullptr);
+}
+
+// A colour-only pass whose draw covers every pixel, left ready for a later pass to sample.
+static VkRenderPass create_sampled_color_render_pass(VkFormat format, const char* name)
+{
+  VkAttachmentDescription attachment{};
+  attachment.format         = format;
+  attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+  attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+  attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+  attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkAttachmentReference color_reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+
+  VkSubpassDescription subpass{};
+  subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments    = &color_reference;
+
+  VkSubpassDependency dependencies[2] = {};
+  dependencies[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+  dependencies[0].dstSubpass    = 0;
+  dependencies[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  dependencies[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+  dependencies[1].srcSubpass    = 0;
+  dependencies[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+  dependencies[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  VkRenderPassCreateInfo render_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+  render_pass_info.attachmentCount = 1;
+  render_pass_info.pAttachments    = &attachment;
+  render_pass_info.subpassCount    = 1;
+  render_pass_info.pSubpasses      = &subpass;
+  render_pass_info.dependencyCount = 2;
+  render_pass_info.pDependencies   = dependencies;
+
+  VkRenderPass render_pass = VK_NULL_HANDLE;
+  if (vkCreateRenderPass(g_device, &render_pass_info, nullptr, &render_pass) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} render pass", name);
+  return render_pass;
+}
+
+// The caller sets the viewport: a draw covers whatever rect it is given.
+template <typename Push_Constants>
+static void record_fullscreen_draw(VkCommandBuffer cmd, const fullscreen_draw_t& draw,
+                                   const Push_Constants& push)
+{
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.pipeline);
+  if (draw.pool != VK_NULL_HANDLE)
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.pipeline_layout, 0, 1,
+                            &draw.sets[g_current_frame_idx_in_swapchain], 0, nullptr);
+  vkCmdPushConstants(cmd, draw.pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                     sizeof(Push_Constants), &push);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
+// --- The tonemap pass ---
+//
+// lighting_def.md decision J. Inline tonemapping does not compose: a scene where
+// `pbr` maps and `grid` does not carries two response curves, and the operator
+// has to see a pixel's FINAL radiance where a forward shader sees only its own
+// draw. So the curve runs here, once, over everything the scene pass wrote.
+
+struct tonemap_push_constants_t
+{
+  float exposure         = 1.0f;
+  float ink_strength     = 0.0f;
+  float ink_threshold    = 1.0f;
+  int   ink_width_pixels = 1;
+  float ink_crease_radians  = 0.5f;
+  int   show_surface_normals = 0;
+};
+
+static fullscreen_draw_t g_tonemap_draw;
 
 static void create_tonemap_resources()
 {
-  // NEAREST: the HDR target is the swapchain size and the pass is a 1:1 blit, so
-  // filtering could only soften a texel that already lines up with its pixel.
+  // NEAREST: a screen target is the swapchain size and its reader is a 1:1 blit,
+  // so filtering could only soften a texel that already lines up with its pixel.
   VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sampler_info.magFilter    = VK_FILTER_NEAREST;
   sampler_info.minFilter    = VK_FILTER_NEAREST;
   sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  if (vkCreateSampler(g_device, &sampler_info, nullptr, &g_hdr_sampler) != VK_SUCCESS)
-    fatal_error("[renderer] could not create the HDR target sampler");
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &g_screen_nearest_sampler) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the screen target sampler");
 
-  VkDescriptorSetLayoutBinding binding{};
-  binding.binding         = 0;
-  binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  binding.descriptorCount = 1;
-  binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  VkDescriptorSetLayoutCreateInfo ds_layout_info{
-      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  ds_layout_info.bindingCount = 1;
-  ds_layout_info.pBindings    = &binding;
-  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_tonemap_ds_layout) !=
-      VK_SUCCESS)
-  {
-    fatal_error("[renderer] could not create the tonemap descriptor set layout");
-  }
-
-  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT};
-  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-  pool_info.maxSets       = MAX_FRAMES_IN_FLIGHT;
-  pool_info.poolSizeCount = 1;
-  pool_info.pPoolSizes    = &pool_size;
-  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_tonemap_pool) != VK_SUCCESS)
-    fatal_error("[renderer] could not create the tonemap descriptor pool");
-
-  VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
-  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
-    layouts[frame] = g_tonemap_ds_layout;
-
-  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-  allocation.descriptorPool     = g_tonemap_pool;
-  allocation.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-  allocation.pSetLayouts        = layouts;
-  if (vkAllocateDescriptorSets(g_device, &allocation, g_tonemap_sets) != VK_SUCCESS)
-    fatal_error("[renderer] could not allocate the tonemap descriptor sets");
-
-  write_tonemap_descriptor_sets();
-
-  VkPushConstantRange push_range{};
-  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  push_range.offset     = 0;
-  push_range.size       = sizeof(tonemap_push_constants_t);
-
-  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.setLayoutCount         = 1;
-  layout_info.pSetLayouts            = &g_tonemap_ds_layout;
-  layout_info.pushConstantRangeCount = 1;
-  layout_info.pPushConstantRanges    = &push_range;
-  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_tonemap_pipeline_layout) !=
-      VK_SUCCESS)
-  {
-    fatal_error("[renderer] could not create the tonemap pipeline layout");
-  }
-
-  g_tonemap_pipeline = create_tonemap_pipeline();
+  fullscreen_draw_settings_t settings;
+  settings.name               = "tonemap";
+  settings.fragment_code      = tonemap_frag_spv;
+  settings.render_pass        = g_tonemapped_render_pass;
+  settings.input_count        = 3; // 0 the HDR target, 1 the scene depth, 2 the scene normal
+  settings.push_constant_size = sizeof(tonemap_push_constants_t);
+  g_tonemap_draw              = create_fullscreen_draw(settings);
 }
 
 static void destroy_tonemap_resources()
 {
-  if (g_tonemap_pipeline)
-    vkDestroyPipeline(g_device, g_tonemap_pipeline, nullptr);
-  if (g_tonemap_pipeline_layout)
-    vkDestroyPipelineLayout(g_device, g_tonemap_pipeline_layout, nullptr);
-  if (g_tonemap_pool)
-    vkDestroyDescriptorPool(g_device, g_tonemap_pool, nullptr);
-  if (g_tonemap_ds_layout)
-    vkDestroyDescriptorSetLayout(g_device, g_tonemap_ds_layout, nullptr);
-  if (g_hdr_sampler)
-    vkDestroySampler(g_device, g_hdr_sampler, nullptr);
+  destroy_fullscreen_draw(g_tonemap_draw);
+  if (g_screen_nearest_sampler)
+    vkDestroySampler(g_device, g_screen_nearest_sampler, nullptr);
+}
+
+// --- Antialiasing ---
+//
+// First in the present pass, over the tonemapped and inked frame and under the
+// outline, the UI and ImGui, which stay as sharp as they were drawn.
+
+struct fxaa_push_constants_t
+{
+  float enabled  = 0.0f;
+  float subpixel = 0.0f;
+};
+
+static fullscreen_draw_t g_fxaa_draw;
+
+static void create_antialiasing_resources()
+{
+  // LINEAR: the edge walk samples between two rows to read both in one fetch.
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = VK_FILTER_LINEAR;
+  sampler_info.minFilter    = VK_FILTER_LINEAR;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &g_screen_linear_sampler) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the filtered screen target sampler");
+
+  fullscreen_draw_settings_t settings;
+  settings.name               = "fxaa";
+  settings.fragment_code      = fxaa_frag_spv;
+  settings.render_pass        = g_present_render_pass;
+  settings.input_count        = 1; // the tonemapped frame
+  settings.push_constant_size = sizeof(fxaa_push_constants_t);
+  g_fxaa_draw                 = create_fullscreen_draw(settings);
+}
+
+static void destroy_antialiasing_resources()
+{
+  destroy_fullscreen_draw(g_fxaa_draw);
+  if (g_screen_linear_sampler)
+    vkDestroySampler(g_device, g_screen_linear_sampler, nullptr);
 }
 
 // --- The selection outline ---
@@ -2890,40 +3074,6 @@ struct outline_push_constants_t
   float hovered_radius;
   float occluded_alpha;
 };
-
-static void write_outline_descriptor_sets()
-{
-  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
-  {
-    if (g_outline_sets[frame] == VK_NULL_HANDLE)
-      continue;
-
-    VkDescriptorImageInfo image{};
-    image.sampler     = g_hdr_sampler;
-    image.imageView   = g_outline_mask_view[frame];
-    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet          = g_outline_sets[frame];
-    write.dstBinding      = 0;
-    write.descriptorCount = 1;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo      = &image;
-    vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
-  }
-}
-
-static VkShaderModule create_shader_module_or_die(const uint32_t* code, size_t size,
-                                                  const char* what)
-{
-  VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-  info.codeSize         = size;
-  info.pCode            = code;
-  VkShaderModule module = VK_NULL_HANDLE;
-  if (vkCreateShaderModule(g_device, &info, nullptr, &module) != VK_SUCCESS)
-    fatal_error("[renderer] could not create the {} shader module", what);
-  return module;
-}
 
 static VkPipeline create_outline_mask_pipeline(bool skinned, bool hovered, bool visible)
 {
@@ -3037,144 +3187,17 @@ static VkPipeline create_outline_mask_pipeline(bool skinned, bool hovered, bool 
   return pipeline;
 }
 
-static VkPipeline create_outline_pipeline()
-{
-  const VkShaderModule vert_module =
-      create_shader_module_or_die(tonemap_vert_spv, sizeof(tonemap_vert_spv), "outline vertex");
-  const VkShaderModule frag_module =
-      create_shader_module_or_die(outline_frag_spv, sizeof(outline_frag_spv), "outline fragment");
-
-  VkPipelineShaderStageCreateInfo stages[] = {
-      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
-       vert_module, "main", nullptr},
-      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
-
-  VkPipelineVertexInputStateCreateInfo vertex_input{
-      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-
-  VkPipelineInputAssemblyStateCreateInfo input_assembly{
-      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-  VkPipelineViewportStateCreateInfo viewport_state{
-      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-  viewport_state.viewportCount = 1;
-  viewport_state.scissorCount  = 1;
-
-  VkPipelineRasterizationStateCreateInfo rasterizer{
-      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-  rasterizer.lineWidth   = 1.0f;
-  rasterizer.cullMode    = VK_CULL_MODE_NONE;
-  rasterizer.frontFace   = HOUSE_FRONT_FACE;
-
-  VkPipelineMultisampleStateCreateInfo multisampling{
-      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-  VkPipelineDepthStencilStateCreateInfo depth_stencil{
-      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-
-  VkPipelineColorBlendAttachmentState blend_attachment{};
-  blend_attachment.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  blend_attachment.blendEnable         = VK_TRUE;
-  blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-  blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-  blend_attachment.colorBlendOp        = VK_BLEND_OP_ADD;
-  blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-  blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-  blend_attachment.alphaBlendOp        = VK_BLEND_OP_ADD;
-
-  VkPipelineColorBlendStateCreateInfo color_blending{
-      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  color_blending.attachmentCount = 1;
-  color_blending.pAttachments    = &blend_attachment;
-
-  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-  VkPipelineDynamicStateCreateInfo dynamic_state{
-      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-  dynamic_state.dynamicStateCount = 2;
-  dynamic_state.pDynamicStates    = dynamic_states;
-
-  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-  pipeline_info.stageCount          = 2;
-  pipeline_info.pStages             = stages;
-  pipeline_info.pVertexInputState   = &vertex_input;
-  pipeline_info.pInputAssemblyState = &input_assembly;
-  pipeline_info.pViewportState      = &viewport_state;
-  pipeline_info.pRasterizationState = &rasterizer;
-  pipeline_info.pMultisampleState   = &multisampling;
-  pipeline_info.pDepthStencilState  = &depth_stencil;
-  pipeline_info.pColorBlendState    = &color_blending;
-  pipeline_info.pDynamicState       = &dynamic_state;
-  pipeline_info.layout              = g_outline_pipeline_layout;
-  pipeline_info.renderPass          = g_present_render_pass;
-  pipeline_info.subpass             = 0;
-
-  VkPipeline pipeline = VK_NULL_HANDLE;
-  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
-      VK_SUCCESS)
-    fatal_error("[renderer] could not create the outline pipeline");
-
-  vkDestroyShaderModule(g_device, frag_module, nullptr);
-  vkDestroyShaderModule(g_device, vert_module, nullptr);
-  return pipeline;
-}
-
 static void create_outline_resources()
 {
-  VkDescriptorSetLayoutBinding binding{};
-  binding.binding         = 0;
-  binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  binding.descriptorCount = 1;
-  binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  fullscreen_draw_settings_t settings;
+  settings.name               = "outline";
+  settings.fragment_code      = outline_frag_spv;
+  settings.render_pass        = g_present_render_pass;
+  settings.input_count        = 1; // the outline mask
+  settings.push_constant_size = sizeof(outline_push_constants_t);
+  settings.alpha_blend        = true;
+  g_outline_draw              = create_fullscreen_draw(settings);
 
-  VkDescriptorSetLayoutCreateInfo ds_layout_info{
-      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  ds_layout_info.bindingCount = 1;
-  ds_layout_info.pBindings    = &binding;
-  if (vkCreateDescriptorSetLayout(g_device, &ds_layout_info, nullptr, &g_outline_ds_layout) !=
-      VK_SUCCESS)
-    fatal_error("[renderer] could not create the outline descriptor set layout");
-
-  VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT};
-  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-  pool_info.maxSets       = MAX_FRAMES_IN_FLIGHT;
-  pool_info.poolSizeCount = 1;
-  pool_info.pPoolSizes    = &pool_size;
-  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_outline_pool) != VK_SUCCESS)
-    fatal_error("[renderer] could not create the outline descriptor pool");
-
-  VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
-  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
-    layouts[frame] = g_outline_ds_layout;
-
-  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-  allocation.descriptorPool     = g_outline_pool;
-  allocation.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-  allocation.pSetLayouts        = layouts;
-  if (vkAllocateDescriptorSets(g_device, &allocation, g_outline_sets) != VK_SUCCESS)
-    fatal_error("[renderer] could not allocate the outline descriptor sets");
-
-  write_outline_descriptor_sets();
-
-  VkPushConstantRange push_range{};
-  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  push_range.offset     = 0;
-  push_range.size       = sizeof(outline_push_constants_t);
-
-  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.setLayoutCount         = 1;
-  layout_info.pSetLayouts            = &g_outline_ds_layout;
-  layout_info.pushConstantRangeCount = 1;
-  layout_info.pPushConstantRanges    = &push_range;
-  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_outline_pipeline_layout) !=
-      VK_SUCCESS)
-    fatal_error("[renderer] could not create the outline pipeline layout");
-
-  g_outline_pipeline = create_outline_pipeline();
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int hovered = 0; hovered < 2; ++hovered)
       for (int visible = 0; visible < 2; ++visible)
@@ -3190,14 +3213,32 @@ static void destroy_outline_resources()
         if (g_outline_mask_pipelines[skinned][hovered][visible])
           vkDestroyPipeline(g_device, g_outline_mask_pipelines[skinned][hovered][visible],
                             nullptr);
-  if (g_outline_pipeline)
-    vkDestroyPipeline(g_device, g_outline_pipeline, nullptr);
-  if (g_outline_pipeline_layout)
-    vkDestroyPipelineLayout(g_device, g_outline_pipeline_layout, nullptr);
-  if (g_outline_pool)
-    vkDestroyDescriptorPool(g_device, g_outline_pool, nullptr);
-  if (g_outline_ds_layout)
-    vkDestroyDescriptorSetLayout(g_device, g_outline_ds_layout, nullptr);
+  destroy_fullscreen_draw(g_outline_draw);
+}
+
+// Called at init and again after every swapchain rebuild, which hands out new target views.
+static void write_screen_target_inputs()
+{
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    const VkDescriptorImageInfo tonemap_inputs[] = {
+        {g_screen_nearest_sampler, g_hdr_target.views[frame],
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {g_screen_nearest_sampler, g_depth_view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
+        {g_screen_nearest_sampler, g_scene_data_images[SCENE_NORMAL_IMAGE].views[frame],
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    write_fullscreen_draw_inputs(g_tonemap_draw, frame, tonemap_inputs);
+
+    const VkDescriptorImageInfo fxaa_inputs[] = {
+        {g_screen_linear_sampler, g_tonemapped_target.views[frame],
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    write_fullscreen_draw_inputs(g_fxaa_draw, frame, fxaa_inputs);
+
+    const VkDescriptorImageInfo outline_inputs[] = {
+        {g_screen_nearest_sampler, g_outline_mask_target.views[frame],
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    write_fullscreen_draw_inputs(g_outline_draw, frame, outline_inputs);
+  }
 }
 
 // --- The screen background ---
@@ -3211,116 +3252,60 @@ struct background_push_constants_t
   float        time = 0.0f;
 };
 
-static VkPipelineLayout g_background_pipeline_layout = VK_NULL_HANDLE;
-static VkPipeline       g_background_pipeline        = VK_NULL_HANDLE;
-
-static VkPipeline create_background_pipeline()
-{
-  const VkShaderModule vert_module =
-      create_shader_module_or_die(tonemap_vert_spv, sizeof(tonemap_vert_spv), "background vertex");
-  const VkShaderModule frag_module = create_shader_module_or_die(
-      background_squares_frag_spv, sizeof(background_squares_frag_spv), "background fragment");
-
-  VkPipelineShaderStageCreateInfo stages[] = {
-      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
-       vert_module, "main", nullptr},
-      {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-       VK_SHADER_STAGE_FRAGMENT_BIT, frag_module, "main", nullptr}};
-
-  VkPipelineVertexInputStateCreateInfo vertex_input{
-      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-
-  VkPipelineInputAssemblyStateCreateInfo input_assembly{
-      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-  VkPipelineViewportStateCreateInfo viewport_state{
-      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-  viewport_state.viewportCount = 1;
-  viewport_state.scissorCount  = 1;
-
-  VkPipelineRasterizationStateCreateInfo rasterizer{
-      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-  rasterizer.lineWidth   = 1.0f;
-  rasterizer.cullMode    = VK_CULL_MODE_NONE;
-  rasterizer.frontFace   = HOUSE_FRONT_FACE;
-
-  VkPipelineMultisampleStateCreateInfo multisampling{
-      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-  VkPipelineDepthStencilStateCreateInfo depth_stencil{
-      VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-
-  VkPipelineColorBlendAttachmentState blend_attachment{};
-  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-
-  VkPipelineColorBlendStateCreateInfo color_blending{
-      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  color_blending.attachmentCount = 1;
-  color_blending.pAttachments    = &blend_attachment;
-
-  VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-  VkPipelineDynamicStateCreateInfo dynamic_state{
-      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-  dynamic_state.dynamicStateCount = 2;
-  dynamic_state.pDynamicStates    = dynamic_states;
-
-  VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-  pipeline_info.stageCount          = 2;
-  pipeline_info.pStages             = stages;
-  pipeline_info.pVertexInputState   = &vertex_input;
-  pipeline_info.pInputAssemblyState = &input_assembly;
-  pipeline_info.pViewportState      = &viewport_state;
-  pipeline_info.pRasterizationState = &rasterizer;
-  pipeline_info.pMultisampleState   = &multisampling;
-  pipeline_info.pDepthStencilState  = &depth_stencil;
-  pipeline_info.pColorBlendState    = &color_blending;
-  pipeline_info.pDynamicState       = &dynamic_state;
-  pipeline_info.layout              = g_background_pipeline_layout;
-  pipeline_info.renderPass          = g_present_render_pass;
-  pipeline_info.subpass             = 0;
-
-  VkPipeline pipeline = VK_NULL_HANDLE;
-  if (vkCreateGraphicsPipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
-      VK_SUCCESS)
-    fatal_error("[renderer] could not create the background pipeline");
-
-  vkDestroyShaderModule(g_device, frag_module, nullptr);
-  vkDestroyShaderModule(g_device, vert_module, nullptr);
-  return pipeline;
-}
+static fullscreen_draw_t g_background_draw;
 
 static void create_background_resources()
 {
-  VkPushConstantRange push_range{};
-  push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  push_range.offset     = 0;
-  push_range.size       = sizeof(background_push_constants_t);
-
-  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.pushConstantRangeCount = 1;
-  layout_info.pPushConstantRanges    = &push_range;
-  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_background_pipeline_layout) !=
-      VK_SUCCESS)
-    fatal_error("[renderer] could not create the background pipeline layout");
-
-  g_background_pipeline = create_background_pipeline();
+  fullscreen_draw_settings_t settings;
+  settings.name               = "background";
+  settings.fragment_code      = background_squares_frag_spv;
+  settings.render_pass        = g_present_render_pass;
+  settings.push_constant_size = sizeof(background_push_constants_t);
+  g_background_draw           = create_fullscreen_draw(settings);
 }
 
-static void destroy_background_resources()
-{
-  if (g_background_pipeline)
-    vkDestroyPipeline(g_device, g_background_pipeline, nullptr);
-  if (g_background_pipeline_layout)
-    vkDestroyPipelineLayout(g_device, g_background_pipeline_layout, nullptr);
-}
+static void destroy_background_resources() { destroy_fullscreen_draw(g_background_draw); }
 
 // ---------------------------------------------------------------------------
 // Public GPU texture upload / destroy
 // ---------------------------------------------------------------------------
+
+static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32_t first_level,
+                                      uint32_t level_count, VkImageLayout old_layout,
+                                      VkImageLayout new_layout)
+{
+  const auto access_of = [](VkImageLayout layout) -> VkAccessFlags {
+    switch (layout)
+    {
+    case VK_IMAGE_LAYOUT_UNDEFINED:                return 0;
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:     return VK_ACCESS_TRANSFER_WRITE_BIT;
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:     return VK_ACCESS_TRANSFER_READ_BIT;
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return VK_ACCESS_SHADER_READ_BIT;
+    default: fatal_error("[renderer] move_mip_levels_to_layout: layout {} is not one a texture "
+                         "upload passes through", (int)layout);
+    }
+  };
+  const auto stage_of = [](VkImageLayout layout) -> VkPipelineStageFlags {
+    switch (layout)
+    {
+    case VK_IMAGE_LAYOUT_UNDEFINED:                return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    default:                                       return VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+  };
+
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image               = image;
+  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, first_level, level_count, 0, 1};
+  barrier.oldLayout           = old_layout;
+  barrier.newLayout           = new_layout;
+  barrier.srcAccessMask       = access_of(old_layout);
+  barrier.dstAccessMask       = access_of(new_layout);
+  vkCmdPipelineBarrier(cmd, stage_of(old_layout), stage_of(new_layout), 0, 0, nullptr, 0, nullptr,
+                       1, &barrier);
+}
 
 gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
 {
@@ -3336,6 +3321,16 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   const int w = texture->width;
   const int h = texture->height;
   VkDeviceSize image_size = (VkDeviceSize)w * h * 4; // always RGBA (channels==4)
+  const uint32_t mip_count = (uint32_t)std::bit_width((uint32_t)std::max(w, h));
+
+  VkFormatProperties format_properties{};
+  vkGetPhysicalDeviceFormatProperties(g_physical_device, image_format, &format_properties);
+  const VkFormatFeatureFlags needed_to_blit_mips = VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+                                                   VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                                                   VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+  if ((format_properties.optimalTilingFeatures & needed_to_blit_mips) != needed_to_blit_mips)
+    fatal_error("[renderer] upload_texture: this GPU cannot blit format {} with a linear filter, "
+                "which building a texture's mips needs", (int)image_format);
 
   // Staging buffer
   VkBuffer staging_buf;
@@ -3353,11 +3348,12 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   img_info.imageType     = VK_IMAGE_TYPE_2D;
   img_info.format        = image_format;
   img_info.extent        = {(uint32_t)w, (uint32_t)h, 1};
-  img_info.mipLevels     = 1;
+  img_info.mipLevels     = mip_count;
   img_info.arrayLayers   = 1;
   img_info.samples       = VK_SAMPLE_COUNT_1_BIT;
   img_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-  img_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  img_info.usage         = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                           VK_IMAGE_USAGE_SAMPLED_BIT;
   img_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
   img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (vkCreateImage(g_device, &img_info, nullptr, &result.image) != VK_SUCCESS)
@@ -3376,21 +3372,10 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   vkAllocateMemory(g_device, &alloc, nullptr, &result.memory);
   vkBindImageMemory(g_device, result.image, result.memory, 0);
 
-  // Transition UNDEFINED → TRANSFER_DST, copy, transition → SHADER_READ_ONLY
   VkCommandBuffer cmd = begin_single_command();
 
-  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image               = result.image;
-  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-
-  barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
-  barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  barrier.srcAccessMask = 0;
-  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+  move_mip_levels_to_layout(cmd, result.image, 0, mip_count, VK_IMAGE_LAYOUT_UNDEFINED,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
   VkBufferImageCopy region{};
   region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -3398,12 +3383,35 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   vkCmdCopyBufferToImage(cmd, staging_buf, result.image,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-  barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+  int32_t source_width  = w;
+  int32_t source_height = h;
+  for (uint32_t level = 1; level < mip_count; ++level)
+  {
+    const int32_t level_width  = std::max(source_width / 2, 1);
+    const int32_t level_height = std::max(source_height / 2, 1);
+
+    move_mip_levels_to_layout(cmd, result.image, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+    VkImageBlit blit{};
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
+    blit.srcOffsets[1]  = {source_width, source_height, 1};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+    blit.dstOffsets[1]  = {level_width, level_height, 1};
+    vkCmdBlitImage(cmd, result.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, result.image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+    source_width  = level_width;
+    source_height = level_height;
+  }
+
+  if (mip_count > 1)
+    move_mip_levels_to_layout(cmd, result.image, 0, mip_count - 1,
+                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  move_mip_levels_to_layout(cmd, result.image, mip_count - 1, 1,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   end_single_command(cmd);
   vkDestroyBuffer(g_device, staging_buf, nullptr);
@@ -3414,16 +3422,20 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   view_info.image            = result.image;
   view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
   view_info.format           = image_format;
-  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_count, 0, 1};
   vkCreateImageView(g_device, &view_info, nullptr, &result.view);
 
-  // Sampler — linear, repeat
+  // Sampler — trilinear, anisotropic, repeat
   VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-  sampler_info.magFilter    = VK_FILTER_LINEAR;
-  sampler_info.minFilter    = VK_FILTER_LINEAR;
-  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.magFilter        = VK_FILTER_LINEAR;
+  sampler_info.minFilter        = VK_FILTER_LINEAR;
+  sampler_info.mipmapMode       = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  sampler_info.maxLod           = VK_LOD_CLAMP_NONE;
+  sampler_info.anisotropyEnable = g_texture_anisotropy > 0.0f ? VK_TRUE : VK_FALSE;
+  sampler_info.maxAnisotropy    = g_texture_anisotropy;
+  sampler_info.addressModeU     = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeV     = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  sampler_info.addressModeW     = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   vkCreateSampler(g_device, &sampler_info, nullptr, &result.sampler);
 
   return result;
@@ -4052,11 +4064,13 @@ static VkPipeline create_skybox_pipeline()
   VkPipelineColorBlendAttachmentState blend_attachment{};
   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  const scene_blend_attachments_t blend_attachments =
+      scene_blend_attachments(blend_attachment, false);
 
   VkPipelineColorBlendStateCreateInfo color_blending{
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  color_blending.attachmentCount = 1;
-  color_blending.pAttachments    = &blend_attachment;
+  color_blending.attachmentCount = blend_attachments.size();
+  color_blending.pAttachments    = blend_attachments.data;
 
   VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dynamic_state{
@@ -6080,9 +6094,12 @@ static void create_particle_graphics_pipeline()
   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+  const scene_blend_attachments_t blend_attachments =
+      scene_blend_attachments(blend_attachment, false);
+
   VkPipelineColorBlendStateCreateInfo blend_state{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  blend_state.attachmentCount = 1;
-  blend_state.pAttachments = &blend_attachment;
+  blend_state.attachmentCount = blend_attachments.size();
+  blend_state.pAttachments = blend_attachments.data;
 
   VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dynamic_state{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
@@ -6520,6 +6537,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Debug_Channel::reflection_capture:
     scene.debug_flags = DEBUG_FLAG_RENDER_REFLECTION_CAPTURE;
     break;
+  case cvars::Debug_Channel::ink_normals: break; // the tonemap pass shows the image, the scene draws as usual
   }
 
   return scene;
@@ -7195,6 +7213,11 @@ static void apply_viewport(VkCommandBuffer cmd, const viewport_t &viewport)
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
+static void apply_whole_screen_viewport(VkCommandBuffer cmd)
+{
+  apply_viewport(cmd, viewport_t{{0.0f, 0.0f}, {1.0f, 1.0f}});
+}
+
 static bool pass_has_outlined_draws(const view_pass_t& pass)
 {
   for (const mesh_draw_t& draw : pass.draws)
@@ -7254,9 +7277,6 @@ static void record_outline_mask_draws(VkCommandBuffer cmd, const view_pass_t& pa
 static void record_outline_composite(VkCommandBuffer cmd, const view_pass_t& pass)
 {
   apply_viewport(cmd, pass.view.viewport);
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_outline_pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_outline_pipeline_layout, 0, 1,
-                          &g_outline_sets[g_current_frame_idx_in_swapchain], 0, nullptr);
 
   const color_t selected = pass.selected_outline_color;
   const color_t hovered  = pass.hovered_outline_color;
@@ -7266,9 +7286,7 @@ static void record_outline_composite(VkCommandBuffer cmd, const view_pass_t& pas
       OUTLINE_SELECTED_RADIUS_PIXELS * std::max(1.0f, display_scale()),
       OUTLINE_HOVERED_RADIUS_PIXELS * std::max(1.0f, display_scale()),
       OUTLINE_OCCLUDED_ALPHA};
-  vkCmdPushConstants(cmd, g_outline_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
-                     &push);
-  vkCmdDraw(cmd, 3, 1, 0, 0);
+  record_fullscreen_draw(cmd, g_outline_draw, push);
 }
 
 view_matrices_t view_matrices(const render_view_t &view)
@@ -7595,23 +7613,11 @@ static void record_debug_polygons(VkCommandBuffer cmd, const debug_draw_list_t &
 // editor panel is not a HUD.
 static void record_background_draw(VkCommandBuffer cmd, float seconds)
 {
-  VkViewport viewport{};
-  viewport.width    = (float)g_swapchain_extent.width;
-  viewport.height   = (float)g_swapchain_extent.height;
-  viewport.maxDepth = 1.0f;
-  vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-  VkRect2D scissor{};
-  scissor.extent = g_swapchain_extent;
-  vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_background_pipeline);
+  apply_whole_screen_viewport(cmd);
 
   const background_push_constants_t push{
       {(float)g_swapchain_extent.width, (float)g_swapchain_extent.height}, seconds};
-  vkCmdPushConstants(cmd, g_background_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                     sizeof(push), &push);
-  vkCmdDraw(cmd, 3, 1, 0, 0);
+  record_fullscreen_draw(cmd, g_background_draw, push);
 }
 
 static void record_ui_draw_list(VkCommandBuffer cmd, const ui_draw_list_t &ui)
@@ -7917,6 +7923,21 @@ bool init(SDL_Window *window)
     std::print("[renderer] wideLines NOT supported — lines stay 1px\n");
   }
 
+  if (supported_features.samplerAnisotropy)
+  {
+    VkPhysicalDeviceProperties device_properties{};
+    vkGetPhysicalDeviceProperties(g_physical_device, &device_properties);
+    enabled_features.samplerAnisotropy = VK_TRUE;
+    g_texture_anisotropy =
+        std::min(WANTED_TEXTURE_ANISOTROPY, device_properties.limits.maxSamplerAnisotropy);
+    std::print("[renderer] samplerAnisotropy supported — textures filter at {}x\n",
+               g_texture_anisotropy);
+  }
+  else
+  {
+    std::print("[renderer] samplerAnisotropy NOT supported — textures use mips alone\n");
+  }
+
   // The reflection captures are a samplerCubeArray (gate 6 step 4), and every
   // pass set binds one -- a device without the feature cannot build the pass
   // layout's images at all, so it is refused here with its name rather than at
@@ -7925,6 +7946,12 @@ bool init(SDL_Window *window)
     fatal_error("[renderer] this GPU has no imageCubeArray feature, which the reflection "
                 "captures need");
   enabled_features.imageCubeArray = VK_TRUE;
+
+  // The scene pass writes its data images from opaque pipelines only, so its blend states differ per attachment.
+  if (!supported_features.independentBlend)
+    fatal_error("[renderer] this GPU has no independentBlend feature, which the scene pass's "
+                "normal image needs");
+  enabled_features.independentBlend = VK_TRUE;
 
   std::vector<const char *> device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 #ifdef __APPLE__
@@ -8030,7 +8057,7 @@ bool init(SDL_Window *window)
   // The SCENE pass. Its colour attachment is the HDR target, not the swapchain,
   // which is the whole of lighting_def.md decision J: an 8-bit attachment clips
   // every value above 1.0 before anything can map it.
-  VkAttachmentDescription attachments[2] = {};
+  VkAttachmentDescription attachments[2 + SCENE_DATA_IMAGE_COUNT] = {};
 
   attachments[0].format = HDR_TARGET_FORMAT;
   attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -8044,15 +8071,29 @@ bool init(SDL_Window *window)
   attachments[1].format = g_depth_format;
   attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
   attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE; // the outline mask pass tests against it
+  attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE; // the outline mask pass tests against it, the ink reads it
   attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-  VkAttachmentReference color_attachment_ref{};
-  color_attachment_ref.attachment = 0;
-  color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  // The data images follow the depth, in create_screen_target's framebuffer order.
+  VkAttachmentReference color_attachment_refs[SCENE_COLOR_ATTACHMENT_COUNT] = {};
+  color_attachment_refs[0] = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+  for (uint32_t index = 0; index < SCENE_DATA_IMAGE_COUNT; ++index)
+  {
+    VkAttachmentDescription& data_attachment = attachments[2 + index];
+    data_attachment.format         = g_scene_data_images[index].format;
+    data_attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+    data_attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    data_attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    data_attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    data_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    data_attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    data_attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    color_attachment_refs[1 + index] = {2 + index, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+  }
 
   VkAttachmentReference depth_attachment_ref{};
   depth_attachment_ref.attachment = 1;
@@ -8060,8 +8101,8 @@ bool init(SDL_Window *window)
 
   VkSubpassDescription subpass{};
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-  subpass.colorAttachmentCount = 1;
-  subpass.pColorAttachments = &color_attachment_ref;
+  subpass.colorAttachmentCount = SCENE_COLOR_ATTACHMENT_COUNT;
+  subpass.pColorAttachments = color_attachment_refs;
   subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
   // Two dependencies now. The first is what was always here; the second is the
@@ -8082,14 +8123,18 @@ bool init(SDL_Window *window)
 
   dependencies[1].srcSubpass = 0;
   dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-  dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-  dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
 
   VkRenderPassCreateInfo render_pass_info{};
   render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  render_pass_info.attachmentCount = 2;
+  render_pass_info.attachmentCount = 2 + SCENE_DATA_IMAGE_COUNT;
   render_pass_info.pAttachments = attachments;
   render_pass_info.subpassCount = 1;
   render_pass_info.pSubpasses = &subpass;
@@ -8103,9 +8148,15 @@ bool init(SDL_Window *window)
     return false;
   }
 
-  // The PRESENT pass: tonemap, then the UI, then ImGui, into the sRGB swapchain.
+  // The TONEMAPPED pass: the curve and the ink, into a target of the swapchain's
+  // format so the sRGB encode stays in the attachment.
+  g_tonemapped_target.format = g_swapchain_image_format;
+  g_tonemapped_render_pass =
+      create_sampled_color_render_pass(g_swapchain_image_format, "tonemapped");
+
+  // The PRESENT pass: antialiasing, then the UI, then ImGui, into the sRGB swapchain.
   // No depth attachment -- nothing in it is three-dimensional -- and no colour
-  // clear either, since the tonemap draw covers every pixel.
+  // clear either, since the antialiasing draw covers every pixel.
   VkAttachmentDescription present_attachment{};
   present_attachment.format = g_swapchain_image_format;
   present_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -8162,14 +8213,14 @@ bool init(SDL_Window *window)
     outline_attachments[1].format         = g_depth_format;
     outline_attachments[1].samples        = VK_SAMPLE_COUNT_1_BIT;
     outline_attachments[1].loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
-    outline_attachments[1].storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    outline_attachments[1].storeOp        = VK_ATTACHMENT_STORE_OP_STORE; // the ink reads it after this pass
     outline_attachments[1].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     outline_attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    outline_attachments[1].initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    outline_attachments[1].finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    outline_attachments[1].initialLayout  = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    outline_attachments[1].finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
     VkAttachmentReference outline_color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-    VkAttachmentReference outline_depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference outline_depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
 
     VkSubpassDescription outline_subpass{};
     outline_subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -8214,9 +8265,8 @@ bool init(SDL_Window *window)
   }
 
   create_depth_resources();
-  create_hdr_targets();
-  create_outline_targets();
-  create_framebuffers();
+  create_screen_targets();
+  create_swapchain_framebuffers();
 
   // Command Pool
   VkCommandPoolCreateInfo command_pool_info{};
@@ -8237,8 +8287,10 @@ bool init(SDL_Window *window)
   create_mesh_resources();
   create_ui_resources(); // after create_mesh_resources -- it borrows g_ui_texture_ds_layout
   create_tonemap_resources();
-  create_outline_resources(); // borrows the mesh pipeline layout and the HDR sampler
+  create_antialiasing_resources();
+  create_outline_resources(); // borrows the mesh pipeline layout
   create_background_resources();
+  write_screen_target_inputs();
   create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
   create_default_resources();
@@ -8377,6 +8429,7 @@ void shutdown()
   destroy_debug_resources();
   destroy_ui_resources();
   destroy_tonemap_resources();
+  destroy_antialiasing_resources();
   destroy_outline_resources();
   destroy_background_resources();
   destroy_skybox_resources();
@@ -8387,6 +8440,7 @@ void shutdown()
   destroy_frame_uniform_allocator(g_skinning_uniforms);
 
   vkDestroyRenderPass(g_device, g_scene_render_pass, nullptr);
+  vkDestroyRenderPass(g_device, g_tonemapped_render_pass, nullptr);
   vkDestroyRenderPass(g_device, g_present_render_pass, nullptr);
   vkDestroyRenderPass(g_device, g_outline_mask_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);
@@ -8490,7 +8544,8 @@ bool new_frame()
 }
 
 void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
-                  const tonemap_settings_t &tonemap, const shadow_settings_t &shadows)
+                  const tonemap_settings_t &tonemap, const look_settings_t &look,
+                  const antialiasing_settings_t &antialiasing, const shadow_settings_t &shadows)
 {
   VkCommandBuffer cmd = g_command_buffers[g_current_frame_idx_in_swapchain];
 
@@ -8543,6 +8598,17 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     }
 
     scene_uniform_t scene = build_scene_uniform(pass);
+    scene.look[0]         = look.cel ? 1.0f : 0.0f;
+    scene.look[1]         = look.cel_terminator;
+    scene.look[2]         = look.cel_shadow_edge;
+    scene.look[3]         = std::max(look.cel_softness, 0.0001f);
+    scene.cel_shadow_tint[0] = look.cel_shadow_tint.x;
+    scene.cel_shadow_tint[1] = look.cel_shadow_tint.y;
+    scene.cel_shadow_tint[2] = look.cel_shadow_tint.z;
+    scene.cel_hatch[0]       = std::clamp(look.cel_hatch, 0.0f, 1.0f);
+    scene.cel_hatch[1]       = std::max(look.cel_hatch_spacing_pixels, 2.0f);
+    scene.cel_hatch[2]       = look.cel_hatch_edge;
+    scene.cel_hatch[3]       = std::max(look.cel_hatch_width_pixels, 0.0f);
     assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
     prepared.scene_block_offset = write_scene_block(scene);
     g_prepared_passes.push_back(prepared);
@@ -8565,14 +8631,14 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   //    swapchain image: the target belongs to the frame that renders it.
   VkRenderPassBeginInfo render_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
   render_pass_info.renderPass        = g_scene_render_pass;
-  render_pass_info.framebuffer       = g_scene_framebuffers[g_current_frame_idx_in_swapchain];
+  render_pass_info.framebuffer       = g_hdr_target.framebuffers[g_current_frame_idx_in_swapchain];
   render_pass_info.renderArea.offset = {0, 0};
   render_pass_info.renderArea.extent = g_swapchain_extent;
 
-  VkClearValue clear_values[2];
+  VkClearValue clear_values[2 + SCENE_DATA_IMAGE_COUNT] = {};
   clear_values[0].color            = {{0.1f, 0.1f, 0.1f, 1.0f}};
   clear_values[1].depthStencil     = {1.0f, 0};
-  render_pass_info.clearValueCount = 2;
+  render_pass_info.clearValueCount = 2 + SCENE_DATA_IMAGE_COUNT;
   render_pass_info.pClearValues    = clear_values;
 
   vkCmdBeginRenderPass(cmd, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -8627,7 +8693,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   {
     VkRenderPassBeginInfo outline_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     outline_pass_info.renderPass        = g_outline_mask_render_pass;
-    outline_pass_info.framebuffer       = g_outline_mask_framebuffers[g_current_frame_idx_in_swapchain];
+    outline_pass_info.framebuffer =
+        g_outline_mask_target.framebuffers[g_current_frame_idx_in_swapchain];
     outline_pass_info.renderArea.extent = g_swapchain_extent;
 
     VkClearValue outline_clear{};
@@ -8650,8 +8717,38 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     vkCmdEndRenderPass(cmd);
   }
 
-  // 6. The PRESENT pass. The tonemap draw is first and covers every pixel, which
-  //    is why the attachment needs no clear.
+  // 6. The TONEMAPPED pass: the curve and the ink. The draw covers every pixel,
+  //    which is why the attachment needs no clear.
+  VkRenderPassBeginInfo tonemapped_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+  tonemapped_pass_info.renderPass = g_tonemapped_render_pass;
+  tonemapped_pass_info.framebuffer =
+      g_tonemapped_target.framebuffers[g_current_frame_idx_in_swapchain];
+  tonemapped_pass_info.renderArea.extent = g_swapchain_extent;
+
+  vkCmdBeginRenderPass(cmd, &tonemapped_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+  // The full framebuffer, not a view_pass_t viewport: what the scene pass wrote
+  // is one image whatever the passes inside it were.
+  apply_whole_screen_viewport(cmd);
+
+  bool showing_surface_normals = false;
+  for (const view_pass_t& pass : passes)
+    showing_surface_normals =
+        showing_surface_normals || pass.debug_channel == cvars::Debug_Channel::ink_normals;
+
+  const float radians_per_degree = 3.14159265f / 180.0f;
+  const tonemap_push_constants_t tonemap_push{
+      tonemap.exposure,
+      look.ink ? 1.0f : 0.0f,
+      look.ink_threshold,
+      std::max(look.ink_width_pixels, 1),
+      std::clamp(look.ink_crease_degrees, 1.0f, 180.0f) * radians_per_degree,
+      showing_surface_normals ? 1 : 0};
+  record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
+  vkCmdEndRenderPass(cmd);
+
+  // 7. The PRESENT pass. The antialiasing draw is first and covers every pixel,
+  //    for the same reason; switched off it copies the frame through.
   VkRenderPassBeginInfo present_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
   present_pass_info.renderPass        = g_present_render_pass;
   present_pass_info.framebuffer       = g_swapchain_framebuffers[g_image_index];
@@ -8660,26 +8757,10 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   vkCmdBeginRenderPass(cmd, &present_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-  // The full framebuffer, not a view_pass_t viewport: what the scene pass wrote
-  // is one image whatever the passes inside it were.
-  VkViewport tonemap_viewport{};
-  tonemap_viewport.width    = (float)g_swapchain_extent.width;
-  tonemap_viewport.height   = (float)g_swapchain_extent.height;
-  tonemap_viewport.maxDepth = 1.0f;
-  vkCmdSetViewport(cmd, 0, 1, &tonemap_viewport);
-
-  VkRect2D tonemap_scissor{};
-  tonemap_scissor.extent = g_swapchain_extent;
-  vkCmdSetScissor(cmd, 0, 1, &tonemap_scissor);
-
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_tonemap_pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_tonemap_pipeline_layout, 0, 1,
-                          &g_tonemap_sets[g_current_frame_idx_in_swapchain], 0, nullptr);
-
-  const tonemap_push_constants_t tonemap_push{tonemap.exposure};
-  vkCmdPushConstants(cmd, g_tonemap_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                     sizeof(tonemap_push), &tonemap_push);
-  vkCmdDraw(cmd, 3, 1, 0, 0);
+  apply_whole_screen_viewport(cmd);
+  const fxaa_push_constants_t fxaa_push{antialiasing.fxaa ? 1.0f : 0.0f,
+                                        std::clamp(antialiasing.fxaa_subpixel, 0.0f, 1.0f)};
+  record_fullscreen_draw(cmd, g_fxaa_draw, fxaa_push);
 
   // Past the curve for the UI's reason: the outline colour is authored in display space.
   if (any_outlined)

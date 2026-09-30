@@ -179,37 +179,4 @@ vec3 lightmap_indirect_diffuse(vec3 N)
     return max(irradiance, vec3(0.0)) / PI;
 }
 
-// The diffuse half of the four, for the paths with no BRDF to hand them to:
-// grid, blend and the non-PBR arm of lit. Lambert against the SHADED normal with
-// the real light direction, which is the whole point of storing a visibility --
-// the same light through shade_direct on the PBR path composes to the same
-// number at metallic 0 and no maps.
-vec3 lightmap_direct_diffuse(vec3 N, vec3 world_position)
-{
-    vec3 diffuse  = vec3(0.0);
-    lightmap_coverage_t coverage = lightmap_coverage();
-
-    for (int channel = 0; channel < LIGHTMAP_LIGHTS_PER_CHART; ++channel)
-    {
-        int slot = lightmap_chart_slot(channel);
-        if (slot < 0 || lightmap_coverage_strength(coverage.slots[channel]) <= 0.0)
-            continue;
-
-        Light         light   = scene.lights[slot];
-        Light_Arrival arrival = light_arrival(light, world_position);
-
-        // Atlas visibility times the shadow map (decision K): independent
-        // blockers, so the product counts no occluder twice. The atlas half is a
-        // COLOUR -- what the glass on the way here let through -- so it filters
-        // the radiance rather than scaling it.
-        vec3  visibility       = coverage.slots[channel] *
-                                 shadow_visibility(light, arrival, world_position, N);
-        float normal_dot_light = max(dot(N, arrival.direction), 0.0);
-        diffuse += light.radiance.rgb * visibility *
-                   (arrival.attenuation * normal_dot_light) / PI;
-    }
-
-    return diffuse;
-}
-
 #endif // LIGHTMAP_GLSL

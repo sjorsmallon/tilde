@@ -25,6 +25,7 @@ struct Extending_Platform_Entity : Entity
   float solid_seconds;
   float half_width;
   float half_thickness;
+  float passable_seconds;
   Render render;
 };
 

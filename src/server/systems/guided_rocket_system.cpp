@@ -88,13 +88,15 @@ void solidify_flight_path(server_context_t& context, const ended_flight_t& fligh
       return;
     }
 
-    platform->position             = segment.start;
-    platform->orientation          = segment.orientation;
-    platform->length               = segment.length;
-    platform->half_width           = segment.half_width;
-    platform->spawned_tick         = spawned_tick;
-    platform->projectile.owner_uid = flight.pilot_uid;
-    platform->projectile.weapon_id = flight.weapon_id;
+    platform->position              = segment.start;
+    platform->orientation           = segment.orientation;
+    platform->length                = segment.length;
+    platform->half_width            = segment.half_width;
+    platform->passable_seconds      = 0.f;
+    platform->render.material.color = segment.color;
+    platform->spawned_tick          = spawned_tick;
+    platform->projectile.owner_uid  = flight.pilot_uid;
+    platform->projectile.weapon_id  = flight.weapon_id;
 
     spawned_tick += shared::extending_platform_extend_ticks(*platform, tick_interval_seconds);
   }

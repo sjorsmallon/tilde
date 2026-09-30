@@ -22,6 +22,7 @@ struct Platform_Entity : Entity
   float flight_seconds;
   float solid_seconds;
   linalg::vec3f half_extents;
+  linalg::vec3f half_extents_at_launch;
   Render render;
 };
 

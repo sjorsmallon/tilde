@@ -6,6 +6,7 @@
 #include "client_api.hpp"
 #include "console.hpp"
 #include "hud/announcement.hpp"
+#include "look_panel.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
 #include "ui/font.hpp"
@@ -242,6 +243,7 @@ bool Tick()
                          renderer::display_scale(), announcement);
 
   state_manager::draw_imgui_panels();
+  draw_look_panel(*state_manager::get_client_context().cvars);
 
   // Global console Overlay
   if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
@@ -254,6 +256,23 @@ bool Tick()
     FRAME_ZONE("renderer::render_frame (submit + present)");
     const cvars::cvar_state_t &cvars = *state_manager::get_client_context().cvars;
     const renderer::tonemap_settings_t tonemap{cvars.r_exposure};
+    renderer::look_settings_t look;
+    look.cel              = cvars.r_stylized && cvars.r_cel;
+    look.cel_terminator   = cvars.r_cel_terminator;
+    look.cel_shadow_edge  = cvars.r_cel_shadow_edge;
+    look.cel_softness     = cvars.r_cel_softness;
+    look.cel_shadow_tint  = {cvars.r_cel_shadow_red, cvars.r_cel_shadow_green,
+                             cvars.r_cel_shadow_blue};
+    look.cel_hatch                = cvars.r_cel_hatch;
+    look.cel_hatch_spacing_pixels = cvars.r_cel_hatch_spacing;
+    look.cel_hatch_width_pixels   = cvars.r_cel_hatch_width;
+    look.cel_hatch_edge           = cvars.r_cel_hatch_edge;
+    look.ink              = cvars.r_stylized && cvars.r_ink;
+    look.ink_threshold    = cvars.r_ink_threshold;
+    look.ink_width_pixels = cvars.r_ink_width;
+    look.ink_crease_degrees = cvars.r_ink_crease_degrees;
+
+    const renderer::antialiasing_settings_t antialiasing{cvars.r_fxaa, cvars.r_fxaa_subpixel};
 
     renderer::shadow_settings_t shadows;
     shadows.map_size             = (uint32_t)std::max(cvars.r_shadow_map_size, 0);
@@ -262,7 +281,7 @@ bool Tick()
     shadows.bias_slope           = cvars.r_shadow_bias_slope;
     shadows.normal_offset_texels = cvars.r_shadow_normal_offset;
     shadows.pcf_radius           = cvars.r_shadow_pcf_radius;
-    shadows.pcss                 = cvars.r_shadow_pcss;
+    shadows.pcss                 = cvars.r_shadow_pcss && !look.cel;
     shadows.pcss_max_radius_texels = cvars.r_shadow_pcss_max_radius;
     shadows.debug_light_uid      = (shared::entity_uid_t)std::max(cvars.r_shadow_debug_light, 0);
     shadows.cascade_count         = (uint32_t)std::max(cvars.r_shadow_cascade_count, 1);
@@ -271,7 +290,7 @@ bool Tick()
     shadows.cascade_blend         = cvars.r_shadow_cascade_blend;
     shadows.cascade_caster_extent = cvars.r_shadow_cascade_caster_extent;
     shadows.freeze_cascades       = cvars.r_shadow_freeze;
-    renderer::render_frame(frame_passes, frame_ui, tonemap, shadows);
+    renderer::render_frame(frame_passes, frame_ui, tonemap, look, antialiasing, shadows);
   }
 
   // WHAT WAS ON SCREEN, recorded at the moment it becomes true. A shot is

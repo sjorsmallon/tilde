@@ -1,5 +1,7 @@
 #include "flight_path.hpp"
 
+#include "color_map.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -53,6 +55,19 @@ segments_of_flight_path(Span<const linalg::vec3f> vertices, const flight_path_se
   std::vector<flight_path_segment_t> segments;
   const linalg::vec3f                dropped = {0.f, -settings.drop, 0.f};
 
+  float distance_to_last_segment = 0.f;
+  float distance_along_path      = 0.f;
+  for (size_t index = 1; index < vertices.size(); ++index)
+  {
+    const float length = linalg::length(vertices[index] - vertices[index - 1]);
+    if (length < SHORTEST_EDGE)
+      continue;
+    distance_to_last_segment = distance_along_path;
+    distance_along_path += length;
+  }
+
+  // The first segment is the map's first colour and the last its last, the ones between by where they start.
+  distance_along_path = 0.f;
   for (size_t index = 1; index < vertices.size(); ++index)
   {
     const linalg::vec3f edge   = vertices[index] - vertices[index - 1];
@@ -60,12 +75,16 @@ segments_of_flight_path(Span<const linalg::vec3f> vertices, const flight_path_se
     if (length < SHORTEST_EDGE)
       continue;
 
+    const float fraction_along_path =
+        distance_to_last_segment > 0.f ? distance_along_path / distance_to_last_segment : 0.f;
     const linalg::view_angles_t facing = linalg::view_angles_from_direction(edge);
     segments.push_back(
         {.start       = vertices[index - 1] + dropped,
          .orientation = linalg::from_view_angles(facing.yaw_degrees, facing.pitch_degrees),
          .length      = length + settings.joint_overlap,
-         .half_width  = settings.half_width});
+         .half_width  = settings.half_width,
+         .color       = sample_color_map(settings.colors, fraction_along_path)});
+    distance_along_path += length;
   }
   return segments;
 }

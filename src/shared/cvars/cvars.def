@@ -487,7 +487,7 @@ Map :: cvars {
     next_map: string<128> = ""                @Server      "Next map to load. not immediate, but after this map is done (whatever that means)."
 }
 
-Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture }
+Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals }
 
 
 Debugging :: cvars {
@@ -498,7 +498,7 @@ Debugging :: cvars {
     // "which cores am I on" is not a thing worth making settable mid-session.
     pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
 
-    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture)"
+    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals)"
 
     // The tonemap pass multiplies the HDR target by this before the curve
     // (lighting_def.md decision J). It is what decision H says
@@ -510,6 +510,28 @@ Debugging :: cvars {
     // which is a calibration offset rather than the authoring inconsistency that
     // would have earned a rescale of every light in every map.
     r_exposure:             f32 = 1.4       @Client    "Exposure multiplier applied before the tonemap curve"
+
+    r_stylized:             bool = true     @Client    "The whole comic look at once: off draws the plain frame whatever r_cel, r_ink and r_cel_hatch say"
+    r_cel:                  bool = true     @Client    "Shade the whole frame in two tones (shading_cel.glsl); turns PCSS off, which a hard shadow edge cannot use"
+    r_cel_terminator:       f32 = 0.05      @Client    "How far a surface must face a light to count as lit, as N.L (0 = edge-on, 1 = face-on)"
+    r_cel_shadow_edge:      f32 = 0.5       @Client    "How much of a light a shadow must let through for the surface to count as lit (0 to 1)"
+    r_cel_softness:         f32 = 0.03      @Client    "Half the width of the edge between lit and unlit; 0 is a hard step"
+    r_cel_shadow_red:       f32 = 0.8       @Client    "Red of the colour the unlit side is multiplied by"
+    r_cel_shadow_green:     f32 = 0.85      @Client    "Green of the colour the unlit side is multiplied by"
+    r_cel_shadow_blue:      f32 = 1.0       @Client    "Blue of the colour the unlit side is multiplied by"
+    r_cel_hatch:            f32 = 0.0       @Client    "How dark the hatching on the unlit side is (0 = none, 1 = solid ink)"
+    r_cel_hatch_spacing:    f32 = 8.0       @Client    "Distance between hatch lines, in pixels"
+    r_cel_hatch_width:      f32 = 1.0       @Client    "Width of a hatch line, in pixels"
+    r_cel_hatch_edge:       f32 = 0.5       @Client    "A surface is hatched where direct light adds less than this many times its ambient light"
+    r_ink:                  bool = true     @Client    "Draw ink lines where the scene depth jumps (outlines) and where the surface normal turns (creases)"
+    r_ink_threshold:        f32 = 4.0       @Client    "How far the depth must jump before an outline is inked; lower draws more lines"
+    r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the surface normal, normal map included, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
+    r_ink_width:            i32 = 1         @Client    "Ink line reach in pixels"
+
+    r_fxaa:                 bool = true     @Client    "Antialias the tonemapped and inked frame with FXAA, under the UI"
+    r_fxaa_subpixel:        f32 = 0.25      @Client    "How far FXAA softens detail one pixel across (0 = edges only and sharpest, 1 = softest); thin ink lines grey out as it rises"
+
+    r_look_panel:           bool = false    @Client    "Show the look panel: a slider per comic look cvar, and an export of their values to look.cfg"
 
     // The sky drawn behind the geometry: the NAME of a cubemap_asset (a folder
     // under resources/cubemaps/), empty for none.
@@ -680,7 +702,7 @@ Server_Commands :: commands {
 }
 
 Client_Commands :: commands {
-    bind(key: string, command: string...)  @Client  "Bind a key (a-z) to a command line"
+    bind(key: string, command: string...)  @Client  "Bind a key (a-z, 0-9, f1-f12, space, arrows, kp_0-kp_9) to a command line"
 
     // @Client even though it is about the server: it picks WHICH server, so it
     // must run on the side that isn't connected to one yet. Forwarding it would

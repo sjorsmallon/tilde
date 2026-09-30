@@ -105,6 +105,13 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     Ripple ripples[MAX_RIPPLES];
     // x = seconds the pass has been drawing for, for what animates by itself.
     vec4   clock;
+    // x = 1 when r_cel shades the whole frame through shading_cel.glsl, y = r_cel_terminator,
+    // z = r_cel_shadow_edge, w = r_cel_softness.
+    vec4   look;
+    // rgb = what the unlit side is multiplied by, the three r_cel_shadow_* cvars.
+    vec4   cel_shadow_tint;
+    // x = r_cel_hatch, y = r_cel_hatch_spacing, z = r_cel_hatch_edge, w = r_cel_hatch_width.
+    vec4   cel_hatch;
 } scene;
 
 #endif // SCENE_GLSL

@@ -1,19 +1,16 @@
-// The pin that ties the two @predicted collects' switches to the flag.
+// The pin that ties the @predicted collects to the flag, and the ONLY guard there is.
 //
-// Neither switch can be generated -- flattening a jump pad into a launch
-// velocity and reading a switch off a brush's owner are both per-type logic --
-// so what stops them drifting from the .def is this file: spawn one of EVERY
-// entity type, run BOTH collects, and assert that exactly one of them answers
-// for exactly the types entity_type_is_predicted names. A @predicted type that
-// feeds neither fails here, and so does an arm on a type nobody marked.
+// No collect can be generated -- flattening a jump pad into a launch velocity
+// and reading a switch off a brush's owner are both per-type logic -- and none
+// of them switches over entity_type, so what stops them drifting from the .def
+// is this file: spawn one of EVERY entity type, run EVERY collect, and assert
+// that exactly one of them answers for exactly the types
+// entity_type_is_predicted names. A @predicted type that feeds none fails here,
+// and so does a collect answering for a type nobody marked.
 //
-// -Werror=switch already catches a type ADDED with no arm at all. What it
-// cannot see is an arm that falls through to `break` under a flag that says it
-// should not, which is the failure this measures.
-//
-// The two are one pin rather than two files because the question is WHICH of
+// They are one pin rather than one file each because the question is WHICH of
 // them a type feeds, and a per-collect pin cannot ask that: it would pass on a
-// type that feeds both, or neither.
+// type that feeds two, or none.
 #include "disabled_geometry.hpp"
 #include "movement_modifiers.hpp"
 #include "entities/entity_reflection.hpp"
@@ -90,12 +87,13 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     if (entities::Shrinking_Platform_Entity* platform =
             system.get<entities::Shrinking_Platform_Entity>(spawned_uids.back()))
       platform->flight = {.launch_tick = 1, .flight_ticks = 0};
-    // An extending platform answers only once its sweep has, which is the tick it is set down.
+    // An extending platform answers only once its sweep has and its passable time is over.
     if (entities::Extending_Platform_Entity* platform =
             system.get<entities::Extending_Platform_Entity>(spawned_uids.back()))
     {
-      platform->spawned_tick = 1;
-      platform->length       = 100.f;
+      platform->spawned_tick     = 1;
+      platform->length           = 100.f;
+      platform->passable_seconds = 0.f;
     }
   }
 
@@ -552,6 +550,47 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
         "the dissolve runs over the last fifth");
 }
 
+static void test_a_platform_grows_over_its_flight_and_lands_at_half_extents()
+{
+  printf("\n[pin] a platform grows from half_extents_at_launch to half_extents over the flight, ease out, and the cut only ever sees it landed\n");
+
+  shared::Entity_System      system;
+  const shared::entity_uid_t uid      = system.spawn(entities::entity_type::Platform_Entity);
+  entities::Platform_Entity* platform = system.get<entities::Platform_Entity>(uid);
+
+  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+
+  platform->flight                 = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 40};
+  platform->projectile.velocity    = {0.f, 0.f, 0.f};
+  platform->solid_seconds          = 2.f;
+  platform->half_extents           = {128.f, 4.f, 128.f};
+  platform->half_extents_at_launch = {8.f, 8.f, 8.f};
+
+  const shared::platform_view_t view = shared::platform_view_of(*platform);
+  const float                   dt   = flight.tick_interval_seconds;
+
+  const linalg::vec3f at_launch = shared::platform_half_extents_at(view, 10, 0.f, dt);
+  check(std::fabs(at_launch.x - 8.f) < 1e-4f && std::fabs(at_launch.y - 8.f) < 1e-4f,
+        "it leaves at half_extents_at_launch");
+
+  const linalg::vec3f halfway = shared::platform_half_extents_at(view, 30, 0.f, dt);
+  check(std::fabs(halfway.x - (8.f + 120.f * 0.875f)) < 1e-3f && std::fabs(halfway.y - (8.f - 4.f * 0.875f)) < 1e-3f,
+        "halfway through the flight it is 7/8 grown: a cubic ease out");
+
+  const linalg::vec3f drawn = shared::platform_half_extents_at(view, 30, 0.5f, dt);
+  check(drawn.x > halfway.x, "the draw's sub-tick fraction grows it between ticks");
+
+  const linalg::vec3f landed = shared::platform_half_extents_at(view, 50, 0.f, dt);
+  check(std::fabs(landed.x - 128.f) < 1e-4f && std::fabs(landed.y - 4.f) < 1e-4f, "it lands at half_extents");
+
+  std::vector<shared::mover_t> movers;
+  shared::collect_spawned_platforms(system, 49, flight, movers);
+  check(movers.empty(), "the cut has no box for it while it flies");
+  shared::collect_spawned_platforms(system, 50, flight, movers);
+  check(movers.size() == 1 && std::fabs(movers[0].swept_bounds.max.x - 128.f) < 1e-4f,
+        "and the first box the cut sweeps is the full one");
+}
+
 static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
 {
   printf("\n[pin] a shrinking platform's box shrinks toward half_extents_when_vanishing on the cut's clock\n");
@@ -620,6 +659,17 @@ static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_
   platform->half_width     = 32.f;
   platform->half_thickness = 4.f;
 
+  check(entities::Extending_Platform_Entity{}.passable_seconds == 0.5f,
+        "a set-down platform is passable for its first half second");
+  platform->passable_seconds = 0.5f;
+  check(cut_at(10).empty() && cut_at(10 + 29).empty() &&
+            shared::extending_platform_exists_at_tick(*platform, 10, dt) &&
+            !shared::extending_platform_is_solid_at_tick(*platform, 10 + 29, dt),
+        "while it is passable it is drawn and is in nobody's way");
+  check(cut_at(10 + 30).size() == 1 && shared::extending_platform_is_solid_at_tick(*platform, 10 + 30, dt),
+        "thirty ticks after it was set down it is solid");
+  platform->passable_seconds = 0.f;
+
   check(shared::extending_platform_extend_ticks(*platform, dt) == 15, "three hundred at twenty a tick is fifteen ticks");
   check(cut_at(9).empty(), "the tick before it was set down it is not there");
   check(cut_at(10).size() == 1 && std::fabs(cut_at(10)[0].swept_bounds.max.x - 20.f) < 1e-3f &&
@@ -670,6 +720,7 @@ int main()
   test_a_timed_modifier_is_live_for_exactly_its_lifetime();
   test_a_bubble_is_placed_by_the_tick_it_is_cut_for();
   test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_out();
+  test_a_platform_grows_over_its_flight_and_lands_at_half_extents();
   test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps();
   test_an_extending_platform_grows_along_its_forward_and_is_solid_the_whole_way();
   test_a_switch_reaches_the_geometry_it_owns();

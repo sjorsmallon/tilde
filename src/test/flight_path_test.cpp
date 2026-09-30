@@ -1,5 +1,6 @@
 // The pin for guided_rocket_plan.md step 2: which positions of a flight become vertices, and the boxes
 // the edges between them become.
+#include "color_map.hpp"
 #include "flight_path.hpp"
 
 #include <cmath>
@@ -32,7 +33,8 @@ constexpr shared::flight_path_settings_t SETTINGS = {.turn_degrees     = 10.f,
                                                      .longest_segment  = 192.f,
                                                      .joint_overlap    = 8.f,
                                                      .drop             = 68.f,
-                                                     .half_width       = 20.f};
+                                                     .half_width       = 20.f,
+                                                     .colors           = shared::RAINBOW_COLORS};
 constexpr float TRAVEL_PER_TICK = 10.f;
 
 int main()
@@ -60,6 +62,9 @@ int main()
     check(near(segments[0].length, 208.f), "as long as its edge and the joint overlap");
     check(segments[0].half_width == 20.f, "as wide as the settings say");
     check(near(linalg::forward(segments[0].orientation), heading), "facing along its edge");
+    check(near(segments[0].color, shared::RAINBOW_COLORS.front()), "the first segment is the map's first colour");
+    check(near(segments[1].color, shared::RAINBOW_COLORS[3]), "one that starts halfway is the map's middle");
+    check(near(segments[2].color, shared::RAINBOW_COLORS.back()), "and the last segment is its last");
   }
 
   printf("[pin] a turn lays a vertex, but never closer than shortest_segment to the last\n");
@@ -97,6 +102,7 @@ int main()
     check(segments.size() == 1, "one edge, one segment");
     check(near(linalg::forward(segments[0].orientation), linalg::normalize(vec3f{1.f, 1.f, 0.f})),
           "pitched along the climb");
+    check(near(segments[0].color, shared::RAINBOW_COLORS.front()), "a lone segment is the map's first colour");
 
     shared::flight_path_t still = shared::begin_flight_path({5.f, 5.f, 5.f}, {1.f, 0.f, 0.f});
     shared::end_flight_path(still, {5.f, 5.f, 5.f});

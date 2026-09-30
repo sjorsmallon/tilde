@@ -28,6 +28,8 @@ struct platform_view_t
   linalg::vec3f                     position;
   float                             solid_seconds;
   linalg::vec3f                     half_extents;
+  // What it leaves the muzzle as; it grows to half_extents over the flight.
+  linalg::vec3f                     half_extents_at_launch;
   // What it has shrunk to on the tick it vanishes; equal to half_extents for a platform that does not shrink.
   linalg::vec3f                     half_extents_when_vanishing;
 };
@@ -49,7 +51,12 @@ struct platform_view_t
 [[nodiscard]] float platform_solid_fraction_elapsed(const platform_view_t& platform, uint32_t tick,
                                                     float tick_fraction, float tick_interval_seconds);
 
-// half_extents shrinking toward half_extents_when_vanishing as the solid time elapses.
+// 0 at launch, 1 as it lands; `tick_fraction` is how far into `tick` the draw is.
+[[nodiscard]] float platform_flight_fraction_elapsed(const platform_view_t& platform, uint32_t tick,
+                                                     float tick_fraction);
+
+// half_extents_at_launch growing to half_extents over the flight (cubic ease out), then shrinking toward
+// half_extents_when_vanishing as the solid time elapses.
 [[nodiscard]] linalg::vec3f platform_half_extents_at(const platform_view_t& platform, uint32_t tick,
                                                      float tick_fraction, float tick_interval_seconds);
 
@@ -63,9 +70,9 @@ constexpr float PLATFORM_DISSOLVE_OVER_LAST_FRACTION = 0.2f;
                                           const fixed_arc_flight_settings_t& settings);
 
 // The extending platform: one tick's growth long on the tick the sweep answered (spawned_tick), growing
-// along its forward at extend_speed until it is `length` long, solid the whole way, gone solid_seconds
-// after it is grown. Every clock is a function of the tick and replicated state alone. It grows THROUGH a
-// hull in its path: its cut never crushes.
+// along its forward at extend_speed until it is `length` long, solid once passable_seconds have passed, gone
+// solid_seconds after it is grown. Every clock is a function of the tick and replicated state alone. It
+// grows THROUGH a hull in its path: its cut never crushes.
 struct extending_platform_box_t
 {
   linalg::vec3f center;
@@ -77,6 +84,11 @@ struct extending_platform_box_t
 [[nodiscard]] uint32_t extending_platform_extend_ticks(const entities::Extending_Platform_Entity& platform,
                                                        float tick_interval_seconds);
 
+// Set down and not yet gone: the ticks it is drawn.
+[[nodiscard]] bool extending_platform_exists_at_tick(const entities::Extending_Platform_Entity& platform,
+                                                     uint32_t tick, float tick_interval_seconds);
+
+// The ticks it is in the cut: those it exists, less its first passable_seconds.
 [[nodiscard]] bool extending_platform_is_solid_at_tick(const entities::Extending_Platform_Entity& platform,
                                                        uint32_t tick, float tick_interval_seconds);
 

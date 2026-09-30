@@ -11,6 +11,7 @@
 #include "entities/generated/entities/modifier_shot_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
+#include "entity_lifecycle.hpp"
 #include "game_session.hpp"
 #include "log.hpp"
 #include "player_constants.hpp"
@@ -67,10 +68,15 @@ static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = -1, .reserve
 static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 10, .reserve_ammo = 30}));
 static_assert(!shared::reload_may_start(KNIFE, {.size = 0, .ammo = 0, .reserve_ammo = 30}));
 static_assert(!shared::reload_may_start(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}));
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = 0, .reserve_ammo = -1}) == 5);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = -1, .reserve_ammo = -1}) == -1);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 4, .reserve_ammo = -1}) == 4);
-static_assert(shared::ammo_after_ground_refill(SCOUT, {.size = 10, .ammo = 0, .reserve_ammo = -1}) == 0);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = 0, .reserve_ammo = -1}, 0) == 5);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = -1, .reserve_ammo = -1}, 0) == -1);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 4, .reserve_ammo = -1}, 0) == 4);
+static_assert(shared::ammo_after_ground_refill(SCOUT, {.size = 10, .ammo = 0, .reserve_ammo = -1}, 0) == 0);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 2) == 0);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 1) == 1);
+static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 1, .reserve_ammo = -1}, 3) == 1);
+static_assert(PLATFORM.limit.max_alive == 0 &&
+              PLATFORM.secondary_fire.resolution == entities::Fire_Resolution::Recall);
 static_assert(shared::ammo_allows_a_shot(-1) && shared::ammo_allows_a_shot(1) &&
               !shared::ammo_allows_a_shot(0));
 
@@ -699,6 +705,7 @@ int main()
             "a segment lies the row's drop under the flight");
       check(platform.length == 200.f + row.path.joint_overlap, "as long as its edge and the overlap");
       check(platform.half_width == row.path.half_width, "and as wide as the row says");
+      check(platform.passable_seconds == 0.f, "and solid from the tick it starts growing");
     }
     const uint32_t extend_ticks = static_cast<uint32_t>(
         std::ceil((200.f + row.path.joint_overlap) /
@@ -775,6 +782,48 @@ int main()
     entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo = shared::UNLIMITED_AMMO;
     server::refill_magazines_on_ground(context.world.session, *carrier);
     check(platform_ammo() == shared::UNLIMITED_AMMO, "and an unlimited one stays unlimited");
+
+    const shared::alive_limit_t limit =
+        shared::alive_limit_of(*entity_system.get<entities::Weapon_Entity>(platform_uid));
+    check(limit.max_alive == 0, "a ground-refill gun is born with no alive limit: its magazine is one");
+
+    const shared::entity_uid_t other_uid = entity_system.spawn<entities::Player_Entity>();
+    const vec3f origin    = {0.f, 0.f, 0.f};
+    const vec3f direction = {1.f, 0.f, 0.f};
+    const auto fire_platform = [&](shared::entity_uid_t owner_uid) {
+      return server::spawn_projectile(context, owner_uid, platform, origin, direction,
+                                      entities::Fire_Trigger::Primary, limit);
+    };
+
+    const shared::entity_uid_t first_shot  = fire_platform(carrier_uid);
+    const shared::entity_uid_t second_shot = fire_platform(carrier_uid);
+    const shared::entity_uid_t other_shot  = fire_platform(other_uid);
+    check(entity_system.try_find(first_shot) != nullptr && entity_system.try_find(second_shot) != nullptr,
+          "a second platform does not replace the first");
+    check(server::count_alive_shots(entity_system, carrier_uid, entities::Weapon::Platform) == 2,
+          "both count as the carrier's, and another owner's does not");
+
+    carrier = entity_system.get<entities::Player_Entity>(carrier_uid);
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->magazine_size = 2;
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo          = 0;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 0, "the ground gives nothing back while both platforms are out");
+
+    server::destroy_entity(context, first_shot);
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 1, "a platform that is gone comes back on the ground");
+
+    entity_system.get<entities::Weapon_Entity>(platform_uid)->ammo = 0;
+    carrier->movement.is_grounded = false;
+    server::recall_shots(context, carrier_uid, entities::Weapon::Platform);
+    check(entity_system.try_find(second_shot) == nullptr, "a recall takes the carrier's platforms");
+    check(entity_system.try_find(other_shot) != nullptr, "and leaves another owner's");
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 0, "a recall in the air gives no ammo back");
+
+    carrier->movement.is_grounded = true;
+    server::refill_magazines_on_ground(context.world.session, *carrier);
+    check(platform_ammo() == 2, "the ground does, once they are gone");
   }
 
   printf("%s (%d failure%s)\n", failure_count == 0 ? "PASSED" : "FAILED", failure_count,

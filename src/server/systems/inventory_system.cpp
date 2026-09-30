@@ -9,6 +9,7 @@
 #include "../../shared/weapon_instance.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
+#include "../spawn_projectile.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -223,8 +224,14 @@ void refill_magazines_on_ground(shared::game_session_t& session, const entities:
       continue;
     }
 
+    const shared::weapon_definition_t& definition =
+        shared::get_weapon_definition(weapon_entity->weapon_id);
+    if (!definition.refills_on_ground)
+      continue;
+
     weapon_entity->ammo = shared::ammo_after_ground_refill(
-        shared::get_weapon_definition(weapon_entity->weapon_id), shared::magazine_of(*weapon_entity));
+        definition, shared::magazine_of(*weapon_entity),
+        count_alive_shots(session.entity_system, player.entity_id, weapon_entity->weapon_id));
   }
 }
 

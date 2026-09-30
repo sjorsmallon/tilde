@@ -376,6 +376,11 @@ void resolve_player_shot(
       toggle_canopy(context, *player);
       return;
 
+    // No clocks and no ammo: an empty magazine is exactly when this is pressed.
+    case entities::Fire_Resolution::Recall:
+      recall_shots(context, player->entity_id, active_weapon->weapon_id);
+      return;
+
     case entities::Fire_Resolution::Hitscan:
     {
       if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
@@ -509,8 +514,8 @@ void resolve_player_shot(
       {
       case shared::place_anchor_t::Feet:
         break;
-      case shared::place_anchor_t::Chest:
-        placed_position    = player->position + vec3f{0.f, shared::player_chest_height, 0.f};
+      case shared::place_anchor_t::Waist:
+        placed_position    = player->position + vec3f{0.f, shared::player_waist_height, 0.f};
         placed_orientation = linalg::from_view_angles(yaw, pitch);
         break;
       case shared::place_anchor_t::Eye:

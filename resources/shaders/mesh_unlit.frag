@@ -5,20 +5,19 @@
 // It exists for LOOKING at a model. The directional sun leaves half a character
 // in 0.15 ambient, which is the wrong lighting for judging a pose or a skin
 // weight -- you end up debugging the light instead of the thing.
-//
-// fragWorldNormal is left undeclared on purpose. The vertex half still writes it
-// (this pairs with both mesh vertex shaders unchanged), and a fragment stage is
-// free to consume fewer outputs than the vertex stage produces.
 
+layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
 layout(location = 2) in vec2       fragUV;
 layout(location = 3) in flat float fragAlpha;
 layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outSurfaceNormal;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
+#include "surface_normal.glsl"
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
@@ -34,6 +33,7 @@ void main() {
     discard_inside_peel(fragWorldPosition);
 
     outColor = vec4(sampled.rgb * fragColor, surfaceAlpha);
+    outSurfaceNormal = store_surface_normal(fragWorldNormal * (gl_FrontFacing ? 1.0 : -1.0));
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
 }

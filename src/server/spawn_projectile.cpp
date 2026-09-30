@@ -130,4 +130,30 @@ shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::enti
   return placed_uid;
 }
 
+int32_t count_alive_shots(shared::Entity_System& entity_system, shared::entity_uid_t owner_uid,
+                          entities::Weapon weapon)
+{
+  int32_t count = 0;
+  for (auto [entity, projectile] : entity_system.entities_with<entities::Projectile>())
+  {
+    if (projectile.owner_uid == owner_uid && projectile.weapon_id == weapon)
+      ++count;
+  }
+  return count;
+}
+
+void recall_shots(server_context_t& context, shared::entity_uid_t owner_uid, entities::Weapon weapon)
+{
+  std::vector<shared::entity_uid_t> recalled;
+  for (auto [entity, projectile] :
+       context.world.session.entity_system.entities_with<entities::Projectile>())
+  {
+    if (projectile.owner_uid == owner_uid && projectile.weapon_id == weapon)
+      recalled.push_back(entity.entity_id);
+  }
+
+  for (const shared::entity_uid_t uid : recalled)
+    destroy_entity(context, uid);
+}
+
 } // namespace server

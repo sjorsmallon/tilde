@@ -265,6 +265,8 @@ void Tool_Editor_State::on_enter()
 {
   log_terminal("Entered Tool_Editor_State");
 
+  state_manager::get_client_context().cvars->r_stylized = false;
+
   // Only load from disk on first entry. When returning from play mode the
   // in-memory map is already correct; reloading would discard unsaved edits
   // and could pick up the wrong file if last_map.txt is stale.
@@ -1242,6 +1244,7 @@ void Tool_Editor_State::draw_imgui_panels()
     };
     draw_window_toggle("Map Info", show_map_info);
     draw_window_toggle("Edit History", show_edit_history);
+    draw_window_toggle("Look", state_manager::get_client_context().cvars->r_look_panel);
 
     const ImGuiStyle& style = ImGui::GetStyle();
     const float right_side_width = ImGui::CalcTextSize("play").x + ImGui::CalcTextSize("Back to Menu").x +

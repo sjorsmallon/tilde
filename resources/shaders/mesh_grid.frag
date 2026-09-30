@@ -17,8 +17,10 @@
 // rather than as a texture on one brush.
 
 #include "scene.glsl"
-#include "direct_light.glsl"
-#include "reflection.glsl"
+#include "surface.glsl"
+#include "surface_normal.glsl"
+#include "light_gather.glsl"
+#include "debug_channels.glsl"
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
@@ -30,12 +32,9 @@ layout(location = 3) in flat float fragAlpha;
 layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outSurfaceNormal;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
-
-#ifdef LIGHTMAP
-#include "lightmap.glsl"
-#endif
 
 const float MINOR_SUBDIVISIONS = 8.0;  // 128 / 8 = one 16-unit minor cell
 const vec3  GRID_COLOR         = vec3(0.06, 0.06, 0.08);
@@ -71,59 +70,28 @@ void main() {
     discard_below_dissolve(fragUV);
     discard_inside_peel(fragWorldPosition);
 
-    vec3  N = normalize(fragWorldNormal);
+    vec3 N = normalize(fragWorldNormal);
+    vec3 V = normalize(scene.camera_position.xyz - fragWorldPosition);
+    outSurfaceNormal = store_surface_normal(N);
 
-    if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
+    // A blockout face has no roughness: r_debug_channel = reflection shows the captures as a MIRROR.
+    Surface surface;
+    surface.albedo    = texture(albedo, fragUV).rgb * fragColor;
+    surface.normal    = N;
+    surface.geometric_normal = N;
+    surface.uv        = fragUV;
+    surface.roughness = 0.0;
+    surface.metallic  = 0.0;
+    surface.occlusion = 1.0;
+    surface.emissive  = vec3(0.0);
+
+    if (showing_debug_channel())
     {
-        outColor = shadow_visibility_debug_color(fragWorldPosition, N);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_DIRECT_LIGHT) != 0)
-    {
-        vec3 direct = analytic_tail_diffuse(N, fragWorldPosition);
-#ifdef LIGHTMAP
-        direct += lightmap_direct_diffuse(N, fragWorldPosition);
-#endif
-        outColor = vec4(direct, 1.0);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
-    {
-#ifdef LIGHTMAP
-        vec3 baked = lightmap_residual_diffuse() + lightmap_indirect_diffuse(N);
-#else
-        vec3 baked = vec3(0.0); // this path reads no probes; its fill is the fixed fake sun
-#endif
-        outColor = vec4(baked, 1.0);
-        return;
-    }
-    // A blockout face has no roughness: the captures as a MIRROR off its
-    // normal, so the parallax and the lattice are judged where most of a map
-    // is (gate 6 step 5). The shading below adds no reflection.
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
-    {
-        outColor = reflection_debug_color(fragWorldPosition, N,
-                                          normalize(scene.camera_position.xyz - fragWorldPosition), 0.0);
+        outColor = debug_channel_color(surface, N, fragWorldPosition, V, albedo);
         return;
     }
 
-    vec3  sunDir  = normalize(vec3(0.4, -0.8, 0.3));
-    vec3  ambient = scene.ambient.rgb;
-    float diffuse = max(dot(N, -sunDir), 0.0);
-#ifdef LIGHTMAP
-    // The four lights this face's chart kept, shaded analytically against the
-    // real light direction, the residual irradiance of the ones it dropped, and
-    // the path-traced bounce.
-    vec3  lighting = lightmap_direct_diffuse(N, fragWorldPosition) +
-                     lightmap_residual_diffuse() + lightmap_indirect_diffuse(N) + ambient;
-#else
-    vec3  lighting = ambient + vec3(diffuse * 0.85);
-#endif
-    // The tail -- Dynamic lights, and on a face with no chart the Mixed copy --
-    // through their shadow maps. Without it a rocket flash never reached a
-    // blockout face at all.
-    lighting += analytic_tail_diffuse(N, fragWorldPosition);
-    vec3  color   = texture(albedo, fragUV).rgb * fragColor * lighting;
+    vec3 color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V);
 
     // Two levels, 8x apart. The minor one fades as it stops being resolvable and
     // the major one -- still 8x larger on screen -- carries on, so backing away

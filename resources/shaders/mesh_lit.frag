@@ -6,9 +6,10 @@
 // multiplies out of the sample below.
 
 #include "scene.glsl"
-#include "probes.glsl"
-#include "direct_light.glsl"
-#include "reflection.glsl"
+#include "surface.glsl"
+#include "surface_normal.glsl"
+#include "light_gather.glsl"
+#include "debug_channels.glsl"
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
@@ -20,6 +21,7 @@ layout(location = 3) in flat float fragAlpha;
 layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outSurfaceNormal;
 
 layout(set = 0, binding = 0) uniform sampler2D albedo;
 
@@ -30,16 +32,48 @@ layout(set = 0, binding = 0) uniform sampler2D albedo;
 layout(set = 0, binding = 4) uniform sampler2D emissiveMap;
 
 #ifdef PBR
-#include "pbr_lighting.glsl"
-
 layout(set = 0, binding = 1) uniform sampler2D normalMap;
 layout(set = 0, binding = 2) uniform sampler2D ormMap;   // R occlusion, G roughness, B metallic
 layout(set = 0, binding = 3) uniform sampler2D heightMap;
+
+const int LOOK = LOOK_PBR;
+#else
+const int LOOK = LOOK_LAMBERT;
 #endif
 
-#ifdef LIGHTMAP
-#include "lightmap.glsl"
+Surface read_surface(vec3 geometric_normal, vec3 V)
+{
+    Surface surface;
+    surface.geometric_normal = geometric_normal;
+#ifdef PBR
+    mat3 tangent_frame = cotangent_frame(geometric_normal, fragWorldPosition, fragUV);
+    // The cel look is flat: no march, and the albedo stays where the face put it.
+    surface.uv         = frame_look(LOOK) == LOOK_CEL
+                             ? fragUV
+                             : parallax_occlusion(heightMap,
+                                                  view_direction_in_tangent_space(tangent_frame, V),
+                                                  fragUV);
+    vec3 tangent_normal = texture(normalMap, surface.uv).xyz * 2.0 - 1.0;
+    surface.normal      = apply_normal_map(tangent_frame, tangent_normal);
+
+    vec3 orm          = texture(ormMap, surface.uv).rgb;
+    surface.occlusion = orm.r;
+    surface.roughness = orm.g;
+    surface.metallic  = orm.b;
+#else
+    // No roughness on this arm, so r_debug_channel = reflection shows the captures as a MIRROR.
+    surface.uv        = fragUV;
+    surface.normal    = geometric_normal;
+    surface.occlusion = 1.0;
+    surface.roughness = 0.0;
+    surface.metallic  = 0.0;
 #endif
+    // fragColor is the material's base colour times the draw's tint, so it tints rather than replaces.
+    surface.albedo   = texture(albedo, surface.uv).rgb * fragColor;
+    // Straight through, tinted by nothing: the tracer collects this same texel (lighting_def.md ss11).
+    surface.emissive = texture(emissiveMap, surface.uv).rgb;
+    return surface;
+}
 
 void main() {
     float surfaceAlpha = fragAlpha * texture(albedo, fragUV).a;
@@ -49,213 +83,22 @@ void main() {
     discard_inside_peel(fragWorldPosition);
 
     // A double-sided material draws unculled; its back is lit along the flipped normal.
-    vec3 facing_normal = normalize(fragWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 geometric_normal = normalize(fragWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 V                = normalize(scene.camera_position.xyz - fragWorldPosition);
 
-    vec3 ambient = scene.ambient.rgb;
+    Surface surface = read_surface(geometric_normal, V);
+    outSurfaceNormal = store_surface_normal(surface.normal);
 
-    // Ahead of every arm: a shadow that is wrong looks exactly like lighting
-    // that is wrong, and this is how the two are told apart.
-    if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_VISIBILITY) != 0)
+    if (showing_debug_channel())
     {
-        outColor = shadow_visibility_debug_color(fragWorldPosition, facing_normal);
-        return;
-    }
-    // The two halves of the lighting, each alone and before albedo, so "too
-    // bright" can be blamed on the analytic lights or on the bake.
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_DIRECT_LIGHT) != 0)
-    {
-        vec3 geometric_normal = facing_normal;
-        vec3 direct           = analytic_tail_diffuse(geometric_normal, fragWorldPosition);
-#ifdef LIGHTMAP
-        direct += lightmap_direct_diffuse(geometric_normal, fragWorldPosition);
-#endif
-        outColor = vec4(direct, 1.0);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
-    {
-        vec3 geometric_normal = facing_normal;
-#ifdef LIGHTMAP
-        vec3 baked = lightmap_residual_diffuse() + lightmap_indirect_diffuse(geometric_normal);
-#else
-        vec3 baked = probe_indirect_diffuse(fragWorldPosition, geometric_normal);
-#endif
-        outColor = vec4(baked, 1.0);
+        outColor = debug_channel_color(surface, geometric_normal, fragWorldPosition, V, albedo);
         return;
     }
 
-#ifdef PBR
-    vec3 N = facing_normal;
-    vec3 V = normalize(scene.camera_position.xyz - fragWorldPosition);
-
-    mat3 tangent_frame = cotangent_frame(N, fragWorldPosition, fragUV);
-    vec2 uv            = parallax_occlusion(
-        heightMap, view_direction_in_tangent_space(tangent_frame, V), fragUV);
-
-    N = apply_normal_map(tangent_frame, texture(normalMap, uv).xyz * 2.0 - 1.0);
-
-    vec3  surface   = texture(albedo, uv).rgb * fragColor;
-    vec3  orm       = texture(ormMap, uv).rgb;
-    float occlusion = orm.r;
-    float roughness = orm.g;
-    float metallic  = orm.b;
-
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_NORMALS) != 0)
-    {
-        outColor = vec4(N * 0.5 + 0.5, 1.0);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_UV) != 0)
-    {
-        outColor = vec4(uv, 0.0, 1.0);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_PARALLAX_UV) != 0)
-    {
-        outColor = vec4(texture(albedo, uv).rgb, 1.0);
-        return;
-    }
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
-    {
-        outColor = reflection_debug_color(fragWorldPosition, N, V, roughness);
-        return;
-    }
-
-    vec3 lit = vec3(0.0);
-
-#ifdef LIGHTMAP
-    // The four this face's chart kept, and nothing else in the level. The atlas
-    // did the culling at bake time (lightmap.glsl says how), so this loop is
-    // four iterations whether the map holds two lights or sixty -- which is what
-    // unblocked making every Baked light analytic (lighting_def.md ss14 step 6).
-    //
-    // Analytic means the material's other three maps finally do something on a
-    // brush face: the real light direction against the normal-mapped normal,
-    // with the bake contributing only the shadow.
-    lightmap_coverage_t coverage = lightmap_coverage();
-    for (int channel = 0; channel < LIGHTMAP_LIGHTS_PER_CHART; ++channel)
-    {
-        int slot = lightmap_chart_slot(channel);
-        if (slot < 0 || lightmap_coverage_strength(coverage.slots[channel]) <= 0.0)
-            continue;
-
-        Light         light   = scene.lights[slot];
-        Light_Arrival arrival = light_arrival(light, fragWorldPosition);
-
-        // Atlas visibility TIMES the shadow map (decision K): the bake holds the
-        // static occluders, a Mixed light's map only the dynamic ones, so the
-        // two are independent blockers and the product counts nothing twice.
-        //
-        // The atlas half is a COLOUR -- what the glass between here and the
-        // light let through -- so it filters the RADIANCE rather than scaling
-        // the attenuation. Same number where the ray crossed nothing, and it is
-        // the radiance both the diffuse and the specular lobe are scaled by, so
-        // a stained-glass highlight is tinted too.
-        vec3 visibility = coverage.slots[channel] *
-                          shadow_visibility(light, arrival, fragWorldPosition, N);
-
-        lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
-                            light.radiance.rgb * visibility, arrival.attenuation,
-                            light.direction.w, arrival.distance);
-    }
-#endif
-
-    // The tail: the lights no bake saw, plus a second copy of every Mixed one so
-    // a surface with no chart still gets it. A lightmapped surface SKIPS that
-    // second copy -- it shaded the light through its chart above, with the
-    // shadow, and shading it here as well is the ss2 double-count.
-    for (int index = scene.baked_light_count; index < scene.light_count; ++index)
-    {
-        Light light = scene.lights[index];
-
-#ifdef LIGHTMAP
-        if (LIGHT_BAKED_SLOT(light) >= 0)
-            continue;
-#endif
-
-        Light_Arrival arrival    = light_arrival(light, fragWorldPosition);
-        float         visibility = shadow_visibility(light, arrival, fragWorldPosition, N);
-#ifndef LIGHTMAP
-        // The probes' static occlusion of a Mixed light, the atlas texel's job
-        // at a point in space, times the map's dynamic casters (decision K).
-        visibility *= probe_light_visibility(light, fragWorldPosition);
-#endif
-
-        lit += shade_direct(N, V, arrival.direction, surface, roughness, metallic,
-                            light.radiance.rgb, arrival.attenuation * visibility,
-                            light.direction.w, arrival.distance);
-    }
-
-#ifdef LIGHTMAP
-    // What the atlas still holds: the lights this chart ranked below its four,
-    // flat -- plus the bounce, which is convolved against N and therefore is the
-    // one baked term a normal map can move.
-    lit += (1.0 - metallic) * surface *
-           (lightmap_residual_diffuse() + lightmap_indirect_diffuse(N));
-#else
-    // No chart: the probe volume is where this surface's baked light lives, the
-    // direct Baked lights and the bounce both (lighting_def.md gate 5).
-    lit += (1.0 - metallic) * surface * probe_indirect_diffuse(fragWorldPosition, N);
-#endif
-
-    // The room's reflection (gate 6): the captures' picture of the lit scene,
-    // parallax-corrected, at this roughness, through the split-sum BRDF. On
-    // both the atlas and the probe path, and added to nothing above: the four
-    // slots and the tail keep their analytic highlights, which a capture cannot
-    // double because a light has no geometry to be photographed.
-    lit += environment_specular(fragWorldPosition, N, V, roughness,
-                                mix(vec3(0.04), surface, metallic));
-
-    lit += ambient * surface * occlusion;
-
-    // Straight through, tinted by nothing: the tracer collects this same texel
-    // and applies no base colour, so a factor here would light the room from one
-    // number and draw it from another -- ss11.
-    lit += texture(emissiveMap, uv).rgb;
+    vec3 lit = light_surface(LOOK, surface, fragWorldPosition, V);
 
     outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, surfaceAlpha), fragWorldPosition),
                                         fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-#else
-    // The non-PBR arm is Lambert against the SAME light list the PBR arm shades:
-    // the analytic tail here, the chart's four slots and the atlas on a
-    // lightmapped face, the probes on everything else. It used to be a
-    // hardcoded sun from a fixed direction plus the floor, which is a second
-    // lighting model (ss11) -- and the one every physics body and untextured
-    // prop drew through, so gate 5's probes landed under a sun that ignored
-    // them.
-    vec3 N = facing_normal;
-
-    // No roughness on this arm, so the channel shows the captures as a MIRROR
-    // off the geometric normal: the parallax is judged on a blockout face too.
-    if ((scene.debug_flags & DEBUG_FLAG_RENDER_REFLECTION) != 0)
-    {
-        outColor = reflection_debug_color(fragWorldPosition, N,
-                                          normalize(scene.camera_position.xyz - fragWorldPosition), 0.0);
-        return;
-    }
-
-    // The tail: the lights no bake saw, plus a second copy of every Mixed one,
-    // each through its shadow map. A lightmapped face skips that copy -- it
-    // shades the light through its chart below -- exactly as the PBR arm does.
-    vec3 lighting = analytic_tail_diffuse(N, fragWorldPosition);
-
-#ifdef LIGHTMAP
-    lighting += lightmap_direct_diffuse(N, fragWorldPosition) + lightmap_residual_diffuse() +
-                lightmap_indirect_diffuse(N);
-#else
-    lighting += probe_indirect_diffuse(fragWorldPosition, N);
-#endif
-    lighting += ambient;
-
-    // fragColor is the material's base colour times the draw's tint, so it tints
-    // rather than replaces.
-    vec3 color = texture(albedo, fragUV).rgb * fragColor * lighting +
-                 texture(emissiveMap, fragUV).rgb;
-    outColor   = reflection_capture_debug(shadow_cascade_debug(vec4(color, surfaceAlpha), fragWorldPosition),
-                                          fragWorldPosition);
-    outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
-    outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-#endif
 }

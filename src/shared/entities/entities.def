@@ -36,7 +36,7 @@ Weapon :: enum {
     Guided_Rocket
 }
 
-Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot }
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall }
 Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -437,34 +437,38 @@ Ricochet_Entity :: entity @runtime_only {
     render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, material = { color = {1, 0.45, 0.15} } }
 }
 
-// A ghost while it flies, a solid box from the tick it lands until solid_seconds later (shared/spawned_platforms.hpp).
+// A ghost while it flies, growing from half_extents_at_launch to half_extents over the flight with an ease out;
+// a solid box from the tick it lands until solid_seconds later (shared/spawned_platforms.hpp).
 Platform_Entity :: entity @runtime_only @predicted {
-    projectile:     Projectile = { weapon_id = .Platform }
-    flight:         Fixed_Arc_Flight
-    flight_seconds: f32 = 0.6
-    solid_seconds:  f32 = 6.0
-    half_extents:   v3 = {128, 4, 128}
+    projectile:              Projectile = { weapon_id = .Platform }
+    flight:                  Fixed_Arc_Flight
+    flight_seconds:          f32 = 0.6
+    solid_seconds:           f32 = 6.0
+    half_extents:            v3 = {128, 4, 128}
+    half_extents_at_launch:  v3 = {8, 8, 8}
     // Drawn at half_extents, never at render.scale.
     render:         Render = { mesh = .Box, material = { color = {1, 0.75, 0.3} } }
 }
 
-// The platform that SHRINKS: lands at half_extents, shrinks toward half_extents_when_vanishing over solid_seconds,
-// collision and draw on the same clock, and dissolves over its last fifth. No clock wipe.
+// The platform that SHRINKS: grows over the flight like Platform_Entity, lands at half_extents, shrinks toward
+// half_extents_when_vanishing over solid_seconds, collision and draw on the same clock, and dissolves over its
+// last fifth. No clock wipe.
 Shrinking_Platform_Entity :: entity @runtime_only @predicted {
     projectile:                  Projectile = { weapon_id = .Shrinking_Platform }
     flight:                      Fixed_Arc_Flight
     flight_seconds:              f32 = 0.6
-    solid_seconds:               f32 = 6.0
-    half_extents:                v3 = {64, 4, 64}
+    solid_seconds:               f32 = 5.0
+    half_extents:                v3 = {128, 4, 128}
+    half_extents_at_launch:      v3 = {8, 8, 8}
     half_extents_when_vanishing: v3 = {8, 4, 8}
     // Drawn at the shrunk half_extents, never at render.scale.
     render:                      Render = { mesh = .Box, material = { color = {0.3, 0.9, 0.6} } }
 }
 
-// The platform that EXTENDS: set down at the shooter's chest facing their aim, it grows along its forward at
+// The platform that EXTENDS: set down at the shooter's waist facing their aim, it grows along its forward at
 // extend_speed until it reaches `length`, one sweep's answer at fire time (server/systems/platform_system.cpp),
-// then stays solid_seconds and dissolves over its last fifth. Solid while it grows and grown through anyone in
-// its path, never crushing. Drawn at the box it is, never at render.scale.
+// then stays solid_seconds and dissolves over its last fifth. Solid once passable_seconds have passed and
+// grown through anyone in its path, never crushing. Drawn at the box it is, never at render.scale.
 Extending_Platform_Entity :: entity @runtime_only @predicted {
     projectile:     Projectile = { weapon_id = .Extending_Platform }
     // The tick the sweep answered; 0 until it has.
@@ -477,6 +481,9 @@ Extending_Platform_Entity :: entity @runtime_only @predicted {
     // The Extending Platform's own; a guided rocket's path writes its row's.
     half_width:     f32_exact = 32.0 @Networked
     half_thickness: f32 = 4.0
+    // Not solid for this long after it is set down, so whoever it was set down in can get on top of it.
+    // The Extending Platform's own; a guided rocket's path writes 0.
+    passable_seconds: f32_exact = 0.5 @Networked
     render:         Render = { mesh = .Box, material = { color = {0.95, 0.55, 0.85} } }
 }
 

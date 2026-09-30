@@ -9,7 +9,9 @@ layout(location = 3) in flat float fragAlpha;
 layout(location = 6) in vec3       fragWorldPosition;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outSurfaceNormal;
 
+#include "surface_normal.glsl"
 #include "procedural_blending.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
@@ -21,6 +23,7 @@ void main() {
 
     vec3 pattern = procedural_blending_pattern(fragWorldPosition, normalize(fragWorldNormal));
     outColor     = vec4(fragColor * pattern, fragAlpha);
+    outSurfaceNormal = store_surface_normal(fragWorldNormal);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
 }

@@ -72,9 +72,10 @@ enum class Debug_Channel : uint8_t
   shadow_penumbra = 9,
   reflection = 10,
   reflection_capture = 11,
+  ink_normals = 12,
 };
 
-constexpr uint32_t Debug_Channel_COUNT = 12;
+constexpr uint32_t Debug_Channel_COUNT = 13;
 
 const char* to_string(Debug_Channel value);
 template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text);
@@ -219,6 +220,25 @@ struct cvar_state_t
   bool pin_main_thread;
   Debug_Channel r_debug_channel;
   float r_exposure;
+  bool r_stylized;
+  bool r_cel;
+  float r_cel_terminator;
+  float r_cel_shadow_edge;
+  float r_cel_softness;
+  float r_cel_shadow_red;
+  float r_cel_shadow_green;
+  float r_cel_shadow_blue;
+  float r_cel_hatch;
+  float r_cel_hatch_spacing;
+  float r_cel_hatch_width;
+  float r_cel_hatch_edge;
+  bool r_ink;
+  float r_ink_threshold;
+  float r_ink_crease_degrees;
+  int32_t r_ink_width;
+  bool r_fxaa;
+  float r_fxaa_subpixel;
+  bool r_look_panel;
   network::pascal_string_t<64> sv_skybox;
   bool debug_show_collisions;
   bool debug_show_hitboxes;
@@ -358,27 +378,46 @@ enum class cvar_id : uint16_t
   pin_main_thread = 108,
   r_debug_channel = 109,
   r_exposure = 110,
-  sv_skybox = 111,
-  debug_show_collisions = 112,
-  debug_show_hitboxes = 113,
-  debug_show_navmesh = 114,
-  debug_show_box_volumes = 115,
-  debug_hide_geometry = 116,
-  cl_shot_debug_seconds = 117,
-  debug_show_entity_counts = 118,
-  net_snapshot_debug = 119,
-  sv_event_debug = 120,
-  cl_event_debug = 121,
-  sv_reliable_debug = 122,
-  sv_io_debug = 123,
-  replay_keyframe_seconds = 124,
-  sv_replay_auto = 125,
-  sv_ghost_record = 126,
+  r_stylized = 111,
+  r_cel = 112,
+  r_cel_terminator = 113,
+  r_cel_shadow_edge = 114,
+  r_cel_softness = 115,
+  r_cel_shadow_red = 116,
+  r_cel_shadow_green = 117,
+  r_cel_shadow_blue = 118,
+  r_cel_hatch = 119,
+  r_cel_hatch_spacing = 120,
+  r_cel_hatch_width = 121,
+  r_cel_hatch_edge = 122,
+  r_ink = 123,
+  r_ink_threshold = 124,
+  r_ink_crease_degrees = 125,
+  r_ink_width = 126,
+  r_fxaa = 127,
+  r_fxaa_subpixel = 128,
+  r_look_panel = 129,
+  sv_skybox = 130,
+  debug_show_collisions = 131,
+  debug_show_hitboxes = 132,
+  debug_show_navmesh = 133,
+  debug_show_box_volumes = 134,
+  debug_hide_geometry = 135,
+  cl_shot_debug_seconds = 136,
+  debug_show_entity_counts = 137,
+  net_snapshot_debug = 138,
+  sv_event_debug = 139,
+  cl_event_debug = 140,
+  sv_reliable_debug = 141,
+  sv_io_debug = 142,
+  replay_keyframe_seconds = 143,
+  sv_replay_auto = 144,
+  sv_ghost_record = 145,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 127;
+constexpr uint32_t CVAR_COUNT = 146;
 
 enum class command_id : uint16_t
 {
@@ -548,7 +587,7 @@ void sv_replay_record(std::string_view name, const command_context_t& context);
 // @Server  Finish the server's replay recording
 // usage: sv_replay_stop
 void sv_replay_stop(const command_context_t& context);
-// @Client  Bind a key (a-z) to a command line
+// @Client  Bind a key (a-z, 0-9, f1-f12, space, arrows, kp_0-kp_9) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
 // @Client  Connect to a server (ip or ip:port) and enter play

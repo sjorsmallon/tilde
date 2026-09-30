@@ -31,4 +31,11 @@ shared::entity_uid_t spawn_placed_entity(
     const shared::weapon_definition_t& weapon, const vec3f& position, const quatf& orientation,
     entities::Fire_Trigger trigger, const shared::alive_limit_t& limit);
 
+// How many shots off `weapon`, either button, `owner_uid` has alive, landed ones included.
+int32_t count_alive_shots(shared::Entity_System& entity_system, shared::entity_uid_t owner_uid,
+                          entities::Weapon weapon);
+
+// Fire_Resolution::Recall: every one of those shots goes, wherever its owner stands.
+void recall_shots(server_context_t& context, shared::entity_uid_t owner_uid, entities::Weapon weapon);
+
 } // namespace server

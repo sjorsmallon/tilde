@@ -109,6 +109,7 @@ Platform_Entity::Platform_Entity()
     flight_seconds(0.6f),
     solid_seconds(6.0f),
     half_extents({128.0f, 4.0f, 128.0f}),
+    half_extents_at_launch({8.0f, 8.0f, 8.0f}),
     render({.mesh = assets::mesh_asset::Box, .material = {.color = {1.0f, 0.75f, 0.3f}}})
 {
   type = entity_type::Platform_Entity;
@@ -118,8 +119,9 @@ Shrinking_Platform_Entity::Shrinking_Platform_Entity()
   : projectile({.weapon_id = Weapon::Shrinking_Platform}),
     flight{},
     flight_seconds(0.6f),
-    solid_seconds(6.0f),
-    half_extents({64.0f, 4.0f, 64.0f}),
+    solid_seconds(5.0f),
+    half_extents({128.0f, 4.0f, 128.0f}),
+    half_extents_at_launch({8.0f, 8.0f, 8.0f}),
     half_extents_when_vanishing({8.0f, 4.0f, 8.0f}),
     render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.3f, 0.9f, 0.6f}}})
 {
@@ -135,6 +137,7 @@ Extending_Platform_Entity::Extending_Platform_Entity()
     solid_seconds(6.0f),
     half_width(32.0f),
     half_thickness(4.0f),
+    passable_seconds(0.5f),
     render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.95f, 0.55f, 0.85f}}})
 {
   type = entity_type::Extending_Platform_Entity;

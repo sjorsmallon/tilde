@@ -463,12 +463,16 @@ bool create_preview_pipeline_from_spv(VkDevice device,
       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
   color_blend_attachment.blendEnable = VK_FALSE;
 
+  VkPipelineColorBlendAttachmentState
+      color_blend_attachments[renderer::SCENE_COLOR_ATTACHMENT_COUNT] = {};
+  color_blend_attachments[0] = color_blend_attachment;
+
   VkPipelineColorBlendStateCreateInfo color_blending{};
   color_blending.sType =
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   color_blending.logicOpEnable = VK_FALSE;
-  color_blending.attachmentCount = 1;
-  color_blending.pAttachments = &color_blend_attachment;
+  color_blending.attachmentCount = renderer::SCENE_COLOR_ATTACHMENT_COUNT;
+  color_blending.pAttachments = color_blend_attachments;
 
   VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
                                      VK_DYNAMIC_STATE_SCISSOR};

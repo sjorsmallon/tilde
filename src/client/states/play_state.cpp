@@ -590,7 +590,8 @@ static void play_predicted_local_gunshot(
   {
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
-    case entities::Fire_Resolution::Canopy: // nothing to do. no effect.
+    case entities::Fire_Resolution::Canopy:
+    case entities::Fire_Resolution::Recall: // nothing to do. no effect.
       return;
 
 
@@ -864,7 +865,8 @@ void Play_State::on_enter()
 {
   auto &ctx = state_manager::get_client_context();
 
-  
+  ctx.cvars->r_stylized = true;
+
   connection_ui = {};
   reset_for_new_connection(ctx);
 
@@ -2863,6 +2865,7 @@ void Play_State::draw_imgui_panels()
     ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);
     ImGui::Checkbox("Hide Geometry", &ctx.cvars->debug_hide_geometry);
     ImGui::Checkbox("Show Entities", &ctx.cvars->debug_show_entity_counts);
+    ImGui::Checkbox("Look Panel", &ctx.cvars->r_look_panel);
   }
   ImGui::End();
 
@@ -3241,7 +3244,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     {
       const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
       const float tick_interval_seconds = 1.0f / tickrate;
-      if (!shared::extending_platform_is_solid_at_tick(*platform, tick, tick_interval_seconds))
+      if (!shared::extending_platform_exists_at_tick(*platform, tick, tick_interval_seconds))
         continue;
 
       const shared::extending_platform_box_t box =
@@ -3249,8 +3252,11 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       drawn_position    = box.center;
       drawn_orientation = box.orientation;
       drawn_scale       = box.half_extents * 2.0f;
-      dissolve          = shared::platform_dissolve_fraction(shared::extending_platform_solid_fraction_elapsed(
-          *platform, tick, fraction, tick_interval_seconds));
+      if (shared::extending_platform_is_solid_at_tick(*platform, tick, tick_interval_seconds))
+        dissolve = shared::platform_dissolve_fraction(shared::extending_platform_solid_fraction_elapsed(
+            *platform, tick, fraction, tick_interval_seconds));
+      else
+        drawn_material.shader_type = entities::Shader_Type::Ghost;
     }
 
     if (const entities::Canopy_Entity* canopy = entities::entity_as<entities::Canopy_Entity>(&entity))

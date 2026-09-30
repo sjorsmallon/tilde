@@ -83,7 +83,7 @@ void refill_inventory(shared::game_session_t& session, entities::Player_Entity& 
 // Tops the magazine up out of the reserve; a respawn and a finished reload are the same transfer.
 void reload_magazine(entities::Weapon_Entity& weapon);
 
-// Fills every carried refills_on_ground magazine while the player stands on the map; a mover is not ground.
+// Fills every carried refills_on_ground magazine to its size less the player's shots still alive, while the player stands on the map; a mover is not ground.
 void refill_magazines_on_ground(shared::game_session_t& session, const entities::Player_Entity& player);
 
 // The weapon in the active slot, or nullptr if that slot is empty.

@@ -2,10 +2,8 @@
 #define DIRECT_LIGHT_GLSL
 
 // The RUNTIME half of a light's occlusion (lighting_def.md gate 9, decision K):
-// the one sampler2DArrayShadow every shadow map is a layer of, the receiver's
-// visibility test against it, and the analytic tail loop the non-PBR fragment
-// shaders share -- lit's Lambert arm, grid and blend -- so the three cannot
-// disagree about which lights a surface sees or how they are shadowed.
+// the one sampler2DArrayShadow every shadow map is a layer of and the receiver's
+// visibility test against it. Which lights a surface loops is light_gather.glsl's.
 //
 // Deliberately NOT reached through light_arrival.glsl: the shader tool's
 // preview vertex shader includes that, and a sampler at set 3 is a binding it
@@ -243,32 +241,6 @@ vec4 shadow_cascade_debug(vec4 shaded, vec3 world_position)
     if (pick.blend > 0.0)
         tint = mix(tint, tints[pick.index + 1], pick.blend);
     return vec4(mix(shaded.rgb, tint, 0.5), shaded.a);
-}
-
-// Lambert over the tail -- the lights no bake saw, plus a second copy of every
-// Mixed one -- each through its shadow map. A lightmapped surface SKIPS the
-// Mixed copy, having shaded that light through its chart (lightmap.glsl); a
-// surface with no chart multiplies in the probes' visibility for it instead,
-// which is the atlas texel's job done at a point in space (decision K).
-vec3 analytic_tail_diffuse(vec3 N, vec3 world_position)
-{
-    vec3 diffuse = vec3(0.0);
-    for (int index = scene.baked_light_count; index < scene.light_count; ++index)
-    {
-        Light light = scene.lights[index];
-#ifdef LIGHTMAP
-        if (LIGHT_BAKED_SLOT(light) >= 0)
-            continue;
-#endif
-        Light_Arrival arrival    = light_arrival(light, world_position);
-        float         visibility = shadow_visibility(light, arrival, world_position, N);
-#ifndef LIGHTMAP
-        visibility *= probe_light_visibility(light, world_position);
-#endif
-        diffuse += light.radiance.rgb *
-                   (arrival.attenuation * visibility * max(dot(N, arrival.direction), 0.0)) / PI;
-    }
-    return diffuse;
 }
 
 // r_debug_channel = shadow_visibility: V alone, white and black, for the

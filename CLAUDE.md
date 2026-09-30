@@ -114,7 +114,8 @@ file only states them.
   map I/O). `Fully_Serializable :: [@Networked, @Editable]` at the top of
   `entities.def` is a flag alias. A type replicates when one of its own fields
   is `@Networked`; there is no `@replicated`. `@predicted` marks a type
-  `collect_movement_volumes` has an arm for. Cvar flags are `@Client`,
+  one of the `collect_*` cuts answers for, pinned by `movement_volumes_test`
+  (the only guard: run `ctest`). Cvar flags are `@Client`,
   `@Server`, `@Mirrored`; none means both sides hold their own copy.
 - Missing handlers are **link errors naming the symbol**: command handlers,
   channel members (`src/client/effects/`, `src/client/game_events/`), entity
@@ -122,11 +123,14 @@ file only states them.
   `src/server/entities/<entity>.cpp` otherwise), and `decode_<ext>` for a new
   asset extension. `-Werror=missing-prototypes` on the handler files catches
   the reverse. Helpers in those files go in an anonymous namespace.
-- Per-type behaviour is a hand-written **exhaustive switch** over the closed
-  enum (`create_map_entity`, `collect_movement_volumes`, editor draw tables
-  pinned by `rows_in_enum_order`). `-Werror=switch` is the guard. Do not
-  generate these, and do not add a registry, an owner table, a `think()` or a
-  function-pointer field.
+- Behaviour EVERY member of a closed enum answers for is a hand-written
+  **exhaustive switch** (`message_direction`, `target_shape_of`) or a table
+  pinned by `rows_in_enum_order` (`EDITOR_DATA_PER_ENTITY_TYPE`, the one site a
+  new entity type must visit). `-Werror=switch` is the guard. Do not generate these,
+  and do not add a registry, an owner table, a `think()` or a function-pointer
+  field. A question only a FEW types answer is asked of those types
+  (`entity_as<T>`, `entities_of<T>()`, a sparse table whose absent row is the
+  default), never a switch that says "no" for the rest.
 - Entities are plain blittable structs, no virtuals: `entity_as<T>` not
   `dynamic_cast`, `destroy_entity()` not `delete`, component lookups through
   `entities::get_*`. Iterate with `entities_of<T>()`,
@@ -257,7 +261,7 @@ prediction writes `ctx.prediction`.
 
 - The inventory is keyed by SLOT; the `Weapon_Entity` says which weapon it is.
   Both mouse buttons are a `weapon_fire_t` and `Fire_Resolution` is the axis
-  (`None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot`). A
+  (`None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall`). A
   row is union-shaped over that discriminant. A `Self_Impulse` or `Pilot` row
   carries no clocks (static_asserted): its gate is
   `Movement::seconds_until_impulse_ready`, applied at the server, the live
@@ -267,7 +271,11 @@ prediction writes `ctx.prediction`.
   that kind is born with, read only by `write_weapon_kind_counts`
   (`shared/weapon_instance.hpp`): a grant, a placement, a changed `weapon_id`.
   `max_alive` is one number counted per button; launchers and bots pass
-  `NO_ALIVE_LIMIT`. The ground only ever raises `ammo`, so -1 stays unlimited.
+  `NO_ALIVE_LIMIT`. A `refills_on_ground` magazine IS how many of its shots
+  the carrier may have out, so its row carries no `max_alive` (static_asserted):
+  the ground fills `ammo` to `magazine_size` less the carrier's shots still
+  alive, and `Recall` on the other button takes them back. The ground only
+  ever raises `ammo`, so -1 stays unlimited.
 - A `Pilot` flight is a `Movement_Override`, flown inside `player_move`: the
   rocket is `Movement::override_target_position`, and `Guided_Rocket_Entity`
   is a follower that flies nothing. The client's camera rides the prediction.
@@ -302,8 +310,18 @@ prediction writes `ctx.prediction`.
   against it through editor buttons, never a ctest. Anything needing a device
   is an editor command.
 - Every shader hands the render pass LINEAR colour; the sRGB encode lives in
-  the attachment alone. Two passes: scene into HDR, then tonemap plus UI.
-  `srgb` on a texture is about what the bytes MEAN.
+  the attachment alone. Three passes: scene into HDR, tonemap plus ink into a
+  swapchain-format target, then antialiasing plus UI. `srgb` on a texture is
+  about what the bytes MEAN.
+- The ink (`tonemap.frag`) draws the OUTLINE from a depth jump and the CREASE
+  from the angle between neighbouring normals, read from the scene pass's
+  normal image (`g_scene_data_images`, `surface_normal.glsl`). Only opaque
+  pipelines write it (`scene_blend_attachments`); every pipeline built for the
+  scene pass declares `SCENE_COLOR_ATTACHMENT_COUNT` blend states, and a new
+  opaque scene shader writes `store_surface_normal`.
+- A post pass is a `screen_target_t` it writes and a `fullscreen_draw_t` that
+  reads one; `render_frame` stays the hand-written ORDER. No pass list, no
+  render graph.
 - The material table is passed at the call site, never held in the renderer.
   A material folder is `albedo.png`, `normal.png`, `orm.png`, `height.png`,
   `emissive.png`; an absent map is a default, never a branch, and an absent

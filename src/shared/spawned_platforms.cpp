@@ -29,6 +29,7 @@ platform_view_t platform_view_of(const entities::Platform_Entity& platform)
           .position                    = platform.position,
           .solid_seconds               = platform.solid_seconds,
           .half_extents                = platform.half_extents,
+          .half_extents_at_launch      = platform.half_extents_at_launch,
           .half_extents_when_vanishing = platform.half_extents};
 }
 
@@ -39,6 +40,7 @@ platform_view_t platform_view_of(const entities::Shrinking_Platform_Entity& plat
           .position                    = platform.position,
           .solid_seconds               = platform.solid_seconds,
           .half_extents                = platform.half_extents,
+          .half_extents_at_launch      = platform.half_extents_at_launch,
           .half_extents_when_vanishing = platform.half_extents_when_vanishing};
 }
 
@@ -76,9 +78,28 @@ float platform_solid_fraction_elapsed(const platform_view_t& platform, uint32_t 
   return std::clamp(elapsed / static_cast<float>(solid_ticks), 0.f, 1.f);
 }
 
+float platform_flight_fraction_elapsed(const platform_view_t& platform, uint32_t tick, float tick_fraction)
+{
+  const entities::Fixed_Arc_Flight& flight = *platform.flight;
+  if (flight.launch_tick == 0)
+    return 0.f;
+  if (flight_has_landed(flight, tick) || flight.flight_ticks == 0)
+    return 1.f;
+
+  const float elapsed = static_cast<float>(tick - flight.launch_tick) + tick_fraction;
+  return std::clamp(elapsed / static_cast<float>(flight.flight_ticks), 0.f, 1.f);
+}
+
 linalg::vec3f platform_half_extents_at(const platform_view_t& platform, uint32_t tick, float tick_fraction,
                                        float tick_interval_seconds)
 {
+  if (!flight_has_landed(*platform.flight, tick))
+  {
+    const float remaining = 1.f - platform_flight_fraction_elapsed(platform, tick, tick_fraction);
+    const float grown     = 1.f - remaining * remaining * remaining;
+    return platform.half_extents_at_launch + (platform.half_extents - platform.half_extents_at_launch) * grown;
+  }
+
   const float elapsed = platform_solid_fraction_elapsed(platform, tick, tick_fraction, tick_interval_seconds);
   return platform.half_extents + (platform.half_extents_when_vanishing - platform.half_extents) * elapsed;
 }
@@ -138,10 +159,18 @@ bool extending_platform_has_vanished_at_tick(const entities::Extending_Platform_
                      whole_ticks_of(platform.solid_seconds, tick_interval_seconds);
 }
 
+bool extending_platform_exists_at_tick(const entities::Extending_Platform_Entity& platform,
+                                       uint32_t tick, float tick_interval_seconds)
+{
+  return extending_platform_age_at(platform, tick).has_value() &&
+         !extending_platform_has_vanished_at_tick(platform, tick, tick_interval_seconds);
+}
+
 bool extending_platform_is_solid_at_tick(const entities::Extending_Platform_Entity& platform,
                                          uint32_t tick, float tick_interval_seconds)
 {
-  return extending_platform_age_at(platform, tick).has_value() &&
+  const std::optional<uint32_t> age = extending_platform_age_at(platform, tick);
+  return age && *age >= whole_ticks_of(platform.passable_seconds, tick_interval_seconds) &&
          !extending_platform_has_vanished_at_tick(platform, tick, tick_interval_seconds);
 }
 
