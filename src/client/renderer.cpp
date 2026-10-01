@@ -744,13 +744,14 @@ struct scene_uniform_t
   float       look[4]                                       = {}; // x 1 when r_cel shades the frame, y terminator, z shadow edge, w softness
   float       cel_shadow_tint[4]                            = {};
   float       cel_fill[4]                                   = {}; // x strength, y spacing px, z edge, w hatch width px
-  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone
+  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone of the darkest shadow
+  float       cel_fill_tone_range[4]                        = {}; // x tone of the lightest shadow, y ambient at the darkest, z ambient at the lightest
   float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of the spacing
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 80,
+                      32 * MAX_SCENE_RIPPLES + 16 + 96,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -8625,6 +8626,9 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_fill[3]        = std::max(look.cel_hatch_width_pixels, 0.0f);
     scene.cel_fill_pattern[0] = cel_fill_pattern_of(look.cel_fill);
     scene.cel_fill_pattern[1] = std::clamp(look.cel_fill_tone, 0.0f, 0.75f);
+    scene.cel_fill_tone_range[0] = std::clamp(look.cel_fill_tone_light, 0.0f, 0.75f);
+    scene.cel_fill_tone_range[1] = std::max(look.cel_fill_ambient_dark, 0.0f);
+    scene.cel_fill_tone_range[2] = std::max(look.cel_fill_ambient_light, scene.cel_fill_tone_range[1] + 0.0001f);
     scene.cel_speckle[0]     = std::clamp(look.cel_speckle, 0.0f, 1.0f);
     scene.cel_speckle[1]     = std::max(look.cel_speckle_spacing_pixels, 2.0f);
     scene.cel_speckle[2]     = std::clamp(look.cel_speckle_density, 0.0f, 1.0f);

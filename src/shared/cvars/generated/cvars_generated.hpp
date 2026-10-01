@@ -245,6 +245,9 @@ struct cvar_state_t
   float r_cel_fill_spacing;
   float r_cel_fill_edge;
   float r_cel_fill_tone;
+  float r_cel_fill_tone_light;
+  float r_cel_fill_ambient_dark;
+  float r_cel_fill_ambient_light;
   float r_cel_hatch_width;
   float r_cel_speckle;
   float r_cel_speckle_spacing;
@@ -409,39 +412,42 @@ enum class cvar_id : uint16_t
   r_cel_fill_spacing = 121,
   r_cel_fill_edge = 122,
   r_cel_fill_tone = 123,
-  r_cel_hatch_width = 124,
-  r_cel_speckle = 125,
-  r_cel_speckle_spacing = 126,
-  r_cel_speckle_density = 127,
-  r_cel_speckle_radius = 128,
-  r_ink = 129,
-  r_ink_threshold = 130,
-  r_ink_crease_degrees = 131,
-  r_ink_width = 132,
-  r_fxaa = 133,
-  r_fxaa_subpixel = 134,
-  r_look_panel = 135,
-  sv_skybox = 136,
-  debug_show_collisions = 137,
-  debug_show_hitboxes = 138,
-  debug_show_navmesh = 139,
-  debug_show_box_volumes = 140,
-  debug_hide_geometry = 141,
-  cl_shot_debug_seconds = 142,
-  debug_show_entity_counts = 143,
-  net_snapshot_debug = 144,
-  sv_event_debug = 145,
-  cl_event_debug = 146,
-  sv_reliable_debug = 147,
-  sv_io_debug = 148,
-  replay_keyframe_seconds = 149,
-  sv_replay_auto = 150,
-  sv_ghost_record = 151,
+  r_cel_fill_tone_light = 124,
+  r_cel_fill_ambient_dark = 125,
+  r_cel_fill_ambient_light = 126,
+  r_cel_hatch_width = 127,
+  r_cel_speckle = 128,
+  r_cel_speckle_spacing = 129,
+  r_cel_speckle_density = 130,
+  r_cel_speckle_radius = 131,
+  r_ink = 132,
+  r_ink_threshold = 133,
+  r_ink_crease_degrees = 134,
+  r_ink_width = 135,
+  r_fxaa = 136,
+  r_fxaa_subpixel = 137,
+  r_look_panel = 138,
+  sv_skybox = 139,
+  debug_show_collisions = 140,
+  debug_show_hitboxes = 141,
+  debug_show_navmesh = 142,
+  debug_show_box_volumes = 143,
+  debug_hide_geometry = 144,
+  cl_shot_debug_seconds = 145,
+  debug_show_entity_counts = 146,
+  net_snapshot_debug = 147,
+  sv_event_debug = 148,
+  cl_event_debug = 149,
+  sv_reliable_debug = 150,
+  sv_io_debug = 151,
+  replay_keyframe_seconds = 152,
+  sv_replay_auto = 153,
+  sv_ghost_record = 154,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 152;
+constexpr uint32_t CVAR_COUNT = 155;
 
 enum class command_id : uint16_t
 {

@@ -49,6 +49,10 @@ float cel_fill_edge()     { return scene.cel_fill.z; }              // r_cel_fil
 float cel_fill_tone()     { return scene.cel_fill_pattern.y; }      // r_cel_fill_tone
 float cel_hatch_width()   { return scene.cel_fill.w; }              // r_cel_hatch_width, pixels
 
+float cel_fill_tone_light()    { return scene.cel_fill_tone_range.x; } // r_cel_fill_tone_light
+float cel_fill_ambient_dark()  { return scene.cel_fill_tone_range.y; } // r_cel_fill_ambient_dark
+float cel_fill_ambient_light() { return scene.cel_fill_tone_range.z; } // r_cel_fill_ambient_light
+
 const vec3 CEL_FILL_COLOR = vec3(0.0);
 
 // The two world axes a face lies along most: what pins a pattern to the world,
@@ -227,6 +231,15 @@ float luminance(vec3 color)
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
 }
 
+// Tone as dot DENSITY (Return of the Obra Dinn): the dimmer a shadow's ambient light, the more of it the dots cover.
+float shadow_tone(vec3 ambient)
+{
+    float lightness = clamp((luminance(ambient) - cel_fill_ambient_dark()) /
+                                (cel_fill_ambient_light() - cel_fill_ambient_dark()),
+                            0.0, 1.0);
+    return mix(cel_fill_tone(), cel_fill_tone_light(), lightness);
+}
+
 // `direct` and `ambient` are the light alone, shaded against a white surface.
 // Filled where the direct light adds less than r_cel_fill_edge times the ambient.
 vec3 compose_cel(Surface surface, vec3 direct, vec3 ambient, vec3 world_position)
@@ -249,7 +262,7 @@ vec3 compose_cel(Surface surface, vec3 direct, vec3 ambient, vec3 world_position
     if (cel_fill_pattern() == CEL_FILL_HATCH)
         ink = hatch_coverage(plane) * in_shadow;
     else
-        ink = dither_coverage(plane, footprint, in_shadow * cel_fill_tone());
+        ink = dither_coverage(plane, footprint, in_shadow * shadow_tone(ambient));
     return mix(color, CEL_FILL_COLOR, ink * cel_fill_strength());
 }
 

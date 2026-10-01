@@ -119,6 +119,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   cel_fill;
     // x = r_cel_fill as one of CEL_FILL_*, y = r_cel_fill_tone.
     vec4   cel_fill_pattern;
+    // x = r_cel_fill_tone_light, y = r_cel_fill_ambient_dark, z = r_cel_fill_ambient_light.
+    vec4   cel_fill_tone_range;
     // x = r_cel_speckle, y = r_cel_speckle_spacing, z = r_cel_speckle_density, w = r_cel_speckle_radius.
     vec4   cel_speckle;
 } scene;

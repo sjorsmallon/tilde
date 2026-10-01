@@ -268,6 +268,9 @@ bool Tick()
     look.cel_fill_spacing_pixels  = cvars.r_cel_fill_spacing;
     look.cel_fill_edge            = cvars.r_cel_fill_edge;
     look.cel_fill_tone            = cvars.r_cel_fill_tone;
+    look.cel_fill_tone_light      = cvars.r_cel_fill_tone_light;
+    look.cel_fill_ambient_dark    = cvars.r_cel_fill_ambient_dark;
+    look.cel_fill_ambient_light   = cvars.r_cel_fill_ambient_light;
     look.cel_hatch_width_pixels   = cvars.r_cel_hatch_width;
     look.cel_speckle                = cvars.r_cel_speckle;
     look.cel_speckle_spacing_pixels = cvars.r_cel_speckle_spacing;

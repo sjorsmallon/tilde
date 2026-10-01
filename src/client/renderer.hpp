@@ -689,9 +689,12 @@ struct look_settings_t
   linalg::vec3f cel_shadow_tint = {0.8f, 0.85f, 1.0f}; // r_cel_shadow_red, _green, _blue
   cvars::Cel_Fill cel_fill         = cvars::Cel_Fill::none; // r_cel_fill
   float   cel_fill_strength        = 0.5f; // r_cel_fill_strength
-  float   cel_fill_spacing_pixels  = 6.0f; // r_cel_fill_spacing
+  float   cel_fill_spacing_pixels  = 5.0f; // r_cel_fill_spacing
   float   cel_fill_edge            = 0.5f; // r_cel_fill_edge
-  float   cel_fill_tone            = 0.3f; // r_cel_fill_tone
+  float   cel_fill_tone            = 0.45f; // r_cel_fill_tone
+  float   cel_fill_tone_light      = 0.15f; // r_cel_fill_tone_light
+  float   cel_fill_ambient_dark    = 0.06f; // r_cel_fill_ambient_dark
+  float   cel_fill_ambient_light   = 0.3f;  // r_cel_fill_ambient_light
   float   cel_hatch_width_pixels   = 1.0f; // r_cel_hatch_width
   float   cel_speckle                = 0.0f;  // r_cel_speckle
   float   cel_speckle_spacing_pixels = 10.0f; // r_cel_speckle_spacing
