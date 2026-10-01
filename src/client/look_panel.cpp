@@ -37,10 +37,12 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Cel", cvars::cvar_id::r_cel_shadow_edge},
     {"Cel", cvars::cvar_id::r_cel_softness, 0.0f, 0.5f},
     {"Cel", cvars::cvar_id::r_cel_shadow_red, 0.0f, 1.0f, 3, "r_cel_shadow rgb"},
-    {"Hatch", cvars::cvar_id::r_cel_hatch},
-    {"Hatch", cvars::cvar_id::r_cel_hatch_spacing, 2.0f, 32.0f},
-    {"Hatch", cvars::cvar_id::r_cel_hatch_width, 0.5f, 8.0f},
-    {"Hatch", cvars::cvar_id::r_cel_hatch_edge, 0.0f, 4.0f},
+    {"Fill", cvars::cvar_id::r_cel_fill},
+    {"Fill", cvars::cvar_id::r_cel_fill_strength},
+    {"Fill", cvars::cvar_id::r_cel_fill_spacing, 2.0f, 32.0f},
+    {"Fill", cvars::cvar_id::r_cel_fill_edge, 0.0f, 4.0f},
+    {"Fill", cvars::cvar_id::r_cel_fill_tone, 0.0f, 0.75f},
+    {"Fill", cvars::cvar_id::r_cel_hatch_width, 0.5f, 8.0f},
     {"Speckle", cvars::cvar_id::r_cel_speckle},
     {"Speckle", cvars::cvar_id::r_cel_speckle_spacing, 2.0f, 40.0f},
     {"Speckle", cvars::cvar_id::r_cel_speckle_density},
@@ -92,9 +94,21 @@ void draw_value_row(cvars::cvar_state_t& state, const look_row_t& row)
     ImGui::SliderInt(info.name, &value_of<int32_t>(state, row.id), static_cast<int>(row.minimum),
                      static_cast<int>(row.maximum));
     break;
+  case cvars::CVAR_TYPE_ENUM:
+  {
+    uint8_t&                       value = value_of<uint8_t>(state, row.id);
+    const Span<const char* const>& names = info.enum_info->value_names;
+    if (ImGui::BeginCombo(info.name, names[value]))
+    {
+      for (size_t index = 0; index < names.size(); ++index)
+        if (ImGui::Selectable(names[index], index == value))
+          value = static_cast<uint8_t>(index);
+      ImGui::EndCombo();
+    }
+    break;
+  }
   case cvars::CVAR_TYPE_U32:
   case cvars::CVAR_TYPE_STRING:
-  case cvars::CVAR_TYPE_ENUM:
     fatal_error("look panel: '{}' is of a type the panel has no widget for", info.name);
   }
   if (ImGui::IsItemHovered())

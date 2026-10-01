@@ -133,14 +133,16 @@ cvar_state_t::cvar_state_t()
     r_cel_shadow_red(0.8f),
     r_cel_shadow_green(0.85f),
     r_cel_shadow_blue(1.0f),
-    r_cel_hatch(0.0f),
-    r_cel_hatch_spacing(8.0f),
+    r_cel_fill(Cel_Fill::dither3d),
+    r_cel_fill_strength(0.5f),
+    r_cel_fill_spacing(6.0f),
+    r_cel_fill_edge(0.5f),
+    r_cel_fill_tone(0.3f),
     r_cel_hatch_width(1.0f),
-    r_cel_hatch_edge(0.5f),
-    r_cel_speckle(0.0f),
+    r_cel_speckle(0.12f),
     r_cel_speckle_spacing(10.0f),
     r_cel_speckle_density(0.33f),
-    r_cel_speckle_radius(0.2f),
+    r_cel_speckle_radius(0.15f),
     r_ink(true),
     r_ink_threshold(4.0f),
     r_ink_crease_degrees(30.0f),
@@ -199,6 +201,12 @@ constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "ink_normals",
 };
 
+constexpr const char* Cel_Fill_VALUE_NAMES[] = {
+  "none",
+  "hatch",
+  "dither3d",
+};
+
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
   "idle",
   "chase",
@@ -209,6 +217,7 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Bunnyhop_Mode", {Bunnyhop_Mode_VALUE_NAMES, 3}},
   {"Locomotion_Model", {Locomotion_Model_VALUE_NAMES, 4}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 13}},
+  {"Cel_Fill", {Cel_Fill_VALUE_NAMES, 3}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -1102,7 +1111,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_stylized",
-     .description = "The whole comic look at once: off draws the plain frame whatever r_cel, r_ink and r_cel_hatch say",
+     .description = "The whole comic look at once: off draws the plain frame whatever r_cel, r_ink and r_cel_fill say",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_BOOL,
      .offset = offsetof(cvar_state_t, r_stylized),
@@ -1165,36 +1174,52 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_cel_shadow_blue),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
-    {.name = "r_cel_hatch",
-     .description = "How dark the hatching on the unlit side is (0 = none, 1 = solid ink)",
+    {.name = "r_cel_fill",
+     .description = "What fills the unlit side: none, hatch (diagonal lines), dither3d (dots pinned to the surface that keep their size on screen)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_ENUM,
+     .offset = offsetof(cvar_state_t, r_cel_fill),
+     .size = sizeof(cvar_state_t::r_cel_fill),
+     .string_capacity = 0,
+     .enum_info = &ENUM_INFOS[3]},
+    {.name = "r_cel_fill_strength",
+     .description = "How dark the fill's ink is (0 = invisible, 1 = solid ink)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, r_cel_hatch),
-     .size = sizeof(cvar_state_t::r_cel_hatch),
+     .offset = offsetof(cvar_state_t, r_cel_fill_strength),
+     .size = sizeof(cvar_state_t::r_cel_fill_strength),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
-    {.name = "r_cel_hatch_spacing",
-     .description = "Distance between hatch lines, in pixels",
+    {.name = "r_cel_fill_spacing",
+     .description = "Distance between hatch lines or dither dots, in pixels",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, r_cel_hatch_spacing),
-     .size = sizeof(cvar_state_t::r_cel_hatch_spacing),
+     .offset = offsetof(cvar_state_t, r_cel_fill_spacing),
+     .size = sizeof(cvar_state_t::r_cel_fill_spacing),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_cel_fill_edge",
+     .description = "A surface is filled where direct light adds less than this many times its ambient light",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_cel_fill_edge),
+     .size = sizeof(cvar_state_t::r_cel_fill_edge),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_cel_fill_tone",
+     .description = "dither3d: the share of the unlit side the dots cover (0 to 0.75)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_cel_fill_tone),
+     .size = sizeof(cvar_state_t::r_cel_fill_tone),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_cel_hatch_width",
-     .description = "Width of a hatch line, in pixels",
+     .description = "hatch: width of a line, in pixels",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, r_cel_hatch_width),
      .size = sizeof(cvar_state_t::r_cel_hatch_width),
-     .string_capacity = 0,
-     .enum_info = NOT_AN_ENUM},
-    {.name = "r_cel_hatch_edge",
-     .description = "A surface is hatched where direct light adds less than this many times its ambient light",
-     .flags = CVAR_FLAG_CLIENT,
-     .type = CVAR_TYPE_F32,
-     .offset = offsetof(cvar_state_t, r_cel_hatch_edge),
-     .size = sizeof(cvar_state_t::r_cel_hatch_edge),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_cel_speckle",
@@ -1206,7 +1231,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_cel_speckle_spacing",
-     .description = "Distance between speckle cells on screen, in pixels; one cell holds at most one speckle",
+     .description = "Distance between speckle lattice points on screen, in pixels; a point holds at most one speckle",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, r_cel_speckle_spacing),
@@ -1214,7 +1239,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_cel_speckle_density",
-     .description = "The share of cells that hold a speckle (0 to 1)",
+     .description = "The share of lattice points that hold a speckle (0 to 1)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, r_cel_speckle_density),
@@ -1222,7 +1247,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_cel_speckle_radius",
-     .description = "Radius of a speckle as a fraction of its cell",
+     .description = "Radius of a speckle as a fraction of the spacing (0 to 0.5); the rest of the half spacing is how far it strays from its lattice point",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, r_cel_speckle_radius),
@@ -1899,6 +1924,26 @@ template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::str
   if (text == "reflection") return Debug_Channel::reflection;
   if (text == "reflection_capture") return Debug_Channel::reflection_capture;
   if (text == "ink_normals") return Debug_Channel::ink_normals;
+  return std::nullopt;
+}
+
+const char* to_string(Cel_Fill value)
+{
+  switch (value)
+  {
+    case Cel_Fill::none: return "none";
+    case Cel_Fill::hatch: return "hatch";
+    case Cel_Fill::dither3d: return "dither3d";
+  }
+  assert(false && "invalid Cel_Fill");
+  return "";
+}
+
+template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view text)
+{
+  if (text == "none") return Cel_Fill::none;
+  if (text == "hatch") return Cel_Fill::hatch;
+  if (text == "dither3d") return Cel_Fill::dither3d;
   return std::nullopt;
 }
 

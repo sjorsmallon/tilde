@@ -743,13 +743,14 @@ struct scene_uniform_t
   float       clock[4]                                      = {}; // x seconds, view_pass_t::seconds
   float       look[4]                                       = {}; // x 1 when r_cel shades the frame, y terminator, z shadow edge, w softness
   float       cel_shadow_tint[4]                            = {};
-  float       cel_hatch[4]                                  = {}; // x strength, y spacing px, z edge, w width px
-  float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of a cell
+  float       cel_fill[4]                                   = {}; // x strength, y spacing px, z edge, w hatch width px
+  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone
+  float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of the spacing
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 64,
+                      32 * MAX_SCENE_RIPPLES + 16 + 80,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -6544,6 +6545,18 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   return scene;
 }
 
+// scene.glsl's CEL_FILL_*.
+[[nodiscard]] float cel_fill_pattern_of(cvars::Cel_Fill fill)
+{
+  switch (fill)
+  {
+  case cvars::Cel_Fill::none: return 0.0f;
+  case cvars::Cel_Fill::hatch: return 1.0f;
+  case cvars::Cel_Fill::dither3d: return 2.0f;
+  }
+  fatal_error("cel_fill_pattern_of: {} is not a Cel_Fill", static_cast<uint32_t>(fill));
+}
+
 // A layer the frame's pool handed to one light, and what to draw into it.
 struct shadow_job_t
 {
@@ -8606,10 +8619,12 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_shadow_tint[0] = look.cel_shadow_tint.x;
     scene.cel_shadow_tint[1] = look.cel_shadow_tint.y;
     scene.cel_shadow_tint[2] = look.cel_shadow_tint.z;
-    scene.cel_hatch[0]       = std::clamp(look.cel_hatch, 0.0f, 1.0f);
-    scene.cel_hatch[1]       = std::max(look.cel_hatch_spacing_pixels, 2.0f);
-    scene.cel_hatch[2]       = look.cel_hatch_edge;
-    scene.cel_hatch[3]       = std::max(look.cel_hatch_width_pixels, 0.0f);
+    scene.cel_fill[0]        = std::clamp(look.cel_fill_strength, 0.0f, 1.0f);
+    scene.cel_fill[1]        = std::max(look.cel_fill_spacing_pixels, 2.0f);
+    scene.cel_fill[2]        = look.cel_fill_edge;
+    scene.cel_fill[3]        = std::max(look.cel_hatch_width_pixels, 0.0f);
+    scene.cel_fill_pattern[0] = cel_fill_pattern_of(look.cel_fill);
+    scene.cel_fill_pattern[1] = std::clamp(look.cel_fill_tone, 0.0f, 0.75f);
     scene.cel_speckle[0]     = std::clamp(look.cel_speckle, 0.0f, 1.0f);
     scene.cel_speckle[1]     = std::max(look.cel_speckle_spacing_pixels, 2.0f);
     scene.cel_speckle[2]     = std::clamp(look.cel_speckle_density, 0.0f, 1.0f);

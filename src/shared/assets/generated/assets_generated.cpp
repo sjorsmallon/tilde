@@ -19,6 +19,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"high_res_sphere", "resources/glb/high_res_sphere.glb"},
   {"hookshot", "resources/glb/hookshot.glb"},
   {"magnet", "resources/glb/magnet.glb"},
+  {"mvmt", "resources/glb/mvmt.glb"},
   {"rocket", "resources/glb/rocket.glb"},
   {"sequence_1", "resources/glb/sequence_1.glb"},
   {"sequence_2", "resources/glb/sequence_2.glb"},

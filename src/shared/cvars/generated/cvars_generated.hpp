@@ -80,6 +80,18 @@ constexpr uint32_t Debug_Channel_COUNT = 13;
 const char* to_string(Debug_Channel value);
 template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text);
 
+enum class Cel_Fill : uint8_t
+{
+  none = 0,
+  hatch = 1,
+  dither3d = 2,
+};
+
+constexpr uint32_t Cel_Fill_COUNT = 3;
+
+const char* to_string(Cel_Fill value);
+template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view text);
+
 enum class Bot_Mode : uint8_t
 {
   idle = 0,
@@ -228,10 +240,12 @@ struct cvar_state_t
   float r_cel_shadow_red;
   float r_cel_shadow_green;
   float r_cel_shadow_blue;
-  float r_cel_hatch;
-  float r_cel_hatch_spacing;
+  Cel_Fill r_cel_fill;
+  float r_cel_fill_strength;
+  float r_cel_fill_spacing;
+  float r_cel_fill_edge;
+  float r_cel_fill_tone;
   float r_cel_hatch_width;
-  float r_cel_hatch_edge;
   float r_cel_speckle;
   float r_cel_speckle_spacing;
   float r_cel_speckle_density;
@@ -390,42 +404,44 @@ enum class cvar_id : uint16_t
   r_cel_shadow_red = 116,
   r_cel_shadow_green = 117,
   r_cel_shadow_blue = 118,
-  r_cel_hatch = 119,
-  r_cel_hatch_spacing = 120,
-  r_cel_hatch_width = 121,
-  r_cel_hatch_edge = 122,
-  r_cel_speckle = 123,
-  r_cel_speckle_spacing = 124,
-  r_cel_speckle_density = 125,
-  r_cel_speckle_radius = 126,
-  r_ink = 127,
-  r_ink_threshold = 128,
-  r_ink_crease_degrees = 129,
-  r_ink_width = 130,
-  r_fxaa = 131,
-  r_fxaa_subpixel = 132,
-  r_look_panel = 133,
-  sv_skybox = 134,
-  debug_show_collisions = 135,
-  debug_show_hitboxes = 136,
-  debug_show_navmesh = 137,
-  debug_show_box_volumes = 138,
-  debug_hide_geometry = 139,
-  cl_shot_debug_seconds = 140,
-  debug_show_entity_counts = 141,
-  net_snapshot_debug = 142,
-  sv_event_debug = 143,
-  cl_event_debug = 144,
-  sv_reliable_debug = 145,
-  sv_io_debug = 146,
-  replay_keyframe_seconds = 147,
-  sv_replay_auto = 148,
-  sv_ghost_record = 149,
+  r_cel_fill = 119,
+  r_cel_fill_strength = 120,
+  r_cel_fill_spacing = 121,
+  r_cel_fill_edge = 122,
+  r_cel_fill_tone = 123,
+  r_cel_hatch_width = 124,
+  r_cel_speckle = 125,
+  r_cel_speckle_spacing = 126,
+  r_cel_speckle_density = 127,
+  r_cel_speckle_radius = 128,
+  r_ink = 129,
+  r_ink_threshold = 130,
+  r_ink_crease_degrees = 131,
+  r_ink_width = 132,
+  r_fxaa = 133,
+  r_fxaa_subpixel = 134,
+  r_look_panel = 135,
+  sv_skybox = 136,
+  debug_show_collisions = 137,
+  debug_show_hitboxes = 138,
+  debug_show_navmesh = 139,
+  debug_show_box_volumes = 140,
+  debug_hide_geometry = 141,
+  cl_shot_debug_seconds = 142,
+  debug_show_entity_counts = 143,
+  net_snapshot_debug = 144,
+  sv_event_debug = 145,
+  cl_event_debug = 146,
+  sv_reliable_debug = 147,
+  sv_io_debug = 148,
+  replay_keyframe_seconds = 149,
+  sv_replay_auto = 150,
+  sv_ghost_record = 151,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 150;
+constexpr uint32_t CVAR_COUNT = 152;
 
 enum class command_id : uint16_t
 {
@@ -696,6 +712,11 @@ template <> struct enum_traits<cvars::Locomotion_Model>
 template <> struct enum_traits<cvars::Debug_Channel>
 {
   static constexpr uint32_t count = cvars::Debug_Channel_COUNT;
+};
+
+template <> struct enum_traits<cvars::Cel_Fill>
+{
+  static constexpr uint32_t count = cvars::Cel_Fill_COUNT;
 };
 
 template <> struct enum_traits<cvars::Bot_Mode>

@@ -42,22 +42,23 @@ vec3 shade_ambient_cel(Surface surface, vec3 baked_irradiance, vec3 ambient_floo
     return surface.albedo * (baked_irradiance + ambient_floor) * cel_shadow_tint();
 }
 
-float cel_hatch_strength() { return scene.cel_hatch.x; } // r_cel_hatch
-float cel_hatch_spacing()  { return scene.cel_hatch.y; } // r_cel_hatch_spacing, pixels
-float cel_hatch_edge()     { return scene.cel_hatch.z; } // r_cel_hatch_edge
-float cel_hatch_width()    { return scene.cel_hatch.w; } // r_cel_hatch_width, pixels
+int   cel_fill_pattern()  { return int(scene.cel_fill_pattern.x); } // r_cel_fill, one of CEL_FILL_*
+float cel_fill_strength() { return scene.cel_fill.x; }              // r_cel_fill_strength
+float cel_fill_spacing()  { return scene.cel_fill.y; }              // r_cel_fill_spacing, pixels
+float cel_fill_edge()     { return scene.cel_fill.z; }              // r_cel_fill_edge
+float cel_fill_tone()     { return scene.cel_fill_pattern.y; }      // r_cel_fill_tone
+float cel_hatch_width()   { return scene.cel_fill.w; }              // r_cel_hatch_width, pixels
 
-const vec3 CEL_HATCH_COLOR = vec3(0.0);
+const vec3 CEL_FILL_COLOR = vec3(0.0);
 
-// How far along the hatching's direction a point is, in world units: pinned to
-// the world on the face's dominant axis, so it does not slide when the camera moves.
-float hatch_coordinate(vec3 world_position, vec3 N)
+// The two world axes a face lies along most: what pins a pattern to the world,
+// so it does not slide when the camera moves.
+vec2 face_plane(vec3 value, vec3 N)
 {
     vec3 facing = abs(N);
-    vec2 plane  = facing.x >= facing.y && facing.x >= facing.z ? world_position.yz
-                  : facing.y >= facing.z                       ? world_position.xz
-                                                               : world_position.xy;
-    return (plane.x + plane.y) * 0.70710678;
+    return facing.x >= facing.y && facing.x >= facing.z ? value.yz
+           : facing.y >= facing.z                       ? value.xz
+                                                        : value.xy;
 }
 
 float hatch_line(float cell, float pixels_per_cell)
@@ -69,12 +70,12 @@ float hatch_line(float cell, float pixels_per_cell)
 
 // Lines a fixed distance apart ON SCREEN: the spacing doubles as a face recedes,
 // every other line fading out as it does, so nothing pops.
-float hatch_coverage(vec3 world_position, vec3 N)
+float hatch_coverage(vec2 plane)
 {
-    float coordinate      = hatch_coordinate(world_position, N);
+    float coordinate      = (plane.x + plane.y) * 0.70710678;
     float world_per_pixel = max(fwidth(coordinate), 1e-6);
 
-    float level   = log2(world_per_pixel * cel_hatch_spacing());
+    float level   = log2(world_per_pixel * cel_fill_spacing());
     float octave  = floor(level);
     float fade    = level - octave;
     float spacing = exp2(octave);
@@ -84,54 +85,141 @@ float hatch_coverage(vec3 world_position, vec3 N)
     return max(coarse, fine * (1.0 - fade));
 }
 
+// What one pixel covers of the face, in world units along face_plane's axes.
+struct Pixel_Footprint
+{
+    vec2  across;          // the step to the pixel on the right
+    vec2  down;            // the step to the pixel below
+    float world_per_pixel; // the mean of its long and its short side
+    float squash;          // how many times longer its long side is than its short one
+};
+
+Pixel_Footprint pixel_footprint(vec3 world_position, vec3 N)
+{
+    Pixel_Footprint footprint;
+    footprint.across = face_plane(dFdx(world_position), N);
+    footprint.down   = face_plane(dFdy(world_position), N);
+
+    float area    = abs(footprint.across.x * footprint.down.y - footprint.across.y * footprint.down.x);
+    float squares = dot(footprint.across, footprint.across) + dot(footprint.down, footprint.down);
+    float spread  = sqrt(max(squares * squares - 4.0 * area * area, 0.0));
+
+    footprint.world_per_pixel = max(sqrt(area), 1e-6);
+    footprint.squash          = 0.5 * (squares + spread) / max(area, 1e-12);
+    return footprint;
+}
+
+// A lattice finer than 2^-10 or coarser than 2^16 world units is never asked for.
+const int LATTICE_FINEST_OCTAVE   = -10;
+const int LATTICE_COARSEST_OCTAVE = 16;
+
+// On a face seen this edge-on a dot is a sliver thinner than a pixel, so the pattern gives way to its mean.
+const float LATTICE_SQUASH_FADE_START = 4.0;
+const float LATTICE_SQUASH_FADE_END   = 8.0;
+
+float lattice_visibility(Pixel_Footprint footprint)
+{
+    return 1.0 - smoothstep(LATTICE_SQUASH_FADE_START, LATTICE_SQUASH_FADE_END, footprint.squash);
+}
+
+uint lattice_hash(ivec2 id)
+{
+    uint hash = uint(id.x) * 0x8da6b343u + uint(id.y) * 0xd8163841u;
+    hash ^= hash >> 15;
+    hash *= 0x2c1b3c6du;
+    hash ^= hash >> 12;
+    hash *= 0x297a2d39u;
+    hash ^= hash >> 15;
+    return hash;
+}
+
+// Where a lattice point comes in the Bayer order of its 8x8 tile, 0 to 63. The first 16
+// are the points of the lattice twice as coarse, in that lattice's own order.
+int bayer_rank(ivec2 point)
+{
+    int rank = 0;
+    for (int bit = 0; bit < 3; ++bit)
+    {
+        ivec2 parity = (point >> bit) & 1;
+        rank = rank * 4 + 2 * (parity.x ^ parity.y) + parity.x;
+    }
+    return rank;
+}
+
+// Dither3D's nesting (runevision, surface-stable fractal dithering): dots a fixed size and
+// distance apart ON SCREEN that stay pinned to the world. The lattice of twice the spacing
+// is a subset of this one, so as a face comes closer dots are only ever ADDED between the
+// ones already there, one Bayer rank at a time, and none of them moves or fades.
+// `radius` and `stray` are fractions of the spacing and sum to at most 0.5, which is what
+// keeps a dot within reach of the four lattice points around the pixel.
+float nested_dot_coverage(vec2 plane, Pixel_Footprint footprint, float spacing_pixels, float radius,
+                          float stray, float kept_share)
+{
+    float level   = clamp(log2(footprint.world_per_pixel * spacing_pixels), float(LATTICE_FINEST_OCTAVE),
+                          float(LATTICE_COARSEST_OCTAVE));
+    float octave  = floor(level);
+    float cell    = exp2(octave);
+    float spacing = exp2(level);
+
+    // The share of this lattice's own points showing, the coarser lattice's quarter
+    // excluded, picked so the dots per screen area stay the same across the octave.
+    float new_share = (exp2(2.0 * (1.0 - (level - octave))) - 1.0) / 3.0;
+
+    ivec2 corner   = ivec2(floor(plane / cell));
+    int   id_scale = 1 << (int(octave) - LATTICE_FINEST_OCTAVE);
+
+    float coverage = 0.0;
+    for (int index = 0; index < 4; ++index)
+    {
+        ivec2 point = corner + ivec2(index & 1, index >> 1);
+        uint  hash  = lattice_hash(point * id_scale);
+        vec2  nudge = vec2(hash & 1023u, (hash >> 10) & 1023u) / 1023.0 * 2.0 - 1.0;
+        float kept  = float(hash >> 20) / 4096.0 < kept_share ? 1.0 : 0.0;
+        float shown = clamp(new_share * 48.0 - float(bayer_rank(point) - 16), 0.0, 1.0);
+
+        vec2  from_centre     = plane - (vec2(point) * cell + nudge * (stray * spacing));
+        float centre_distance = length(from_centre);
+        vec2  outward         = from_centre / max(centre_distance, 1e-9);
+        float world_per_pixel = length(vec2(dot(footprint.across, outward), dot(footprint.down, outward)));
+        float pixels_to_edge  = (centre_distance - radius * spacing) / max(world_per_pixel, 1e-9);
+
+        coverage = max(coverage, kept * shown * (1.0 - smoothstep(-0.5, 0.5, pixels_to_edge)));
+    }
+    return coverage;
+}
+
 float cel_speckle_strength() { return scene.cel_speckle.x; } // r_cel_speckle
 float cel_speckle_spacing()  { return scene.cel_speckle.y; } // r_cel_speckle_spacing, pixels
 float cel_speckle_density()  { return scene.cel_speckle.z; } // r_cel_speckle_density
-float cel_speckle_radius()   { return scene.cel_speckle.w; } // r_cel_speckle_radius, of a cell
+float cel_speckle_radius()   { return scene.cel_speckle.w; } // r_cel_speckle_radius, of the spacing
 
 const vec3 CEL_SPECKLE_COLOR = vec3(0.0);
 
-vec2 speckle_plane(vec3 world_position, vec3 N)
+// Sand: r_cel_speckle_density of the lattice points hold a dot, each strayed from its point.
+float speckle_coverage(vec2 plane, Pixel_Footprint footprint)
 {
-    vec3 facing = abs(N);
-    return facing.x >= facing.y && facing.x >= facing.z ? world_position.yz
-           : facing.y >= facing.z                       ? world_position.xz
-                                                        : world_position.xy;
+    float radius = cel_speckle_radius();
+    return nested_dot_coverage(plane, footprint, cel_speckle_spacing(), radius, 0.5 - radius,
+                               cel_speckle_density()) *
+           lattice_visibility(footprint);
 }
 
-vec2 speckle_hash(vec2 cell_id)
+// Discs on a square lattice touch at pi / 4 of the face; a darker tone than this is not a dot pattern.
+const float DITHER_DARKEST_TONE = 0.75;
+
+// Ink dots of ONE size covering `tone` of the face: a lighter tone spreads them further
+// apart, by the same nesting that keeps them apart on screen. At r_cel_fill_tone they
+// are r_cel_fill_spacing pixels apart.
+float dither_coverage(vec2 plane, Pixel_Footprint footprint, float tone)
 {
-    vec3 p = fract(vec3(cell_id.xyx) * vec3(0.1031, 0.1030, 0.0973));
-    p += dot(p, p.yzx + 33.33);
-    return fract((p.xx + p.yz) * p.zy);
-}
+    tone = min(tone, DITHER_DARKEST_TONE);
+    if (tone <= 0.001)
+        return 0.0;
 
-// At most one dot per cell, at a random spot, present in r_cel_speckle_density of the cells.
-float speckle_dot(vec2 plane, float cell_size, float pixels_per_cell)
-{
-    vec2  cell_id = floor(plane / cell_size);
-    float present = step(speckle_hash(cell_id + 31.0).x, cel_speckle_density());
-    vec2  centre  = cell_id + mix(vec2(cel_speckle_radius()), vec2(1.0 - cel_speckle_radius()),
-                                  speckle_hash(cell_id + 17.0));
-    float pixels_to_edge = (length(plane / cell_size - centre) - cel_speckle_radius()) * pixels_per_cell;
-    return present * (1.0 - smoothstep(-0.5, 0.5, pixels_to_edge));
-}
-
-// Cells a fixed size ON SCREEN, pinned to the world like the hatching: the cell
-// doubles as a face recedes, the finer set fading out as it does.
-float speckle_coverage(vec3 world_position, vec3 N)
-{
-    vec2  plane           = speckle_plane(world_position, N);
-    float world_per_pixel = max(max(fwidth(plane.x), fwidth(plane.y)), 1e-6);
-
-    float level     = log2(world_per_pixel * cel_speckle_spacing());
-    float octave    = floor(level);
-    float fade      = level - octave;
-    float cell_size = exp2(octave);
-
-    float fine   = speckle_dot(plane, cell_size, cell_size / world_per_pixel);
-    float coarse = speckle_dot(plane, 2.0 * cell_size, 2.0 * cell_size / world_per_pixel);
-    return max(coarse, fine * (1.0 - fade));
+    float full_tone = clamp(cel_fill_tone(), 0.001, DITHER_DARKEST_TONE);
+    float spacing   = cel_fill_spacing() * sqrt(full_tone / tone);
+    float dots      = nested_dot_coverage(plane, footprint, spacing, sqrt(tone / PI), 0.0, 1.0);
+    return mix(tone, dots, lattice_visibility(footprint));
 }
 
 float luminance(vec3 color)
@@ -140,23 +228,29 @@ float luminance(vec3 color)
 }
 
 // `direct` and `ambient` are the light alone, shaded against a white surface.
-// Hatched where the direct light adds less than r_cel_hatch_edge times the ambient.
+// Filled where the direct light adds less than r_cel_fill_edge times the ambient.
 vec3 compose_cel(Surface surface, vec3 direct, vec3 ambient, vec3 world_position)
 {
+    vec2            plane     = face_plane(world_position, surface.geometric_normal);
+    Pixel_Footprint footprint = pixel_footprint(world_position, surface.geometric_normal);
+
     vec3 albedo = surface.albedo;
     if (cel_speckle_strength() > 0.0)
-        albedo = mix(albedo, CEL_SPECKLE_COLOR,
-                     speckle_coverage(world_position, surface.geometric_normal) * cel_speckle_strength());
+        albedo = mix(albedo, CEL_SPECKLE_COLOR, speckle_coverage(plane, footprint) * cel_speckle_strength());
 
     vec3 color = albedo * (direct + ambient);
-    if (cel_hatch_strength() <= 0.0)
+    if (cel_fill_pattern() == CEL_FILL_NONE)
         return color;
 
     float direct_share = luminance(direct) / max(luminance(ambient), 0.0001);
-    float in_shadow    = 1.0 - cel_band(direct_share, cel_hatch_edge());
-    float hatch        = hatch_coverage(world_position, surface.geometric_normal) * in_shadow *
-                         cel_hatch_strength();
-    return mix(color, CEL_HATCH_COLOR, hatch);
+    float in_shadow    = 1.0 - cel_band(direct_share, cel_fill_edge());
+
+    float ink;
+    if (cel_fill_pattern() == CEL_FILL_HATCH)
+        ink = hatch_coverage(plane) * in_shadow;
+    else
+        ink = dither_coverage(plane, footprint, in_shadow * cel_fill_tone());
+    return mix(color, CEL_FILL_COLOR, ink * cel_fill_strength());
 }
 
 #endif // SHADING_CEL_GLSL

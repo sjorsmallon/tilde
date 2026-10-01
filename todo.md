@@ -1,5 +1,78 @@
 # TODO
 
+**The ink lines read a normal image since 2026-09-30, looked at the same day
+("looks great").** The scene pass writes each opaque surface's world normal
+into a second colour output (`g_scene_data_images` in `renderer.cpp`,
+`surface_normal.glsl`), and `tonemap.frag` draws the OUTLINE from a depth jump
+(`r_ink_threshold`) and the CREASE, material detail included, from the angle
+between neighbouring normals (`r_ink_crease_degrees`). `r_debug_channel
+ink_normals` shows the image. The in-surface detail ink it replaced is deleted.
+Why depth alone was not enough: the depth ink measures a difference of depth
+SLOPES, which blows up as a surface turns edge-on, so facet edges of a round
+mesh inked (seen on `resources/glb/Duck.glb`); an angle-from-depth measure was
+worked through and rejected, it loses outlines over edge-on floors.
+
+Open on the ink lines:
+
+- Object ids, for a line between two objects whose depth and normal agree
+  (Obra Dinn). Decided 2026-09-30: later. The normal image's alpha is free
+  (above zero means a surface drew), or `g_scene_data_images` takes another
+  row. What an "object" is (entity, brush, material) is undecided: two brushes
+  of one floor would get a seam.
+- `r_ink_threshold` 4 and `r_ink_crease_degrees` 30 are first picks; the Look
+  panel (`r_look_panel`) tunes and exports them.
+- Antialiasing the lines (asked for 2026-09-29). FXAA was BUILT 2026-09-30 as
+  a post pass over the tonemapped and inked frame, under the UI (`fxaa.frag`,
+  `r_fxaa`, `r_fxaa_subpixel`), and looked at the same day: "lines look fine
+  for now". SMAA stays the candidate if they ever grey (three passes, two
+  lookup textures, keeps thin lines sharper); it is two more `screen_target_t`
+  and three `fullscreen_draw_t`.
+
+**The unlit side's fill is a selector since 2026-10-01: `r_cel_fill none |
+hatch | dither3d`. The dither was looked at the same day: "looks crazy
+good".** One row per pattern in
+`compose_cel` (`shading_cel.glsl`), drawn where direct light adds less than
+`r_cel_fill_edge` times the ambient; `r_cel_fill_strength` is how dark the ink
+is and `r_cel_fill_spacing` the pixels between lines or dots. All in the Look
+panel, which grew a combo for enum cvars.
+
+- `dither3d` (the default) is runevision's surface-stable fractal dithering,
+  written out as arithmetic instead of read from his 3D texture
+  (`nested_dot_coverage`): a square lattice pinned to the world on the face's
+  dominant axis, the lattice of twice the spacing a subset of it, the points
+  between shown in Bayer order so the dots per screen area never change. As a
+  face comes closer dots are only ADDED, one Bayer rank (a 48th of the new
+  ones) at a time. Dots are ONE size; `r_cel_fill_tone` is the share of the
+  shadow they cover, and a lighter tone (today only the band at the shadow's
+  edge) spreads them apart rather than shrinking them.
+- `hatch` is the 2026-09-29 monolines, looked at and rejected ("not
+  crosshatched, just monolines"), kept as a row. `r_cel_hatch_width` is its
+  one own number.
+- Not built, each one more row: crosshatch (a second set of lines crossing the
+  first as it darkens), halftone (the same lattice held still, the dots growing
+  with the tone).
+- Open: the tone is FLAT across the shadow. Return of the Obra Dinn's trick is
+  tone as pattern density, so the next number to feed `dither_coverage` is how
+  dark the baked light is there. Which look this should be is not decided.
+- Known costs: a pattern pinned to the world slides across a moving object;
+  past four-to-one squash (a floor further off than about four eye heights) the
+  dots give way to their flat mean tone, or they would be slivers under a pixel.
+
+**Sand speckles ride the same lattice since 2026-10-01; the flicker they were
+parked for 2026-09-30 should be gone, not looked at yet.** `r_cel_speckle` is
+back at 0.12. Mars First Logistics direction: sparse dots over every surface
+under the cel look (`speckle_coverage`, applied to the albedo in
+`compose_cel`). `r_cel_speckle_density` of the lattice points hold a dot,
+picked by a hash of the point's world id, so a dot that exists keeps existing
+at every distance. Each strays from its point by a hash too; the stray is a
+fixed number of PIXELS (half the spacing less the radius), so over a halving of
+the distance a dot drifts on its surface by at most that many pixels' worth. If
+that reads as swimming, the fix is stray in world units and a search over more
+than the four nearest points. Decided earlier: promote the strength to a
+per-material number through a `look.txt` in the material folder and a uniform
+block at set 0 binding 5 (the push block is full at 128 bytes); the cvar stays
+as the global multiplier. Not built until the dots look right on sand.
+
 - latency injection for testing (loopback?)
 
 **Surfing is not quite CS yet: aiming back UP the ramp feels wrong.** The

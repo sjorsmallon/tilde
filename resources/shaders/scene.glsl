@@ -22,6 +22,11 @@
 // MAX_SCENE_RIPPLES, kept one number by the scene block's size assert.
 #define MAX_RIPPLES 16
 
+// scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
+#define CEL_FILL_NONE     0
+#define CEL_FILL_HATCH    1
+#define CEL_FILL_DITHER3D 2
+
 // scene.debug_flags, from r_debug_channel. One text for every fragment shader
 // that reads them, so a channel added here is a channel every shader can show.
 #define DEBUG_FLAG_RENDER_NORMALS           (1 << 0)
@@ -110,8 +115,10 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   look;
     // rgb = what the unlit side is multiplied by, the three r_cel_shadow_* cvars.
     vec4   cel_shadow_tint;
-    // x = r_cel_hatch, y = r_cel_hatch_spacing, z = r_cel_hatch_edge, w = r_cel_hatch_width.
-    vec4   cel_hatch;
+    // x = r_cel_fill_strength, y = r_cel_fill_spacing, z = r_cel_fill_edge, w = r_cel_hatch_width.
+    vec4   cel_fill;
+    // x = r_cel_fill as one of CEL_FILL_*, y = r_cel_fill_tone.
+    vec4   cel_fill_pattern;
     // x = r_cel_speckle, y = r_cel_speckle_spacing, z = r_cel_speckle_density, w = r_cel_speckle_radius.
     vec4   cel_speckle;
 } scene;

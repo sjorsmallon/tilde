@@ -263,10 +263,12 @@ bool Tick()
     look.cel_softness     = cvars.r_cel_softness;
     look.cel_shadow_tint  = {cvars.r_cel_shadow_red, cvars.r_cel_shadow_green,
                              cvars.r_cel_shadow_blue};
-    look.cel_hatch                = cvars.r_cel_hatch;
-    look.cel_hatch_spacing_pixels = cvars.r_cel_hatch_spacing;
+    look.cel_fill                 = cvars.r_cel_fill;
+    look.cel_fill_strength        = cvars.r_cel_fill_strength;
+    look.cel_fill_spacing_pixels  = cvars.r_cel_fill_spacing;
+    look.cel_fill_edge            = cvars.r_cel_fill_edge;
+    look.cel_fill_tone            = cvars.r_cel_fill_tone;
     look.cel_hatch_width_pixels   = cvars.r_cel_hatch_width;
-    look.cel_hatch_edge           = cvars.r_cel_hatch_edge;
     look.cel_speckle                = cvars.r_cel_speckle;
     look.cel_speckle_spacing_pixels = cvars.r_cel_speckle_spacing;
     look.cel_speckle_density        = cvars.r_cel_speckle_density;

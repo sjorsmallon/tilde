@@ -488,7 +488,7 @@ Map :: cvars {
 }
 
 Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals }
-
+Cel_Fill :: enum { none, hatch, dither3d }
 
 Debugging :: cvars {
 
@@ -511,7 +511,7 @@ Debugging :: cvars {
     // would have earned a rescale of every light in every map.
     r_exposure:             f32 = 1.4       @Client    "Exposure multiplier applied before the tonemap curve"
 
-    r_stylized:             bool = true     @Client    "The whole comic look at once: off draws the plain frame whatever r_cel, r_ink and r_cel_hatch say"
+    r_stylized:             bool = true     @Client    "The whole comic look at once: off draws the plain frame whatever r_cel, r_ink and r_cel_fill say"
     r_cel:                  bool = true     @Client    "Shade the whole frame in two tones (shading_cel.glsl); turns PCSS off, which a hard shadow edge cannot use"
     r_cel_terminator:       f32 = 0.05      @Client    "How far a surface must face a light to count as lit, as N.L (0 = edge-on, 1 = face-on)"
     r_cel_shadow_edge:      f32 = 0.5       @Client    "How much of a light a shadow must let through for the surface to count as lit (0 to 1)"
@@ -519,14 +519,16 @@ Debugging :: cvars {
     r_cel_shadow_red:       f32 = 0.8       @Client    "Red of the colour the unlit side is multiplied by"
     r_cel_shadow_green:     f32 = 0.85      @Client    "Green of the colour the unlit side is multiplied by"
     r_cel_shadow_blue:      f32 = 1.0       @Client    "Blue of the colour the unlit side is multiplied by"
-    r_cel_hatch:            f32 = 0.0       @Client    "How dark the hatching on the unlit side is (0 = none, 1 = solid ink)"
-    r_cel_hatch_spacing:    f32 = 8.0       @Client    "Distance between hatch lines, in pixels"
-    r_cel_hatch_width:      f32 = 1.0       @Client    "Width of a hatch line, in pixels"
-    r_cel_hatch_edge:       f32 = 0.5       @Client    "A surface is hatched where direct light adds less than this many times its ambient light"
-    r_cel_speckle:          f32 = 0.0       @Client    "How dark the sand speckles over every surface are (0 = none, 1 = solid ink)"
-    r_cel_speckle_spacing:  f32 = 10.0      @Client    "Distance between speckle cells on screen, in pixels; one cell holds at most one speckle"
-    r_cel_speckle_density:  f32 = 0.33      @Client    "The share of cells that hold a speckle (0 to 1)"
-    r_cel_speckle_radius:   f32 = 0.2       @Client    "Radius of a speckle as a fraction of its cell"
+    r_cel_fill:             Cel_Fill = .dither3d @Client "What fills the unlit side: none, hatch (diagonal lines), dither3d (dots pinned to the surface that keep their size on screen)"
+    r_cel_fill_strength:    f32 = 0.5       @Client    "How dark the fill's ink is (0 = invisible, 1 = solid ink)"
+    r_cel_fill_spacing:     f32 = 6.0       @Client    "Distance between hatch lines or dither dots, in pixels"
+    r_cel_fill_edge:        f32 = 0.5       @Client    "A surface is filled where direct light adds less than this many times its ambient light"
+    r_cel_fill_tone:        f32 = 0.3       @Client    "dither3d: the share of the unlit side the dots cover (0 to 0.75)"
+    r_cel_hatch_width:      f32 = 1.0       @Client    "hatch: width of a line, in pixels"
+    r_cel_speckle:          f32 = 0.12      @Client    "How dark the sand speckles over every surface are (0 = none, 1 = solid ink)"
+    r_cel_speckle_spacing:  f32 = 10.0      @Client    "Distance between speckle lattice points on screen, in pixels; a point holds at most one speckle"
+    r_cel_speckle_density:  f32 = 0.33      @Client    "The share of lattice points that hold a speckle (0 to 1)"
+    r_cel_speckle_radius:   f32 = 0.15      @Client    "Radius of a speckle as a fraction of the spacing (0 to 0.5); the rest of the half spacing is how far it strays from its lattice point"
     r_ink:                  bool = true     @Client    "Draw ink lines where the scene depth jumps (outlines) and where the surface normal turns (creases)"
     r_ink_threshold:        f32 = 4.0       @Client    "How far the depth must jump before an outline is inked; lower draws more lines"
     r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the surface normal, normal map included, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
