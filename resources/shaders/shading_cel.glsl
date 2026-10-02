@@ -7,6 +7,7 @@
 
 #include "scene.glsl"
 #include "surface.glsl"
+#include "dither3d.glsl"
 
 // Every number is a cvar, so it is tuned from the console and a map can carry its own.
 float cel_terminator()  { return scene.look.y; }          // r_cel_terminator
@@ -19,13 +20,20 @@ float cel_band(float value, float edge)
     return smoothstep(edge - cel_softness(), edge + cel_softness(), value);
 }
 
+float luminance(vec3 color)
+{
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
 // Lit or not, never in between: flat brightness off the geometric normal, no highlight.
+// rgb is the light; a is its luminance times how squarely it arrives, which compose_cel
+// turns into the lit side's tone.
 //
 // NOT BUILT, a hard highlight: take pbr_lighting.glsl's GGX specular, threshold it to a
 // solid dot, and add it only where surface.roughness is low, tinted by
 // mix(vec3(0.04), albedo, metallic). It needs V passed in here, and surface.normal
 // kept normal-mapped for it. Left out because a flat face shows either no dot or a whole-face one.
-vec3 shade_light_cel(Surface surface, Incoming_Light light)
+vec4 shade_light_cel(Surface surface, Incoming_Light light)
 {
     float facing   = dot(surface.geometric_normal, light.direction);
     float strength = max(light.visibility.r, max(light.visibility.g, light.visibility.b));
@@ -33,7 +41,23 @@ vec3 shade_light_cel(Surface surface, Incoming_Light light)
 
     float lit = cel_band(facing, cel_terminator()) * cel_band(strength, cel_shadow_edge());
 
-    return surface.albedo * light.radiance * tint * (light.attenuation * lit) / PI;
+    vec3 color = surface.albedo * light.radiance * tint * (light.attenuation * lit) / PI;
+    return vec4(color, luminance(color) * max(facing, 0.0));
+}
+
+float cel_bands() { return scene.cel_shadow_tint.a; } // r_cel_bands
+
+// Light in flat steps a fixed ratio apart, r_cel_bands of them per doubling, its hue kept. compose_cel bands the total.
+vec3 band_light(vec3 light)
+{
+    float bands = cel_bands();
+    float level = luminance(light);
+    if (bands <= 0.0 || level <= 1e-6)
+        return light;
+
+    float position = log2(level) * bands;
+    float banded   = floor(position) + cel_band(fract(position), 0.5);
+    return light * (exp2(banded / bands) / level);
 }
 
 // The shadow side: the baked light and the floor, tinted.
@@ -52,6 +76,8 @@ float cel_hatch_width()   { return scene.cel_fill.w; }              // r_cel_hat
 float cel_fill_tone_light()    { return scene.cel_fill_tone_range.x; } // r_cel_fill_tone_light
 float cel_fill_ambient_dark()  { return scene.cel_fill_tone_range.y; } // r_cel_fill_ambient_dark
 float cel_fill_ambient_light() { return scene.cel_fill_tone_range.z; } // r_cel_fill_ambient_light
+float cel_fill_tone_lit()      { return scene.cel_fill_tone_range.w; } // r_cel_fill_tone_lit
+float cel_fill_material()      { return scene.cel_fill_pattern.z; }    // r_cel_fill_material
 
 const vec3 CEL_FILL_COLOR = vec3(0.0);
 
@@ -226,9 +252,19 @@ float dither_coverage(vec2 plane, Pixel_Footprint footprint, float tone)
     return mix(tone, dots, lattice_visibility(footprint));
 }
 
-float luminance(vec3 color)
+// runevision's own shader and 3D texture (dither3d.glsl), fed the same tone. At half tone its dots are
+// r_cel_fill_spacing pixels apart.
+float dither3d_original_coverage(vec2 plane, Pixel_Footprint footprint, float tone)
 {
-    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+    if (tone <= 0.001)
+        return 0.0;
+
+    Dither3d_Settings settings;
+    settings.scale              = log2(8.0 * cel_fill_spacing());
+    settings.size_variability   = scene.cel_dither3d.x; // r_cel_dither3d_size_variability
+    settings.contrast           = scene.cel_dither3d.y; // r_cel_dither3d_contrast
+    settings.stretch_smoothness = scene.cel_dither3d.z; // r_cel_dither3d_stretch_smoothness
+    return dither3d(plane, footprint.across, footprint.down, tone, settings);
 }
 
 // Tone as dot DENSITY (Return of the Obra Dinn): the dimmer a shadow's ambient light, the more of it the dots cover.
@@ -240,9 +276,19 @@ float shadow_tone(vec3 ambient)
     return mix(cel_fill_tone(), cel_fill_tone_light(), lightness);
 }
 
-// `direct` and `ambient` are the light alone, shaded against a white surface.
-// Filled where the direct light adds less than r_cel_fill_edge times the ambient.
-vec3 compose_cel(Surface surface, vec3 direct, vec3 ambient, vec3 world_position)
+// How far the material's own maps put this spot from a flat, open surface: 1 in a crack its
+// occlusion map closes or where its normal map leans a right angle off the face, 0 with neither map.
+float material_relief(Surface surface)
+{
+    float lean = length(cross(surface.normal, surface.geometric_normal));
+    return clamp(max(1.0 - surface.occlusion, lean), 0.0, 1.0);
+}
+
+// `direct` and `ambient` are the light alone, shaded against a white surface; direct.a is
+// shade_light_cel's. Shadow is where the direct light adds less than r_cel_fill_edge times the
+// ambient. The dithers fill it by shadow_tone, the lit side by how far its light is from
+// arriving square-on, and both by the material's relief; the hatch fills the shadow alone.
+vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position)
 {
     vec2            plane     = face_plane(world_position, surface.geometric_normal);
     Pixel_Footprint footprint = pixel_footprint(world_position, surface.geometric_normal);
@@ -251,18 +297,27 @@ vec3 compose_cel(Surface surface, vec3 direct, vec3 ambient, vec3 world_position
     if (cel_speckle_strength() > 0.0)
         albedo = mix(albedo, CEL_SPECKLE_COLOR, speckle_coverage(plane, footprint) * cel_speckle_strength());
 
-    vec3 color = albedo * (direct + ambient);
+    // Direct and ambient are banded TOGETHER, so a light's own falloff steps with the shadow it fades into.
+    vec3 color = albedo * band_light(direct.rgb + ambient);
     if (cel_fill_pattern() == CEL_FILL_NONE)
         return color;
 
-    float direct_share = luminance(direct) / max(luminance(ambient), 0.0001);
-    float in_shadow    = 1.0 - cel_band(direct_share, cel_fill_edge());
+    float direct_luminance = luminance(direct.rgb);
+    float in_shadow        = 1.0 - cel_band(direct_luminance / max(luminance(ambient), 0.0001), cel_fill_edge());
+
+    float facing = clamp(direct.a / max(direct_luminance, 0.0001), 0.0, 1.0);
+    float tone   = in_shadow * shadow_tone(band_light(ambient)) +
+                   (1.0 - in_shadow) * (1.0 - facing) * cel_fill_tone_lit() +
+                   material_relief(surface) * cel_fill_material();
+    tone         = min(tone, DITHER_DARKEST_TONE);
 
     float ink;
     if (cel_fill_pattern() == CEL_FILL_HATCH)
         ink = hatch_coverage(plane) * in_shadow;
+    else if (cel_fill_pattern() == CEL_FILL_DITHER3D_ORIGINAL)
+        ink = dither3d_original_coverage(plane, footprint, tone);
     else
-        ink = dither_coverage(plane, footprint, in_shadow * shadow_tone(ambient));
+        ink = dither_coverage(plane, footprint, tone);
     return mix(color, CEL_FILL_COLOR, ink * cel_fill_strength());
 }
 

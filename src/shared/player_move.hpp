@@ -45,6 +45,8 @@ constexpr uint64_t Secondary_Fire = 1 << 20;
 // it is here for Throw's reason, which is that the server resolves it in the
 // step loop off a press edge.
 constexpr uint64_t Ping = 1 << 21;
+// cl_auto_equip_weapon_on_pickup as STATE, riding in the way Zoom does: the server raises a weapon this player walks over.
+constexpr uint64_t Equip_On_Pickup = 1 << 22;
 
 // The buttons whose EDGE is worth a sub-tick slot, and therefore an extra
 // movement step (shared/subtick.hpp).

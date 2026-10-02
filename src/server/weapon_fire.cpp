@@ -376,6 +376,14 @@ void resolve_player_shot(
       toggle_canopy(context, *player);
       return;
 
+    case entities::Fire_Resolution::Reveal_Light:
+      player->reveal_light_on = !player->reveal_light_on;
+      return;
+
+    case entities::Fire_Resolution::Reveal_Light_Overhead:
+      player->reveal_light_overhead = !player->reveal_light_overhead;
+      return;
+
     // No clocks and no ammo: an empty magazine is exactly when this is pressed.
     case entities::Fire_Resolution::Recall:
       recall_shots(context, player->entity_id, active_weapon->weapon_id);

@@ -18,6 +18,7 @@ struct pass_builder_t
   shared::frame_lights_t                               lights;
   // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
   std::vector<shared::wall_ripple_t>                   ripples;
+  std::vector<shared::reveal_cone_t>                   reveal_cones;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
 
@@ -77,6 +78,7 @@ struct pass_builder_t
     lights.entries.clear();
     lights.baked_count = 0;
     ripples.clear();
+    reveal_cones.clear();
     custom.clear();
     debug.retire(delta_seconds);
     seconds += delta_seconds;
@@ -91,6 +93,7 @@ struct pass_builder_t
     pass.lights            = lights.entries;
     pass.baked_light_count = lights.baked_count;
     pass.ripples           = ripples;
+    pass.reveal_cones      = reveal_cones;
     pass.seconds           = seconds;
     pass.debug_channel = debug_channel;
     pass.particles = particles;

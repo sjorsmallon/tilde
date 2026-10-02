@@ -699,6 +699,20 @@ void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws
   }
 }
 
+void Lightmap_Tool::rebuild_charts(editor_context_t& ctx)
+{
+  baked = {};
+  baked.settings = settings;
+  baked.charts = shared::build_lightmap_charts(*ctx.map, settings);
+  baked.atlas = shared::pack_lightmap_charts(baked.charts, settings);
+  shared::set_lightmap_geometry_id(baked);
+  lit_texel_count = 0;
+
+  if (!has_packed())
+    log_error("[lightmap] packing produced no pages for {} charts.",
+              baked.charts.size());
+}
+
 void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
 {
   ImGui::SetNextWindowSize({340, 0}, ImGuiCond_Once);
@@ -719,20 +733,11 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   ImGui::Separator();
 
   if (ImGui::Button("Build charts and pack", {-1, 0}))
-  {
-    baked = {};
-    baked.settings = settings;
-    baked.charts = shared::build_lightmap_charts(*ctx.map, settings);
-    baked.atlas = shared::pack_lightmap_charts(baked.charts, settings);
-    shared::set_lightmap_geometry_id(baked);
-    lit_texel_count = 0;
+    rebuild_charts(ctx);
 
-    if (!has_packed())
-      log_error("[lightmap] packing produced no pages for {} charts.",
-                baked.charts.size());
-  }
-
-  if (!has_packed())
+  // Fixed for the frame: Bake rebuilds the charts, and a Begin must meet its End.
+  const bool nothing_packed = !has_packed();
+  if (nothing_packed)
     ImGui::BeginDisabled();
 
   if (ImGui::Button("Write packing PNG", {-1, 0}))
@@ -797,7 +802,17 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   ImGui::Checkbox("Bake on the GPU (r_lightmap_gpu)", &cvars.r_lightmap_gpu);
   ImGui::TextWrapped("next bake runs through %s", bake_path_for(cvars).description.c_str());
 
-  if (ImGui::Button("Bake", {-1, 0}))
+  // The charts are rebuilt from the map as it is NOW: kept ones were another map's, or this one's before an edit.
+  if (nothing_packed)
+    ImGui::EndDisabled();
+  const bool bake_pressed = ImGui::Button("Bake", {-1, 0});
+  if (nothing_packed)
+    ImGui::BeginDisabled();
+
+  if (bake_pressed)
+    rebuild_charts(ctx);
+
+  if (bake_pressed && has_packed())
   {
     visibility_masks = {};
     const bake_path_t path = bake_path_for(cvars);
@@ -1232,7 +1247,7 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   if (has_packed() && ctx.map_path.empty())
     ImGui::TextDisabled("Save the map first -- a sidecar needs somewhere to go.");
 
-  if (!has_packed())
+  if (nothing_packed)
     ImGui::EndDisabled();
 
   ImGui::Separator();

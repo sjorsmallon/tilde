@@ -87,7 +87,8 @@ bool Tick()
                                 {.tick        = context.tick_number,
                                  .state_tick  = context.tick_number - 1,
                                  .tickrate_hz = context.cvars->sv_tickrate,
-                                 .gravity     = context.cvars->g_gravity},
+                                 .gravity     = context.cvars->g_gravity,
+                                 .reveal_cone = shared::reveal_cone_settings_from(*context.cvars)},
                                 predicted_world_storage);
   }
   const shared::predicted_world_storage_t& world = predicted_world_storage;
@@ -164,7 +165,7 @@ bool Tick()
                     context.cvars->map_respawn_delay_seconds);
 
     update_bounce_bodies(context, world, tick_dt);
-    update_dropped_weapons(context);
+    update_dropped_weapons(context, tick_dt);
     update_weapon_emancipation_grills(context);
 
     // Observers last: they look at where things ended up and write nothing but

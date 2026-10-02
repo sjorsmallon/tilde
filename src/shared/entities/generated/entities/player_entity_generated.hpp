@@ -28,6 +28,8 @@ struct Player_Entity : Entity
   uint32_t death_tick;
   uint32_t last_fire_tick;
   Weapon last_fire_weapon;
+  bool reveal_light_on;
+  bool reveal_light_overhead;
   uint64_t reload_complete_time;
   uint32_t last_empty_fire_warning_tick;
   shared::entity_uid_t checkpoint_uid;

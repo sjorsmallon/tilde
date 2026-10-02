@@ -566,6 +566,108 @@ try_find_local_weapon_definition(const client_context_t &ctx)
   return try_find_weapon_definition_for_active_weapon_held_by_player(ctx, try_find_my_player(ctx));
 }
 
+// The server raises a pickup with no key press to predict the deploy from, so it is read off the replicated hand.
+static void start_deploy_clock_for_weapon_raised_by_pickup(client_context_t &ctx)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr || ctx.prediction.local_player_health <= 0)
+  {
+    ctx.prediction.inventory_at_last_frame.reset();
+    return;
+  }
+
+  const entities::Inventory& inventory = my_player->inventory;
+  if (ctx.prediction.inventory_at_last_frame &&
+      ctx.prediction.inventory_at_last_frame->active_slot != inventory.active_slot)
+  {
+    const uint32_t* held_at_last_frame =
+        ctx.prediction.inventory_at_last_frame->weapons.try_get(inventory.active_slot);
+    const entities::Weapon_Entity* raised = try_find_active_weapon(ctx, *my_player);
+
+    if (held_at_last_frame != nullptr && *held_at_last_frame == shared::null_entity_uid &&
+        raised != nullptr)
+    {
+      ctx.prediction.seconds_until_local_reload_complete = 0.f;
+      ctx.prediction.seconds_until_local_deploy_complete =
+          shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds;
+    }
+  }
+
+  ctx.prediction.inventory_at_last_frame = inventory;
+}
+
+// The server flips Player_Entity::reveal_light_on (primary) or reveal_light_overhead (secondary) at this press,
+// behind the same gates; held_snapshot.cpp forgets it once answered.
+static void predict_local_reveal_light_toggle(client_context_t &ctx, entities::Fire_Trigger trigger)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr || !local_movement_is_allowed(ctx) ||
+      ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot)
+    return;
+
+  if (!shared::reveal_light_is_in_hand(ctx.world.session.entity_system, *my_player))
+    return;
+
+  std::vector<int> &unanswered = trigger == entities::Fire_Trigger::Primary
+                                     ? ctx.prediction.unanswered_reveal_light_toggles
+                                     : ctx.prediction.unanswered_reveal_light_overhead_toggles;
+  unanswered.push_back(ctx.prediction.input_number);
+}
+
+// A server flag as it stands when the server opens `input_number`: flipped once per unanswered press before that input.
+static bool flag_after_unanswered_presses(bool server_flag, const std::vector<int> &unanswered,
+                                          int input_number)
+{
+  const auto earlier_presses =
+      std::count_if(unanswered.begin(), unanswered.end(),
+                    [input_number](int pressed_in) { return pressed_in < input_number; });
+  return server_flag != (earlier_presses % 2 == 1);
+}
+
+static bool local_reveal_light_is_on_entering(const client_context_t &ctx,
+                                              const entities::Player_Entity &my_player, int input_number)
+{
+  return flag_after_unanswered_presses(my_player.reveal_light_on,
+                                       ctx.prediction.unanswered_reveal_light_toggles, input_number) &&
+         shared::reveal_light_is_in_hand(ctx.world.session.entity_system, my_player);
+}
+
+static bool local_reveal_light_is_on(const client_context_t &ctx, const entities::Player_Entity &my_player)
+{
+  return local_reveal_light_is_on_entering(ctx, my_player, std::numeric_limits<int>::max());
+}
+
+static bool local_reveal_light_is_overhead_entering(const client_context_t &ctx,
+                                                    const entities::Player_Entity &my_player,
+                                                    int input_number)
+{
+  return flag_after_unanswered_presses(my_player.reveal_light_overhead,
+                                       ctx.prediction.unanswered_reveal_light_overhead_toggles,
+                                       input_number);
+}
+
+static bool local_reveal_light_is_overhead(const client_context_t &ctx,
+                                           const entities::Player_Entity &my_player)
+{
+  return local_reveal_light_is_overhead_entering(ctx, my_player, std::numeric_limits<int>::max());
+}
+
+// The aim the server holds for us when it opens `input_number`: where the input before it ended.
+static shared::subtick_view_t local_view_entering(const client_context_t &ctx,
+                                                  const entities::Player_Entity &my_player,
+                                                  int input_number)
+{
+  const int previous = input_number - 1;
+  if (previous >= 0)
+  {
+    const Saved_Input &saved =
+        ctx.prediction.pending_inputs[previous % (int)ctx.prediction.pending_inputs.size()];
+    if (saved.input_number == previous)
+      return saved.input.view_at_end;
+  }
+  return {.yaw = my_player.view_angle_yaw, .pitch = my_player.view_angle_pitch};
+}
+
 static void play_predicted_local_gunshot(
   client_context_t &ctx,
   entities::Fire_Trigger trigger,
@@ -591,6 +693,8 @@ static void play_predicted_local_gunshot(
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
     case entities::Fire_Resolution::Canopy:
+    case entities::Fire_Resolution::Reveal_Light:
+    case entities::Fire_Resolution::Reveal_Light_Overhead:
     case entities::Fire_Resolution::Recall: // nothing to do. no effect.
       return;
 
@@ -1019,17 +1123,36 @@ static void collect_disabled_geometry_for_frame(client_context_t& ctx, play_fram
 // replayed input's tick: a switch that flipped inside the unacked window
 // mispredicts for that window and is corrected, which is what makes them need no
 // history (prediction_def.md ss1.4).
+//
+// The reveal cones are per input too. Everyone else's are the snapshot's; our own is cut from where
+// `input_number` finds us (`own_feet`, the aim and the toggle the input before it left), as the server cuts it.
 static void build_predicted_world_for_input(client_context_t& ctx, play_frame_t& frame,
-                                          int input_number)
+                                          int input_number, const vec3f& own_feet)
 {
   const shared::predicted_world_settings_t settings{
       .tick        = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number),
       // The session's entities are the newest snapshot's, so that is the tick their state describes.
       .state_tick  = ctx.prediction.latest_server_tick,
       .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
-      .gravity     = ctx.cvars->g_gravity};
+      .gravity     = ctx.cvars->g_gravity,
+      .reveal_cone = shared::reveal_cone_settings_from(*ctx.cvars)};
   shared::build_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
   shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
+
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  shared::collect_reveal_cones(ctx.world.session.entity_system, settings.reveal_cone,
+                               my_player != nullptr ? my_player->entity_id : shared::null_entity_uid,
+                               frame.predicted_world_storage.reveal_cones);
+  if (my_player != nullptr && local_reveal_light_is_on_entering(ctx, *my_player, input_number))
+  {
+    const shared::subtick_view_t view = local_view_entering(ctx, *my_player, input_number);
+    frame.predicted_world_storage.reveal_cones.push_back(shared::planes_of_reveal_cone(
+        shared::reveal_cone_of(own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw,
+                               view.pitch,
+                               local_reveal_light_is_overhead_entering(ctx, *my_player, input_number),
+                               settings.reveal_cone)));
+  }
+
   frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage, frame.team);
 }
 
@@ -1360,31 +1483,12 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
     network::Bit_Reader reader(payload.data(), payload.size());
     shared::map_data_message_t data = shared::deserialize_map_data(reader);
 
-    if (data.compressed)
-    {
-      // cool, that's not implemented.
-      fatal_error("Received compressed S2C_MapData for '{}' but decompression isn't implemented yet.", data.map_name);
+    const std::optional<shared::map_package_t> package =
+        shared::try_unpack_map_data_message(data);
+    if (!package)
       continue;
-    }
 
-    // Integrity check: package_hash is over the uncompressed blob.
-    uint32_t actual_hash = shared::compute_map_package_hash(data.bytes);
-    if (actual_hash != data.package_hash)
-    {
-      log_error("Streamed map package hash mismatch (got {:#x}, expected "
-                "{:#x}); waiting for resend.", actual_hash, data.package_hash);
-      continue;
-    }
-
-    auto package = shared::map_package_t{};
-    if (!shared::deserialize_map_package(data.bytes, package))
-    {
-      log_error("Failed to deserialize streamed map package '{}'; waiting for "
-                "resend.", data.map_name);
-      continue;
-    }
-
-    if (!switch_to_map_provided_by_map_package(package))
+    if (!switch_to_map_provided_by_map_package(*package))
     {
       log_error("Failed to switch to map based on map package. supposed map name: '{}'.", data.map_name);
       continue;
@@ -1393,9 +1497,10 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
     // map loaded.
     ctx.connection.awaiting_stream_content_hash = 0;
     enter_connected_phase();
-    log_terminal("Downloaded map '{}' (package hash {:#x}); now reporting "
-                 "content hash {:#x}", package.map_name, data.package_hash,
-                 ctx.world.map_content_hash);
+    log_terminal("Downloaded map '{}' ({} bytes on the wire, {} unpacked, package hash {:#x}); "
+                 "now reporting content hash {:#x}",
+                 package->map_name, data.compressed_package.size(), data.package_size_in_bytes,
+                 data.package_hash, ctx.world.map_content_hash);
   }
 
   consume_ghost_messages(ctx, inbox);
@@ -1621,7 +1726,7 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
-      build_predicted_world_for_input(ctx, frame, replayed);
+      build_predicted_world_for_input(ctx, frame, replayed, reconciled_position);
       reconciled_position =
           predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
 
@@ -1826,6 +1931,8 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
     if (ctx.prediction.zoom_active) buttons |= Button::Zoom;
   }
 
+  if (ctx.cvars->cl_auto_equip_weapon_on_pickup) buttons |= Button::Equip_On_Pickup;
+
   // Read once for the frame; the tick loop below gates both the predicted shot
   // and the predicted move on it.
   const bool local_player_is_dead = ctx.prediction.local_player_health <= 0;
@@ -1852,6 +1959,8 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
       local_player_is_a_corpse
           ? 0.f
           : std::max(0.f, ctx.prediction.seconds_until_local_deploy_complete - dt);
+
+  start_deploy_clock_for_weapon_raised_by_pickup(ctx);
 
   frame.fov_degrees          = fov_degrees;
   frame.mouse_sensitivity    = mouse_sensitivity;
@@ -2300,12 +2409,18 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             subtick_input.buttons_at_start & subtick_input.buttons_at_end();
 
         if (fire_slot < shared::SUBTICK_SLOT_COUNT)
+        {
           play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, false);
+          predict_local_reveal_light_toggle(ctx, entities::Fire_Trigger::Primary);
+        }
         else if ((buttons_down_across_tick & Button::Fire) != 0)
           play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, true);
 
         if (secondary_fire_slot < shared::SUBTICK_SLOT_COUNT)
+        {
           play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Secondary, false);
+          predict_local_reveal_light_toggle(ctx, entities::Fire_Trigger::Secondary);
+        }
         else if ((buttons_down_across_tick & Button::Secondary_Fire) != 0)
           play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Secondary, true);
       }
@@ -2329,7 +2444,8 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
 
         uint64_t buttons_entering_step = buttons_before_tick;
 
-        build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
+        build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number,
+                                        ctx.prediction.player_position);
         ctx.prediction.player_position =
             predict_mover_push(ctx, frame.predicted_world, ctx.prediction.player_movement,
                                ctx.prediction.player_position);
@@ -2779,7 +2895,8 @@ void Play_State::update(float dt)
 
   // ----------------------------------------------------------------- SIMULATE
   collect_disabled_geometry_for_frame(ctx, frame);
-  build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number);
+  build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number,
+                                  ctx.prediction.player_position);
 
   reconcile_with_server(ctx, frame);
   resolve_aim_and_buttons(ctx, frame);
@@ -3035,6 +3152,69 @@ explosion_parameters(uint64_t explosion_index, const vec3f& position, float time
   return parameters;
 }
 
+// Whose lights reveal for THIS viewer: everyone's. Only-your-own is this function without its remote loop.
+void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& camera,
+                                bool camera_is_my_eye, std::vector<shared::reveal_cone_t>& out)
+{
+  const shared::Entity_System& system = ctx.world.session.entity_system;
+  const vec3f eye_above_feet = {0.f, shared::player_eye_height, 0.f};
+  const shared::reveal_cone_settings_t settings = shared::reveal_cone_settings_from(*ctx.cvars);
+
+  if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
+      my_player != nullptr && local_reveal_light_is_on(ctx, *my_player))
+  {
+    const bool overhead = local_reveal_light_is_overhead(ctx, *my_player);
+    out.push_back(camera_is_my_eye
+                      ? shared::reveal_cone_of(camera.position, camera.yaw, camera.pitch, overhead,
+                                               settings)
+                      : shared::reveal_cone_of(drawn_local_feet(ctx) + eye_above_feet,
+                                               my_player->view_angle_yaw,
+                                               my_player->view_angle_pitch, overhead, settings));
+  }
+
+  for (const auto& [slot, remote_player] : ctx.replication.remote_players)
+  {
+    if (!remote_player.active || slot == ctx.connection.my_slot)
+      continue;
+    const entities::Player_Entity* player = try_find_player_in_slot(ctx, slot);
+    if (player == nullptr || !shared::reveal_light_is_on(system, *player))
+      continue;
+    out.push_back(shared::reveal_cone_of(remote_player.render_position + eye_above_feet,
+                                         remote_player.render_yaw, remote_player.render_pitch,
+                                         player->reveal_light_overhead, settings));
+  }
+}
+
+struct flashlight_settings_t
+{
+  linalg::vec3 color          = {1.f, 1.f, 1.f};
+  float        intensity      = 0.f;
+  float        inner_fraction = 0.f;
+};
+
+// The visible half of a reveal cone: a spot light down the same cone. It casts no shadow, since it sits inside its holder's head.
+shared::scene_light_t flashlight_of(const shared::reveal_cone_t& cone,
+                                    const flashlight_settings_t& settings)
+{
+  entities::Light light{};
+  light.color     = settings.color;
+  light.intensity = settings.intensity;
+
+  const float half_angle = std::acos(std::clamp(cone.cosine_of_half_angle, -1.f, 1.f));
+
+  shared::scene_light_t spot;
+  spot.kind          = shared::light_kind_t::Spot;
+  spot.mode          = entities::Light_Mode::Dynamic;
+  spot.position      = cone.apex;
+  spot.forward       = cone.axis;
+  spot.radiance      = shared::radiance_of(light, shared::light_kind_t::Spot);
+  spot.range         = cone.range;
+  spot.cos_inner     = std::cos(half_angle * std::clamp(settings.inner_fraction, 0.f, 0.99f));
+  spot.cos_outer     = cone.cosine_of_half_angle;
+  spot.casts_shadows = false;
+  return spot;
+}
+
 } // namespace
 
 void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
@@ -3130,21 +3310,24 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       const auto moved = mover_matrices.find(owner_uid);
       const shared::map_geometry_t &entry = ctx.world.session.geometry[index];
 
+      const entities::Geometry_Owner_Entity* owner =
+          entity_system.get<entities::Geometry_Owner_Entity>(owner_uid);
+
       std::optional<team_wall_tint_t> team_wall;
-      if (const entities::Geometry_Owner_Entity* owner =
-              entity_system.get<entities::Geometry_Owner_Entity>(owner_uid);
-          owner != nullptr && owner->passable_by != entities::Team_Allegiance::Free_For_All)
+      if (owner != nullptr && owner->passable_by != entities::Team_Allegiance::Free_For_All)
         team_wall = {.color    = color_from_vec3(GHOST_TINTS[owner->passable_by].tint),
                      .passable = !shared::geometry_owner_blocks(*owner, my_team)};
 
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
-                    clock_wipe_of(ctx, owner_uid, entry.value), team_wall);
+                    clock_wipe_of(ctx, owner_uid, entry.value), team_wall,
+                    owner != nullptr && owner->revealed_by_light);
     }
   }
 
   scene.ripples = ctx.visuals.team_wall_ripples.ripples;
+  collect_drawn_reveal_cones(ctx, camera, camera_is_my_eye, scene.reveal_cones);
 
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
@@ -3153,6 +3336,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id,
                             entity);
   }
+
+  const flashlight_settings_t flashlight_settings = {
+      .color          = {ctx.cvars->r_flashlight_red, ctx.cvars->r_flashlight_green,
+                         ctx.cvars->r_flashlight_blue},
+      .intensity      = ctx.cvars->r_flashlight_intensity,
+      .inner_fraction = ctx.cvars->r_flashlight_inner};
+  if (flashlight_settings.intensity > 0.f)
+    for (const shared::reveal_cone_t& cone : scene.reveal_cones)
+      shared::add_dynamic_frame_light(scene.lights, flashlight_of(cone, flashlight_settings));
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {

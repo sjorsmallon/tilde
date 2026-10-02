@@ -36,6 +36,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   context.world.session.map_name      = "old_map";
   context.world.current_map_path      = "maps/old_map.source";
   context.world.map_content_hash      = 0xDEADBEEF;
+  context.world.map_data_message_bytes = {1, 2, 3};
   context.world.next_bot_slot         = BOT_SLOT_BASE + 3;
   context.world.bots.push_back(Bot_State{});
   context.world.bots.push_back(Bot_State{});
@@ -134,6 +135,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   assert(context.world.session.map_name.empty());
   assert(context.world.current_map_path.empty());
   assert(context.world.map_content_hash == 0);
+  assert(context.world.map_data_message_bytes.empty());
   assert(context.world.bots.empty());
   assert(context.world.next_bot_slot == BOT_SLOT_BASE);
   assert(context.world.previous_tick_trigger_overlaps.empty());

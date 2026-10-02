@@ -15,15 +15,18 @@ layout(location = 1) out vec4 outSurfaceNormal;
 #include "procedural_blending.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
+#include "reveal.glsl"
 
 void main() {
     discard_inside_clock_wipe(fragWorldPosition);
     discard_below_dissolve(fragUV);
     discard_inside_peel(fragWorldPosition);
+    discard_outside_reveal(fragWorldPosition);
 
     vec3 pattern = procedural_blending_pattern(fragWorldPosition, normalize(fragWorldNormal));
     outColor     = vec4(fragColor * pattern, fragAlpha);
     outSurfaceNormal = store_surface_normal(fragWorldNormal);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
 }

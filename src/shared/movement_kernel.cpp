@@ -56,6 +56,24 @@ namespace
   return travel * (travel_limit / distance);
 }
 
+[[nodiscard]] bool stops_speed_as_a_wall(steep_face_rule_t steep_faces, const vec3& wall_normal)
+{
+  return steep_faces == steep_face_rule_t::Wall && wall_normal.y > 0.f;
+}
+
+[[nodiscard]] vec3 flat_normal_of(const vec3& wall_normal)
+{
+  return normalize(vec3{wall_normal.x, 0.f, wall_normal.z});
+}
+
+[[nodiscard]] vec3 without_horizontal_speed_into(const vec3& velocity, const vec3& flat_normal)
+{
+  const float into_face = dot(velocity, flat_normal);
+  if (into_face >= 0.f)
+    return velocity;
+  return velocity - flat_normal * into_face;
+}
+
 } // namespace
 
 ground_frame_t ground_frame_of(const contacts_t& contacts, bool grounded, float vertical_velocity)
@@ -79,9 +97,22 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
                                   std::vector<collision_candidate_t>& out)
 {
   std::vector<const BVH_Primitive*> overlapping;
-  bvh_intersect_aabb(bvh, bounds, overlapping, world.disabled_geometry);
+  bvh_intersect_aabb(bvh, bounds, overlapping);
   for (const BVH_Primitive* primitive : overlapping)
+  {
+    const uint8_t state = geometry_state_of(world.disabled_geometry, primitive->id);
+    if (state == GEOMETRY_SOLID_WHERE_LIT)
+    {
+      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
+      if (!shared::any_reveal_cone_touches_box(world.reveal_cones, contact))
+        continue;
+    }
+    else if (state != GEOMETRY_SOLID)
+    {
+      continue;
+    }
     out.push_back({&primitive->collision_planes, &primitive->face_polygons});
+  }
 
   for (const shared::mover_t& mover : world.movers)
   {
@@ -118,7 +149,7 @@ float hull_penetration_depth(const std::vector<Plane>& planes, const vec3& cente
 // client-side, so both the flag and the destination have to arrive from
 // whichever side is simulating rather than from a global. Null means the caller
 // has no reader for them (the server, every time) -- see debug_collision.hpp.
-contacts_t resolve_collisions(const movement_settings_t& settings,
+contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_rule_t steep_faces,
                               const Bounding_Volume_Hierarchy& bvh,
                               const predicted_world_t& world, vec3& player_pos,
                               debug_collision::Face_Bucket* debug_faces)
@@ -198,7 +229,18 @@ contacts_t resolve_collisions(const movement_settings_t& settings,
     constexpr float skin_width = 0.01f;
     float push_amount = -min_penetration - skin_width;
     if (push_amount > 0.f)
-      player_pos = player_pos + push_normal * push_amount;
+    {
+      // Out of a wall-ruled steep face the hull leaves sideways, or walking into its foot lifts it.
+      if (push_normal.y <= cos_45 && stops_speed_as_a_wall(steep_faces, push_normal))
+      {
+        const vec3 flat_normal = flat_normal_of(push_normal);
+        player_pos = player_pos + flat_normal * (push_amount / dot(flat_normal, push_normal));
+      }
+      else
+      {
+        player_pos = player_pos + push_normal * push_amount;
+      }
+    }
 
     // Create a collision plane at the contact point
     Plane p;
@@ -231,9 +273,9 @@ contacts_t resolve_collisions(const movement_settings_t& settings,
   return result;
 }
 
-slide_result_t slide(const movement_settings_t& settings, const contacts_t& contacts,
-                     bool grounded, const wanted_move_t& wanted, const vec3& hull_center,
-                     const float dt)
+slide_result_t slide(const movement_settings_t& settings, steep_face_rule_t steep_faces,
+                     const contacts_t& contacts, bool grounded, const wanted_move_t& wanted,
+                     const vec3& hull_center, const float dt)
 {
   const float          overbounce = settings.shared.overbounce;
   const ground_frame_t frame = ground_frame_of(contacts, grounded, wanted.vertical_velocity);
@@ -258,15 +300,19 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
     {
       // we should not collide with the plane if we are trying to move away from
       // it.
+      const vec3 wall_normal = stops_speed_as_a_wall(steep_faces, collider_plane.normal)
+                                   ? flat_normal_of(collider_plane.normal)
+                                   : collider_plane.normal;
+
       new_speed = length(new_velocity);
       new_velocity = normalize(new_velocity);
-      if (dot(new_velocity, collider_plane.normal) > 0.f)
+      if (dot(new_velocity, wall_normal) > 0.f)
       {
         new_velocity = new_velocity * new_speed;
         continue;
       }
 
-      new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
+      new_velocity = clip_vector(new_velocity, wall_normal, overbounce);
 
       // Speed-preserving rescale: when sliding along a wall we normalize and
       // rescale to new_speed so that touching a wall doesn't bleed speed.
@@ -344,6 +390,9 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
   // and clipping the horizontal alone threw the lift away with its y.
   for (const Plane& collider_plane : contacts.wall_planes)
   {
+    if (stops_speed_as_a_wall(steep_faces, collider_plane.normal))
+      new_velocity =
+          without_horizontal_speed_into(new_velocity, flat_normal_of(collider_plane.normal));
     if (dot(new_velocity, collider_plane.normal) < 0.f)
       new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
   }
@@ -358,13 +407,14 @@ slide_result_t slide(const movement_settings_t& settings, const contacts_t& cont
 }
 
 settled_move_t resolve_after_move(const movement_settings_t& settings,
+                                  steep_face_rule_t steep_faces,
                                   const Bounding_Volume_Hierarchy& bvh,
                                   const predicted_world_t& world, vec3 hull_center, vec3 velocity,
                                   debug_collision::Face_Bucket* debug_faces)
 {
   // Post-move collision resolve: push position out of any geometry we
   // tunneled into, and correct velocity so it doesn't fight the surface.
-  contacts_t post = resolve_collisions(settings, bvh, world, hull_center, debug_faces);
+  contacts_t post = resolve_collisions(settings, steep_faces, bvh, world, hull_center, debug_faces);
 
   const float overbounce = settings.shared.overbounce;
 
@@ -396,6 +446,8 @@ settled_move_t resolve_after_move(const movement_settings_t& settings,
   }
   for (const Plane& plane : post.wall_planes)
   {
+    if (stops_speed_as_a_wall(steep_faces, plane.normal))
+      velocity = without_horizontal_speed_into(velocity, flat_normal_of(plane.normal));
     if (dot(velocity, plane.normal) < 0.f)
       velocity = clip_vector(velocity, plane.normal, overbounce);
   }
@@ -412,7 +464,7 @@ settled_move_t resolve_after_move(const movement_settings_t& settings,
 // player by pm_step_height and re-testing. If no wall at the raised height
 // blocks our wish direction, the obstacle is short enough to step over.
 // Walk from the raised position, then drop back down onto the surface.
-stair_step_t try_stair_step(const movement_settings_t& settings,
+stair_step_t try_stair_step(const movement_settings_t& settings, steep_face_rule_t steep_faces,
                             const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                             const contacts_t& contacts, const move_state_t& state,
                             const move_input_t& input, const vec3& hull_center,
@@ -435,7 +487,7 @@ stair_step_t try_stair_step(const movement_settings_t& settings,
   const float step_height = settings.shared.step_height;
   vec3        raised_position = hull_center + vec3{0.f, step_height, 0.f};
   const contacts_t raised =
-      resolve_collisions(settings, bvh, world, raised_position, debug_faces);
+      resolve_collisions(settings, steep_faces, bvh, world, raised_position, debug_faces);
 
   // Only abort if a raised wall specifically blocks our wish direction.
   // Walls from other nearby obstacles that we're not moving into are ignored.
@@ -460,7 +512,8 @@ stair_step_t try_stair_step(const movement_settings_t& settings,
   raised_state.velocity            = raised_velocity;
   const wanted_move_t wanted =
       decide_move(settings, raised, true, raised_velocity, raised_state, input);
-  const slide_result_t stepped = slide(settings, raised, true, wanted, raised_position, input.dt);
+  const slide_result_t stepped =
+      slide(settings, steep_faces, raised, true, wanted, raised_position, input.dt);
 
   // Drop back down by step_height. resolve_collisions will push the
   // player up to sit on top of whatever surface is below (the step top,
@@ -478,7 +531,7 @@ stair_step_t try_stair_step(const movement_settings_t& settings,
   drop_position.z += wish_direction.z * step_height;
   drop_position.y -= step_height;
   const contacts_t dropped =
-      resolve_collisions(settings, bvh, world, drop_position, debug_faces);
+      resolve_collisions(settings, steep_faces, bvh, world, drop_position, debug_faces);
 
   // Reject the step if a wall still blocks the wish direction at the
   // drop position — that means we ran into a real obstacle, not just

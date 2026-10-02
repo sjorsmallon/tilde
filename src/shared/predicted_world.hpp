@@ -26,6 +26,7 @@
 #include "movement_modifiers.hpp"
 #include "movement_volumes.hpp"
 #include "movers.hpp"
+#include "reveal_light.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -56,6 +57,9 @@ struct predicted_world_t
   // Platform_Entity and Shrinking_Platform_Entity are in here too, as movers whose two poses are equal,
   // and so is a growing Extending_Platform_Entity, an oriented box whose length is a clock.
   Span<const mover_t> movers;
+
+  // Where a GEOMETRY_SOLID_WHERE_LIT byte of the disabled set is solid (reveal_light.hpp).
+  Span<const reveal_cone_planes_t> reveal_cones;
 };
 
 // The STORAGE the three views are over, held by the caller across ticks so a
@@ -73,6 +77,7 @@ struct predicted_world_storage_t
   std::vector<movement_volume_t>                             movement_volumes;
   std::vector<movement_modifier_t>                           movement_modifiers;
   std::vector<mover_t>                                       movers;
+  std::vector<reveal_cone_planes_t>                          reveal_cones;
 };
 
 [[nodiscard]] inline predicted_world_t predicted_world_of(const predicted_world_storage_t& storage,
@@ -86,7 +91,8 @@ struct predicted_world_storage_t
                                     : Span<const uint8_t>{storage.disabled_geometry[entities::Team_Allegiance::Free_For_All]},
           .movement_volumes   = storage.movement_volumes,
           .movement_modifiers = storage.movement_modifiers,
-          .movers             = storage.movers};
+          .movers             = storage.movers,
+          .reveal_cones       = storage.reveal_cones};
 }
 
 // The tick a build is FOR. `tick_interval_seconds` is DERIVED from the tickrate
@@ -102,6 +108,7 @@ struct predicted_world_settings_t
   uint32_t state_tick  = 0;
   float    tickrate_hz = 0.f;
   float    gravity     = 0.f;
+  reveal_cone_settings_t reveal_cone = {};
 
   [[nodiscard]] float tick_interval_seconds() const { return 1.0f / tickrate_hz; }
 };
@@ -117,6 +124,8 @@ void build_movement_volumes(game_session_t& session, const predicted_world_setti
                           predicted_world_storage_t& out);
 void build_movers(game_session_t& session, const predicted_world_settings_t& settings,
                 predicted_world_storage_t& out);
+void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
+                        predicted_world_storage_t& out);
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out);
 

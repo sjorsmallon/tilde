@@ -11,6 +11,7 @@
 // They are one pin rather than one file each because the question is WHICH of
 // them a type feeds, and a per-collect pin cannot ask that: it would pass on a
 // type that feeds two, or none.
+#include "collision_detection.hpp"
 #include "disabled_geometry.hpp"
 #include "movement_modifiers.hpp"
 #include "entities/entity_reflection.hpp"
@@ -423,6 +424,19 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
   check(shared::predicted_world_of(storage, static_cast<entities::Team_Allegiance>(200))
                 .disabled_geometry[1] == 0,
         "a team off the wire that names no value passes no team wall");
+
+  // Solid only where lit is a third value, and only for a mover the owner would block at all.
+  system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_revealed = true;
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  check(disabled[0] == GEOMETRY_SOLID && disabled[1] == GEOMETRY_SOLID_WHERE_LIT,
+        "a lit-only owner's geometry is solid where lit for a mover it blocks");
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
+  check(disabled[1] == GEOMETRY_NOT_THERE, "and not there, lit or dark, for the team that passes it");
+  shared::collect_hidden_geometry(system, owner_of, disabled);
+  check(disabled[1] == GEOMETRY_SOLID, "the draw's set does not know about the light");
+  system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  check(disabled[1] == GEOMETRY_NOT_THERE, "switched off, a lit-only owner's geometry is not there");
 }
 
 static void test_a_drawn_mover_carries_its_rider_by_the_same_fraction()

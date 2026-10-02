@@ -18,6 +18,7 @@
 #include "entity_lifecycle.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <format>
 #include <string>
 #include <vector>
@@ -204,28 +205,31 @@ static void handle_map_data_requests(server_context_t &context)
     shared::request_map_data_message_t request =
         shared::deserialize_request_map_data(reader);
 
-    shared::map_package_t package =
-        shared::build_map_package(context.world.current_map);
-    std::vector<network::uint8> blob = shared::serialize_map_package(package);
+    world_t &world = context.world;
+    if (world.map_data_message_bytes.empty())
+    {
+      const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+      const shared::map_data_message_t message =
+          shared::make_map_data_message(world.current_map, world.session.map_name);
 
-    shared::map_data_message_t msg;
-    msg.map_name     = context.world.session.map_name;
-    msg.package_hash = shared::compute_map_package_hash(blob);
-    msg.compressed   = false;
-    msg.bytes        = std::move(blob);
+      auto writer = network::Bit_Writer{};
+      shared::serialize_map_data(writer, message);
+      world.map_data_message_bytes = std::move(writer.buffer);
 
-    auto writer = network::Bit_Writer{};
-    shared::serialize_map_data(writer, msg);
+      const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
+      log_terminal("Built map package '{}': {} bytes, {} compressed, hash {:#x}, in {:.2f}s.",
+                   message.map_name, message.package_size_in_bytes,
+                   message.compressed_package.size(), message.package_hash, elapsed.count());
+    }
 
     network::begin_paced_transfer(
-        context.transport_layer, client_slot, writer.buffer,
+        context.transport_layer, client_slot, world.map_data_message_bytes,
         static_cast<network::uint8>(network::Message_Type::S2C_MapData));
 
-    log_terminal("Queued map package '{}' ({} bytes, {} fragments, hash {:#x}) "
-                 "for slot {} (requested '{}').",
-                 msg.map_name, msg.bytes.size(),
+    log_terminal("Queued map package '{}' ({} bytes, {} fragments) for slot {} (requested '{}').",
+                 world.session.map_name, world.map_data_message_bytes.size(),
                  context.transport_layer.clients[client_slot].outbound_transfer.fragments.size(),
-                 msg.package_hash, client_slot, request.map_name);
+                 client_slot, request.map_name);
   }
 }
 

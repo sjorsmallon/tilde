@@ -15,6 +15,8 @@
 #include "game_session.hpp"
 #include "log.hpp"
 #include "player_constants.hpp"
+#include "player_move.hpp"
+#include "reveal_light.hpp"
 #include "server_context.hpp"
 #include "spawn_projectile.hpp"
 #include "subtick.hpp"
@@ -524,12 +526,12 @@ int main()
           "throwing an empty hand does nothing");
 
     owner->position = thrown->position - vec3f{0.f, 36.f, 0.f};
-    server::update_dropped_weapons(context);
+    server::update_dropped_weapons(context, tick_dt);
     check(owner->inventory.weapons[slot] == shared::null_entity_uid,
           "a thrown weapon cannot be picked up before its delay runs out");
 
     context.tick_number = thrown->pickup_allowed_tick;
-    server::update_dropped_weapons(context);
+    server::update_dropped_weapons(context, tick_dt);
     check(owner->inventory.weapons[slot] == granted_uid && thrown->owner_uid == owner_uid,
           "touching it after the delay puts the same weapon back in its slot");
 
@@ -541,10 +543,57 @@ int main()
     thrown = context.world.session.entity_system.get<entities::Weapon_Entity>(granted_uid);
     owner->position     = thrown->position - vec3f{0.f, 36.f, 0.f};
     context.tick_number = thrown->pickup_allowed_tick;
-    server::update_dropped_weapons(context);
+    server::update_dropped_weapons(context, tick_dt);
     check(owner->inventory.weapons[slot] == replacement_uid &&
               thrown->owner_uid == shared::null_entity_uid,
           "a weapon is not picked up into a slot that is already full");
+  }
+
+  // --- a pickup raises the weapon only for a carrier whose input asks for it ---
+  {
+    server::server_context_t context;
+    const float tick_dt = 1.f / 60.f;
+
+    const shared::entity_uid_t owner_uid =
+        context.world.session.entity_system.spawn<entities::Player_Entity>();
+    entities::Player_Entity* owner =
+        context.world.session.entity_system.get<entities::Player_Entity>(owner_uid);
+    const shared::entity_uid_t scout_uid =
+        server::try_grant_weapon(context, *owner, owner->inventory, entities::Weapon::Scout);
+    owner = context.world.session.entity_system.get<entities::Player_Entity>(owner_uid);
+
+    context.transport_layer.clients[0].occupied = true;
+    context.clients[0].player_uid               = owner_uid;
+
+    const auto throw_and_walk_back_onto_it = [&]() {
+      owner->inventory.active_slot = SCOUT.slot;
+      owner->position              = {0.f, 0.f, 0.f};
+      (void)server::try_throw_active_weapon(context, *owner, {1.f, 0.f, 0.f}, tick_dt);
+      owner->inventory.active_slot = entities::Inventory_Slot::Melee;
+
+      const entities::Weapon_Entity* thrown =
+          context.world.session.entity_system.get<entities::Weapon_Entity>(scout_uid);
+      owner->position     = thrown->position - vec3f{0.f, 36.f, 0.f};
+      context.tick_number = thrown->pickup_allowed_tick;
+      server::update_dropped_weapons(context, tick_dt);
+    };
+
+    throw_and_walk_back_onto_it();
+    check(owner->inventory.weapons[SCOUT.slot] == scout_uid &&
+              owner->inventory.active_slot == entities::Inventory_Slot::Melee,
+          "a pickup without Equip_On_Pickup leaves the hand where it was");
+
+    context.clients[0].latest_buttons_bitmap = Button::Equip_On_Pickup;
+    owner->reload_complete_time              = 1;
+    throw_and_walk_back_onto_it();
+    check(owner->inventory.weapons[SCOUT.slot] == scout_uid &&
+              owner->inventory.active_slot == SCOUT.slot,
+          "a pickup with Equip_On_Pickup raises the weapon");
+    check(!server::is_reloading(*owner) &&
+              owner->inventory.deploy_complete_time ==
+                  shared::subtick_time_after(shared::subtick_time(context.tick_number + 1, 0),
+                                             SCOUT.deploy_duration_seconds, tick_dt),
+          "...as a switch: the reload dies and the deploy gate runs from the end of the tick");
   }
 
   // --- the weapon's alive limit replaces the owner's oldest shot off that button, and nobody else's ---
@@ -726,6 +775,63 @@ int main()
     check(pilot()->movement.override_seconds_remaining == 0.f, "a dead pilot's flight is let go");
     check(entity_system.entities_of<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
     check(count_segments() == 2, "and it leaves no path of its own");
+  }
+
+  // --- a reveal light is on while its toggle is set, its carrier lives and the Flashlight is in hand ---
+  {
+    server::server_context_t context;
+    shared::Entity_System& entity_system = context.world.session.entity_system;
+
+    const shared::entity_uid_t carrier_uid = entity_system.spawn<entities::Player_Entity>();
+    grant_test_loadout(context.world.session, carrier_uid);
+    entities::Player_Entity* carrier = entity_system.get<entities::Player_Entity>(carrier_uid);
+
+    const shared::entity_uid_t flashlight_uid = server::try_grant_weapon(
+        context, *carrier, carrier->inventory, entities::Weapon::Flashlight);
+    carrier = entity_system.get<entities::Player_Entity>(carrier_uid);
+    check(flashlight_uid != shared::null_entity_uid, "a Flashlight can be granted");
+
+    const entities::Inventory_Slot flashlight_slot =
+        shared::get_weapon_definition(entities::Weapon::Flashlight).slot;
+
+    carrier->inventory.active_slot = flashlight_slot;
+    check(!shared::reveal_light_is_on(entity_system, *carrier), "a Flashlight in hand starts dark");
+
+    carrier->reveal_light_on = true;
+    check(shared::reveal_light_is_on(entity_system, *carrier), "the toggle lights it");
+
+    carrier->inventory.active_slot = entities::Inventory_Slot::Melee;
+    check(!shared::reveal_light_is_on(entity_system, *carrier), "switching to another weapon puts it out");
+
+    carrier->inventory.active_slot = flashlight_slot;
+    check(shared::reveal_light_is_on(entity_system, *carrier), "and switching back finds it still on");
+
+    const shared::reveal_cone_settings_t cone_settings = {
+        .range = 1024.f, .half_angle_degrees = 25.f, .overhead_height = 128.f};
+    std::vector<shared::reveal_cone_planes_t> cones;
+    carrier->position = {100.f, 0.f, 0.f};
+    shared::collect_reveal_cones(entity_system, cone_settings, shared::null_entity_uid, cones);
+    check(cones.size() == 1 &&
+              linalg::length(cones[0].apex -
+                             linalg::vec3f{100.f, shared::player_eye_height, 0.f}) < 1e-4f,
+          "a lit Flashlight is one solid-making cone from its carrier's eye");
+    shared::collect_reveal_cones(entity_system, cone_settings, carrier_uid, cones);
+    check(cones.empty(), "the player a client predicts for itself is left out of the cut");
+
+    carrier->reveal_light_overhead = true;
+    shared::collect_reveal_cones(entity_system, cone_settings, shared::null_entity_uid, cones);
+    check(cones.size() == 1 &&
+              linalg::length(cones[0].apex -
+                             linalg::vec3f{100.f, shared::player_eye_height + 128.f, 0.f}) < 1e-4f,
+          "the overhead toggle hangs that cone above the carrier's eye");
+    check(shared::get_weapon_definition(entities::Weapon::Flashlight).secondary_fire.resolution ==
+              entities::Fire_Resolution::Reveal_Light_Overhead,
+          "and the Flashlight's secondary press is what flips it");
+
+    carrier->health.current_health = 0;
+    check(!shared::reveal_light_is_on(entity_system, *carrier), "a dead carrier lights nothing");
+    shared::collect_reveal_cones(entity_system, cone_settings, shared::null_entity_uid, cones);
+    check(cones.empty(), "and makes nothing solid");
   }
 
   // --- a refills_on_ground magazine fills on the map, and nowhere else ---

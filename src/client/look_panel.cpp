@@ -30,6 +30,7 @@ struct look_row_t
 
 constexpr look_row_t LOOK_ROWS[] = {
     {"Frame", cvars::cvar_id::r_exposure, 0.1f, 4.0f},
+    {"Frame", cvars::cvar_id::r_ambient_floor, 0.0f, 0.5f},
     {"Frame", cvars::cvar_id::r_fxaa},
     {"Frame", cvars::cvar_id::r_fxaa_subpixel},
     {"Cel", cvars::cvar_id::r_cel},
@@ -37,6 +38,7 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Cel", cvars::cvar_id::r_cel_shadow_edge},
     {"Cel", cvars::cvar_id::r_cel_softness, 0.0f, 0.5f},
     {"Cel", cvars::cvar_id::r_cel_shadow_red, 0.0f, 1.0f, 3, "r_cel_shadow rgb"},
+    {"Cel", cvars::cvar_id::r_cel_bands, 0.0f, 8.0f},
     {"Fill", cvars::cvar_id::r_cel_fill},
     {"Fill", cvars::cvar_id::r_cel_fill_strength},
     {"Fill", cvars::cvar_id::r_cel_fill_spacing, 2.0f, 32.0f},
@@ -45,7 +47,12 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Fill", cvars::cvar_id::r_cel_fill_tone_light, 0.0f, 0.75f},
     {"Fill", cvars::cvar_id::r_cel_fill_ambient_dark, 0.0f, 0.5f},
     {"Fill", cvars::cvar_id::r_cel_fill_ambient_light, 0.0f, 2.0f},
+    {"Fill", cvars::cvar_id::r_cel_fill_tone_lit, 0.0f, 0.75f},
+    {"Fill", cvars::cvar_id::r_cel_fill_material},
     {"Fill", cvars::cvar_id::r_cel_hatch_width, 0.5f, 8.0f},
+    {"Fill", cvars::cvar_id::r_cel_dither3d_size_variability},
+    {"Fill", cvars::cvar_id::r_cel_dither3d_contrast, 0.0f, 2.0f},
+    {"Fill", cvars::cvar_id::r_cel_dither3d_stretch_smoothness, 0.0f, 2.0f},
     {"Speckle", cvars::cvar_id::r_cel_speckle},
     {"Speckle", cvars::cvar_id::r_cel_speckle_spacing, 2.0f, 40.0f},
     {"Speckle", cvars::cvar_id::r_cel_speckle_density},
@@ -54,6 +61,12 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Ink", cvars::cvar_id::r_ink_threshold, 0.0f, 20.0f},
     {"Ink", cvars::cvar_id::r_ink_crease_degrees, 1.0f, 90.0f},
     {"Ink", cvars::cvar_id::r_ink_width, 1.0f, 8.0f},
+    {"Ink", cvars::cvar_id::r_ink_tint},
+    {"Rim", cvars::cvar_id::r_rim},
+    {"Rim", cvars::cvar_id::r_rim_width, 1.0f, 16.0f},
+    {"Flashlight", cvars::cvar_id::r_flashlight_intensity, 0.0f, 200.0f},
+    {"Flashlight", cvars::cvar_id::r_flashlight_red, 0.0f, 1.0f, 3, "r_flashlight rgb"},
+    {"Flashlight", cvars::cvar_id::r_flashlight_inner, 0.0f, 0.99f},
 };
 
 static_assert(static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_green) ==
@@ -61,6 +74,11 @@ static_assert(static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_green) ==
                   static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_blue) ==
                       static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_red) + 2,
               "The colour row reads r_cel_shadow_red, _green, _blue as three consecutive cvar ids.");
+static_assert(static_cast<uint32_t>(cvars::cvar_id::r_flashlight_green) ==
+                      static_cast<uint32_t>(cvars::cvar_id::r_flashlight_red) + 1 &&
+                  static_cast<uint32_t>(cvars::cvar_id::r_flashlight_blue) ==
+                      static_cast<uint32_t>(cvars::cvar_id::r_flashlight_red) + 2,
+              "The colour row reads r_flashlight_red, _green, _blue as three consecutive cvar ids.");
 
 [[nodiscard]] cvars::cvar_id channel_of(const look_row_t& row, uint32_t channel)
 {
@@ -160,7 +178,7 @@ void draw_look_panel(cvars::cvar_state_t& state)
       ImGui::SetTooltip("%s\nNot exported: play turns it on and the editor turns it off on entry.",
                         cvars::cvar_info(cvars::cvar_id::r_stylized).description);
 
-    ImGui::PushItemWidth(-ImGui::CalcTextSize("r_ink_crease_degrees  ").x);
+    ImGui::PushItemWidth(-ImGui::CalcTextSize("r_cel_dither3d_stretch_smoothness  ").x);
     std::string_view section;
     for (const look_row_t& row : LOOK_ROWS)
     {

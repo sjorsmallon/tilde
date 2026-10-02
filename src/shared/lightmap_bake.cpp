@@ -132,6 +132,94 @@ std::optional<lightmap_chart_t> try_build_chart(entity_uid_t object_uid, const P
   return chart;
 }
 
+int triangle_cell_index(float coordinate, float minimum, float cell_size, int cell_count)
+{
+  return std::clamp((int)std::floor((coordinate - minimum) / cell_size), 0, cell_count - 1);
+}
+
+// About one triangle per cell: sample_chart walked every triangle per sample, eight seconds for one level-32 face.
+void build_triangle_cells(lightmap_chart_t &chart)
+{
+  chart_triangle_cells_t &cells = chart.triangle_cells;
+  cells = {};
+
+  const size_t triangle_count = chart.twins.size();
+  if (triangle_count == 0 || chart.triangles.size() != triangle_count * 3)
+    fatal_error("[lightmap] object {}'s chart has {} triangle corners and {} twins to put in cells.",
+                chart.object_uid, chart.triangles.size(), triangle_count);
+
+  linalg::vec2 minimum = chart.triangles[0];
+  linalg::vec2 maximum = chart.triangles[0];
+  for (const linalg::vec2 &corner : chart.triangles)
+  {
+    minimum = {std::min(minimum.x, corner.x), std::min(minimum.y, corner.y)};
+    maximum = {std::max(maximum.x, corner.x), std::max(maximum.y, corner.y)};
+  }
+
+  const float extent_x       = maximum.x - minimum.x;
+  const float extent_y       = maximum.y - minimum.y;
+  const int   cells_per_edge = std::max(1, (int)std::ceil(std::sqrt((float)triangle_count)));
+
+  cells.minimum   = minimum;
+  cells.cell_size = std::max(std::max(extent_x, extent_y) / (float)cells_per_edge, 1e-6f);
+  cells.width     = std::max(1, (int)std::ceil(extent_x / cells.cell_size));
+  cells.height    = std::max(1, (int)std::ceil(extent_y / cells.cell_size));
+
+  const auto for_each_cell_of = [&](size_t triangle, const auto &visit) {
+    linalg::vec2 low  = chart.triangles[triangle * 3];
+    linalg::vec2 high = chart.triangles[triangle * 3];
+    for (size_t corner = 1; corner < 3; ++corner)
+    {
+      const linalg::vec2 &point = chart.triangles[triangle * 3 + corner];
+      low  = {std::min(low.x, point.x), std::min(low.y, point.y)};
+      high = {std::max(high.x, point.x), std::max(high.y, point.y)};
+    }
+    const int first_x = triangle_cell_index(low.x, minimum.x, cells.cell_size, cells.width);
+    const int last_x  = triangle_cell_index(high.x, minimum.x, cells.cell_size, cells.width);
+    const int first_y = triangle_cell_index(low.y, minimum.y, cells.cell_size, cells.height);
+    const int last_y  = triangle_cell_index(high.y, minimum.y, cells.cell_size, cells.height);
+    for (int y = first_y; y <= last_y; ++y)
+      for (int x = first_x; x <= last_x; ++x)
+        visit((size_t)y * (size_t)cells.width + (size_t)x);
+  };
+
+  const size_t cell_count = (size_t)cells.width * (size_t)cells.height;
+  cells.first.assign(cell_count + 1, 0);
+  for (size_t triangle = 0; triangle < triangle_count; ++triangle)
+    for_each_cell_of(triangle, [&](size_t cell) { ++cells.first[cell + 1]; });
+  for (size_t cell = 0; cell < cell_count; ++cell)
+    cells.first[cell + 1] += cells.first[cell];
+
+  std::vector<uint32_t> next(cells.first.begin(), cells.first.end() - 1);
+  cells.triangles.resize(cells.first[cell_count]);
+  for (size_t triangle = 0; triangle < triangle_count; ++triangle)
+    for_each_cell_of(triangle, [&](size_t cell) { cells.triangles[next[cell]++] = (uint32_t)triangle; });
+}
+
+// A subdivided face's coverage: the triangles and normals it draws with, so a texel is measured ON the raised surface.
+void fill_grid_coverage(lightmap_chart_t &chart, const std::vector<linalg::vec3> &grid,
+                        const linalg::vec3 &face_normal)
+{
+  assets::mesh_asset_t surface;
+  emit_face_grid(surface, grid, face_normal, default_face_uv(face_normal));
+
+  chart.triangles.reserve(surface.indices.size());
+  chart.twins.reserve(surface.indices.size() / 3);
+  for (size_t index = 0; index + 2 < surface.indices.size(); index += 3)
+  {
+    chart_triangle_twin_t twin;
+    for (uint32_t corner = 0; corner < 3; ++corner)
+    {
+      const vertex_xnu &vertex = surface.vertices[surface.indices[index + corner]];
+      chart.triangles.push_back(to_chart_space(chart, vertex.position));
+      twin.corners[corner] = vertex.position;
+      twin.normals[corner] = vertex.normal;
+    }
+    chart.twins.push_back(twin);
+  }
+  build_triangle_cells(chart);
+}
+
 void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
                         const lightmap_bake_settings_t &settings, int max_covered_in_texels,
                         std::vector<lightmap_chart_t> &charts)
@@ -144,9 +232,12 @@ void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
     return;
   }
 
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron);
+
   std::vector<linalg::vec3> points;
-  for (const brush_face_t &face : polyhedron->faces)
+  for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
   {
+    const brush_face_t &face = polyhedron->faces[face_index];
     const face_surface_t *surface = find_face_surface(brush, face.plane);
     if (surface && !surface->emits_geometry)
       continue;
@@ -154,15 +245,27 @@ void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
     points.clear();
     for (uint32_t vertex_index : face.vertex_indices)
       points.push_back(polyhedron->vertices[vertex_index]);
+    const size_t corner_count = points.size();
+
+    // A subdivided face is charted over where its RAISED surface projects to, which a sideways offset carries past the outline.
+    const std::vector<linalg::vec3> &grid = grids.grid_vertices[face_index];
+    points.insert(points.end(), grid.begin(), grid.end());
 
     std::optional<lightmap_chart_t> chart =
         try_build_chart(object_uid, face.plane, points, surface ? surface->lightmap_scale : 1.f,
                         settings, max_covered_in_texels);
     if (!chart) continue;
 
-    chart->polygon.reserve(points.size());
-    for (const linalg::vec3 &point : points)
-      chart->polygon.push_back(to_chart_space(*chart, point));
+    if (grid.empty())
+    {
+      chart->polygon.reserve(corner_count);
+      for (size_t corner = 0; corner < corner_count; ++corner)
+        chart->polygon.push_back(to_chart_space(*chart, points[corner]));
+    }
+    else
+    {
+      fill_grid_coverage(*chart, grid, face.plane.normal);
+    }
 
     charts.push_back(std::move(*chart));
   }
@@ -243,6 +346,7 @@ void build_static_mesh_charts(entity_uid_t object_uid, const static_mesh_geometr
                                              : chart.twins[0].normals[0];
     chart.plane.point = centroid * (1.f / (float)chart.triangles.size());
     chart.unwrap = std::move(unwrap);
+    build_triangle_cells(chart);
 
     charts.push_back(std::move(chart));
   }
@@ -429,9 +533,23 @@ texel_sample_t sample_chart(const lightmap_chart_t& chart, const linalg::vec2& c
                 "chart carries one twin per triangle.",
                 chart.object_uid, chart.triangles.size() / 3, chart.twins.size());
 
+  if (chart.twins.empty())
+    return sample;
+
+  const chart_triangle_cells_t& cells = chart.triangle_cells;
+  if (cells.first.size() != (size_t)cells.width * (size_t)cells.height + 1)
+    fatal_error("[lightmap] object {}'s chart carries {} triangles and no cells to find one in.",
+                chart.object_uid, chart.twins.size());
+
+  const size_t cell =
+      (size_t)triangle_cell_index(chart_space.y, cells.minimum.y, cells.cell_size, cells.height) *
+          (size_t)cells.width +
+      (size_t)triangle_cell_index(chart_space.x, cells.minimum.x, cells.cell_size, cells.width);
+
   // Signs rather than a winding order, for the reason polygon_contains gives.
-  for (size_t twin_index = 0; twin_index < chart.twins.size(); ++twin_index)
+  for (uint32_t entry = cells.first[cell]; entry < cells.first[cell + 1]; ++entry)
   {
+    const size_t twin_index = cells.triangles[entry];
     const linalg::vec2& a = chart.triangles[twin_index * 3 + 0];
     const linalg::vec2& b = chart.triangles[twin_index * 3 + 1];
     const linalg::vec2& c = chart.triangles[twin_index * 3 + 2];

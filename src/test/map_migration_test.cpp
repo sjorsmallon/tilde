@@ -853,6 +853,42 @@ int main()
     map_package_t should_fail;
     if (deserialize_map_package(corrupt, should_fail))
       return fail("package: deserialize accepted a corrupted magic");
+
+    // The wire message: compressed by one end, unpacked by the other.
+    {
+      const map_data_message_t message = make_map_data_message(packaged, package.map_name);
+      if (message.package_size_in_bytes != blob.size() || message.package_hash != package_hash)
+        return fail("map data: the message does not describe the uncompressed package");
+      if (message.compressed_package.size() >= blob.size())
+        return fail("map data: the compressed package is no smaller than the package");
+
+      network::Bit_Writer message_writer;
+      serialize_map_data(message_writer, message);
+      network::Bit_Reader message_reader(message_writer.buffer.data(),
+                                         message_writer.buffer.size());
+      const map_data_message_t received = deserialize_map_data(message_reader);
+
+      const std::optional<map_package_t> unpacked = try_unpack_map_data_message(received);
+      if (!unpacked)
+        return fail("map data: a valid message was refused");
+      if (compute_map_package_hash(serialize_map_package(*unpacked)) != package_hash)
+        return fail("map data: the package changed across compress/decompress");
+
+      map_data_message_t wrong_size = received;
+      wrong_size.package_size_in_bytes += 1;
+      if (try_unpack_map_data_message(wrong_size))
+        return fail("map data: a wrong declared size was accepted");
+
+      map_data_message_t wrong_hash = received;
+      wrong_hash.package_hash ^= 1u;
+      if (try_unpack_map_data_message(wrong_hash))
+        return fail("map data: a wrong declared hash was accepted");
+
+      map_data_message_t truncated = received;
+      truncated.compressed_package.resize(truncated.compressed_package.size() / 2);
+      if (try_unpack_map_data_message(truncated))
+        return fail("map data: a truncated package was accepted");
+    }
   }
 
   // --- 8. Per-map cvar settings round-trip --------------------------------

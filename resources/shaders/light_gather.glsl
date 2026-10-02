@@ -25,9 +25,9 @@ Incoming_Light incoming_light(Light light, Light_Arrival arrival, vec3 visibilit
     return incoming;
 }
 
-vec3 gather_direct_light(int look, Surface surface, vec3 world_position, vec3 V)
+vec4 gather_direct_light(int look, Surface surface, vec3 world_position, vec3 V)
 {
-    vec3 lit = vec3(0.0);
+    vec4 lit = vec4(0.0);
 
 #ifdef LIGHTMAP
     // The four this face's chart kept, and nothing else in the level (lighting_def.md ss14 step 6).
@@ -91,7 +91,7 @@ vec3 light_surface_cel(Surface surface, vec3 world_position, vec3 V)
     white.albedo  = vec3(1.0);
     white.normal  = surface.geometric_normal;
 
-    vec3 direct  = gather_direct_light(LOOK_CEL, white, world_position, V);
+    vec4 direct  = gather_direct_light(LOOK_CEL, white, world_position, V);
     vec3 ambient = shade_ambient(LOOK_CEL, white, V, world_position,
                                  baked_irradiance(world_position, white.normal), scene.ambient.rgb);
     return compose_cel(surface, direct, ambient, world_position) + surface.emissive;
@@ -103,7 +103,7 @@ vec3 light_surface(int material_look, Surface surface, vec3 world_position, vec3
     if (look == LOOK_CEL)
         return light_surface_cel(surface, world_position, V);
 
-    return gather_direct_light(look, surface, world_position, V) +
+    return gather_direct_light(look, surface, world_position, V).rgb +
            shade_ambient(look, surface, V, world_position,
                          baked_irradiance(world_position, surface.normal), scene.ambient.rgb) +
            surface.emissive;

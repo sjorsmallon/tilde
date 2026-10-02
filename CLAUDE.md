@@ -202,6 +202,10 @@ prediction writes `ctx.prediction`.
   mutable parameter is the `Movement` component, every field of which is
   `@Networked`, and a reconciliation replay restarts it unconditionally from
   the latest snapshot. A jump is an edge, not a level.
+- A face too steep to stand on (past 45 degrees) is a `steep_face_rule_t`,
+  answered per model by `steep_face_rule_of`: a `Ramp` under `quake` (surfing),
+  a `Wall` under the instant models, which would otherwise turn their per-step
+  run speed into lift and launch off its top.
 - `sweep_projectile` is the one question a flying thing asks, a hitscan
   included (radius zero), through the shooter's team view: you shoot through
   what you can walk through. Targets are the current entities by the box each
@@ -315,7 +319,9 @@ prediction writes `ctx.prediction`.
   about what the bytes MEAN.
 - The ink (`tonemap.frag`) draws the OUTLINE from a depth jump and the CREASE
   from the angle between neighbouring normals, read from the scene pass's
-  normal image (`g_scene_data_images`, `surface_normal.glsl`). Only opaque
+  normal image (`g_scene_data_images`, `surface_normal.glsl`). The RIM light
+  is the same depth jump's near side (`depth_edges`), never a fresnel term: a
+  flat face seen edge-on would light whole. Only opaque
   pipelines write it (`scene_blend_attachments`); every pipeline built for the
   scene pass declares `SCENE_COLOR_ATTACHMENT_COUNT` blend states, and a new
   opaque scene shader writes `store_surface_normal`.

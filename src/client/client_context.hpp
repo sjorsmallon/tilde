@@ -256,6 +256,11 @@ struct prediction_t
   // state member it survived a disconnect, so you rejoined still zoomed.
   bool zoom_active = false;
 
+  // The inputs carrying a Flashlight press the server has not answered; our light is its flag flipped once per entry.
+  std::vector<int> unanswered_reveal_light_toggles;
+  // The same for its secondary press and Player_Entity::reveal_light_overhead.
+  std::vector<int> unanswered_reveal_light_overhead_toggles;
+
   // Real seconds since our own last predicted gunshot, PER WEAPON, for
   // re-running the server's fire-rate gate locally (weapons.hpp is shared, so
   // it is the same number). Audio only -- the authoritative limit is the
@@ -286,6 +291,9 @@ struct prediction_t
   // server is visible rather than merely audible. It is still not simulation:
   // being wrong costs a wrong number on screen and a wrong bang, never a desync.
   float seconds_until_local_deploy_complete = 0.f;
+
+  // Our replicated hand as of last frame: a switch into a slot that was empty then is the server raising a pickup.
+  std::optional<entities::Inventory> inventory_at_last_frame;
 
   // Real seconds left on our own predicted reload, or 0 when none is running.
   //

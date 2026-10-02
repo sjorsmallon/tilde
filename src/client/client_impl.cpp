@@ -257,12 +257,14 @@ bool Tick()
     const cvars::cvar_state_t &cvars = *state_manager::get_client_context().cvars;
     const renderer::tonemap_settings_t tonemap{cvars.r_exposure};
     renderer::look_settings_t look;
+    look.ambient_floor    = cvars.r_ambient_floor;
     look.cel              = cvars.r_stylized && cvars.r_cel;
     look.cel_terminator   = cvars.r_cel_terminator;
     look.cel_shadow_edge  = cvars.r_cel_shadow_edge;
     look.cel_softness     = cvars.r_cel_softness;
     look.cel_shadow_tint  = {cvars.r_cel_shadow_red, cvars.r_cel_shadow_green,
                              cvars.r_cel_shadow_blue};
+    look.cel_bands = cvars.r_cel_bands;
     look.cel_fill                 = cvars.r_cel_fill;
     look.cel_fill_strength        = cvars.r_cel_fill_strength;
     look.cel_fill_spacing_pixels  = cvars.r_cel_fill_spacing;
@@ -271,7 +273,12 @@ bool Tick()
     look.cel_fill_tone_light      = cvars.r_cel_fill_tone_light;
     look.cel_fill_ambient_dark    = cvars.r_cel_fill_ambient_dark;
     look.cel_fill_ambient_light   = cvars.r_cel_fill_ambient_light;
+    look.cel_fill_tone_lit        = cvars.r_cel_fill_tone_lit;
+    look.cel_fill_material        = cvars.r_cel_fill_material;
     look.cel_hatch_width_pixels   = cvars.r_cel_hatch_width;
+    look.cel_dither3d_size_variability   = cvars.r_cel_dither3d_size_variability;
+    look.cel_dither3d_contrast           = cvars.r_cel_dither3d_contrast;
+    look.cel_dither3d_stretch_smoothness = cvars.r_cel_dither3d_stretch_smoothness;
     look.cel_speckle                = cvars.r_cel_speckle;
     look.cel_speckle_spacing_pixels = cvars.r_cel_speckle_spacing;
     look.cel_speckle_density        = cvars.r_cel_speckle_density;
@@ -280,6 +287,9 @@ bool Tick()
     look.ink_threshold    = cvars.r_ink_threshold;
     look.ink_width_pixels = cvars.r_ink_width;
     look.ink_crease_degrees = cvars.r_ink_crease_degrees;
+    look.ink_tint         = cvars.r_ink_tint;
+    look.rim              = cvars.r_stylized ? cvars.r_rim : 0.0f;
+    look.rim_width_pixels = cvars.r_rim_width;
 
     const renderer::antialiasing_settings_t antialiasing{cvars.r_fxaa, cvars.r_fxaa_subpixel};
 

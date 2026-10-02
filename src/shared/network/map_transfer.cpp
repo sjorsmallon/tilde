@@ -1,7 +1,11 @@
 #include "map_transfer.hpp"
 
+#include "../compression.hpp"
+#include "../log.hpp"
 #include "../map.hpp"
 #include "quantization.hpp"
+
+#include <limits>
 
 namespace shared
 {
@@ -457,15 +461,16 @@ bool deserialize_map_package(const std::vector<uint8_t> &bytes,
   deserialize_lightmap(reader, out_package.lightmap);
 
   // read past the end (truncated blob) => reject rather than yield garbage.
-  return reader.bit_index <= static_cast<int>(bytes.size() * 8);
+  return reader.bit_index <= bytes.size() * 8;
 }
 
 uint32_t compute_map_package_hash(const std::vector<uint8_t> &package_bytes)
 {
   uint32_t hash = 2166136261u; // FNV-1a offset basis
-  for (uint8_t byte : package_bytes)
+  const uint8_t *const end = package_bytes.data() + package_bytes.size();
+  for (const uint8_t *byte = package_bytes.data(); byte != end; ++byte)
   {
-    hash ^= byte;
+    hash ^= *byte;
     hash *= 16777619u; // FNV prime
   }
   return hash;
@@ -492,21 +497,68 @@ void serialize_map_data(network::Bit_Writer &writer,
 {
   network::write_string(writer, msg.map_name);
   network::write_var_uint(writer, msg.package_hash);
-  writer.write_bit(msg.compressed);
-  network::write_var_uint(writer, static_cast<uint32_t>(msg.bytes.size()));
-  writer.write_bytes(msg.bytes.data(), msg.bytes.size());
+  network::write_var_uint(writer, msg.package_size_in_bytes);
+  network::write_var_uint(writer, static_cast<uint32_t>(msg.compressed_package.size()));
+  writer.write_bytes(msg.compressed_package.data(), msg.compressed_package.size());
 }
 
 map_data_message_t deserialize_map_data(network::Bit_Reader &reader)
 {
   map_data_message_t msg{};
   network::read_string(reader, msg.map_name);
-  msg.package_hash = network::read_var_uint(reader);
-  msg.compressed   = reader.read_bit();
-  uint32_t size    = network::read_var_uint(reader);
-  msg.bytes.resize(size);
-  reader.read_bytes(msg.bytes.data(), size);
+  msg.package_hash          = network::read_var_uint(reader);
+  msg.package_size_in_bytes = network::read_var_uint(reader);
+  uint32_t size             = network::read_var_uint(reader);
+  msg.compressed_package.resize(size);
+  reader.read_bytes(msg.compressed_package.data(), size);
   return msg;
+}
+
+map_data_message_t make_map_data_message(const map_t &map, const std::string &map_name)
+{
+  const std::vector<uint8_t> blob = serialize_map_package(build_map_package(map));
+  if (blob.size() > std::numeric_limits<uint32_t>::max())
+    fatal_error("the package of '{}' is {} bytes, and the message counts them in 32 bits",
+                map_name, blob.size());
+
+  map_data_message_t message;
+  message.map_name              = map_name;
+  message.package_hash          = compute_map_package_hash(blob);
+  message.package_size_in_bytes = static_cast<uint32_t>(blob.size());
+  message.compressed_package    = compress_bytes(Span<const uint8_t>(blob));
+  return message;
+}
+
+std::optional<map_package_t> try_unpack_map_data_message(const map_data_message_t &message)
+{
+  const std::optional<std::vector<uint8_t>> blob = try_decompress_bytes(
+      Span<const uint8_t>(message.compressed_package), message.package_size_in_bytes);
+  if (!blob)
+  {
+    log_error("[map_transfer] the package of '{}' does not inflate from {} to the {} bytes it "
+              "declares; refusing it.",
+              message.map_name, message.compressed_package.size(), message.package_size_in_bytes);
+    return std::nullopt;
+  }
+
+  const uint32_t actual_hash = compute_map_package_hash(*blob);
+  if (actual_hash != message.package_hash)
+  {
+    log_error("[map_transfer] the package of '{}' hashes to {:#x}, the message says {:#x}; "
+              "refusing it.",
+              message.map_name, actual_hash, message.package_hash);
+    return std::nullopt;
+  }
+
+  std::optional<map_package_t> package = map_package_t{};
+  if (!deserialize_map_package(*blob, *package))
+  {
+    log_error("[map_transfer] the package of '{}' does not deserialize; refusing it.",
+              message.map_name);
+    return std::nullopt;
+  }
+
+  return package;
 }
 
 } // namespace shared

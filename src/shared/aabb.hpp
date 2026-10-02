@@ -70,6 +70,15 @@ inline aabb_bounds_t union_aabb(const aabb_bounds_t &a, const aabb_bounds_t &b)
            std::max(a.max.z, b.max.z)}};
 }
 
+// The bounds both contain. Only meaningful when the two intersect.
+inline aabb_bounds_t intersection_aabb(const aabb_bounds_t &a, const aabb_bounds_t &b)
+{
+  return {{std::max(a.min.x, b.min.x), std::max(a.min.y, b.min.y),
+           std::max(a.min.z, b.min.z)},
+          {std::min(a.max.x, b.max.x), std::min(a.max.y, b.max.y),
+           std::min(a.max.z, b.max.z)}};
+}
+
 inline void expand_aabb_to_include_point(aabb_bounds_t &bounds, const linalg::vec3 &point)
 {
   bounds.min.x = std::min(bounds.min.x, point.x);

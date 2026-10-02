@@ -4,6 +4,7 @@
 #include "../navmesh.hpp"
 #include "bitstream.hpp"
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -106,20 +107,27 @@ void serialize_request_map_data(network::Bit_Writer &writer,
 request_map_data_message_t
 deserialize_request_map_data(network::Bit_Reader &reader);
 
-// Server -> client: here is the compiled package. `bytes` is the (optionally
-// compressed) serialize_map_package() blob; `package_hash` is over the
-// UNCOMPRESSED blob so the client can verify after decompressing. We ship
-// compressed=false first (step 6 adds gzip).
+// Server -> client: here is the compiled package. `compressed_package` is the
+// serialize_map_package() blob through compress_bytes, always; `package_hash`
+// and `package_size_in_bytes` describe the UNCOMPRESSED blob, so the client
+// verifies after decompressing.
 struct map_data_message_t
 {
   std::string          map_name;
   uint32_t             package_hash;
-  bool                 compressed;
-  std::vector<uint8_t> bytes;
+  uint32_t             package_size_in_bytes;
+  std::vector<uint8_t> compressed_package;
 };
 
 void serialize_map_data(network::Bit_Writer &writer,
                         const map_data_message_t &msg);
 map_data_message_t deserialize_map_data(network::Bit_Reader &reader);
+
+// The two ends of the message. The second refuses, naming why, a package that
+// does not inflate to the declared size, does not hash to the declared hash or
+// does not deserialize.
+map_data_message_t make_map_data_message(const map_t &map, const std::string &map_name);
+[[nodiscard]] std::optional<map_package_t>
+try_unpack_map_data_message(const map_data_message_t &message);
 
 } // namespace shared

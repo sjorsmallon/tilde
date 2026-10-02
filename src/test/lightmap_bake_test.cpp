@@ -727,6 +727,57 @@ visibility_under_the_light(const shared::lightmap_t &lightmap)
   return lightmap.visibility_pages.load_visibility(at.page, at.x, at.y);
 }
 
+shared::map_t map_with_a_raised_floor_and_a_light(int subdivision_level, float raised_by,
+                                                  float light_height)
+{
+  shared::map_t map = map_with_a_floor_and_a_light(light_height, 1.f);
+
+  shared::brush_geometry_t &floor = std::get<shared::brush_geometry_t>(map.geometry[0].value);
+  shared::sync_face_surfaces(floor);
+
+  Plane top;
+  top.normal = {0, 1, 0};
+  top.point  = {0, 0, 0};
+  shared::face_surface_t &face = shared::face_surface_for(floor, top);
+  shared::resize_face_grid(face, subdivision_level);
+
+  const int size = subdivision_level + 1;
+  face.offsets[(size_t)((size / 2) * size + size / 2)] = {0.f, raised_by, 0.f};
+  return map;
+}
+
+// A subdivided face is measured ON the surface it draws: a texel of its chart
+// samples the raised grid, never the flat face buried in the solid under it.
+void a_subdivided_face_is_sampled_on_its_raised_surface()
+{
+  const int   level     = 4;
+  const float raised_by = 32.f;
+  const shared::map_t map = map_with_a_raised_floor_and_a_light(level, raised_by, 96.f);
+  const shared::lightmap_t lightmap = bake_for(map);
+
+  const shared::lightmap_chart_t &chart = *upward_chart(lightmap);
+  assert(chart.polygon.empty());
+  assert(chart.twins.size() == (size_t)(level * level * 2));
+  assert(chart.triangles.size() == chart.twins.size() * 3);
+
+  // The grid tiles the face, so every texel finds a triangle, and the one over the raised vertex is up there with it.
+  float highest = 0.f;
+  for (int texel_y = 0; texel_y < shared::chart_covered_height(chart, lightmap.settings); ++texel_y)
+    for (int texel_x = 0; texel_x < shared::chart_covered_width(chart, lightmap.settings); ++texel_x)
+    {
+      const shared::texel_sample_t sample = shared::sample_texel(chart, texel_x, texel_y);
+      assert(sample.on_surface);
+      assert(sample.position.y >= -1e-3f && sample.position.y <= raised_by + 1e-3f);
+      assert(sample.normal.y > 0.f);
+      highest = std::max(highest, sample.position.y);
+    }
+  assert(highest > raised_by - 4.f);
+
+  // ...and the bake reaches it: the light over the hill is kept by the chart and lights the texel on top.
+  assert(chart.light_slots[0] != shared::LIGHTMAP_NO_LIGHT_SLOT);
+  assert(visibility_under_the_light(lightmap)[0].x == 1.f);
+}
+
 // Visibility is a MODE, not a second implementation -- so it writes the same
 // RGB9E5 pages, and every lit texel is exactly white. Anything else means the
 // falloff leaked into the arm that exists to have none.
@@ -4680,6 +4731,7 @@ int main()
   packing_places_every_chart_without_overlap();
   a_chart_too_big_for_a_page_fails_loudly();
   a_chart_polygon_fits_inside_its_own_rect();
+  a_subdivided_face_is_sampled_on_its_raised_surface();
   the_chart_size_cap_lowers_density_instead_of_truncating();
   a_vertex_uv_lands_on_its_own_chart();
   a_sidecar_round_trips_every_chart();

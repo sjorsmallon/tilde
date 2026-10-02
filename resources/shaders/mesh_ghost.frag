@@ -12,6 +12,7 @@ layout(location = 0) out vec4 outColor;
 #include "scene.glsl"
 #include "ripple.glsl"
 #include "peel.glsl"
+#include "reveal.glsl"
 
 const float GHOST_CENTRE_ALPHA = 0.08;
 const float GHOST_RIM_ALPHA    = 0.9;
@@ -23,6 +24,7 @@ const float RIPPLE_ALPHA_GAIN  = 0.35;
 
 void main() {
     discard_inside_peel(fragWorldPosition);
+    discard_outside_reveal(fragWorldPosition);
 
     ripple_sample_t ripple = sample_ripples(fragWorldPosition);
 

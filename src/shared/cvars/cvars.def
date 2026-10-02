@@ -188,6 +188,13 @@ Aim :: cvars {
     sv_aim_body_turn_rate:  f32 = 540.0       @Mirrored  "How fast a player model's feet chase their view yaw, degrees/second"
 }
 
+// The Flashlight's cone (shared/reveal_light.hpp). @Mirrored: what a client draws as revealed and what the server makes solid are the same two numbers.
+Reveal_Light :: cvars {
+    sv_reveal_light_range:      f32 = 1024.0  @Mirrored  "How far a Flashlight reveals and lights, in world units"
+    sv_reveal_light_half_angle: f32 = 25.0    @Mirrored  "Half the opening angle of a Flashlight's cone, in degrees, at most 89"
+    sv_reveal_light_overhead_height: f32 = 256.0 @Mirrored  "How far above its holder's eye an overhead Flashlight's cone starts, in world units"
+}
+
 // ---------------------------------------------------------------------------
 // Lag compensation -- lag_compensation_def.md
 // ---------------------------------------------------------------------------
@@ -252,11 +259,12 @@ Server :: cvars {
     // the client's first recvfrom -- which no receive-side change can recover,
     // and which made a download retry forever without ever converging.
     //
-    // At 60Hz, 8 fragments is ~576 KB/s: fast enough that a map arrives in under
-    // a second, slow enough that a client draining once per frame never lets its
-    // queue grow past a frame's worth. This is the same knob Source spells
-    // sv_maxrate, in fragments rather than bytes because our fragments are fixed.
-    sv_map_transfer_fragments_per_tick: i32 = 8 @Server "Map-package fragments sent per client per tick"
+    // At 60Hz, 32 fragments is ~2.3 MB/s: a 12 MB compressed package in about five
+    // seconds. What bounds it is the client's receive queue
+    // (client_receive_buffer_size_in_bytes), which has to hold what arrives while
+    // a frame stalls. This is the same knob Source spells sv_maxrate, in
+    // fragments rather than bytes because our fragments are fixed.
+    sv_map_transfer_fragments_per_tick: i32 = 32 @Server "Map-package fragments sent per client per tick"
 }
 
 Client :: cvars {
@@ -426,6 +434,8 @@ Client :: cvars {
     // number, and a number on screen is not what a shipped HUD shows for this.
     cl_show_deploy_timer:   bool = false     @Client    "Draw the seconds left on a weapon switch before anything may fire"
 
+    cl_auto_equip_weapon_on_pickup: bool = true @Client "Switch to a weapon the moment you walk over it"
+
     // Crosshair. All pixel units, unscaled -- there is no UI scale factor in
     // the client yet, so these are literal framebuffer pixels.
     cl_crosshair:           bool = true      @Client    "Draw the crosshair"
@@ -488,7 +498,7 @@ Map :: cvars {
 }
 
 Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals }
-Cel_Fill :: enum { none, hatch, dither3d }
+Cel_Fill :: enum { none, hatch, dither3d, dither3d_original }
 
 Debugging :: cvars {
 
@@ -511,6 +521,11 @@ Debugging :: cvars {
     // would have earned a rescale of every light in every map.
     r_exposure:             f32 = 1.4       @Client    "Exposure multiplier applied before the tonemap curve"
 
+    // Composed as a diffuse term already (floor * albedo), so it does NOT take
+    // the 1/PI the lightmapped and analytic paths apply to their irradiance:
+    // the default is 0.15/PI (lighting_def.md §9).
+    r_ambient_floor:        f32 = 0.0477    @Client    "Constant light added to every surface on top of the baked and probe light, lightmapped or not; all a surface with no chart gets where the probes are dark or absent"
+
     r_stylized:             bool = true     @Client    "The whole comic look at once: off draws the plain frame whatever r_cel, r_ink and r_cel_fill say"
     r_cel:                  bool = true     @Client    "Shade the whole frame in two tones (shading_cel.glsl); turns PCSS off, which a hard shadow edge cannot use"
     r_cel_terminator:       f32 = 0.05      @Client    "How far a surface must face a light to count as lit, as N.L (0 = edge-on, 1 = face-on)"
@@ -519,16 +534,22 @@ Debugging :: cvars {
     r_cel_shadow_red:       f32 = 0.8       @Client    "Red of the colour the unlit side is multiplied by"
     r_cel_shadow_green:     f32 = 0.85      @Client    "Green of the colour the unlit side is multiplied by"
     r_cel_shadow_blue:      f32 = 1.0       @Client    "Blue of the colour the unlit side is multiplied by"
-    r_cel_fill:             Cel_Fill = .dither3d @Client "What fills the unlit side: none, hatch (diagonal lines), dither3d (dots pinned to the surface that keep their size on screen)"
+    r_cel_bands:            f32 = 0.0       @Client    "How many flat steps the light on a surface, direct and ambient together, is cut into per doubling of its brightness; 0 leaves it smooth"
+    r_cel_fill:             Cel_Fill = .dither3d @Client "What fills the unlit side: none, hatch (diagonal lines), dither3d (dots pinned to the surface that keep their size on screen, written as arithmetic), dither3d_original (runevision's own Dither3D shader and 3D texture)"
     r_cel_fill_strength:    f32 = 0.5       @Client    "How dark the fill's ink is (0 = invisible, 1 = solid ink)"
-    r_cel_fill_spacing:     f32 = 5.0       @Client    "Distance between hatch lines, or between dither dots in the darkest shadow, in pixels"
+    r_cel_fill_spacing:     f32 = 5.0       @Client    "Distance in pixels between hatch lines, between dither3d dots in the darkest shadow, or between dither3d_original dots at half tone"
     r_cel_fill_edge:        f32 = 0.5       @Client    "A surface is filled where direct light adds less than this many times its ambient light"
-    r_cel_fill_tone:        f32 = 0.45      @Client    "dither3d: the share of the DARKEST shadow the dots cover (0 to 0.75)"
-    r_cel_fill_tone_light:  f32 = 0.15      @Client    "dither3d: the share of the LIGHTEST shadow the dots cover (0 to 0.75); equal to r_cel_fill_tone is one flat tone"
-    r_cel_fill_ambient_dark:  f32 = 0.06    @Client    "dither3d: a shadow whose ambient light is this dim or dimmer gets r_cel_fill_tone"
-    r_cel_fill_ambient_light: f32 = 0.3     @Client    "dither3d: a shadow whose ambient light is this bright or brighter gets r_cel_fill_tone_light"
+    r_cel_fill_tone:        f32 = 0.45      @Client    "Both dithers: the share of the DARKEST shadow the dots cover (0 to 0.75)"
+    r_cel_fill_tone_light:  f32 = 0.15      @Client    "Both dithers: the share of the LIGHTEST shadow the dots cover (0 to 0.75); equal to r_cel_fill_tone is one flat tone"
+    r_cel_fill_ambient_dark:  f32 = 0.06    @Client    "Both dithers: a shadow whose ambient light is this dim or dimmer gets r_cel_fill_tone"
+    r_cel_fill_ambient_light: f32 = 0.3     @Client    "Both dithers: a shadow whose ambient light is this bright or brighter gets r_cel_fill_tone_light"
+    r_cel_fill_tone_lit:    f32 = 0.15      @Client    "Both dithers: the share of a LIT surface the dots cover where its light only grazes it, thinning to none where the light arrives square-on (0 to 0.75); 0 leaves the lit side clean"
+    r_cel_fill_material:    f32 = 0.5       @Client    "Both dithers: the tone a material's own occlusion and normal map add, lit or not, so dots gather in its cracks and on its bumps (0 to 1); 0 ignores the maps"
     r_cel_hatch_width:      f32 = 1.0       @Client    "hatch: width of a line, in pixels"
-    r_cel_speckle:          f32 = 0.12      @Client    "How dark the sand speckles over every surface are (0 = none, 1 = solid ink)"
+    r_cel_dither3d_size_variability:   f32 = 0.0 @Client "dither3d_original: 0 keeps every dot one size and spreads them apart as the tone lightens, 1 keeps the spacing and shrinks them"
+    r_cel_dither3d_contrast:           f32 = 1.0 @Client "dither3d_original: how sharp a dot's edge is (0 to 2); 1 is about a pixel of blur"
+    r_cel_dither3d_stretch_smoothness: f32 = 1.0 @Client "dither3d_original: how much dots on a surface seen edge-on blur into their flat tone (0 to 2)"
+    r_cel_speckle:          f32 = 0.2       @Client    "How dark the sand speckles over every surface are (0 = none, 1 = solid ink)"
     r_cel_speckle_spacing:  f32 = 10.0      @Client    "Distance between speckle lattice points on screen, in pixels; a point holds at most one speckle"
     r_cel_speckle_density:  f32 = 0.33      @Client    "The share of lattice points that hold a speckle (0 to 1)"
     r_cel_speckle_radius:   f32 = 0.15      @Client    "Radius of a speckle as a fraction of the spacing (0 to 0.5); the rest of the half spacing is how far it strays from its lattice point"
@@ -536,6 +557,15 @@ Debugging :: cvars {
     r_ink_threshold:        f32 = 4.0       @Client    "How far the depth must jump before an outline is inked; lower draws more lines"
     r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the surface normal, normal map included, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
     r_ink_width:            i32 = 1         @Client    "Ink line reach in pixels"
+    r_ink_tint:             f32 = 0.0       @Client    "How much of the colour under a line its ink keeps: 0 is black ink, 0.3 a line three tenths as bright as the surface it is drawn over"
+    r_rim:                  f32 = 0.0       @Client    "Rim light: how far towards white the near side of a depth jump is lit (0 = none, 1 = white); what counts as a jump is r_ink_threshold"
+    r_rim_width:            i32 = 3         @Client    "How many pixels in from the edge the rim light reaches; the ink covers the outermost r_ink_width of them"
+
+    r_flashlight_intensity: f32 = 20.0      @Client    "Brightness of the light a Flashlight casts down its cone, as the irradiance it delivers one metre away; 0 casts none and the cone still reveals"
+    r_flashlight_red:       f32 = 1.0       @Client    "Red of a Flashlight's light"
+    r_flashlight_green:     f32 = 0.95      @Client    "Green of a Flashlight's light"
+    r_flashlight_blue:      f32 = 0.85      @Client    "Blue of a Flashlight's light"
+    r_flashlight_inner:     f32 = 0.7       @Client    "Where a Flashlight's beam starts to fade towards the edge of its cone, as a fraction of the half-angle (0 fades from the centre, 0.99 is a hard-edged disc)"
 
     r_fxaa:                 bool = true     @Client    "Antialias the tonemapped and inked frame with FXAA, under the UI"
     r_fxaa_subpixel:        f32 = 0.25      @Client    "How far FXAA softens detail one pixel across (0 = edges only and sharpest, 1 = softest); thin ink lines grey out as it rises"

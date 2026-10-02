@@ -153,6 +153,9 @@ struct world_t
   std::string   current_map_path;
   uint32_t      map_content_hash = 0;
 
+  // The serialized S2C_MapData of current_map, built by the first client that asks; empty until then.
+  std::vector<uint8_t> map_data_message_bytes;
+
   std::vector<Bot_State> bots;
   int32_t next_bot_slot = BOT_SLOT_BASE; // increments with each spawned bot
 

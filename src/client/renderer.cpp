@@ -1,4 +1,5 @@
 #include "../shared/environment_brdf.hpp"
+#include "../shared/dither3d_pattern.hpp"
 #include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
 
@@ -272,6 +273,7 @@ struct pipeline_key_t
   vertex_layout_t  vertex_layout = vertex_layout_t::static_mesh;
   fill_mode_t      fill          = fill_mode_t::solid;
   bool             discard_effects = false; // the clock wipe and the dissolve
+  bool             revealed_by_light = false; // reveal.glsl
 
   bool operator==(const pipeline_key_t &) const = default;
 };
@@ -286,7 +288,7 @@ struct pipeline_key_hash_t
            ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 6) |
            ((size_t)key.state.depth_write << 7) | ((size_t)key.vertex_layout << 8) |
            ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12) |
-           ((size_t)key.discard_effects << 20);
+           ((size_t)key.discard_effects << 20) | ((size_t)key.revealed_by_light << 21);
   }
 };
 
@@ -374,11 +376,14 @@ constexpr uint32_t PASS_SHADOW_DEPTH_BINDING = 11;
 constexpr uint32_t PASS_REFLECTION_CUBES_BINDING = 12;
 constexpr uint32_t PASS_REFLECTION_TABLE_BINDING = 13;
 constexpr uint32_t PASS_ENVIRONMENT_BRDF_BINDING = 14;
+// r_cel_fill dither3d_original: the dot pattern volume and its brightness ramp (dither3d.glsl), the renderer's.
+constexpr uint32_t PASS_DITHER3D_PATTERN_BINDING = 15;
+constexpr uint32_t PASS_DITHER3D_RAMP_BINDING    = 16;
 // How many images of the BAKE a pass set binds (the shadow pool is not one).
 constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 10;
 // The images the renderer owns and binds beside them: the shadow pool twice,
-// the BRDF table once.
-constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 3;
+// the BRDF table once, the Dither3D pattern and its ramp.
+constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 5;
 // The lightmap images, the scene block, the renderer's three images and the
 // capture table.
 constexpr uint32_t PASS_BINDING_COUNT =
@@ -554,6 +559,9 @@ static lightmap_handle_t g_white_lightmap;
 // Gate 6 step 4: the environment BRDF table, one image for every pass set.
 static gpu_texture_t g_environment_brdf;
 
+static gpu_texture_t g_dither3d_pattern;
+static gpu_texture_t g_dither3d_ramp;
+
 // The internal textures the fallback ladder ends at, and the material every mesh
 // without one of its own gets. An invalid ALBEDO resolves to WHITE so the colour
 // multiplies out of the shader; a texture that was NAMED but failed to load
@@ -698,6 +706,8 @@ struct gpu_light_t
 constexpr uint32_t MAX_SCENE_LIGHTS = 64;
 // scene.glsl's MAX_RIPPLES; the size assert below keeps the two one number.
 constexpr uint32_t MAX_SCENE_RIPPLES = 16;
+// scene.glsl's MAX_REVEAL_CONES, kept one number by the same assert.
+constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -742,16 +752,19 @@ struct scene_uniform_t
   float       ripples[MAX_SCENE_RIPPLES][8]                 = {};
   float       clock[4]                                      = {}; // x seconds, view_pass_t::seconds
   float       look[4]                                       = {}; // x 1 when r_cel shades the frame, y terminator, z shadow edge, w softness
-  float       cel_shadow_tint[4]                            = {};
+  float       cel_shadow_tint[4]                            = {}; // rgb the unlit side's tint, a bands per doubling
   float       cel_fill[4]                                   = {}; // x strength, y spacing px, z edge, w hatch width px
-  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone of the darkest shadow
-  float       cel_fill_tone_range[4]                        = {}; // x tone of the lightest shadow, y ambient at the darkest, z ambient at the lightest
+  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone of the darkest shadow, z tone the material's relief adds
+  float       cel_fill_tone_range[4]                        = {}; // x tone of the lightest shadow, y ambient at the darkest, z ambient at the lightest, w tone of a grazed lit surface
   float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of the spacing
+  float       cel_dither3d[4]                               = {}; // x size variability, y contrast, z stretch smoothness
+  float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` are live
+  float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 96,
+                      32 * MAX_SCENE_RIPPLES + 16 + 112 + 16 + 32 * MAX_SCENE_REVEAL_CONES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -769,14 +782,6 @@ constexpr int32_t DEBUG_FLAG_RENDER_PROBE_VISIBILITY  = 1 << 7;
 constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   = 1 << 8;
 constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION         = 1 << 9;
 constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION_CAPTURE = 1 << 10;
-
-// One number in one place, so the lit, grid and blend paths cannot disagree.
-// It is composed as a diffuse term already (ambient * albedo), so it does NOT
-// take the 1/PI the lightmapped and analytic paths apply to their irradiance --
-// which is why it had to be divided by PI here when they gained it
-// (lighting_def.md §9): the floor keeps its old weight relative to lit surfaces
-// instead of becoming PI times stronger than everything around it.
-constexpr float AMBIENT_FLOOR = 0.0477f;
 
 constexpr uint32_t MAX_VIEW_PASSES_PER_FRAME = 8;
 
@@ -2066,16 +2071,19 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
     VkBool32 cutout;
     float    cutoff;
     VkBool32 discard_effects;
+    VkBool32 revealed_by_light;
   } alpha_specialization{key.state.blend_mode == blend_mode_t::cutout ? VK_TRUE : VK_FALSE,
-                         key.state.alpha_cutoff / 255.0f, key.discard_effects ? VK_TRUE : VK_FALSE};
+                         key.state.alpha_cutoff / 255.0f, key.discard_effects ? VK_TRUE : VK_FALSE,
+                         key.revealed_by_light ? VK_TRUE : VK_FALSE};
 
-  const VkSpecializationMapEntry alpha_entries[3] = {
+  const VkSpecializationMapEntry alpha_entries[4] = {
       {0, offsetof(alpha_specialization_t, cutout), sizeof(VkBool32)},
       {1, offsetof(alpha_specialization_t, cutoff), sizeof(float)},
-      {2, offsetof(alpha_specialization_t, discard_effects), sizeof(VkBool32)}};
+      {2, offsetof(alpha_specialization_t, discard_effects), sizeof(VkBool32)},
+      {3, offsetof(alpha_specialization_t, revealed_by_light), sizeof(VkBool32)}};
 
   VkSpecializationInfo alpha_info{};
-  alpha_info.mapEntryCount = 3;
+  alpha_info.mapEntryCount = 4;
   alpha_info.pMapEntries   = alpha_entries;
   alpha_info.dataSize      = sizeof(alpha_specialization);
   alpha_info.pData         = &alpha_specialization;
@@ -2596,7 +2604,15 @@ static void create_mesh_resources()
   pass_bindings[14].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[14].descriptorCount = 1;
   pass_bindings[14].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-  static_assert(PASS_BINDING_COUNT == 15, "the pass bindings above are written out by index");
+  pass_bindings[15].binding         = PASS_DITHER3D_PATTERN_BINDING;
+  pass_bindings[15].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[15].descriptorCount = 1;
+  pass_bindings[15].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[16].binding         = PASS_DITHER3D_RAMP_BINDING;
+  pass_bindings[16].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[16].descriptorCount = 1;
+  pass_bindings[16].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  static_assert(PASS_BINDING_COUNT == 17, "the pass bindings above are written out by index");
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2608,9 +2624,9 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Thirteen samplers per set -- irradiance, visibility, the bounce's two, the
-  // probe volume's five, the reflection cubes, the shadow pool twice and the
-  // BRDF table -- plus the capture table.
+  // Fifteen samplers per set -- irradiance, visibility, the bounce's two, the
+  // probe volume's five, the reflection cubes, the shadow pool twice, the
+  // BRDF table and Dither3D's two -- plus the capture table.
   VkDescriptorPoolSize pass_pool_sizes[3] = {
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
        MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT)},
@@ -2992,6 +3008,9 @@ struct tonemap_push_constants_t
   float ink_threshold    = 1.0f;
   int   ink_width_pixels = 1;
   float ink_crease_radians  = 0.5f;
+  float ink_tint         = 0.0f;
+  float rim_strength     = 0.0f;
+  int   rim_width_pixels = 1;
   int   show_surface_normals = 0;
 };
 
@@ -3496,13 +3515,14 @@ static bool try_check_sampled_format(VkFormat format, const char *what, bool &ou
 }
 
 // One tightly packed byte range to one sampled image, whatever its shape: a 2D
-// array of `layers` square pages, or a single 3D volume. Clamp-to-edge on every
-// axis and no mips, which is what both the atlas and the probe volume want.
+// array of `layers` square pages, or a single 3D volume. `address_mode` on every
+// axis and no mips: the atlas and the probe volume clamp to the edge.
 // `create_flags` is VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT for a cube and 0 for
 // everything else: it is the one thing a cube needs that a plain layered image
 // does not, since six layers already copy, view and sample as one region here.
 static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_count,
                                      VkFormat format, bool filter_linear,
+                                     VkSamplerAddressMode address_mode,
                                      VkImageType image_type, VkImageViewType view_type,
                                      VkImageCreateFlags create_flags, VkExtent3D extent,
                                      uint32_t layers, gpu_texture_t &out)
@@ -3596,9 +3616,9 @@ static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_cou
   VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sampler_info.magFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
   sampler_info.minFilter    = filter_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeU = address_mode;
+  sampler_info.addressModeV = address_mode;
+  sampler_info.addressModeW = address_mode;
   vkCreateSampler(g_device, &sampler_info, nullptr, &out.sampler);
 
   return true;
@@ -3612,7 +3632,8 @@ static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu
     return false;
 
   return try_upload_sampled_image(pages.bytes.data(), (VkDeviceSize)pages.bytes.size(), format,
-                                  filter_linear, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0,
+                                  filter_linear, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                  VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0,
                                   {(uint32_t)pages.size_in_texels, (uint32_t)pages.size_in_texels, 1},
                                   (uint32_t)pages.page_count, out);
 }
@@ -3629,6 +3650,7 @@ static bool try_upload_probe_image(const uint8_t *bytes, size_t byte_count,
     return false;
 
   return try_upload_sampled_image(bytes, (VkDeviceSize)byte_count, format, filter_linear,
+                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                   VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D, 0,
                                   {(uint32_t)count.x, (uint32_t)count.y, (uint32_t)count.z}, 1,
                                   out);
@@ -3724,7 +3746,7 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
       PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2, PASS_PROBE_VISIBILITY_BINDING,
       PASS_REFLECTION_CUBES_BINDING};
 
-  // The bake's images, the renderer's three, and the capture table.
+  // The bake's images, the renderer's five, and the capture table.
   constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT + 1;
   VkDescriptorImageInfo images[WRITE_COUNT]{};
   VkWriteDescriptorSet writes[WRITE_COUNT]{};
@@ -3782,6 +3804,30 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   writes[brdf].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   writes[brdf].pImageInfo      = &images[brdf];
 
+  if (!g_dither3d_pattern.valid() || !g_dither3d_ramp.valid())
+    fatal_error("[renderer] the Dither3D pattern and ramp must exist before any pass set is written");
+  const uint32_t dither_pattern = PASS_IMAGE_BINDING_COUNT + 3;
+  images[dither_pattern].sampler     = g_dither3d_pattern.sampler;
+  images[dither_pattern].imageView   = g_dither3d_pattern.view;
+  images[dither_pattern].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  writes[dither_pattern]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[dither_pattern].dstSet          = set;
+  writes[dither_pattern].dstBinding      = PASS_DITHER3D_PATTERN_BINDING;
+  writes[dither_pattern].descriptorCount = 1;
+  writes[dither_pattern].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[dither_pattern].pImageInfo      = &images[dither_pattern];
+
+  const uint32_t dither_ramp = PASS_IMAGE_BINDING_COUNT + 4;
+  images[dither_ramp].sampler     = g_dither3d_ramp.sampler;
+  images[dither_ramp].imageView   = g_dither3d_ramp.view;
+  images[dither_ramp].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  writes[dither_ramp]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[dither_ramp].dstSet          = set;
+  writes[dither_ramp].dstBinding      = PASS_DITHER3D_RAMP_BINDING;
+  writes[dither_ramp].descriptorCount = 1;
+  writes[dither_ramp].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[dither_ramp].pImageInfo      = &images[dither_ramp];
+
   // The capture table, the bake's, beside its cubes.
   if (entry.reflection_table == VK_NULL_HANDLE)
     fatal_error("[renderer] a pass set is being written for a bake with no capture table");
@@ -3789,7 +3835,7 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   table.buffer = entry.reflection_table;
   table.offset = 0;
   table.range  = entry.reflection_table_bytes;
-  const uint32_t table_at = PASS_IMAGE_BINDING_COUNT + 3;
+  const uint32_t table_at = PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT;
   writes[table_at]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
   writes[table_at].dstSet          = set;
   writes[table_at].dstBinding      = PASS_REFLECTION_TABLE_BINDING;
@@ -3948,7 +3994,8 @@ static void create_environment_brdf_texture()
     fatal_error("[renderer] this GPU cannot sample the R16G16_UNORM environment BRDF table");
   if (!try_upload_sampled_image(reinterpret_cast<const uint8_t *>(lut.scale_bias.data()),
                                 (VkDeviceSize)(lut.scale_bias.size() * sizeof(uint16_t)),
-                                VK_FORMAT_R16G16_UNORM, filter_linear, VK_IMAGE_TYPE_2D,
+                                VK_FORMAT_R16G16_UNORM, filter_linear,
+                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_IMAGE_TYPE_2D,
                                 VK_IMAGE_VIEW_TYPE_2D, 0,
                                 {(uint32_t)lut.size, (uint32_t)lut.size, 1}, 1,
                                 g_environment_brdf))
@@ -3956,12 +4003,34 @@ static void create_environment_brdf_texture()
                 lut.size);
 }
 
+// r_cel_fill dither3d_original's two images: map-independent like the BRDF table, built once at startup.
+static void create_dither3d_textures()
+{
+  const shared::dither3d_pattern_t dither = shared::build_dither3d_pattern();
+  bool filter_linear = false;
+  if (!try_check_sampled_format(VK_FORMAT_R8_UNORM, "Dither3D pattern", filter_linear))
+    fatal_error("[renderer] this GPU cannot sample the R8_UNORM Dither3D pattern");
+  if (!try_upload_sampled_image(dither.pattern.data(), (VkDeviceSize)dither.pattern.size(),
+                                VK_FORMAT_R8_UNORM, filter_linear, VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D, 0,
+                                {(uint32_t)dither.size, (uint32_t)dither.size, (uint32_t)dither.layers},
+                                1, g_dither3d_pattern))
+    fatal_error("[renderer] could not upload the {}x{}x{} Dither3D pattern", dither.size,
+                dither.size, dither.layers);
+  if (!try_upload_sampled_image(dither.ramp.data(), (VkDeviceSize)dither.ramp.size(),
+                                VK_FORMAT_R8_UNORM, filter_linear,
+                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_IMAGE_TYPE_2D,
+                                VK_IMAGE_VIEW_TYPE_2D, 0, {(uint32_t)dither.size, 1, 1}, 1,
+                                g_dither3d_ramp))
+    fatal_error("[renderer] could not upload the {}-texel Dither3D brightness ramp", dither.size);
+}
+
 // ---------------------------------------------------------------------------
 // The sky
 // ---------------------------------------------------------------------------
 //
 // A self-contained pipeline with a descriptor set of its own rather than a
-// binding on the pass set. Set 3 is full at 0..14 behind a static_assert, and
+// binding on the pass set. Set 3 is full at 0..16 behind a static_assert, and
 // joining it means touching the layout, the pool, the writer and the GLSL
 // literals in step; the sky borrows nothing from any of them. It also needs a
 // depth compare the mesh pipeline factory cannot express -- that one hardcodes
@@ -4236,7 +4305,8 @@ skybox_handle_t register_skybox(assets::cubemap_asset id)
   gpu_skybox_t sky;
   sky.id = id;
   if (!try_upload_sampled_image(bytes.data(), (VkDeviceSize)bytes.size(), SKYBOX_FACE_FORMAT,
-                                filter_linear, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_CUBE,
+                                filter_linear, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_CUBE,
                                 VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
                                 {(uint32_t)faces[0]->width, (uint32_t)faces[0]->height, 1},
                                 (uint32_t)assets::CUBEMAP_FACE_COUNT, sky.texture))
@@ -5784,6 +5854,7 @@ static void create_default_resources()
   // for "unknown" and an invented bounce is not a graceful unknown.
   // Before the first pass set is written: every set binds the table.
   create_environment_brdf_texture();
+  create_dither3d_textures();
 
   shared::lightmap_t white_lightmap;
   white_lightmap.irradiance_pages = white_pages;
@@ -5802,6 +5873,8 @@ static void cleanup_registered_resources()
     destroy_lightmap_textures(lightmap);
   g_lightmaps.clear();
   destroy_texture(g_environment_brdf);
+  destroy_texture(g_dither3d_pattern);
+  destroy_texture(g_dither3d_ramp);
 
   for (gpu_mesh_t &mesh : g_meshes)
     destroy_mesh_buffers(mesh);
@@ -6421,11 +6494,6 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   scene.camera_forward[2] = forward.z;
   scene.camera_forward[3] = 0.0f;
 
-  scene.ambient[0] = AMBIENT_FLOOR;
-  scene.ambient[1] = AMBIENT_FLOOR;
-  scene.ambient[2] = AMBIENT_FLOOR;
-  scene.ambient[3] = 0.0f;
-
   // The probe mapping belongs to the BAKE the pass draws, resolved from the same
   // handle the descriptor set is -- so a pass naming no bake, or one whose bake
   // carried no probes, says so and the shader fetches nothing.
@@ -6470,6 +6538,27 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     out[5] = ripple.normal.y;
     out[6] = ripple.normal.z;
     out[7] = linalg::dot(ripple.normal, ripple.center);
+  }
+
+  if (pass.reveal_cones.size() > MAX_SCENE_REVEAL_CONES)
+  {
+    log_error("[renderer] this view pass carries {} reveal cones; only the first {} reveal anything",
+              pass.reveal_cones.size(), MAX_SCENE_REVEAL_CONES);
+  }
+  const size_t reveal_cone_count = std::min<size_t>(pass.reveal_cones.size(), MAX_SCENE_REVEAL_CONES);
+  scene.reveal_settings[0]       = (float)reveal_cone_count;
+  for (size_t index = 0; index < reveal_cone_count; ++index)
+  {
+    const shared::reveal_cone_t& cone = pass.reveal_cones[(uint32_t)index];
+    float*                       out  = scene.reveal_cones[index];
+    out[0] = cone.apex.x;
+    out[1] = cone.apex.y;
+    out[2] = cone.apex.z;
+    out[3] = cone.range;
+    out[4] = cone.axis.x;
+    out[5] = cone.axis.y;
+    out[6] = cone.axis.z;
+    out[7] = cone.cosine_of_half_angle;
   }
 
   scene.clock[0] = pass.seconds;
@@ -6554,6 +6643,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Cel_Fill::none: return 0.0f;
   case cvars::Cel_Fill::hatch: return 1.0f;
   case cvars::Cel_Fill::dither3d: return 2.0f;
+  case cvars::Cel_Fill::dither3d_original: return 3.0f;
   }
   fatal_error("cel_fill_pattern_of: {} is not a Cel_Fill", static_cast<uint32_t>(fill));
 }
@@ -7043,7 +7133,8 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
       const uint32_t pipeline_id = resolve_pipeline_id(
           {g_materials[material.index].pipeline_state, mesh.layout, draw.fill,
-           draw.clock_wipe.armed || draw.dissolve > 0.0f || draw.peel.armed});
+           draw.clock_wipe.armed || draw.dissolve > 0.0f || draw.peel.armed,
+           draw.revealed_by_light});
       if (pipeline_id == UINT32_MAX)
         continue;
 
@@ -8613,6 +8704,9 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     }
 
     scene_uniform_t scene = build_scene_uniform(pass);
+    scene.ambient[0]      = std::max(look.ambient_floor, 0.0f);
+    scene.ambient[1]      = scene.ambient[0];
+    scene.ambient[2]      = scene.ambient[0];
     scene.look[0]         = look.cel ? 1.0f : 0.0f;
     scene.look[1]         = look.cel_terminator;
     scene.look[2]         = look.cel_shadow_edge;
@@ -8620,6 +8714,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_shadow_tint[0] = look.cel_shadow_tint.x;
     scene.cel_shadow_tint[1] = look.cel_shadow_tint.y;
     scene.cel_shadow_tint[2] = look.cel_shadow_tint.z;
+    scene.cel_shadow_tint[3] = std::max(look.cel_bands, 0.0f);
     scene.cel_fill[0]        = std::clamp(look.cel_fill_strength, 0.0f, 1.0f);
     scene.cel_fill[1]        = std::max(look.cel_fill_spacing_pixels, 2.0f);
     scene.cel_fill[2]        = look.cel_fill_edge;
@@ -8629,10 +8724,15 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_fill_tone_range[0] = std::clamp(look.cel_fill_tone_light, 0.0f, 0.75f);
     scene.cel_fill_tone_range[1] = std::max(look.cel_fill_ambient_dark, 0.0f);
     scene.cel_fill_tone_range[2] = std::max(look.cel_fill_ambient_light, scene.cel_fill_tone_range[1] + 0.0001f);
+    scene.cel_fill_tone_range[3] = std::clamp(look.cel_fill_tone_lit, 0.0f, 0.75f);
+    scene.cel_fill_pattern[2]    = std::clamp(look.cel_fill_material, 0.0f, 1.0f);
     scene.cel_speckle[0]     = std::clamp(look.cel_speckle, 0.0f, 1.0f);
     scene.cel_speckle[1]     = std::max(look.cel_speckle_spacing_pixels, 2.0f);
     scene.cel_speckle[2]     = std::clamp(look.cel_speckle_density, 0.0f, 1.0f);
     scene.cel_speckle[3]     = std::clamp(look.cel_speckle_radius, 0.0f, 0.5f);
+    scene.cel_dither3d[0]    = std::clamp(look.cel_dither3d_size_variability, 0.0f, 1.0f);
+    scene.cel_dither3d[1]    = std::max(look.cel_dither3d_contrast, 0.0f);
+    scene.cel_dither3d[2]    = std::max(look.cel_dither3d_stretch_smoothness, 0.0f);
     assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
     prepared.scene_block_offset = write_scene_block(scene);
     g_prepared_passes.push_back(prepared);
@@ -8767,6 +8867,9 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       look.ink_threshold,
       std::max(look.ink_width_pixels, 1),
       std::clamp(look.ink_crease_degrees, 1.0f, 180.0f) * radians_per_degree,
+      std::clamp(look.ink_tint, 0.0f, 1.0f),
+      std::clamp(look.rim, 0.0f, 1.0f),
+      std::max(look.rim_width_pixels, 1),
       showing_surface_normals ? 1 : 0};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);

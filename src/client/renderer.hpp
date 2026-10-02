@@ -37,6 +37,7 @@
 #include "../shared/lighting.hpp"
 #include "../shared/lightmap.hpp"
 #include "../shared/linalg.hpp"
+#include "../shared/reveal_light.hpp"
 #include "../shared/span.hpp"
 #include "../shared/team_wall_ripples.hpp"
 #include "camera.hpp"
@@ -396,6 +397,8 @@ struct mesh_draw_t
   float dissolve = 0.0f;
   // Rides the same pipeline bit and the clock wipe's push slots, so a draw wipes or peels, never both.
   peel_t peel = {};
+  // Kept only inside one of the pass's reveal_cones (resources/shaders/reveal.glsl); its own pipeline bit.
+  bool revealed_by_light = false;
 };
 
 // --- Debug drawing ---
@@ -667,6 +670,8 @@ struct view_pass_t
   // shader reads them all and confines each to the face it names. Past
   // MAX_SCENE_RIPPLES the oldest are dropped.
   Span<const shared::wall_ripple_t>         ripples   = {};
+  // Where a revealed_by_light draw exists; the caller decides whose cones these are.
+  Span<const shared::reveal_cone_t>         reveal_cones = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
   float                                     seconds   = 0.0f;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
@@ -682,11 +687,13 @@ struct tonemap_settings_t
 };
 struct look_settings_t
 {
+  float   ambient_floor    = 0.0477f; // r_ambient_floor
   bool    cel              = false; // r_cel
   float   cel_terminator   = 0.05f; // r_cel_terminator
   float   cel_shadow_edge  = 0.5f;  // r_cel_shadow_edge
   float   cel_softness     = 0.03f; // r_cel_softness
   linalg::vec3f cel_shadow_tint = {0.8f, 0.85f, 1.0f}; // r_cel_shadow_red, _green, _blue
+  float   cel_bands = 0.0f; // r_cel_bands
   cvars::Cel_Fill cel_fill         = cvars::Cel_Fill::none; // r_cel_fill
   float   cel_fill_strength        = 0.5f; // r_cel_fill_strength
   float   cel_fill_spacing_pixels  = 5.0f; // r_cel_fill_spacing
@@ -695,7 +702,12 @@ struct look_settings_t
   float   cel_fill_tone_light      = 0.15f; // r_cel_fill_tone_light
   float   cel_fill_ambient_dark    = 0.06f; // r_cel_fill_ambient_dark
   float   cel_fill_ambient_light   = 0.3f;  // r_cel_fill_ambient_light
+  float   cel_fill_tone_lit        = 0.15f; // r_cel_fill_tone_lit
+  float   cel_fill_material        = 0.5f;  // r_cel_fill_material
   float   cel_hatch_width_pixels   = 1.0f; // r_cel_hatch_width
+  float   cel_dither3d_size_variability   = 0.0f; // r_cel_dither3d_size_variability
+  float   cel_dither3d_contrast           = 1.0f; // r_cel_dither3d_contrast
+  float   cel_dither3d_stretch_smoothness = 1.0f; // r_cel_dither3d_stretch_smoothness
   float   cel_speckle                = 0.0f;  // r_cel_speckle
   float   cel_speckle_spacing_pixels = 10.0f; // r_cel_speckle_spacing
   float   cel_speckle_density        = 0.33f; // r_cel_speckle_density
@@ -704,6 +716,9 @@ struct look_settings_t
   float   ink_threshold    = 4.0f;  // r_ink_threshold
   int     ink_width_pixels = 1;     // r_ink_width
   float   ink_crease_degrees = 30.0f; // r_ink_crease_degrees
+  float   ink_tint         = 0.0f;  // r_ink_tint
+  float   rim              = 0.0f;  // r_rim
+  int     rim_width_pixels = 3;     // r_rim_width
 };
 
 struct antialiasing_settings_t

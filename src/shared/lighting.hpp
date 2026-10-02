@@ -303,4 +303,7 @@ void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap);
 void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
                      entity_uid_t uid, const entities::Entity &entity);
 
+// A Dynamic light no entity holds and no bake saw (a Flashlight's beam): the tail alone. After begin_frame_lights.
+void add_dynamic_frame_light(frame_lights_t &frame, const scene_light_t &light);
+
 } // namespace shared

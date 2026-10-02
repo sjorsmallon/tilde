@@ -399,6 +399,9 @@ add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 # Vendored verbatim, so its warnings are not ours to fix.
 set_source_files_properties(src/shared/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
 set_source_files_properties(src/shared/tinygltf/tiny_gltf_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
+set_source_files_properties(src/shared/miniz/miniz.c PROPERTIES
+    COMPILE_OPTIONS "-w;-Wno-error=switch;-O2"
+    COMPILE_DEFINITIONS "MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_STDIO;MINIZ_NO_TIME;MINIZ_NO_ZLIB_COMPATIBLE_NAMES")
 
 add_library(game_shared STATIC
     src/shared/file_watcher.hpp
@@ -491,11 +494,17 @@ add_library(game_shared STATIC
     # xatlas, verbatim (MIT): the static mesh unwrap. lightmap_unwrap_plan.md.
     src/shared/xatlas.h
     src/shared/xatlas.cpp
+    # miniz 3.1.2, verbatim (MIT): DEFLATE for the streamed map package.
+    src/shared/miniz/miniz.h
+    src/shared/miniz/miniz.c
+    src/shared/compression.hpp
+    src/shared/compression.cpp
     src/shared/lightmap_debug_image.cpp
     src/shared/lightmap_lights.cpp
     src/shared/lightmap_probes.cpp
     src/shared/lightmap_reflections.cpp
     src/shared/environment_brdf.cpp
+    src/shared/dither3d_pattern.cpp
     src/shared/lightmap_trace.cpp
     src/shared/lightmap_gpu.hpp
     src/shared/lightmap_gpu.cpp
@@ -565,6 +574,7 @@ add_library(game_shared STATIC
     src/shared/flight_path.hpp
     src/shared/flight_path.cpp
     src/shared/canopy.cpp
+    src/shared/reveal_light.cpp
     src/shared/statues.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
@@ -721,6 +731,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/shading_lambert.glsl
                     ${SHADER_SRC_DIR}/shading_pbr.glsl
                     ${SHADER_SRC_DIR}/shading_cel.glsl
+                    ${SHADER_SRC_DIR}/dither3d.glsl
                     ${SHADER_SRC_DIR}/light_gather.glsl
                     ${SHADER_SRC_DIR}/debug_channels.glsl
                     ${SHADER_SRC_DIR}/reflection.glsl
@@ -732,6 +743,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/clock_wipe.glsl
                     ${SHADER_SRC_DIR}/peel.glsl
                     ${SHADER_SRC_DIR}/ripple.glsl
+                    ${SHADER_SRC_DIR}/reveal.glsl
                     ${SHADER_SRC_DIR}/dissolve.glsl
                     ${SHADER_SRC_DIR}/simplex_noise.glsl
                     ${SHADER_SRC_DIR}/procedural_blending.glsl)
@@ -1244,6 +1256,11 @@ add_executable(team_wall_ripples_test src/test/team_wall_ripples_test.cpp)
 target_include_directories(team_wall_ripples_test PRIVATE src src/shared)
 target_link_libraries(team_wall_ripples_test PRIVATE game_shared)
 
+# A reveal cone's planes hold everything the shader draws; its range is a distance from the eye.
+add_executable(reveal_cone_test src/test/reveal_cone_test.cpp)
+target_include_directories(reveal_cone_test PRIVATE src src/shared)
+target_link_libraries(reveal_cone_test PRIVATE game_shared)
+
 # 22. CVar / command test — tables, text conversion, console dispatch,
 # argument binders, and the @Mirrored wire path.
 #
@@ -1523,6 +1540,7 @@ set(GAME_TESTS
     projectile_sweep_test
     bounce_body_test
     team_wall_ripples_test
+    reveal_cone_test
     mover_path_test
     prefab_test
     map_group_test

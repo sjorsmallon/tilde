@@ -5,6 +5,7 @@
 #include "lighting.hpp"
 
 #include "entities/entity_reflection.hpp"
+#include "log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -383,6 +384,15 @@ void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
   // analytic -- lighting dynamic objects with it is lighting_def.md ss7's probes,
   // and not this.
   if (light_is_analytic(light.mode)) frame.entries.push_back(light);
+}
+
+void add_dynamic_frame_light(frame_lights_t &frame, const scene_light_t &light)
+{
+  if (light.mode != entities::Light_Mode::Dynamic || light.baked_slot != LIGHTMAP_NO_LIGHT_SLOT)
+    fatal_error("add_dynamic_frame_light: a light of mode {} with baked slot {}; only a Dynamic light "
+                "with no slot belongs in the tail alone",
+                (int)light.mode, light.baked_slot);
+  frame.entries.push_back(light);
 }
 
 } // namespace shared

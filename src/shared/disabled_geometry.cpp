@@ -1,5 +1,6 @@
 #include "disabled_geometry.hpp"
 
+#include "collision_detection.hpp"
 #include "entity_system.hpp"
 
 namespace shared
@@ -17,10 +18,10 @@ bool geometry_owner_blocks(const entities::Geometry_Owner_Entity& owner,
 namespace
 {
 
-// ONE walk for both sets, the predicate being the only thing they disagree on.
-template <typename Blocks_T>
+// ONE walk for both sets, the byte an owner's geometry gets being the only thing they disagree on.
+template <typename State_Of_T>
 void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owner_of,
-                            disabled_geometry_t& out, Blocks_T&& owner_blocks)
+                            disabled_geometry_t& out, State_Of_T&& state_of_owner)
 {
   out.assign(owner_of.size(), 0);
 
@@ -35,7 +36,7 @@ void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owne
     if (owner == nullptr)
       continue;
 
-    out[index] = owner_blocks(*owner) ? 0 : 1;
+    out[index] = state_of_owner(*owner);
   }
 }
 
@@ -45,16 +46,21 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
                                entities::Team_Allegiance mover_team, disabled_geometry_t& out)
 {
   collect_geometry_where(system, owner_of, out,
-                         [mover_team](const entities::Geometry_Owner_Entity& owner)
-                         { return geometry_owner_blocks(owner, mover_team); });
+                         [mover_team](const entities::Geometry_Owner_Entity& owner) -> uint8_t
+                         {
+                           if (!geometry_owner_blocks(owner, mover_team))
+                             return GEOMETRY_NOT_THERE;
+                           return owner.solid_only_when_revealed ? GEOMETRY_SOLID_WHERE_LIT
+                                                                 : GEOMETRY_SOLID;
+                         });
 }
 
 void collect_hidden_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
                              disabled_geometry_t& out)
 {
   collect_geometry_where(system, owner_of, out,
-                         [](const entities::Geometry_Owner_Entity& owner)
-                         { return owner.switch_state.value; });
+                         [](const entities::Geometry_Owner_Entity& owner) -> uint8_t
+                         { return owner.switch_state.value ? GEOMETRY_SOLID : GEOMETRY_NOT_THERE; });
 }
 
 } // namespace shared

@@ -17,7 +17,8 @@ class Bit_Writer
 {
 public:
   std::vector<uint8> buffer;
-  int bit_index = 0;
+  // size_t: a map package is one stream, and an int of BITS ends at 256 MB.
+  size_t bit_index = 0;
 
   void align()
   {
@@ -83,7 +84,7 @@ class Bit_Reader
 public:
   const uint8 *buffer;
   size_t size;
-  int bit_index = 0;
+  size_t bit_index = 0;
 
   Bit_Reader(const uint8 *buffer, size_t sz) : buffer(buffer), size(sz) {}
 

@@ -5,6 +5,7 @@
 #include "../../shared/log.hpp"
 #include "../../shared/bounce_body.hpp"
 #include "../../shared/player_constants.hpp"
+#include "../../shared/player_move.hpp"
 #include "../../shared/shapes.hpp"
 #include "../../shared/weapon_instance.hpp"
 #include "../../shared/weapons.hpp"
@@ -311,7 +312,35 @@ static shared::aabb_bounds_t pickup_bounds_of(const entities::Weapon_Entity& wea
   return shared::get_bounds(cube, weapon.position);
 }
 
-void update_dropped_weapons(server_context_t& context)
+void switch_active_slot(shared::game_session_t& session, entities::Player_Entity& player,
+                        entities::Inventory_Slot slot, shared::subtick_time_t switch_time,
+                        float tick_dt)
+{
+  if (player.inventory.active_slot == slot)
+    return;
+
+  player.inventory.active_slot = slot;
+  cancel_reload(player);
+
+  const entities::Weapon_Entity* raised = try_find_active_weapon(session, player);
+  const float deploy_seconds =
+      raised != nullptr ? shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds
+                        : 0.f;
+
+  player.inventory.deploy_complete_time =
+      shared::subtick_time_after(switch_time, deploy_seconds, tick_dt);
+}
+
+static bool input_asks_to_equip_on_pickup(server_context_t& context, shared::entity_uid_t player_uid)
+{
+  for (connected_client_t row : connected_clients(context))
+    if (row.client.player_uid == player_uid)
+      return (row.client.latest_buttons_bitmap & Button::Equip_On_Pickup) != 0;
+
+  return false;
+}
+
+void update_dropped_weapons(server_context_t& context, float tick_dt)
 {
   shared::game_session_t& session = context.world.session;
 
@@ -342,6 +371,10 @@ void update_dropped_weapons(server_context_t& context)
 
       weapon.owner_uid               = player.entity_id;
       player.inventory.weapons[slot] = weapon.entity_id;
+
+      if (input_asks_to_equip_on_pickup(context, player.entity_id))
+        switch_active_slot(session, player, slot,
+                           shared::subtick_time(context.tick_number + 1, 0), tick_dt);
       break;
     }
   }

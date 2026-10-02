@@ -16,13 +16,16 @@ layout(push_constant) uniform Tonemap
     float ink_threshold;
     int   ink_width_pixels;
     float ink_crease_radians;
+    float ink_tint;
+    float rim_strength;
+    int   rim_width_pixels;
     int   show_surface_normals;
 } tonemap;
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 fragment_color;
 
-const vec3 INK_COLOR = vec3(0.0);
+const vec3 RIM_COLOR = vec3(1.0);
 
 // What three float depths near 1.0 can disagree by with no edge between them.
 const float DEPTH_NOISE = 4.0 / 16777216.0;
@@ -50,7 +53,8 @@ vec3 pbr_neutral_tonemap(vec3 color)
     return mix(color, vec3(new_peak), g);
 }
 
-// x = how far the depth bends across `pixel` along `reach`, y = the nearest of the three depths.
+// x = how far the depth bends across `pixel` along `reach`, above zero where the pixel is nearer
+// than the two either side of it, y = the nearest of the three depths.
 vec2 depth_bend(ivec2 pixel, ivec2 reach, ivec2 last_pixel, float centre)
 {
     ivec2 before = pixel - reach;
@@ -60,7 +64,7 @@ vec2 depth_bend(ivec2 pixel, ivec2 reach, ivec2 last_pixel, float centre)
 
     float depth_before = texelFetch(scene_depth, before, 0).r;
     float depth_after  = texelFetch(scene_depth, after, 0).r;
-    return vec2(abs(depth_before + depth_after - 2.0 * centre),
+    return vec2(depth_before + depth_after - 2.0 * centre,
                 min(centre, min(depth_before, depth_after)));
 }
 
@@ -95,22 +99,39 @@ float crease_coverage()
 
 // Depth-buffer values are a straight line across a flat face, so the bend is
 // zero there and non-zero at a crease or a silhouette.
-float outline_coverage()
+// x = the bend where this pixel is the FAR side of a jump or the bottom of a hollow,
+// y = the bend where it is the NEAR side or the top of a ridge, both in r_ink_threshold's units.
+vec2 depth_edges(int reach)
 {
-    ivec2 pixel      = ivec2(gl_FragCoord.xy);
-    ivec2 size       = textureSize(scene_depth, 0);
-    int   reach      = max(tonemap.ink_width_pixels, 1);
-    float centre     = texelFetch(scene_depth, pixel, 0).r;
+    ivec2 pixel  = ivec2(gl_FragCoord.xy);
+    ivec2 size   = textureSize(scene_depth, 0);
+    float centre = texelFetch(scene_depth, pixel, 0).r;
 
     vec2 horizontal = depth_bend(pixel, ivec2(reach, 0), size - 1, centre);
     vec2 vertical   = depth_bend(pixel, ivec2(0, reach), size - 1, centre);
 
-    float bend    = max(max(horizontal.x, vertical.x) - DEPTH_NOISE, 0.0);
+    vec2  bends   = vec2(-min(horizontal.x, vertical.x), max(horizontal.x, vertical.x));
     float nearest = min(horizontal.y, vertical.y);
 
     // Over the distance and the pixel size, so one threshold holds near and far and at any resolution.
-    float edge = bend / max(1.0 - nearest, 1e-7) * float(size.y) / float(reach);
+    return max(bends - DEPTH_NOISE, 0.0) / max(1.0 - nearest, 1e-7) * float(size.y) / float(reach);
+}
+
+float depth_jump_coverage(float edge)
+{
     return smoothstep(tonemap.ink_threshold, tonemap.ink_threshold * 2.0, edge);
+}
+
+float outline_coverage()
+{
+    vec2 edges = depth_edges(max(tonemap.ink_width_pixels, 1));
+    return depth_jump_coverage(max(edges.x, edges.y));
+}
+
+// The outline's own depth jump, its near side alone and r_rim_width pixels deep.
+float rim_coverage()
+{
+    return depth_jump_coverage(depth_edges(max(tonemap.rim_width_pixels, 1)).y);
 }
 
 void main()
@@ -121,11 +142,15 @@ void main()
         return;
     }
 
-    vec3 hdr   = max(texture(hdr_target, in_uv).rgb, vec3(0.0)) * tonemap.exposure;
-    vec3 color = pbr_neutral_tonemap(hdr);
+    vec3 hdr     = max(texture(hdr_target, in_uv).rgb, vec3(0.0)) * tonemap.exposure;
+    vec3 surface = pbr_neutral_tonemap(hdr);
+    vec3 color   = surface;
+
+    if (tonemap.rim_strength > 0.0)
+        color = mix(color, RIM_COLOR, rim_coverage() * tonemap.rim_strength);
 
     if (tonemap.ink_strength > 0.0)
-        color = mix(color, INK_COLOR,
+        color = mix(color, surface * tonemap.ink_tint,
                     max(outline_coverage(), crease_coverage()) * tonemap.ink_strength);
 
     fragment_color = vec4(color, 1.0);

@@ -77,9 +77,10 @@ enum class Weapon : uint8_t
   Modifier_Gun = 16,
   Extending_Platform = 17,
   Guided_Rocket = 18,
+  Flashlight = 19,
 };
 
-constexpr uint32_t Weapon_COUNT = 19;
+constexpr uint32_t Weapon_COUNT = 20;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -95,9 +96,11 @@ enum class Fire_Resolution : uint8_t
   Canopy = 6,
   Pilot = 7,
   Recall = 8,
+  Reveal_Light = 9,
+  Reveal_Light_Overhead = 10,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 9;
+constexpr uint32_t Fire_Resolution_COUNT = 11;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);

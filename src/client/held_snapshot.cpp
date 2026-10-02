@@ -171,6 +171,13 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
                   return input.input_number() <=
                          context.prediction.latest_input_number_processed_by_server;
                 });
+  for (std::vector<int>* unanswered : {&context.prediction.unanswered_reveal_light_toggles,
+                                       &context.prediction.unanswered_reveal_light_overhead_toggles})
+    std::erase_if(*unanswered,
+                  [&](int input_number)
+                  {
+                    return input_number <= context.prediction.latest_input_number_processed_by_server;
+                  });
 
   // --- 5. Seed prediction from our own body; feed the remotes' rings ---
   for (const entities::Player_Entity& player : session.entities_of<entities::Player_Entity>())

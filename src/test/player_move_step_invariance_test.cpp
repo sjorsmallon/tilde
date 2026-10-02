@@ -2594,6 +2594,119 @@ static void test_surf_ramp_projects_the_fall(const cvar_state_t& cvars)
   }
 }
 
+// --- 36. a face too steep to stand on: a wall under the instant models, a ramp under quake
+//
+// An instant model remakes run speed from input every step. Clipped against a
+// face past 45 degrees as one vector, that refill became lift, every step, and
+// the hull left the top at about run_speed * tan(theta): 433 u/s off a 60-degree
+// face, where a jump is 270.
+static Bounding_Volume_Hierarchy floor_and_wedge_world(float degrees)
+{
+  const float              rise = 512.f * std::tan(linalg::to_radians(degrees));
+  shared::brush_geometry_t wedge;
+  wedge.hull_points = {{0.f, 0.f, -512.f},    {0.f, 0.f, 512.f},    {512.f, 0.f, -512.f},
+                       {512.f, 0.f, 512.f},   {512.f, rise, -512.f}, {512.f, rise, 512.f}};
+  const shared::geometry_value_t floor =
+      shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
+
+  std::vector<BVH_Input> inputs;
+  uint32_t               index = 0;
+  for (const shared::geometry_value_t& geometry : {shared::geometry_value_t{wedge}, floor})
+  {
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1))
+    {
+      BVH_Input input;
+      input.aabb             = piece.bounds;
+      input.id               = {Collision_Id::Type::Static_Geometry, index};
+      input.collision_planes = piece.planes;
+      input.face_polygons    = piece.face_polygons;
+      inputs.push_back(std::move(input));
+    }
+    ++index;
+  }
+
+  return build_bvh(inputs);
+}
+
+struct climb_t
+{
+  float peak_vertical_velocity = 0.f;
+  float peak_height_gained     = 0.f;
+  float height_gained          = 0.f;
+};
+
+static climb_t hold_forward(const cvar_state_t& cvars, const Bounding_Volume_Hierarchy& bvh,
+                            vec3 feet, int ticks)
+{
+  Move_Input forward;
+  forward.forward_pressed = true;
+
+  const float        start_height = feet.y;
+  vec3               velocity{};
+  entities::Movement movement{};
+  climb_t            climb;
+  for (int tick = 0; tick < ticks; ++tick)
+  {
+    const move_result_t moved =
+        run_split(cvars, bvh, forward, feet, velocity, tick_dt, 1, &movement);
+    feet     = moved.position;
+    velocity = moved.velocity;
+    climb.peak_vertical_velocity = std::max(climb.peak_vertical_velocity, velocity.y);
+    climb.peak_height_gained     = std::max(climb.peak_height_gained, feet.y - start_height);
+  }
+  climb.height_gained = feet.y - start_height;
+  return climb;
+}
+
+static void test_a_steep_face_is_a_wall_under_the_instant_models(const cvar_state_t& cvars)
+{
+  printf("\n[DELIBERATE] a face past 45 degrees: the instant models cannot push up it\n");
+
+  const vec3 foot_start{-64.f, -0.02f, 0.f};
+  const int  ticks = 120;
+
+  for (float degrees : {46.f, 60.f, 75.f})
+  {
+    const Bounding_Volume_Hierarchy bvh     = floor_and_wedge_world(degrees);
+    const float                     radians = linalg::to_radians(degrees);
+    const vec3  normal  = {-std::sin(radians), std::cos(radians), 0.f};
+    const float support = half_width * std::fabs(normal.x) + half_height * normal.y;
+    const vec3  point   = {256.f, 256.f * std::tan(radians), 0.f};
+    const vec3  face_start = point + normal * (support - 0.02f) - vec3{0.f, half_height, 0.f};
+
+    for (cvars::Locomotion_Model model :
+         {cvars::Locomotion_Model::instant, cvars::Locomotion_Model::instant_momentum,
+          cvars::Locomotion_Model::instant_redirect})
+    {
+      cvar_state_t local = cvars;
+      local.pm_model     = model;
+
+      const climb_t from_foot = hold_forward(local, bvh, foot_start, ticks);
+      const climb_t from_face = hold_forward(local, bvh, face_start, ticks);
+
+      printf("    %2.0f deg  %-16s  foot: peak vy %7.2f peak gain %6.2f end %7.2f   "
+             "face: peak vy %7.2f peak gain %6.2f end %8.2f\n",
+             degrees, cvars::to_string(model), from_foot.peak_vertical_velocity,
+             from_foot.peak_height_gained, from_foot.height_gained,
+             from_face.peak_vertical_velocity, from_face.peak_height_gained,
+             from_face.height_gained);
+
+      check(from_foot.peak_vertical_velocity <= 0.f, "foot: running into the face never lifts");
+      check(from_foot.peak_height_gained < 0.1f, "foot: the hull stays on the floor");
+      check(from_face.peak_vertical_velocity <= 0.f, "face: pushing into the face never lifts");
+      check(from_face.peak_height_gained < 0.1f, "face: the hull never climbs");
+      check(from_face.height_gained < 0.f, "face: the hull slides down");
+    }
+  }
+
+  // Under quake the same face is a surf ramp, and carried speed still climbs it.
+  const Bounding_Volume_Hierarchy bvh = floor_and_wedge_world(50.f);
+  const climb_t                   quake = hold_forward(cvars, bvh, foot_start, ticks);
+  printf("    50 deg  quake             foot: peak vy %7.2f peak gain %6.2f\n",
+         quake.peak_vertical_velocity, quake.peak_height_gained);
+  check(quake.peak_height_gained > 64.f, "quake: the face is still a ramp");
+}
+
 int main()
 {
   printf("player_move_step_invariance_test\n");
@@ -2648,6 +2761,7 @@ int main()
   test_hook_reel_arrival_is_step_invariant(cvars);
   test_hook_reel_timeout_is_step_invariant(cvars);
   test_surf_ramp_projects_the_fall(cvars);
+  test_a_steep_face_is_a_wall_under_the_instant_models(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

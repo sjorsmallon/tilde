@@ -51,6 +51,7 @@ private:
 
   // the bake in progress
   shared::lightmap_t baked;
+  void rebuild_charts(editor_context_t& ctx);
 
   // Per-light shadow-ray coverage from the same bake, held only to be looked at:
   // it goes into no sidecar and no atlas yet (lighting_def.md ss14 step 6).

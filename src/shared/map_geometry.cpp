@@ -1172,9 +1172,6 @@ void sync_face_surfaces(brush_geometry_t &brush)
 // Face grids -- what a displacement became
 // ============================================================================
 
-namespace
-{
-
 // One subdivided face's cells, as two triangles each. Normals are PER GRID
 // VERTEX, averaged from the four cells around it -- a displaced grid is a smooth
 // surface and flat-shading it faceted would be the one visible difference from
@@ -1246,9 +1243,6 @@ void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> 
     }
   }
 }
-
-} // namespace
-
 
 bool face_is_subdivided(const face_surface_t &face)
 {

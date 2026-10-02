@@ -66,7 +66,8 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   const shared::predicted_world_t world =
       frozen ? shared::predicted_world_t{.disabled_geometry  = world_as_cut.disabled_geometry,
                                          .movement_volumes   = world_as_cut.movement_volumes,
-                                         .movement_modifiers = world_as_cut.movement_modifiers}
+                                         .movement_modifiers = world_as_cut.movement_modifiers,
+                                         .reveal_cones       = world_as_cut.reveal_cones}
              : world_as_cut;
 
   // The hull is tested where the step OPENS, so every number below is one value for the whole step.
@@ -90,8 +91,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   // The caller's position is at the FEET; everything below works on the hull centre.
   const vec3 hull_center_offset{0.f, settings.shared.half_height, 0.f};
   vec3       hull_center = state.feet + hull_center_offset;
-  const shared::contacts_t contacts =
-      shared::resolve_collisions(settings, bvh, world, hull_center, recording_bucket);
+  const shared::steep_face_rule_t steep_faces = shared::steep_face_rule_of(settings);
+  const shared::contacts_t        contacts    = shared::resolve_collisions(
+      settings, steep_faces, bvh, world, hull_center, recording_bucket);
 
   // we are grounded if (and only if):
   // - the ground trace hits.
@@ -134,7 +136,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
     if (over.moves)
     {
       const shared::slide_result_t slid =
-          shared::slide(settings, contacts, grounded, over.wanted, hull_center, dt);
+          shared::slide(settings, steep_faces, contacts, grounded, over.wanted, hull_center, dt);
       new_center   = slid.hull_center;
       new_velocity = slid.velocity;
     }
@@ -144,8 +146,8 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
       shared::stair_step_t stair{};
       if (grounded && !jump.from_ground && length(wish_direction) > 0.f &&
           !contacts.wall_planes.empty())
-        stair = shared::try_stair_step(settings, bvh, world, contacts, state, input, hull_center,
-                                       wish_direction, recording_bucket);
+        stair = shared::try_stair_step(settings, steep_faces, bvh, world, contacts, state, input,
+                                       hull_center, wish_direction, recording_bucket);
 
       if (stair.taken)
       {
@@ -158,15 +160,15 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
         const shared::wanted_move_t wanted =
             shared::decide_move(settings, contacts, grounded, jump.velocity, state, input);
         const shared::slide_result_t slid =
-            shared::slide(settings, contacts, grounded, wanted, hull_center, dt);
+            shared::slide(settings, steep_faces, contacts, grounded, wanted, hull_center, dt);
         new_center   = slid.hull_center;
         new_velocity = slid.velocity;
         shared::clip_model_memory(settings, state, contacts.wall_planes);
       }
     }
 
-    settled = shared::resolve_after_move(settings, bvh, world, new_center, new_velocity,
-                                         recording_bucket);
+    settled = shared::resolve_after_move(settings, steep_faces, bvh, world, new_center,
+                                         new_velocity, recording_bucket);
     shared::clip_model_memory(settings, state, settled.wall_planes);
   }
 

@@ -536,6 +536,10 @@ struct brush_face_grids_t
 brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
                                           const brush_polyhedron_t &hull);
 
+// One face's grid as the triangles and smooth normals it DRAWS with, appended to `mesh`; the lightmap bake samples the same ones.
+void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> &grid,
+                    const linalg::vec3 &face_normal, const face_uv_channel_t &uv);
+
 // Move every grid vertex whose CURRENT displaced position is one of `points` by
 // `delta`, and answer how many moved. The editor's grid drag, and the reason it
 // is here rather than in the tool: a boundary vertex belongs to every face that

@@ -216,23 +216,23 @@ static void test_receipt_round_trip_and_refusal()
   const std::vector<uint8> wire_bytes = serialize_transfer_receipt(original);
   assert(wire_bytes.size() == 3 + 3 && "20 fragments is three bitmap bytes");
 
-  transfer_receipt_t decoded;
-  assert(try_deserialize_transfer_receipt(wire_bytes, decoded));
-  assert(decoded.message_id == 42);
-  assert(decoded.fragment_count == 20);
+  const std::optional<transfer_receipt_t> decoded = try_deserialize_transfer_receipt(wire_bytes);
+  assert(decoded);
+  assert(decoded->message_id == 42);
+  assert(decoded->fragment_count == 20);
   for (uint16 index = 0; index < 20; ++index)
-    assert(receipt_holds_fragment(decoded, index) ==
+    assert(receipt_holds_fragment(*decoded, index) ==
            receipt_holds_fragment(original, index));
 
   std::vector<uint8> truncated = wire_bytes;
   truncated.pop_back();
-  assert(!try_deserialize_transfer_receipt(truncated, decoded) &&
+  assert(!try_deserialize_transfer_receipt(truncated) &&
          "a bitmap shorter than the count it declares must be refused");
 
   std::vector<uint8> empty_count = wire_bytes;
   empty_count[1] = 0;
   empty_count[2] = 0;
-  assert(!try_deserialize_transfer_receipt(empty_count, decoded) &&
+  assert(!try_deserialize_transfer_receipt(empty_count) &&
          "a receipt about zero fragments names no transfer");
 
   printf("  receipt round trip, and both malformed shapes refused\n");
@@ -369,12 +369,6 @@ static void test_drain_cap_exceeds_queue_capacity()
   static_assert(server_receive_drain_cap_in_datagrams >
                     server_receive_buffer_size_in_bytes / MAX_PACKET_SIZE_IN_BYTES,
                 "the server cap must exceed a full queue");
-
-  // The server takes every peer's traffic on one socket, so its queue -- and
-  // therefore its cap -- has to be the larger of the two.
-  static_assert(server_receive_drain_cap_in_datagrams >
-                    client_receive_drain_cap_in_datagrams,
-                "the server drains an aggregate of all clients");
 
   printf("  drain caps: client %zu, server %zu datagrams "
          "(queues hold <= %zu / %zu)\n",

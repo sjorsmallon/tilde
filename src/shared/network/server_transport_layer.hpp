@@ -278,10 +278,9 @@ inline void apply_transfer_receipt(Server_Transport_Layer &state, int32_t slot,
 
 // Hands every in-progress transfer its next few fragments. Call once per tick.
 //
-// fragments_per_tick is the rate knob: at 60Hz, 8 fragments is ~576 KB/s, which
-// a receiver draining once per frame absorbs without ever letting its queue grow
-// past a frame's worth. Raising it trades download time for the risk of
-// outrunning a slow or busy client.
+// fragments_per_tick is the rate knob (sv_map_transfer_fragments_per_tick, which
+// carries the numbers). Raising it trades download time for the risk of
+// outrunning a slow or busy client's receive queue.
 inline void service_paced_transfers(Server_Transport_Layer &state,
                                     Udp_Socket &socket,
                                     size_t fragments_per_tick)
@@ -430,10 +429,10 @@ inline void deliver_client_message(int32_t client_slot, uint8 message_type,
     out_inbox.ghost_requests.push_back({client_slot, std::move(payload)});
     return;
 
-  // Transport, handled in poll_network before reassembly ever runs -- a block
-  // is not a message, and a receipt names a message_id and a fragment set that
-  // nothing above this layer has an opinion about. Reaching here means one
-  // arrived by a path that should not exist.
+  // Transport, handled in poll_network and never delivered -- a block is not a
+  // message, and a receipt names a message_id and a fragment set that nothing
+  // above this layer has an opinion about. Reaching here means one arrived by
+  // a path that should not exist.
   case Message_Type::Reliable:
   case Message_Type::C2S_TransferReceipt:
     break;
@@ -533,26 +532,30 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
       continue;
     }
 
+    const bool reassembled =
+        reassemble_fragment(state.clients[client_slot].partial_packets, packet, payload);
+
     // A fragment report about a bulk message we are sending. Handled here rather
     // than through the inbox because it is transport, not gameplay: it names a
     // message_id and a set of fragment indices and nothing above this layer has
     // an opinion about either.
-    if (packet.header.message_type ==
-        static_cast<uint8>(Message_Type::C2S_TransferReceipt))
+    //
+    // AFTER reassembly, because the report is a message like any other: past
+    // 9496 fragments its bitmap outgrows one datagram and arrives as several.
+    if (reassembled && packet.header.message_type ==
+                           static_cast<uint8>(Message_Type::C2S_TransferReceipt))
     {
-      transfer_receipt_t receipt;
-      if (try_deserialize_transfer_receipt(
-              Span<const uint8>{packet.buffer, packet.header.payload_size},
-              receipt))
-        apply_transfer_receipt(state, client_slot, receipt);
+      const std::optional<transfer_receipt_t> receipt =
+          try_deserialize_transfer_receipt(Span<const uint8>{payload});
+      if (receipt)
+        apply_transfer_receipt(state, client_slot, *receipt);
       else
         log_error("slot {} sent a malformed transfer receipt ({} bytes)",
-                  client_slot, packet.header.payload_size);
+                  client_slot, payload.size());
       continue;
     }
 
-
-    if (reassemble_fragment(state.clients[client_slot].partial_packets, packet, payload))
+    if (reassembled)
       deliver_client_message(client_slot, packet.header.message_type,
                              std::move(payload), out_inbox);
     else if (packet.header.fragment_count == 1)

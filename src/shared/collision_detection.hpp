@@ -135,11 +135,25 @@ bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& o
 // Empty means nothing is disabled, which is what the bake's BVH, the editor's
 // and every test pass -- and what the default argument below spells, so a query
 // that answers for something other than the running session says nothing.
+//
+// The byte has a third value. GEOMETRY_SOLID_WHERE_LIT is not there for a ray or a sweep either;
+// only a hull reads it apart, and collides where a reveal cone touches (collect_collision_candidates).
+inline constexpr uint8_t GEOMETRY_SOLID           = 0;
+inline constexpr uint8_t GEOMETRY_NOT_THERE       = 1;
+inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LIT = 2;
+
+[[nodiscard]] inline uint8_t
+geometry_state_of(Span<const uint8_t> disabled_geometry, Collision_Id id)
+{
+  if (id.type != Collision_Id::Type::Static_Geometry || id.index >= disabled_geometry.size())
+    return GEOMETRY_SOLID;
+  return disabled_geometry[id.index];
+}
+
 [[nodiscard]] inline bool
 collision_is_disabled(Span<const uint8_t> disabled_geometry, Collision_Id id)
 {
-  return id.type == Collision_Id::Type::Static_Geometry &&
-         id.index < disabled_geometry.size() && disabled_geometry[id.index] != 0;
+  return geometry_state_of(disabled_geometry, id) != GEOMETRY_SOLID;
 }
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,

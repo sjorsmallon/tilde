@@ -562,6 +562,18 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .self_impulse_cooldown_seconds = 1.f,
      .sounds                        = {.fire         = assets::sound_asset::Missing,
                                        .world_impact = assets::sound_asset::Missing}},
+    // Two toggles, not shots: a press flips Player_Entity::reveal_light_on or reveal_light_overhead, so the row has no clocks.
+    {.weapon                  = entities::Weapon::Flashlight,
+     .display_name            = "Flashlight",
+     .slot                    = entities::Inventory_Slot::Utility_1,
+     .fire_interval_seconds   = 0.f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Reveal_Light},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -711,11 +723,13 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
 
   switch (fire.resolution)
   {
-  // Canopy and Recall read nothing either: a press toggles the canopy or takes the row's shots back, and carries no numbers.
+  // Canopy, Recall and the two Reveal_Lights read nothing either: a press toggles the canopy, the light or where its cone hangs, or takes the row's shots back, and carries no numbers.
   case entities::Fire_Resolution::None:
   case entities::Fire_Resolution::Zoom:
   case entities::Fire_Resolution::Canopy:
   case entities::Fire_Resolution::Recall:
+  case entities::Fire_Resolution::Reveal_Light:
+  case entities::Fire_Resolution::Reveal_Light_Overhead:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
            pilot_is_zero && contact_is_none && contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Hitscan:
@@ -788,7 +802,7 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "seconds, and path numbers only when it leaves a Path) and leaves the others zero, and the "
               "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
               "so a value in another is a number nothing reads. A Hitscan carries a contact "
-              "effect; a Projectile may; None, Zoom, Canopy, Place, Self_Impulse and Pilot carry "
+              "effect; a Projectile may; None, Zoom, Canopy, both Reveal_Lights, Place, Self_Impulse and Pilot carry "
               "contact_effect_t::None. The contact fills the sub-struct of its own effect "
               "(Damage: positive amount and headshot_multiplier; Magnet: a non-zero speed; Reel: "
               "positive seconds; Freeze: Stasis or Statue and positive seconds; Explode: positive "

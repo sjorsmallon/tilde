@@ -21,6 +21,7 @@ layout(set = 0, binding = 0) uniform sampler2D albedo;
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
+#include "reveal.glsl"
 
 void main() {
     // Same tint semantics as the lit path -- the material's base colour
@@ -31,9 +32,11 @@ void main() {
     discard_inside_clock_wipe(fragWorldPosition);
     discard_below_dissolve(fragUV);
     discard_inside_peel(fragWorldPosition);
+    discard_outside_reveal(fragWorldPosition);
 
     outColor = vec4(sampled.rgb * fragColor, surfaceAlpha);
     outSurfaceNormal = store_surface_normal(fragWorldNormal * (gl_FrontFacing ? 1.0 : -1.0));
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
 }

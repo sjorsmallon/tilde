@@ -45,6 +45,7 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Modifier_Gun",
   "Extending_Platform",
   "Guided_Rocket",
+  "Flashlight",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -57,6 +58,8 @@ constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
   "Canopy",
   "Pilot",
   "Recall",
+  "Reveal_Light",
+  "Reveal_Light_Overhead",
 };
 
 constexpr const char* Fire_Trigger_VALUE_NAMES[] = {
@@ -155,8 +158,8 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 19}},
-  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 9}},
+  {"Weapon", {Weapon_VALUE_NAMES, 20}},
+  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 11}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
@@ -1103,6 +1106,24 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[2]},
+  {.name = "reveal_light_on",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Player_Entity, reveal_light_on),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::reveal_light_on),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "reveal_light_overhead",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Player_Entity, reveal_light_overhead),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::reveal_light_overhead),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
   {.name = "reload_complete_time",
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Player_Entity, reload_complete_time),
@@ -3362,6 +3383,24 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[1]},
+  {.name = "revealed_by_light",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, revealed_by_light),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::revealed_by_light),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "solid_only_when_revealed",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_revealed),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::solid_only_when_revealed),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Ping_Marker_Entity_FIELDS[] = {
@@ -4475,7 +4514,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, false, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 27}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 6720u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 29}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 6720u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 16}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 545u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 8}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 520u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
   {"hook_entity", "Hook", {Hook_Entity_FIELDS, 8}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 520u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
@@ -4499,7 +4538,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 5}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 16384u, false, true, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 128u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
-  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 7}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
+  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 9}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
   {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 8}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 512u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 8192u, false, true, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
   {"path_node_entity", "Path Node", {Path_Node_Entity_FIELDS, 8}, (uint32_t)sizeof(Path_Node_Entity), (uint32_t)alignof(Path_Node_Entity), 0u, false, false, false, construct_Path_Node_Entity, as_base_Path_Node_Entity},
@@ -4684,6 +4723,7 @@ const char* to_string(Weapon value)
     case Weapon::Modifier_Gun: return "Modifier_Gun";
     case Weapon::Extending_Platform: return "Extending_Platform";
     case Weapon::Guided_Rocket: return "Guided_Rocket";
+    case Weapon::Flashlight: return "Flashlight";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -4710,6 +4750,7 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Modifier_Gun") return Weapon::Modifier_Gun;
   if (text == "Extending_Platform") return Weapon::Extending_Platform;
   if (text == "Guided_Rocket") return Weapon::Guided_Rocket;
+  if (text == "Flashlight") return Weapon::Flashlight;
   return std::nullopt;
 }
 
@@ -4726,6 +4767,8 @@ const char* to_string(Fire_Resolution value)
     case Fire_Resolution::Canopy: return "Canopy";
     case Fire_Resolution::Pilot: return "Pilot";
     case Fire_Resolution::Recall: return "Recall";
+    case Fire_Resolution::Reveal_Light: return "Reveal_Light";
+    case Fire_Resolution::Reveal_Light_Overhead: return "Reveal_Light_Overhead";
   }
   assert(false && "invalid Fire_Resolution");
   return "";
@@ -4742,6 +4785,8 @@ template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std:
   if (text == "Canopy") return Fire_Resolution::Canopy;
   if (text == "Pilot") return Fire_Resolution::Pilot;
   if (text == "Recall") return Fire_Resolution::Recall;
+  if (text == "Reveal_Light") return Fire_Resolution::Reveal_Light;
+  if (text == "Reveal_Light_Overhead") return Fire_Resolution::Reveal_Light_Overhead;
   return std::nullopt;
 }
 
@@ -5193,6 +5238,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x448fb8d5u;
+const uint32_t SCHEMA_HASH = 0x40135945u;
 
 } // namespace entities

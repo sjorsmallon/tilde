@@ -154,21 +154,12 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       const entities::Inventory_Slot slot_before_switch = player->inventory.active_slot;
       if (const std::optional<entities::Inventory_Slot> selected =
               shared::try_slot_selected_by(pressed_in_this_step))
-        player->inventory.active_slot = *selected;
+        switch_active_slot(context.world.session, *player, *selected, step_time, tick_dt);
 
       if (player->inventory.active_slot != slot_before_switch)
       {
-        cancel_reload(*player);
-
         const entities::Weapon_Entity* raised =
             try_find_active_weapon(context.world.session, *player);
-        const float deploy_seconds =
-            raised != nullptr
-                ? shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds
-                : 0.f;
-
-        player->inventory.deploy_complete_time =
-            shared::subtick_time_after(step_time, deploy_seconds, tick_dt);
 
         // debug
 

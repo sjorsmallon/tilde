@@ -85,9 +85,10 @@ enum class Cel_Fill : uint8_t
   none = 0,
   hatch = 1,
   dither3d = 2,
+  dither3d_original = 3,
 };
 
-constexpr uint32_t Cel_Fill_COUNT = 3;
+constexpr uint32_t Cel_Fill_COUNT = 4;
 
 const char* to_string(Cel_Fill value);
 template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view text);
@@ -159,6 +160,9 @@ struct cvar_state_t
   float sv_aim_max_pitch;
   float sv_aim_max_yaw;
   float sv_aim_body_turn_rate;
+  float sv_reveal_light_range;
+  float sv_reveal_light_half_angle;
+  float sv_reveal_light_overhead_height;
   bool sv_lag_compensation;
   int32_t sv_max_rewind_ticks;
   bool sv_lag_compensation_debug;
@@ -211,6 +215,7 @@ struct cvar_state_t
   float cl_aim_debug_pitch;
   float cl_aim_debug_yaw;
   bool cl_show_deploy_timer;
+  bool cl_auto_equip_weapon_on_pickup;
   bool cl_crosshair;
   bool cl_crosshair_dot;
   float cl_crosshair_size;
@@ -232,6 +237,7 @@ struct cvar_state_t
   bool pin_main_thread;
   Debug_Channel r_debug_channel;
   float r_exposure;
+  float r_ambient_floor;
   bool r_stylized;
   bool r_cel;
   float r_cel_terminator;
@@ -240,6 +246,7 @@ struct cvar_state_t
   float r_cel_shadow_red;
   float r_cel_shadow_green;
   float r_cel_shadow_blue;
+  float r_cel_bands;
   Cel_Fill r_cel_fill;
   float r_cel_fill_strength;
   float r_cel_fill_spacing;
@@ -248,7 +255,12 @@ struct cvar_state_t
   float r_cel_fill_tone_light;
   float r_cel_fill_ambient_dark;
   float r_cel_fill_ambient_light;
+  float r_cel_fill_tone_lit;
+  float r_cel_fill_material;
   float r_cel_hatch_width;
+  float r_cel_dither3d_size_variability;
+  float r_cel_dither3d_contrast;
+  float r_cel_dither3d_stretch_smoothness;
   float r_cel_speckle;
   float r_cel_speckle_spacing;
   float r_cel_speckle_density;
@@ -257,6 +269,14 @@ struct cvar_state_t
   float r_ink_threshold;
   float r_ink_crease_degrees;
   int32_t r_ink_width;
+  float r_ink_tint;
+  float r_rim;
+  int32_t r_rim_width;
+  float r_flashlight_intensity;
+  float r_flashlight_red;
+  float r_flashlight_green;
+  float r_flashlight_blue;
+  float r_flashlight_inner;
   bool r_fxaa;
   float r_fxaa_subpixel;
   bool r_look_panel;
@@ -326,128 +346,147 @@ enum class cvar_id : uint16_t
   sv_aim_max_pitch = 35,
   sv_aim_max_yaw = 36,
   sv_aim_body_turn_rate = 37,
-  sv_lag_compensation = 38,
-  sv_max_rewind_ticks = 39,
-  sv_lag_compensation_debug = 40,
-  sv_shot_debug = 41,
-  sv_ping_range = 42,
-  sv_ping_lifetime_seconds = 43,
-  sv_tickrate = 44,
-  sv_timeout = 45,
-  sv_max_move_backlog = 46,
-  sv_map_transfer_fragments_per_tick = 47,
-  name = 48,
-  cl_max_unacked_inputs = 49,
-  r_fov = 50,
-  r_zoom_fov = 51,
-  r_zoom_easing_time_between_fovs = 52,
-  r_shadow_map_size = 53,
-  r_shadow_layer_count = 54,
-  r_shadow_light_offset = 55,
-  r_shadow_bias_slope = 56,
-  r_shadow_normal_offset = 57,
-  r_shadow_pcf_radius = 58,
-  r_shadow_pcss = 59,
-  r_shadow_pcss_max_radius = 60,
-  r_shadow_debug_light = 61,
-  r_lightmap_gpu = 62,
-  r_shadow_cascade_count = 63,
-  r_shadow_cascade_lambda = 64,
-  r_shadow_cascade_distance = 65,
-  r_shadow_cascade_blend = 66,
-  r_shadow_cascade_caster_extent = 67,
-  r_shadow_freeze = 68,
-  m_sensitivity = 69,
-  m_zoom_sensitivity_ratio = 70,
-  cl_maxfps = 71,
-  cl_interpolation_delay_ticks = 72,
-  cl_interpolation_debug = 73,
-  cl_display_latency_ms = 74,
-  cl_draw_player_hull = 75,
-  cl_spectate_slot = 76,
-  cl_replay_player_view = 77,
-  cl_replay_panel = 78,
-  cl_ghost_show = 79,
-  cl_noclip = 80,
-  cl_player_unlit = 81,
-  cl_blob_shadow = 82,
-  cl_blob_shadow_radius = 83,
-  cl_blob_shadow_opacity = 84,
-  cl_blob_shadow_max_distance = 85,
-  cl_aim_debug = 86,
-  cl_aim_debug_pitch = 87,
-  cl_aim_debug_yaw = 88,
-  cl_show_deploy_timer = 89,
-  cl_crosshair = 90,
-  cl_crosshair_dot = 91,
-  cl_crosshair_size = 92,
-  cl_crosshair_gap = 93,
-  cl_crosshair_thickness = 94,
-  cl_crosshair_r = 95,
-  cl_crosshair_g = 96,
-  cl_crosshair_b = 97,
-  cl_crosshair_a = 98,
-  editor_speed = 99,
-  cl_timescale = 100,
-  sound_reference_distance = 101,
-  sound_max_distance_cutoff = 102,
-  sound_rolloff_factor = 103,
-  map_respawn_delay_seconds = 104,
-  map_kill_limit = 105,
-  map_round_time_limit_seconds = 106,
-  next_map = 107,
-  pin_main_thread = 108,
-  r_debug_channel = 109,
-  r_exposure = 110,
-  r_stylized = 111,
-  r_cel = 112,
-  r_cel_terminator = 113,
-  r_cel_shadow_edge = 114,
-  r_cel_softness = 115,
-  r_cel_shadow_red = 116,
-  r_cel_shadow_green = 117,
-  r_cel_shadow_blue = 118,
-  r_cel_fill = 119,
-  r_cel_fill_strength = 120,
-  r_cel_fill_spacing = 121,
-  r_cel_fill_edge = 122,
-  r_cel_fill_tone = 123,
-  r_cel_fill_tone_light = 124,
-  r_cel_fill_ambient_dark = 125,
-  r_cel_fill_ambient_light = 126,
-  r_cel_hatch_width = 127,
-  r_cel_speckle = 128,
-  r_cel_speckle_spacing = 129,
-  r_cel_speckle_density = 130,
-  r_cel_speckle_radius = 131,
-  r_ink = 132,
-  r_ink_threshold = 133,
-  r_ink_crease_degrees = 134,
-  r_ink_width = 135,
-  r_fxaa = 136,
-  r_fxaa_subpixel = 137,
-  r_look_panel = 138,
-  sv_skybox = 139,
-  debug_show_collisions = 140,
-  debug_show_hitboxes = 141,
-  debug_show_navmesh = 142,
-  debug_show_box_volumes = 143,
-  debug_hide_geometry = 144,
-  cl_shot_debug_seconds = 145,
-  debug_show_entity_counts = 146,
-  net_snapshot_debug = 147,
-  sv_event_debug = 148,
-  cl_event_debug = 149,
-  sv_reliable_debug = 150,
-  sv_io_debug = 151,
-  replay_keyframe_seconds = 152,
-  sv_replay_auto = 153,
-  sv_ghost_record = 154,
+  sv_reveal_light_range = 38,
+  sv_reveal_light_half_angle = 39,
+  sv_reveal_light_overhead_height = 40,
+  sv_lag_compensation = 41,
+  sv_max_rewind_ticks = 42,
+  sv_lag_compensation_debug = 43,
+  sv_shot_debug = 44,
+  sv_ping_range = 45,
+  sv_ping_lifetime_seconds = 46,
+  sv_tickrate = 47,
+  sv_timeout = 48,
+  sv_max_move_backlog = 49,
+  sv_map_transfer_fragments_per_tick = 50,
+  name = 51,
+  cl_max_unacked_inputs = 52,
+  r_fov = 53,
+  r_zoom_fov = 54,
+  r_zoom_easing_time_between_fovs = 55,
+  r_shadow_map_size = 56,
+  r_shadow_layer_count = 57,
+  r_shadow_light_offset = 58,
+  r_shadow_bias_slope = 59,
+  r_shadow_normal_offset = 60,
+  r_shadow_pcf_radius = 61,
+  r_shadow_pcss = 62,
+  r_shadow_pcss_max_radius = 63,
+  r_shadow_debug_light = 64,
+  r_lightmap_gpu = 65,
+  r_shadow_cascade_count = 66,
+  r_shadow_cascade_lambda = 67,
+  r_shadow_cascade_distance = 68,
+  r_shadow_cascade_blend = 69,
+  r_shadow_cascade_caster_extent = 70,
+  r_shadow_freeze = 71,
+  m_sensitivity = 72,
+  m_zoom_sensitivity_ratio = 73,
+  cl_maxfps = 74,
+  cl_interpolation_delay_ticks = 75,
+  cl_interpolation_debug = 76,
+  cl_display_latency_ms = 77,
+  cl_draw_player_hull = 78,
+  cl_spectate_slot = 79,
+  cl_replay_player_view = 80,
+  cl_replay_panel = 81,
+  cl_ghost_show = 82,
+  cl_noclip = 83,
+  cl_player_unlit = 84,
+  cl_blob_shadow = 85,
+  cl_blob_shadow_radius = 86,
+  cl_blob_shadow_opacity = 87,
+  cl_blob_shadow_max_distance = 88,
+  cl_aim_debug = 89,
+  cl_aim_debug_pitch = 90,
+  cl_aim_debug_yaw = 91,
+  cl_show_deploy_timer = 92,
+  cl_auto_equip_weapon_on_pickup = 93,
+  cl_crosshair = 94,
+  cl_crosshair_dot = 95,
+  cl_crosshair_size = 96,
+  cl_crosshair_gap = 97,
+  cl_crosshair_thickness = 98,
+  cl_crosshair_r = 99,
+  cl_crosshair_g = 100,
+  cl_crosshair_b = 101,
+  cl_crosshair_a = 102,
+  editor_speed = 103,
+  cl_timescale = 104,
+  sound_reference_distance = 105,
+  sound_max_distance_cutoff = 106,
+  sound_rolloff_factor = 107,
+  map_respawn_delay_seconds = 108,
+  map_kill_limit = 109,
+  map_round_time_limit_seconds = 110,
+  next_map = 111,
+  pin_main_thread = 112,
+  r_debug_channel = 113,
+  r_exposure = 114,
+  r_ambient_floor = 115,
+  r_stylized = 116,
+  r_cel = 117,
+  r_cel_terminator = 118,
+  r_cel_shadow_edge = 119,
+  r_cel_softness = 120,
+  r_cel_shadow_red = 121,
+  r_cel_shadow_green = 122,
+  r_cel_shadow_blue = 123,
+  r_cel_bands = 124,
+  r_cel_fill = 125,
+  r_cel_fill_strength = 126,
+  r_cel_fill_spacing = 127,
+  r_cel_fill_edge = 128,
+  r_cel_fill_tone = 129,
+  r_cel_fill_tone_light = 130,
+  r_cel_fill_ambient_dark = 131,
+  r_cel_fill_ambient_light = 132,
+  r_cel_fill_tone_lit = 133,
+  r_cel_fill_material = 134,
+  r_cel_hatch_width = 135,
+  r_cel_dither3d_size_variability = 136,
+  r_cel_dither3d_contrast = 137,
+  r_cel_dither3d_stretch_smoothness = 138,
+  r_cel_speckle = 139,
+  r_cel_speckle_spacing = 140,
+  r_cel_speckle_density = 141,
+  r_cel_speckle_radius = 142,
+  r_ink = 143,
+  r_ink_threshold = 144,
+  r_ink_crease_degrees = 145,
+  r_ink_width = 146,
+  r_ink_tint = 147,
+  r_rim = 148,
+  r_rim_width = 149,
+  r_flashlight_intensity = 150,
+  r_flashlight_red = 151,
+  r_flashlight_green = 152,
+  r_flashlight_blue = 153,
+  r_flashlight_inner = 154,
+  r_fxaa = 155,
+  r_fxaa_subpixel = 156,
+  r_look_panel = 157,
+  sv_skybox = 158,
+  debug_show_collisions = 159,
+  debug_show_hitboxes = 160,
+  debug_show_navmesh = 161,
+  debug_show_box_volumes = 162,
+  debug_hide_geometry = 163,
+  cl_shot_debug_seconds = 164,
+  debug_show_entity_counts = 165,
+  net_snapshot_debug = 166,
+  sv_event_debug = 167,
+  cl_event_debug = 168,
+  sv_reliable_debug = 169,
+  sv_io_debug = 170,
+  replay_keyframe_seconds = 171,
+  sv_replay_auto = 172,
+  sv_ghost_record = 173,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 155;
+constexpr uint32_t CVAR_COUNT = 174;
 
 enum class command_id : uint16_t
 {

@@ -91,7 +91,7 @@ size_t transmit_snapshot(const network::snapshot_frame_t& current,
   // A trailing payload, so that the reader is shown to stop on exactly the bit
   // the writer stopped on: assert the position AND read the tail back.
   constexpr uint32_t trailing_sentinel = 0xABCD;
-  const int          writer_end_bit    = writer.bit_index;
+  const size_t       writer_end_bit    = writer.bit_index;
   network::write_var_uint(writer, trailing_sentinel);
 
   network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());

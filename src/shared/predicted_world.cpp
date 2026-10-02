@@ -44,12 +44,20 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
   collect_statues(session.entity_system, out.movers);
 }
 
+void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
+                        predicted_world_storage_t& out)
+{
+  collect_reveal_cones(session.entity_system, settings.reveal_cone, null_entity_uid,
+                       out.reveal_cones);
+}
+
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out)
 {
   collect_disabled_geometry_for_every_team(session, out);
   build_movement_volumes(session, settings, out);
   build_movers(session, settings, out);
+  build_reveal_cones(session, settings, out);
 }
 
 } // namespace shared

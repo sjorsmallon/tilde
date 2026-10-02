@@ -308,39 +308,43 @@ void test_reliable_stream_round_trip_c2s()
 // through the socket, which is the one shortcut here -- it is how the test
 // chooses WHICH fragments are lost, and paced_transfer_test already covers those
 // same fragments going over the wire. Everything in the C2S direction is real.
-void test_lossy_transfer_converges()
+//
+// Run at two sizes, because the bitmap's size is the transfer's: at 20 fragments
+// the report is one datagram, at 10000 it is two, and the server must take both.
+void test_lossy_transfer_converges(uint16_t server_port, uint16_t client_port,
+                                   size_t fragment_count, size_t first_lost, size_t second_lost)
 {
-  std::cout << "[TEST] Testing transfer recovery over UDP..." << std::endl;
+  std::cout << "[TEST] Testing transfer recovery over UDP, " << fragment_count
+            << " fragments..." << std::endl;
 
   Server_Transport_Layer server_state;
   Udp_Socket server_socket;
   Client_Transport_Layer client_state;
 
-  if (!server_socket.open(9005) || !client_state.socket.open(9006))
+  if (!server_socket.open(server_port) || !client_state.socket.open(client_port))
   {
     std::cerr << "Failed to open the socket pair" << std::endl;
     exit(1);
   }
 
-  const Address server_address(127, 0, 0, 1, 9005);
-  const Address client_address(127, 0, 0, 1, 9006);
+  const Address server_address(127, 0, 0, 1, server_port);
+  const Address client_address(127, 0, 0, 1, client_port);
   client_state.server_address = server_address;
   occupy_client_slot(server_state, 0, client_address, 200);
 
-  std::vector<uint8> payload(20 * MAX_PAYLOAD_SIZE_IN_BYTES);
+  std::vector<uint8> payload(fragment_count * MAX_PAYLOAD_SIZE_IN_BYTES);
   for (size_t index = 0; index < payload.size(); ++index)
-    payload[index] = static_cast<uint8>(index * 13 + 5);
+    payload.data()[index] = static_cast<uint8>(index * 13 + 5);
 
   begin_paced_transfer(server_state, 0, payload,
                        static_cast<uint8>(Message_Type::S2C_MapData));
   const std::vector<Packet> fragments = server_state.clients[0].outbound_transfer.fragments;
-  assert(fragments.size() == 20);
+  assert(fragments.size() == fragment_count);
 
-  // Fragments 4 and 17 are lost.
   std::vector<uint8> reassembled;
   for (size_t index = 0; index < fragments.size(); ++index)
   {
-    if (index == 4 || index == 17)
+    if (index == first_lost || index == second_lost)
       continue;
     assert(!reassemble_fragment(client_state.partial_packets, fragments[index], reassembled) &&
            "the message cannot complete while two fragments are missing");
@@ -357,9 +361,9 @@ void test_lossy_transfer_converges()
   for (bool confirmed : server_state.clients[0].outbound_transfer.confirmed)
     if (confirmed)
       ++confirmed_count;
-  assert(confirmed_count == 18 && "the bitmap named exactly what arrived");
-  assert(!server_state.clients[0].outbound_transfer.confirmed[4]);
-  assert(!server_state.clients[0].outbound_transfer.confirmed[17]);
+  assert(confirmed_count == fragment_count - 2 && "the bitmap named exactly what arrived");
+  assert(!server_state.clients[0].outbound_transfer.confirmed[first_lost]);
+  assert(!server_state.clients[0].outbound_transfer.confirmed[second_lost]);
   std::cout << "  -> Bitmap crossed the wire and named the two gaps!" << std::endl;
 
   // The repair pass, which must be two fragments and not a restart.
@@ -374,7 +378,8 @@ void test_lossy_transfer_converges()
 
   assert(repaired.size() == 2 && "a two-fragment gap costs two fragments");
   for (const Packet &fragment : repaired)
-    assert(fragment.header.fragment_index == 4 || fragment.header.fragment_index == 17);
+    assert(fragment.header.fragment_index == first_lost ||
+           fragment.header.fragment_index == second_lost);
 
   // Feeding them in completes the message.
   assert(!reassemble_fragment(client_state.partial_packets, repaired[0], reassembled));
@@ -385,7 +390,7 @@ void test_lossy_transfer_converges()
             << std::endl;
 
   // A duplicate arriving after completion must not reopen the bucket -- that is
-  // what would report "1 of 20" and re-stream a map we already hold.
+  // what would report "1 of N" and re-stream a map we already hold.
   assert(!reassemble_fragment(client_state.partial_packets, fragments[0], reassembled) &&
          "a duplicate after completion is discarded, not re-delivered");
 
@@ -591,7 +596,10 @@ int main()
   test_receive_and_reassembly();
   test_reliable_stream_round_trip();
   test_reliable_stream_round_trip_c2s();
-  test_lossy_transfer_converges();
+  test_lossy_transfer_converges(9005, 9006, 20, 4, 17);
+  static_assert(3 + receipt_bitmap_size_in_bytes(10000) > MAX_PAYLOAD_SIZE_IN_BYTES,
+                "the large case must need a receipt of more than one datagram");
+  test_lossy_transfer_converges(9013, 9014, 10000, 4, 9990);
   test_a_cold_client_receives_the_announced_ghost();
   test_wrapped_message_id_takes_over_a_stale_bucket();
   std::cout << "[TEST] All tests passed." << std::endl;

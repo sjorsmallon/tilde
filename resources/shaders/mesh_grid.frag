@@ -24,6 +24,7 @@
 #include "alpha_cutout.glsl"
 #include "dissolve.glsl"
 #include "peel.glsl"
+#include "reveal.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -69,6 +70,7 @@ void main() {
     discard_inside_clock_wipe(fragWorldPosition);
     discard_below_dissolve(fragUV);
     discard_inside_peel(fragWorldPosition);
+    discard_outside_reveal(fragWorldPosition);
 
     vec3 N = normalize(fragWorldNormal);
     vec3 V = normalize(scene.camera_position.xyz - fragWorldPosition);
@@ -104,4 +106,5 @@ void main() {
         fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
 }

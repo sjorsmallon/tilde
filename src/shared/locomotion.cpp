@@ -307,6 +307,22 @@ void clip_model_memory(const movement_settings_t& settings, move_state_t& state,
   fatal_error("clip_model_memory: no arm for locomotion model {}", (int)settings.model);
 }
 
+// The bug this fixes: an instant model remakes run speed from input every step, so a face steeper
+// than 45 degrees turned that refill into lift each step and launched the player off its top.
+steep_face_rule_t steep_face_rule_of(const movement_settings_t& settings)
+{
+  switch (settings.model)
+  {
+    case cvars::Locomotion_Model::quake:
+      return steep_face_rule_t::Ramp;
+    case cvars::Locomotion_Model::instant:
+    case cvars::Locomotion_Model::instant_momentum:
+    case cvars::Locomotion_Model::instant_redirect:
+      return steep_face_rule_t::Wall;
+  }
+  fatal_error("steep_face_rule_of: no arm for locomotion model {}", (int)settings.model);
+}
+
 wanted_move_t decide_move(const movement_settings_t& settings, const contacts_t& contacts,
                           bool grounded, const vec3& velocity_entering_move, move_state_t& state,
                           const move_input_t& input)

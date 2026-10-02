@@ -33,10 +33,11 @@ Weapon :: enum {
     Statue,
     Modifier_Gun,
     Extending_Platform,
-    Guided_Rocket
+    Guided_Rocket,
+    Flashlight
 }
 
-Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall }
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead }
 Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -348,6 +349,11 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
 
+    // The Flashlight's toggle. The light is on only while this is set AND the Flashlight is in hand (shared::reveal_light_is_on).
+    reveal_light_on:   bool             @Networked
+    // The Flashlight's other toggle: the cone hangs above the head and points straight down (shared::reveal_cone_of).
+    reveal_light_overhead: bool         @Networked
+
     // WHEN the in-flight reload finishes, in sub-tick time; 0 means not
     // reloading. A DEADLINE rather than a start stamp, because the duration is
     // a property of the weapon being reloaded and the weapon can change while
@@ -447,7 +453,7 @@ Platform_Entity :: entity @runtime_only @predicted {
     half_extents:            v3 = {128, 4, 128}
     half_extents_at_launch:  v3 = {8, 8, 8}
     // Drawn at half_extents, never at render.scale.
-    render:         Render = { mesh = .Box, material = { color = {1, 0.75, 0.3} } }
+    render:         Render = { mesh = .Box, material = { color = {0.2039, 0.9216, 0.8353} } }
 }
 
 // The platform that SHRINKS: grows over the flight like Platform_Entity, lands at half_extents, shrinks toward
@@ -660,6 +666,10 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     // A team wall: its geometry is not there for THIS team's movers and shots and solid for everyone else.
     // Free_For_All is the plain switchable brush, passable by nobody.
     passable_by: Team_Allegiance = .Free_For_All @Networked @Editable
+    // Its geometry is drawn only inside a reveal cone (shared/reveal_light.hpp); the editor always draws it.
+    revealed_by_light: bool = false @Networked @Editable
+    // Its geometry is solid only inside a reveal cone; unset, it is solid wherever the switch says so.
+    solid_only_when_revealed: bool = false @Networked @Editable
 }
 
 // middle-mouse button ping.

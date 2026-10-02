@@ -30,6 +30,8 @@ Player_Entity::Player_Entity()
     death_tick{},
     last_fire_tick{},
     last_fire_weapon(Weapon::Knife),
+    reveal_light_on{},
+    reveal_light_overhead{},
     reload_complete_time{},
     last_empty_fire_warning_tick{},
     checkpoint_uid{},
@@ -110,7 +112,7 @@ Platform_Entity::Platform_Entity()
     solid_seconds(6.0f),
     half_extents({128.0f, 4.0f, 128.0f}),
     half_extents_at_launch({8.0f, 8.0f, 8.0f}),
-    render({.mesh = assets::mesh_asset::Box, .material = {.color = {1.0f, 0.75f, 0.3f}}})
+    render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.2039f, 0.9216f, 0.8353f}}})
 {
   type = entity_type::Platform_Entity;
 }
@@ -296,7 +298,9 @@ Logic_Counter_Entity::Logic_Counter_Entity()
 Geometry_Owner_Entity::Geometry_Owner_Entity()
   : switch_state{},
     wipe_timer{},
-    passable_by(Team_Allegiance::Free_For_All)
+    passable_by(Team_Allegiance::Free_For_All),
+    revealed_by_light(false),
+    solid_only_when_revealed(false)
 {
   type = entity_type::Geometry_Owner_Entity;
 }

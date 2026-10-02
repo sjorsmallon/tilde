@@ -21,11 +21,14 @@
 // Team wall ripples the ghost shader draws (ripple.glsl) -- renderer.cpp's
 // MAX_SCENE_RIPPLES, kept one number by the scene block's size assert.
 #define MAX_RIPPLES 16
+// renderer.cpp's MAX_SCENE_REVEAL_CONES, kept one number by the same assert.
+#define MAX_REVEAL_CONES 8
 
 // scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
 #define CEL_FILL_NONE     0
 #define CEL_FILL_HATCH    1
 #define CEL_FILL_DITHER3D 2
+#define CEL_FILL_DITHER3D_ORIGINAL 3
 
 // scene.debug_flags, from r_debug_channel. One text for every fragment shader
 // that reads them, so a channel added here is a channel every shader can show.
@@ -64,10 +67,16 @@ struct Ripple {
     vec4 plane;
 };
 
+// One reveal cone (reveal.glsl): the apex (xyz) and range (w); the unit axis (xyz) and the cosine of the half-angle (w).
+struct RevealCone {
+    vec4 apex_range;
+    vec4 axis_cosine;
+};
+
 layout(set = 3, binding = 1) uniform SceneUniform {
     mat4  view_projection;
     vec4  camera_position;  // xyz, w unused
-    vec4  ambient;          // rgb = the constant floor, a unused
+    vec4  ambient;          // rgb = r_ambient_floor, a unused
     // The probe volume's world-to-texture mapping (lighting_def.md gate 5):
     // uv = (P - probe_origin.xyz) * probe_inverse_extent.xyz. probe_origin.w is
     // 1 when this pass's bake carries probes and 0 when the bound volume is the
@@ -113,16 +122,21 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = 1 when r_cel shades the whole frame through shading_cel.glsl, y = r_cel_terminator,
     // z = r_cel_shadow_edge, w = r_cel_softness.
     vec4   look;
-    // rgb = what the unlit side is multiplied by, the three r_cel_shadow_* cvars.
+    // rgb = what the unlit side is multiplied by, the three r_cel_shadow_* cvars, a = r_cel_bands.
     vec4   cel_shadow_tint;
     // x = r_cel_fill_strength, y = r_cel_fill_spacing, z = r_cel_fill_edge, w = r_cel_hatch_width.
     vec4   cel_fill;
-    // x = r_cel_fill as one of CEL_FILL_*, y = r_cel_fill_tone.
+    // x = r_cel_fill as one of CEL_FILL_*, y = r_cel_fill_tone, z = r_cel_fill_material.
     vec4   cel_fill_pattern;
-    // x = r_cel_fill_tone_light, y = r_cel_fill_ambient_dark, z = r_cel_fill_ambient_light.
+    // x = r_cel_fill_tone_light, y = r_cel_fill_ambient_dark, z = r_cel_fill_ambient_light, w = r_cel_fill_tone_lit.
     vec4   cel_fill_tone_range;
     // x = r_cel_speckle, y = r_cel_speckle_spacing, z = r_cel_speckle_density, w = r_cel_speckle_radius.
     vec4   cel_speckle;
+    // x = r_cel_dither3d_size_variability, y = r_cel_dither3d_contrast, z = r_cel_dither3d_stretch_smoothness.
+    vec4   cel_dither3d;
+    // x = how many of `reveal_cones` are live.
+    vec4       reveal_settings;
+    RevealCone reveal_cones[MAX_REVEAL_CONES];
 } scene;
 
 #endif // SCENE_GLSL

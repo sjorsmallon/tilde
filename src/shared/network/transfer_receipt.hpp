@@ -4,6 +4,7 @@
 #include "network_types.hpp"
 
 #include <cstring>
+#include <optional>
 #include <vector>
 
 namespace network
@@ -48,7 +49,7 @@ struct transfer_receipt_t
   std::vector<uint8> received_bits;
 };
 
-[[nodiscard]] inline size_t receipt_bitmap_size_in_bytes(uint16 fragment_count)
+[[nodiscard]] constexpr size_t receipt_bitmap_size_in_bytes(uint16 fragment_count)
 {
   return (static_cast<size_t>(fragment_count) + 7) / 8;
 }
@@ -87,26 +88,27 @@ inline std::vector<uint8> serialize_transfer_receipt(const transfer_receipt_t &r
 // try_, because this comes off the wire: a truncated or self-contradictory
 // receipt is a peer we did not ship, and the sender must refuse it rather than
 // re-send against a bitmap it had to guess the length of.
-[[nodiscard]] inline bool try_deserialize_transfer_receipt(
-    Span<const uint8> payload, transfer_receipt_t &out_receipt)
+[[nodiscard]] inline std::optional<transfer_receipt_t>
+try_deserialize_transfer_receipt(Span<const uint8> payload)
 {
   if (payload.count < 3)
-    return false;
+    return std::nullopt;
 
-  out_receipt.message_id = payload.data[0];
-  out_receipt.fragment_count = static_cast<uint16>(
+  transfer_receipt_t receipt;
+  receipt.message_id = payload.data[0];
+  receipt.fragment_count = static_cast<uint16>(
       static_cast<uint16>(payload.data[1]) |
       (static_cast<uint16>(payload.data[2]) << 8));
 
-  if (out_receipt.fragment_count == 0)
-    return false;
+  if (receipt.fragment_count == 0)
+    return std::nullopt;
 
-  const size_t expected = receipt_bitmap_size_in_bytes(out_receipt.fragment_count);
+  const size_t expected = receipt_bitmap_size_in_bytes(receipt.fragment_count);
   if (payload.count - 3 != expected)
-    return false;
+    return std::nullopt;
 
-  out_receipt.received_bits.assign(payload.data + 3, payload.data + payload.count);
-  return true;
+  receipt.received_bits.assign(payload.data + 3, payload.data + payload.count);
+  return receipt;
 }
 
 } // namespace network

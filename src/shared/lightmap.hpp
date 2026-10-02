@@ -103,6 +103,17 @@ struct chart_unwrap_t
   [[nodiscard]] bool empty() const { return faces.empty(); }
 };
 
+// Which of a chart's `triangles` each cell of a coarse grid over chart space touches, in triangle order, so a point asks a handful and not all of them.
+struct chart_triangle_cells_t
+{
+  linalg::vec2 minimum{0.f, 0.f};
+  float cell_size = 0.f;
+  int width = 0;
+  int height = 0;
+  std::vector<uint32_t> first;     // width * height + 1 offsets into `triangles`
+  std::vector<uint32_t> triangles; // triangle indices, cell after cell
+};
+
 struct lightmap_chart_t
 {
   entity_uid_t object_uid = 0;
@@ -129,10 +140,9 @@ struct lightmap_chart_t
   // face -- the rect is the allocation, the polygon is the coverage.
   std::vector<linalg::vec2> polygon;
 
-  // The OTHER coverage shape, for a chart that is not one polygon: a static
-  // mesh's coplanar triangles, three chart-space corners each. A mesh's
-  // coplanar triangles need not be adjacent, so their union is not a polygon
-  // and the point-in-face test walks these instead. Exactly one of `polygon`
+  // The OTHER coverage shape, for a chart that is not one flat polygon: a static
+  // mesh's unwrapped triangles, or a SUBDIVIDED brush face's raised grid projected
+  // onto its plane, three chart-space corners each. Exactly one of `polygon`
   // and `triangles` is filled, and like `polygon` it is the bake's own and is
   // never saved.
   std::vector<linalg::vec2> triangles;
@@ -141,6 +151,9 @@ struct lightmap_chart_t
   // triangle's world corners and vertex normals, blended per texel by the bake.
   // Required whenever `triangles` is filled; bake-only like it.
   std::vector<chart_triangle_twin_t> twins;
+
+  // Required whenever `triangles` is filled; bake-only like it.
+  chart_triangle_cells_t triangle_cells;
 
   // A static mesh chart's unwrap; empty on a brush chart, whose uvs are the
   // stored plane projected. Saved, unlike everything above it.

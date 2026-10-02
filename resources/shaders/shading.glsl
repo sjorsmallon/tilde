@@ -18,13 +18,14 @@ int frame_look(int material_look)
     return scene.look.x > 0.5 ? LOOK_CEL : material_look;
 }
 
-vec3 shade_light(int look, Surface surface, vec3 V, Incoming_Light light)
+// rgb is the light as the look shades it; a is the look's own to fill, and only the cel look does.
+vec4 shade_light(int look, Surface surface, vec3 V, Incoming_Light light)
 {
     if (look == LOOK_CEL)
         return shade_light_cel(surface, light);
     if (look == LOOK_PBR)
-        return shade_light_pbr(surface, V, light);
-    return shade_light_lambert(surface, light);
+        return vec4(shade_light_pbr(surface, V, light), 0.0);
+    return vec4(shade_light_lambert(surface, light), 0.0);
 }
 
 vec3 shade_ambient(int look, Surface surface, vec3 V, vec3 world_position, vec3 baked_irradiance,

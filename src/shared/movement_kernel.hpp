@@ -66,6 +66,14 @@ struct ground_frame_t
 [[nodiscard]] vec3 clip_vector(vec3 in, vec3 normal, float overbounce);
 [[nodiscard]] vec3 clip_horizontal_speed(const vec3& velocity, float speed_limit);
 
+// What a face too steep to stand on does with horizontal speed pushed into it:
+// a Ramp turns it into lift (surfing), a Wall stops it as the vertical wall under it would.
+enum class steep_face_rule_t
+{
+  Ramp,
+  Wall
+};
+
 struct collision_candidate_t
 {
   const std::vector<Plane>*              collision_planes;
@@ -85,6 +93,7 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
                                            float half_width, float half_height);
 
 [[nodiscard]] contacts_t resolve_collisions(const movement_settings_t& settings,
+                                            steep_face_rule_t steep_faces,
                                             const Bounding_Volume_Hierarchy& bvh,
                                             const predicted_world_t& world, vec3& hull_center,
                                             debug_collision::Face_Bucket* debug_faces);
@@ -95,7 +104,8 @@ struct slide_result_t
   vec3 velocity    = {};
 };
 
-[[nodiscard]] slide_result_t slide(const movement_settings_t& settings, const contacts_t& contacts,
+[[nodiscard]] slide_result_t slide(const movement_settings_t& settings,
+                                   steep_face_rule_t steep_faces, const contacts_t& contacts,
                                    bool grounded, const wanted_move_t& wanted,
                                    const vec3& hull_center, float dt);
 
@@ -111,6 +121,7 @@ struct settled_move_t
 };
 
 [[nodiscard]] settled_move_t resolve_after_move(const movement_settings_t& settings,
+                                                steep_face_rule_t steep_faces,
                                                 const Bounding_Volume_Hierarchy& bvh,
                                                 const predicted_world_t& world, vec3 hull_center,
                                                 vec3 velocity,
@@ -124,6 +135,7 @@ struct stair_step_t
 };
 
 [[nodiscard]] stair_step_t try_stair_step(const movement_settings_t& settings,
+                                          steep_face_rule_t steep_faces,
                                           const Bounding_Volume_Hierarchy& bvh,
                                           const predicted_world_t& world,
                                           const contacts_t& contacts, const move_state_t& state,

@@ -35,7 +35,7 @@ vec4 debug_channel_color(Surface surface, vec3 geometric_normal, vec3 world_posi
         white.metallic  = 0.0;
         white.occlusion = 1.0;
         white.emissive  = vec3(0.0);
-        return vec4(gather_direct_light(LOOK_LAMBERT, white, world_position, V), 1.0);
+        return vec4(gather_direct_light(LOOK_LAMBERT, white, world_position, V).rgb, 1.0);
     }
     if ((scene.debug_flags & DEBUG_FLAG_RENDER_BAKED_LIGHT) != 0)
         return vec4(baked_irradiance(world_position, geometric_normal), 1.0);

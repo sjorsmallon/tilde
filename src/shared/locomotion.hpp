@@ -35,6 +35,8 @@ namespace shared
                                                   const vec3& velocity_entering_move,
                                                   move_state_t& state, const move_input_t& input);
 
+[[nodiscard]] steep_face_rule_t steep_face_rule_of(const movement_settings_t& settings);
+
 [[nodiscard]] vec3 velocity_after_impulse(const move_state_t& state, const impulse_t& impulse);
 
 // Where an impulse LANDS is the model's answer, which is what turns N writers

@@ -186,11 +186,16 @@ constexpr auto server_port_number = 9999;
 //
 // The default (~64KB on Windows) holds roughly 50 of our 1200-byte packets: two
 // ticks of ordinary traffic, and a fraction of any bulk transfer.
-constexpr size_t client_receive_buffer_size_in_bytes = 512 * 1024;
+//
+// Sized by the map transfer, the one bulk thing a client receives: at
+// sv_map_transfer_fragments_per_tick = 32 this is roughly 109 ticks of it, so a
+// client frame may stall for 1.8s at 60Hz before the kernel drops a fragment.
+constexpr size_t client_receive_buffer_size_in_bytes = 4 * 1024 * 1024;
 
-// Larger because the server has ONE socket for every peer, so its queue takes
-// the aggregate arrival rate rather than one connection's. A tick of a full
-// server is sv_max_client_count * 1200 bytes; this is roughly a 25-tick backlog.
+// Sized by ordinary traffic, because nothing bulk travels C2S: the server has
+// ONE socket for every peer, so its queue takes the aggregate arrival rate. A
+// tick of a full server is sv_max_client_count * 1200 bytes; this is roughly a
+// 25-tick backlog.
 constexpr size_t server_receive_buffer_size_in_bytes = 1024 * 1024;
 
 } // namespace network
