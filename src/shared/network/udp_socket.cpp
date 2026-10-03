@@ -204,9 +204,7 @@ bool Udp_Socket::open(uint16 port, size_t receive_buffer_size_in_bytes)
 #endif
     }
 
-    // Read back what we were actually granted -- the request is a hint, and a
-    // silently clamped buffer is exactly the condition that makes a bulk
-    // transfer fail in a way that looks like a protocol bug.
+    // ask and ye shall receive maybe the same amount, or less.
     int granted_receive_buffer = 0;
     socklen_t granted_size = sizeof(granted_receive_buffer);
 #ifdef _WIN32

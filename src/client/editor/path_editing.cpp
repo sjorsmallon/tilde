@@ -1,5 +1,6 @@
 #include "entities/generated/entities/mover_entity_generated.hpp"
 #include "entities/generated/entities/path_node_entity_generated.hpp"
+#include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "path_editing.hpp"
 
 #include "../../shared/map_connection.hpp"
@@ -182,6 +183,19 @@ void draw_path_links(const shared::map_t& map, const editor_context_t& ctx, pass
       continue;
     }
     draws.debug.line(mover->position, start->position, colors::magenta);
+  }
+
+  for (const auto [uid, light] : map.entities_of_type<entities::Reveal_Light_Entity>())
+  {
+    if (!ctx.object_is_visible(uid) || light->follows == shared::null_entity_uid)
+      continue;
+    const shared::map_entity_t* followed = map.find_by_uid(light->follows);
+    if (followed == nullptr || !entities::entity_as<entities::Mover_Entity>(followed->entity.get()))
+    {
+      draws.debug.backed_text(light->position, "follows no mover", colors::red);
+      continue;
+    }
+    draws.debug.line(light->position, followed->entity->position, colors::cyan);
   }
 }
 

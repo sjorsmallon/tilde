@@ -339,16 +339,17 @@ void team_wall_draw(renderer::mesh_draw_t& draw, const team_wall_tint_t& team_wa
   draw.shadow_caster      = renderer::shadow_caster_t::none;
 }
 
-void revealed_by_light_draw(renderer::mesh_draw_t& draw)
+void light_cut_draw(renderer::mesh_draw_t& draw, renderer::light_cut_t light_cut)
 {
-  draw.revealed_by_light = true;
-  draw.shadow_caster     = renderer::shadow_caster_t::none;
+  draw.light_cut = light_cut;
+  if (light_cut == renderer::light_cut_t::revealed)
+    draw.shadow_caster = renderer::shadow_caster_t::none;
 }
 
 bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
                        renderer::mesh_handle_t mesh, const linalg::mat4f &transform,
                        const linalg::mat4f* moved_by, const renderer::clock_wipe_t& clock_wipe,
-                       std::optional<team_wall_tint_t> team_wall, bool revealed_by_light)
+                       std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut)
 {
   if (!surface.visible)
     return true; // resolved to "draw nothing", which is not a fallback case
@@ -374,8 +375,7 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
     if (team_wall)
       team_wall_draw(draw, *team_wall);
   }
-  if (revealed_by_light)
-    revealed_by_light_draw(draw);
+  light_cut_draw(draw, light_cut);
 
   draws.meshes.push_back(draw);
   return true;
@@ -387,7 +387,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by,
                    const renderer::clock_wipe_t& clock_wipe,
-                   std::optional<team_wall_tint_t> team_wall, bool revealed_by_light)
+                   std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut)
 {
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
 
@@ -412,13 +412,13 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
       const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
       if (draw_surface_mesh(draws, surface, get_render_mesh(assets::find_mesh_in_cache(cache_key)),
                             linalg::mat4f::identity(), moved_by, clock_wipe, team_wall,
-                            revealed_by_light))
+                            light_cut))
         return;
     }
     else if (draw_surface_mesh(draws, surface,
                                get_render_mesh(shared::resolve_surface_mesh(surface)),
                                shared::static_mesh_transform(static_mesh), moved_by, clock_wipe,
-                               team_wall, revealed_by_light))
+                               team_wall, light_cut))
       return;
 
     // A static mesh with no resolvable mesh has nothing to draw but its bound —
@@ -437,7 +437,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                           get_render_mesh(shared::resolve_surface_mesh(surface)),
                           linalg::compose_transform(shared::get_position(geometry), {0, 0, 0, 1},
                                                     {1, 1, 1}),
-                          moved_by, clock_wipe, team_wall, revealed_by_light))
+                          moved_by, clock_wipe, team_wall, light_cut))
       return;
 
     if (!surface.visible)
@@ -474,8 +474,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
 
     if (team_wall)
       team_wall_draw(draw, *team_wall);
-    if (revealed_by_light)
-      revealed_by_light_draw(draw);
+    light_cut_draw(draw, light_cut);
 
     draws.meshes.push_back(draw);
     return;
@@ -527,6 +526,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
     // Eager re-upload, right here where the edit happened, rather than a flag
     // the next draw would have to notice.
     renderer::update_mesh(get_render_mesh(mesh_asset), *mesh);
+    forget_material_variants(get_render_mesh(mesh_asset));
   }
 
   // The slot table follows the mesh it describes -- a rebuild can change how

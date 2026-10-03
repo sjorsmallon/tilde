@@ -2,6 +2,10 @@
 // shader draws, and a range that is a distance from the eye.
 
 #include "collision_detection.hpp"
+#include "entities/generated/entities/mover_entity_generated.hpp"
+#include "entities/generated/entities/path_node_entity_generated.hpp"
+#include "entities/generated/entities/reveal_light_entity_generated.hpp"
+#include "entity_system.hpp"
 #include "map_geometry.hpp"
 #include "movement_kernel.hpp"
 #include "player_constants.hpp"
@@ -133,8 +137,8 @@ int main()
   const shared::reveal_cone_settings_t overhead_settings = {
       .range = RANGE, .half_angle_degrees = HALF_ANGLE_DEGREES, .overhead_height = 128.f};
   const linalg::vec3f         eye      = {0.f, 64.f, 0.f};
-  const shared::reveal_cone_t overhead = shared::reveal_cone_of(eye, 0.f, 0.f, true, overhead_settings);
-  const shared::reveal_cone_t down_aim = shared::reveal_cone_of(eye, 0.f, 0.f, false, overhead_settings);
+  const shared::reveal_cone_t overhead = shared::reveal_cone_of(eye, 0.f, 0.f, true, entities::Reveal_Cone_Kind::Reveals, overhead_settings);
+  const shared::reveal_cone_t down_aim = shared::reveal_cone_of(eye, 0.f, 0.f, false, entities::Reveal_Cone_Kind::Reveals, overhead_settings);
   check(linalg::length(overhead.apex - linalg::vec3f{0.f, 192.f, 0.f}) < 1e-4f &&
             linalg::length(overhead.axis - linalg::vec3f{0.f, -1.f, 0.f}) < 1e-4f,
         "an overhead cone hangs its height above the eye and points straight down");
@@ -196,6 +200,120 @@ int main()
   check(shared::reveal_cone_touches_box(lights_head, standing_hull) &&
             candidate_count(GEOMETRY_SOLID_WHERE_LIT, {&lights_head, 1}) == 0,
         "a cone on the hull's head and not on the surface it touches does not");
+
+  printf("\n[pin] a hull passes solid-unless-erased geometry only where an erase cone holds all it touches\n");
+
+  const shared::reveal_cone_planes_t erases_from_above = shared::planes_of_reveal_cone(
+      {.apex                 = {0.f, 256.f, 0.f},
+       .axis                 = {0.f, -1.f, 0.f},
+       .range                = RANGE,
+       .cosine_of_half_angle = cosine,
+       .kind                 = entities::Reveal_Cone_Kind::Erases});
+  shared::reveal_cone_planes_t erases_feet = lights_feet;
+  erases_feet.kind                         = entities::Reveal_Cone_Kind::Erases;
+  const shared::reveal_cone_planes_t erases_a_spot = shared::planes_of_reveal_cone(
+      {.apex                 = {0.f, 256.f, 0.f},
+       .axis                 = {0.f, -1.f, 0.f},
+       .range                = RANGE,
+       .cosine_of_half_angle = std::cos(linalg::to_radians(2.f)),
+       .kind                 = entities::Reveal_Cone_Kind::Erases});
+  shared::reveal_cone_planes_t reveals_from_above = erases_from_above;
+  reveals_from_above.kind                         = entities::Reveal_Cone_Kind::Reveals;
+
+  check(candidate_count(GEOMETRY_SOLID_UNLESS_ERASED, {}) == 1, "an erasable brush with no cone on it is solid");
+  check(candidate_count(GEOMETRY_SOLID_UNLESS_ERASED, {&erases_from_above, 1}) == 0,
+        "an erase cone that holds everything the hull touches lets it through");
+  check(candidate_count(GEOMETRY_SOLID_UNLESS_ERASED, {&erases_a_spot, 1}) == 1,
+        "one that holds only a spot of what the hull touches does not");
+  check(candidate_count(GEOMETRY_SOLID_UNLESS_ERASED, {&reveals_from_above, 1}) == 1,
+        "a Flashlight's cone erases nothing");
+  check(candidate_count(GEOMETRY_SOLID_WHERE_LIT, {&erases_feet, 1}) == 0,
+        "and an Eraser's cone makes nothing solid");
+
+  const uint8_t erasable = GEOMETRY_SOLID_UNLESS_ERASED;
+  check(!collision_is_disabled({&erasable, 1}, {Collision_Id::Type::Static_Geometry, 0}),
+        "a ray or a sweep meets an erasable brush wherever the cones are");
+
+  printf("\n[pin] a map-placed light is one cone from where it stands, only while switched on\n");
+  {
+    shared::Entity_System system;
+    const shared::entity_uid_t     light_uid = system.spawn(entities::entity_type::Reveal_Light_Entity);
+    entities::Reveal_Light_Entity* light     = system.get<entities::Reveal_Light_Entity>(light_uid);
+    light->position           = {40.f, 72.f, -16.f};
+    light->kind               = entities::Reveal_Cone_Kind::Erases;
+    light->range              = 300.f;
+    light->half_angle_degrees = 10.f;
+
+    const shared::reveal_cone_settings_t player_settings = {.range = 1024.f, .half_angle_degrees = 25.f};
+    std::vector<shared::reveal_cone_planes_t> collected;
+    shared::collect_reveal_cones(system, {}, {}, player_settings, 1, 60.f, shared::null_entity_uid, collected);
+    check(collected.size() == 1, "a switched-on light is one cone");
+    check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-4f &&
+              linalg::length(collected[0].axis - linalg::forward(light->orientation)) < 1e-4f,
+          "from its position, down its orientation");
+    check(collected.size() == 1 && collected[0].kind == entities::Reveal_Cone_Kind::Erases &&
+              collected[0].range == 300.f &&
+              std::fabs(collected[0].cosine_of_half_angle - std::cos(linalg::to_radians(10.f))) < 1e-6f,
+          "with its own kind, range and half-angle, not the players' settings");
+
+    light->switch_state.value = false;
+    shared::collect_reveal_cones(system, {}, {}, player_settings, 1, 60.f, shared::null_entity_uid, collected);
+    check(collected.empty(), "a switched-off light is no cone");
+  }
+
+  printf("\n[pin] a light that follows a mover rides it rigidly from where it was placed\n");
+  {
+    shared::Entity_System system;
+    const shared::entity_uid_t first_uid  = system.spawn(entities::entity_type::Path_Node_Entity);
+    const shared::entity_uid_t second_uid = system.spawn(entities::entity_type::Path_Node_Entity);
+    const shared::entity_uid_t mover_uid  = system.spawn(entities::entity_type::Mover_Entity);
+    const shared::entity_uid_t light_uid  = system.spawn(entities::entity_type::Reveal_Light_Entity);
+
+    const linalg::quatf turned = linalg::from_view_angles(90.f, 0.f);
+
+    entities::Path_Node_Entity* first = system.get<entities::Path_Node_Entity>(first_uid);
+    first->position          = {0.f, 100.f, 0.f};
+    first->next              = second_uid;
+    first->traversal_seconds = 1.f;
+    entities::Path_Node_Entity* second = system.get<entities::Path_Node_Entity>(second_uid);
+    second->position    = {200.f, 100.f, 0.f};
+    second->orientation = turned;
+
+    system.get<entities::Mover_Entity>(mover_uid)->follow = {.from = first_uid, .segment_start_tick = 1, .direction = 1};
+
+    entities::Reveal_Light_Entity* light = system.get<entities::Reveal_Light_Entity>(light_uid);
+    light->position = {0.f, 150.f, 0.f};
+    light->follows  = mover_uid;
+
+    const shared::path_links_t links = shared::derive_path_links(system);
+    const shared::reveal_cone_settings_t player_settings = {.range = 1024.f, .half_angle_degrees = 25.f};
+    std::vector<shared::reveal_cone_planes_t> collected;
+
+    shared::collect_reveal_cones(system, links, {}, player_settings, 1, 60.f, shared::null_entity_uid, collected);
+    check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-3f,
+          "with its mover at rest it is where it was placed");
+
+    shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
+    check(collected.size() == 1 &&
+              linalg::length(collected[0].apex - linalg::vec3f{100.f, 150.f, 0.f}) < 1e-3f,
+          "halfway through the segment it has moved half the segment, keeping its offset");
+
+    shared::collect_reveal_cones(system, links, {}, player_settings, 61, 60.f, shared::null_entity_uid, collected);
+    check(collected.size() == 1 &&
+              linalg::length(collected[0].apex - linalg::vec3f{200.f, 150.f, 0.f}) < 1e-3f &&
+              linalg::length(collected[0].axis - linalg::forward(turned * light->orientation)) < 1e-3f,
+          "at the far node it has turned as the mover has");
+
+    light->switch_state.value = false;
+    shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
+    check(collected.empty(), "switched off it is no cone, wherever its mover has it");
+
+    light->switch_state.value = true;
+    light->follows            = first_uid;
+    shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
+    check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-3f,
+          "following something that is not a mover, it stays where it was placed");
+  }
 
   printf(failure_count == 0 ? "\nALL PASSED\n" : "\n%d FAILED\n", failure_count);
   return failure_count == 0 ? 0 : 1;

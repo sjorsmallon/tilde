@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <system_error>
 #include <vector>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -70,6 +72,19 @@ struct page_image_t
   }
 };
 
+void create_parent_directory(const std::string& path_prefix)
+{
+  const std::filesystem::path parent = std::filesystem::path(path_prefix).parent_path();
+  if (parent.empty())
+    return;
+
+  std::error_code error;
+  std::filesystem::create_directories(parent, error);
+  if (error)
+    log_error("[lightmap] could not create the directory '{}': {}.", parent.generic_string(),
+              error.message());
+}
+
 } // namespace
 
 bool try_write_lightmap_debug_png(const std::vector<lightmap_chart_t> &charts,
@@ -77,6 +92,7 @@ bool try_write_lightmap_debug_png(const std::vector<lightmap_chart_t> &charts,
                                   const lightmap_bake_settings_t &settings,
                                   const std::string &path_prefix)
 {
+  create_parent_directory(path_prefix);
   if (atlas.size_in_texels <= 0 || atlas.page_count <= 0)
   {
     log_error("[lightmap] cannot write a debug image for an atlas of {} pages at {} "
@@ -156,6 +172,7 @@ bool try_write_lightmap_debug_png(const std::vector<lightmap_chart_t> &charts,
 bool try_write_lightmap_pages_png(const lightmap_pages_t &pages,
                                   const std::string &path_prefix, float exposure)
 {
+  create_parent_directory(path_prefix);
   if (pages.size_in_texels <= 0 || pages.page_count <= 0)
   {
     log_error("[lightmap] cannot write {} page(s) at {} texels.", pages.page_count,
@@ -217,6 +234,7 @@ bool try_write_lightmap_pages_png(const lightmap_pages_t &pages,
 bool try_write_lightmap_visibility_pages_png(const lightmap_pages_t &pages,
                                              const std::string &path_prefix)
 {
+  create_parent_directory(path_prefix);
   if (pages.empty() || pages.format != lightmap_pixel_format_t::Unorm8x4)
   {
     log_error("[lightmap] there are no visibility pages to write.");
@@ -266,6 +284,7 @@ bool try_write_lightmap_l1_pages_png(const lightmap_pages_t &l1_pages,
                                      const lightmap_pages_t &l0_pages,
                                      const std::string &path_prefix)
 {
+  create_parent_directory(path_prefix);
   if (l1_pages.empty() || l0_pages.empty() ||
       l1_pages.page_count != l0_pages.page_count * SH_L1_LAYERS_PER_PAGE)
   {
@@ -326,6 +345,7 @@ bool try_write_lightmap_l1_pages_png(const lightmap_pages_t &l1_pages,
 bool try_write_lightmap_visibility_png(const lightmap_visibility_masks_t &masks,
                                        const std::string &path_prefix)
 {
+  create_parent_directory(path_prefix);
   if (masks.empty() || masks.size_in_texels <= 0 || masks.page_count <= 0)
   {
     log_error("[lightmap] there are no visibility masks to write.");

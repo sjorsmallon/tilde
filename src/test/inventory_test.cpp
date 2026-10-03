@@ -810,16 +810,16 @@ int main()
         .range = 1024.f, .half_angle_degrees = 25.f, .overhead_height = 128.f};
     std::vector<shared::reveal_cone_planes_t> cones;
     carrier->position = {100.f, 0.f, 0.f};
-    shared::collect_reveal_cones(entity_system, cone_settings, shared::null_entity_uid, cones);
+    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, shared::null_entity_uid, cones);
     check(cones.size() == 1 &&
               linalg::length(cones[0].apex -
                              linalg::vec3f{100.f, shared::player_eye_height, 0.f}) < 1e-4f,
           "a lit Flashlight is one solid-making cone from its carrier's eye");
-    shared::collect_reveal_cones(entity_system, cone_settings, carrier_uid, cones);
+    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, carrier_uid, cones);
     check(cones.empty(), "the player a client predicts for itself is left out of the cut");
 
     carrier->reveal_light_overhead = true;
-    shared::collect_reveal_cones(entity_system, cone_settings, shared::null_entity_uid, cones);
+    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, shared::null_entity_uid, cones);
     check(cones.size() == 1 &&
               linalg::length(cones[0].apex -
                              linalg::vec3f{100.f, shared::player_eye_height + 128.f, 0.f}) < 1e-4f,
@@ -830,7 +830,7 @@ int main()
 
     carrier->health.current_health = 0;
     check(!shared::reveal_light_is_on(entity_system, *carrier), "a dead carrier lights nothing");
-    shared::collect_reveal_cones(entity_system, cone_settings, shared::null_entity_uid, cones);
+    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, shared::null_entity_uid, cones);
     check(cones.empty(), "and makes nothing solid");
   }
 

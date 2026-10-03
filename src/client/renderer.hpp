@@ -376,6 +376,17 @@ struct peel_t
   bool          armed          = false;
 };
 
+// scene.glsl's MAX_REVEAL_CONES, kept one number by renderer.cpp's size assert on the scene uniform.
+inline constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
+
+// What the pass's reveal_cones do to a draw (resources/shaders/reveal.glsl's LIGHT_CUT_*).
+enum class light_cut_t : uint8_t
+{
+  none,
+  revealed,
+  erased
+};
+
 struct mesh_draw_t
 {
   mesh_handle_t                 mesh;
@@ -397,8 +408,8 @@ struct mesh_draw_t
   float dissolve = 0.0f;
   // Rides the same pipeline bit and the clock wipe's push slots, so a draw wipes or peels, never both.
   peel_t peel = {};
-  // Kept only inside one of the pass's reveal_cones (resources/shaders/reveal.glsl); its own pipeline bit.
-  bool revealed_by_light = false;
+  // Kept only inside a cone that reveals, or only outside every cone that erases; its own pipeline bits.
+  light_cut_t light_cut = light_cut_t::none;
 };
 
 // --- Debug drawing ---
@@ -670,7 +681,7 @@ struct view_pass_t
   // shader reads them all and confines each to the face it names. Past
   // MAX_SCENE_RIPPLES the oldest are dropped.
   Span<const shared::wall_ripple_t>         ripples   = {};
-  // Where a revealed_by_light draw exists; the caller decides whose cones these are.
+  // Where a revealed draw exists and an erased one does not; the caller decides whose cones these are.
   Span<const shared::reveal_cone_t>         reveal_cones = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
   float                                     seconds   = 0.0f;
@@ -694,12 +705,15 @@ struct look_settings_t
   float   cel_softness     = 0.03f; // r_cel_softness
   linalg::vec3f cel_shadow_tint = {0.8f, 0.85f, 1.0f}; // r_cel_shadow_red, _green, _blue
   float   cel_bands = 0.0f; // r_cel_bands
+  float   cel_flat_albedo = 0.0f; // r_cel_flat_albedo
+  float   cel_halftone    = 0.0f; // r_cel_halftone
+  float   cel_halftone_paper = 1.0f; // r_cel_halftone_paper
   cvars::Cel_Fill cel_fill         = cvars::Cel_Fill::none; // r_cel_fill
   float   cel_fill_strength        = 0.5f; // r_cel_fill_strength
   float   cel_fill_spacing_pixels  = 5.0f; // r_cel_fill_spacing
   float   cel_fill_edge            = 0.5f; // r_cel_fill_edge
-  float   cel_fill_tone            = 0.45f; // r_cel_fill_tone
-  float   cel_fill_tone_light      = 0.15f; // r_cel_fill_tone_light
+  float   cel_fill_shadow_tone_dark            = 0.45f; // r_cel_fill_shadow_tone_dark
+  float   cel_fill_shadow_tone_light      = 0.15f; // r_cel_fill_shadow_tone_light
   float   cel_fill_ambient_dark    = 0.06f; // r_cel_fill_ambient_dark
   float   cel_fill_ambient_light   = 0.3f;  // r_cel_fill_ambient_light
   float   cel_fill_tone_lit        = 0.15f; // r_cel_fill_tone_lit
@@ -712,11 +726,22 @@ struct look_settings_t
   float   cel_speckle_spacing_pixels = 10.0f; // r_cel_speckle_spacing
   float   cel_speckle_density        = 0.33f; // r_cel_speckle_density
   float   cel_speckle_radius         = 0.15f; // r_cel_speckle_radius
+  float   cel_pebble                   = 0.0f;  // r_cel_pebble
+  float   cel_pebble_spacing           = 48.0f; // r_cel_pebble_spacing
+  float   cel_pebble_density           = 0.3f;  // r_cel_pebble_density
+  float   cel_pebble_size              = 0.25f; // r_cel_pebble_size
+  float   cel_pebble_irregularity      = 0.5f;  // r_cel_pebble_irregularity
+  float   cel_pebble_line_width_pixels = 1.5f;  // r_cel_pebble_width
   bool    ink              = false; // r_ink
   float   ink_threshold    = 4.0f;  // r_ink_threshold
   int     ink_width_pixels = 1;     // r_ink_width
   float   ink_crease_degrees = 30.0f; // r_ink_crease_degrees
   float   ink_tint         = 0.0f;  // r_ink_tint
+  float   ink_wobble_pixels       = 0.0f;   // r_ink_wobble
+  float   ink_wobble_scale_pixels = 40.0f;  // r_ink_wobble_scale
+  float   ink_boil_per_second     = 0.0f;   // r_ink_boil
+  float   ink_weight_near         = 1.0f;   // r_ink_weight_near
+  float   ink_weight_distance     = 256.0f; // r_ink_weight_distance
   float   rim              = 0.0f;  // r_rim
   int     rim_width_pixels = 3;     // r_rim_width
 };

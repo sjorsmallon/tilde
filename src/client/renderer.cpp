@@ -273,7 +273,7 @@ struct pipeline_key_t
   vertex_layout_t  vertex_layout = vertex_layout_t::static_mesh;
   fill_mode_t      fill          = fill_mode_t::solid;
   bool             discard_effects = false; // the clock wipe and the dissolve
-  bool             revealed_by_light = false; // reveal.glsl
+  light_cut_t      light_cut = light_cut_t::none; // reveal.glsl
 
   bool operator==(const pipeline_key_t &) const = default;
 };
@@ -288,7 +288,7 @@ struct pipeline_key_hash_t
            ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 6) |
            ((size_t)key.state.depth_write << 7) | ((size_t)key.vertex_layout << 8) |
            ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12) |
-           ((size_t)key.discard_effects << 20) | ((size_t)key.revealed_by_light << 21);
+           ((size_t)key.discard_effects << 20) | ((size_t)key.light_cut << 21);
   }
 };
 
@@ -706,8 +706,6 @@ struct gpu_light_t
 constexpr uint32_t MAX_SCENE_LIGHTS = 64;
 // scene.glsl's MAX_RIPPLES; the size assert below keeps the two one number.
 constexpr uint32_t MAX_SCENE_RIPPLES = 16;
-// scene.glsl's MAX_REVEAL_CONES, kept one number by the same assert.
-constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -754,17 +752,19 @@ struct scene_uniform_t
   float       look[4]                                       = {}; // x 1 when r_cel shades the frame, y terminator, z shadow edge, w softness
   float       cel_shadow_tint[4]                            = {}; // rgb the unlit side's tint, a bands per doubling
   float       cel_fill[4]                                   = {}; // x strength, y spacing px, z edge, w hatch width px
-  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone of the darkest shadow, z tone the material's relief adds
+  float       cel_fill_pattern[4]                           = {}; // x one of scene.glsl's CEL_FILL_*, y tone of the darkest shadow, z tone the material's relief adds, w flat albedo
   float       cel_fill_tone_range[4]                        = {}; // x tone of the lightest shadow, y ambient at the darkest, z ambient at the lightest, w tone of a grazed lit surface
   float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of the spacing
-  float       cel_dither3d[4]                               = {}; // x size variability, y contrast, z stretch smoothness
-  float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` are live
+  float       cel_dither3d[4]                               = {}; // x size variability, y contrast, z stretch smoothness, w halftone white level
+  float       cel_pebble[4]                                 = {}; // x strength, y spacing in world units, z density, w largest radius of the spacing
+  float       cel_pebble_shape[4]                           = {}; // x irregularity, y outline width px, z halftone paper
+  float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 112 + 16 + 32 * MAX_SCENE_REVEAL_CONES,
+                      32 * MAX_SCENE_RIPPLES + 16 + 144 + 16 + 32 * MAX_SCENE_REVEAL_CONES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -2071,16 +2071,16 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
     VkBool32 cutout;
     float    cutoff;
     VkBool32 discard_effects;
-    VkBool32 revealed_by_light;
+    int32_t  light_cut;
   } alpha_specialization{key.state.blend_mode == blend_mode_t::cutout ? VK_TRUE : VK_FALSE,
                          key.state.alpha_cutoff / 255.0f, key.discard_effects ? VK_TRUE : VK_FALSE,
-                         key.revealed_by_light ? VK_TRUE : VK_FALSE};
+                         static_cast<int32_t>(key.light_cut)};
 
   const VkSpecializationMapEntry alpha_entries[4] = {
       {0, offsetof(alpha_specialization_t, cutout), sizeof(VkBool32)},
       {1, offsetof(alpha_specialization_t, cutoff), sizeof(float)},
       {2, offsetof(alpha_specialization_t, discard_effects), sizeof(VkBool32)},
-      {3, offsetof(alpha_specialization_t, revealed_by_light), sizeof(VkBool32)}};
+      {3, offsetof(alpha_specialization_t, light_cut), sizeof(int32_t)}};
 
   VkSpecializationInfo alpha_info{};
   alpha_info.mapEntryCount = 4;
@@ -3001,6 +3001,9 @@ static void record_fullscreen_draw(VkCommandBuffer cmd, const fullscreen_draw_t&
 // has to see a pixel's FINAL radiance where a forward shader sees only its own
 // draw. So the curve runs here, once, over everything the scene pass wrote.
 
+constexpr float VIEW_NEAR_PLANE = 1.0f;
+constexpr float VIEW_FAR_PLANE  = 50000.0f;
+
 struct tonemap_push_constants_t
 {
   float exposure         = 1.0f;
@@ -3012,6 +3015,12 @@ struct tonemap_push_constants_t
   float rim_strength     = 0.0f;
   int   rim_width_pixels = 1;
   int   show_surface_normals = 0;
+  float ink_wobble_pixels       = 0.0f;
+  float ink_wobble_scale_pixels = 1.0f;
+  float ink_boil_frame          = 0.0f;
+  float ink_weight_near         = 1.0f;
+  float ink_weight_slope        = 0.0f;
+  float ink_weight_offset       = 0.0f;
 };
 
 static fullscreen_draw_t g_tonemap_draw;
@@ -6542,23 +6551,30 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
 
   if (pass.reveal_cones.size() > MAX_SCENE_REVEAL_CONES)
   {
-    log_error("[renderer] this view pass carries {} reveal cones; only the first {} reveal anything",
+    log_error("[renderer] this view pass carries {} reveal cones; only {} reveal or erase anything",
               pass.reveal_cones.size(), MAX_SCENE_REVEAL_CONES);
   }
-  const size_t reveal_cone_count = std::min<size_t>(pass.reveal_cones.size(), MAX_SCENE_REVEAL_CONES);
-  scene.reveal_settings[0]       = (float)reveal_cone_count;
-  for (size_t index = 0; index < reveal_cone_count; ++index)
+  size_t written_cone_count = 0;
+  for (const entities::Reveal_Cone_Kind kind :
+       {entities::Reveal_Cone_Kind::Reveals, entities::Reveal_Cone_Kind::Erases})
   {
-    const shared::reveal_cone_t& cone = pass.reveal_cones[(uint32_t)index];
-    float*                       out  = scene.reveal_cones[index];
-    out[0] = cone.apex.x;
-    out[1] = cone.apex.y;
-    out[2] = cone.apex.z;
-    out[3] = cone.range;
-    out[4] = cone.axis.x;
-    out[5] = cone.axis.y;
-    out[6] = cone.axis.z;
-    out[7] = cone.cosine_of_half_angle;
+    const size_t first_of_kind = written_cone_count;
+    for (const shared::reveal_cone_t& cone : pass.reveal_cones)
+    {
+      if (cone.kind != kind || written_cone_count == MAX_SCENE_REVEAL_CONES)
+        continue;
+      float* out = scene.reveal_cones[written_cone_count++];
+      out[0] = cone.apex.x;
+      out[1] = cone.apex.y;
+      out[2] = cone.apex.z;
+      out[3] = cone.range;
+      out[4] = cone.axis.x;
+      out[5] = cone.axis.y;
+      out[6] = cone.axis.z;
+      out[7] = cone.cosine_of_half_angle;
+    }
+    scene.reveal_settings[kind == entities::Reveal_Cone_Kind::Reveals ? 0 : 1] =
+        (float)(written_cone_count - first_of_kind);
   }
 
   scene.clock[0] = pass.seconds;
@@ -6710,8 +6726,8 @@ static shared::shadow_view_t shadow_view_of(const render_view_t &view)
       linalg::length(right) > 1e-4f ? linalg::normalize(right) : linalg::vec3f{1.0f, 0.0f, 0.0f};
   shadow_view.up         = linalg::cross(shadow_view.right, shadow_view.forward);
   shadow_view.aspect     = aspect;
-  shadow_view.near_plane = 1.0f;
-  shadow_view.far_plane  = 50000.0f; // view_matrices' far plane
+  shadow_view.near_plane = VIEW_NEAR_PLANE;
+  shadow_view.far_plane  = VIEW_FAR_PLANE;
   if (view.camera.orthographic)
   {
     shadow_view.tan_half_fov_y    = 0.0f;
@@ -7134,7 +7150,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
       const uint32_t pipeline_id = resolve_pipeline_id(
           {g_materials[material.index].pipeline_state, mesh.layout, draw.fill,
            draw.clock_wipe.armed || draw.dissolve > 0.0f || draw.peel.armed,
-           draw.revealed_by_light});
+           draw.light_cut});
       if (pipeline_id == UINT32_MAX)
         continue;
 
@@ -7414,7 +7430,7 @@ view_matrices_t view_matrices(const render_view_t &view)
   else
   {
     matrices.projection = linalg::perspective(linalg::to_radians(view.camera.fov_degrees), aspect,
-                                              1.0f, 50000.0f);
+                                              VIEW_NEAR_PLANE, VIEW_FAR_PLANE);
   }
 
   const linalg::vec3f eye     = view.camera.position;
@@ -8720,8 +8736,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_fill[2]        = look.cel_fill_edge;
     scene.cel_fill[3]        = std::max(look.cel_hatch_width_pixels, 0.0f);
     scene.cel_fill_pattern[0] = cel_fill_pattern_of(look.cel_fill);
-    scene.cel_fill_pattern[1] = std::clamp(look.cel_fill_tone, 0.0f, 0.75f);
-    scene.cel_fill_tone_range[0] = std::clamp(look.cel_fill_tone_light, 0.0f, 0.75f);
+    scene.cel_fill_pattern[1] = std::clamp(look.cel_fill_shadow_tone_dark, 0.0f, 0.75f);
+    scene.cel_fill_tone_range[0] = std::clamp(look.cel_fill_shadow_tone_light, 0.0f, 0.75f);
     scene.cel_fill_tone_range[1] = std::max(look.cel_fill_ambient_dark, 0.0f);
     scene.cel_fill_tone_range[2] = std::max(look.cel_fill_ambient_light, scene.cel_fill_tone_range[1] + 0.0001f);
     scene.cel_fill_tone_range[3] = std::clamp(look.cel_fill_tone_lit, 0.0f, 0.75f);
@@ -8730,9 +8746,18 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_speckle[1]     = std::max(look.cel_speckle_spacing_pixels, 2.0f);
     scene.cel_speckle[2]     = std::clamp(look.cel_speckle_density, 0.0f, 1.0f);
     scene.cel_speckle[3]     = std::clamp(look.cel_speckle_radius, 0.0f, 0.5f);
+    scene.cel_pebble[0]       = std::clamp(look.cel_pebble, 0.0f, 1.0f);
+    scene.cel_pebble[1]       = std::max(look.cel_pebble_spacing, 1.0f);
+    scene.cel_pebble[2]       = std::clamp(look.cel_pebble_density, 0.0f, 1.0f);
+    scene.cel_pebble[3]       = std::clamp(look.cel_pebble_size, 0.0f, 0.5f);
+    scene.cel_pebble_shape[0] = std::clamp(look.cel_pebble_irregularity, 0.0f, 1.0f);
+    scene.cel_pebble_shape[1] = std::max(look.cel_pebble_line_width_pixels, 0.0f);
     scene.cel_dither3d[0]    = std::clamp(look.cel_dither3d_size_variability, 0.0f, 1.0f);
     scene.cel_dither3d[1]    = std::max(look.cel_dither3d_contrast, 0.0f);
     scene.cel_dither3d[2]    = std::max(look.cel_dither3d_stretch_smoothness, 0.0f);
+    scene.cel_dither3d[3]    = std::max(look.cel_halftone, 0.0f);
+    scene.cel_pebble_shape[2] = std::max(look.cel_halftone_paper, 0.0f);
+    scene.cel_fill_pattern[3] = look.cel ? std::clamp(look.cel_flat_albedo, 0.0f, 1.0f) : 0.0f;
     assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
     prepared.scene_block_offset = write_scene_block(scene);
     g_prepared_passes.push_back(prepared);
@@ -8861,6 +8886,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
         showing_surface_normals || pass.debug_channel == cvars::Debug_Channel::ink_normals;
 
   const float radians_per_degree = 3.14159265f / 180.0f;
+  const float boil_seconds       = passes.empty() ? 0.0f : passes[0].seconds;
+  const float weight_distance    = std::max(look.ink_weight_distance, 0.0f);
   const tonemap_push_constants_t tonemap_push{
       tonemap.exposure,
       look.ink ? 1.0f : 0.0f,
@@ -8870,7 +8897,13 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       std::clamp(look.ink_tint, 0.0f, 1.0f),
       std::clamp(look.rim, 0.0f, 1.0f),
       std::max(look.rim_width_pixels, 1),
-      showing_surface_normals ? 1 : 0};
+      showing_surface_normals ? 1 : 0,
+      std::max(look.ink_wobble_pixels, 0.0f),
+      std::max(look.ink_wobble_scale_pixels, 1.0f),
+      std::floor(boil_seconds * std::max(look.ink_boil_per_second, 0.0f)),
+      std::max(look.ink_weight_near, 1.0f),
+      weight_distance * (VIEW_FAR_PLANE - VIEW_NEAR_PLANE) / (VIEW_NEAR_PLANE * VIEW_FAR_PLANE),
+      weight_distance / VIEW_FAR_PLANE};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
 

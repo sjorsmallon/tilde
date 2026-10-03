@@ -251,6 +251,8 @@ int main()
         // Through Render and its clock, like a spawned zone.
         entity_type::Emancipated_Weapon_Entity,
         entity_type::Void_Entity,
+        // Through Enabled.
+        entity_type::Reveal_Light_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

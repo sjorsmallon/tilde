@@ -114,6 +114,12 @@ material_variant(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t 
   return g_material_variants.emplace(key, std::move(variant)).first->second;
 }
 
+void forget_material_variants(renderer::mesh_handle_t mesh)
+{
+  std::erase_if(g_material_variants,
+                [mesh](const auto& entry) { return (entry.first >> 16) == mesh.index; });
+}
+
 void preload_map_render_assets(const shared::map_t &map)
 {
   // Entities name their meshes through the generated manifest, so every id a

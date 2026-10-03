@@ -52,8 +52,8 @@ void main() {
     float weight1 = clamp(fragBlendWeight1, 0.0, 1.0);
     float weight0 = clamp(1.0 - weight1, 0.0, 1.0);
 
-    vec3 layers = texture(albedo, fragUV).rgb * weight0 +
-                  texture(blendAlbedo1, fragUV).rgb * weight1;
+    vec3 layers = cel_flat_albedo(albedo, fragUV, texture(albedo, fragUV).rgb) * weight0 +
+                  cel_flat_albedo(blendAlbedo1, fragUV, texture(blendAlbedo1, fragUV).rgb) * weight1;
 
     Surface surface;
     surface.albedo    = layers * fragColor;

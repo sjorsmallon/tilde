@@ -300,7 +300,8 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     wipe_timer{},
     passable_by(Team_Allegiance::Free_For_All),
     revealed_by_light(false),
-    solid_only_when_revealed(false)
+    solid_only_when_revealed(false),
+    erased_by_light(false)
 {
   type = entity_type::Geometry_Owner_Entity;
 }
@@ -423,6 +424,16 @@ Void_Entity::Void_Entity()
     render({.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Procedural_Blending, .color = {1.0f, 1.0f, 1.0f}}})
 {
   type = entity_type::Void_Entity;
+}
+
+Reveal_Light_Entity::Reveal_Light_Entity()
+  : switch_state{},
+    follows{},
+    kind(Reveal_Cone_Kind::Reveals),
+    range(1024.0f),
+    half_angle_degrees(25.0f)
+{
+  type = entity_type::Reveal_Light_Entity;
 }
 
 } // namespace entities

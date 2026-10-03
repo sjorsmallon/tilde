@@ -33,10 +33,13 @@ renderer::pipeline_state_t state_for(const entities::Material &material);
 // the same textures and base colours, drawn unlit, or translucent, or with the
 // depth test off. Cached per (mesh, state), so a per-frame call costs a lookup.
 //
-// The returned span is stable for the process and is meant to go straight into
-// mesh_draw_t::material_overrides.
+// The returned span is stable until forget_material_variants names its mesh and
+// is meant to go straight into mesh_draw_t::material_overrides.
 Span<const renderer::material_handle_t>
 material_variant(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t &state);
+
+// After renderer::update_mesh: the variants were built from the materials the handle held before.
+void forget_material_variants(renderer::mesh_handle_t mesh);
 
 // Register every mesh and texture this map can show, up front. Called from the
 // map-load tail on both the play and editor sides.

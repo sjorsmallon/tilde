@@ -68,6 +68,18 @@ private:
   // would reselect, and the panel the author was editing would be gone before
   // the target landed in it.
   uid_pick_t uid_pick;
+
+  // Ctrl+P arms it: the next viewport click names an entity and every selected ENTITY takes its
+  // position (Ctrl+Shift+P: its orientation too). Swallowed like the connection pick, so the selection stays.
+  struct snap_pick_t
+  {
+    bool armed            = false;
+    bool with_orientation = false;
+  };
+  snap_pick_t snap_pick;
+  void snap_selected_entities_onto(editor_context_t& ctx, shared::entity_uid_t target_uid,
+                                   bool with_orientation);
+
   void commit_picked_field_uid(editor_context_t& ctx, const field_pick_target_t& target,
                                shared::entity_uid_t picked);
 

@@ -70,7 +70,7 @@ Surface read_surface(vec3 geometric_normal, vec3 V)
     surface.metallic  = 0.0;
 #endif
     // fragColor is the material's base colour times the draw's tint, so it tints rather than replaces.
-    surface.albedo   = texture(albedo, surface.uv).rgb * fragColor;
+    surface.albedo   = cel_flat_albedo(albedo, surface.uv, texture(albedo, surface.uv).rgb) * fragColor;
     // Straight through, tinted by nothing: the tracer collects this same texel (lighting_def.md ss11).
     surface.emissive = texture(emissiveMap, surface.uv).rgb;
     return surface;

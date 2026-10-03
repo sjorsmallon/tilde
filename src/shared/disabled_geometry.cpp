@@ -50,6 +50,8 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
                          {
                            if (!geometry_owner_blocks(owner, mover_team))
                              return GEOMETRY_NOT_THERE;
+                           if (owner.erased_by_light)
+                             return GEOMETRY_SOLID_UNLESS_ERASED;
                            return owner.solid_only_when_revealed ? GEOMETRY_SOLID_WHERE_LIT
                                                                  : GEOMETRY_SOLID;
                          });

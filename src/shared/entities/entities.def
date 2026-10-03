@@ -34,10 +34,11 @@ Weapon :: enum {
     Modifier_Gun,
     Extending_Platform,
     Guided_Rocket,
-    Flashlight
+    Flashlight,
+    Eraser
 }
 
-Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead }
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead, Erase_Light }
 Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -57,6 +58,9 @@ Match_Request :: enum { None, Start_Match, End_Round, Restart_Round, End_Match }
 
 // mover_def.md ss2. Orientation always slerps; this is t alone. shared/tween.hpp is the curve.
 Easing :: enum { Linear, Smooth, In_Cubic, Out_Cubic, In_Out_Cubic }
+
+// What a reveal cone does to the geometry that answers to it (shared/reveal_light.hpp): a Flashlight's Reveals, an Eraser's Erases.
+Reveal_Cone_Kind :: enum { Reveals, Erases }
 
 // What is authoring a player's move instead of the model, while it lasts.
 // movement_def.md "Overrides": one override, one member. A second kind reuses
@@ -349,7 +353,7 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
 
-    // The Flashlight's toggle. The light is on only while this is set AND the Flashlight is in hand (shared::reveal_light_is_on).
+    // The Flashlight's and the Eraser's toggle. The light is on only while this is set AND one of them is in hand (shared::reveal_light_is_on).
     reveal_light_on:   bool             @Networked
     // The Flashlight's other toggle: the cone hangs above the head and points straight down (shared::reveal_cone_of).
     reveal_light_overhead: bool         @Networked
@@ -670,6 +674,8 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     revealed_by_light: bool = false @Networked @Editable
     // Its geometry is solid only inside a reveal cone; unset, it is solid wherever the switch says so.
     solid_only_when_revealed: bool = false @Networked @Editable
+    // Its geometry is neither drawn nor solid inside an Eraser's cone; the editor always draws it.
+    erased_by_light: bool = false @Networked @Editable
 }
 
 // middle-mouse button ping.
@@ -794,4 +800,15 @@ Void_Entity :: entity is Switchable, Touchable {
     switch_state: Enabled
     volume : Box_Volume = { half_extents = {64, 128, 8} }
     render:  Render = { mesh = .Box, material = { shader_type = .Procedural_Blending, color = {1, 1, 1} } }
+}
+
+// A Flashlight or an Eraser standing in the map: while switched on, a cone from its position down its orientation (shared/reveal_light.hpp).
+// `follows` names the Mover_Entity it rides, rigidly from where it was placed, as that mover's brushes do.
+Reveal_Light_Entity :: entity is Switchable {
+    switch_state:       Enabled
+    follows:            entity                      @Editable
+    kind:               Reveal_Cone_Kind = .Reveals @Editable
+    range:              f32 = 1024.0                @Editable
+    // Half the opening angle, at most 89 (MAX_REVEAL_HALF_ANGLE_DEGREES).
+    half_angle_degrees: f32 = 25.0                  @Editable
 }

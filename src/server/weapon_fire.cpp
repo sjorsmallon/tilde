@@ -377,6 +377,7 @@ void resolve_player_shot(
       return;
 
     case entities::Fire_Resolution::Reveal_Light:
+    case entities::Fire_Resolution::Erase_Light:
       player->reveal_light_on = !player->reveal_light_on;
       return;
 

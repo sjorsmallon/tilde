@@ -46,6 +46,7 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Extending_Platform",
   "Guided_Rocket",
   "Flashlight",
+  "Eraser",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -60,6 +61,7 @@ constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
   "Recall",
   "Reveal_Light",
   "Reveal_Light_Overhead",
+  "Erase_Light",
 };
 
 constexpr const char* Fire_Trigger_VALUE_NAMES[] = {
@@ -147,6 +149,11 @@ constexpr const char* Easing_VALUE_NAMES[] = {
   "In_Out_Cubic",
 };
 
+constexpr const char* Reveal_Cone_Kind_VALUE_NAMES[] = {
+  "Reveals",
+  "Erases",
+};
+
 constexpr const char* Movement_Override_VALUE_NAMES[] = {
   "None",
   "Reel",
@@ -158,8 +165,8 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 20}},
-  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 11}},
+  {"Weapon", {Weapon_VALUE_NAMES, 21}},
+  {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 12}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
@@ -172,6 +179,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Round_End_Reason", {Round_End_Reason_VALUE_NAMES, 6}},
   {"Match_Request", {Match_Request_VALUE_NAMES, 5}},
   {"Easing", {Easing_VALUE_NAMES, 5}},
+  {"Reveal_Cone_Kind", {Reveal_Cone_Kind_VALUE_NAMES, 2}},
   {"Movement_Override", {Movement_Override_VALUE_NAMES, 5}},
 };
 
@@ -616,7 +624,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[17]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -3401,6 +3409,15 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "erased_by_light",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, erased_by_light),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::erased_by_light),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Ping_Marker_Entity_FIELDS[] = {
@@ -4411,6 +4428,90 @@ constexpr field_info_t Void_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "follows",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, follows),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::follows),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "kind",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, kind),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::kind),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[16]},
+  {.name = "range",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, range),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::range),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "half_angle_degrees",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, half_angle_degrees),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::half_angle_degrees),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -4469,6 +4570,7 @@ Entity* construct_Timed_Movement_Modifier_Entity(void* memory) { return new (mem
 Entity* construct_Weapon_Emancipation_Grill_Entity(void* memory) { return new (memory) Weapon_Emancipation_Grill_Entity(); }
 Entity* construct_Emancipated_Weapon_Entity(void* memory) { return new (memory) Emancipated_Weapon_Entity(); }
 Entity* construct_Void_Entity(void* memory) { return new (memory) Void_Entity(); }
+Entity* construct_Reveal_Light_Entity(void* memory) { return new (memory) Reveal_Light_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -4509,6 +4611,7 @@ Entity* as_base_Timed_Movement_Modifier_Entity(void* memory) { return static_cas
 Entity* as_base_Weapon_Emancipation_Grill_Entity(void* memory) { return static_cast<Entity*>((Weapon_Emancipation_Grill_Entity*)memory); }
 Entity* as_base_Emancipated_Weapon_Entity(void* memory) { return static_cast<Entity*>((Emancipated_Weapon_Entity*)memory); }
 Entity* as_base_Void_Entity(void* memory) { return static_cast<Entity*>((Void_Entity*)memory); }
+Entity* as_base_Reveal_Light_Entity(void* memory) { return static_cast<Entity*>((Reveal_Light_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -4538,7 +4641,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 5}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 16384u, false, true, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 128u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
-  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 9}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
+  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 10}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
   {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 8}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 512u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 8192u, false, true, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
   {"path_node_entity", "Path Node", {Path_Node_Entity_FIELDS, 8}, (uint32_t)sizeof(Path_Node_Entity), (uint32_t)alignof(Path_Node_Entity), 0u, false, false, false, construct_Path_Node_Entity, as_base_Path_Node_Entity},
@@ -4551,6 +4654,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"weapon_emancipation_grill_entity", "Weapon Emancipation Grill", {Weapon_Emancipation_Grill_Entity_FIELDS, 7}, (uint32_t)sizeof(Weapon_Emancipation_Grill_Entity), (uint32_t)alignof(Weapon_Emancipation_Grill_Entity), 515u, false, true, false, construct_Weapon_Emancipation_Grill_Entity, as_base_Weapon_Emancipation_Grill_Entity},
   {"emancipated_weapon_entity", "Emancipated Weapon", {Emancipated_Weapon_Entity_FIELDS, 9}, (uint32_t)sizeof(Emancipated_Weapon_Entity), (uint32_t)alignof(Emancipated_Weapon_Entity), 512u, true, true, false, construct_Emancipated_Weapon_Entity, as_base_Emancipated_Weapon_Entity},
   {"void_entity", "Void", {Void_Entity_FIELDS, 7}, (uint32_t)sizeof(Void_Entity), (uint32_t)alignof(Void_Entity), 515u, false, true, false, construct_Void_Entity, as_base_Void_Entity},
+  {"reveal_light_entity", "Reveal Light", {Reveal_Light_Entity_FIELDS, 9}, (uint32_t)sizeof(Reveal_Light_Entity), (uint32_t)alignof(Reveal_Light_Entity), 2u, false, true, false, construct_Reveal_Light_Entity, as_base_Reveal_Light_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][16] = {
@@ -4594,9 +4698,10 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {(int32_t)offsetof(Weapon_Emancipation_Grill_Entity, volume), (int32_t)offsetof(Weapon_Emancipation_Grill_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Emancipation_Grill_Entity, render), -1, -1, -1, -1, -1, -1}, // Weapon_Emancipation_Grill_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Emancipated_Weapon_Entity, render), -1, -1, -1, -1, -1, -1}, // Emancipated_Weapon_Entity
   {(int32_t)offsetof(Void_Entity, volume), (int32_t)offsetof(Void_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Void_Entity, render), -1, -1, -1, -1, -1, -1}, // Void_Entity
+  {-1, (int32_t)offsetof(Reveal_Light_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Reveal_Light_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 23;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 24;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -4621,9 +4726,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Movement_Modifier_Entity,
   entity_type::Weapon_Emancipation_Grill_Entity,
   entity_type::Void_Entity,
+  entity_type::Reveal_Light_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 33;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 34;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4658,6 +4764,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Weapon_Emancipation_Grill_Entity,
   entity_type::Emancipated_Weapon_Entity,
   entity_type::Void_Entity,
+  entity_type::Reveal_Light_Entity,
 };
 
 } // namespace
@@ -4724,6 +4831,7 @@ const char* to_string(Weapon value)
     case Weapon::Extending_Platform: return "Extending_Platform";
     case Weapon::Guided_Rocket: return "Guided_Rocket";
     case Weapon::Flashlight: return "Flashlight";
+    case Weapon::Eraser: return "Eraser";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -4751,6 +4859,7 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Extending_Platform") return Weapon::Extending_Platform;
   if (text == "Guided_Rocket") return Weapon::Guided_Rocket;
   if (text == "Flashlight") return Weapon::Flashlight;
+  if (text == "Eraser") return Weapon::Eraser;
   return std::nullopt;
 }
 
@@ -4769,6 +4878,7 @@ const char* to_string(Fire_Resolution value)
     case Fire_Resolution::Recall: return "Recall";
     case Fire_Resolution::Reveal_Light: return "Reveal_Light";
     case Fire_Resolution::Reveal_Light_Overhead: return "Reveal_Light_Overhead";
+    case Fire_Resolution::Erase_Light: return "Erase_Light";
   }
   assert(false && "invalid Fire_Resolution");
   return "";
@@ -4787,6 +4897,7 @@ template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std:
   if (text == "Recall") return Fire_Resolution::Recall;
   if (text == "Reveal_Light") return Fire_Resolution::Reveal_Light;
   if (text == "Reveal_Light_Overhead") return Fire_Resolution::Reveal_Light_Overhead;
+  if (text == "Erase_Light") return Fire_Resolution::Erase_Light;
   return std::nullopt;
 }
 
@@ -5056,6 +5167,24 @@ template <> std::optional<Easing> try_from_string<Easing>(std::string_view text)
   return std::nullopt;
 }
 
+const char* to_string(Reveal_Cone_Kind value)
+{
+  switch (value)
+  {
+    case Reveal_Cone_Kind::Reveals: return "Reveals";
+    case Reveal_Cone_Kind::Erases: return "Erases";
+  }
+  assert(false && "invalid Reveal_Cone_Kind");
+  return "";
+}
+
+template <> std::optional<Reveal_Cone_Kind> try_from_string<Reveal_Cone_Kind>(std::string_view text)
+{
+  if (text == "Reveals") return Reveal_Cone_Kind::Reveals;
+  if (text == "Erases") return Reveal_Cone_Kind::Erases;
+  return std::nullopt;
+}
+
 const char* to_string(Movement_Override value)
 {
   switch (value)
@@ -5164,6 +5293,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Weapon_Emancipation_Grill_Entity: return new Weapon_Emancipation_Grill_Entity();
     case entity_type::Emancipated_Weapon_Entity: return new Emancipated_Weapon_Entity();
     case entity_type::Void_Entity: return new Void_Entity();
+    case entity_type::Reveal_Light_Entity: return new Reveal_Light_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -5224,6 +5354,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Weapon_Emancipation_Grill_Entity: delete static_cast<Weapon_Emancipation_Grill_Entity*>(entity); return;
     case entity_type::Emancipated_Weapon_Entity: delete static_cast<Emancipated_Weapon_Entity*>(entity); return;
     case entity_type::Void_Entity: delete static_cast<Void_Entity*>(entity); return;
+    case entity_type::Reveal_Light_Entity: delete static_cast<Reveal_Light_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -5238,6 +5369,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x40135945u;
+const uint32_t SCHEMA_HASH = 0xac6c5cf7u;
 
 } // namespace entities

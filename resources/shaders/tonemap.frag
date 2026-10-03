@@ -20,6 +20,12 @@ layout(push_constant) uniform Tonemap
     float rim_strength;
     int   rim_width_pixels;
     int   show_surface_normals;
+    float ink_wobble_pixels;
+    float ink_wobble_scale_pixels;
+    float ink_boil_frame;
+    float ink_weight_near;
+    float ink_weight_slope;
+    float ink_weight_offset;
 } tonemap;
 
 layout(location = 0) in vec2 in_uv;
@@ -86,11 +92,9 @@ float normal_turn(ivec2 pixel, ivec2 reach, ivec2 last_pixel)
 }
 
 // A line where the surface turns by more than r_ink_crease_degrees between neighbouring pixels.
-float crease_coverage()
+float crease_coverage(ivec2 pixel, int reach)
 {
-    ivec2 pixel = ivec2(gl_FragCoord.xy);
-    ivec2 size  = textureSize(scene_normal, 0);
-    int   reach = max(tonemap.ink_width_pixels, 1);
+    ivec2 size = textureSize(scene_normal, 0);
 
     float turn = max(normal_turn(pixel, ivec2(reach, 0), size - 1),
                      normal_turn(pixel, ivec2(0, reach), size - 1));
@@ -101,9 +105,8 @@ float crease_coverage()
 // zero there and non-zero at a crease or a silhouette.
 // x = the bend where this pixel is the FAR side of a jump or the bottom of a hollow,
 // y = the bend where it is the NEAR side or the top of a ridge, both in r_ink_threshold's units.
-vec2 depth_edges(int reach)
+vec2 depth_edges(ivec2 pixel, int reach)
 {
-    ivec2 pixel  = ivec2(gl_FragCoord.xy);
     ivec2 size   = textureSize(scene_depth, 0);
     float centre = texelFetch(scene_depth, pixel, 0).r;
 
@@ -122,16 +125,59 @@ float depth_jump_coverage(float edge)
     return smoothstep(tonemap.ink_threshold, tonemap.ink_threshold * 2.0, edge);
 }
 
-float outline_coverage()
+float ink_coverage(ivec2 pixel, int reach)
 {
-    vec2 edges = depth_edges(max(tonemap.ink_width_pixels, 1));
-    return depth_jump_coverage(max(edges.x, edges.y));
+    vec2 edges = depth_edges(pixel, reach);
+    return max(depth_jump_coverage(max(edges.x, edges.y)), crease_coverage(pixel, reach));
 }
 
-// The outline's own depth jump, its near side alone and r_rim_width pixels deep.
-float rim_coverage()
+// The outline's own depth jump, its near side alone.
+float rim_coverage(ivec2 pixel, int reach)
 {
-    return depth_jump_coverage(depth_edges(max(tonemap.rim_width_pixels, 1)).y);
+    return depth_jump_coverage(depth_edges(pixel, reach).y);
+}
+
+vec2 wobble_hash(vec2 cell)
+{
+    vec3 mixed = fract(vec3(cell.xyx) * vec3(0.1031, 0.1030, 0.0973) + tonemap.ink_boil_frame * 0.7131);
+    mixed += dot(mixed, mixed.yzx + 33.33);
+    return fract((mixed.xx + mixed.yz) * mixed.zy) * 2.0 - 1.0;
+}
+
+// The pixel the lines are looked up around: this one, strayed by up to r_ink_wobble pixels along a
+// waver r_ink_wobble_scale pixels long that r_ink_boil redraws.
+ivec2 wobbled_pixel()
+{
+    if (tonemap.ink_wobble_pixels <= 0.0)
+        return ivec2(gl_FragCoord.xy);
+
+    vec2 point = gl_FragCoord.xy / max(tonemap.ink_wobble_scale_pixels, 1.0);
+    vec2 cell  = floor(point);
+    vec2 blend = smoothstep(0.0, 1.0, point - cell);
+    vec2 stray = mix(mix(wobble_hash(cell), wobble_hash(cell + vec2(1.0, 0.0)), blend.x),
+                     mix(wobble_hash(cell + vec2(0.0, 1.0)), wobble_hash(cell + vec2(1.0, 1.0)), blend.x),
+                     blend.y);
+    return clamp(ivec2(gl_FragCoord.xy + stray * tonemap.ink_wobble_pixels), ivec2(0),
+                 textureSize(scene_depth, 0) - 1);
+}
+
+// How many times wider than its cvar a line is here: r_ink_weight_distance over the distance of the
+// nearest surface a line of the widest reach could belong to, from 1 up to r_ink_weight_near.
+float line_weight(ivec2 pixel)
+{
+    if (tonemap.ink_weight_near <= 1.0)
+        return 1.0;
+
+    ivec2 last_pixel = textureSize(scene_depth, 0) - 1;
+    int   reach      = int(ceil(float(max(tonemap.ink_width_pixels, 1)) * tonemap.ink_weight_near));
+    float nearest    = texelFetch(scene_depth, pixel, 0).r;
+    for (int index = 0; index < 4; ++index)
+    {
+        ivec2 offset = index < 2 ? ivec2(index * 2 - 1, 0) : ivec2(0, index * 2 - 5);
+        nearest = min(nearest, texelFetch(scene_depth, clamp(pixel + offset * reach, ivec2(0), last_pixel), 0).r);
+    }
+    return clamp((1.0 - nearest) * tonemap.ink_weight_slope + tonemap.ink_weight_offset, 1.0,
+                 tonemap.ink_weight_near);
 }
 
 void main()
@@ -146,12 +192,27 @@ void main()
     vec3 surface = pbr_neutral_tonemap(hdr);
     vec3 color   = surface;
 
+    ivec2 pixel  = wobbled_pixel();
+    float weight = tonemap.rim_strength > 0.0 || tonemap.ink_strength > 0.0 ? line_weight(pixel) : 1.0;
+
+    // A width between two whole reaches is the two lines blended, so a line thickens without a step.
     if (tonemap.rim_strength > 0.0)
-        color = mix(color, RIM_COLOR, rim_coverage() * tonemap.rim_strength);
+    {
+        float reach    = float(max(tonemap.rim_width_pixels, 1)) * weight;
+        float coverage = rim_coverage(pixel, int(reach));
+        if (fract(reach) > 0.0)
+            coverage = mix(coverage, rim_coverage(pixel, int(reach) + 1), fract(reach));
+        color = mix(color, RIM_COLOR, coverage * tonemap.rim_strength);
+    }
 
     if (tonemap.ink_strength > 0.0)
-        color = mix(color, surface * tonemap.ink_tint,
-                    max(outline_coverage(), crease_coverage()) * tonemap.ink_strength);
+    {
+        float reach    = float(max(tonemap.ink_width_pixels, 1)) * weight;
+        float coverage = ink_coverage(pixel, int(reach));
+        if (fract(reach) > 0.0)
+            coverage = mix(coverage, ink_coverage(pixel, int(reach) + 1), fract(reach));
+        color = mix(color, surface * tonemap.ink_tint, coverage * tonemap.ink_strength);
+    }
 
     fragment_color = vec4(color, 1.0);
 }

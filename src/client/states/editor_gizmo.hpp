@@ -68,6 +68,8 @@ class Editor_Gizmo
 {
 public:
   float snap_step = editor::MAJOR_GRID_STEP;
+  // Degrees a ring drag snaps to; 0 turns freely.
+  float rotation_snap_degrees = editor::ROTATION_SNAP;
 
   // Where the gizmo sits, what it may do, and what translation snapping
   // measures against. Call every frame the gizmo is idle; it is ignored during a

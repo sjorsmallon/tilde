@@ -78,9 +78,10 @@ enum class Weapon : uint8_t
   Extending_Platform = 17,
   Guided_Rocket = 18,
   Flashlight = 19,
+  Eraser = 20,
 };
 
-constexpr uint32_t Weapon_COUNT = 20;
+constexpr uint32_t Weapon_COUNT = 21;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -98,9 +99,10 @@ enum class Fire_Resolution : uint8_t
   Recall = 8,
   Reveal_Light = 9,
   Reveal_Light_Overhead = 10,
+  Erase_Light = 11,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 11;
+constexpr uint32_t Fire_Resolution_COUNT = 12;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);
@@ -262,6 +264,17 @@ constexpr uint32_t Easing_COUNT = 5;
 const char* to_string(Easing value);
 template <> std::optional<Easing> try_from_string<Easing>(std::string_view text);
 
+enum class Reveal_Cone_Kind : uint8_t
+{
+  Reveals = 0,
+  Erases = 1,
+};
+
+constexpr uint32_t Reveal_Cone_Kind_COUNT = 2;
+
+const char* to_string(Reveal_Cone_Kind value);
+template <> std::optional<Reveal_Cone_Kind> try_from_string<Reveal_Cone_Kind>(std::string_view text);
+
 enum class Movement_Override : uint8_t
 {
   None = 0,
@@ -294,10 +307,11 @@ enum class enum_type : uint16_t
   Round_End_Reason = 13,
   Match_Request = 14,
   Easing = 15,
-  Movement_Override = 16,
+  Reveal_Cone_Kind = 16,
+  Movement_Override = 17,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 17;
+constexpr uint32_t ENUM_TYPE_COUNT = 18;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -346,11 +360,12 @@ enum class entity_type : uint16_t
   Weapon_Emancipation_Grill_Entity = 37,
   Emancipated_Weapon_Entity = 38,
   Void_Entity = 39,
+  Reveal_Light_Entity = 40,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 40;
+constexpr uint32_t ENTITY_TYPE_COUNT = 41;
 
 enum class component_type : uint16_t
 {
@@ -479,6 +494,12 @@ template <> struct enum_traits<entities::Easing>
 {
   static constexpr uint32_t count = entities::Easing_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Easing;
+};
+
+template <> struct enum_traits<entities::Reveal_Cone_Kind>
+{
+  static constexpr uint32_t count = entities::Reveal_Cone_Kind_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Reveal_Cone_Kind;
 };
 
 template <> struct enum_traits<entities::Movement_Override>

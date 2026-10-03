@@ -1,4 +1,5 @@
 #include "entities/generated/entities/path_node_entity_generated.hpp"
+#include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "movers.hpp"
 
 #include "entity_system.hpp"
@@ -60,6 +61,16 @@ std::vector<path_refusal_t> validate_map_paths(const map_t& map)
                                                    describe_map_entity(map, entry.uid),
                                                    describe_map_entity(map, mover->follow.from))});
     }
+    else if (const entities::Reveal_Light_Entity* light =
+                 entities::entity_as<entities::Reveal_Light_Entity>(entry.entity.get()))
+    {
+      const map_entity_t* followed = map.find_by_uid(light->follows);
+      if (light->follows != null_entity_uid &&
+          (followed == nullptr || !entities::entity_as<entities::Mover_Entity>(followed->entity.get())))
+        refusals.push_back({entry.uid, std::format("{}: follows {}, which is not a mover",
+                                                   describe_map_entity(map, entry.uid),
+                                                   describe_map_entity(map, light->follows))});
+    }
   }
   return refusals;
 }
@@ -86,6 +97,12 @@ linalg::vec3f apply_mover_pose(const path_pose_t& rest, const path_pose_t& pose,
                                const linalg::vec3f& point)
 {
   return pose.position + linalg::rotate(rotation_from_rest(rest, pose), point - rest.position);
+}
+
+path_pose_t carry_pose_by_mover(const path_pose_t& rest, const path_pose_t& pose, const path_pose_t& placed)
+{
+  return {.position    = apply_mover_pose(rest, pose, placed.position),
+          .orientation = rotation_from_rest(rest, pose) * placed.orientation};
 }
 
 path_pose_t blend_path_poses(const path_pose_t& from, const path_pose_t& to, float t)

@@ -78,7 +78,7 @@ void main() {
 
     // A blockout face has no roughness: r_debug_channel = reflection shows the captures as a MIRROR.
     Surface surface;
-    surface.albedo    = texture(albedo, fragUV).rgb * fragColor;
+    surface.albedo    = cel_flat_albedo(albedo, fragUV, texture(albedo, fragUV).rgb) * fragColor;
     surface.normal    = N;
     surface.geometric_normal = N;
     surface.uv        = fragUV;

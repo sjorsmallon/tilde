@@ -126,17 +126,29 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   cel_shadow_tint;
     // x = r_cel_fill_strength, y = r_cel_fill_spacing, z = r_cel_fill_edge, w = r_cel_hatch_width.
     vec4   cel_fill;
-    // x = r_cel_fill as one of CEL_FILL_*, y = r_cel_fill_tone, z = r_cel_fill_material.
+    // x = r_cel_fill as one of CEL_FILL_*, y = r_cel_fill_shadow_tone_dark, z = r_cel_fill_material, w = r_cel_flat_albedo.
     vec4   cel_fill_pattern;
-    // x = r_cel_fill_tone_light, y = r_cel_fill_ambient_dark, z = r_cel_fill_ambient_light, w = r_cel_fill_tone_lit.
+    // x = r_cel_fill_shadow_tone_light, y = r_cel_fill_ambient_dark, z = r_cel_fill_ambient_light, w = r_cel_fill_tone_lit.
     vec4   cel_fill_tone_range;
     // x = r_cel_speckle, y = r_cel_speckle_spacing, z = r_cel_speckle_density, w = r_cel_speckle_radius.
     vec4   cel_speckle;
-    // x = r_cel_dither3d_size_variability, y = r_cel_dither3d_contrast, z = r_cel_dither3d_stretch_smoothness.
+    // x = r_cel_dither3d_size_variability, y = r_cel_dither3d_contrast, z = r_cel_dither3d_stretch_smoothness,
+    // w = r_cel_halftone.
     vec4   cel_dither3d;
-    // x = how many of `reveal_cones` are live.
+    // x = r_cel_pebble, y = r_cel_pebble_spacing, z = r_cel_pebble_density, w = r_cel_pebble_size.
+    vec4   cel_pebble;
+    // x = r_cel_pebble_irregularity, y = r_cel_pebble_width, z = r_cel_halftone_paper.
+    vec4   cel_pebble_shape;
+    // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
 } scene;
+
+// r_cel_flat_albedo: a material's colour drawn towards its smallest mip, the mean of the whole texture.
+vec3 cel_flat_albedo(sampler2D map, vec2 uv, vec3 sampled)
+{
+    float flatness = scene.cel_fill_pattern.w;
+    return flatness > 0.0 ? mix(sampled, textureLod(map, uv, 1000.0).rgb, flatness) : sampled;
+}
 
 #endif // SCENE_GLSL

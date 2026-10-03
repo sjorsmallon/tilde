@@ -574,6 +574,18 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+    // The Flashlight's two toggles on the same two player flags; the cone it casts Erases (shared/reveal_light.hpp).
+    {.weapon                  = entities::Weapon::Eraser,
+     .display_name            = "Eraser",
+     .slot                    = entities::Inventory_Slot::Utility_1,
+     .fire_interval_seconds   = 0.f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Erase_Light},
+     .secondary_fire          = {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -730,6 +742,7 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   case entities::Fire_Resolution::Recall:
   case entities::Fire_Resolution::Reveal_Light:
   case entities::Fire_Resolution::Reveal_Light_Overhead:
+  case entities::Fire_Resolution::Erase_Light:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
            pilot_is_zero && contact_is_none && contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Hitscan:

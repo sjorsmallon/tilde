@@ -3,6 +3,7 @@
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/jump_pad_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "entity_editor_traits.hpp"
@@ -206,6 +207,30 @@ void draw_spot_light_reach(pass_builder_t& draws, const entities::Spot_Light_Ent
   draws.debug.line(position, cone_end, dim);
 }
 
+void draw_reveal_light_reach(pass_builder_t& draws, const entities::Reveal_Light_Entity* light,
+                             const linalg::vec3& position, color_t color)
+{
+  if (light->range <= 0.f)
+    return;
+
+  const linalg::basis_t basis    = linalg::basis_from(light->orientation);
+  const linalg::vec3    cone_end = position + basis.forward * light->range;
+  const color_t         dim      = with_alpha(color, LIGHT_VOLUME_ALPHA);
+  const float           radius   =
+      light->range * std::tan(linalg::to_radians(std::clamp(light->half_angle_degrees, 0.f,
+                                                            shared::MAX_REVEAL_HALF_ANGLE_DEGREES)));
+
+  draws.debug.wire_circle(cone_end, radius, basis.forward, dim);
+  for (int quadrant = 0; quadrant < 4; ++quadrant)
+  {
+    const float        angle  = linalg::to_radians(90.f * (float)quadrant);
+    const linalg::vec3 offset = basis.right * (std::cos(angle) * radius) +
+                                basis.up * (std::sin(angle) * radius);
+    draws.debug.line(position, cone_end + offset, dim);
+  }
+  draws.debug.line(position, cone_end, dim);
+}
+
 // No falloff volume to draw -- a directional light has no position that shading
 // reads. So the gizmo says the one thing that IS true of it: parallel rays, all
 // the same length, pointing the way the rotate gizmo put them. The middle ray
@@ -358,13 +383,12 @@ void jump_pad_reach(const entities::Entity* e, pass_builder_t& draws,
                     settings.gravity);
 }
 
-void launcher_diagram(const entities::Entity* e, pass_builder_t& draws,
+void aim_arrow_diagram(const entities::Entity* e, pass_builder_t& draws,
                       const linalg::vec3& position, color_t color,
                       const entity_draw_settings_t&)
 {
-  constexpr float LAUNCHER_AIM_ARROW_LENGTH = 96.f;
-  draws.debug.arrow(position, position + linalg::forward(e->orientation) * LAUNCHER_AIM_ARROW_LENGTH,
-                    color);
+  constexpr float AIM_ARROW_LENGTH = 96.f;
+  draws.debug.arrow(position, position + linalg::forward(e->orientation) * AIM_ARROW_LENGTH, color);
 }
 
 void point_light_diagram(const entities::Entity* e, pass_builder_t& draws,
@@ -389,6 +413,21 @@ void directional_light_diagram(const entities::Entity* e, pass_builder_t& draws,
 {
   draw_directional_light_shape(
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
+}
+
+void reveal_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+                          const linalg::vec3& position, color_t color,
+                          const entity_draw_settings_t&)
+{
+  draw_light_direction_stub(draws, e->orientation, position, color);
+}
+
+void reveal_light_reach(const entities::Entity* e, pass_builder_t& draws,
+                        const linalg::vec3& position, color_t color,
+                        const entity_draw_settings_t&)
+{
+  draw_reveal_light_reach(
+      draws, static_cast<const entities::Reveal_Light_Entity*>(e), position, color);
 }
 
 void point_light_reach(const entities::Entity* e, pass_builder_t& draws,
@@ -498,9 +537,9 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Geometry_Owner_Entity, .icon = assets::texture_asset::wall_hammer},
     {.type = entity_type::Ping_Marker_Entity}, // runtime only; the render component draws it
     {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::icon_timer},
-    {.type = entity_type::Path_Node_Entity, .color = colors::green},
+    {.type = entity_type::Path_Node_Entity, .color = colors::green, .draw_diagram = &aim_arrow_diagram},
     {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = assets::texture_asset::move},
-    {.type = entity_type::Launcher_Entity, .color = colors::orange, .draw_diagram = &launcher_diagram},
+    {.type = entity_type::Launcher_Entity, .color = colors::orange, .draw_diagram = &aim_arrow_diagram},
     {.type = entity_type::Movement_Modifier_Entity, .color = colors::green, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Remnant_Entity}, // runtime only
     {.type = entity_type::Modifier_Shot_Entity}, // runtime only
@@ -508,6 +547,12 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Weapon_Emancipation_Grill_Entity, .color = colors::red, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Emancipated_Weapon_Entity}, // runtime only
     {.type = entity_type::Void_Entity, .color = colors::purple, .draw_diagram = &box_volume_diagram},
+
+    {.type         = entity_type::Reveal_Light_Entity,
+     .color        = colors::cyan,
+     .icon         = assets::texture_asset::spot_light,
+     .draw_diagram = &reveal_light_diagram,
+     .draw_reach   = &reveal_light_reach},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

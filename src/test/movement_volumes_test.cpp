@@ -437,6 +437,15 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
   shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled[1] == GEOMETRY_NOT_THERE, "switched off, a lit-only owner's geometry is not there");
+
+  system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value       = true;
+  system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_revealed = false;
+  system.get<entities::Geometry_Owner_Entity>(owner)->erased_by_light          = true;
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  check(disabled[1] == GEOMETRY_SOLID_UNLESS_ERASED,
+        "an erasable owner's geometry is solid unless erased for a mover it blocks");
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
+  check(disabled[1] == GEOMETRY_NOT_THERE, "and not there for the team that passes it");
 }
 
 static void test_a_drawn_mover_carries_its_rider_by_the_same_fraction()

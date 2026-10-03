@@ -59,6 +59,10 @@ struct path_refusal_t
 [[nodiscard]] linalg::vec3f apply_mover_pose(const path_pose_t& rest, const path_pose_t& pose,
                                              const linalg::vec3f& point);
 
+// What rides a mover that is not a brush: `placed` is where it was authored, with the mover at rest.
+[[nodiscard]] path_pose_t carry_pose_by_mover(const path_pose_t& rest, const path_pose_t& pose,
+                                              const path_pose_t& placed);
+
 // A draw between two ticks: t in [0, 1] across ONE tick, so nlerp is exact enough.
 [[nodiscard]] path_pose_t blend_path_poses(const path_pose_t& from, const path_pose_t& to, float t);
 

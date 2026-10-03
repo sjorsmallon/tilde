@@ -279,6 +279,45 @@ void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
+void Selection_Tool::snap_selected_entities_onto(editor_context_t& ctx, shared::entity_uid_t target_uid,
+                                                 bool with_orientation)
+{
+  const shared::map_entity_t* target = ctx.map->find_by_uid(target_uid);
+  if (target == nullptr || !target->entity)
+    return;
+  const linalg::vec3  position    = target->entity->position;
+  const linalg::quatf orientation = target->entity->orientation;
+
+  transaction_t transaction;
+  size_t        moved = 0;
+  for (shared::entity_uid_t uid : selected_uids)
+  {
+    shared::map_entity_t* entry = ctx.map->find_by_uid(uid);
+    if (uid == target_uid || entry == nullptr || !entry->entity)
+      continue;
+
+    const entity_snapshot_t before = snapshot_entity(entry->entity.get());
+    entry->entity->position = position;
+    if (with_orientation)
+      entry->entity->orientation = orientation;
+    transaction.add_modified_from_diff(uid, before, entry->entity.get());
+    ++moved;
+  }
+
+  if (moved == 0)
+  {
+    hud::set_announcement("Nothing snapped: the selection holds no other entity.");
+    return;
+  }
+
+  ctx.transaction_system.push("Snap to entity", std::move(transaction));
+  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
+    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+  hud::set_announcement(std::format("Snapped {} entit{} onto {}{}", moved, moved == 1 ? "y" : "ies",
+                                    shared::describe_map_entity(*ctx.map, target_uid),
+                                    with_orientation ? ", orientation too" : ""));
+}
+
 void Selection_Tool::snap_selection_to_surface_below(editor_context_t& ctx)
 {
   if (selected_uids.empty() || !ctx.map || !ctx.bvh)
@@ -1159,6 +1198,7 @@ void Selection_Tool::on_enable(editor_context_t& ctx)
   selected_uids.clear();
   editor_gizmo.clear_target();
   uid_pick.disarm();
+  snap_pick = {};
   click_consumed_by_gesture = false;
 }
 
@@ -1169,6 +1209,7 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
   editor_gizmo.clear_target();
   cancel_paste();
   uid_pick.disarm();
+  snap_pick = {};
   click_consumed_by_gesture = false;
 }
 
@@ -1213,7 +1254,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   // radius without this is a different kind of finicky -- it hits SOMETHING every
   // time and you find out which afterwards. The label is the same spelling the
   // panel and the loader's refusals use.
-  if (uid_pick.armed && ctx.map)
+  if ((uid_pick.armed || snap_pick.armed) && ctx.map)
   {
     const ImVec2 mouse = ImGui::GetMousePos();
     const std::optional<shared::entity_uid_t> candidate =
@@ -1244,7 +1285,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   // proximity hit on a light in front of a wall is visibly a choice rather than
   // a surprise. Not drawn while another gesture owns the cursor -- a paste
   // preview, a drag or an armed pick each already say what the click will do.
-  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !paste_is_pending &&
+  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !snap_pick.armed && !paste_is_pending &&
       !is_dragging_box && !is_dragging_object && !editor_gizmo.is_dragging())
   {
     const std::optional<linalg::vec3> anchor =
@@ -1785,6 +1826,7 @@ void Selection_Tool::on_update(editor_context_t& ctx,
 
   const float grid_step  = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
   editor_gizmo.snap_step = input::current_modifiers().alt ? 0.0f : grid_step;
+  editor_gizmo.rotation_snap_degrees = input::current_modifiers().alt ? 0.0f : editor::ROTATION_SNAP;
 
   const gizmo_view_t gizmo_view = make_gizmo_view();
 
@@ -2024,6 +2066,21 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
 {
   if (e.button == input::mouse_button_t::Left)
   {
+    if (snap_pick.armed && ctx.map)
+    {
+      click_consumed_by_gesture = true;
+      const bool with_orientation = snap_pick.with_orientation;
+      snap_pick = {};
+
+      const std::optional<shared::entity_uid_t> target = try_pick_entity_near_cursor(
+          ctx, {(float)e.position.x, (float)e.position.y});
+      if (target)
+        snap_selected_entities_onto(ctx, *target, with_orientation);
+      else
+        hud::set_announcement("No entity near the cursor — the snap is cancelled.");
+      return;
+    }
+
     // Before anything else, because every branch below either selects or drags,
     // and a pick must do neither.
     if (uid_pick.armed && ctx.map)
@@ -2362,6 +2419,25 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
     return;
   }
 
+  if (e.key == input::key_t::P && e.mods.ctrl)
+  {
+    const bool holds_an_entity =
+        ctx.map && std::any_of(selected_uids.begin(), selected_uids.end(), [&](shared::entity_uid_t uid)
+                               { return ctx.map->find_by_uid(uid) != nullptr; });
+    if (!holds_an_entity)
+    {
+      hud::set_announcement("Select the entities to move first, then Ctrl+P.");
+      return;
+    }
+    uid_pick.disarm();
+    cancel_paste();
+    snap_pick = {.armed = true, .with_orientation = e.mods.shift};
+    hud::set_announcement(e.mods.shift
+                              ? "Click the entity to snap to (position and orientation). Esc cancels."
+                              : "Click the entity to snap to. Esc cancels.");
+    return;
+  }
+
   if (e.key == input::key_t::G && e.mods.ctrl)
   {
     if (e.mods.shift)
@@ -2389,6 +2465,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
                                         uid_pick.queued_rows.size() +
                                             (uid_pick.armed ? 1u : 0u)));
     uid_pick.disarm();
+    snap_pick = {};
     cancel_paste();
     return;
   }

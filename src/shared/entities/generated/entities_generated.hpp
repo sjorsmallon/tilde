@@ -50,3 +50,4 @@
 #include "entities/weapon_emancipation_grill_entity_generated.hpp"
 #include "entities/emancipated_weapon_entity_generated.hpp"
 #include "entities/void_entity_generated.hpp"
+#include "entities/reveal_light_entity_generated.hpp"

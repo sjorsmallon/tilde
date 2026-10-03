@@ -6,9 +6,17 @@
 #include "imgui.h"
 #include "log.hpp"
 
+#include <algorithm>
+#include <cstdio>
+#include <filesystem>
 #include <format>
 #include <fstream>
+#include <string>
 #include <string_view>
+#include <vector>
+
+// look_file := { line }
+// line      := cvar_name ' ' value '\n'
 
 namespace client
 {
@@ -16,7 +24,11 @@ namespace client
 namespace
 {
 
-constexpr const char* LOOK_FILE_PATH = "look.cfg";
+constexpr const char* LOOK_DIRECTORY = "looks";
+constexpr const char* LOOK_EXTENSION = ".look";
+
+char                     g_look_name[64] = "look";
+std::vector<std::string> g_look_names;
 
 struct look_row_t
 {
@@ -39,12 +51,15 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Cel", cvars::cvar_id::r_cel_softness, 0.0f, 0.5f},
     {"Cel", cvars::cvar_id::r_cel_shadow_red, 0.0f, 1.0f, 3, "r_cel_shadow rgb"},
     {"Cel", cvars::cvar_id::r_cel_bands, 0.0f, 8.0f},
+    {"Cel", cvars::cvar_id::r_cel_flat_albedo},
+    {"Fill", cvars::cvar_id::r_cel_halftone, 0.0f, 4.0f},
+    {"Fill", cvars::cvar_id::r_cel_halftone_paper, 0.0f, 4.0f},
     {"Fill", cvars::cvar_id::r_cel_fill},
     {"Fill", cvars::cvar_id::r_cel_fill_strength},
     {"Fill", cvars::cvar_id::r_cel_fill_spacing, 2.0f, 32.0f},
     {"Fill", cvars::cvar_id::r_cel_fill_edge, 0.0f, 4.0f},
-    {"Fill", cvars::cvar_id::r_cel_fill_tone, 0.0f, 0.75f},
-    {"Fill", cvars::cvar_id::r_cel_fill_tone_light, 0.0f, 0.75f},
+    {"Fill", cvars::cvar_id::r_cel_fill_shadow_tone_dark, 0.0f, 0.75f},
+    {"Fill", cvars::cvar_id::r_cel_fill_shadow_tone_light, 0.0f, 0.75f},
     {"Fill", cvars::cvar_id::r_cel_fill_ambient_dark, 0.0f, 0.5f},
     {"Fill", cvars::cvar_id::r_cel_fill_ambient_light, 0.0f, 2.0f},
     {"Fill", cvars::cvar_id::r_cel_fill_tone_lit, 0.0f, 0.75f},
@@ -57,11 +72,22 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Speckle", cvars::cvar_id::r_cel_speckle_spacing, 2.0f, 40.0f},
     {"Speckle", cvars::cvar_id::r_cel_speckle_density},
     {"Speckle", cvars::cvar_id::r_cel_speckle_radius, 0.0f, 0.5f},
+    {"Pebble", cvars::cvar_id::r_cel_pebble},
+    {"Pebble", cvars::cvar_id::r_cel_pebble_spacing, 4.0f, 256.0f},
+    {"Pebble", cvars::cvar_id::r_cel_pebble_density},
+    {"Pebble", cvars::cvar_id::r_cel_pebble_size, 0.0f, 0.5f},
+    {"Pebble", cvars::cvar_id::r_cel_pebble_irregularity},
+    {"Pebble", cvars::cvar_id::r_cel_pebble_width, 0.5f, 8.0f},
     {"Ink", cvars::cvar_id::r_ink},
     {"Ink", cvars::cvar_id::r_ink_threshold, 0.0f, 20.0f},
     {"Ink", cvars::cvar_id::r_ink_crease_degrees, 1.0f, 90.0f},
     {"Ink", cvars::cvar_id::r_ink_width, 1.0f, 8.0f},
     {"Ink", cvars::cvar_id::r_ink_tint},
+    {"Ink", cvars::cvar_id::r_ink_wobble, 0.0f, 8.0f},
+    {"Ink", cvars::cvar_id::r_ink_wobble_scale, 4.0f, 200.0f},
+    {"Ink", cvars::cvar_id::r_ink_boil, 0.0f, 24.0f},
+    {"Ink", cvars::cvar_id::r_ink_weight_near, 1.0f, 8.0f},
+    {"Ink", cvars::cvar_id::r_ink_weight_distance, 16.0f, 2048.0f},
     {"Rim", cvars::cvar_id::r_rim},
     {"Rim", cvars::cvar_id::r_rim_width, 1.0f, 16.0f},
     {"Flashlight", cvars::cvar_id::r_flashlight_intensity, 0.0f, 200.0f},
@@ -136,12 +162,40 @@ void draw_value_row(cvars::cvar_state_t& state, const look_row_t& row)
     ImGui::SetTooltip("%s", info.description);
 }
 
-[[nodiscard]] bool try_write_look_file(const cvars::cvar_state_t& state)
+[[nodiscard]] std::string look_file_path(std::string_view name)
 {
-  std::ofstream file(LOOK_FILE_PATH, std::ios::trunc);
+  return std::format("{}/{}{}", LOOK_DIRECTORY, name, LOOK_EXTENSION);
+}
+
+[[nodiscard]] std::vector<std::string> list_look_names()
+{
+  std::vector<std::string> names;
+  std::error_code          error;
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(LOOK_DIRECTORY, error))
+    if (entry.is_regular_file() && entry.path().extension() == LOOK_EXTENSION)
+      names.push_back(entry.path().stem().string());
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
+[[nodiscard]] bool is_look_cvar(cvars::cvar_id id)
+{
+  for (const look_row_t& row : LOOK_ROWS)
+    for (uint32_t channel = 0; channel < row.channel_count; ++channel)
+      if (channel_of(row, channel) == id)
+        return true;
+  return false;
+}
+
+[[nodiscard]] bool try_write_look_file(const cvars::cvar_state_t& state, const std::string& path)
+{
+  std::error_code error;
+  std::filesystem::create_directories(LOOK_DIRECTORY, error);
+  std::ofstream file(path, std::ios::trunc);
   if (!file.is_open())
   {
-    log_error("look panel: could not open '{}' for writing", LOOK_FILE_PATH);
+    log_error("look panel: could not open '{}' for writing", path);
     return false;
   }
   for (const look_row_t& row : LOOK_ROWS)
@@ -161,6 +215,42 @@ void revert_look_to_defaults(cvars::cvar_state_t& state)
       const cvars::cvar_id id = channel_of(row, channel);
       shared::revert_cvars_to_defaults(state, Span<const cvars::cvar_id>(&id, 1));
     }
+}
+
+[[nodiscard]] bool try_load_look_file(cvars::cvar_state_t& state, const std::string& path)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    log_error("look panel: could not open '{}' for reading", path);
+    return false;
+  }
+  revert_look_to_defaults(state);
+  std::string line;
+  for (uint32_t line_number = 1; std::getline(file, line); ++line_number)
+  {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    if (line.empty())
+      continue;
+    const size_t separator = line.find(' ');
+    if (separator == std::string::npos)
+    {
+      log_error("look panel: {}:{}: '{}' is not a 'name value' line", path, line_number, line);
+      continue;
+    }
+    const std::string_view               name  = std::string_view(line).substr(0, separator);
+    const std::string_view               value = std::string_view(line).substr(separator + 1);
+    const std::optional<cvars::cvar_id> id    = cvars::try_find_cvar(name);
+    if (!id || !is_look_cvar(*id))
+    {
+      log_error("look panel: {}:{}: '{}' is not a look cvar, line skipped", path, line_number, name);
+      continue;
+    }
+    if (!cvars::try_cvar_from_text(state, *id, value))
+      log_error("look panel: {}:{}: '{}' is not a value for '{}'", path, line_number, value, name);
+  }
+  return true;
 }
 
 } // namespace
@@ -195,12 +285,45 @@ void draw_look_panel(cvars::cvar_state_t& state)
     ImGui::PopItemWidth();
 
     ImGui::Separator();
-    if (ImGui::Button("Export"))
-      hud::set_announcement(try_write_look_file(state)
-                                ? std::format("Look written to {}", LOOK_FILE_PATH)
-                                : std::format("Could not write {}", LOOK_FILE_PATH));
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::InputText("##look_name", g_look_name, sizeof(g_look_name));
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Write every value above to %s as console lines", LOOK_FILE_PATH);
+      ImGui::SetTooltip("The look's name: Export writes %s/<name>%s", LOOK_DIRECTORY, LOOK_EXTENSION);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(g_look_name[0] == '\0');
+    if (ImGui::Button("Export"))
+    {
+      const std::string path = look_file_path(g_look_name);
+      hud::set_announcement(try_write_look_file(state, path) ? std::format("Look written to {}", path)
+                                                             : std::format("Could not write {}", path));
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Write every value above to the named file as 'name value' lines");
+    ImGui::SameLine();
+    if (ImGui::Button("Load"))
+    {
+      g_look_names = list_look_names();
+      ImGui::OpenPopup("##load_look");
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Pick a file from %s/: defaults first, then every line in it", LOOK_DIRECTORY);
+    if (ImGui::BeginPopup("##load_look"))
+    {
+      if (g_look_names.empty())
+        ImGui::TextDisabled("(no %s files in %s/)", LOOK_EXTENSION, LOOK_DIRECTORY);
+      for (const std::string& name : g_look_names)
+        if (ImGui::Selectable(name.c_str()))
+        {
+          const std::string path = look_file_path(name);
+          const bool        loaded = try_load_look_file(state, path);
+          if (loaded)
+            std::snprintf(g_look_name, sizeof(g_look_name), "%s", name.c_str());
+          hud::set_announcement(loaded ? std::format("Look loaded from {}", path)
+                                       : std::format("Could not read {}", path));
+        }
+      ImGui::EndPopup();
+    }
     ImGui::SameLine();
     if (ImGui::Button("Defaults"))
       revert_look_to_defaults(state);

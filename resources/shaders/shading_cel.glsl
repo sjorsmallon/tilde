@@ -70,14 +70,16 @@ int   cel_fill_pattern()  { return int(scene.cel_fill_pattern.x); } // r_cel_fil
 float cel_fill_strength() { return scene.cel_fill.x; }              // r_cel_fill_strength
 float cel_fill_spacing()  { return scene.cel_fill.y; }              // r_cel_fill_spacing, pixels
 float cel_fill_edge()     { return scene.cel_fill.z; }              // r_cel_fill_edge
-float cel_fill_tone()     { return scene.cel_fill_pattern.y; }      // r_cel_fill_tone
+float cel_fill_shadow_tone_dark()     { return scene.cel_fill_pattern.y; }      // r_cel_fill_shadow_tone_dark
 float cel_hatch_width()   { return scene.cel_fill.w; }              // r_cel_hatch_width, pixels
 
-float cel_fill_tone_light()    { return scene.cel_fill_tone_range.x; } // r_cel_fill_tone_light
+float cel_fill_shadow_tone_light()    { return scene.cel_fill_tone_range.x; } // r_cel_fill_shadow_tone_light
 float cel_fill_ambient_dark()  { return scene.cel_fill_tone_range.y; } // r_cel_fill_ambient_dark
 float cel_fill_ambient_light() { return scene.cel_fill_tone_range.z; } // r_cel_fill_ambient_light
 float cel_fill_tone_lit()      { return scene.cel_fill_tone_range.w; } // r_cel_fill_tone_lit
 float cel_fill_material()      { return scene.cel_fill_pattern.z; }    // r_cel_fill_material
+float cel_halftone_white()     { return scene.cel_dither3d.w; }        // r_cel_halftone
+float cel_halftone_paper()     { return scene.cel_pebble_shape.z; }    // r_cel_halftone_paper
 
 const vec3 CEL_FILL_COLOR = vec3(0.0);
 
@@ -234,11 +236,73 @@ float speckle_coverage(vec2 plane, Pixel_Footprint footprint)
            lattice_visibility(footprint);
 }
 
+float cel_pebble_strength()     { return scene.cel_pebble.x; }       // r_cel_pebble
+float cel_pebble_spacing()      { return scene.cel_pebble.y; }       // r_cel_pebble_spacing, world units
+float cel_pebble_density()      { return scene.cel_pebble.z; }       // r_cel_pebble_density
+float cel_pebble_size()         { return scene.cel_pebble.w; }       // r_cel_pebble_size, of the spacing
+float cel_pebble_irregularity() { return scene.cel_pebble_shape.x; } // r_cel_pebble_irregularity
+float cel_pebble_line_width()   { return scene.cel_pebble_shape.y; } // r_cel_pebble_width, pixels
+
+const vec3 CEL_PEBBLE_COLOR = vec3(0.0);
+
+// A pebble this many pixels in radius is gone, and one this many is fully drawn. Each leaves at its
+// own size, up to PEBBLE_LAST_LEAVES_AT times these, so they thin out one by one and not along a line.
+const float PEBBLE_FADE_START_PIXELS = 0.75;
+const float PEBBLE_FADE_END_PIXELS   = 1.25;
+const float PEBBLE_LAST_LEAVES_AT    = 6.0;
+
+// Pebbles: r_cel_pebble_density of the squares of a WORLD-sized grid hold one inked outline,
+// its place, size, squash, tilt and wobble all hashed from the square, so it stays where it is.
+float pebble_coverage(vec2 plane, Pixel_Footprint footprint)
+{
+    float spacing = cel_pebble_spacing();
+    ivec2 square  = ivec2(floor(plane / spacing));
+
+    uint placement = lattice_hash(square);
+    if (float(placement >> 20) / 4096.0 >= cel_pebble_density())
+        return 0.0;
+
+    uint  form   = lattice_hash(ivec2(placement & 0xffffu, placement >> 16));
+    float sized  = float(form & 255u) / 255.0;
+    float squash = float((form >> 8) & 255u) / 255.0;
+    float tilt   = float((form >> 16) & 255u) / 255.0 * PI;
+    float phase  = float(form >> 24) / 255.0 * 2.0 * PI;
+
+    float largest = cel_pebble_size() * spacing;
+    float room    = max(0.5 * spacing - largest - footprint.world_per_pixel * cel_pebble_line_width(), 0.0);
+    vec2  nudge   = vec2(placement & 1023u, (placement >> 10) & 1023u) / 1023.0 * 2.0 - 1.0;
+    vec2  centre  = (vec2(square) + 0.5) * spacing + nudge * room;
+
+    float long_radius  = largest * mix(0.5, 1.0, sized);
+    float short_radius = long_radius * (1.0 - 0.6 * cel_pebble_irregularity() * squash);
+
+    vec2  from_centre     = plane - centre;
+    float centre_distance = length(from_centre);
+    vec2  outward         = centre_distance > 1e-9 ? from_centre / centre_distance : vec2(1.0, 0.0);
+
+    vec2  along       = vec2(cos(tilt), sin(tilt));
+    vec2  tilted      = vec2(dot(outward, along), dot(outward, vec2(-along.y, along.x)));
+    float angle       = atan(tilted.y, tilted.x);
+    float wobble      = 1.0 - 0.15 * cel_pebble_irregularity() *
+                                  (1.0 + 0.6 * sin(2.0 * angle + phase) + 0.4 * sin(3.0 * angle - 2.0 * phase));
+    float edge_radius = wobble / length(tilted / vec2(long_radius, short_radius));
+
+    float world_per_pixel = length(vec2(dot(footprint.across, outward), dot(footprint.down, outward)));
+    float pixels_to_line  = abs(centre_distance - edge_radius) / max(world_per_pixel, 1e-9);
+    float half_width      = cel_pebble_line_width() * 0.5;
+    float line            = 1.0 - smoothstep(half_width - 0.5, half_width + 0.5, pixels_to_line);
+
+    float radius_pixels = long_radius / footprint.world_per_pixel;
+    float leaves_at     = mix(1.0, PEBBLE_LAST_LEAVES_AT, float((form >> 12) & 255u) / 255.0);
+    return line * smoothstep(PEBBLE_FADE_START_PIXELS * leaves_at, PEBBLE_FADE_END_PIXELS * leaves_at,
+                             radius_pixels);
+}
+
 // Discs on a square lattice touch at pi / 4 of the face; a darker tone than this is not a dot pattern.
 const float DITHER_DARKEST_TONE = 0.75;
 
 // Ink dots of ONE size covering `tone` of the face: a lighter tone spreads them further
-// apart, by the same nesting that keeps them apart on screen. At r_cel_fill_tone they
+// apart, by the same nesting that keeps them apart on screen. At r_cel_fill_shadow_tone_dark they
 // are r_cel_fill_spacing pixels apart.
 float dither_coverage(vec2 plane, Pixel_Footprint footprint, float tone)
 {
@@ -246,7 +310,7 @@ float dither_coverage(vec2 plane, Pixel_Footprint footprint, float tone)
     if (tone <= 0.001)
         return 0.0;
 
-    float full_tone = clamp(cel_fill_tone(), 0.001, DITHER_DARKEST_TONE);
+    float full_tone = clamp(cel_fill_shadow_tone_dark(), 0.001, DITHER_DARKEST_TONE);
     float spacing   = cel_fill_spacing() * sqrt(full_tone / tone);
     float dots      = nested_dot_coverage(plane, footprint, spacing, sqrt(tone / PI), 0.0, 1.0);
     return mix(tone, dots, lattice_visibility(footprint));
@@ -273,7 +337,7 @@ float shadow_tone(vec3 ambient)
     float lightness = clamp((luminance(ambient) - cel_fill_ambient_dark()) /
                                 (cel_fill_ambient_light() - cel_fill_ambient_dark()),
                             0.0, 1.0);
-    return mix(cel_fill_tone(), cel_fill_tone_light(), lightness);
+    return mix(cel_fill_shadow_tone_dark(), cel_fill_shadow_tone_light(), lightness);
 }
 
 // How far the material's own maps put this spot from a flat, open surface: 1 in a crack its
@@ -296,20 +360,35 @@ vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position
     vec3 albedo = surface.albedo;
     if (cel_speckle_strength() > 0.0)
         albedo = mix(albedo, CEL_SPECKLE_COLOR, speckle_coverage(plane, footprint) * cel_speckle_strength());
+    if (cel_pebble_strength() > 0.0)
+        albedo = mix(albedo, CEL_PEBBLE_COLOR, pebble_coverage(plane, footprint) * cel_pebble_strength());
 
     // Direct and ambient are banded TOGETHER, so a light's own falloff steps with the shadow it fades into.
-    vec3 color = albedo * band_light(direct.rgb + ambient);
+    vec3 light = band_light(direct.rgb + ambient);
+    vec3 color = albedo * light;
     if (cel_fill_pattern() == CEL_FILL_NONE)
         return color;
 
     float direct_luminance = luminance(direct.rgb);
     float in_shadow        = 1.0 - cel_band(direct_luminance / max(luminance(ambient), 0.0001), cel_fill_edge());
 
-    float facing = clamp(direct.a / max(direct_luminance, 0.0001), 0.0, 1.0);
-    float tone   = in_shadow * shadow_tone(band_light(ambient)) +
-                   (1.0 - in_shadow) * (1.0 - facing) * cel_fill_tone_lit() +
-                   material_relief(surface) * cel_fill_material();
-    tone         = min(tone, DITHER_DARKEST_TONE);
+    float tone;
+    if (cel_halftone_white() > 0.0 && cel_fill_pattern() != CEL_FILL_HATCH)
+    {
+        // The surface as r_cel_halftone_paper of light would show it; the dots cover what it lacks of r_cel_halftone.
+        float level = luminance(light);
+        color      *= cel_halftone_paper() / max(level, 1e-6);
+        tone        = clamp((1.0 - level / cel_halftone_white()) / max(cel_fill_strength(), 0.001), 0.0, 1.0);
+        tone        = min(tone + material_relief(surface) * cel_fill_material(), 1.0);
+    }
+    else
+    {
+        float facing = clamp(direct.a / max(direct_luminance, 0.0001), 0.0, 1.0);
+        tone         = in_shadow * shadow_tone(band_light(ambient)) +
+                       (1.0 - in_shadow) * (1.0 - facing) * cel_fill_tone_lit() +
+                       material_relief(surface) * cel_fill_material();
+        tone         = min(tone, DITHER_DARKEST_TONE);
+    }
 
     float ink;
     if (cel_fill_pattern() == CEL_FILL_HATCH)

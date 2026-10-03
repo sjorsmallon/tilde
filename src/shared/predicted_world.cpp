@@ -47,7 +47,8 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
 void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
                         predicted_world_storage_t& out)
 {
-  collect_reveal_cones(session.entity_system, settings.reveal_cone, null_entity_uid,
+  collect_reveal_cones(session.entity_system, session.path_links, session.mover_rests,
+                       settings.reveal_cone, settings.tick, settings.tickrate_hz, null_entity_uid,
                        out.reveal_cones);
 }
 

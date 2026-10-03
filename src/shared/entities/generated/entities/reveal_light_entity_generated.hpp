@@ -1,6 +1,6 @@
 // Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
-// Geometry_Owner_Entity: what it IS, and what it can be TOLD.
+// Reveal_Light_Entity: what it IS, and what it can be TOLD.
 //
 // The includes are relative to THIS file rather than to src/shared: a
 // quoted include is resolved against the including file's directory first.
@@ -12,35 +12,34 @@
 namespace entities
 {
 
-struct Geometry_Owner_Entity : Entity
+struct Reveal_Light_Entity : Entity
 {
-  static constexpr entity_type static_type = entity_type::Geometry_Owner_Entity;
+  static constexpr entity_type static_type = entity_type::Reveal_Light_Entity;
 
-  Geometry_Owner_Entity();
+  Reveal_Light_Entity();
 
   Enabled switch_state;
-  shared::entity_uid_t wipe_timer;
-  Team_Allegiance passable_by;
-  bool revealed_by_light;
-  bool solid_only_when_revealed;
-  bool erased_by_light;
+  shared::entity_uid_t follows;
+  Reveal_Cone_Kind kind;
+  float range;
+  float half_angle_degrees;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no
 // destructor. A field that breaks either of these corrupts or leaks
 // silently, so the check lives here rather than in a test nobody runs
 // before the pool does.
-static_assert(std::is_trivially_copyable_v<Geometry_Owner_Entity>,
-              "Geometry_Owner_Entity must stay trivially copyable: pooled storage, snapshot "
+static_assert(std::is_trivially_copyable_v<Reveal_Light_Entity>,
+              "Reveal_Light_Entity must stay trivially copyable: pooled storage, snapshot "
               "baselines and undo all copy entities with memcpy");
-static_assert(std::is_trivially_destructible_v<Geometry_Owner_Entity>,
-              "Geometry_Owner_Entity must stay trivially destructible: the entity pool frees a "
+static_assert(std::is_trivially_destructible_v<Reveal_Light_Entity>,
+              "Reveal_Light_Entity must stay trivially destructible: the entity pool frees a "
               "slot by overwriting it and runs no destructor");
-static_assert(std::is_base_of_v<Entity, Geometry_Owner_Entity>,
-              "Geometry_Owner_Entity must derive from Entity: the generated tables hand out "
+static_assert(std::is_base_of_v<Entity, Reveal_Light_Entity>,
+              "Reveal_Light_Entity must derive from Entity: the generated tables hand out "
               "Entity* for every entity type");
 
-// --- what a Geometry_Owner_Entity accepts ---
+// --- what a Reveal_Light_Entity accepts ---
 //
 // Its `is` list is: Switchable.
 // No handler for a verb this type does not accept EXISTS, so calling one

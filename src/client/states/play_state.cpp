@@ -310,6 +310,18 @@ static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const 
   };
 }
 
+static shared::path_pose_t drawn_reveal_light_pose(const client_context_t &ctx,
+                                                   const entities::Reveal_Light_Entity &light)
+{
+  const shared::path_pose_t placed = {.position = light.position, .orientation = light.orientation};
+  const entities::Mover_Entity* mover =
+      ctx.world.session.entity_system.get<entities::Mover_Entity>(light.follows);
+  if (mover == nullptr)
+    return placed;
+  return shared::carry_pose_by_mover(rest_frame_of(ctx, *mover), drawn_mover_poses(ctx, *mover).drawn,
+                                     placed);
+}
+
 // where are we? what's the carry here?
 static vec3f drawn_local_feet(const client_context_t &ctx)
 {
@@ -475,13 +487,15 @@ static bool local_movement_is_allowed(const client_context_t &ctx)
 }
 
 
-static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge)
+static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge, bool mouse_buttons_allowed)
 {
   if (edge.device == input::input_device_t::Mouse_Motion)
     return 0; // travel, not a transition -- it steers, it does not cut a step
 
   if (edge.device == input::input_device_t::Mouse_Button)
   {
+    if (!mouse_buttons_allowed)
+      return 0;
     switch (edge.button)
     {
     case input::mouse_button_t::Left:   return Button::Fire;
@@ -695,6 +709,7 @@ static void play_predicted_local_gunshot(
     case entities::Fire_Resolution::Canopy:
     case entities::Fire_Resolution::Reveal_Light:
     case entities::Fire_Resolution::Reveal_Light_Overhead:
+    case entities::Fire_Resolution::Erase_Light:
     case entities::Fire_Resolution::Recall: // nothing to do. no effect.
       return;
 
@@ -1140,7 +1155,9 @@ static void build_predicted_world_for_input(client_context_t& ctx, play_frame_t&
   shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
 
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  shared::collect_reveal_cones(ctx.world.session.entity_system, settings.reveal_cone,
+  shared::collect_reveal_cones(ctx.world.session.entity_system, ctx.world.session.path_links,
+                               ctx.world.session.mover_rests, settings.reveal_cone, settings.tick,
+                               settings.tickrate_hz,
                                my_player != nullptr ? my_player->entity_id : shared::null_entity_uid,
                                frame.predicted_world_storage.reveal_cones);
   if (my_player != nullptr && local_reveal_light_is_on_entering(ctx, *my_player, input_number))
@@ -1150,6 +1167,7 @@ static void build_predicted_world_for_input(client_context_t& ctx, play_frame_t&
         shared::reveal_cone_of(own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw,
                                view.pitch,
                                local_reveal_light_is_overhead_entering(ctx, *my_player, input_number),
+                               *shared::try_reveal_light_in_hand(ctx.world.session.entity_system, *my_player),
                                settings.reveal_cone)));
   }
 
@@ -1917,12 +1935,15 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
     if (input::is_key_down(input::key_t::G))     buttons |= Button::Throw;
 
 
-    if (input::is_mouse_down(input::mouse_button_t::Left))
-      buttons |= Button::Fire;
-    if (input::is_mouse_down(input::mouse_button_t::Right))
-      buttons |= Button::Secondary_Fire;
-    if (input::is_mouse_down(input::mouse_button_t::Middle))
-      buttons |= Button::Ping;
+    if (mouse_look_allowed)
+    {
+      if (input::is_mouse_down(input::mouse_button_t::Left))
+        buttons |= Button::Fire;
+      if (input::is_mouse_down(input::mouse_button_t::Right))
+        buttons |= Button::Secondary_Fire;
+      if (input::is_mouse_down(input::mouse_button_t::Middle))
+        buttons |= Button::Ping;
+    }
 
     // Sent even though zoom is drawn client-side: the server needs it the
     // moment scoping costs movement speed or accuracy, and it has to arrive
@@ -2135,7 +2156,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
         uint64_t buttons_after_this_frames_edges = live_tracked_buttons;
         for (const input::input_edge_t& edge : input::frame_input_edges())
         {
-          const uint64_t bit = subtick_button_for_input_edge(edge);
+          const uint64_t bit = subtick_button_for_input_edge(edge, mouse_look_allowed);
           if (bit == 0)
             continue;
           buttons_after_this_frames_edges = edge.down
@@ -2174,7 +2195,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
           continue;
         }
 
-        const uint64_t bit = subtick_button_for_input_edge(edge);
+        const uint64_t bit = subtick_button_for_input_edge(edge, mouse_look_allowed);
         if (bit == 0)
           continue;
 
@@ -3152,7 +3173,8 @@ explosion_parameters(uint64_t explosion_index, const vec3f& position, float time
   return parameters;
 }
 
-// Whose lights reveal for THIS viewer: everyone's. Only-your-own is this function without its remote loop.
+// Whose lights reveal for THIS viewer: everyone's and the map's. Only-your-own is this function without its remote loop.
+// Past the shader's cap the nearest to the camera are the ones drawn.
 void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& camera,
                                 bool camera_is_my_eye, std::vector<shared::reveal_cone_t>& out)
 {
@@ -3163,13 +3185,14 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
   if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
       my_player != nullptr && local_reveal_light_is_on(ctx, *my_player))
   {
-    const bool overhead = local_reveal_light_is_overhead(ctx, *my_player);
+    const bool                       overhead = local_reveal_light_is_overhead(ctx, *my_player);
+    const entities::Reveal_Cone_Kind kind     = *shared::try_reveal_light_in_hand(system, *my_player);
     out.push_back(camera_is_my_eye
                       ? shared::reveal_cone_of(camera.position, camera.yaw, camera.pitch, overhead,
-                                               settings)
+                                               kind, settings)
                       : shared::reveal_cone_of(drawn_local_feet(ctx) + eye_above_feet,
                                                my_player->view_angle_yaw,
-                                               my_player->view_angle_pitch, overhead, settings));
+                                               my_player->view_angle_pitch, overhead, kind, settings));
   }
 
   for (const auto& [slot, remote_player] : ctx.replication.remote_players)
@@ -3181,7 +3204,22 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
       continue;
     out.push_back(shared::reveal_cone_of(remote_player.render_position + eye_above_feet,
                                          remote_player.render_yaw, remote_player.render_pitch,
-                                         player->reveal_light_overhead, settings));
+                                         player->reveal_light_overhead,
+                                         *shared::try_reveal_light_in_hand(system, *player), settings));
+  }
+
+  for (const entities::Reveal_Light_Entity& light : system.entities_of<entities::Reveal_Light_Entity>())
+    if (light.switch_state.value)
+      out.push_back(shared::reveal_cone_of(light, drawn_reveal_light_pose(ctx, light)));
+
+  if (out.size() > renderer::MAX_SCENE_REVEAL_CONES)
+  {
+    const auto distance_to_camera = [&camera](const shared::reveal_cone_t& cone)
+    { return linalg::length(cone.apex - camera.position); };
+    std::sort(out.begin(), out.end(),
+              [&](const shared::reveal_cone_t& left, const shared::reveal_cone_t& right)
+              { return distance_to_camera(left) < distance_to_camera(right); });
+    out.resize(renderer::MAX_SCENE_REVEAL_CONES);
   }
 }
 
@@ -3318,11 +3356,16 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         team_wall = {.color    = color_from_vec3(GHOST_TINTS[owner->passable_by].tint),
                      .passable = !shared::geometry_owner_blocks(*owner, my_team)};
 
+      renderer::light_cut_t light_cut = renderer::light_cut_t::none;
+      if (owner != nullptr && owner->erased_by_light)
+        light_cut = renderer::light_cut_t::erased;
+      else if (owner != nullptr && owner->revealed_by_light)
+        light_cut = renderer::light_cut_t::revealed;
+
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
-                    clock_wipe_of(ctx, owner_uid, entry.value), team_wall,
-                    owner != nullptr && owner->revealed_by_light);
+                    clock_wipe_of(ctx, owner_uid, entry.value), team_wall, light_cut);
     }
   }
 

@@ -247,12 +247,15 @@ struct cvar_state_t
   float r_cel_shadow_green;
   float r_cel_shadow_blue;
   float r_cel_bands;
+  float r_cel_flat_albedo;
+  float r_cel_halftone;
+  float r_cel_halftone_paper;
   Cel_Fill r_cel_fill;
   float r_cel_fill_strength;
   float r_cel_fill_spacing;
   float r_cel_fill_edge;
-  float r_cel_fill_tone;
-  float r_cel_fill_tone_light;
+  float r_cel_fill_shadow_tone_dark;
+  float r_cel_fill_shadow_tone_light;
   float r_cel_fill_ambient_dark;
   float r_cel_fill_ambient_light;
   float r_cel_fill_tone_lit;
@@ -265,11 +268,22 @@ struct cvar_state_t
   float r_cel_speckle_spacing;
   float r_cel_speckle_density;
   float r_cel_speckle_radius;
+  float r_cel_pebble;
+  float r_cel_pebble_spacing;
+  float r_cel_pebble_density;
+  float r_cel_pebble_size;
+  float r_cel_pebble_irregularity;
+  float r_cel_pebble_width;
   bool r_ink;
   float r_ink_threshold;
   float r_ink_crease_degrees;
   int32_t r_ink_width;
   float r_ink_tint;
+  float r_ink_wobble;
+  float r_ink_wobble_scale;
+  float r_ink_boil;
+  float r_ink_weight_near;
+  float r_ink_weight_distance;
   float r_rim;
   int32_t r_rim_width;
   float r_flashlight_intensity;
@@ -433,60 +447,74 @@ enum class cvar_id : uint16_t
   r_cel_shadow_green = 122,
   r_cel_shadow_blue = 123,
   r_cel_bands = 124,
-  r_cel_fill = 125,
-  r_cel_fill_strength = 126,
-  r_cel_fill_spacing = 127,
-  r_cel_fill_edge = 128,
-  r_cel_fill_tone = 129,
-  r_cel_fill_tone_light = 130,
-  r_cel_fill_ambient_dark = 131,
-  r_cel_fill_ambient_light = 132,
-  r_cel_fill_tone_lit = 133,
-  r_cel_fill_material = 134,
-  r_cel_hatch_width = 135,
-  r_cel_dither3d_size_variability = 136,
-  r_cel_dither3d_contrast = 137,
-  r_cel_dither3d_stretch_smoothness = 138,
-  r_cel_speckle = 139,
-  r_cel_speckle_spacing = 140,
-  r_cel_speckle_density = 141,
-  r_cel_speckle_radius = 142,
-  r_ink = 143,
-  r_ink_threshold = 144,
-  r_ink_crease_degrees = 145,
-  r_ink_width = 146,
-  r_ink_tint = 147,
-  r_rim = 148,
-  r_rim_width = 149,
-  r_flashlight_intensity = 150,
-  r_flashlight_red = 151,
-  r_flashlight_green = 152,
-  r_flashlight_blue = 153,
-  r_flashlight_inner = 154,
-  r_fxaa = 155,
-  r_fxaa_subpixel = 156,
-  r_look_panel = 157,
-  sv_skybox = 158,
-  debug_show_collisions = 159,
-  debug_show_hitboxes = 160,
-  debug_show_navmesh = 161,
-  debug_show_box_volumes = 162,
-  debug_hide_geometry = 163,
-  cl_shot_debug_seconds = 164,
-  debug_show_entity_counts = 165,
-  net_snapshot_debug = 166,
-  sv_event_debug = 167,
-  cl_event_debug = 168,
-  sv_reliable_debug = 169,
-  sv_io_debug = 170,
-  replay_keyframe_seconds = 171,
-  sv_replay_auto = 172,
-  sv_ghost_record = 173,
+  r_cel_flat_albedo = 125,
+  r_cel_halftone = 126,
+  r_cel_halftone_paper = 127,
+  r_cel_fill = 128,
+  r_cel_fill_strength = 129,
+  r_cel_fill_spacing = 130,
+  r_cel_fill_edge = 131,
+  r_cel_fill_shadow_tone_dark = 132,
+  r_cel_fill_shadow_tone_light = 133,
+  r_cel_fill_ambient_dark = 134,
+  r_cel_fill_ambient_light = 135,
+  r_cel_fill_tone_lit = 136,
+  r_cel_fill_material = 137,
+  r_cel_hatch_width = 138,
+  r_cel_dither3d_size_variability = 139,
+  r_cel_dither3d_contrast = 140,
+  r_cel_dither3d_stretch_smoothness = 141,
+  r_cel_speckle = 142,
+  r_cel_speckle_spacing = 143,
+  r_cel_speckle_density = 144,
+  r_cel_speckle_radius = 145,
+  r_cel_pebble = 146,
+  r_cel_pebble_spacing = 147,
+  r_cel_pebble_density = 148,
+  r_cel_pebble_size = 149,
+  r_cel_pebble_irregularity = 150,
+  r_cel_pebble_width = 151,
+  r_ink = 152,
+  r_ink_threshold = 153,
+  r_ink_crease_degrees = 154,
+  r_ink_width = 155,
+  r_ink_tint = 156,
+  r_ink_wobble = 157,
+  r_ink_wobble_scale = 158,
+  r_ink_boil = 159,
+  r_ink_weight_near = 160,
+  r_ink_weight_distance = 161,
+  r_rim = 162,
+  r_rim_width = 163,
+  r_flashlight_intensity = 164,
+  r_flashlight_red = 165,
+  r_flashlight_green = 166,
+  r_flashlight_blue = 167,
+  r_flashlight_inner = 168,
+  r_fxaa = 169,
+  r_fxaa_subpixel = 170,
+  r_look_panel = 171,
+  sv_skybox = 172,
+  debug_show_collisions = 173,
+  debug_show_hitboxes = 174,
+  debug_show_navmesh = 175,
+  debug_show_box_volumes = 176,
+  debug_hide_geometry = 177,
+  cl_shot_debug_seconds = 178,
+  debug_show_entity_counts = 179,
+  net_snapshot_debug = 180,
+  sv_event_debug = 181,
+  cl_event_debug = 182,
+  sv_reliable_debug = 183,
+  sv_io_debug = 184,
+  replay_keyframe_seconds = 185,
+  sv_replay_auto = 186,
+  sv_ghost_record = 187,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 174;
+constexpr uint32_t CVAR_COUNT = 188;
 
 enum class command_id : uint16_t
 {

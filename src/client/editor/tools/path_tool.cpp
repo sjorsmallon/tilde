@@ -1,5 +1,6 @@
 #include "entities/generated/entities/mover_entity_generated.hpp"
 #include "entities/generated/entities/path_node_entity_generated.hpp"
+#include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "path_tool.hpp"
 
 #include "../../../shared/entities/entity_reflection.hpp"
@@ -29,6 +30,8 @@ constexpr float MARKER_PICK_RADIUS_IN_PIXELS = 14.0f;
 constexpr float NODE_MARKER_RADIUS          = 6.0f;
 constexpr float ACTIVE_NODE_MARKER_RADIUS   = 10.0f;
 constexpr color_t NODE_GHOST_COLOR{90, 200, 220};
+constexpr float NODE_AIM_ARROW_LENGTH       = 48.0f;
+constexpr float RIDING_LIGHT_ARROW_LENGTH   = 96.0f;
 
 const entities::Path_Node_Entity* node_in_map(const shared::map_t& map, shared::entity_uid_t uid)
 {
@@ -245,6 +248,7 @@ void Path_Tool::on_update(editor_context_t& ctx, const viewport_state_t& view, f
 
   const float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
   gizmo.snap_step = input::current_modifiers().alt ? 0.0f : grid_step;
+  gizmo.rotation_snap_degrees = input::current_modifiers().alt ? 0.0f : editor::ROTATION_SNAP;
 
   if (gizmo.is_dragging())
   {
@@ -577,6 +581,19 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
         draw_geometry(draws, geometry->value, uid, ctx.map->materials, ctx.map->lightmap, &moved_by);
     if (rest)
       draw_posed_box(draws, rest_frame, pose, *rest, colors::magenta);
+
+    for (const entities::Reveal_Light_Entity& light :
+         scratch.system.entities_of<entities::Reveal_Light_Entity>())
+    {
+      if (light.follows != mover.entity_id)
+        continue;
+      const shared::path_pose_t carried = shared::carry_pose_by_mover(
+          rest_frame, pose, {.position = light.position, .orientation = light.orientation});
+      draws.debug.wire_sphere(carried.position, NODE_MARKER_RADIUS, colors::cyan);
+      draws.debug.arrow(carried.position,
+                        carried.position + linalg::forward(carried.orientation) * RIDING_LIGHT_ARROW_LENGTH,
+                        colors::cyan);
+    }
   }
 }
 
@@ -591,6 +608,9 @@ void Path_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
     const bool active = node_uid == active_node;
     draws.debug.wire_sphere(node->position, active ? ACTIVE_NODE_MARKER_RADIUS : NODE_MARKER_RADIUS,
                             active ? colors::yellow : colors::green);
+    draws.debug.arrow(node->position,
+                      node->position + linalg::forward(node->orientation) * NODE_AIM_ARROW_LENGTH,
+                      active ? colors::yellow : colors::green);
 
     if (const entities::Path_Node_Entity* next = scratch.system.get<entities::Path_Node_Entity>(node->next))
       draws.debug.backed_text((node->position + next->position) * 0.5f, segment_label(*node).c_str(), colors::white);

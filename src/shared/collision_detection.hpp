@@ -138,9 +138,12 @@ bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& o
 //
 // The byte has a third value. GEOMETRY_SOLID_WHERE_LIT is not there for a ray or a sweep either;
 // only a hull reads it apart, and collides where a reveal cone touches (collect_collision_candidates).
-inline constexpr uint8_t GEOMETRY_SOLID           = 0;
-inline constexpr uint8_t GEOMETRY_NOT_THERE       = 1;
-inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LIT = 2;
+// And a fourth, its inverse: GEOMETRY_SOLID_UNLESS_ERASED is solid for a ray or a sweep, and a hull
+// passes it only where an erase cone holds everything it touches.
+inline constexpr uint8_t GEOMETRY_SOLID               = 0;
+inline constexpr uint8_t GEOMETRY_NOT_THERE           = 1;
+inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LIT     = 2;
+inline constexpr uint8_t GEOMETRY_SOLID_UNLESS_ERASED = 3;
 
 [[nodiscard]] inline uint8_t
 geometry_state_of(Span<const uint8_t> disabled_geometry, Collision_Id id)
@@ -153,7 +156,8 @@ geometry_state_of(Span<const uint8_t> disabled_geometry, Collision_Id id)
 [[nodiscard]] inline bool
 collision_is_disabled(Span<const uint8_t> disabled_geometry, Collision_Id id)
 {
-  return geometry_state_of(disabled_geometry, id) != GEOMETRY_SOLID;
+  const uint8_t state = geometry_state_of(disabled_geometry, id);
+  return state != GEOMETRY_SOLID && state != GEOMETRY_SOLID_UNLESS_ERASED;
 }
 
 bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,

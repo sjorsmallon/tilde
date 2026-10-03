@@ -26,19 +26,23 @@ namespace client
 namespace
 {
 
-constexpr const char* PACKING_IMAGE_PREFIX = "lightmap_packing";
-constexpr const char* PAGES_IMAGE_PREFIX = "lightmap_pages";
-constexpr const char* MASK_IMAGE_PREFIX = "lightmap_mask";
-constexpr const char* VISIBILITY_IMAGE_PREFIX = "lightmap_visibility";
-constexpr const char* INDIRECT_IMAGE_PREFIX = "lightmap_indirect";
-constexpr const char* INDIRECT_DIRECTION_IMAGE_PREFIX = "lightmap_indirect_direction";
-constexpr const char* COMPARE_CPU_IMAGE_PREFIX = "lightmap_compare_cpu";
-constexpr const char* COMPARE_GPU_IMAGE_PREFIX = "lightmap_compare_gpu";
-constexpr const char* COMPARE_DIFFERENCE_IMAGE_PREFIX = "lightmap_compare_difference";
-constexpr const char* COMPARE_DIRECT_CPU_IMAGE_PREFIX = "lightmap_compare_direct_cpu";
-constexpr const char* COMPARE_DIRECT_GPU_IMAGE_PREFIX = "lightmap_compare_direct_gpu";
+constexpr const char* PACKING_IMAGE_PREFIX = "lightmap_debug/lightmap_packing";
+constexpr const char* PAGES_IMAGE_PREFIX = "lightmap_debug/lightmap_pages";
+constexpr const char* MASK_IMAGE_PREFIX = "lightmap_debug/lightmap_mask";
+constexpr const char* VISIBILITY_IMAGE_PREFIX = "lightmap_debug/lightmap_visibility";
+constexpr const char* INDIRECT_IMAGE_PREFIX = "lightmap_debug/lightmap_indirect";
+constexpr const char* INDIRECT_DIRECTION_IMAGE_PREFIX =
+    "lightmap_debug/lightmap_indirect_direction";
+constexpr const char* COMPARE_CPU_IMAGE_PREFIX = "lightmap_debug/lightmap_compare_cpu";
+constexpr const char* COMPARE_GPU_IMAGE_PREFIX = "lightmap_debug/lightmap_compare_gpu";
+constexpr const char* COMPARE_DIFFERENCE_IMAGE_PREFIX =
+    "lightmap_debug/lightmap_compare_difference";
+constexpr const char* COMPARE_DIRECT_CPU_IMAGE_PREFIX =
+    "lightmap_debug/lightmap_compare_direct_cpu";
+constexpr const char* COMPARE_DIRECT_GPU_IMAGE_PREFIX =
+    "lightmap_debug/lightmap_compare_direct_gpu";
 constexpr const char* COMPARE_DIRECT_DIFFERENCE_IMAGE_PREFIX =
-    "lightmap_compare_direct_difference";
+    "lightmap_debug/lightmap_compare_direct_difference";
 
 // The two solvers' pictures side by side and their difference, the way the
 // debug pages already are written.

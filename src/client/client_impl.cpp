@@ -265,12 +265,15 @@ bool Tick()
     look.cel_shadow_tint  = {cvars.r_cel_shadow_red, cvars.r_cel_shadow_green,
                              cvars.r_cel_shadow_blue};
     look.cel_bands = cvars.r_cel_bands;
+    look.cel_flat_albedo = cvars.r_cel_flat_albedo;
+    look.cel_halftone    = cvars.r_cel_halftone;
+    look.cel_halftone_paper = cvars.r_cel_halftone_paper;
     look.cel_fill                 = cvars.r_cel_fill;
     look.cel_fill_strength        = cvars.r_cel_fill_strength;
     look.cel_fill_spacing_pixels  = cvars.r_cel_fill_spacing;
     look.cel_fill_edge            = cvars.r_cel_fill_edge;
-    look.cel_fill_tone            = cvars.r_cel_fill_tone;
-    look.cel_fill_tone_light      = cvars.r_cel_fill_tone_light;
+    look.cel_fill_shadow_tone_dark            = cvars.r_cel_fill_shadow_tone_dark;
+    look.cel_fill_shadow_tone_light      = cvars.r_cel_fill_shadow_tone_light;
     look.cel_fill_ambient_dark    = cvars.r_cel_fill_ambient_dark;
     look.cel_fill_ambient_light   = cvars.r_cel_fill_ambient_light;
     look.cel_fill_tone_lit        = cvars.r_cel_fill_tone_lit;
@@ -283,11 +286,22 @@ bool Tick()
     look.cel_speckle_spacing_pixels = cvars.r_cel_speckle_spacing;
     look.cel_speckle_density        = cvars.r_cel_speckle_density;
     look.cel_speckle_radius         = cvars.r_cel_speckle_radius;
+    look.cel_pebble                   = cvars.r_cel_pebble;
+    look.cel_pebble_spacing           = cvars.r_cel_pebble_spacing;
+    look.cel_pebble_density           = cvars.r_cel_pebble_density;
+    look.cel_pebble_size              = cvars.r_cel_pebble_size;
+    look.cel_pebble_irregularity      = cvars.r_cel_pebble_irregularity;
+    look.cel_pebble_line_width_pixels = cvars.r_cel_pebble_width;
     look.ink              = cvars.r_stylized && cvars.r_ink;
     look.ink_threshold    = cvars.r_ink_threshold;
     look.ink_width_pixels = cvars.r_ink_width;
     look.ink_crease_degrees = cvars.r_ink_crease_degrees;
     look.ink_tint         = cvars.r_ink_tint;
+    look.ink_wobble_pixels       = cvars.r_ink_wobble;
+    look.ink_wobble_scale_pixels = cvars.r_ink_wobble_scale;
+    look.ink_boil_per_second     = cvars.r_ink_boil;
+    look.ink_weight_near         = cvars.r_ink_weight_near;
+    look.ink_weight_distance     = cvars.r_ink_weight_distance;
     look.rim              = cvars.r_stylized ? cvars.r_rim : 0.0f;
     look.rim_width_pixels = cvars.r_rim_width;
 
