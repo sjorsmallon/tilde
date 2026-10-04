@@ -1,5 +1,6 @@
 #pragma once
 
+#include "entities/generated/entities/fog_volume_entity_generated.hpp"
 #include "renderer.hpp"
 
 #include <vector>
@@ -19,6 +20,7 @@ struct pass_builder_t
   // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
   std::vector<shared::wall_ripple_t>                   ripples;
   std::vector<shared::reveal_cone_t>                   reveal_cones;
+  std::vector<renderer::fog_volume_t>                  fog_volumes;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
 
@@ -79,6 +81,7 @@ struct pass_builder_t
     lights.baked_count = 0;
     ripples.clear();
     reveal_cones.clear();
+    fog_volumes.clear();
     custom.clear();
     debug.retire(delta_seconds);
     seconds += delta_seconds;
@@ -94,7 +97,8 @@ struct pass_builder_t
     pass.baked_light_count = lights.baked_count;
     pass.ripples           = ripples;
     pass.reveal_cones      = reveal_cones;
-    pass.seconds           = seconds;
+    pass.fog_volumes       = fog_volumes;
+    pass.seconds          = seconds;
     pass.debug_channel = debug_channel;
     pass.particles = particles;
     pass.custom    = custom;
@@ -105,5 +109,18 @@ struct pass_builder_t
     return pass;
   }
 };
+
+inline void add_fog_volume(pass_builder_t& pass, const entities::Fog_Volume_Entity& fog)
+{
+  if (!fog.switch_state.value || fog.density <= 0.0f)
+    return;
+
+  const linalg::vec3f center = fog.position + fog.volume.position;
+  pass.fog_volumes.push_back({.minimum = center - fog.volume.half_extents,
+                              .maximum = center + fog.volume.half_extents,
+                              .color   = fog.color,
+                              .density = fog.density,
+                              .edge_softness = fog.edge_softness});
+}
 
 } // namespace client

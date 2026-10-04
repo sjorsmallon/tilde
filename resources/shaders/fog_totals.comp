@@ -1,0 +1,41 @@
+#version 450
+
+// Once per column of the fog grid, from the eye outwards: each cell is overwritten with the running total of its column,
+// the light the fog between the eye and the cell's far side adds (rgb) and how much of what is behind it shows through (a).
+
+#include "scene.glsl"
+#include "fog_grid.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image3D fog_cells;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image3D fog_totals;
+
+void main()
+{
+    ivec2 column = ivec2(gl_GlobalInvocationID.xy);
+    ivec3 size   = imageSize(fog_cells);
+    if (any(greaterThanEqual(column, size.xy)))
+        return;
+
+    // A line of sight off the screen's centre crosses a slice at a slant.
+    float units_per_depth = length(fog_view_ray((vec2(column) + 0.5) / vec2(size.xy)));
+
+    vec3  light_total = vec3(0.0);
+    float see_through = 1.0;
+    for (int slice = 0; slice < size.z; ++slice)
+    {
+        vec4  cell      = imageLoad(fog_cells, ivec3(column, slice));
+        float thickness = (fog_slice_depth(float(slice + 1), float(size.z)) - fog_slice_depth(float(slice), float(size.z))) *
+                          units_per_depth;
+
+        // The cell hides part of its own light too: what leaves it is its light over its density, less what it lets through.
+        float cell_see_through = exp(-cell.a * thickness);
+        vec3  cell_light       = cell.a > 0.0 ? cell.rgb / cell.a * (1.0 - cell_see_through) : vec3(0.0);
+
+        light_total += see_through * cell_light;
+        see_through *= cell_see_through;
+
+        imageStore(fog_totals, ivec3(column, slice), vec4(light_total, see_through));
+    }
+}

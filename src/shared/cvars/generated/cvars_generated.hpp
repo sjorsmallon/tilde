@@ -293,6 +293,9 @@ struct cvar_state_t
   float r_flashlight_inner;
   bool r_fxaa;
   float r_fxaa_subpixel;
+  bool r_fog;
+  float r_fog_distance;
+  float r_fog_anisotropy;
   bool r_look_panel;
   network::pascal_string_t<64> sv_skybox;
   bool debug_show_collisions;
@@ -493,28 +496,31 @@ enum class cvar_id : uint16_t
   r_flashlight_inner = 168,
   r_fxaa = 169,
   r_fxaa_subpixel = 170,
-  r_look_panel = 171,
-  sv_skybox = 172,
-  debug_show_collisions = 173,
-  debug_show_hitboxes = 174,
-  debug_show_navmesh = 175,
-  debug_show_box_volumes = 176,
-  debug_hide_geometry = 177,
-  cl_shot_debug_seconds = 178,
-  debug_show_entity_counts = 179,
-  net_snapshot_debug = 180,
-  sv_event_debug = 181,
-  cl_event_debug = 182,
-  sv_reliable_debug = 183,
-  sv_io_debug = 184,
-  replay_keyframe_seconds = 185,
-  sv_replay_auto = 186,
-  sv_ghost_record = 187,
+  r_fog = 171,
+  r_fog_distance = 172,
+  r_fog_anisotropy = 173,
+  r_look_panel = 174,
+  sv_skybox = 175,
+  debug_show_collisions = 176,
+  debug_show_hitboxes = 177,
+  debug_show_navmesh = 178,
+  debug_show_box_volumes = 179,
+  debug_hide_geometry = 180,
+  cl_shot_debug_seconds = 181,
+  debug_show_entity_counts = 182,
+  net_snapshot_debug = 183,
+  sv_event_debug = 184,
+  cl_event_debug = 185,
+  sv_reliable_debug = 186,
+  sv_io_debug = 187,
+  replay_keyframe_seconds = 188,
+  sv_replay_auto = 189,
+  sv_ghost_record = 190,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 188;
+constexpr uint32_t CVAR_COUNT = 191;
 
 enum class command_id : uint16_t
 {

@@ -379,6 +379,20 @@ struct peel_t
 // scene.glsl's MAX_REVEAL_CONES, kept one number by renderer.cpp's size assert on the scene uniform.
 inline constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 
+// scene.glsl's MAX_FOG_VOLUMES, kept one number by the same assert.
+inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
+
+// A world-space box of fog: the colour the air inside scatters, and how much of what is behind it one world unit of it hides.
+struct fog_volume_t
+{
+  linalg::vec3f minimum;
+  linalg::vec3f maximum;
+  linalg::vec3f color   = {1.0f, 1.0f, 1.0f};
+  float         density = 0.0f;
+  // How far in from each face the fog takes to thicken from nothing to `density`.
+  float         edge_softness = 0.0f;
+};
+
 // What the pass's reveal_cones do to a draw (resources/shaders/reveal.glsl's LIGHT_CUT_*).
 enum class light_cut_t : uint8_t
 {
@@ -683,6 +697,8 @@ struct view_pass_t
   Span<const shared::wall_ripple_t>         ripples   = {};
   // Where a revealed draw exists and an erased one does not; the caller decides whose cones these are.
   Span<const shared::reveal_cone_t>         reveal_cones = {};
+  // Drawn for the FIRST perspective pass of the frame that carries any: there is one fog grid.
+  Span<const fog_volume_t>                  fog_volumes = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
   float                                     seconds   = 0.0f;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
@@ -744,6 +760,9 @@ struct look_settings_t
   float   ink_weight_distance     = 256.0f; // r_ink_weight_distance
   float   rim              = 0.0f;  // r_rim
   int     rim_width_pixels = 3;     // r_rim_width
+  bool    fog              = true;  // r_fog
+  float   fog_distance     = 4096.0f; // r_fog_distance
+  float   fog_anisotropy   = 0.5f;  // r_fog_anisotropy
 };
 
 struct antialiasing_settings_t

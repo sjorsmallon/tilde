@@ -812,3 +812,14 @@ Reveal_Light_Entity :: entity is Switchable {
     // Half the opening angle, at most 89 (MAX_REVEAL_HALF_ANGLE_DEGREES).
     half_angle_degrees: f32 = 25.0                  @Editable
 }
+
+// A box of fog, axis aligned whatever its orientation: the air inside scatters `color` and hides what is behind it,
+// `density` of it per world unit (resources/shaders/fog_cells.comp).
+Fog_Volume_Entity :: entity is Switchable {
+    switch_state: Enabled
+    volume:       Box_Volume = { half_extents = {128, 64, 128} }
+    density:      f32 = 0.004                       @Editable
+    color:        v3 = {1, 1, 1}                    @Editable
+    // How far in from each face the fog takes to thicken from nothing to `density`; 0 is a hard edge.
+    edge_softness: f32 = 32.0                       @Editable
+}

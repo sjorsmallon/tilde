@@ -1,0 +1,77 @@
+#version 450
+
+// Once per cell of the fog grid: how thick the air at the cell's centre is (a), and the light a world unit of it scatters
+// towards the eye (rgb). The air is lit as a surface with no chart is (light_gather.glsl): the probes, which hold every
+// Baked light, and then the tail of the light array through its shadow maps.
+
+#define SHADOW_NOISE_COORDINATE vec2(gl_GlobalInvocationID.xy)
+#include "direct_light.glsl"
+#include "fog_grid.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image3D fog_cells;
+
+// Henyey-Greenstein: of the light a droplet scatters, the share that leaves at this angle from the way the light was
+// travelling. Anisotropy 0 scatters alike in every direction; towards 1 it scatters mostly onwards.
+float fog_phase(float cosine, float anisotropy)
+{
+    float squared = anisotropy * anisotropy;
+    return (1.0 - squared) / (4.0 * PI * pow(1.0 + squared - 2.0 * anisotropy * cosine, 1.5));
+}
+
+// The light arriving at `point` from every side, weighted by how much of each the air turns towards the eye.
+vec3 fog_light_towards_eye(vec3 point)
+{
+    vec3 to_eye = normalize(scene.camera_position.xyz - point);
+
+    // A zero normal leaves the probe's mean over every direction.
+    vec3 light = probe_indirect_diffuse(point, vec3(0.0)) + scene.ambient.rgb;
+
+    for (int index = scene.baked_light_count; index < scene.light_count; ++index)
+    {
+        Light         light_source = scene.lights[index];
+        Light_Arrival arrival      = light_arrival(light_source, point);
+        if (arrival.attenuation <= 0.0)
+            continue;
+
+        // The air has no face to turn: it takes the shadow test as a surface facing the light would.
+        float visibility = shadow_visibility(light_source, arrival, point, arrival.direction) *
+                           probe_light_visibility(light_source, point);
+
+        light += light_source.radiance.rgb *
+                 (arrival.attenuation * visibility * fog_phase(dot(-arrival.direction, to_eye), scene.fog_settings.w));
+    }
+    return light;
+}
+
+void main()
+{
+    ivec3 cell = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(fog_cells);
+    if (any(greaterThanEqual(cell, size)))
+        return;
+
+    vec3 point = fog_cell_point(vec3(cell) + 0.5, vec3(size));
+
+    float density   = 0.0;
+    vec3  scattered = vec3(0.0);
+    for (int index = 0; index < int(scene.fog_settings.x); ++index)
+    {
+        FogVolume volume = scene.fog_volumes[index];
+        vec3  inside  = min(point - volume.minimum_density.xyz, volume.maximum.xyz - point);
+        float nearest = min(inside.x, min(inside.y, inside.z));
+        if (nearest <= 0.0)
+            continue;
+
+        float here = volume.minimum_density.w *
+                     (volume.maximum.w > 0.0 ? smoothstep(0.0, volume.maximum.w, nearest) : 1.0);
+        density   += here;
+        scattered += volume.color.rgb * here;
+    }
+
+    if (density > 0.0)
+        scattered *= fog_light_towards_eye(point);
+
+    imageStore(fog_cells, cell, vec4(scattered, density));
+}

@@ -167,6 +167,7 @@ constexpr asset_info_t cubemap_asset_MANIFEST[] = {
   {"Missing", nullptr},
   {"actual_night_sky", "resources/cubemaps/actual_night_sky"},
   {"night_sky", "resources/cubemaps/night_sky"},
+  {"pitch_black", "resources/cubemaps/pitch_black"},
 };
 
 } // namespace

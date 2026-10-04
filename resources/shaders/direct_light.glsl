@@ -31,10 +31,15 @@ const vec2 PCSS_POISSON_DISC[PCSS_TAP_COUNT] = vec2[](
     vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
     vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790));
 
+// A compute shader has no fragment, and names what its disc is rotated by before including this.
+#ifndef SHADOW_NOISE_COORDINATE
+#define SHADOW_NOISE_COORDINATE gl_FragCoord.xy
+#endif
+
 // Interleaved gradient noise (Jimenez 2014) as a per-pixel rotation of the disc.
 mat2 pcss_disc_rotation()
 {
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float noise = fract(52.9829189 * fract(dot(SHADOW_NOISE_COORDINATE, vec2(0.06711056, 0.00583715))));
     float angle = noise * 2.0 * PI;
     float s = sin(angle);
     float c = cos(angle);

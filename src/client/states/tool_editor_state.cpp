@@ -1550,6 +1550,10 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       // is what makes a bake previewed here the bake that ships.
       shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
 
+      if (const entities::Fog_Volume_Entity* fog =
+              entities::entity_as<entities::Fog_Volume_Entity>(entry.entity.get()))
+        add_fog_volume(scene, *fog);
+
       const size_t first_mesh = scene.meshes.size();
       draw_entity_in_editor(entry.entity.get(), scene, context.entity_draw_settings);
       scene.record_object_meshes(entry.uid, first_mesh);

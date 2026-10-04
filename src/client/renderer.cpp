@@ -113,6 +113,14 @@ const uint32_t particle_comp_spv[] =
 #include "particle.comp.spv.h"
     ;
 
+const uint32_t fog_cells_comp_spv[] =
+#include "fog_cells.comp.spv.h"
+    ;
+
+const uint32_t fog_totals_comp_spv[] =
+#include "fog_totals.comp.spv.h"
+    ;
+
 const uint32_t particle_vert_spv[] =
 #include "particle.vert.spv.h"
     ;
@@ -760,11 +768,16 @@ struct scene_uniform_t
   float       cel_pebble_shape[4]                           = {}; // x irregularity, y outline width px, z halftone paper
   float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
+  float       fog_settings[4]                               = {}; // x how many of `fog_volumes` are live, y the view depth the fog grid starts at, z where it ends, w anisotropy
+  float       fog_view_right[4]                             = {}; // the camera's right, as long as half the view is wide one unit of view depth away
+  float       fog_view_up[4]                                = {}; // the camera's up, as long as half the view is tall
+  float       fog_volumes[MAX_SCENE_FOG_VOLUMES][12]        = {}; // lowest corner xyz and density, highest corner xyz and edge softness, then the scattered colour rgb
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 144 + 16 + 32 * MAX_SCENE_REVEAL_CONES,
+                      32 * MAX_SCENE_RIPPLES + 16 + 144 + 16 + 32 * MAX_SCENE_REVEAL_CONES + 48 +
+                      48 * MAX_SCENE_FOG_VOLUMES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -2560,7 +2573,9 @@ static void create_mesh_resources()
   pass_bindings[1].binding         = PASS_SCENE_BINDING;
   pass_bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
   pass_bindings[1].descriptorCount = 1;
-  pass_bindings[1].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  // COMPUTE on the scene block, the probes and the shadow pool: the fog's kernels light the air out of this same set.
+  pass_bindings[1].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                                     VK_SHADER_STAGE_COMPUTE_BIT;
   pass_bindings[2].binding         = PASS_VISIBILITY_BINDING;
   pass_bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[2].descriptorCount = 1;
@@ -2578,20 +2593,20 @@ static void create_mesh_resources()
     pass_bindings[5 + axis].binding         = PASS_PROBE_L0_BINDING + axis;
     pass_bindings[5 + axis].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     pass_bindings[5 + axis].descriptorCount = 1;
-    pass_bindings[5 + axis].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pass_bindings[5 + axis].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
   }
   pass_bindings[9].binding         = PASS_SHADOW_BINDING;
   pass_bindings[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[9].descriptorCount = 1;
-  pass_bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
   pass_bindings[10].binding         = PASS_PROBE_VISIBILITY_BINDING;
   pass_bindings[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[10].descriptorCount = 1;
-  pass_bindings[10].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[10].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
   pass_bindings[11].binding         = PASS_SHADOW_DEPTH_BINDING;
   pass_bindings[11].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[11].descriptorCount = 1;
-  pass_bindings[11].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pass_bindings[11].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
   pass_bindings[12].binding         = PASS_REFLECTION_CUBES_BINDING;
   pass_bindings[12].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[12].descriptorCount = 1;
@@ -2994,6 +3009,276 @@ static void record_fullscreen_draw(VkCommandBuffer cmd, const fullscreen_draw_t&
   vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
+// --- Fog ---
+//
+// A grid of cells over ONE pass's view: FOG_GRID_WIDTH x FOG_GRID_HEIGHT across the screen and FOG_GRID_DEPTH slices
+// away from the eye. fog_cells.comp fills each cell with the fog at its centre, fog_totals.comp sums every column from
+// the eye outwards, and tonemap.frag reads the total at each pixel's depth. Both images are rewritten whole each frame
+// by commands recorded ahead of the ones that read them, so one of each serves every frame in flight.
+
+constexpr uint32_t FOG_GRID_WIDTH     = 160;
+constexpr uint32_t FOG_GRID_HEIGHT    = 90;
+constexpr uint32_t FOG_GRID_DEPTH     = 64;
+constexpr uint32_t FOG_WORKGROUP_SIZE = 8; // the local_size of both kernels
+constexpr float    FOG_GRID_NEAR      = 16.0f;
+constexpr VkFormat FOG_GRID_FORMAT    = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+// Set 0 of both kernels. The fogged pass's own set rides at PASS_DESCRIPTOR_SET, as it does for a mesh: the air is lit
+// out of the same scene block, probes and shadow pool a surface is.
+constexpr uint32_t FOG_CELLS_BINDING  = 0;
+constexpr uint32_t FOG_TOTALS_BINDING = 1;
+constexpr uint32_t FOG_BINDING_COUNT  = 2;
+
+struct fog_grid_image_t
+{
+  VkImage        image  = VK_NULL_HANDLE;
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  VkImageView    view   = VK_NULL_HANDLE;
+};
+
+static fog_grid_image_t      g_fog_cells;
+static fog_grid_image_t      g_fog_totals;
+static VkDescriptorSetLayout g_fog_set_layout      = VK_NULL_HANDLE;
+static VkDescriptorSetLayout g_fog_unused_set_layout = VK_NULL_HANDLE; // the sets between 0 and the pass's
+static VkDescriptorPool      g_fog_pool            = VK_NULL_HANDLE;
+static VkDescriptorSet       g_fog_set             = VK_NULL_HANDLE;
+static VkPipelineLayout      g_fog_pipeline_layout = VK_NULL_HANDLE;
+static VkPipeline            g_fog_cells_pipeline  = VK_NULL_HANDLE;
+static VkPipeline            g_fog_totals_pipeline = VK_NULL_HANDLE;
+
+static fog_grid_image_t create_fog_grid_image(const char* name)
+{
+  fog_grid_image_t grid{};
+
+  VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.imageType     = VK_IMAGE_TYPE_3D;
+  image_info.format        = FOG_GRID_FORMAT;
+  image_info.extent        = {FOG_GRID_WIDTH, FOG_GRID_HEIGHT, FOG_GRID_DEPTH};
+  image_info.mipLevels     = 1;
+  image_info.arrayLayers   = 1;
+  image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &image_info, nullptr, &grid.image) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} image", name);
+
+  VkMemoryRequirements requirements;
+  vkGetImageMemoryRequirements(g_device, grid.image, &requirements);
+
+  VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  allocation.allocationSize  = requirements.size;
+  allocation.memoryTypeIndex =
+      find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(g_device, &allocation, nullptr, &grid.memory) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the {} image", name);
+  vkBindImageMemory(g_device, grid.image, grid.memory, 0);
+
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = grid.image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_3D;
+  view_info.format           = FOG_GRID_FORMAT;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  if (vkCreateImageView(g_device, &view_info, nullptr, &grid.view) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} view", name);
+
+  return grid;
+}
+
+static void destroy_fog_grid_image(fog_grid_image_t& grid)
+{
+  vkDestroyImageView(g_device, grid.view, nullptr);
+  vkDestroyImage(g_device, grid.image, nullptr);
+  vkFreeMemory(g_device, grid.memory, nullptr);
+  grid = {};
+}
+
+static VkPipeline create_fog_pipeline(Span<const uint32_t> code, const char* name)
+{
+  const VkShaderModule module =
+      create_shader_module_or_die(code.data, code.size() * sizeof(uint32_t), name);
+
+  VkComputePipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+  pipeline_info.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pipeline_info.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+  pipeline_info.stage.module = module;
+  pipeline_info.stage.pName  = "main";
+  pipeline_info.layout       = g_fog_pipeline_layout;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  if (vkCreateComputePipelines(g_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} pipeline", name);
+
+  vkDestroyShaderModule(g_device, module, nullptr);
+  return pipeline;
+}
+
+// After create_mesh_resources, whose pass set layout both kernels bind.
+static void create_fog_resources()
+{
+  g_fog_cells  = create_fog_grid_image("fog cells");
+  g_fog_totals = create_fog_grid_image("fog totals");
+
+  VkDescriptorSetLayoutBinding bindings[FOG_BINDING_COUNT] = {};
+  bindings[FOG_CELLS_BINDING]  = {FOG_CELLS_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1,
+                                  VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+  bindings[FOG_TOTALS_BINDING] = {FOG_TOTALS_BINDING, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1,
+                                  VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+
+  VkDescriptorSetLayoutCreateInfo set_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  set_layout_info.bindingCount = FOG_BINDING_COUNT;
+  set_layout_info.pBindings    = bindings;
+  if (vkCreateDescriptorSetLayout(g_device, &set_layout_info, nullptr, &g_fog_set_layout) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the fog descriptor set layout");
+
+  const VkDescriptorSetLayoutCreateInfo unused_layout_info{
+      VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+  if (vkCreateDescriptorSetLayout(g_device, &unused_layout_info, nullptr, &g_fog_unused_set_layout) !=
+      VK_SUCCESS)
+    fatal_error("[renderer] could not create the fog's empty descriptor set layout");
+
+  const VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, FOG_BINDING_COUNT};
+  VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+  pool_info.maxSets       = 1;
+  pool_info.poolSizeCount = 1;
+  pool_info.pPoolSizes    = &pool_size;
+  if (vkCreateDescriptorPool(g_device, &pool_info, nullptr, &g_fog_pool) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the fog descriptor pool");
+
+  VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+  allocation.descriptorPool     = g_fog_pool;
+  allocation.descriptorSetCount = 1;
+  allocation.pSetLayouts        = &g_fog_set_layout;
+  if (vkAllocateDescriptorSets(g_device, &allocation, &g_fog_set) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the fog descriptor set");
+
+  const VkDescriptorImageInfo cells{VK_NULL_HANDLE, g_fog_cells.view, VK_IMAGE_LAYOUT_GENERAL};
+  const VkDescriptorImageInfo totals{VK_NULL_HANDLE, g_fog_totals.view, VK_IMAGE_LAYOUT_GENERAL};
+
+  VkWriteDescriptorSet writes[FOG_BINDING_COUNT] = {};
+  for (uint32_t binding = 0; binding < FOG_BINDING_COUNT; ++binding)
+  {
+    writes[binding].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[binding].dstSet          = g_fog_set;
+    writes[binding].dstBinding      = binding;
+    writes[binding].descriptorCount = 1;
+    writes[binding].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  }
+  writes[FOG_CELLS_BINDING].pImageInfo  = &cells;
+  writes[FOG_TOTALS_BINDING].pImageInfo = &totals;
+  vkUpdateDescriptorSets(g_device, FOG_BINDING_COUNT, writes, 0, nullptr);
+
+  VkDescriptorSetLayout set_layouts[PASS_DESCRIPTOR_SET + 1];
+  set_layouts[0] = g_fog_set_layout;
+  for (uint32_t set = 1; set < PASS_DESCRIPTOR_SET; ++set)
+    set_layouts[set] = g_fog_unused_set_layout;
+  set_layouts[PASS_DESCRIPTOR_SET] = g_pass_ds_layout;
+
+  VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+  layout_info.setLayoutCount = PASS_DESCRIPTOR_SET + 1;
+  layout_info.pSetLayouts    = set_layouts;
+  if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &g_fog_pipeline_layout) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the fog pipeline layout");
+
+  g_fog_cells_pipeline  = create_fog_pipeline(fog_cells_comp_spv, "fog cells");
+  g_fog_totals_pipeline = create_fog_pipeline(fog_totals_comp_spv, "fog totals");
+}
+
+static void destroy_fog_resources()
+{
+  vkDestroyPipeline(g_device, g_fog_totals_pipeline, nullptr);
+  vkDestroyPipeline(g_device, g_fog_cells_pipeline, nullptr);
+  vkDestroyPipelineLayout(g_device, g_fog_pipeline_layout, nullptr);
+  vkDestroyDescriptorPool(g_device, g_fog_pool, nullptr);
+  vkDestroyDescriptorSetLayout(g_device, g_fog_unused_set_layout, nullptr);
+  vkDestroyDescriptorSetLayout(g_device, g_fog_set_layout, nullptr);
+  destroy_fog_grid_image(g_fog_totals);
+  destroy_fog_grid_image(g_fog_cells);
+}
+
+struct fog_image_step_t
+{
+  VkImageLayout        old_layout;
+  VkImageLayout        new_layout;
+  VkAccessFlags        access_before;
+  VkAccessFlags        access_after;
+  VkPipelineStageFlags stage_before;
+  VkPipelineStageFlags stage_after;
+};
+
+static void record_fog_image_step(VkCommandBuffer cmd, const fog_grid_image_t& grid,
+                                  const fog_image_step_t& step)
+{
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.oldLayout           = step.old_layout;
+  barrier.newLayout           = step.new_layout;
+  barrier.srcAccessMask       = step.access_before;
+  barrier.dstAccessMask       = step.access_after;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image               = grid.image;
+  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  vkCmdPipelineBarrier(cmd, step.stage_before, step.stage_after, 0, 0, nullptr, 0, nullptr, 1,
+                       &barrier);
+}
+
+// Outside any render pass. An old layout of UNDEFINED discards the image, and every texel is about to be rewritten.
+static void record_fog_grid(VkCommandBuffer cmd, VkDescriptorSet pass_set, uint32_t scene_block_offset)
+{
+  const VkPipelineStageFlags compute  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+  const VkPipelineStageFlags fragment = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+  // The shadow passes just wrote the pool the cells are about to read.
+  VkMemoryBarrier shadows_written{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  shadows_written.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  shadows_written.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                       compute, 0, 1, &shadows_written, 0, nullptr, 0, nullptr);
+
+  record_fog_image_step(cmd, g_fog_cells,
+                        {VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                         VK_ACCESS_SHADER_WRITE_BIT, compute, compute});
+  record_fog_image_step(cmd, g_fog_totals,
+                        {VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0,
+                         VK_ACCESS_SHADER_WRITE_BIT, fragment, compute});
+
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_fog_pipeline_layout, 0, 1,
+                          &g_fog_set, 0, nullptr);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_fog_pipeline_layout,
+                          PASS_DESCRIPTOR_SET, 1, &pass_set, 1, &scene_block_offset);
+
+  const uint32_t groups_wide = (FOG_GRID_WIDTH + FOG_WORKGROUP_SIZE - 1) / FOG_WORKGROUP_SIZE;
+  const uint32_t groups_tall = (FOG_GRID_HEIGHT + FOG_WORKGROUP_SIZE - 1) / FOG_WORKGROUP_SIZE;
+  const uint32_t groups_deep = (FOG_GRID_DEPTH + FOG_WORKGROUP_SIZE - 1) / FOG_WORKGROUP_SIZE;
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_fog_cells_pipeline);
+  vkCmdDispatch(cmd, groups_wide, groups_tall, groups_deep);
+
+  record_fog_image_step(cmd, g_fog_cells,
+                        {VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT, compute, compute});
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_fog_totals_pipeline);
+  vkCmdDispatch(cmd, groups_wide, groups_tall, 1);
+
+  record_fog_image_step(cmd, g_fog_totals,
+                        {VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, compute, fragment});
+}
+
+// A frame with no fog still binds the totals to the tonemap, which reads none of them.
+static void record_unused_fog_grid(VkCommandBuffer cmd)
+{
+  record_fog_image_step(cmd, g_fog_totals,
+                        {VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
+                         VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT});
+}
+
 // --- The tonemap pass ---
 //
 // lighting_def.md decision J. Inline tonemapping does not compose: a scene where
@@ -3021,6 +3306,14 @@ struct tonemap_push_constants_t
   float ink_weight_near         = 1.0f;
   float ink_weight_slope        = 0.0f;
   float ink_weight_offset       = 0.0f;
+  float fog_viewport_x          = 0.0f;
+  float fog_viewport_y          = 0.0f;
+  float fog_viewport_width      = 0.0f; // 0 is no fog this frame
+  float fog_viewport_height     = 0.0f;
+  float fog_near                = 1.0f;
+  float fog_far                 = 2.0f;
+  float inverse_view_depth_slope  = 0.0f;
+  float inverse_view_depth_offset = 1.0f;
 };
 
 static fullscreen_draw_t g_tonemap_draw;
@@ -3042,7 +3335,7 @@ static void create_tonemap_resources()
   settings.name               = "tonemap";
   settings.fragment_code      = tonemap_frag_spv;
   settings.render_pass        = g_tonemapped_render_pass;
-  settings.input_count        = 3; // 0 the HDR target, 1 the scene depth, 2 the scene normal
+  settings.input_count        = 4; // 0 the HDR target, 1 the scene depth, 2 the scene normal, 3 the fog totals
   settings.push_constant_size = sizeof(tonemap_push_constants_t);
   g_tonemap_draw              = create_fullscreen_draw(settings);
 }
@@ -3257,7 +3550,8 @@ static void write_screen_target_inputs()
          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {g_screen_nearest_sampler, g_depth_view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
         {g_screen_nearest_sampler, g_scene_data_images[SCENE_NORMAL_IMAGE].views[frame],
-         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {g_screen_linear_sampler, g_fog_totals.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     write_fullscreen_draw_inputs(g_tonemap_draw, frame, tonemap_inputs);
 
     const VkDescriptorImageInfo fxaa_inputs[] = {
@@ -6579,6 +6873,46 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
 
   scene.clock[0] = pass.seconds;
 
+  if (pass.fog_volumes.size() > MAX_SCENE_FOG_VOLUMES)
+  {
+    log_error("[renderer] this view pass carries {} fog volumes; only the first {} are drawn",
+              pass.fog_volumes.size(), MAX_SCENE_FOG_VOLUMES);
+  }
+  // The grid is cut along lines of sight that fan out from the eye, which an orthographic view has none of.
+  if (!pass.view.camera.orthographic)
+  {
+    const size_t fog_volume_count = std::min<size_t>(pass.fog_volumes.size(), MAX_SCENE_FOG_VOLUMES);
+    scene.fog_settings[0]         = (float)fog_volume_count;
+    for (size_t index = 0; index < fog_volume_count; ++index)
+    {
+      const fog_volume_t& volume = pass.fog_volumes[(uint32_t)index];
+      float*              out    = scene.fog_volumes[index];
+      out[0]  = volume.minimum.x;
+      out[1]  = volume.minimum.y;
+      out[2]  = volume.minimum.z;
+      out[3]  = volume.density;
+      out[4]  = volume.maximum.x;
+      out[5]  = volume.maximum.y;
+      out[6]  = volume.maximum.z;
+      out[7]  = std::max(volume.edge_softness, 0.0f);
+      out[8]  = volume.color.x;
+      out[9]  = volume.color.y;
+      out[10] = volume.color.z;
+    }
+
+    // Read back out of the projection, for record_skybox_draw's reason.
+    const camera_basis_t basis      = get_orientation_vectors(pass.view.camera);
+    const linalg::mat4f  projection = view_matrices(pass.view).projection;
+    const linalg::vec3f  right      = basis.right * (1.0f / projection[0].x);
+    const linalg::vec3f  up         = basis.up * (-1.0f / projection[1].y);
+    scene.fog_view_right[0] = right.x;
+    scene.fog_view_right[1] = right.y;
+    scene.fog_view_right[2] = right.z;
+    scene.fog_view_up[0]    = up.x;
+    scene.fog_view_up[1]    = up.y;
+    scene.fog_view_up[2]    = up.z;
+  }
+
   // Clamped to what actually fits, or a chart naming slot 70 would index past
   // the array's end -- the shader's bound check reads this number and nothing
   // else, so a truncated upload has to shrink the region rather than the total.
@@ -8412,6 +8746,7 @@ bool init(SDL_Window *window)
   create_antialiasing_resources();
   create_outline_resources(); // borrows the mesh pipeline layout
   create_background_resources();
+  create_fog_resources(); // before the screen target inputs: the tonemap samples the fog totals
   write_screen_target_inputs();
   create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
@@ -8554,6 +8889,7 @@ void shutdown()
   destroy_antialiasing_resources();
   destroy_outline_resources();
   destroy_background_resources();
+  destroy_fog_resources();
   destroy_skybox_resources();
   destroy_shadow_resources();
   cleanup_registered_resources();
@@ -8703,6 +9039,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   g_shadow_freeze_active = shadows.freeze_cascades;
   g_point_shadow_faces.clear();
   g_sun_cascades.count   = 0;
+  const float             fog_far = std::max(look.fog_distance, FOG_GRID_NEAR * 2.0f);
+  std::optional<uint32_t> fogged_pass;
   for (const view_pass_t &pass : passes)
   {
     prepared_pass_t prepared{};
@@ -8758,6 +9096,26 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_dither3d[3]    = std::max(look.cel_halftone, 0.0f);
     scene.cel_pebble_shape[2] = std::max(look.cel_halftone_paper, 0.0f);
     scene.cel_fill_pattern[3] = look.cel ? std::clamp(look.cel_flat_albedo, 0.0f, 1.0f) : 0.0f;
+    scene.fog_settings[1]     = FOG_GRID_NEAR;
+    scene.fog_settings[2]     = fog_far;
+    scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);
+    if (!look.fog)
+    {
+      scene.fog_settings[0] = 0.0f;
+    }
+    else if (scene.fog_settings[0] > 0.0f && fogged_pass.has_value())
+    {
+      static bool warned = false;
+      if (!warned)
+        log_error("[renderer] two view passes of one frame carry fog volumes; there is one fog grid "
+                  "and only the first pass is fogged");
+      warned                = true;
+      scene.fog_settings[0] = 0.0f;
+    }
+    else if (scene.fog_settings[0] > 0.0f)
+    {
+      fogged_pass = (uint32_t)g_prepared_passes.size();
+    }
     assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
     prepared.scene_block_offset = write_scene_block(scene);
     g_prepared_passes.push_back(prepared);
@@ -8773,6 +9131,20 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
         g_draw_skinning.data() + prepared.skinning_base, pass.draws.size());
     for (uint32_t job = 0; job < prepared.job_count; ++job)
       record_shadow_layer(cmd, prepared.jobs[job], pass.draws, skinning, shadows);
+  }
+
+  // 4b. The fog grid of the one pass that carries fog, between render passes and ahead of the tonemap that reads it.
+  const VkDescriptorSet fogged_pass_set =
+      fogged_pass.has_value() ? resolve_pass_set(passes[*fogged_pass].lightmap) : VK_NULL_HANDLE;
+  if (fogged_pass_set != VK_NULL_HANDLE)
+  {
+    record_fog_grid(cmd, fogged_pass_set, g_prepared_passes[*fogged_pass].scene_block_offset);
+  }
+  else
+  {
+    // record_mesh_draws reports the missing pass set.
+    fogged_pass.reset();
+    record_unused_fog_grid(cmd);
   }
 
   // 5. The SCENE pass, into the HDR target, and every view pass inside it in the
@@ -8888,6 +9260,9 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   const float radians_per_degree = 3.14159265f / 180.0f;
   const float boil_seconds       = passes.empty() ? 0.0f : passes[0].seconds;
   const float weight_distance    = std::max(look.ink_weight_distance, 0.0f);
+  const viewport_pixels_t fog_viewport =
+      fogged_pass.has_value() ? viewport_in_pixels(passes[*fogged_pass].view.viewport)
+                              : viewport_pixels_t{};
   const tonemap_push_constants_t tonemap_push{
       tonemap.exposure,
       look.ink ? 1.0f : 0.0f,
@@ -8903,7 +9278,15 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       std::floor(boil_seconds * std::max(look.ink_boil_per_second, 0.0f)),
       std::max(look.ink_weight_near, 1.0f),
       weight_distance * (VIEW_FAR_PLANE - VIEW_NEAR_PLANE) / (VIEW_NEAR_PLANE * VIEW_FAR_PLANE),
-      weight_distance / VIEW_FAR_PLANE};
+      weight_distance / VIEW_FAR_PLANE,
+      fog_viewport.x,
+      fog_viewport.y,
+      fog_viewport.width,
+      fog_viewport.height,
+      FOG_GRID_NEAR,
+      fog_far,
+      (VIEW_FAR_PLANE - VIEW_NEAR_PLANE) / (VIEW_NEAR_PLANE * VIEW_FAR_PLANE),
+      1.0f / VIEW_FAR_PLANE};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
 

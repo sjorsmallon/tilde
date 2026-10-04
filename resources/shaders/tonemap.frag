@@ -6,6 +6,7 @@
 layout(set = 0, binding = 0) uniform sampler2D hdr_target;
 layout(set = 0, binding = 1) uniform sampler2D scene_depth;
 layout(set = 0, binding = 2) uniform sampler2D scene_normal;
+layout(set = 0, binding = 3) uniform sampler3D fog_totals;
 
 #include "surface_normal.glsl"
 
@@ -26,6 +27,17 @@ layout(push_constant) uniform Tonemap
     float ink_weight_near;
     float ink_weight_slope;
     float ink_weight_offset;
+    // The fogged pass's viewport in pixels; a width of 0 is no fog this frame.
+    float fog_viewport_x;
+    float fog_viewport_y;
+    float fog_viewport_width;
+    float fog_viewport_height;
+    // The view depths the fog grid starts and ends at (scene.glsl's fog_settings).
+    float fog_near;
+    float fog_far;
+    // One over a pixel's view depth is (1 - its stored depth) * slope + offset.
+    float inverse_view_depth_slope;
+    float inverse_view_depth_offset;
 } tonemap;
 
 layout(location = 0) in vec2 in_uv;
@@ -180,6 +192,25 @@ float line_weight(ivec2 pixel)
                  tonemap.ink_weight_near);
 }
 
+// The fog between the eye and this pixel's surface: the light it adds (rgb) and how much of the surface shows through (a),
+// read from the fog grid's running totals (fog_totals.comp) at the surface's depth.
+vec4 fog_in_front()
+{
+    vec2 position = (gl_FragCoord.xy - vec2(tonemap.fog_viewport_x, tonemap.fog_viewport_y)) /
+                    max(vec2(tonemap.fog_viewport_width, tonemap.fog_viewport_height), vec2(1.0));
+    if (tonemap.fog_viewport_width <= 0.0 || any(lessThan(position, vec2(0.0))) || any(greaterThan(position, vec2(1.0))))
+        return vec4(0.0, 0.0, 0.0, 1.0);
+
+    float stored     = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;
+    float view_depth = 1.0 / ((1.0 - stored) * tonemap.inverse_view_depth_slope + tonemap.inverse_view_depth_offset);
+
+    // A total is its slice's FAR side, so the surface reads half a slice back from its own place in the grid.
+    float slice_count = float(textureSize(fog_totals, 0).z);
+    float slice       = log(view_depth / tonemap.fog_near) / log(tonemap.fog_far / tonemap.fog_near) * slice_count;
+    vec4  fog         = texture(fog_totals, vec3(position, (slice - 0.5) / slice_count));
+    return mix(vec4(0.0, 0.0, 0.0, 1.0), fog, clamp(slice, 0.0, 1.0));
+}
+
 void main()
 {
     if (tonemap.show_surface_normals != 0)
@@ -188,7 +219,8 @@ void main()
         return;
     }
 
-    vec3 hdr     = max(texture(hdr_target, in_uv).rgb, vec3(0.0)) * tonemap.exposure;
+    vec4 fog     = fog_in_front();
+    vec3 hdr     = (max(texture(hdr_target, in_uv).rgb, vec3(0.0)) * fog.a + fog.rgb) * tonemap.exposure;
     vec3 surface = pbr_neutral_tonemap(hdr);
     vec3 color   = surface;
 

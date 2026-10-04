@@ -3372,6 +3372,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   scene.ripples = ctx.visuals.team_wall_ripples.ripples;
   collect_drawn_reveal_cones(ctx, camera, camera_is_my_eye, scene.reveal_cones);
 
+  for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of<entities::Fog_Volume_Entity>())
+    add_fog_volume(scene, fog);
+
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
   {

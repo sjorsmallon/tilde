@@ -23,6 +23,8 @@
 #define MAX_RIPPLES 16
 // renderer.cpp's MAX_SCENE_REVEAL_CONES, kept one number by the same assert.
 #define MAX_REVEAL_CONES 8
+// renderer.hpp's MAX_SCENE_FOG_VOLUMES, kept one number by the same assert.
+#define MAX_FOG_VOLUMES 8
 
 // scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
 #define CEL_FILL_NONE     0
@@ -71,6 +73,14 @@ struct Ripple {
 struct RevealCone {
     vec4 apex_range;
     vec4 axis_cosine;
+};
+
+// One box of fog (fog_cells.comp): its lowest corner (xyz) and its density per world unit (w); its highest corner (xyz) and
+// how far in from each face the fog takes to reach that density (w); the colour the air inside scatters (rgb).
+struct FogVolume {
+    vec4 minimum_density;
+    vec4 maximum;
+    vec4 color;
 };
 
 layout(set = 3, binding = 1) uniform SceneUniform {
@@ -142,6 +152,13 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
+    // x = how many of `fog_volumes` are live, y = the view depth the fog grid starts at, z = the view depth it ends at,
+    // w = r_fog_anisotropy.
+    vec4       fog_settings;
+    // The camera's right and up, each as long as half the view is wide or tall one unit of view depth away (fog_grid.glsl).
+    vec4       fog_view_right;
+    vec4       fog_view_up;
+    FogVolume  fog_volumes[MAX_FOG_VOLUMES];
 } scene;
 
 // r_cel_flat_albedo: a material's colour drawn towards its smallest mip, the mean of the whole texture.

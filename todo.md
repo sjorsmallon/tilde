@@ -21,6 +21,14 @@ Open on the ink lines:
   of one floor would get a seam.
 - `r_ink_threshold` 4 and `r_ink_crease_degrees` 30 are first picks; the Look
   panel (`r_look_panel`) tunes and exports them.
+- Ink colour and rim light, BUILT 2026-10-02. `r_ink_tint` is the share of
+  the pixel's own colour a line keeps (0 = black); a silhouette line is tinted
+  half by the near surface and half by what is behind it, not commented on.
+  `r_rim` lights the near side of the outline's depth jump towards white,
+  `r_rim_width` pixels deep. Looked at the same day: the rim "greatly
+  conflicts with the ink" (a white band hard against the black line, on the
+  same edge), "not sure it's a good idea". Default is 0 since; delete it
+  (`rim_coverage`, two cvars, two Look rows) if it is never turned back on.
 - Antialiasing the lines (asked for 2026-09-29). FXAA was BUILT 2026-09-30 as
   a post pass over the tonemapped and inked frame, under the UI (`fxaa.frag`,
   `r_fxaa`, `r_fxaa_subpixel`), and looked at the same day: "lines look fine
@@ -29,8 +37,9 @@ Open on the ink lines:
   and three `fullscreen_draw_t`.
 
 **The unlit side's fill is a selector since 2026-10-01: `r_cel_fill none |
-hatch | dither3d`. The dither was looked at the same day: "looks crazy
-good".** One row per pattern in
+hatch | dither3d | dither3d_original`. The dither was looked at the same day:
+"looks crazy good"; `dither3d_original` was added 2026-10-02 to compare the two
+and is not looked at yet.** One row per pattern in
 `compose_cel` (`shading_cel.glsl`), drawn where direct light adds less than
 `r_cel_fill_edge` times the ambient; `r_cel_fill_strength` is how dark the ink
 is and `r_cel_fill_spacing` the pixels between lines or dots. All in the Look
@@ -42,18 +51,36 @@ panel, which grew a combo for enum cvars.
   dominant axis, the lattice of twice the spacing a subset of it, the points
   between shown in Bayer order so the dots per screen area never change. As a
   face comes closer dots are only ADDED, one Bayer rank (a 48th of the new
-  ones) at a time. Dots are ONE size; `r_cel_fill_tone` is the share of the
+  ones) at a time. Dots are ONE size; `r_cel_fill_shadow_tone_dark` is the share of the
   shadow they cover, and a lighter tone (today only the band at the shadow's
   edge) spreads them apart rather than shrinking them.
+- `dither3d_original` is runevision's own code, ported: `dither3d.glsl` is his
+  `GetDither3D_` and `src/shared/dither3d_pattern.cpp` his texture maker (both
+  files stay under his MPL 2.0 header). The generator's 8x8 pattern
+  (128x128x64) and ramp are byte-identical to the textures his repository
+  ships; they are built at startup and bound at set 3, bindings 15 and 16. It
+  is fed the same tone, edge and strength as `dither3d`, and
+  `r_cel_fill_spacing` is its dot distance at half tone. Its own three numbers
+  are `r_cel_dither3d_size_variability`, `_contrast` and `_stretch_smoothness`.
+  Not ported: his `RADIAL_COMPENSATION`, `QUANTIZE_LAYERS` and the RGB / CMYK
+  modes. Whichever of the two loses the comparison should be deleted.
 - `hatch` is the 2026-09-29 monolines, looked at and rejected ("not
   crosshatched, just monolines"), kept as a row. `r_cel_hatch_width` is its
   one own number.
 - Not built, each one more row: crosshatch (a second set of lines crossing the
   first as it darkens), halftone (the same lattice held still, the dots growing
   with the tone).
-- Open: the tone is FLAT across the shadow. Return of the Obra Dinn's trick is
-  tone as pattern density, so the next number to feed `dither_coverage` is how
-  dark the baked light is there. Which look this should be is not decided.
+- The tone both dithers draw is three terms since 2026-10-02 (`compose_cel`),
+  asked for as "more texture", not looked at yet. In shadow, the baked light's
+  darkness (`r_cel_fill_shadow_tone_dark` to `_tone_light`). On the LIT side,
+  `r_cel_fill_tone_lit` where the light only grazes the face, thinning to none
+  where it arrives square-on; `shade_light_cel` hands the facing out in the
+  alpha of what `shade_light` returns. Everywhere, `r_cel_fill_material` times
+  the material's relief: its occlusion map and how far its normal map leans off
+  the face (`material_relief`; only `mesh_lit.frag`'s PBR arm has the maps).
+  Either new cvar at 0 is the old picture. Expected trouble: relief changes
+  faster than a dot is wide, so dots in a narrow crack are clipped to its shape.
+  `r_cel_speckle` went 0.12 to 0.2 the same day.
 - Known costs: a pattern pinned to the world slides across a moving object;
   past four-to-one squash (a floor further off than about four eye heights) the
   dots give way to their flat mean tone, or they would be slivers under a pixel.
@@ -244,8 +271,8 @@ changing exposure mid-session makes item 4 unanswerable.
   from it, at 32 chains. `r_debug_channel baked_light` shows the atlas
   contribution alone: residual direct plus the bounce, before albedo.
   `r_debug_channel direct_light` shows every light shaded analytically -- the
-  tail plus a chart's four slots -- and neither channel adds the floor. `AMBIENT_FLOOR`
-  is 0.0477 (0.15/pi) in `renderer.cpp`, added outside the lightmapped branch
+  tail plus a chart's four slots -- and neither channel adds the floor. `r_ambient_floor`
+  defaults to 0.0477 (0.15/pi), added outside the lightmapped branch
   and reaching every surface.
 - Good, meaning the floor can go: in `baked_light`, the surfaces round the
   corner and the ceiling above the light are visibly lit, with a gradient that
@@ -1312,6 +1339,40 @@ tool.
 ---
 
 # Rendering
+
+**VOLUMETRIC FOG, built 2026-10-04, looked at ("lit fog looks fine"), uncommitted.**
+`Fog_Volume_Entity` (an axis-aligned box: `density`, `color`, `edge_softness`)
+through a froxel grid, 160x90x64 over the one fogged pass's view. Three stages:
+`fog_cells.comp` (each cell: how thick the air is at its centre, and the light
+it scatters towards the eye -- the probes plus the light array's tail through
+the shadow maps, as a chartless surface is lit, times a Henyey-Greenstein
+phase), `fog_totals.comp` (the running total of every column, from the eye
+outwards), and `fog_in_front()` in `tonemap.frag` (one read at the pixel's
+depth). The C++ is the "Fog" section of `renderer.cpp`. Cvars: `r_fog`,
+`r_fog_distance`, `r_fog_anisotropy`. No design record written.
+
+Known and accepted: only Mixed and Dynamic lights draw a beam (a Baked light
+reaches the fog through the probes, as a glow with no shape); one fog grid a
+frame, so only the first perspective pass carrying fog volumes is fogged; at
+most 8 volumes a pass.
+
+Open, in the order they would be built:
+
+- **Jitter the cell's sample point each frame and blend with the last frame's
+  grid** (1-2 hours). One sample per 12-pixel cell is what makes a beam's
+  shadow edge blocky and the far slices band. The standard fix; its cost is
+  fog light lagging a few frames behind a fast light (the flashlight).
+- **Fog on see-through surfaces** (about an hour). The fog is applied per
+  pixel at the OPAQUE depth, so a ghost wall or a particle in front of a fog
+  box is fogged as if it sat on the wall behind it. They would sample the
+  totals in their own shaders.
+- **UNDECIDED: how the fog reacts to anything.** Today density is a pure
+  formula of the point. Either more formula -- players pushing a fading hole
+  (the team-wall ripples' pattern), drifting 3D noise, a fade when a box is
+  switched -- or a world-fixed voxel grid holding density that changes over
+  time (Counter-Strike 2's smoke: flood fill, holes carved by shots), which
+  `fog_cells.comp` would sample in place of the box test. The second makes
+  the player-hole formula not worth building first.
 
 **OPEN QUESTION, 2026-09-01: should a BLOCKOUT face respond to real lights?**
 Noticed while checking that the per-light visibility landed — a `Mixed` point

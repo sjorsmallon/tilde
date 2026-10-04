@@ -304,6 +304,9 @@ bool Tick()
     look.ink_weight_distance     = cvars.r_ink_weight_distance;
     look.rim              = cvars.r_stylized ? cvars.r_rim : 0.0f;
     look.rim_width_pixels = cvars.r_rim_width;
+    look.fog              = cvars.r_fog;
+    look.fog_distance     = cvars.r_fog_distance;
+    look.fog_anisotropy   = cvars.r_fog_anisotropy;
 
     const renderer::antialiasing_settings_t antialiasing{cvars.r_fxaa, cvars.r_fxaa_subpixel};
 

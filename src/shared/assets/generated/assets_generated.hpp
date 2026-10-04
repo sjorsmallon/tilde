@@ -245,9 +245,10 @@ enum class cubemap_asset : uint16_t
   Missing = 0,
   actual_night_sky = 1,
   night_sky = 2,
+  pitch_black = 3,
 };
 
-constexpr uint32_t cubemap_asset_COUNT = 3;
+constexpr uint32_t cubemap_asset_COUNT = 4;
 
 const char* to_string(cubemap_asset value);
 template <> std::optional<cubemap_asset> try_from_string<cubemap_asset>(std::string_view text);

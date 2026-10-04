@@ -706,6 +706,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/skybox.vert
     ${SHADER_SRC_DIR}/skybox.frag
     ${SHADER_SRC_DIR}/background_squares.frag
+    ${SHADER_SRC_DIR}/fog_cells.comp
+    ${SHADER_SRC_DIR}/fog_totals.comp
 )
 # The lightmapped variants are the SAME sources compiled with -DLIGHTMAP, not
 # new files. A lightmap composes with lit, grid and blend alike, so a file per
@@ -744,6 +746,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/peel.glsl
                     ${SHADER_SRC_DIR}/ripple.glsl
                     ${SHADER_SRC_DIR}/reveal.glsl
+                    ${SHADER_SRC_DIR}/fog_grid.glsl
                     ${SHADER_SRC_DIR}/dissolve.glsl
                     ${SHADER_SRC_DIR}/simplex_noise.glsl
                     ${SHADER_SRC_DIR}/procedural_blending.glsl)

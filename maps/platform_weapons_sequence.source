@@ -3863,7 +3863,7 @@ entity
   "name" ""
   "ammo" "-1"
   "reserve_ammo" "-1"
-  "weapon_id" "Eraser"
+  "weapon_id" "Flashlight"
   "magazine_size" "0"
   "max_alive" "0"
   "damage_type" "Normal"
@@ -3990,4 +3990,35 @@ entity
   "name" ""
   "switch_state.value" "true"
   "follow.from" "101"
+}
+entity
+{
+  "classname" "fog_volume_entity"
+  "_uid" "109"
+  "position" "-128 127.99999 -256.00003"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "128 102.70851 188.4783"
+  "density" "0.004"
+  "color" "1 1 1"
+  "edge_softness" "32"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "110"
+  "position" "-128 512 -256"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "range" "512"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
 }

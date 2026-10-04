@@ -553,6 +553,8 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .icon         = assets::texture_asset::spot_light,
      .draw_diagram = &reveal_light_diagram,
      .draw_reach   = &reveal_light_reach},
+
+    {.type = entity_type::Fog_Volume_Entity, .color = colors::white, .draw_diagram = &box_volume_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

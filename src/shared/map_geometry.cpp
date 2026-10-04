@@ -2176,9 +2176,14 @@ generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
     for (size_t t = 0; t < unwrap.faces.size(); ++t)
     {
       const uint32_t face = unwrap.faces[t];
-      if (face >= face_count || covered[face])
+      if (face >= face_count)
       {
-        refuse(covered[face] ? "face twice, face" : "face", face, face_count);
+        refuse("face", face, face_count);
+        return out;
+      }
+      if (covered[face])
+      {
+        refuse("face twice, face", face, face_count);
         return out;
       }
       covered[face] = 1;
@@ -2188,6 +2193,11 @@ generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
         if (local >= unwrap.vertices.size())
         {
           refuse("chart vertex", local, unwrap.vertices.size());
+          return out;
+        }
+        if (unwrap.vertices[local].xref != source->indices[(size_t)face * 3 + corner])
+        {
+          refuse("another mesh's corner, vertex", unwrap.vertices[local].xref, world.size());
           return out;
         }
         out.indices[(size_t)face * 3 + corner] = base + local;

@@ -152,3 +152,4 @@ class cubemap_asset cubemap_asset_t asset_types.hpp
   Missing -
   actual_night_sky resources/cubemaps/actual_night_sky
   night_sky resources/cubemaps/night_sky
+  pitch_black resources/cubemaps/pitch_black

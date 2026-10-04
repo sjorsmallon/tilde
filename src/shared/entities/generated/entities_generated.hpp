@@ -51,3 +51,4 @@
 #include "entities/emancipated_weapon_entity_generated.hpp"
 #include "entities/void_entity_generated.hpp"
 #include "entities/reveal_light_entity_generated.hpp"
+#include "entities/fog_volume_entity_generated.hpp"

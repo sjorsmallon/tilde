@@ -534,7 +534,7 @@ Debugging :: cvars {
     r_cel_shadow_red:       f32 = 0.8       @Client    "Red of the colour the unlit side is multiplied by"
     r_cel_shadow_green:     f32 = 0.85      @Client    "Green of the colour the unlit side is multiplied by"
     r_cel_shadow_blue:      f32 = 1.0       @Client    "Blue of the colour the unlit side is multiplied by"
-    r_cel_bands:            f32 = 0.0       @Client    "How many flat steps the light on a surface, direct and ambient together, is cut into per doubling of its brightness; 0 leaves it smooth"
+    r_cel_bands:            f32 = 2.0       @Client    "How many flat steps the light on a surface, direct and ambient together, is cut into per doubling of its brightness; 0 leaves it smooth"
     r_cel_flat_albedo:      f32 = 0.0       @Client    "How far a material's colour is drawn to the mean colour of its whole texture (0 = textured, 1 = one flat colour per material)"
     r_cel_halftone:         f32 = 0.0       @Client    "Both dithers: 0 lets light darken a surface as usual; above 0 the dots alone carry a surface's light, none where it is lit this brightly and covering more of it the dimmer it is"
     r_cel_halftone_paper:   f32 = 1.0       @Client    "With r_cel_halftone above 0: how brightly every surface is drawn between the dots"
@@ -569,7 +569,7 @@ Debugging :: cvars {
     r_ink_tint:             f32 = 0.0       @Client    "How much of the colour under a line its ink keeps: 0 is black ink, 0.3 a line three tenths as bright as the surface it is drawn over"
     r_ink_wobble:           f32 = 1.5       @Client    "How many pixels an ink line strays from the edge it draws, so it wavers like a hand-drawn one (0 = ruler straight)"
     r_ink_wobble_scale:     f32 = 40.0      @Client    "Length of one waver of r_ink_wobble, in pixels"
-    r_ink_boil:             f32 = 8.0       @Client    "How many times a second the waver of r_ink_wobble is redrawn (0 = it holds still)"
+    r_ink_boil:             f32 = 5.0       @Client    "How many times a second the waver of r_ink_wobble is redrawn (0 = it holds still)"
     r_ink_weight_near:      f32 = 1.0       @Client    "How many times wider than r_ink_width and r_rim_width a line right at the camera is (1 = one width at every distance)"
     r_ink_weight_distance:  f32 = 256.0     @Client    "The distance, in world units, within which a line thickens: at half of it a line is twice as wide, up to r_ink_weight_near"
     r_rim:                  f32 = 0.0       @Client    "Rim light: how far towards white the near side of a depth jump is lit (0 = none, 1 = white); what counts as a jump is r_ink_threshold"
@@ -583,6 +583,10 @@ Debugging :: cvars {
 
     r_fxaa:                 bool = true     @Client    "Antialias the tonemapped and inked frame with FXAA, under the UI"
     r_fxaa_subpixel:        f32 = 0.25      @Client    "How far FXAA softens detail one pixel across (0 = edges only and sharpest, 1 = softest); thin ink lines grey out as it rises"
+
+    r_fog:                  bool = true     @Client    "Draw the fog of every Fog_Volume_Entity"
+    r_fog_distance:         f32 = 4096.0    @Client    "How far from the camera the fog grid reaches, in world units; fog past it is not drawn, and a shorter reach is a finer grid"
+    r_fog_anisotropy:       f32 = 0.5       @Client    "How much of the light fog scatters carries on the way it was going: 0 glows alike from every side, towards 0.9 a beam glows mostly when you look up it at its light"
 
     r_look_panel:           bool = false    @Client    "Show the look panel: a slider per comic look cvar, and an export and load of their values as looks/<name>.look"
 

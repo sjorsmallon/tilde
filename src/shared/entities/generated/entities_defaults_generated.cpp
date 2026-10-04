@@ -436,4 +436,14 @@ Reveal_Light_Entity::Reveal_Light_Entity()
   type = entity_type::Reveal_Light_Entity;
 }
 
+Fog_Volume_Entity::Fog_Volume_Entity()
+  : switch_state{},
+    volume({.half_extents = {128.0f, 64.0f, 128.0f}}),
+    density(0.004f),
+    color({1.0f, 1.0f, 1.0f}),
+    edge_softness(32.0f)
+{
+  type = entity_type::Fog_Volume_Entity;
+}
+
 } // namespace entities
