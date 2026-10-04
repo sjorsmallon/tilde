@@ -1,6 +1,7 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"
+#include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "tool_editor_state.hpp"
 
@@ -1549,6 +1550,19 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       // The editor lays the frame's lights out exactly as the game does, which
       // is what makes a bake previewed here the bake that ships.
       shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
+
+      if (const entities::Reveal_Light_Entity* reveal_light =
+              entities::entity_as<entities::Reveal_Light_Entity>(entry.entity.get());
+          reveal_light != nullptr && reveal_light->switch_state.value && reveal_light->intensity > 0.f)
+      {
+        const shared::path_pose_t placed = {.position    = reveal_light->position,
+                                            .orientation = reveal_light->orientation};
+        shared::add_dynamic_frame_light(
+            scene.lights,
+            flashlight_of({shared::reveal_cone_of(*reveal_light, placed), reveal_light->color,
+                           reveal_light->intensity},
+                          state_manager::get_client_context().cvars->r_flashlight_inner));
+      }
 
       if (const entities::Fog_Volume_Entity* fog =
               entities::entity_as<entities::Fog_Volume_Entity>(entry.entity.get()))

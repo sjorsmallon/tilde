@@ -23,6 +23,8 @@ struct Reveal_Light_Entity : Entity
   Reveal_Cone_Kind kind;
   float range;
   float half_angle_degrees;
+  float intensity;
+  linalg::vec3f color;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

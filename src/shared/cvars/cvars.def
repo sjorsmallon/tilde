@@ -575,7 +575,7 @@ Debugging :: cvars {
     r_rim:                  f32 = 0.0       @Client    "Rim light: how far towards white the near side of a depth jump is lit (0 = none, 1 = white); what counts as a jump is r_ink_threshold"
     r_rim_width:            i32 = 3         @Client    "How many pixels in from the edge the rim light reaches; the ink covers the outermost r_ink_width of them"
 
-    r_flashlight_intensity: f32 = 20.0      @Client    "Brightness of the light a Flashlight casts down its cone, as the irradiance it delivers one metre away; 0 casts none and the cone still reveals"
+    r_flashlight_intensity: f32 = 20.0      @Client    "Brightness of the light a held Flashlight casts down its cone (a placed Reveal_Light_Entity carries its own), as the irradiance it delivers one metre away; 0 casts none and the cone still reveals"
     r_flashlight_red:       f32 = 1.0       @Client    "Red of a Flashlight's light"
     r_flashlight_green:     f32 = 0.95      @Client    "Green of a Flashlight's light"
     r_flashlight_blue:      f32 = 0.85      @Client    "Blue of a Flashlight's light"

@@ -4510,6 +4510,24 @@ constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "intensity",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, intensity),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::intensity),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "color",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Reveal_Light_Entity, color),
+   .size_in_bytes = (uint32_t)sizeof(Reveal_Light_Entity::color),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Fog_Volume_Entity_FIELDS[] = {
@@ -4740,7 +4758,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"weapon_emancipation_grill_entity", "Weapon Emancipation Grill", {Weapon_Emancipation_Grill_Entity_FIELDS, 7}, (uint32_t)sizeof(Weapon_Emancipation_Grill_Entity), (uint32_t)alignof(Weapon_Emancipation_Grill_Entity), 515u, false, true, false, construct_Weapon_Emancipation_Grill_Entity, as_base_Weapon_Emancipation_Grill_Entity},
   {"emancipated_weapon_entity", "Emancipated Weapon", {Emancipated_Weapon_Entity_FIELDS, 9}, (uint32_t)sizeof(Emancipated_Weapon_Entity), (uint32_t)alignof(Emancipated_Weapon_Entity), 512u, true, true, false, construct_Emancipated_Weapon_Entity, as_base_Emancipated_Weapon_Entity},
   {"void_entity", "Void", {Void_Entity_FIELDS, 7}, (uint32_t)sizeof(Void_Entity), (uint32_t)alignof(Void_Entity), 515u, false, true, false, construct_Void_Entity, as_base_Void_Entity},
-  {"reveal_light_entity", "Reveal Light", {Reveal_Light_Entity_FIELDS, 9}, (uint32_t)sizeof(Reveal_Light_Entity), (uint32_t)alignof(Reveal_Light_Entity), 2u, false, true, false, construct_Reveal_Light_Entity, as_base_Reveal_Light_Entity},
+  {"reveal_light_entity", "Reveal Light", {Reveal_Light_Entity_FIELDS, 11}, (uint32_t)sizeof(Reveal_Light_Entity), (uint32_t)alignof(Reveal_Light_Entity), 2u, false, true, false, construct_Reveal_Light_Entity, as_base_Reveal_Light_Entity},
   {"fog_volume_entity", "Fog Volume", {Fog_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Fog_Volume_Entity), (uint32_t)alignof(Fog_Volume_Entity), 3u, false, true, false, construct_Fog_Volume_Entity, as_base_Fog_Volume_Entity},
 };
 
@@ -5461,6 +5479,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xc9e09432u;
+const uint32_t SCHEMA_HASH = 0x147a29d3u;
 
 } // namespace entities

@@ -811,6 +811,9 @@ Reveal_Light_Entity :: entity is Switchable {
     range:              f32 = 1024.0                @Editable
     // Half the opening angle, at most 89 (MAX_REVEAL_HALF_ANGLE_DEGREES).
     half_angle_degrees: f32 = 25.0                  @Editable
+    // The light it casts down its cone, as Light's: the irradiance it delivers one metre away. 0 casts none and the cone still reveals or erases.
+    intensity:          f32 = 20.0                  @Editable
+    color:              v3 = {1, 0.95, 0.85}        @Editable
 }
 
 // A box of fog, axis aligned whatever its orientation: the air inside scatters `color` and hides what is behind it,

@@ -431,7 +431,9 @@ Reveal_Light_Entity::Reveal_Light_Entity()
     follows{},
     kind(Reveal_Cone_Kind::Reveals),
     range(1024.0f),
-    half_angle_degrees(25.0f)
+    half_angle_degrees(25.0f),
+    intensity(20.0f),
+    color({1.0f, 0.95f, 0.85f})
 {
   type = entity_type::Reveal_Light_Entity;
 }

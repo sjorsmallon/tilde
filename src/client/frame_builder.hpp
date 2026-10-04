@@ -3,10 +3,43 @@
 #include "entities/generated/entities/fog_volume_entity_generated.hpp"
 #include "renderer.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace client
 {
+
+// A reveal cone and the light cast down it: the holder's r_flashlight_* cvars, or a Reveal_Light_Entity's own numbers.
+struct lit_reveal_cone_t
+{
+  shared::reveal_cone_t cone;
+  linalg::vec3          light_color     = {1.f, 1.f, 1.f};
+  float                 light_intensity = 0.f;
+};
+
+// The visible half of a reveal cone: a spot light down the same cone, fading from `inner_fraction` of its half-angle (r_flashlight_inner).
+// It casts no shadow, since a held one sits inside its holder's head.
+[[nodiscard]] inline shared::scene_light_t flashlight_of(const lit_reveal_cone_t& lit, float inner_fraction)
+{
+  entities::Light light{};
+  light.color     = lit.light_color;
+  light.intensity = lit.light_intensity;
+
+  const float half_angle = std::acos(std::clamp(lit.cone.cosine_of_half_angle, -1.f, 1.f));
+
+  shared::scene_light_t spot;
+  spot.kind          = shared::light_kind_t::Spot;
+  spot.mode          = entities::Light_Mode::Dynamic;
+  spot.position      = lit.cone.apex;
+  spot.forward       = lit.cone.axis;
+  spot.radiance      = shared::radiance_of(light, shared::light_kind_t::Spot);
+  spot.range         = lit.cone.range;
+  spot.cos_inner     = std::cos(half_angle * std::clamp(inner_fraction, 0.f, 0.99f));
+  spot.cos_outer     = lit.cone.cosine_of_half_angle;
+  spot.casts_shadows = false;
+  return spot;
+}
 
 struct pass_builder_t
 {
@@ -20,7 +53,9 @@ struct pass_builder_t
   // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
   std::vector<shared::wall_ripple_t>                   ripples;
   std::vector<shared::reveal_cone_t>                   reveal_cones;
-  std::vector<renderer::fog_volume_t>                  fog_volumes;
+  // Where `reveal_cones` and their lights come from; the pass reads neither from here.
+  std::vector<lit_reveal_cone_t>                       lit_reveal_cones;
+  std::vector<renderer::fog_volume_t>                 fog_volumes;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
 
@@ -81,6 +116,7 @@ struct pass_builder_t
     lights.baked_count = 0;
     ripples.clear();
     reveal_cones.clear();
+    lit_reveal_cones.clear();
     fog_volumes.clear();
     custom.clear();
     debug.retire(delta_seconds);

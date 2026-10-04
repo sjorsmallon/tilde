@@ -3173,10 +3173,18 @@ explosion_parameters(uint64_t explosion_index, const vec3f& position, float time
   return parameters;
 }
 
+struct flashlight_settings_t
+{
+  linalg::vec3 color          = {1.f, 1.f, 1.f};
+  float        intensity      = 0.f;
+  float        inner_fraction = 0.f;
+};
+
 // Whose lights reveal for THIS viewer: everyone's and the map's. Only-your-own is this function without its remote loop.
-// Past the shader's cap the nearest to the camera are the ones drawn.
+// Past the shader's cap the nearest to the camera are the ones drawn. A held light is lit by `held`, a placed one by its own fields.
 void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& camera,
-                                bool camera_is_my_eye, std::vector<shared::reveal_cone_t>& out)
+                                bool camera_is_my_eye, const flashlight_settings_t& held,
+                                std::vector<lit_reveal_cone_t>& out)
 {
   const shared::Entity_System& system = ctx.world.session.entity_system;
   const vec3f eye_above_feet = {0.f, shared::player_eye_height, 0.f};
@@ -3187,12 +3195,13 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
   {
     const bool                       overhead = local_reveal_light_is_overhead(ctx, *my_player);
     const entities::Reveal_Cone_Kind kind     = *shared::try_reveal_light_in_hand(system, *my_player);
-    out.push_back(camera_is_my_eye
-                      ? shared::reveal_cone_of(camera.position, camera.yaw, camera.pitch, overhead,
-                                               kind, settings)
-                      : shared::reveal_cone_of(drawn_local_feet(ctx) + eye_above_feet,
-                                               my_player->view_angle_yaw,
-                                               my_player->view_angle_pitch, overhead, kind, settings));
+    out.push_back({camera_is_my_eye
+                       ? shared::reveal_cone_of(camera.position, camera.yaw, camera.pitch, overhead,
+                                                kind, settings)
+                       : shared::reveal_cone_of(drawn_local_feet(ctx) + eye_above_feet,
+                                                my_player->view_angle_yaw,
+                                                my_player->view_angle_pitch, overhead, kind, settings),
+                   held.color, held.intensity});
   }
 
   for (const auto& [slot, remote_player] : ctx.replication.remote_players)
@@ -3202,55 +3211,27 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
     const entities::Player_Entity* player = try_find_player_in_slot(ctx, slot);
     if (player == nullptr || !shared::reveal_light_is_on(system, *player))
       continue;
-    out.push_back(shared::reveal_cone_of(remote_player.render_position + eye_above_feet,
-                                         remote_player.render_yaw, remote_player.render_pitch,
-                                         player->reveal_light_overhead,
-                                         *shared::try_reveal_light_in_hand(system, *player), settings));
+    out.push_back({shared::reveal_cone_of(remote_player.render_position + eye_above_feet,
+                                          remote_player.render_yaw, remote_player.render_pitch,
+                                          player->reveal_light_overhead,
+                                          *shared::try_reveal_light_in_hand(system, *player), settings),
+                   held.color, held.intensity});
   }
 
   for (const entities::Reveal_Light_Entity& light : system.entities_of<entities::Reveal_Light_Entity>())
     if (light.switch_state.value)
-      out.push_back(shared::reveal_cone_of(light, drawn_reveal_light_pose(ctx, light)));
+      out.push_back({shared::reveal_cone_of(light, drawn_reveal_light_pose(ctx, light)), light.color,
+                     light.intensity});
 
   if (out.size() > renderer::MAX_SCENE_REVEAL_CONES)
   {
-    const auto distance_to_camera = [&camera](const shared::reveal_cone_t& cone)
-    { return linalg::length(cone.apex - camera.position); };
+    const auto distance_to_camera = [&camera](const lit_reveal_cone_t& lit)
+    { return linalg::length(lit.cone.apex - camera.position); };
     std::sort(out.begin(), out.end(),
-              [&](const shared::reveal_cone_t& left, const shared::reveal_cone_t& right)
+              [&](const lit_reveal_cone_t& left, const lit_reveal_cone_t& right)
               { return distance_to_camera(left) < distance_to_camera(right); });
     out.resize(renderer::MAX_SCENE_REVEAL_CONES);
   }
-}
-
-struct flashlight_settings_t
-{
-  linalg::vec3 color          = {1.f, 1.f, 1.f};
-  float        intensity      = 0.f;
-  float        inner_fraction = 0.f;
-};
-
-// The visible half of a reveal cone: a spot light down the same cone. It casts no shadow, since it sits inside its holder's head.
-shared::scene_light_t flashlight_of(const shared::reveal_cone_t& cone,
-                                    const flashlight_settings_t& settings)
-{
-  entities::Light light{};
-  light.color     = settings.color;
-  light.intensity = settings.intensity;
-
-  const float half_angle = std::acos(std::clamp(cone.cosine_of_half_angle, -1.f, 1.f));
-
-  shared::scene_light_t spot;
-  spot.kind          = shared::light_kind_t::Spot;
-  spot.mode          = entities::Light_Mode::Dynamic;
-  spot.position      = cone.apex;
-  spot.forward       = cone.axis;
-  spot.radiance      = shared::radiance_of(light, shared::light_kind_t::Spot);
-  spot.range         = cone.range;
-  spot.cos_inner     = std::cos(half_angle * std::clamp(settings.inner_fraction, 0.f, 0.99f));
-  spot.cos_outer     = cone.cosine_of_half_angle;
-  spot.casts_shadows = false;
-  return spot;
 }
 
 } // namespace
@@ -3370,7 +3351,14 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 
   scene.ripples = ctx.visuals.team_wall_ripples.ripples;
-  collect_drawn_reveal_cones(ctx, camera, camera_is_my_eye, scene.reveal_cones);
+  const flashlight_settings_t held_flashlight = {
+      .color          = {ctx.cvars->r_flashlight_red, ctx.cvars->r_flashlight_green,
+                         ctx.cvars->r_flashlight_blue},
+      .intensity      = ctx.cvars->r_flashlight_intensity,
+      .inner_fraction = ctx.cvars->r_flashlight_inner};
+  collect_drawn_reveal_cones(ctx, camera, camera_is_my_eye, held_flashlight, scene.lit_reveal_cones);
+  for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)
+    scene.reveal_cones.push_back(lit.cone);
 
   for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of<entities::Fog_Volume_Entity>())
     add_fog_volume(scene, fog);
@@ -3383,14 +3371,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                             entity);
   }
 
-  const flashlight_settings_t flashlight_settings = {
-      .color          = {ctx.cvars->r_flashlight_red, ctx.cvars->r_flashlight_green,
-                         ctx.cvars->r_flashlight_blue},
-      .intensity      = ctx.cvars->r_flashlight_intensity,
-      .inner_fraction = ctx.cvars->r_flashlight_inner};
-  if (flashlight_settings.intensity > 0.f)
-    for (const shared::reveal_cone_t& cone : scene.reveal_cones)
-      shared::add_dynamic_frame_light(scene.lights, flashlight_of(cone, flashlight_settings));
+  for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)
+    if (lit.light_intensity > 0.f)
+      shared::add_dynamic_frame_light(scene.lights,
+                                      flashlight_of(lit, held_flashlight.inner_fraction));
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {
