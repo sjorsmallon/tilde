@@ -840,7 +840,7 @@ constexpr const weapon_definition_t& get_weapon_definition(entities::Weapon id)
 }
 
 // The half of the row a button reads.
-constexpr const weapon_fire_t& fire_of(const weapon_definition_t& weapon,
+constexpr const weapon_fire_t& get_weapon_fire_for_button(const weapon_definition_t& weapon,
                                        entities::Fire_Trigger trigger)
 {
   switch (trigger)
@@ -869,7 +869,7 @@ try_find_held_fire_time(const weapon_fire_t& fire, subtick_time_t next_fire_time
 // Negative ammo or reserve is UNLIMITED; every count is per weapon INSTANCE and authored in the map.
 inline constexpr int32_t UNLIMITED_AMMO = -1;
 
-constexpr int32_t full_magazine_of(const weapon_definition_t& weapon)
+constexpr int32_t get_full_magazine_ammo(const weapon_definition_t& weapon)
 {
   return weapon.magazine_size > 0 ? weapon.magazine_size : UNLIMITED_AMMO;
 }
@@ -919,9 +919,9 @@ constexpr int32_t ammo_after_ground_refill(const weapon_definition_t& weapon, co
 }
 
 // How a live projectile flies: the row that fired it, the button it came off.
-inline const projectile_t& projectile_parameters_of(const entities::Projectile& projectile)
+inline const projectile_t& get_projectile_parameters(const entities::Projectile& projectile)
 {
-  return fire_of(get_weapon_definition(projectile.weapon_id), projectile.trigger).projectile;
+  return get_weapon_fire_for_button(get_weapon_definition(projectile.weapon_id), projectile.trigger).projectile;
 }
 
 // ---------------------------------------------------------------------------
@@ -954,7 +954,7 @@ inline const projectile_t& projectile_parameters_of(const entities::Projectile& 
                                                  entities::Movement& movement,
                                                  vec3f& velocity)
 {
-  const weapon_fire_t& fire = fire_of(weapon, trigger);
+  const weapon_fire_t& fire = get_weapon_fire_for_button(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Self_Impulse)
     return false;
   const self_impulse_t* impulse = &fire.self_impulse;
@@ -1007,7 +1007,7 @@ inline const projectile_t& projectile_parameters_of(const entities::Projectile& 
                                                  entities::Fire_Trigger trigger, const vec3f& eye,
                                                  entities::Movement& movement)
 {
-  const weapon_fire_t& fire = fire_of(weapon, trigger);
+  const weapon_fire_t& fire = get_weapon_fire_for_button(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Pilot)
     return false;
 
@@ -1029,7 +1029,7 @@ inline const projectile_t& projectile_parameters_of(const entities::Projectile& 
 }
 
 // The row half a flight was launched off: the primary when both are pilots, nothing when neither is.
-[[nodiscard]] constexpr const pilot_t* try_find_pilot_of(const weapon_definition_t& weapon)
+[[nodiscard]] constexpr const pilot_t* try_find_pilot_for_weapon(const weapon_definition_t& weapon)
 {
   for (const weapon_fire_t* fire : {&weapon.primary_fire, &weapon.secondary_fire})
     if (fire->resolution == entities::Fire_Resolution::Pilot)

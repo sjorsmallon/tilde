@@ -23,7 +23,7 @@ void update_hooks(server_context_t& context, const shared::predicted_world_stora
   std::vector<shared::projectile_target_t> targets;
   shared::collect_projectile_targets(entity_system, targets);
 
-  for (entities::Hook_Entity& hook : entity_system.entities_of<entities::Hook_Entity>())
+  for (entities::Hook_Entity& hook : entity_system.entities_of_type<entities::Hook_Entity>())
   {
     hook.lifetime -= dt;
     if (hook.lifetime <= 0.f)

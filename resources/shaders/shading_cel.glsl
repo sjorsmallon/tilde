@@ -348,11 +348,25 @@ float material_relief(Surface surface)
     return clamp(max(1.0 - surface.occlusion, lean), 0.0, 1.0);
 }
 
+float cel_black() { return scene.cel_pebble_shape.w; } // r_cel_black
+
+// Spotted blacks (Mignola): a shadow whose ambient light is dimmer than r_cel_black is solid ink,
+// where the dots' tone ramp ends. The edge is a pixel wide.
+float solid_ink_coverage(float in_shadow, vec3 ambient)
+{
+    float level = luminance(band_light(ambient));
+    float edge  = max(fwidth(level), 1e-6);
+    if (cel_black() <= 0.0)
+        return 0.0;
+    return in_shadow * (1.0 - smoothstep(cel_black() - edge, cel_black() + edge, level));
+}
+
 // `direct` and `ambient` are the light alone, shaded against a white surface; direct.a is
 // shade_light_cel's. Shadow is where the direct light adds less than r_cel_fill_edge times the
 // ambient. The dithers fill it by shadow_tone, the lit side by how far its light is from
 // arriving square-on, and both by the material's relief; the hatch fills the shadow alone.
-vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position)
+// `solid_ink` is how far the surface went to solid ink, which the lines over it need to know.
+vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position, out float solid_ink)
 {
     vec2            plane     = face_plane(world_position, surface.geometric_normal);
     Pixel_Footprint footprint = pixel_footprint(world_position, surface.geometric_normal);
@@ -366,11 +380,13 @@ vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position
     // Direct and ambient are banded TOGETHER, so a light's own falloff steps with the shadow it fades into.
     vec3 light = band_light(direct.rgb + ambient);
     vec3 color = albedo * light;
-    if (cel_fill_pattern() == CEL_FILL_NONE)
-        return color;
 
     float direct_luminance = luminance(direct.rgb);
     float in_shadow        = 1.0 - cel_band(direct_luminance / max(luminance(ambient), 0.0001), cel_fill_edge());
+
+    solid_ink = solid_ink_coverage(in_shadow, ambient);
+    if (cel_fill_pattern() == CEL_FILL_NONE)
+        return mix(color, CEL_FILL_COLOR, solid_ink);
 
     float tone;
     if (cel_halftone_white() > 0.0 && cel_fill_pattern() != CEL_FILL_HATCH)
@@ -397,7 +413,7 @@ vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position
         ink = dither3d_original_coverage(plane, footprint, tone);
     else
         ink = dither_coverage(plane, footprint, tone);
-    return mix(color, CEL_FILL_COLOR, ink * cel_fill_strength());
+    return mix(color, CEL_FILL_COLOR, max(ink * cel_fill_strength(), solid_ink));
 }
 
 #endif // SHADING_CEL_GLSL

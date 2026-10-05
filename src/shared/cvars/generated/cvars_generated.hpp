@@ -93,6 +93,22 @@ constexpr uint32_t Cel_Fill_COUNT = 4;
 const char* to_string(Cel_Fill value);
 template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view text);
 
+enum class Pattern_Kind : uint8_t
+{
+  none = 0,
+  stripes = 1,
+  grid = 2,
+  checks = 3,
+  bricks = 4,
+  chevrons = 5,
+  dots = 6,
+};
+
+constexpr uint32_t Pattern_Kind_COUNT = 7;
+
+const char* to_string(Pattern_Kind value);
+template <> std::optional<Pattern_Kind> try_from_string<Pattern_Kind>(std::string_view text);
+
 enum class Bot_Mode : uint8_t
 {
   idle = 0,
@@ -198,6 +214,7 @@ struct cvar_state_t
   float m_zoom_sensitivity_ratio;
   float cl_maxfps;
   float cl_interpolation_delay_ticks;
+  bool cl_smooth_drawn_tick;
   bool cl_interpolation_debug;
   float cl_display_latency_ms;
   bool cl_draw_player_hull;
@@ -248,6 +265,7 @@ struct cvar_state_t
   float r_cel_shadow_blue;
   float r_cel_bands;
   float r_cel_flat_albedo;
+  float r_cel_black;
   float r_cel_halftone;
   float r_cel_halftone_paper;
   Cel_Fill r_cel_fill;
@@ -274,11 +292,23 @@ struct cvar_state_t
   float r_cel_pebble_size;
   float r_cel_pebble_irregularity;
   float r_cel_pebble_width;
+  Pattern_Kind r_pattern_preview;
+  float r_pattern_preview_spacing_along;
+  float r_pattern_preview_spacing_across;
+  float r_pattern_preview_angle;
+  float r_pattern_preview_scroll;
+  float r_pattern_preview_coverage;
+  float r_pattern_preview_shape;
+  float r_pattern_preview_strength;
+  float r_pattern_preview_red;
+  float r_pattern_preview_green;
+  float r_pattern_preview_blue;
   bool r_ink;
   float r_ink_threshold;
   float r_ink_crease_degrees;
   int32_t r_ink_width;
   float r_ink_tint;
+  float r_ink_on_black;
   float r_ink_wobble;
   float r_ink_wobble_scale;
   float r_ink_boil;
@@ -286,6 +316,8 @@ struct cvar_state_t
   float r_ink_weight_distance;
   float r_rim;
   int32_t r_rim_width;
+  float r_misprint;
+  float r_misprint_distance;
   float r_flashlight_intensity;
   float r_flashlight_red;
   float r_flashlight_green;
@@ -401,126 +433,142 @@ enum class cvar_id : uint16_t
   m_zoom_sensitivity_ratio = 73,
   cl_maxfps = 74,
   cl_interpolation_delay_ticks = 75,
-  cl_interpolation_debug = 76,
-  cl_display_latency_ms = 77,
-  cl_draw_player_hull = 78,
-  cl_spectate_slot = 79,
-  cl_replay_player_view = 80,
-  cl_replay_panel = 81,
-  cl_ghost_show = 82,
-  cl_noclip = 83,
-  cl_player_unlit = 84,
-  cl_blob_shadow = 85,
-  cl_blob_shadow_radius = 86,
-  cl_blob_shadow_opacity = 87,
-  cl_blob_shadow_max_distance = 88,
-  cl_aim_debug = 89,
-  cl_aim_debug_pitch = 90,
-  cl_aim_debug_yaw = 91,
-  cl_show_deploy_timer = 92,
-  cl_auto_equip_weapon_on_pickup = 93,
-  cl_crosshair = 94,
-  cl_crosshair_dot = 95,
-  cl_crosshair_size = 96,
-  cl_crosshair_gap = 97,
-  cl_crosshair_thickness = 98,
-  cl_crosshair_r = 99,
-  cl_crosshair_g = 100,
-  cl_crosshair_b = 101,
-  cl_crosshair_a = 102,
-  editor_speed = 103,
-  cl_timescale = 104,
-  sound_reference_distance = 105,
-  sound_max_distance_cutoff = 106,
-  sound_rolloff_factor = 107,
-  map_respawn_delay_seconds = 108,
-  map_kill_limit = 109,
-  map_round_time_limit_seconds = 110,
-  next_map = 111,
-  pin_main_thread = 112,
-  r_debug_channel = 113,
-  r_exposure = 114,
-  r_ambient_floor = 115,
-  r_stylized = 116,
-  r_cel = 117,
-  r_cel_terminator = 118,
-  r_cel_shadow_edge = 119,
-  r_cel_softness = 120,
-  r_cel_shadow_red = 121,
-  r_cel_shadow_green = 122,
-  r_cel_shadow_blue = 123,
-  r_cel_bands = 124,
-  r_cel_flat_albedo = 125,
-  r_cel_halftone = 126,
-  r_cel_halftone_paper = 127,
-  r_cel_fill = 128,
-  r_cel_fill_strength = 129,
-  r_cel_fill_spacing = 130,
-  r_cel_fill_edge = 131,
-  r_cel_fill_shadow_tone_dark = 132,
-  r_cel_fill_shadow_tone_light = 133,
-  r_cel_fill_ambient_dark = 134,
-  r_cel_fill_ambient_light = 135,
-  r_cel_fill_tone_lit = 136,
-  r_cel_fill_material = 137,
-  r_cel_hatch_width = 138,
-  r_cel_dither3d_size_variability = 139,
-  r_cel_dither3d_contrast = 140,
-  r_cel_dither3d_stretch_smoothness = 141,
-  r_cel_speckle = 142,
-  r_cel_speckle_spacing = 143,
-  r_cel_speckle_density = 144,
-  r_cel_speckle_radius = 145,
-  r_cel_pebble = 146,
-  r_cel_pebble_spacing = 147,
-  r_cel_pebble_density = 148,
-  r_cel_pebble_size = 149,
-  r_cel_pebble_irregularity = 150,
-  r_cel_pebble_width = 151,
-  r_ink = 152,
-  r_ink_threshold = 153,
-  r_ink_crease_degrees = 154,
-  r_ink_width = 155,
-  r_ink_tint = 156,
-  r_ink_wobble = 157,
-  r_ink_wobble_scale = 158,
-  r_ink_boil = 159,
-  r_ink_weight_near = 160,
-  r_ink_weight_distance = 161,
-  r_rim = 162,
-  r_rim_width = 163,
-  r_flashlight_intensity = 164,
-  r_flashlight_red = 165,
-  r_flashlight_green = 166,
-  r_flashlight_blue = 167,
-  r_flashlight_inner = 168,
-  r_fxaa = 169,
-  r_fxaa_subpixel = 170,
-  r_fog = 171,
-  r_fog_distance = 172,
-  r_fog_anisotropy = 173,
-  r_look_panel = 174,
-  sv_skybox = 175,
-  debug_show_collisions = 176,
-  debug_show_hitboxes = 177,
-  debug_show_navmesh = 178,
-  debug_show_box_volumes = 179,
-  debug_hide_geometry = 180,
-  cl_shot_debug_seconds = 181,
-  debug_show_entity_counts = 182,
-  net_snapshot_debug = 183,
-  sv_event_debug = 184,
-  cl_event_debug = 185,
-  sv_reliable_debug = 186,
-  sv_io_debug = 187,
-  replay_keyframe_seconds = 188,
-  sv_replay_auto = 189,
-  sv_ghost_record = 190,
+  cl_smooth_drawn_tick = 76,
+  cl_interpolation_debug = 77,
+  cl_display_latency_ms = 78,
+  cl_draw_player_hull = 79,
+  cl_spectate_slot = 80,
+  cl_replay_player_view = 81,
+  cl_replay_panel = 82,
+  cl_ghost_show = 83,
+  cl_noclip = 84,
+  cl_player_unlit = 85,
+  cl_blob_shadow = 86,
+  cl_blob_shadow_radius = 87,
+  cl_blob_shadow_opacity = 88,
+  cl_blob_shadow_max_distance = 89,
+  cl_aim_debug = 90,
+  cl_aim_debug_pitch = 91,
+  cl_aim_debug_yaw = 92,
+  cl_show_deploy_timer = 93,
+  cl_auto_equip_weapon_on_pickup = 94,
+  cl_crosshair = 95,
+  cl_crosshair_dot = 96,
+  cl_crosshair_size = 97,
+  cl_crosshair_gap = 98,
+  cl_crosshair_thickness = 99,
+  cl_crosshair_r = 100,
+  cl_crosshair_g = 101,
+  cl_crosshair_b = 102,
+  cl_crosshair_a = 103,
+  editor_speed = 104,
+  cl_timescale = 105,
+  sound_reference_distance = 106,
+  sound_max_distance_cutoff = 107,
+  sound_rolloff_factor = 108,
+  map_respawn_delay_seconds = 109,
+  map_kill_limit = 110,
+  map_round_time_limit_seconds = 111,
+  next_map = 112,
+  pin_main_thread = 113,
+  r_debug_channel = 114,
+  r_exposure = 115,
+  r_ambient_floor = 116,
+  r_stylized = 117,
+  r_cel = 118,
+  r_cel_terminator = 119,
+  r_cel_shadow_edge = 120,
+  r_cel_softness = 121,
+  r_cel_shadow_red = 122,
+  r_cel_shadow_green = 123,
+  r_cel_shadow_blue = 124,
+  r_cel_bands = 125,
+  r_cel_flat_albedo = 126,
+  r_cel_black = 127,
+  r_cel_halftone = 128,
+  r_cel_halftone_paper = 129,
+  r_cel_fill = 130,
+  r_cel_fill_strength = 131,
+  r_cel_fill_spacing = 132,
+  r_cel_fill_edge = 133,
+  r_cel_fill_shadow_tone_dark = 134,
+  r_cel_fill_shadow_tone_light = 135,
+  r_cel_fill_ambient_dark = 136,
+  r_cel_fill_ambient_light = 137,
+  r_cel_fill_tone_lit = 138,
+  r_cel_fill_material = 139,
+  r_cel_hatch_width = 140,
+  r_cel_dither3d_size_variability = 141,
+  r_cel_dither3d_contrast = 142,
+  r_cel_dither3d_stretch_smoothness = 143,
+  r_cel_speckle = 144,
+  r_cel_speckle_spacing = 145,
+  r_cel_speckle_density = 146,
+  r_cel_speckle_radius = 147,
+  r_cel_pebble = 148,
+  r_cel_pebble_spacing = 149,
+  r_cel_pebble_density = 150,
+  r_cel_pebble_size = 151,
+  r_cel_pebble_irregularity = 152,
+  r_cel_pebble_width = 153,
+  r_pattern_preview = 154,
+  r_pattern_preview_spacing_along = 155,
+  r_pattern_preview_spacing_across = 156,
+  r_pattern_preview_angle = 157,
+  r_pattern_preview_scroll = 158,
+  r_pattern_preview_coverage = 159,
+  r_pattern_preview_shape = 160,
+  r_pattern_preview_strength = 161,
+  r_pattern_preview_red = 162,
+  r_pattern_preview_green = 163,
+  r_pattern_preview_blue = 164,
+  r_ink = 165,
+  r_ink_threshold = 166,
+  r_ink_crease_degrees = 167,
+  r_ink_width = 168,
+  r_ink_tint = 169,
+  r_ink_on_black = 170,
+  r_ink_wobble = 171,
+  r_ink_wobble_scale = 172,
+  r_ink_boil = 173,
+  r_ink_weight_near = 174,
+  r_ink_weight_distance = 175,
+  r_rim = 176,
+  r_rim_width = 177,
+  r_misprint = 178,
+  r_misprint_distance = 179,
+  r_flashlight_intensity = 180,
+  r_flashlight_red = 181,
+  r_flashlight_green = 182,
+  r_flashlight_blue = 183,
+  r_flashlight_inner = 184,
+  r_fxaa = 185,
+  r_fxaa_subpixel = 186,
+  r_fog = 187,
+  r_fog_distance = 188,
+  r_fog_anisotropy = 189,
+  r_look_panel = 190,
+  sv_skybox = 191,
+  debug_show_collisions = 192,
+  debug_show_hitboxes = 193,
+  debug_show_navmesh = 194,
+  debug_show_box_volumes = 195,
+  debug_hide_geometry = 196,
+  cl_shot_debug_seconds = 197,
+  debug_show_entity_counts = 198,
+  net_snapshot_debug = 199,
+  sv_event_debug = 200,
+  cl_event_debug = 201,
+  sv_reliable_debug = 202,
+  sv_io_debug = 203,
+  replay_keyframe_seconds = 204,
+  sv_replay_auto = 205,
+  sv_ghost_record = 206,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 191;
+constexpr uint32_t CVAR_COUNT = 207;
 
 enum class command_id : uint16_t
 {
@@ -796,6 +844,11 @@ template <> struct enum_traits<cvars::Debug_Channel>
 template <> struct enum_traits<cvars::Cel_Fill>
 {
   static constexpr uint32_t count = cvars::Cel_Fill_COUNT;
+};
+
+template <> struct enum_traits<cvars::Pattern_Kind>
+{
+  static constexpr uint32_t count = cvars::Pattern_Kind_COUNT;
 };
 
 template <> struct enum_traits<cvars::Bot_Mode>

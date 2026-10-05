@@ -11,10 +11,18 @@ namespace shared
 bounce_body_t bounce_step(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                           const bounce_body_t& body, float radius, float gravity, float dt)
 {
-  if (body.bounce.at_rest || dt <= 0.f)
+  if (dt <= 0.f)
     return body;
 
   bounce_body_t out = body;
+  if (out.bounce.at_rest)
+  {
+    const linalg::vec3f below = out.position - linalg::vec3f{0.f, BOUNCE_SUPPORT_PROBE, 0.f};
+    if (sweep_body(bvh, world, out.position, below, radius))
+      return body;
+    out.bounce.at_rest = false;
+  }
+
   linalg::vec3f velocity = out.bounce.velocity;
   velocity.y -= gravity * dt;
 
@@ -23,7 +31,7 @@ bounce_body_t bounce_step(const Bounding_Volume_Hierarchy& bvh, const predicted_
   {
     const linalg::vec3f to = out.position + velocity * remaining;
     const std::optional<projectile_hit_t> hit =
-        sweep_projectile(bvh, world, out.position, to, radius);
+        sweep_body(bvh, world, out.position, to, radius);
     if (!hit)
     {
       out.position = to;

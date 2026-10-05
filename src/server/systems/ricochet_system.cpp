@@ -25,7 +25,7 @@ void update_ricochets(server_context_t& context, const shared::predicted_world_s
   shared::collect_projectile_targets(entity_system, targets);
 
   for (entities::Ricochet_Entity& ricochet :
-       entity_system.entities_of<entities::Ricochet_Entity>())
+       entity_system.entities_of_type<entities::Ricochet_Entity>())
   {
     ricochet.lifetime -= dt;
     if (ricochet.lifetime <= 0.f)

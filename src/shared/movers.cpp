@@ -129,7 +129,7 @@ void collect_movers(const Entity_System& system, const path_links_t& links,
                     const mover_rests_t& rests, uint32_t tick, float tickrate,
                     std::vector<mover_t>& out)
 {
-  Span<const entities::Mover_Entity> movers = system.entities_of<entities::Mover_Entity>();
+  Span<const entities::Mover_Entity> movers = system.entities_of_type<entities::Mover_Entity>();
   out.resize(movers.size());
 
   for (uint32_t index = 0; index < movers.size(); ++index)

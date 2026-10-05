@@ -116,7 +116,7 @@ bool try_pose_players_across_bracket(
   // the start of its blend, and a player who died mid-blend was still a body
   // under the crosshair for part of it.
   const Span<const entities::Player_Entity> from_players =
-      from->entities.entities_of<entities::Player_Entity>();
+      from->entities.entities_of_type<entities::Player_Entity>();
 
   uint32_t living_count = 0;
   for (const entities::Player_Entity& player : from_players)

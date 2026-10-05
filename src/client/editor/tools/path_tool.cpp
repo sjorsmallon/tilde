@@ -136,7 +136,7 @@ void Path_Tool::refresh(editor_context_t& ctx)
     active_selection.push_back(subject_mover);
 
   cycle_seconds = 0.0f;
-  for (const entities::Mover_Entity& each : scratch.system.entities_of<entities::Mover_Entity>())
+  for (const entities::Mover_Entity& each : scratch.system.entities_of_type<entities::Mover_Entity>())
     cycle_seconds = std::max(cycle_seconds,
                              chain_cycle_seconds(chain_through(scratch, each.follow.from), ctx.tickrate));
 }
@@ -480,7 +480,7 @@ void Path_Tool::delete_active_node(editor_context_t& ctx)
     return;
 
   const shared::entity_uid_t removed = active_node;
-  const shared::entity_uid_t previous = shared::previous_node_of(scratch.links, removed);
+  const shared::entity_uid_t previous = shared::find_previous_node(scratch.links, removed);
   const shared::entity_uid_t next = static_cast<const entities::Path_Node_Entity&>(*entry->entity).next;
 
   transaction_t transaction;
@@ -542,7 +542,7 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
   const uint32_t tick = (uint32_t)preview_ticks;
   const float fraction = preview_ticks - (float)tick;
 
-  for (const entities::Mover_Entity& mover : scratch.system.entities_of<entities::Mover_Entity>())
+  for (const entities::Mover_Entity& mover : scratch.system.entities_of_type<entities::Mover_Entity>())
   {
     entities::Mover_Entity previewed = mover;
     previewed.follow.segment_start_tick = 0;
@@ -583,7 +583,7 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
       draw_posed_box(draws, rest_frame, pose, *rest, colors::magenta);
 
     for (const entities::Reveal_Light_Entity& light :
-         scratch.system.entities_of<entities::Reveal_Light_Entity>())
+         scratch.system.entities_of_type<entities::Reveal_Light_Entity>())
     {
       if (light.follows != mover.entity_id)
         continue;

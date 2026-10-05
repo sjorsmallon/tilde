@@ -137,8 +137,8 @@ int main()
   const shared::reveal_cone_settings_t overhead_settings = {
       .range = RANGE, .half_angle_degrees = HALF_ANGLE_DEGREES, .overhead_height = 128.f};
   const linalg::vec3f         eye      = {0.f, 64.f, 0.f};
-  const shared::reveal_cone_t overhead = shared::reveal_cone_of(eye, 0.f, 0.f, true, entities::Reveal_Cone_Kind::Reveals, overhead_settings);
-  const shared::reveal_cone_t down_aim = shared::reveal_cone_of(eye, 0.f, 0.f, false, entities::Reveal_Cone_Kind::Reveals, overhead_settings);
+  const shared::reveal_cone_t overhead = shared::compute_player_reveal_cone(eye, 0.f, 0.f, true, entities::Reveal_Cone_Kind::Reveals, overhead_settings);
+  const shared::reveal_cone_t down_aim = shared::compute_player_reveal_cone(eye, 0.f, 0.f, false, entities::Reveal_Cone_Kind::Reveals, overhead_settings);
   check(linalg::length(overhead.apex - linalg::vec3f{0.f, 192.f, 0.f}) < 1e-4f &&
             linalg::length(overhead.axis - linalg::vec3f{0.f, -1.f, 0.f}) < 1e-4f,
         "an overhead cone hangs its height above the eye and points straight down");

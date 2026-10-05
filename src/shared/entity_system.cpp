@@ -86,7 +86,7 @@ void Entity_System::add_entity(entity_uid_t uid, const entities::Entity *entity)
   {
     log_error("Entity_System::add_entity: a {} was handed uid 0, which is the null "
               "sentinel — not added",
-              entities::classname_of(entity));
+              entities::get_classname(entity));
     return;
   }
 

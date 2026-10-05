@@ -24,11 +24,11 @@ void update_bounce_bodies(server_context_t& context, const shared::predicted_wor
 {
   shared::game_session_t&         session = context.world.session;
   const shared::predicted_world_t view =
-      shared::predicted_world_of(world, entities::Team_Allegiance::Free_For_All);
+      shared::get_predicted_world_for_team(world, entities::Team_Allegiance::Free_For_All);
   const float gravity = context.cvars->g_gravity;
 
   for (entities::Physics_Body_Entity& body :
-       session.entity_system.entities_of<entities::Physics_Body_Entity>())
+       session.entity_system.entities_of_type<entities::Physics_Body_Entity>())
   {
     const shared::bounce_body_t stepped = shared::bounce_step(
         session.bvh, view,
@@ -39,7 +39,7 @@ void update_bounce_bodies(server_context_t& context, const shared::predicted_wor
     body.bounce      = stepped.bounce;
   }
 
-  for (entities::Weapon_Entity& weapon : session.entity_system.entities_of<entities::Weapon_Entity>())
+  for (entities::Weapon_Entity& weapon : session.entity_system.entities_of_type<entities::Weapon_Entity>())
   {
     if (weapon.owner_uid != shared::null_entity_uid)
       continue;

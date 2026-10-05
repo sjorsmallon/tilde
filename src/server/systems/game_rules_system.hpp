@@ -28,8 +28,8 @@ struct round_timing_t
 [[nodiscard]] const entities::Game_Rules_Entity *try_find_rules_entity(const server_context_t &context);
 
 // The same, for a caller that runs inside a loaded world: none is a bug.
-[[nodiscard]] entities::Match &match_of(server_context_t &context);
-[[nodiscard]] const entities::Match &match_of(const server_context_t &context);
+[[nodiscard]] entities::Match &get_match(server_context_t &context);
+[[nodiscard]] const entities::Match &get_match(const server_context_t &context);
 
 [[nodiscard]] const game_mode_settings_t &current_mode(const server_context_t &context);
 

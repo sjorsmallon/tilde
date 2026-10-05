@@ -20,7 +20,7 @@ struct lit_reveal_cone_t
 
 // The visible half of a reveal cone: a spot light down the same cone, fading from `inner_fraction` of its half-angle (r_flashlight_inner).
 // It casts no shadow, since a held one sits inside its holder's head.
-[[nodiscard]] inline shared::scene_light_t flashlight_of(const lit_reveal_cone_t& lit, float inner_fraction)
+[[nodiscard]] inline shared::scene_light_t build_spot_light_for_reveal_cone(const lit_reveal_cone_t& lit, float inner_fraction)
 {
   entities::Light light{};
   light.color     = lit.light_color;
@@ -33,7 +33,7 @@ struct lit_reveal_cone_t
   spot.mode          = entities::Light_Mode::Dynamic;
   spot.position      = lit.cone.apex;
   spot.forward       = lit.cone.axis;
-  spot.radiance      = shared::radiance_of(light, shared::light_kind_t::Spot);
+  spot.radiance      = shared::compute_radiance(light, shared::light_kind_t::Spot);
   spot.range         = lit.cone.range;
   spot.cos_inner     = std::cos(half_angle * std::clamp(inner_fraction, 0.f, 0.99f));
   spot.cos_outer     = lit.cone.cosine_of_half_angle;

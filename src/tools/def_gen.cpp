@@ -8427,7 +8427,7 @@ static void emit_verb_enum(FILE* out, const char* enum_name, const char* count_n
 // Which trait of `entity`'s `is` list declares `verb`, or null if none does.
 // A verb belongs to exactly one trait (check_verb_names_are_unique), so this
 // answer is unique when it exists.
-static const declaration_t* owning_trait_of(const program_t* program,
+static const declaration_t* find_owning_trait(const program_t* program,
                                             const declaration_t* entity, const field_t* verb)
 {
   for (int32_t offset = 0; offset < entity->trait_opt_in_count; ++offset)
@@ -9119,7 +9119,7 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
     int32_t written = 0;
     for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
     {
-      if (owning_trait_of(program, entity, actions[verb_index]) == nullptr)
+      if (find_owning_trait(program, entity, actions[verb_index]) == nullptr)
         continue;
       fprintf(out, "%saction_bit(entity_action::%.*s)", written > 0 ? " | " : "",
               actions[verb_index]->name.length, actions[verb_index]->name.data);
@@ -9163,7 +9163,7 @@ static void emit_entity_io_header(FILE* out, const program_t* program, const cha
     int32_t written = 0;
     for (int32_t verb_index = 0; verb_index < signal_count; ++verb_index)
     {
-      if (owning_trait_of(program, entity, signals[verb_index]) == nullptr)
+      if (find_owning_trait(program, entity, signals[verb_index]) == nullptr)
         continue;
       fprintf(out, "%ssignal_bit(entity_signal::%.*s)", written > 0 ? " | " : "",
               signals[verb_index]->name.length, signals[verb_index]->name.data);
@@ -9451,7 +9451,7 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
       if (entity->kind != DECLARATION_ENTITY)
         continue;
 
-      const declaration_t* trait = owning_trait_of(program, entity, verb);
+      const declaration_t* trait = find_owning_trait(program, entity, verb);
       if (trait == nullptr)
         continue;
 
@@ -9502,7 +9502,7 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
     // also the one a reader can check against the enum above.
     int32_t accepted = 0;
     for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
-      accepted += owning_trait_of(program, entity, actions[verb_index]) != nullptr ? 1 : 0;
+      accepted += find_owning_trait(program, entity, actions[verb_index]) != nullptr ? 1 : 0;
 
     if (accepted == 0)
     {
@@ -9513,7 +9513,7 @@ static void emit_action_bindings(FILE* out, const program_t* program, const char
     fprintf(out, "  {   // %.*s\n", entity->name.length, entity->name.data);
     for (int32_t verb_index = 0; verb_index < action_count; ++verb_index)
     {
-      if (owning_trait_of(program, entity, actions[verb_index]) == nullptr)
+      if (find_owning_trait(program, entity, actions[verb_index]) == nullptr)
       {
         fprintf(out, "    nullptr,   // %.*s\n", actions[verb_index]->name.length,
                 actions[verb_index]->name.data);

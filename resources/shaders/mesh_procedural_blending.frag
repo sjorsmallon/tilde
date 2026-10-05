@@ -28,5 +28,5 @@ void main() {
     outSurfaceNormal = store_surface_normal(fragWorldNormal);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition, normalize(fragWorldNormal));
 }

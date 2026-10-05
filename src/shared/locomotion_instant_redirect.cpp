@@ -31,10 +31,10 @@ wanted_move_t instant_redirect_step(const movement_settings_t& settings,
                                     const vec3& velocity_entering_move, move_state_t&,
                                     const move_input_t& input)
 {
-  const ground_frame_t frame = ground_frame_of(contacts, grounded, velocity_entering_move.y);
-  const wish_t         wish  = wish_of(settings, input, frame.has_ground, frame.normal);
+  const ground_under_step_t frame = compute_ground_under_step(contacts, grounded, velocity_entering_move.y);
+  const wish_t         wish  = compute_wish_direction_and_speed(settings, input, frame.has_ground, frame.normal);
   const vec3           target_direction =
-      frame.walking ? wish.direction : last_push_direction_of(wish.direction, input.aim_sweep);
+      frame.walking ? wish.direction : compute_last_push_direction(wish.direction, input.aim_turn_across_step);
 
   const vec3  horizontal{velocity_entering_move.x, 0.f, velocity_entering_move.z};
   const float carried_speed = length(horizontal);

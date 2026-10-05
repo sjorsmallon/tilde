@@ -69,7 +69,7 @@ struct movement_settings_t
   bool                        record_collisions = false;
 };
 
-[[nodiscard]] movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars);
+[[nodiscard]] movement_settings_t movement_settings_from_cvars(const cvars::cvar_state_t& cvars);
 
 // The model a cvar's prefix names, or nothing when every model reads it. A map
 // setting one whose model is not its own pm_model is setting a dead number.

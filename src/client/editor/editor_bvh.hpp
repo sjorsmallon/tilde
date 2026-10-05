@@ -82,8 +82,8 @@ build_editor_bvh(const shared::map_t &map)
     // Entities pick as the shape the editor draws them as, planes included:
     // for every type but the spectate spot the hull IS the bound, and for that
     // one the frustum's empty corner should fall through to what is behind it.
-    add_leaf(entry.uid, editor_bounds_of(entry.entity.get()),
-             editor_collision_planes_of(entry.entity.get()));
+    add_leaf(entry.uid, get_editor_bounds(entry.entity.get()),
+             get_editor_collision_planes(entry.entity.get()));
   }
 
   result.bvh = build_bvh(inputs);

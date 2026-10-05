@@ -266,6 +266,7 @@ bool Tick()
                              cvars.r_cel_shadow_blue};
     look.cel_bands = cvars.r_cel_bands;
     look.cel_flat_albedo = cvars.r_cel_flat_albedo;
+    look.cel_black       = cvars.r_cel_black;
     look.cel_halftone    = cvars.r_cel_halftone;
     look.cel_halftone_paper = cvars.r_cel_halftone_paper;
     look.cel_fill                 = cvars.r_cel_fill;
@@ -292,6 +293,16 @@ bool Tick()
     look.cel_pebble_size              = cvars.r_cel_pebble_size;
     look.cel_pebble_irregularity      = cvars.r_cel_pebble_irregularity;
     look.cel_pebble_line_width_pixels = cvars.r_cel_pebble_width;
+    look.pattern_preview               = cvars.r_pattern_preview;
+    look.pattern_preview_spacing       = {cvars.r_pattern_preview_spacing_along,
+                                          cvars.r_pattern_preview_spacing_across};
+    look.pattern_preview_angle_degrees = cvars.r_pattern_preview_angle;
+    look.pattern_preview_scroll_speed  = cvars.r_pattern_preview_scroll;
+    look.pattern_preview_coverage      = cvars.r_pattern_preview_coverage;
+    look.pattern_preview_shape         = cvars.r_pattern_preview_shape;
+    look.pattern_preview_strength      = cvars.r_pattern_preview_strength;
+    look.pattern_preview_ink           = {cvars.r_pattern_preview_red, cvars.r_pattern_preview_green,
+                                          cvars.r_pattern_preview_blue};
     look.ink              = cvars.r_stylized && cvars.r_ink;
     look.ink_threshold    = cvars.r_ink_threshold;
     look.ink_width_pixels = cvars.r_ink_width;
@@ -304,6 +315,9 @@ bool Tick()
     look.ink_weight_distance     = cvars.r_ink_weight_distance;
     look.rim              = cvars.r_stylized ? cvars.r_rim : 0.0f;
     look.rim_width_pixels = cvars.r_rim_width;
+    look.ink_on_black      = cvars.r_ink_on_black;
+    look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
+    look.misprint_distance = cvars.r_misprint_distance;
     look.fog              = cvars.r_fog;
     look.fog_distance     = cvars.r_fog_distance;
     look.fog_anisotropy   = cvars.r_fog_anisotropy;

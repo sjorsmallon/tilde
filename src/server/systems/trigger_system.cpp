@@ -63,11 +63,11 @@ void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& o
   out.clear();
 
   for (entities::Player_Entity& player :
-       session.entity_system.entities_of<entities::Player_Entity>())
+       session.entity_system.entities_of_type<entities::Player_Entity>())
     out.push_back({&player, shared::player_hull_bounds(player.position)});
 
   for (entities::Physics_Body_Entity& body :
-       session.entity_system.entities_of<entities::Physics_Body_Entity>())
+       session.entity_system.entities_of_type<entities::Physics_Body_Entity>())
     out.push_back({&body, {body.position - body.size, body.position + body.size}});
 }
 

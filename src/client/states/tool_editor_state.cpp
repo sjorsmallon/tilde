@@ -98,7 +98,7 @@ static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 // Cvars panel all go through, so this cannot disagree with any of them about
 // where the name ends. Last line wins, matching apply_map_cvars_that_were_supplied_from_the_editor: the map's list
 // is executed in order, so a repeated name ends on its final value.
-static std::string skybox_name_of(const shared::map_t &map)
+static std::string get_skybox_name(const shared::map_t &map)
 {
   std::string name;
   for (const std::string &line : map.attached_cvars)
@@ -1281,11 +1281,11 @@ void Tool_Editor_State::draw_imgui_panels()
     }
     else
     {
-      // Clicking play in the editor means play, so the trip carries the
+      // Clicking play in the editor means play, so the switch carries the
       // `join_game` a spectating connection would otherwise wait for you to
       // type. Play_State sends it once it is connected.
       client_context_t& client_context = state_manager::get_client_context();
-      client_context.requested_match_join = true;
+      client_context.requested_join_on_connect = true;
       if (spawn_at_camera)
         client_context.requested_spawn_view = camera;
       state_manager::switch_to(game_state::play);
@@ -1559,7 +1559,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
                                             .orientation = reveal_light->orientation};
         shared::add_dynamic_frame_light(
             scene.lights,
-            flashlight_of({shared::reveal_cone_of(*reveal_light, placed), reveal_light->color,
+            build_spot_light_for_reveal_cone({shared::compute_light_reveal_cone(*reveal_light, placed), reveal_light->color,
                            reveal_light->intensity},
                           state_manager::get_client_context().cvars->r_flashlight_inner));
       }
@@ -1632,7 +1632,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     tools[*active_tool]->on_draw_overlay(context, scene);
   }
 
-  scene.sky = skybox.resolve(skybox_name_of(map));
+  scene.sky = skybox.resolve(get_skybox_name(map));
 
   passes.push_back(scene.to_pass());
 }

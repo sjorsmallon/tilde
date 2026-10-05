@@ -128,7 +128,7 @@ int main()
   // Player_Entity (entities::entity_type::Player_Entity) is the live player, runtime-spawned
   // when a client connects — not a map-loaded thing.
   Span<entities::Player_Spawn_Entity> spawns =
-      session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      session.entity_system.entities_of_type<entities::Player_Spawn_Entity>();
 
   if (spawns.empty())
   {
@@ -186,7 +186,7 @@ int main()
     game_session_t second_session = build_session(test_map);
 
     Span<entities::Player_Spawn_Entity> second_spawns =
-        second_session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+        second_session.entity_system.entities_of_type<entities::Player_Spawn_Entity>();
     if (second_spawns.size() != 1 || second_spawns[0].entity_id != spawn_uid)
     {
       log_error("Second session from the same map did not get uid {} on its spawn marker",
@@ -800,9 +800,9 @@ int main()
 
     std::vector<ray_hit_result_t> hits;
     bvh_intersect_ray_all(stacked.bvh, {0.f, 0.f, -100.f}, {0.f, 0.f, 1.f}, hits);
-    const auto uid_of = [&](const ray_hit_result_t& hit) { return stacked.geometry[hit.id.index].uid; };
-    if (hits.size() != 3 || uid_of(hits[0]) != near_box || uid_of(hits[1]) != middle_box ||
-        uid_of(hits[2]) != far_box)
+    const auto get_uid_for_hit = [&](const ray_hit_result_t& hit) { return stacked.geometry[hit.id.index].uid; };
+    if (hits.size() != 3 || get_uid_for_hit(hits[0]) != near_box || get_uid_for_hit(hits[1]) != middle_box ||
+        get_uid_for_hit(hits[2]) != far_box)
     {
       log_error("bvh_intersect_ray_all did not answer the three stacked boxes nearest first");
       return 1;

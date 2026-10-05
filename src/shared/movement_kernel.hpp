@@ -53,14 +53,14 @@ struct wanted_move_t
 // does not rise, and FLIES it otherwise -- a jump is a velocity that rises. The
 // ground a rising step leaves is no longer under it, which is why the frame the
 // basis and the clip are taken in comes out of the same answer.
-struct ground_frame_t
+struct ground_under_step_t
 {
   bool walking    = false;
   bool has_ground = false;
   vec3 normal     = {0.f, 1.f, 0.f};
 };
 
-[[nodiscard]] ground_frame_t ground_frame_of(const contacts_t& contacts, bool grounded,
+[[nodiscard]] ground_under_step_t compute_ground_under_step(const contacts_t& contacts, bool grounded,
                                              float vertical_velocity);
 
 [[nodiscard]] vec3 clip_vector(vec3 in, vec3 normal, float overbounce);

@@ -220,7 +220,7 @@ struct Entity_System
   // array object. Formally UB, universally fine, and the same bet the codebase
   // already makes when it memcmp-diffs and memcpy-clones entities
   // (entity_system_def.md §4).
-  template <typename T> Span<T> entities_of()
+  template <typename T> Span<T> entities_of_type()
   {
     Entity_Pool &pool = pools[(uint32_t)T::static_type];
 
@@ -236,9 +236,9 @@ struct Entity_System
     return Span<T>(reinterpret_cast<T *>(pool.storage.data()), pool.count);
   }
 
-  template <typename T> Span<const T> entities_of() const
+  template <typename T> Span<const T> entities_of_type() const
   {
-    return const_cast<Entity_System *>(this)->entities_of<T>();
+    return const_cast<Entity_System *>(this)->entities_of_type<T>();
   }
 
   // Every live entity carrying ALL of Component_T..., across every pool whose
@@ -251,7 +251,7 @@ struct Entity_System
   // Point_Light_Entity pool paying a COMPONENT_OFFSETS lookup that could only
   // return -1. See Component_View below for what it costs instead.
   //
-  // Same lifetime rule as entities_of<T>(): a view, not a container, invalidated
+  // Same lifetime rule as entities_of_type<T>(): a view, not a container, invalidated
   // by the next spawn or destroy in any pool it covers.
   template <typename... Component_T> Component_View<Component_T...> entities_with();
 
@@ -270,7 +270,7 @@ struct Entity_System
   // A trait with no `requires` yields the Entity alone, so the row binds as
   // `for (entities::Entity& volume : ...)` rather than as a structured binding.
   //
-  // Same lifetime rule as entities_of<T>(): a view, not a container,
+  // Same lifetime rule as entities_of_type<T>(): a view, not a container,
   // invalidated by the next spawn or destroy in any pool it covers.
   template <typename Trait_T> Trait_View<Trait_T> entities_with_trait();
 
@@ -344,7 +344,7 @@ struct Entity_System
     }
 
     // T is known here, so the element is reached as T directly rather than
-    // through as_base — same reinterpretation entities_of<T>() makes, minus the
+    // through as_base — same reinterpretation entities_of_type<T>() makes, minus the
     // thunk call this warm path does not need.
     return reinterpret_cast<T *>(pool.storage.data() + (size_t)location.slot * pool.stride);
   }

@@ -25,7 +25,7 @@ void play_world_impact(client_context_t& context, const shared::Shot_Impact& dat
   if (!sound)
     return;
 
-  if (shared::fire_of(shared::WEAPON_DEFINITIONS[weapon],
+  if (shared::get_weapon_fire_for_button(shared::WEAPON_DEFINITIONS[weapon],
                       static_cast<entities::Fire_Trigger>(data.trigger))
           .hitscan.leaves_bullet_impact)
   {

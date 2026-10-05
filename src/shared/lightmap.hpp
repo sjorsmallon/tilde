@@ -459,12 +459,12 @@ struct probe_grid_t
   }
 
   // x fastest, then y, then z -- the order a 3D texture's texels are laid out.
-  [[nodiscard]] size_t index_of(int x, int y, int z) const
+  [[nodiscard]] size_t compute_cell_index(int x, int y, int z) const
   {
     return ((size_t)z * (size_t)count.y + (size_t)y) * (size_t)count.x + (size_t)x;
   }
 
-  [[nodiscard]] linalg::vec3i coordinates_of(size_t index) const
+  [[nodiscard]] linalg::vec3i compute_cell_coordinates(size_t index) const
   {
     const int x = (int)(index % (size_t)count.x);
     const int y = (int)((index / (size_t)count.x) % (size_t)count.y);
@@ -472,7 +472,7 @@ struct probe_grid_t
     return {x, y, z};
   }
 
-  [[nodiscard]] linalg::vec3 position_of(const linalg::vec3i &coordinates) const
+  [[nodiscard]] linalg::vec3 compute_cell_position(const linalg::vec3i &coordinates) const
   {
     return origin + linalg::vec3{(float)coordinates.x, (float)coordinates.y,
                                  (float)coordinates.z} *
@@ -481,7 +481,7 @@ struct probe_grid_t
 
   [[nodiscard]] aabb_bounds_t bounds() const
   {
-    return {origin, position_of({count.x - 1, count.y - 1, count.z - 1})};
+    return {origin, compute_cell_position({count.x - 1, count.y - 1, count.z - 1})};
   }
 };
 
@@ -582,7 +582,7 @@ struct lightmap_pages_t
     return (size_t)page_count * (size_t)size_in_texels * (size_t)size_in_texels;
   }
 
-  [[nodiscard]] size_t byte_offset_of(int page, int x, int y) const
+  [[nodiscard]] size_t compute_byte_offset(int page, int x, int y) const
   {
     const size_t texel =
         ((size_t)page * (size_t)size_in_texels + (size_t)y) * (size_t)size_in_texels +
@@ -714,7 +714,7 @@ struct reflection_cube_t
     return offset;
   }
   [[nodiscard]] size_t texel_count() const { return texel_offset_of_mip(mip_count); }
-  [[nodiscard]] size_t texel_index_of(int mip, int face, int x, int y) const
+  [[nodiscard]] size_t compute_texel_index(int mip, int face, int x, int y) const
   {
     const size_t size = (size_t)size_of_mip(mip);
     return texel_offset_of_mip(mip) + ((size_t)face * size + (size_t)y) * size + (size_t)x;
@@ -733,7 +733,7 @@ struct reflection_cube_t
   }
   void store(int mip, int face, int x, int y, const linalg::vec3 &linear_rgb)
   {
-    store(texel_index_of(mip, face, x, y), linear_rgb);
+    store(compute_texel_index(mip, face, x, y), linear_rgb);
   }
   [[nodiscard]] linalg::vec3 load(size_t texel) const
   {
@@ -743,7 +743,7 @@ struct reflection_cube_t
   }
   [[nodiscard]] linalg::vec3 load(int mip, int face, int x, int y) const
   {
-    return load(texel_index_of(mip, face, x, y));
+    return load(compute_texel_index(mip, face, x, y));
   }
   [[nodiscard]] linalg::vec3 load(int face, int x, int y) const { return load(0, face, x, y); }
 };
@@ -756,7 +756,7 @@ struct reflection_cube_texel_t
   int x = 0;
   int y = 0;
 };
-[[nodiscard]] reflection_cube_texel_t reflection_cube_texel_of(const linalg::vec3 &direction,
+[[nodiscard]] reflection_cube_texel_t compute_reflection_cube_texel_for_direction(const linalg::vec3 &direction,
                                                                 int size_in_texels);
 
 struct reflection_capture_t
@@ -805,7 +805,7 @@ struct reflection_lattice_t
   linalg::vec3i count{0, 0, 0};
   std::vector<int32_t> cells;
 
-  [[nodiscard]] size_t index_of(const linalg::vec3i &cell) const
+  [[nodiscard]] size_t compute_cell_index(const linalg::vec3i &cell) const
   {
     return ((size_t)cell.z * (size_t)count.y + (size_t)cell.y) * (size_t)count.x +
            (size_t)cell.x;

@@ -11,7 +11,7 @@
 namespace shared
 {
 
-reveal_cone_settings_t reveal_cone_settings_from(const cvars::cvar_state_t& cvars)
+reveal_cone_settings_t reveal_cone_settings_from_cvars(const cvars::cvar_state_t& cvars)
 {
   return {.range              = cvars.sv_reveal_light_range,
           .half_angle_degrees = cvars.sv_reveal_light_half_angle,
@@ -64,7 +64,7 @@ path_pose_t reveal_light_pose_at(const Entity_System& system, const path_links_t
   return carry_pose_by_mover(rest, mover_pose_at(system, links, *mover, rest, tick, tickrate), placed);
 }
 
-reveal_cone_t reveal_cone_of(const entities::Reveal_Light_Entity& light, const path_pose_t& pose)
+reveal_cone_t compute_light_reveal_cone(const entities::Reveal_Light_Entity& light, const path_pose_t& pose)
 {
   return {.apex                 = pose.position,
           .axis                 = linalg::forward(pose.orientation),
@@ -156,21 +156,21 @@ void collect_reveal_cones(const Entity_System& system, const path_links_t& links
                           entity_uid_t predicted_by_caller, std::vector<reveal_cone_planes_t>& out)
 {
   out.clear();
-  for (const entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
     const std::optional<entities::Reveal_Cone_Kind> kind = try_reveal_light_in_hand(system, player);
     if (player.entity_id == predicted_by_caller || !player.reveal_light_on || !kind)
       continue;
     out.push_back(planes_of_reveal_cone(
-        reveal_cone_of(player.position + linalg::vec3f{0.f, player_eye_height, 0.f},
+        compute_player_reveal_cone(player.position + linalg::vec3f{0.f, player_eye_height, 0.f},
                        player.view_angle_yaw, player.view_angle_pitch,
                        player.reveal_light_overhead, *kind, settings)));
   }
 
-  for (const entities::Reveal_Light_Entity& light : system.entities_of<entities::Reveal_Light_Entity>())
+  for (const entities::Reveal_Light_Entity& light : system.entities_of_type<entities::Reveal_Light_Entity>())
     if (light.switch_state.value)
       out.push_back(planes_of_reveal_cone(
-          reveal_cone_of(light, reveal_light_pose_at(system, links, rests, light, tick, tickrate))));
+          compute_light_reveal_cone(light, reveal_light_pose_at(system, links, rests, light, tick, tickrate))));
 }
 
 } // namespace shared

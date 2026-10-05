@@ -277,7 +277,7 @@ static bool load_map_file_into_context(server_context_t &context,
   int bot_spawn_count = 0;
   {
     Span<entities::Player_Spawn_Entity> spawn_pool =
-        world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+        world.session.entity_system.entities_of_type<entities::Player_Spawn_Entity>();
 
     for (const entities::Player_Spawn_Entity& player_spawn : spawn_pool)
     {
@@ -335,8 +335,8 @@ bool init(cvars::cvar_state_t* cvar_state, cvars::command_table_t* cvar_command_
   // this is kind of a shit way to load a static upfront and I don't like it.
   shared::player_rig();
 
-  if (!g_server_context.socket.open(network::server_port_number,
-                                    network::server_receive_buffer_size_in_bytes))
+  if (!g_server_context.socket.try_open({.port_id              = network::server_port_number,
+                                     .buffer_size_in_bytes = network::server_receive_buffer_size_in_bytes}))
   {
     log_error("Failed to open server socket on port {}. Port may be in use or insufficient permissions.",
                  network::server_port_number);
@@ -740,7 +740,7 @@ void ready(const command_context_t &command_context)
     return;
   }
 
-  const entities::Round_Phase phase = match_of(context).phase;
+  const entities::Round_Phase phase = get_match(context).phase;
   if (!shared::is_before_match(phase))
   {
     log_warning("ready: refused during {}, the match has started", entities::to_string(phase));

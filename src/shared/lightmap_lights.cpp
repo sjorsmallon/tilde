@@ -35,7 +35,7 @@ std::vector<baked_light_t> collect_lights(const map_t &map)
     if (!entry.entity)
       continue;
 
-    const std::optional<scene_light_t> light = try_light_of(*entry.entity);
+    const std::optional<scene_light_t> light = try_convert_light_entity_to_scene_light(*entry.entity);
     if (!light) continue;
 
     // A light the author left switched off is off for the bake too: baking it
@@ -63,7 +63,7 @@ static Bounding_Volume_Hierarchy build_geometry_bvh(const map_t &map,
 
   for (const map_geometry_t &entry : map.geometry)
   {
-    if (light_occlusion_of(entry.value, map.materials) != wanted)
+    if (compute_light_occlusion(entry.value, map.materials) != wanted)
       continue;
 
     // A static mesh COLLIDES as its bound and must not SHADOW as it: a texel on
@@ -325,7 +325,7 @@ static bool nearest_solid_alpha_tested_hit(const traced_scene_t &surfaces,
   return false;
 }
 
-bool trace_nearest_surface(const shadow_scene_t &scene, const linalg::vec3 &origin,
+bool trace_nearest_surface(const shadow_casters_t &scene, const linalg::vec3 &origin,
                            const linalg::vec3 &direction, ray_hit_result_t &out_hit)
 {
   if (!scene.occluders) return false;
@@ -355,14 +355,14 @@ bool trace_nearest_surface(const shadow_scene_t &scene, const linalg::vec3 &orig
   return true;
 }
 
-linalg::vec3 segment_transmittance(const shadow_scene_t &scene, const linalg::vec3 &origin,
+linalg::vec3 segment_transmittance(const shadow_casters_t &scene, const linalg::vec3 &origin,
                                    const linalg::vec3 &direction, float travel)
 {
   if (!scene.surfaces || !scene.transmissive) return {1.f, 1.f, 1.f};
   return transmittance_along(*scene.surfaces, *scene.transmissive, origin, direction, travel);
 }
 
-linalg::vec3 shadow_ray_transmittance(const shadow_scene_t &scene,
+linalg::vec3 shadow_ray_transmittance(const shadow_casters_t &scene,
                                       const linalg::vec3 &surface_position,
                                       const linalg::vec3 &surface_normal,
                                       const linalg::vec3 &direction, float distance,
@@ -396,7 +396,7 @@ uint32_t sample_hash(int atlas_x, int atlas_y, int page, int sample_index)
   return hash;
 }
 
-float luminance_of(const linalg::vec3 &linear_rgb)
+float compute_luminance(const linalg::vec3 &linear_rgb)
 {
   return 0.2126f * linear_rgb.x + 0.7152f * linear_rgb.y + 0.0722f * linear_rgb.z;
 }
@@ -412,7 +412,7 @@ std::vector<light_reach_on_face_t> probe_light_reach(
   const Bounding_Volume_Hierarchy alpha_tested = build_alpha_tested_bvh(map);
   const Bounding_Volume_Hierarchy transmissive = build_transmissive_bvh(map);
   const traced_scene_t glass = build_traced_scene(map, bvh, &alpha_tested, &transmissive);
-  const shadow_scene_t shadow = shadow_scene_of(glass);
+  const shadow_casters_t shadow = get_shadow_casters(glass);
   const linalg::vec3 axis = light.light.kind == light_kind_t::Point
                                 ? linalg::vec3{0.f, 0.f, 0.f}
                                 : linalg::normalize(light.light.forward);
@@ -463,7 +463,7 @@ std::vector<light_reach_on_face_t> probe_light_reach(
 
         // One hard ray: the probe asks whether ANYTHING gets through, and a
         // penumbra sample count is not what separates lit from black.
-        if (luminance_of(light_visibility(shadow, position, sample.normal, arrival,
+        if (compute_luminance(light_visibility(shadow, position, sample.normal, arrival,
                                           shadow_ray_bias, 1,
                                           sample_hash(texel_x, texel_y, 0, 0))) > 0.f)
           ++face.visible;
@@ -482,7 +482,7 @@ std::vector<light_reach_on_face_t> probe_light_reach(
 // silhouette from the surface: the half of it the surface cannot see is the half
 // that emits nothing toward it.
 static linalg::vec3 shadow_ray_transmittance_to_disc_point(
-    const shadow_scene_t &scene, const linalg::vec3 &surface_position,
+    const shadow_casters_t &scene, const linalg::vec3 &surface_position,
     const linalg::vec3 &surface_normal, const light_arrival_t &arrival, float radius,
     float angle, float shadow_ray_bias)
 {
@@ -502,7 +502,7 @@ static linalg::vec3 shadow_ray_transmittance_to_disc_point(
                                   to_target * (1.f / distance), distance, shadow_ray_bias);
 }
 
-linalg::vec3 light_visibility(const shadow_scene_t &scene,
+linalg::vec3 light_visibility(const shadow_casters_t &scene,
                               const linalg::vec3 &surface_position,
                               const linalg::vec3 &surface_normal,
                               const light_arrival_t &arrival, float shadow_ray_bias,
@@ -544,7 +544,7 @@ linalg::vec3 light_visibility(const shadow_scene_t &scene,
   return reached * (1.f / (float)sample_count);
 }
 
-linalg::vec3 light_visibility_single_ray(const shadow_scene_t &scene,
+linalg::vec3 light_visibility_single_ray(const shadow_casters_t &scene,
                                          const linalg::vec3 &surface_position,
                                          const linalg::vec3 &surface_normal,
                                          const light_arrival_t &arrival, float shadow_ray_bias,

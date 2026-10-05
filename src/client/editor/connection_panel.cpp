@@ -452,7 +452,7 @@ std::string describe_connection_target(const shared::map_t &map, const shared::c
   return "<unknown>";
 }
 
-connection_counts_t count_connections_of(const shared::map_t &map, shared::entity_uid_t uid)
+connection_counts_t count_connections_by_uid(const shared::map_t &map, shared::entity_uid_t uid)
 {
   connection_counts_t counts;
   for (const shared::connection_t &row : map.connections)

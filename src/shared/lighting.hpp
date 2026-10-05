@@ -49,7 +49,7 @@ enum class light_kind_t : uint8_t
 // no exposure could hold both it and a lamp. For the sun `intensity` IS the
 // irradiance it delivers, the same number a point light delivers at one metre.
 [[nodiscard]]
-inline linalg::vec3 radiance_of(const entities::Light &light, light_kind_t kind)
+inline linalg::vec3 compute_radiance(const entities::Light &light, light_kind_t kind)
 {
   if (kind == light_kind_t::Directional) return light.color * light.intensity;
   return light.color * (light.intensity * LIGHT_REFERENCE_DISTANCE *
@@ -93,7 +93,7 @@ struct scene_light_t
   float        source_radius = 0.f;
 
   // Which slot of the map's bake this light is, or LIGHTMAP_NO_LIGHT_SLOT.
-  // try_light_of does NOT fill it -- a light entity knows nothing about a bake
+  // try_convert_light_entity_to_scene_light does NOT fill it -- a light entity knows nothing about a bake
   // -- so the GATHER pass resolves it through find_baked_light_slot, which is
   // the one place a bake's uid table meets a frame's light array.
   //
@@ -227,7 +227,7 @@ inline constexpr float    POINT_SHADOW_FACE_GUARD_TEXELS = 4.f;
 
 // The face a direction from the light falls in, in the order above: the
 // C++ twin of the shader's pick, pinned by shadow_test.
-[[nodiscard]] uint32_t point_shadow_face_of(const linalg::vec3 &light_to_point);
+[[nodiscard]] uint32_t compute_point_shadow_face_for_direction(const linalg::vec3 &light_to_point);
 
 // One face: its map, whether the camera can see anything it covers, and the
 // pyramid a debug view draws -- the apex then the four far corners.
@@ -257,7 +257,7 @@ struct point_shadow_faces_t
 // It does NOT filter by mode -- see scene_light_t::mode -- and it does NOT
 // filter by the switch either, because the editor's inspector wants to describe
 // a light that is currently off rather than say nothing about it.
-[[nodiscard]] std::optional<scene_light_t> try_light_of(const entities::Entity &entity);
+[[nodiscard]] std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entities::Entity &entity);
 
 // Whether Switchable has this light on. A type with no Enabled component (a
 // directional light) is always on -- there is no switch to be off. The two

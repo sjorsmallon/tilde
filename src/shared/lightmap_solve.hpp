@@ -114,7 +114,7 @@ struct lightmap_visibility_masks_t
 
   [[nodiscard]] bool empty() const { return coverage.empty(); }
   [[nodiscard]] size_t slot_count() const { return light_uids.size(); }
-  [[nodiscard]] size_t index_of(size_t slot, int page, int x, int y) const;
+  [[nodiscard]] size_t compute_coverage_index(size_t slot, int page, int x, int y) const;
 
   void allocate(const lightmap_atlas_t &atlas, std::vector<entity_uid_t> uids);
 };

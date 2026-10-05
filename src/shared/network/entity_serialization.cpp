@@ -17,7 +17,7 @@ void serialize_entity(Bit_Writer& writer, const entities::Entity& entity,
   {
     log_error("entity wire: baseline is a {} but the entity is a {} — sending a full update "
               "instead of a delta",
-              entities::classname_of(baseline), entities::classname_of(&entity));
+              entities::get_classname(baseline), entities::get_classname(&entity));
     baseline = nullptr;
   }
 

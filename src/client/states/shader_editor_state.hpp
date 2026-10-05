@@ -28,7 +28,7 @@ struct editor_light_t
   linalg::vec3f color = {1.0f, 1.0f, 1.0f};
   // The SAME unit as entities::Light::intensity: the irradiance this light
   // delivers at LIGHT_REFERENCE_DISTANCE. The preview folds it through
-  // shared::radiance_of like the game and the bake do, so a number that looks
+  // shared::compute_radiance like the game and the bake do, so a number that looks
   // right here is the number to type into the map editor. It used to be 1500,
   // because pbr.frag multiplied colour by intensity raw -- a second unit for one
   // field, which is what lighting_def.md ss11 is about.

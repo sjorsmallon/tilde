@@ -186,7 +186,7 @@ static move_result_t run_split(const cvar_state_t& cvars,
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
 
-  const shared::movement_settings_t settings = shared::movement_settings_from(cvars);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(cvars);
 
   const float step_dt = total_dt / (float)sub_steps;
   for (int i = 0; i < sub_steps; ++i)
@@ -828,7 +828,7 @@ static void test_an_inverted_gravity_zone_lifts_a_standing_hull(const cvar_state
   printf("\n[pin] modifier: inverted gravity lifts a hull off the floor, a switched-off one does not\n");
 
   const Bounding_Volume_Hierarchy   bvh      = floor_world();
-  const shared::movement_settings_t settings = shared::movement_settings_from(cvars);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(cvars);
 
   const auto height_after_half_a_second = [&](bool enabled)
   {
@@ -1194,16 +1194,16 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
     const float    yaw_radians  = linalg::to_radians(yaw_at_start);
     const vec3     front{std::cos(yaw_radians), 0.f, std::sin(yaw_radians)};
     const vec3     right{-std::sin(yaw_radians), 0.f, std::cos(yaw_radians)};
-    const aim_sweep_t sweep =
-        sweep_the_aim ? aim_sweep_t{.yaw_change_degrees = yaw_at_end - yaw_at_start,
+    const aim_turn_across_step_t sweep =
+        sweep_the_aim ? aim_turn_across_step_t{.yaw_change_degrees = yaw_at_end - yaw_at_start,
                                     .push_count         = slot_count}
-                      : aim_sweep_t{};
+                      : aim_turn_across_step_t{};
     const float step_dt = tick_dt * static_cast<float>(slot_count) * slot_fraction;
 
     const shared::move_state_t moved = player_move(
-        shared::movement_settings_from(cvars), bvh, {},
+        shared::movement_settings_from_cvars(cvars), bvh, {},
         {.feet = position, .velocity = velocity, .movement = movement},
-        {.buttons = input, .front = front, .right = right, .aim_sweep = sweep, .dt = step_dt});
+        {.buttons = input, .front = front, .right = right, .aim_turn_across_step = sweep, .dt = step_dt});
     position = moved.feet;
     velocity = moved.velocity;
     movement = moved.movement;
@@ -2057,7 +2057,7 @@ static void test_instant_momentum_decay_composes(const cvar_state_t& cvars)
   constexpr float                   air_drag = 4.f;
   const cvar_state_t                momentum = momentum_cvars(cvars, 10.f, air_drag);
   const Bounding_Volume_Hierarchy   bvh      = empty_world();
-  const shared::movement_settings_t settings = shared::movement_settings_from(momentum);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(momentum);
 
   const float expected = 900.f * std::exp(-air_drag * tick_dt);
 
@@ -2098,7 +2098,7 @@ static void test_instant_momentum_is_clipped_by_a_wall(const cvar_state_t& cvars
 
   const cvar_state_t                momentum = momentum_cvars(cvars, 0.f, 0.f);
   const Bounding_Volume_Hierarchy   bvh      = floor_and_wall_world();
-  const shared::movement_settings_t settings = shared::movement_settings_from(momentum);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(momentum);
 
   for (int sub_steps : {1, 8})
   {
@@ -2130,7 +2130,7 @@ static void test_instant_momentum_input_adds_only_beside_it(const cvar_state_t& 
 
   const cvar_state_t                momentum  = momentum_cvars(cvars, 10.f, 0.f);
   const Bounding_Volume_Hierarchy   bvh       = empty_world();
-  const shared::movement_settings_t settings  = shared::movement_settings_from(momentum);
+  const shared::movement_settings_t settings  = shared::movement_settings_from_cvars(momentum);
   const float                       run_speed = momentum.pm_maxspeed;
 
   Move_Input forward;
@@ -2255,7 +2255,7 @@ static void test_instant_redirect_turns_carried_speed(const cvar_state_t& cvars)
   constexpr float                 turn_rate = 360.f;
   const cvar_state_t              redirect  = redirect_cvars(cvars, turn_rate, 0.f);
   const Bounding_Volume_Hierarchy bvh       = empty_world();
-  const shared::movement_settings_t settings = shared::movement_settings_from(redirect);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(redirect);
 
   Move_Input backward;
   backward.backward_pressed = true;
@@ -2390,7 +2390,7 @@ static void test_an_impulse_survives_every_model(const cvar_state_t& cvars)
     const cvars::Locomotion_Model model = (cvars::Locomotion_Model)row;
     cvar_state_t tuned    = cvars;
     tuned.pm_model = model;
-    const shared::movement_settings_t settings = shared::movement_settings_from(tuned);
+    const shared::movement_settings_t settings = shared::movement_settings_from_cvars(tuned);
 
     for (const Move_Input& input : {Move_Input{}, forward})
     {

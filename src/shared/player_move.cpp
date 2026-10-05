@@ -14,7 +14,7 @@ using namespace network;
 namespace shared
 {
 
-move_input_t move_input_of(const shared::subtick_step_t& step)
+move_input_t move_input_from_subtick_step(const shared::subtick_step_t& step)
 {
   const float yaw_radians   = linalg::to_radians(step.view.yaw);
   const float pitch_radians = linalg::to_radians(step.view.pitch);
@@ -40,7 +40,7 @@ move_input_t move_input_of(const shared::subtick_step_t& step)
   return {.buttons   = move_input_from_buttons(step.buttons),
           .front     = front,
           .right     = right,
-          .aim_sweep = aim_sweep_of(step),
+          .aim_turn_across_step = compute_aim_turn_across_step(step),
           .dt        = step.dt};
 }
 
@@ -56,9 +56,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
 {
   timed_function();
 
-  if (input.aim_sweep.push_count == 0)
-    fatal_error("player_move: aim_sweep.push_count is {}, which divides the step by zero",
-                input.aim_sweep.push_count);
+  if (input.aim_turn_across_step.push_count == 0)
+    fatal_error("player_move: aim_turn_across_step.push_count is {}, which divides the step by zero",
+                input.aim_turn_across_step.push_count);
 
   // A frozen hull is itself one of the cut's movers (statues.hpp), and there is no uid in here to
   // skip it by: the step sees none, or it is pushed out of its own box.
@@ -91,7 +91,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   // The caller's position is at the FEET; everything below works on the hull centre.
   const vec3 hull_center_offset{0.f, settings.shared.half_height, 0.f};
   vec3       hull_center = state.feet + hull_center_offset;
-  const shared::steep_face_rule_t steep_faces = shared::steep_face_rule_of(settings);
+  const shared::steep_face_rule_t steep_faces = shared::get_steep_face_rule_for_locomotion_model(settings.model);
   const shared::contacts_t        contacts    = shared::resolve_collisions(
       settings, steep_faces, bvh, world, hull_center, recording_bucket);
 

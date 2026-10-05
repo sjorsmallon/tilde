@@ -50,8 +50,8 @@ wanted_move_t instant_step(const movement_settings_t& settings, const contacts_t
                            bool grounded, const vec3& velocity_entering_move, move_state_t& state,
                            const move_input_t& input)
 {
-  const ground_frame_t frame = ground_frame_of(contacts, grounded, velocity_entering_move.y);
-  const wish_t         wish  = wish_of(settings, input, frame.has_ground, frame.normal);
+  const ground_under_step_t frame = compute_ground_under_step(contacts, grounded, velocity_entering_move.y);
+  const wish_t         wish  = compute_wish_direction_and_speed(settings, input, frame.has_ground, frame.normal);
   const bool           borrowed =
       state.movement.seconds_until_speed_returns_to_base_speed > 0.f;
 
@@ -61,15 +61,15 @@ wanted_move_t instant_step(const movement_settings_t& settings, const contacts_t
   {
     return {.velocity = instant_velocity(horizontal, wish.direction, wish.speed, borrowed),
             .horizontal_speed_limit =
-                horizontal_speed_limit_of(settings, true, length(horizontal))};
+                compute_horizontal_speed_limit(settings, true, length(horizontal))};
   }
 
   // Only the sweep's LAST push counts under a set, and it names the same slot however the tick was split.
-  const vec3 last_push_direction = last_push_direction_of(wish.direction, input.aim_sweep);
+  const vec3 last_push_direction = compute_last_push_direction(wish.direction, input.aim_turn_across_step);
 
   return {.velocity = instant_velocity(horizontal, last_push_direction, wish.speed, borrowed),
           .vertical_velocity      = velocity_entering_move.y,
-          .horizontal_speed_limit = horizontal_speed_limit_of(settings, false, length(horizontal)),
+          .horizontal_speed_limit = compute_horizontal_speed_limit(settings, false, length(horizontal)),
           .gravity                = settings.shared.gravity};
 }
 

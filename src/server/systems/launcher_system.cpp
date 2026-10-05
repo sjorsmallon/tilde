@@ -91,7 +91,7 @@ void fire_launcher_shot(server_context_t& context, entities::Launcher_Entity& la
     return;
   }
 
-  if (shared::fire_of(*weapon, launcher.trigger).resolution != entities::Fire_Resolution::Projectile)
+  if (shared::get_weapon_fire_for_button(*weapon, launcher.trigger).resolution != entities::Fire_Resolution::Projectile)
   {
     log_warning("launcher {} (uid {}): {}'s {} fire is not a projectile, nothing fired",
                 launcher.name.c_str(), launcher.entity_id, weapon->display_name,
@@ -110,7 +110,7 @@ void fire_launcher_shot(server_context_t& context, entities::Launcher_Entity& la
 void update_launchers(server_context_t& context)
 {
   for (entities::Launcher_Entity& launcher :
-       context.world.session.entity_system.entities_of<entities::Launcher_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Launcher_Entity>())
   {
     if (!launcher.switch_state.value || launcher.fire_interval_seconds <= 0.f ||
         context.tick_number < launcher.next_fire_tick)

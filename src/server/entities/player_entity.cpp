@@ -26,21 +26,21 @@ void teleport(Player_Entity& player, const Teleport_Data& payload,
 
   player.position = destination->position;
   if (!payload.keep_velocity)
-    shared::apply_impulse(shared::movement_settings_from(*context.server.cvars), player.velocity,
+    shared::apply_impulse(shared::movement_settings_from_cvars(*context.server.cvars), player.velocity,
                           player.movement, {});
 }
 
 void set_velocity(Player_Entity& player, const Set_Velocity_Data& payload,
                   server::input_context_t& context)
 {
-  shared::apply_impulse(shared::movement_settings_from(*context.server.cvars), player.velocity,
+  shared::apply_impulse(shared::movement_settings_from_cvars(*context.server.cvars), player.velocity,
                         player.movement, {.velocity = payload.velocity});
 }
 
 void add_velocity(Player_Entity& player, const Add_Velocity_Data& payload,
                   server::input_context_t& context)
 {
-  shared::apply_impulse(shared::movement_settings_from(*context.server.cvars), player.velocity,
+  shared::apply_impulse(shared::movement_settings_from_cvars(*context.server.cvars), player.velocity,
                         player.movement,
                         {.horizontal = shared::impulse_mode_t::Add,
                          .vertical   = shared::impulse_mode_t::Add,

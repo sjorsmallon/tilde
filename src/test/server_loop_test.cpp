@@ -20,12 +20,12 @@ void test_receive_and_reassembly()
   Udp_Socket client_socket;
 
   // Open sockets
-  if (!server_socket.open(9001))
+  if (!server_socket.try_open({.port_id = 9001}))
   {
     std::cerr << "Failed to open server socket on 9001" << std::endl;
     exit(1);
   }
-  if (!client_socket.open(0))
+  if (!client_socket.try_open({.port_id = 0}))
   {
     std::cerr << "Failed to open client socket" << std::endl;
     exit(1);
@@ -36,7 +36,7 @@ void test_receive_and_reassembly()
   // Actually Udp_Socket wraps a socket handle. If we bind 0, we need to ask OS.
   // For simplicity, bind client to fixed port 9002.
   client_socket.close();
-  if (!client_socket.open(9002))
+  if (!client_socket.try_open({.port_id = 9002}))
   {
     std::cerr << "Failed to open client socket on 9002" << std::endl;
     exit(1);
@@ -136,12 +136,12 @@ void test_reliable_stream_round_trip()
   Udp_Socket server_socket;
   Client_Transport_Layer client_state;
 
-  if (!server_socket.open(9003))
+  if (!server_socket.try_open({.port_id = 9003}))
   {
     std::cerr << "Failed to open server socket on 9003" << std::endl;
     exit(1);
   }
-  if (!client_state.socket.open(9004))
+  if (!client_state.socket.try_open({.port_id = 9004}))
   {
     std::cerr << "Failed to open client socket on 9004" << std::endl;
     exit(1);
@@ -221,7 +221,7 @@ void test_reliable_stream_round_trip_c2s()
   Udp_Socket server_socket;
   Client_Transport_Layer client_state;
 
-  if (!server_socket.open(9007) || !client_state.socket.open(9008))
+  if (!server_socket.try_open({.port_id = 9007}) || !client_state.socket.try_open({.port_id = 9008}))
   {
     std::cerr << "Failed to open the socket pair" << std::endl;
     exit(1);
@@ -321,7 +321,7 @@ void test_lossy_transfer_converges(uint16_t server_port, uint16_t client_port,
   Udp_Socket server_socket;
   Client_Transport_Layer client_state;
 
-  if (!server_socket.open(server_port) || !client_state.socket.open(client_port))
+  if (!server_socket.try_open({.port_id = server_port}) || !client_state.socket.try_open({.port_id = client_port}))
   {
     std::cerr << "Failed to open the socket pair" << std::endl;
     exit(1);
@@ -424,7 +424,7 @@ void test_a_cold_client_receives_the_announced_ghost()
   Udp_Socket server_socket;
   Client_Transport_Layer client_state;
 
-  if (!server_socket.open(9011) || !client_state.socket.open(9012))
+  if (!server_socket.try_open({.port_id = 9011}) || !client_state.socket.try_open({.port_id = 9012}))
   {
     std::cerr << "Failed to open the socket pair" << std::endl;
     exit(1);

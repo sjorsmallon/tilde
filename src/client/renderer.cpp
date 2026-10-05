@@ -699,7 +699,7 @@ struct gpu_light_t
 {
   float position[4];    // xyz world, w = baked slot or -1 (light_arrival.glsl's LIGHT_BAKED_SLOT)
   float direction[4];   // xyz normalized, w = the emitter's source radius
-  float radiance[4];    // rgb, already through shared/lighting.hpp's radiance_of;
+  float radiance[4];    // rgb, already through shared/lighting.hpp's compute_radiance;
                         // w = shadow layer or -1 (direct_light.glsl's LIGHT_SHADOW_LAYER)
   float spot_params[4]; // cos(inner), cos(outer), range, type
 };
@@ -765,7 +765,10 @@ struct scene_uniform_t
   float       cel_speckle[4]                                = {}; // x strength, y spacing px, z density, w radius of the spacing
   float       cel_dither3d[4]                               = {}; // x size variability, y contrast, z stretch smoothness, w halftone white level
   float       cel_pebble[4]                                 = {}; // x strength, y spacing in world units, z density, w largest radius of the spacing
-  float       cel_pebble_shape[4]                           = {}; // x irregularity, y outline width px, z halftone paper
+  float       cel_pebble_shape[4]                           = {}; // x irregularity, y outline width px, z halftone paper, w ambient below which a shadow is solid ink
+  float       pattern_preview_cells[4]                      = {}; // x one of pattern.glsl's PATTERN_*, y spacing along, z spacing across, w angle in radians
+  float       pattern_preview_shape[4]                      = {}; // x coverage, y the kind's own number, z scroll speed
+  float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
   float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
   float       fog_settings[4]                               = {}; // x how many of `fog_volumes` are live, y the view depth the fog grid starts at, z where it ends, w anisotropy
@@ -776,7 +779,7 @@ struct scene_uniform_t
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 144 + 16 + 32 * MAX_SCENE_REVEAL_CONES + 48 +
+                      32 * MAX_SCENE_RIPPLES + 16 + 144 + 48 + 16 + 32 * MAX_SCENE_REVEAL_CONES + 48 +
                       48 * MAX_SCENE_FOG_VOLUMES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
@@ -3314,6 +3317,9 @@ struct tonemap_push_constants_t
   float fog_far                 = 2.0f;
   float inverse_view_depth_slope  = 0.0f;
   float inverse_view_depth_offset = 1.0f;
+  float ink_on_black              = 0.0f;
+  float misprint_pixels           = 0.0f;
+  float misprint_distance         = 1.0f;
 };
 
 static fullscreen_draw_t g_tonemap_draw;
@@ -3599,7 +3605,7 @@ static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32
                                       uint32_t level_count, VkImageLayout old_layout,
                                       VkImageLayout new_layout)
 {
-  const auto access_of = [](VkImageLayout layout) -> VkAccessFlags {
+  const auto get_access_flags_for_image_layout = [](VkImageLayout layout) -> VkAccessFlags {
     switch (layout)
     {
     case VK_IMAGE_LAYOUT_UNDEFINED:                return 0;
@@ -3610,7 +3616,7 @@ static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32
                          "upload passes through", (int)layout);
     }
   };
-  const auto stage_of = [](VkImageLayout layout) -> VkPipelineStageFlags {
+  const auto get_pipeline_stage_for_image_layout = [](VkImageLayout layout) -> VkPipelineStageFlags {
     switch (layout)
     {
     case VK_IMAGE_LAYOUT_UNDEFINED:                return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -3626,9 +3632,9 @@ static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32
   barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, first_level, level_count, 0, 1};
   barrier.oldLayout           = old_layout;
   barrier.newLayout           = new_layout;
-  barrier.srcAccessMask       = access_of(old_layout);
-  barrier.dstAccessMask       = access_of(new_layout);
-  vkCmdPipelineBarrier(cmd, stage_of(old_layout), stage_of(new_layout), 0, 0, nullptr, 0, nullptr,
+  barrier.srcAccessMask       = get_access_flags_for_image_layout(old_layout);
+  barrier.dstAccessMask       = get_access_flags_for_image_layout(new_layout);
+  vkCmdPipelineBarrier(cmd, get_pipeline_stage_for_image_layout(old_layout), get_pipeline_stage_for_image_layout(new_layout), 0, 0, nullptr, 0, nullptr,
                        1, &barrier);
 }
 
@@ -3775,7 +3781,7 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
 // CLAMP_TO_EDGE, not REPEAT: the gutter keeps neighbouring charts from bleeding
 // into each other WITHIN a page, and wrapping at the page edge would defeat it
 // by reading the opposite side of the atlas entirely.
-static VkFormat vulkan_format_of(shared::lightmap_pixel_format_t format)
+static VkFormat get_vulkan_format_for_pixel_format(shared::lightmap_pixel_format_t format)
 {
   switch (format)
   {
@@ -3929,7 +3935,7 @@ static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_cou
 
 static bool try_upload_lightmap_image(const shared::lightmap_pages_t &pages, gpu_texture_t &out)
 {
-  const VkFormat format = vulkan_format_of(pages.format);
+  const VkFormat format = get_vulkan_format_for_pixel_format(pages.format);
   bool           filter_linear = false;
   if (!try_check_sampled_format(format, "lightmap", filter_linear))
     return false;
@@ -3947,7 +3953,7 @@ static bool try_upload_probe_image(const uint8_t *bytes, size_t byte_count,
                                    shared::lightmap_pixel_format_t pixel_format,
                                    const linalg::vec3i &count, gpu_texture_t &out)
 {
-  const VkFormat format = vulkan_format_of(pixel_format);
+  const VkFormat format = get_vulkan_format_for_pixel_format(pixel_format);
   bool           filter_linear = false;
   if (!try_check_sampled_format(format, "probe volume", filter_linear))
     return false;
@@ -4694,7 +4700,7 @@ static void record_skybox_draw(VkCommandBuffer cmd, const view_pass_t &pass)
 static bool try_upload_reflection_cubes(const shared::reflection_capture_set_t &set,
                                         gpu_texture_t &out)
 {
-  const VkFormat format = vulkan_format_of(shared::lightmap_pixel_format_t::Rgb9e5);
+  const VkFormat format = get_vulkan_format_for_pixel_format(shared::lightmap_pixel_format_t::Rgb9e5);
   bool           filter_linear = false;
   if (!try_check_sampled_format(format, "reflection captures", filter_linear))
     return false;
@@ -6986,7 +6992,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
 }
 
 // scene.glsl's CEL_FILL_*.
-[[nodiscard]] float cel_fill_pattern_of(cvars::Cel_Fill fill)
+[[nodiscard]] float get_cel_fill_pattern_for_cel_fill(cvars::Cel_Fill fill)
 {
   switch (fill)
   {
@@ -6995,7 +7001,23 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Cel_Fill::dither3d: return 2.0f;
   case cvars::Cel_Fill::dither3d_original: return 3.0f;
   }
-  fatal_error("cel_fill_pattern_of: {} is not a Cel_Fill", static_cast<uint32_t>(fill));
+  fatal_error("get_cel_fill_pattern_for_cel_fill: {} is not a Cel_Fill", static_cast<uint32_t>(fill));
+}
+
+// pattern.glsl's PATTERN_*.
+[[nodiscard]] float get_pattern_shader_kind_for_pattern_kind(cvars::Pattern_Kind kind)
+{
+  switch (kind)
+  {
+  case cvars::Pattern_Kind::none: return 0.0f;
+  case cvars::Pattern_Kind::stripes: return 1.0f;
+  case cvars::Pattern_Kind::grid: return 2.0f;
+  case cvars::Pattern_Kind::checks: return 3.0f;
+  case cvars::Pattern_Kind::bricks: return 4.0f;
+  case cvars::Pattern_Kind::chevrons: return 5.0f;
+  case cvars::Pattern_Kind::dots: return 6.0f;
+  }
+  fatal_error("get_pattern_shader_kind_for_pattern_kind: {} is not a Pattern_Kind", static_cast<uint32_t>(kind));
 }
 
 // A layer the frame's pool handed to one light, and what to draw into it.
@@ -7045,7 +7067,7 @@ static shared::entity_uid_t g_shadow_debug_light_shown = shared::null_entity_uid
 
 // The same aspect and near plane view_matrices projects through, so the slices
 // are of the frustum actually drawn.
-static shared::shadow_view_t shadow_view_of(const render_view_t &view)
+static shared::shadow_view_t compute_shadow_view_for_render_view(const render_view_t &view)
 {
   float aspect = 1.0f;
   if (view.viewport.dimensions.y != 0.0f && g_swapchain_extent.height != 0)
@@ -7143,7 +7165,7 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       .caster_extent = settings.cascade_caster_extent,
   };
   const shared::shadow_view_t shadow_view =
-      g_shadow_freeze_active ? g_frozen_shadow_view : shadow_view_of(pass.view);
+      g_shadow_freeze_active ? g_frozen_shadow_view : compute_shadow_view_for_render_view(pass.view);
 
   float nearest_distance_squared = 0.0f;
   for (uint32_t at = 0; at < candidate_count; ++at)
@@ -9035,7 +9057,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   uint32_t next_shadow_layer = 0;
   // The freeze latches the camera on its rising edge and the fit keeps using it.
   if (shadows.freeze_cascades && !g_shadow_freeze_active && !passes.empty())
-    g_frozen_shadow_view = shadow_view_of(passes[0].view);
+    g_frozen_shadow_view = compute_shadow_view_for_render_view(passes[0].view);
   g_shadow_freeze_active = shadows.freeze_cascades;
   g_point_shadow_faces.clear();
   g_sun_cascades.count   = 0;
@@ -9073,7 +9095,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_fill[1]        = std::max(look.cel_fill_spacing_pixels, 2.0f);
     scene.cel_fill[2]        = look.cel_fill_edge;
     scene.cel_fill[3]        = std::max(look.cel_hatch_width_pixels, 0.0f);
-    scene.cel_fill_pattern[0] = cel_fill_pattern_of(look.cel_fill);
+    scene.cel_fill_pattern[0] = get_cel_fill_pattern_for_cel_fill(look.cel_fill);
     scene.cel_fill_pattern[1] = std::clamp(look.cel_fill_shadow_tone_dark, 0.0f, 0.75f);
     scene.cel_fill_tone_range[0] = std::clamp(look.cel_fill_shadow_tone_light, 0.0f, 0.75f);
     scene.cel_fill_tone_range[1] = std::max(look.cel_fill_ambient_dark, 0.0f);
@@ -9095,7 +9117,19 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_dither3d[2]    = std::max(look.cel_dither3d_stretch_smoothness, 0.0f);
     scene.cel_dither3d[3]    = std::max(look.cel_halftone, 0.0f);
     scene.cel_pebble_shape[2] = std::max(look.cel_halftone_paper, 0.0f);
+    scene.cel_pebble_shape[3] = std::max(look.cel_black, 0.0f);
     scene.cel_fill_pattern[3] = look.cel ? std::clamp(look.cel_flat_albedo, 0.0f, 1.0f) : 0.0f;
+    scene.pattern_preview_cells[0] = get_pattern_shader_kind_for_pattern_kind(look.pattern_preview);
+    scene.pattern_preview_cells[1] = std::max(look.pattern_preview_spacing.x, 0.01f);
+    scene.pattern_preview_cells[2] = std::max(look.pattern_preview_spacing.y, 0.01f);
+    scene.pattern_preview_cells[3] = linalg::to_radians(look.pattern_preview_angle_degrees);
+    scene.pattern_preview_shape[0] = std::clamp(look.pattern_preview_coverage, 0.0f, 1.0f);
+    scene.pattern_preview_shape[1] = look.pattern_preview_shape;
+    scene.pattern_preview_shape[2] = look.pattern_preview_scroll_speed;
+    scene.pattern_preview_ink[0]   = look.pattern_preview_ink.x;
+    scene.pattern_preview_ink[1]   = look.pattern_preview_ink.y;
+    scene.pattern_preview_ink[2]   = look.pattern_preview_ink.z;
+    scene.pattern_preview_ink[3]   = std::clamp(look.pattern_preview_strength, 0.0f, 1.0f);
     scene.fog_settings[1]     = FOG_GRID_NEAR;
     scene.fog_settings[2]     = fog_far;
     scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);
@@ -9286,7 +9320,10 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       FOG_GRID_NEAR,
       fog_far,
       (VIEW_FAR_PLANE - VIEW_NEAR_PLANE) / (VIEW_NEAR_PLANE * VIEW_FAR_PLANE),
-      1.0f / VIEW_FAR_PLANE};
+      1.0f / VIEW_FAR_PLANE,
+      std::clamp(look.ink_on_black, 0.0f, 1.0f),
+      std::max(look.misprint_pixels, 0.0f),
+      std::max(look.misprint_distance, 1.0f)};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
 

@@ -72,7 +72,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     // This player's view of the frozen world: its team's walls are not there.
     const shared::predicted_world_t world =
-        shared::predicted_world_of(world_storage, player->team_allegiance);
+        shared::get_predicted_world_for_team(world_storage, player->team_allegiance);
 
     if (!try_spend_move_credit(client.move_credits))
     {
@@ -127,7 +127,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     float tick_dt = static_cast<float>(get_tick_interval());
 
     const bool world_is_frozen = !is_movement_allowed(context);
-    const bool in_freeze = match_of(context).phase == entities::Round_Phase::Freeze;
+    const bool in_freeze = get_match(context).phase == entities::Round_Phase::Freeze;
     if (world_is_frozen)
     {
       // zero out velocity so nothing builds up.
@@ -138,7 +138,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
         shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
 
     const shared::movement_settings_t move_settings =
-        shared::movement_settings_from(*context.cvars);
+        shared::movement_settings_from_cvars(*context.cvars);
 
     auto move_events = Move_Events{};
     uint64_t buttons_entering_step = buttons_before_tick;
@@ -188,7 +188,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
           const shared::weapon_definition_t &held =
               shared::get_weapon_definition(held_entity->weapon_id);
           if (!is_reloading(*player) &&
-              shared::reload_may_start(held, shared::magazine_of(*held_entity)))
+              shared::reload_may_start(held, shared::get_magazine(*held_entity)))
           {
             player->reload_complete_time = shared::subtick_time_after(
                 step_time, held.reload_duration_seconds, tick_dt);
@@ -205,7 +205,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       {
         auto step_events = Move_Events{};
 
-        shared::move_input_t move_input = shared::move_input_of(step);
+        shared::move_input_t move_input = shared::move_input_from_subtick_step(step);
         if (!allowed_to_move)
           move_input.buttons = Move_Input{};
 

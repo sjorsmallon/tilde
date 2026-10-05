@@ -38,12 +38,19 @@ layout(push_constant) uniform Tonemap
     // One over a pixel's view depth is (1 - its stored depth) * slope + offset.
     float inverse_view_depth_slope;
     float inverse_view_depth_offset;
+    float ink_on_black;
+    float misprint_pixels;
+    float misprint_distance;
 } tonemap;
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 fragment_color;
 
-const vec3 RIM_COLOR = vec3(1.0);
+const vec3 RIM_COLOR          = vec3(1.0);
+const vec3 INK_ON_BLACK_COLOR = vec3(1.0);
+
+// The way the red plate slips; the blue slips the other way.
+const vec2 MISPRINT_DIRECTION = vec2(0.8, 0.6);
 
 // What three float depths near 1.0 can disagree by with no edge between them.
 const float DEPTH_NOISE = 4.0 / 16777216.0;
@@ -192,6 +199,41 @@ float line_weight(ivec2 pixel)
                  tonemap.ink_weight_near);
 }
 
+float view_depth_at(ivec2 pixel)
+{
+    float stored = texelFetch(scene_depth, pixel, 0).r;
+    return 1.0 / ((1.0 - stored) * tonemap.inverse_view_depth_slope + tonemap.inverse_view_depth_offset);
+}
+
+// The scene's light at this pixel. Print misregistration: its red and blue are read r_misprint pixels
+// to either side at r_misprint_distance and beyond, less the nearer the surface is.
+vec3 scene_light()
+{
+    vec3 light = texture(hdr_target, in_uv).rgb;
+    if (tonemap.misprint_pixels > 0.0)
+    {
+        float share  = clamp(view_depth_at(ivec2(gl_FragCoord.xy)) / tonemap.misprint_distance, 0.0, 1.0);
+        vec2  offset = MISPRINT_DIRECTION * (tonemap.misprint_pixels * share) / vec2(textureSize(hdr_target, 0));
+        light.r = texture(hdr_target, in_uv + offset).r;
+        light.b = texture(hdr_target, in_uv - offset).b;
+    }
+    return max(light, vec3(0.0));
+}
+
+// How solid the ink (r_cel_black) is at `pixel` AND `reach` to each side of it: a line there is
+// drawn in INK_ON_BLACK_COLOR, and one along the edge of the black stays ink.
+float solid_ink_around(ivec2 pixel, int reach)
+{
+    ivec2 last_pixel = textureSize(scene_normal, 0) - 1;
+    float solid      = stored_solid_ink(texelFetch(scene_normal, pixel, 0));
+    for (int index = 0; index < 4; ++index)
+    {
+        ivec2 offset = index < 2 ? ivec2(index * 2 - 1, 0) : ivec2(0, index * 2 - 5);
+        solid = min(solid, stored_solid_ink(texelFetch(scene_normal, clamp(pixel + offset * reach, ivec2(0), last_pixel), 0)));
+    }
+    return solid;
+}
+
 // The fog between the eye and this pixel's surface: the light it adds (rgb) and how much of the surface shows through (a),
 // read from the fog grid's running totals (fog_totals.comp) at the surface's depth.
 vec4 fog_in_front()
@@ -201,8 +243,7 @@ vec4 fog_in_front()
     if (tonemap.fog_viewport_width <= 0.0 || any(lessThan(position, vec2(0.0))) || any(greaterThan(position, vec2(1.0))))
         return vec4(0.0, 0.0, 0.0, 1.0);
 
-    float stored     = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;
-    float view_depth = 1.0 / ((1.0 - stored) * tonemap.inverse_view_depth_slope + tonemap.inverse_view_depth_offset);
+    float view_depth = view_depth_at(ivec2(gl_FragCoord.xy));
 
     // A total is its slice's FAR side, so the surface reads half a slice back from its own place in the grid.
     float slice_count = float(textureSize(fog_totals, 0).z);
@@ -220,7 +261,7 @@ void main()
     }
 
     vec4 fog     = fog_in_front();
-    vec3 hdr     = (max(texture(hdr_target, in_uv).rgb, vec3(0.0)) * fog.a + fog.rgb) * tonemap.exposure;
+    vec3 hdr     = (scene_light() * fog.a + fog.rgb) * tonemap.exposure;
     vec3 surface = pbr_neutral_tonemap(hdr);
     vec3 color   = surface;
 
@@ -243,7 +284,15 @@ void main()
         float coverage = ink_coverage(pixel, int(reach));
         if (fract(reach) > 0.0)
             coverage = mix(coverage, ink_coverage(pixel, int(reach) + 1), fract(reach));
-        color = mix(color, surface * tonemap.ink_tint, coverage * tonemap.ink_strength);
+
+        vec3 ink = surface * tonemap.ink_tint;
+        if (tonemap.ink_on_black > 0.0 && coverage > 0.0)
+        {
+            int around = int(ceil(reach + tonemap.ink_wobble_pixels)) + 1;
+            ink = mix(ink, INK_ON_BLACK_COLOR,
+                      solid_ink_around(ivec2(gl_FragCoord.xy), around) * tonemap.ink_on_black);
+        }
+        color = mix(color, ink, coverage * tonemap.ink_strength);
     }
 
     fragment_color = vec4(color, 1.0);

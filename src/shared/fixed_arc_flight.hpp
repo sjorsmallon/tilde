@@ -33,7 +33,7 @@ struct fixed_arc_flight_settings_t
   const float remaining      = 1.f - progress;
   const float seconds        = flight_seconds * (1.f - remaining * remaining);
 
-  return advance_projectile(projectile_parameters_of(projectile), settings.gravity,
+  return advance_projectile(get_projectile_parameters(projectile), settings.gravity,
                             flight.launch_position, projectile.velocity, seconds)
       .position;
 }

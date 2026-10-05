@@ -62,7 +62,7 @@ void write_comparison_pages(const shared::lightmap_t& lightmap,
       shared::absolute_difference_pages(cpu_pages, gpu_pages), difference_prefix, exposure);
 }
 
-float mean_of(const std::vector<float>& values, size_t first, size_t count)
+float compute_mean(const std::vector<float>& values, size_t first, size_t count)
 {
   double sum = 0.0;
   for (size_t k = first; k < first + count; ++k) sum += values[k];
@@ -436,8 +436,8 @@ void Lightmap_Tool::compare_gpu_direct(editor_context_t& ctx)
                  shared::direct_coefficient_name(k, light_count, Span<char>(name)),
                  chart.reference_mean[k], chart.candidate_mean[k],
                  chart.difference_standard_error[k], chart.largest_sigma,
-                 light_count ? mean_of(chart.reference_mean, 3, light_count) : 0.f,
-                 light_count ? mean_of(chart.candidate_mean, 3, light_count) : 0.f);
+                 light_count ? compute_mean(chart.reference_mean, 3, light_count) : 0.f,
+                 light_count ? compute_mean(chart.candidate_mean, 3, light_count) : 0.f);
   }
 
   write_comparison_pages(baked, set, from_cpu.irradiance, from_gpu.irradiance,
@@ -505,7 +505,7 @@ void Lightmap_Tool::compare_gpu_probes(editor_context_t& ctx)
 
   std::vector<shared::gpu_sample_t> by_slice = samples;
   for (shared::gpu_sample_t& sample : by_slice)
-    sample.chart_index = (uint32_t)grid->coordinates_of(sample.chart_index).z;
+    sample.chart_index = (uint32_t)grid->compute_cell_coordinates(sample.chart_index).z;
   std::vector<size_t> slices((size_t)grid->count.z);
   for (size_t z = 0; z < slices.size(); ++z) slices[z] = z;
 
@@ -679,20 +679,20 @@ void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws
   for (int y = lowest.y; y <= highest.y; ++y)
   for (int x = lowest.x; x <= highest.x; ++x)
   {
-    const linalg::vec3 position = grid.position_of({x, y, z});
+    const linalg::vec3 position = grid.compute_cell_position({x, y, z});
     if (linalg::length(position - eye) > radius) continue;
 
     ++probe_preview_drawn_count;
     color_t color = colors::green;
     if (draw_baked)
     {
-      const linalg::vec3 l0 = baked.probes.load(grid.index_of(x, y, z)).l0 * preview_exposure;
+      const linalg::vec3 l0 = baked.probes.load(grid.compute_cell_index(x, y, z)).l0 * preview_exposure;
       const auto to_byte = [](float value) {
         return (uint8_t)std::clamp((int)(value * 255.f), 0, 255);
       };
       color = {to_byte(l0.x), to_byte(l0.y), to_byte(l0.z)};
     }
-    else if (probe_preview_inside[grid.index_of(x, y, z)])
+    else if (probe_preview_inside[grid.compute_cell_index(x, y, z)])
       color = colors::red;
     draws.debug.line(position - linalg::vec3{arm, 0, 0}, position + linalg::vec3{arm, 0, 0},
                      color);

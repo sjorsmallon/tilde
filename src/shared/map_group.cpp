@@ -9,7 +9,7 @@
 namespace shared
 {
 
-const map_group_t* find_group_of(const map_t& map, entity_uid_t member)
+const map_group_t* find_group_containing_member(const map_t& map, entity_uid_t member)
 {
   for (const map_group_t& group : map.groups)
     if (std::find(group.members.begin(), group.members.end(), member) != group.members.end())
@@ -17,9 +17,9 @@ const map_group_t* find_group_of(const map_t& map, entity_uid_t member)
   return nullptr;
 }
 
-map_group_t* find_group_of(map_t& map, entity_uid_t member)
+map_group_t* find_group_containing_member(map_t& map, entity_uid_t member)
 {
-  return const_cast<map_group_t*>(find_group_of(static_cast<const map_t&>(map), member));
+  return const_cast<map_group_t*>(find_group_containing_member(static_cast<const map_t&>(map), member));
 }
 
 const map_group_t* find_group_by_uid(const map_t& map, entity_uid_t group_uid)
@@ -38,7 +38,7 @@ void expand_to_group(const map_t& map, entity_uid_t uid, std::vector<entity_uid_
       out.push_back(candidate);
   };
 
-  const map_group_t* group = find_group_of(map, uid);
+  const map_group_t* group = find_group_containing_member(map, uid);
   if (group == nullptr)
   {
     append(uid);

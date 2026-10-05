@@ -77,9 +77,9 @@ std::string describe_map_entity(const map_t& map, entity_uid_t uid)
   if (entry == nullptr || !entry->entity)
     return std::format("uid {}", uid);
   if (entry->entity->name.length == 0)
-    return std::format("{} uid {}", entities::classname_of(entry->entity.get()), uid);
+    return std::format("{} uid {}", entities::get_classname(entry->entity.get()), uid);
   return std::format("\"{}\" ({} uid {})", entry->entity->name.c_str(),
-                     entities::classname_of(entry->entity.get()), uid);
+                     entities::get_classname(entry->entity.get()), uid);
 }
 
 namespace

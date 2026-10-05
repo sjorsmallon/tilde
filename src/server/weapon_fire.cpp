@@ -288,7 +288,7 @@ try_find_held_fire_time(shared::game_session_t& session, const entities::Player_
     return std::nullopt;
 
   const shared::weapon_definition_t& weapon = shared::get_weapon_definition(active_weapon->weapon_id);
-  return shared::try_find_held_fire_time(shared::fire_of(weapon, trigger),
+  return shared::try_find_held_fire_time(shared::get_weapon_fire_for_button(weapon, trigger),
                                          active_weapon->next_fire_time,
                                          player.inventory.deploy_complete_time, step_start, step_end);
 }
@@ -306,7 +306,7 @@ struct remnant_targets_t
 // Own_Remnants is the shooter's remnants: a remnant is a marker, not a body, so it never
 // soaks a bullet, nobody else's can be aimed at, and it does not move, so there is nothing
 // to rewind; the volume is the one the hitbox overlay draws.
-static Span<const shared::hitscan_target_t> hitscan_targets_of(server_context_t& context,
+static Span<const shared::hitscan_target_t> collect_hitscan_targets(server_context_t& context,
                                                                const shared::contact_t& contact,
                                                                const entities::Player_Entity& shooter,
                                                                remnant_targets_t& remnants)
@@ -320,7 +320,7 @@ static Span<const shared::hitscan_target_t> hitscan_targets_of(server_context_t&
   {
     std::vector<shared::entity_uid_t> uids;
     for (const entities::Remnant_Entity& remnant :
-         context.world.session.entity_system.entities_of<entities::Remnant_Entity>())
+         context.world.session.entity_system.entities_of_type<entities::Remnant_Entity>())
     {
       if (remnant.owner_uid != shooter.entity_id)
         continue;
@@ -363,7 +363,7 @@ void resolve_player_shot(
   if (active_weapon == nullptr) return;
 
   const shared::weapon_definition_t& weapon = shared::get_weapon_definition(active_weapon->weapon_id);
-  const shared::weapon_fire_t&       fire   = shared::fire_of(weapon, trigger);
+  const shared::weapon_fire_t&       fire   = shared::get_weapon_fire_for_button(weapon, trigger);
 
   switch (fire.resolution)
   {
@@ -419,7 +419,7 @@ void resolve_player_shot(
 
       remnant_targets_t remnants;
       Span<const shared::hitscan_target_t> targets =
-          hitscan_targets_of(context, fire.contact, *player, remnants);
+          collect_hitscan_targets(context, fire.contact, *player, remnants);
       auto verdict     = shared::bracket_verdict_t{};
       bool used_rewind = false;
 
@@ -442,7 +442,7 @@ void resolve_player_shot(
         if (bracket_is_usable &&
             shared::try_pose_players_across_bracket(
                 context.replication.snapshot_history, shared::player_rig(),
-                aim_settings_from(*context.cvars), verdict.bracket, context.rewind_scratch))
+                aim_settings_from_cvars(*context.cvars), verdict.bracket, context.rewind_scratch))
         {
           // The rewound set is PLAYERS ONLY, so the static targets are appended
           // rather than lost. A rewind exists because a target moved between
@@ -465,7 +465,7 @@ void resolve_player_shot(
           eye, direction, body_range, targets, player->entity_id);
 
       if (context.cvars->sv_shot_debug)
-        send_shot_debug(context, client_slot, input, shared::subtick_slot_of(fire_time), eye,
+        send_shot_debug(context, client_slot, input, shared::subtick_time_to_slot(fire_time), eye,
                         direction, verdict,
                         used_rewind,
                         used_rewind ? context.rewind_scratch : context.posed_players, targets,
@@ -509,7 +509,7 @@ void resolve_player_shot(
         return;
 
       spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger,
-                       shared::alive_limit_of(*active_weapon));
+                       shared::get_concurrent_projectiles_alive_limit(*active_weapon));
       break;
     }
     case entities::Fire_Resolution::Place:
@@ -535,14 +535,14 @@ void resolve_player_shot(
 
       const shared::entity_uid_t placed_uid = spawn_placed_entity(
           context, player->entity_id, weapon, placed_position, placed_orientation, trigger,
-          shared::alive_limit_of(*active_weapon));
+          shared::get_concurrent_projectiles_alive_limit(*active_weapon));
       if (context.world.session.entity_system.get<entities::Remnant_Entity>(placed_uid) != nullptr)
         claim_remnant(context, placed_uid, player->entity_id);
       break;
     }
     case entities::Fire_Resolution::Self_Impulse:
     {
-      if (!shared::try_apply_self_impulse(shared::movement_settings_from(*context.cvars), weapon,
+      if (!shared::try_apply_self_impulse(shared::movement_settings_from_cvars(*context.cvars), weapon,
                                           trigger, direction, player->movement,
                                           player->velocity))
         return;

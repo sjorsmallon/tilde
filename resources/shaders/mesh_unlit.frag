@@ -38,5 +38,5 @@ void main() {
     outSurfaceNormal = store_surface_normal(fragWorldNormal * (gl_FrontFacing ? 1.0 : -1.0));
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition, normalize(fragWorldNormal));
 }

@@ -910,14 +910,14 @@ void test_locomotion_model_prefixes()
   state.pm_quake_friction     = 99.f;
   state.pm_quake_air_speed_cap = 7.f;
   state.pm_quake_bunnyhop     = cvars::Bunnyhop_Mode::cs;
-  const shared::movement_settings_t settings = shared::movement_settings_from(state);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(state);
   check(settings.quake.friction == shared::quake_settings_t{}.friction,
         "a pm_quake_ value cannot reach the instant model");
   check(settings.quake.clip_air_speed, "and neither can its bunnyhop mode");
 
   state.pm_model                        = cvars::Locomotion_Model::instant;
   state.pm_instant_momentum_ground_drag = 3.f;
-  const shared::movement_settings_t instant = shared::movement_settings_from(state);
+  const shared::movement_settings_t instant = shared::movement_settings_from_cvars(state);
   check(instant.instant_momentum.ground_drag == shared::instant_momentum_settings_t{}.ground_drag,
         "a drag cannot reach the model that has no momentum to bleed");
 }

@@ -67,7 +67,7 @@ std::vector<uint8_t> classify_probes_inside_solid(const probe_grid_t &grid,
   std::vector<uint8_t> inside(grid.probe_count(), 0);
   for (size_t index = 0; index < inside.size(); ++index)
   {
-    const linalg::vec3 position = grid.position_of(grid.coordinates_of(index));
+    const linalg::vec3 position = grid.compute_cell_position(grid.compute_cell_coordinates(index));
     inside[index] = bvh_point_is_inside_solid(occluders, position) ? 1 : 0;
   }
   return inside;
@@ -115,7 +115,7 @@ void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> in
     {
       if (filled[index]) continue;
 
-      const linalg::vec3i at = grid.coordinates_of(index);
+      const linalg::vec3i at = grid.compute_cell_coordinates(index);
       indirect_sh_l1_t sum;
       Array<float, PROBE_VISIBILITY_CHANNELS> visibility_sum{};
       int neighbours = 0;
@@ -127,7 +127,7 @@ void dilate_probes_inside_solid(const probe_grid_t &grid, Span<const uint8_t> in
         if (near.x < 0 || near.y < 0 || near.z < 0 || near.x >= grid.count.x ||
             near.y >= grid.count.y || near.z >= grid.count.z)
           continue;
-        const size_t neighbour = grid.index_of(near.x, near.y, near.z);
+        const size_t neighbour = grid.compute_cell_index(near.x, near.y, near.z);
         if (!filled[neighbour]) continue;
 
         sum.l0 = sum.l0 + values[neighbour].light.l0;
@@ -173,9 +173,9 @@ std::vector<gpu_sample_t> collect_probe_samples(const probe_grid_t &grid,
   for (size_t index = 0; index < grid.probe_count(); ++index)
   {
     if (inside[(uint32_t)index]) continue;
-    const linalg::vec3i at = grid.coordinates_of(index);
+    const linalg::vec3i at = grid.compute_cell_coordinates(index);
     gpu_sample_t sample;
-    sample.position = grid.position_of(at);
+    sample.position = grid.compute_cell_position(at);
     sample.chart_index = (uint32_t)index;
     sample.seed = probe_hash(at);
     samples.push_back(sample);
@@ -222,9 +222,9 @@ probe_volume_t bake_probe_volume(const probe_grid_t &grid,
         if (index >= values.size()) return;
         if (inside[index]) continue;
 
-        const linalg::vec3i at = grid.coordinates_of(index);
+        const linalg::vec3i at = grid.compute_cell_coordinates(index);
         values[index] = trace_probe_light(scene, lights, visibility_slots,
-                                          grid.position_of(at), settings, probe_hash(at));
+                                          grid.compute_cell_position(at), settings, probe_hash(at));
       }
     };
 

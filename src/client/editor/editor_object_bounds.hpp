@@ -11,7 +11,7 @@ namespace client
 
 // The editor's twin of shared::compute_object_bounds: a geometry value's bound
 // is its own, an entity's is the shape the editor DRAWS and PICKS it as
-// (editor_bounds_of), stand-in included. Framing, box select, the hover
+// (get_editor_bounds), stand-in included. Framing, box select, the hover
 // preview and the picking BVH all go through this pair, so the box you click
 // is the box you see.
 inline shared::aabb_bounds_t editor_object_bounds(const shared::map_t& map,
@@ -21,7 +21,7 @@ inline shared::aabb_bounds_t editor_object_bounds(const shared::map_t& map,
     return shared::get_bounds(entry->value);
 
   if (const shared::map_entity_t* entry = map.find_by_uid(uid); entry && entry->entity)
-    return editor_bounds_of(entry->entity.get());
+    return get_editor_bounds(entry->entity.get());
 
   log_error("editor_object_bounds: no map object has uid {}", uid);
   return {{0, 0, 0}, {0, 0, 0}};
@@ -41,7 +41,7 @@ collect_editor_object_bounds(const shared::map_t& map)
   {
     if (!entry.entity)
       continue;
-    result.emplace_back(entry.uid, editor_bounds_of(entry.entity.get()));
+    result.emplace_back(entry.uid, get_editor_bounds(entry.entity.get()));
   }
 
   return result;

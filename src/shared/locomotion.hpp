@@ -35,7 +35,7 @@ namespace shared
                                                   const vec3& velocity_entering_move,
                                                   move_state_t& state, const move_input_t& input);
 
-[[nodiscard]] steep_face_rule_t steep_face_rule_of(const movement_settings_t& settings);
+[[nodiscard]] steep_face_rule_t get_steep_face_rule_for_locomotion_model(cvars::Locomotion_Model model);
 
 [[nodiscard]] vec3 velocity_after_impulse(const move_state_t& state, const impulse_t& impulse);
 
@@ -87,12 +87,12 @@ struct wish_t
   float speed     = 0.f;
 };
 
-[[nodiscard]] wish_t wish_of(const movement_settings_t& settings, const move_input_t& input,
+[[nodiscard]] wish_t compute_wish_direction_and_speed(const movement_settings_t& settings, const move_input_t& input,
                              bool has_ground, const vec3& ground_normal);
 
 // The relative clip: a push can turn you but never take you past what you came
 // in with.
-[[nodiscard]] float horizontal_speed_limit_of(const movement_settings_t& settings, bool walking,
+[[nodiscard]] float compute_horizontal_speed_limit(const movement_settings_t& settings, bool walking,
                                               float speed_entering_move);
 
 [[nodiscard]] vec3 accelerate(vec3 velocity, vec3 wish_direction, float wish_speed,
@@ -113,6 +113,6 @@ struct friction_step_t
 // terms: the direction the LAST of its pushes would have been spent along. A
 // model whose answer is an instant one reads this rather than the step's
 // opening aim, or an extra sub-tick edge moves the aim it answers under.
-[[nodiscard]] vec3 last_push_direction_of(const vec3& direction, const aim_sweep_t& sweep);
+[[nodiscard]] vec3 compute_last_push_direction(const vec3& direction, const aim_turn_across_step_t& sweep);
 
 } // namespace shared

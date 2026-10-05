@@ -28,7 +28,7 @@ void update_modifier_shots(server_context_t& context, const shared::predicted_wo
   std::vector<shared::projectile_target_t> targets;
   shared::collect_projectile_targets(entity_system, targets);
 
-  for (entities::Modifier_Shot_Entity& shot : entity_system.entities_of<entities::Modifier_Shot_Entity>())
+  for (entities::Modifier_Shot_Entity& shot : entity_system.entities_of_type<entities::Modifier_Shot_Entity>())
   {
     shot.lifetime -= dt;
     if (shot.lifetime <= 0.f)
@@ -59,7 +59,7 @@ void update_timed_movement_modifiers(server_context_t& context)
 
   std::vector<shared::entity_uid_t> expired;
   for (entities::Timed_Movement_Modifier_Entity& zone :
-       context.world.session.entity_system.entities_of<entities::Timed_Movement_Modifier_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Timed_Movement_Modifier_Entity>())
   {
     // The ONE stamping site, for a zone a shot left and a zone RMB fired alike. A fired one arrives with a
     // velocity and flies its arc from here, unclipped: it collides with nothing and stops where the arc ends.

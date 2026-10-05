@@ -50,7 +50,7 @@ size_t transmit(const entities::Player_Entity& source,
   return writer.buffer.size();
 }
 
-uint32_t leaf_index_of(entities::entity_type type, const char* dotted_name)
+uint32_t find_leaf_index_by_name(entities::entity_type type, const char* dotted_name)
 {
   const Span<const entities::leaf_field_t> leaves = entities::networked_leaf_fields(type);
   for (uint32_t index = 0; index < leaves.size(); ++index)
@@ -58,7 +58,7 @@ uint32_t leaf_index_of(entities::entity_type type, const char* dotted_name)
       return index;
 
   std::cerr << "    !! no networked leaf named '" << dotted_name << "'\n";
-  assert(false && "leaf_index_of: unknown field -- did entities.def change?");
+  assert(false && "find_leaf_index_by_name: unknown field -- did entities.def change?");
   return 0;
 }
 
@@ -117,9 +117,9 @@ void put(network::snapshot_frame_t& frame, const Entity_T& entity)
 }
 
 template <typename Entity_T>
-uint32_t count_of(const network::snapshot_frame_t& frame)
+uint32_t count_entities_of_type(const network::snapshot_frame_t& frame)
 {
-  return frame.entities.entities_of<Entity_T>().size();
+  return frame.entities.entities_of_type<Entity_T>().size();
 }
 
 // The frame's copy of `uid`, which a subtest expects to be there.
@@ -304,8 +304,8 @@ int main()
     network::changed_fields_t changed;
     transmit(server_state, &baseline, client_state, &changed);
 
-    const uint32_t health_leaf   = leaf_index_of(entities::entity_type::Player_Entity, "health.current_health");
-    const uint32_t position_leaf = leaf_index_of(entities::entity_type::Player_Entity, "position");
+    const uint32_t health_leaf   = find_leaf_index_by_name(entities::entity_type::Player_Entity, "health.current_health");
+    const uint32_t position_leaf = find_leaf_index_by_name(entities::entity_type::Player_Entity, "position");
 
     assert(changed.any());
     assert(changed.is_set(health_leaf));
@@ -338,7 +338,7 @@ int main()
     const size_t full_size = transmit_snapshot(server_frame, nullptr, client_frame,
                                                &record_count);
     assert(record_count == 3); // no baseline: every entity is a full record
-    assert(count_of<entities::Rocket_Entity>(client_frame) == 3);
+    assert(count_entities_of_type<entities::Rocket_Entity>(client_frame) == 3);
 
     network::snapshot_frame_t acked = client_frame;
 
@@ -350,7 +350,7 @@ int main()
                                                 &record_count);
 
     assert(record_count == 1); // only the rocket that moved
-    assert(count_of<entities::Rocket_Entity>(next_client_frame) == 3);
+    assert(count_entities_of_type<entities::Rocket_Entity>(next_client_frame) == 3);
     assert(held<entities::Rocket_Entity>(next_client_frame, 11).position.x == 140.f);
     assert(held<entities::Rocket_Entity>(next_client_frame, 10).position.x == 0.f);   // carried over
     assert(held<entities::Rocket_Entity>(next_client_frame, 12).position.x == 200.f); // carried over
@@ -364,7 +364,7 @@ int main()
     network::snapshot_frame_t idle_baseline = next_client_frame;
     transmit_snapshot(server_frame, &idle_baseline, idle_client_frame, &record_count);
     assert(record_count == 0);
-    assert(count_of<entities::Rocket_Entity>(idle_client_frame) == 3);
+    assert(count_entities_of_type<entities::Rocket_Entity>(idle_client_frame) == 3);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -413,7 +413,7 @@ int main()
 
     // The player plus one entity per carried weapon.
     assert(record_count == 1 + carried_weapons.size());
-    assert(count_of<entities::Weapon_Entity>(client_frame) == carried_weapons.size());
+    assert(count_entities_of_type<entities::Weapon_Entity>(client_frame) == carried_weapons.size());
 
     // The client resolves the same way the server does: one index into the
     // replicated forward list, never a scan for a weapon claiming this owner.
@@ -472,7 +472,7 @@ int main()
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(count_of<entities::Rocket_Entity>(client_frame) == 2);
+    assert(count_entities_of_type<entities::Rocket_Entity>(client_frame) == 2);
 
     network::snapshot_frame_t acked = client_frame;
 
@@ -648,9 +648,9 @@ int main()
     transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
 
     assert(record_count == 1);
-    assert(count_of<entities::Player_Entity>(next_client_frame) == 0);
-    assert(count_of<entities::Physics_Body_Entity>(next_client_frame) == 1);
-    assert(count_of<entities::Rocket_Entity>(next_client_frame) == 1);
+    assert(count_entities_of_type<entities::Player_Entity>(next_client_frame) == 0);
+    assert(count_entities_of_type<entities::Physics_Body_Entity>(next_client_frame) == 1);
+    assert(count_entities_of_type<entities::Rocket_Entity>(next_client_frame) == 1);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -678,7 +678,7 @@ int main()
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
 
-    assert(count_of<entities::Damageable_Entity>(client_frame) == 1);
+    assert(count_entities_of_type<entities::Damageable_Entity>(client_frame) == 1);
     assert(held<entities::Damageable_Entity>(client_frame, 70).health.current_health == 100);
     assert(held<entities::Damageable_Entity>(client_frame, 70).render.visible);
 

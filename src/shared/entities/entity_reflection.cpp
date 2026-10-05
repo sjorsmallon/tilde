@@ -90,7 +90,7 @@ std::vector<field_change_t> capture_field_changes(const Entity* baseline, const 
   if (baseline->type != current->type)
   {
     log_error("entity_reflection: cannot diff a {} against a {} — no change captured",
-              classname_of(baseline), classname_of(current));
+              get_classname(baseline), get_classname(current));
     return changes;
   }
 
@@ -135,7 +135,7 @@ bool write_field_changes(Entity* target, const std::vector<field_change_t>& chan
     if (change.index >= fields.size())
     {
       log_error("entity_reflection: {} has no field at index {} — change not applied",
-                classname_of(target), change.index);
+                get_classname(target), change.index);
       all_written = false;
       continue;
     }
@@ -147,7 +147,7 @@ bool write_field_changes(Entity* target, const std::vector<field_change_t>& chan
     {
       log_error("entity_reflection: field {}.{} is {} bytes but the captured change holds {} — "
                 "change not applied",
-                classname_of(target), field.name, field.size_in_bytes, bytes.size());
+                get_classname(target), field.name, field.size_in_bytes, bytes.size());
       all_written = false;
       continue;
     }
@@ -186,7 +186,7 @@ void copy_networked_fields(const Entity& from, Entity& to)
   {
     log_error("entity_reflection: cannot copy the networked fields of a {} onto a {} — nothing "
               "copied",
-              classname_of(&from), classname_of(&to));
+              get_classname(&from), get_classname(&to));
     return;
   }
 
@@ -199,7 +199,7 @@ void copy_networked_fields(const Entity& from, Entity& to)
     std::memcpy(target + leaf.offset, source + leaf.offset, leaf.info->size_in_bytes);
 }
 
-const char* classname_of(const Entity* entity)
+const char* get_classname(const Entity* entity)
 {
   if (entity == nullptr || entity->type == entity_type::Invalid ||
       (uint32_t)entity->type >= ENTITY_TYPE_COUNT)

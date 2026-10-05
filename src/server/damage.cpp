@@ -60,7 +60,7 @@ static void apply_player_damage_total(server_context_t &context,
                                       const vec3f& knockback_velocity,
                                       const damage_info_t &credited)
 {
-  shared::apply_impulse(shared::movement_settings_from(*context.cvars), player.velocity,
+  shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), player.velocity,
                         player.movement,
                         {.horizontal = shared::impulse_mode_t::Add,
                          .vertical   = shared::impulse_mode_t::Add,

@@ -201,7 +201,7 @@ void advance_clip(clip_playback_t &clip, const assets::animation_asset_t &asset,
 }
 
 // if there's a hitbox rig from a file, get that file path. otherwise, get the path it _should_ be to write to.
-std::string rig_path_of(const hitbox_workspace_t &workspace, const assets::skeleton_t &skeleton)
+std::string get_hitbox_rig_path(const hitbox_workspace_t &workspace, const assets::skeleton_t &skeleton)
 {
   if (workspace.file_based_hitbox_rig)
     return assets::hitbox_rig_manifest()[(size_t)*workspace.file_based_hitbox_rig].path;
@@ -289,7 +289,7 @@ void Animation_Tool::on_enable(editor_context_t& ctx)
   display.selected_bone_index = display_options_t::NO_BONE_SELECTED;
   workspace.selected_volume_index = hitbox_workspace_t::NO_HITBOX_VOLUME_SELECTED;
 
-  aim_settings = aim_settings_from(*state_manager::get_client_context().cvars);
+  aim_settings = aim_settings_from_cvars(*state_manager::get_client_context().cvars);
 
   // this is by definition true only on the very first entry.
   if (clip.selected == assets::animation_asset::Missing)
@@ -323,7 +323,7 @@ void Animation_Tool::on_disable(editor_context_t& ctx) {}
 
 void Animation_Tool::on_update(editor_context_t& ctx, const viewport_state_t& view, float dt)
 {
-  aim_settings = aim_settings_from(*state_manager::get_client_context().cvars);
+  aim_settings = aim_settings_from_cvars(*state_manager::get_client_context().cvars);
 
   //advance with _this_ frame's dt.
   if (pose_controls.pose_source == pose_source_t::Clip)
@@ -642,7 +642,7 @@ void draw_hitbox_panel(hitbox_workspace_t &workspace, const preview_model_t &mod
   ImGui::Text("Hit volumes");
 
   const assets::mesh_asset_t *mesh = assets::get(model.mesh);
-  const std::string           path = rig_path_of(workspace, *model.skeleton);
+  const std::string           path = get_hitbox_rig_path(workspace, *model.skeleton);
 
   if (workspace.rig.volumes.empty())
   {

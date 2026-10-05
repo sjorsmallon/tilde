@@ -40,7 +40,7 @@ struct baked_light_t
 // the same surface.
 [[nodiscard]] Bounding_Volume_Hierarchy build_occluder_bvh(const map_t &map);
 
-// The other two sets light_occlusion_of names, each its own BVH: the ALPHA
+// The other two sets compute_light_occlusion names, each its own BVH: the ALPHA
 // TESTED geometry, which stops a ray where its texel is opaque, and the
 // TRANSMISSIVE geometry, which stops nothing and tints what it passes. Empty for
 // every map with no fence and no glass in it, and an empty one is never traced.
@@ -57,7 +57,7 @@ struct traced_scene_t;
 // `transmissive` is null when the map holds no glass -- which is every map
 // authored before transparency -- and then a shadow ray is the single test it
 // has always been, answering white or black and touching one structure.
-struct shadow_scene_t
+struct shadow_casters_t
 {
   // What stops a ray outright, with no texel read at all. Every map has one.
   const Bounding_Volume_Hierarchy *occluders = nullptr;
@@ -72,7 +72,7 @@ struct shadow_scene_t
 
   // What turns a hit on either of those two into a material. Null exactly when
   // both of them are, since neither can be read without it -- which is why
-  // shadow_scene_of derives all four together rather than letting a caller
+  // get_shadow_casters derives all four together rather than letting a caller
   // assemble a set it has no materials for.
   const traced_scene_t *surfaces = nullptr;
 };
@@ -118,7 +118,7 @@ struct light_arrival_t
 // Glass is deliberately NOT in it: a chain passes through a window and is TINTED
 // by it (segment_transmittance below), rather than landing on it. Reflecting off
 // one is transparency_plan.md ss5's deferred Fresnel split.
-[[nodiscard]] bool trace_nearest_surface(const shadow_scene_t &scene,
+[[nodiscard]] bool trace_nearest_surface(const shadow_casters_t &scene,
                                          const linalg::vec3 &origin,
                                          const linalg::vec3 &direction,
                                          ray_hit_result_t &out_hit);
@@ -127,7 +127,7 @@ struct light_arrival_t
 // no alpha test, no bias. The filter a shadow ray applies once it is through, and
 // the one a chain applies to every leg -- same function, because a bounce
 // crossing a red window is as red as a shadow ray crossing it.
-[[nodiscard]] linalg::vec3 segment_transmittance(const shadow_scene_t &scene,
+[[nodiscard]] linalg::vec3 segment_transmittance(const shadow_casters_t &scene,
                                                  const linalg::vec3 &origin,
                                                  const linalg::vec3 &direction, float travel);
 
@@ -139,7 +139,7 @@ struct light_arrival_t
 //
 // The colour is why this is a vec3 and not the bool it was: stained glass casts
 // a coloured shadow, and the tint has to survive all the way to the texel.
-[[nodiscard]] linalg::vec3 shadow_ray_transmittance(const shadow_scene_t &scene,
+[[nodiscard]] linalg::vec3 shadow_ray_transmittance(const shadow_casters_t &scene,
                                                     const linalg::vec3 &surface_position,
                                                     const linalg::vec3 &surface_normal,
                                                     const linalg::vec3 &direction,
@@ -159,7 +159,7 @@ struct light_arrival_t
 //
 // A light with no size takes exactly ONE ray whatever `soft_shadow_samples` says,
 // so every map authored before area lights existed bakes bit for bit what it did.
-[[nodiscard]] linalg::vec3 light_visibility(const shadow_scene_t &scene,
+[[nodiscard]] linalg::vec3 light_visibility(const shadow_casters_t &scene,
                                             const linalg::vec3 &surface_position,
                                             const linalg::vec3 &surface_normal,
                                             const light_arrival_t &arrival,
@@ -182,7 +182,7 @@ struct light_arrival_t
 // texel itself, where there is one evaluation and nothing to average over, and
 // is `soft_shadow_samples` times too expensive inside a chain. A punctual light
 // takes the same centre ray either way. lightmap_gpu_plan.md step 0.
-[[nodiscard]] linalg::vec3 light_visibility_single_ray(const shadow_scene_t &scene,
+[[nodiscard]] linalg::vec3 light_visibility_single_ray(const shadow_casters_t &scene,
                                                        const linalg::vec3 &surface_position,
                                                        const linalg::vec3 &surface_normal,
                                                        const light_arrival_t &arrival,
@@ -208,7 +208,7 @@ struct light_arrival_t
 // Rec. 709, which is what "how much light is this" means when the answer has to
 // be one number. Only a RANKING or a survival probability reads it -- nothing
 // stored is ever collapsed to a luminance.
-[[nodiscard]] float luminance_of(const linalg::vec3 &linear_rgb);
+[[nodiscard]] float compute_luminance(const linalg::vec3 &linear_rgb);
 
 // WHY a light does or does not reach a face, per face, through the same gates
 // the solve runs. A bake that keeps a light nowhere has one symptom -- nothing --

@@ -74,7 +74,7 @@ struct delivered_record_t
 static constexpr uint8 TYPE_A = 7;
 static constexpr uint8 TYPE_B = 11;
 
-static std::vector<uint8> bytes_of(const std::string& text)
+static std::vector<uint8> text_to_bytes(const std::string& text)
 {
   return std::vector<uint8>(text.begin(), text.end());
 }
@@ -82,7 +82,7 @@ static std::vector<uint8> bytes_of(const std::string& text)
 static void queue_text(Reliable_Stream& stream, uint8 message_type,
                        const std::string& text)
 {
-  const std::vector<uint8> payload = bytes_of(text);
+  const std::vector<uint8> payload = text_to_bytes(text);
   queue_reliable_message(stream, message_type, payload);
 }
 
@@ -320,7 +320,7 @@ static void test_a_block_numbered_zero_is_never_accepted()
   printf("block 0 means no block attached, so it carries nothing\n");
 
   Reliable_Stream receiver;
-  const std::vector<uint8> payload = bytes_of("junk");
+  const std::vector<uint8> payload = text_to_bytes("junk");
   check(!accept_reliable_block(receiver, 0, payload),
         "a zero block number is refused");
   check_equal(receiver.inbound.size(), 0, "and nothing was appended");

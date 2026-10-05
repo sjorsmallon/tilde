@@ -296,7 +296,7 @@ std::optional<std::string> render_entity_fields_in_an_imgui_window(
   {
     if (other->type != primary->type)
       fatal_error("entity inspector: handed a {} beside a {} -- a multi-edit is one type",
-                  entities::classname_of(other), entities::classname_of(primary));
+                  entities::get_classname(other), entities::get_classname(primary));
   }
 
   const entities::entity_type_info_t& info = entities::entity_info(primary->type);

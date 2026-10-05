@@ -37,7 +37,7 @@ struct row_columns_t
   ui::ui_rect_t deaths;
 };
 
-row_columns_t columns_of(ui::ui_rect_t row, float scale)
+row_columns_t compute_scoreboard_column_rectangles(ui::ui_rect_t row, float scale)
 {
   const float score_width = SCORE_COLUMN_WIDTH * scale;
   const float gap         = COLUMN_GAP * scale;
@@ -121,7 +121,7 @@ void draw_scoreboard(renderer::ui_draw_list_t &list, const ui::ui_font_t &font,
   const ui::ui_rect_t content = ui::inset(panel, padding);
 
   const ui::ui_rect_t header_row = {content.min, {content.max.x, content.min.y + row_height}};
-  const row_columns_t header     = columns_of(header_row, scale);
+  const row_columns_t header     = compute_scoreboard_column_rectangles(header_row, scale);
 
   ui::draw_text_aligned(list, font, ui::font_size_t::small, header.name,
                         ui::text_align_t::left, "PLAYER", HEADER_TEXT);
@@ -145,7 +145,7 @@ void draw_scoreboard(renderer::ui_draw_list_t &list, const ui::ui_font_t &font,
       list.rect({panel.min.x, row_box.min.y}, {panel.max.x, row_box.max.y}, LOCAL_HIGHLIGHT);
 
     const color_t       text_color = row.is_alive ? LIVING_TEXT : DEAD_TEXT;
-    const row_columns_t column     = columns_of(row_box, scale);
+    const row_columns_t column     = compute_scoreboard_column_rectangles(row_box, scale);
 
     ui::draw_text_aligned(list, font, ui::font_size_t::small, column.name,
                           ui::text_align_t::left, row.name, text_color);

@@ -24,7 +24,7 @@ struct gpu_light_t
 {
   float position[4];
   float direction[4];   // xyz normalized, w = the emitter's source radius
-  float radiance[4]; // already through shared::radiance_of
+  float radiance[4]; // already through shared::compute_radiance
   float spot_params[4];
 };
 
@@ -473,7 +473,7 @@ void Shader_Editor_State::build_frame(float delta_seconds,
       light_component.intensity = light.intensity;
 
       const linalg::vec3f radiance =
-          shared::radiance_of(light_component, (shared::light_kind_t)light.light_type);
+          shared::compute_radiance(light_component, (shared::light_kind_t)light.light_type);
       ubo.lights[i].radiance[0] = radiance.x;
       ubo.lights[i].radiance[1] = radiance.y;
       ubo.lights[i].radiance[2] = radiance.z;

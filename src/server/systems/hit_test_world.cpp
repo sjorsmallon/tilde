@@ -29,18 +29,18 @@ struct target_shape_t
 };
 
 // The ONE place a Mortal type says what kind of target it is; the two switches below are exhaustive over the kinds.
-static target_kind_t target_kind_of(entities::entity_type type)
+static target_kind_t get_target_kind_for_entity_type(entities::entity_type type)
 {
   if (type == entities::entity_type::Player_Entity)
     return target_kind_t::Rigged_Player;
   if (type == entities::entity_type::Damageable_Entity)
     return target_kind_t::Box;
 
-  fatal_error("target_kind_of: {} is Mortal and has no hit volumes; name its kind here",
+  fatal_error("get_target_kind_for_entity_type: {} is Mortal and has no hit volumes; name its kind here",
               entities::entity_info(type).classname);
 }
 
-static target_shape_t target_shape_of(target_kind_t kind, const shared::player_rig_t &rig)
+static target_shape_t get_target_shape_for_target_kind(target_kind_t kind, const shared::player_rig_t &rig)
 {
   switch (kind)
   {
@@ -48,7 +48,7 @@ static target_shape_t target_shape_of(target_kind_t kind, const shared::player_r
   case target_kind_t::Box:           return {1, false};
   }
 
-  fatal_error("target_shape_of: target kind {} is not a target_kind_t", (uint32_t)kind);
+  fatal_error("get_target_shape_for_target_kind: target kind {} is not a target_kind_t", (uint32_t)kind);
 }
 
 // Write one target's volumes into `slice`, and its pose if it has one.
@@ -88,7 +88,7 @@ void pose_all_targets(server_context_t &context)
   posed.built_for_tick = context.tick_number;
 
   const shared::player_rig_t &rig = shared::player_rig();
-  const aim_settings_t settings   = aim_settings_from(*context.cvars);
+  const aim_settings_t settings   = aim_settings_from_cvars(*context.cvars);
 
   shared::Entity_System &system = context.world.session.entity_system;
 
@@ -102,7 +102,7 @@ void pose_all_targets(server_context_t &context)
     // alraedy dead?
     if (health.current_health <= 0) continue;
 
-    const target_shape_t shape = target_shape_of(target_kind_of(entity.type), rig);
+    const target_shape_t shape = get_target_shape_for_target_kind(get_target_kind_for_entity_type(entity.type), rig);
     total_volume_count += shape.volume_count;
     total_target_count += 1;
     posed_target_count += shape.has_pose ? 1 : 0;
@@ -128,8 +128,8 @@ void pose_all_targets(server_context_t &context)
       if (health.current_health <= 0)
         continue;
 
-      const target_kind_t  kind  = target_kind_of(entity.type);
-      const target_shape_t shape = target_shape_of(kind, rig);
+      const target_kind_t  kind  = get_target_kind_for_entity_type(entity.type);
+      const target_shape_t shape = get_target_shape_for_target_kind(kind, rig);
       if (shape.has_pose != should_be_posed)
         continue;
 

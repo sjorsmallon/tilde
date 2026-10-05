@@ -77,7 +77,7 @@ constexpr float REPLAY_ICON_PADDING = 2.0f;
 
 // Where the slider sits: the jump that has been asked for but not yet serviced,
 // else the clock. The same choice replay_skip makes.
-[[nodiscard]] double scrub_position_of(const replay_playback_t& playback)
+[[nodiscard]] double get_replay_slider_position_in_seconds(const replay_playback_t& playback)
 {
   if (playback.pending_seek_tick)
     return seconds_of_tick(playback, *playback.pending_seek_tick);
@@ -113,7 +113,7 @@ struct replay_pov_row_t
 {
   std::vector<replay_pov_row_t> rows;
   for (const entities::Player_Entity& player :
-       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
   {
     replay_pov_row_t row;
     row.slot     = player.client_slot_index;
@@ -152,7 +152,7 @@ void draw_replay_panel(client_context_t& context)
     ImGui::Text("%s   recorded %s   %u Hz", playback.replay.header.map_name.c_str(),
                 playback.replay.header.date.c_str(), playback.replay.header.tickrate_hz);
 
-    const double position = scrub_position_of(playback);
+    const double position = get_replay_slider_position_in_seconds(playback);
     ImGui::Text("%s / %s   tick %u of %u..%u%s",
                 shared::format_run_time(static_cast<float>(position)).c_str(),
                 shared::format_run_time(static_cast<float>(total)).c_str(),

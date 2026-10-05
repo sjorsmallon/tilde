@@ -17,7 +17,7 @@ void launch_fixed_arc_flight(server_context_t& context, const entities::Projecti
   const entities::Player_Entity* owner =
       context.world.session.entity_system.get<entities::Player_Entity>(projectile.owner_uid);
   const Span<const uint8_t> disabled_geometry =
-      shared::predicted_world_of(world, owner != nullptr ? owner->team_allegiance
+      shared::get_predicted_world_for_team(world, owner != nullptr ? owner->team_allegiance
                                                          : entities::Team_Allegiance::Free_For_All)
           .disabled_geometry;
 

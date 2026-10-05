@@ -428,7 +428,7 @@ enum class light_occlusion_t : uint8_t
   Transmissive,
 };
 
-[[nodiscard]] light_occlusion_t light_occlusion_of(const geometry_value_t &geometry,
+[[nodiscard]] light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
                                                    Span<const std::string> materials);
 
 // The first of the three, which is the set a shadow ray is STOPPED by with no
@@ -436,7 +436,7 @@ enum class light_occlusion_t : uint8_t
 [[nodiscard]] inline bool geometry_occludes_light(const geometry_value_t &geometry,
                                                   Span<const std::string> materials)
 {
-  return light_occlusion_of(geometry, materials) == light_occlusion_t::Opaque;
+  return compute_light_occlusion(geometry, materials) == light_occlusion_t::Opaque;
 }
 
 geometry_surface_t &get_surface(geometry_value_t &geometry);

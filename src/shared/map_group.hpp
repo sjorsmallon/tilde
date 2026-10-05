@@ -46,8 +46,8 @@ struct map_group_t
 };
 
 // The group this object belongs to, or null.
-[[nodiscard]] const map_group_t* find_group_of(const map_t& map, entity_uid_t member);
-[[nodiscard]] map_group_t*       find_group_of(map_t& map, entity_uid_t member);
+[[nodiscard]] const map_group_t* find_group_containing_member(const map_t& map, entity_uid_t member);
+[[nodiscard]] map_group_t*       find_group_containing_member(map_t& map, entity_uid_t member);
 
 [[nodiscard]] const map_group_t* find_group_by_uid(const map_t& map, entity_uid_t group_uid);
 

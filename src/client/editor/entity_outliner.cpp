@@ -276,12 +276,12 @@ void draw_group_row(const shared::map_t& map, entity_visibility_t& visibility,
   ImGui::PopID();
 }
 
-reveal_t reveal_of(const shared::map_t& map, Span<const shared::entity_uid_t> selection,
+reveal_t compute_outliner_reveal(const shared::map_t& map, Span<const shared::entity_uid_t> selection,
                    const uid_set_t& selected)
 {
   reveal_t reveal;
   const shared::entity_uid_t first = selection[0];
-  if (const shared::map_group_t* group = shared::find_group_of(map, first))
+  if (const shared::map_group_t* group = shared::find_group_containing_member(map, first))
   {
     bool whole_group = true;
     for (shared::entity_uid_t member : group->members)
@@ -313,7 +313,7 @@ void begin_requested_rename(const shared::map_t& map, Span<const shared::entity_
                             outliner_result_t& result)
 {
   if (!selection.empty())
-    if (const shared::map_group_t* group = shared::find_group_of(map, selection[0]))
+    if (const shared::map_group_t* group = shared::find_group_containing_member(map, selection[0]))
     {
       size_t live_members = 0;
       bool   whole_group  = true;
@@ -338,7 +338,7 @@ void begin_requested_rename(const shared::map_t& map, Span<const shared::entity_
     begin_rename(rename, selection[0], false, entity_name(map, selection[0]));
     reveal     = {};
     reveal.row = selection[0];
-    if (const shared::map_group_t* group = shared::find_group_of(map, selection[0]))
+    if (const shared::map_group_t* group = shared::find_group_containing_member(map, selection[0]))
       reveal.open_group = group->uid;
     return;
   }
@@ -405,7 +405,7 @@ outliner_result_t draw_entity_outliner(const shared::map_t&              map,
   {
     state.previous_selection.assign(selection.begin(), selection.end());
     if (state.frames_ignoring_selection_change == 0 && !selection.empty())
-      reveal = reveal_of(map, selection, selected);
+      reveal = compute_outliner_reveal(map, selection, selected);
   }
   if (state.frames_ignoring_selection_change > 0)
     --state.frames_ignoring_selection_change;

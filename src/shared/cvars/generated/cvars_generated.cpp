@@ -90,6 +90,7 @@ cvar_state_t::cvar_state_t()
     m_zoom_sensitivity_ratio(1.0f),
     cl_maxfps(1000.0f),
     cl_interpolation_delay_ticks(2.0f),
+    cl_smooth_drawn_tick(true),
     cl_interpolation_debug(false),
     cl_display_latency_ms(0.0f),
     cl_draw_player_hull(false),
@@ -140,6 +141,7 @@ cvar_state_t::cvar_state_t()
     r_cel_shadow_blue(1.0f),
     r_cel_bands(2.0f),
     r_cel_flat_albedo(0.0f),
+    r_cel_black(0.05f),
     r_cel_halftone(0.0f),
     r_cel_halftone_paper(1.0f),
     r_cel_fill(Cel_Fill::dither3d),
@@ -166,11 +168,23 @@ cvar_state_t::cvar_state_t()
     r_cel_pebble_size(0.25f),
     r_cel_pebble_irregularity(0.5f),
     r_cel_pebble_width(1.5f),
+    r_pattern_preview(Pattern_Kind::none),
+    r_pattern_preview_spacing_along(32.0f),
+    r_pattern_preview_spacing_across(32.0f),
+    r_pattern_preview_angle(0.0f),
+    r_pattern_preview_scroll(0.0f),
+    r_pattern_preview_coverage(0.25f),
+    r_pattern_preview_shape(0.0f),
+    r_pattern_preview_strength(0.5f),
+    r_pattern_preview_red(0.0f),
+    r_pattern_preview_green(0.0f),
+    r_pattern_preview_blue(0.0f),
     r_ink(true),
     r_ink_threshold(4.0f),
     r_ink_crease_degrees(30.0f),
     r_ink_width(1),
     r_ink_tint(0.0f),
+    r_ink_on_black(1.0f),
     r_ink_wobble(1.5f),
     r_ink_wobble_scale(40.0f),
     r_ink_boil(5.0f),
@@ -178,6 +192,8 @@ cvar_state_t::cvar_state_t()
     r_ink_weight_distance(256.0f),
     r_rim(0.0f),
     r_rim_width(3),
+    r_misprint(1.5f),
+    r_misprint_distance(1024.0f),
     r_flashlight_intensity(20.0f),
     r_flashlight_red(1.0f),
     r_flashlight_green(0.95f),
@@ -247,6 +263,16 @@ constexpr const char* Cel_Fill_VALUE_NAMES[] = {
   "dither3d_original",
 };
 
+constexpr const char* Pattern_Kind_VALUE_NAMES[] = {
+  "none",
+  "stripes",
+  "grid",
+  "checks",
+  "bricks",
+  "chevrons",
+  "dots",
+};
+
 constexpr const char* Bot_Mode_VALUE_NAMES[] = {
   "idle",
   "chase",
@@ -258,6 +284,7 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Locomotion_Model", {Locomotion_Model_VALUE_NAMES, 4}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 13}},
   {"Cel_Fill", {Cel_Fill_VALUE_NAMES, 4}},
+  {"Pattern_Kind", {Pattern_Kind_VALUE_NAMES, 7}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
 
@@ -870,6 +897,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::cl_interpolation_delay_ticks),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "cl_smooth_drawn_tick",
+     .description = "Movers, moving lights and everything else drawn from the predicted tick glide when the server takes one of our inputs a tick late or early; off draws them at the snapshot's own count, which hops a whole tick",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, cl_smooth_drawn_tick),
+     .size = sizeof(cvar_state_t::cl_smooth_drawn_tick),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "cl_interpolation_debug",
      .description = "Log interpolation buffer stalls and clock snaps",
      .flags = CVAR_FLAG_CLIENT,
@@ -1270,6 +1305,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_cel_flat_albedo),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_cel_black",
+     .description = "Spotted blacks: a shadow whose ambient light is dimmer than this is drawn as solid ink, the end of the dots' tone ramp (0 = none)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_cel_black),
+     .size = sizeof(cvar_state_t::r_cel_black),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "r_cel_halftone",
      .description = "Both dithers: 0 lets light darken a surface as usual; above 0 the dots alone carry a surface's light, none where it is lit this brightly and covering more of it the dimmer it is",
      .flags = CVAR_FLAG_CLIENT,
@@ -1478,6 +1521,94 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_cel_pebble_width),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview",
+     .description = "Draw one procedural pattern (pattern.glsl) over every surface, to judge it: none, stripes, grid, checks, bricks, chevrons, dots",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_ENUM,
+     .offset = offsetof(cvar_state_t, r_pattern_preview),
+     .size = sizeof(cvar_state_t::r_pattern_preview),
+     .string_capacity = 0,
+     .enum_info = &ENUM_INFOS[4]},
+    {.name = "r_pattern_preview_spacing_along",
+     .description = "World units from one repeat of the previewed pattern to the next, in the direction stripes repeat, chevrons point and brick courses run",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_spacing_along),
+     .size = sizeof(cvar_state_t::r_pattern_preview_spacing_along),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_spacing_across",
+     .description = "World units from one repeat of the previewed pattern to the next, across that direction; stripes and chevrons read it only for their wave and their fold",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_spacing_across),
+     .size = sizeof(cvar_state_t::r_pattern_preview_spacing_across),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_angle",
+     .description = "How far the previewed pattern is turned on the face, in degrees",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_angle),
+     .size = sizeof(cvar_state_t::r_pattern_preview_angle),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_scroll",
+     .description = "How fast the previewed pattern travels along its direction, in world units per second (0 = still)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_scroll),
+     .size = sizeof(cvar_state_t::r_pattern_preview_scroll),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_coverage",
+     .description = "How much of a repeat is ink (0 to 1): a stripe's, grid line's, mortar joint's or chevron arm's thickness, or a dot's diameter; checks ignore it",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_coverage),
+     .size = sizeof(cvar_state_t::r_pattern_preview_coverage),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_shape",
+     .description = "The one number only the previewed kind reads: stripes waviness, bricks and dots how far each row is shifted (0.5 = classic brick), chevrons how pointed (0 = straight stripes)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_shape),
+     .size = sizeof(cvar_state_t::r_pattern_preview_shape),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_strength",
+     .description = "How far the previewed pattern's ink replaces the surface's colour (0 = invisible, 1 = solid ink)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_strength),
+     .size = sizeof(cvar_state_t::r_pattern_preview_strength),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_red",
+     .description = "Red of the previewed pattern's ink",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_red),
+     .size = sizeof(cvar_state_t::r_pattern_preview_red),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_green",
+     .description = "Green of the previewed pattern's ink",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_green),
+     .size = sizeof(cvar_state_t::r_pattern_preview_green),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_pattern_preview_blue",
+     .description = "Blue of the previewed pattern's ink",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_pattern_preview_blue),
+     .size = sizeof(cvar_state_t::r_pattern_preview_blue),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "r_ink",
      .description = "Draw ink lines where the scene depth jumps (outlines) and where the surface normal turns (creases)",
      .flags = CVAR_FLAG_CLIENT,
@@ -1516,6 +1647,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, r_ink_tint),
      .size = sizeof(cvar_state_t::r_ink_tint),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_ink_on_black",
+     .description = "How white a line drawn inside r_cel_black's solid ink is (0 = it stays ink and is lost, 1 = white)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_ink_on_black),
+     .size = sizeof(cvar_state_t::r_ink_on_black),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_ink_wobble",
@@ -1572,6 +1711,22 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_I32,
      .offset = offsetof(cvar_state_t, r_rim_width),
      .size = sizeof(cvar_state_t::r_rim_width),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_misprint",
+     .description = "Print misregistration: how many pixels the red and the blue of a far surface are drawn to either side of its green, the ink lines staying in place (0 = none)",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_misprint),
+     .size = sizeof(cvar_state_t::r_misprint),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_misprint_distance",
+     .description = "The distance, in world units, at which r_misprint is reached; a nearer surface is offset in proportion, so what is close stays in register",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_misprint_distance),
+     .size = sizeof(cvar_state_t::r_misprint_distance),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_flashlight_intensity",
@@ -2301,6 +2456,34 @@ template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view t
   if (text == "hatch") return Cel_Fill::hatch;
   if (text == "dither3d") return Cel_Fill::dither3d;
   if (text == "dither3d_original") return Cel_Fill::dither3d_original;
+  return std::nullopt;
+}
+
+const char* to_string(Pattern_Kind value)
+{
+  switch (value)
+  {
+    case Pattern_Kind::none: return "none";
+    case Pattern_Kind::stripes: return "stripes";
+    case Pattern_Kind::grid: return "grid";
+    case Pattern_Kind::checks: return "checks";
+    case Pattern_Kind::bricks: return "bricks";
+    case Pattern_Kind::chevrons: return "chevrons";
+    case Pattern_Kind::dots: return "dots";
+  }
+  assert(false && "invalid Pattern_Kind");
+  return "";
+}
+
+template <> std::optional<Pattern_Kind> try_from_string<Pattern_Kind>(std::string_view text)
+{
+  if (text == "none") return Pattern_Kind::none;
+  if (text == "stripes") return Pattern_Kind::stripes;
+  if (text == "grid") return Pattern_Kind::grid;
+  if (text == "checks") return Pattern_Kind::checks;
+  if (text == "bricks") return Pattern_Kind::bricks;
+  if (text == "chevrons") return Pattern_Kind::chevrons;
+  if (text == "dots") return Pattern_Kind::dots;
   return std::nullopt;
 }
 

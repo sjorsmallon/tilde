@@ -39,7 +39,7 @@ static_assert(!std::is_trivially_copyable_v<Array<non_trivial_t, 2>>);
 // Deduction guide.
 static_assert(std::is_same_v<decltype(Array{1, 2, 3}), Array<int, 3>>);
 
-constexpr int sum_of(Span<const int> values)
+constexpr int compute_sum(Span<const int> values)
 {
   int total = 0;
   for (int value : values)
@@ -48,7 +48,7 @@ constexpr int sum_of(Span<const int> values)
 }
 
 // Implicit conversion to Span, in a constant expression.
-static_assert(sum_of(NUMBERS) == 60);
+static_assert(compute_sum(NUMBERS) == 60);
 
 // --- Enum_Array -------------------------------------------------------------
 //

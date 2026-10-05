@@ -17,7 +17,7 @@ void claim_remnant(server_context_t& context, shared::entity_uid_t remnant_uid,
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
   std::vector<shared::entity_uid_t> superseded;
-  for (const entities::Remnant_Entity& remnant : entity_system.entities_of<entities::Remnant_Entity>())
+  for (const entities::Remnant_Entity& remnant : entity_system.entities_of_type<entities::Remnant_Entity>())
   {
     if (remnant.owner_uid == owner_uid && remnant.entity_id != remnant_uid)
       superseded.push_back(remnant.entity_id);

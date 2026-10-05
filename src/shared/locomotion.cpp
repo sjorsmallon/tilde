@@ -15,7 +15,7 @@ constexpr float pm_input_axial_extreme = 127.f;
 // since input can be provided -127 -> +127, scale the movement vector based on
 // the input delivered.
 //@FIXME: this should be better.
-[[nodiscard]] float calculate_input_scale(const float forward_move, const float right_move,
+[[nodiscard]] float compute_input_scale(const float forward_move, const float right_move,
                                           const float max_speed,
                                           const float input_axial_extreme)
 {
@@ -62,7 +62,7 @@ vec3 rotate_about_y(const vec3& vector, const float radians)
   return vec3{vector.x * cosine - vector.z * sine, vector.y, vector.x * sine + vector.z * cosine};
 }
 
-vec3 last_push_direction_of(const vec3& direction, const aim_sweep_t& sweep)
+vec3 compute_last_push_direction(const vec3& direction, const aim_turn_across_step_t& sweep)
 {
   const float pushes = static_cast<float>(sweep.push_count);
   return rotate_about_y(direction,
@@ -136,7 +136,7 @@ vec3 flat_wish_direction(const move_input_t& input)
   return normalize(front_xz * forward + right_xz * sideways);
 }
 
-wish_t wish_of(const movement_settings_t& settings, const move_input_t& input, bool has_ground,
+wish_t compute_wish_direction_and_speed(const movement_settings_t& settings, const move_input_t& input, bool has_ground,
                const vec3& ground_normal)
 {
   const Move_Input& buttons    = input.buttons;
@@ -180,7 +180,7 @@ wish_t wish_of(const movement_settings_t& settings, const move_input_t& input, b
   // what buttons I pressed in relation to those vectors.
   vec3 wish_direction = front_clipped * forward_input + right_clipped * right_input;
 
-  float input_scale = calculate_input_scale(forward_input, right_input, settings.shared.run_speed,
+  float input_scale = compute_input_scale(forward_input, right_input, settings.shared.run_speed,
                                             pm_input_axial_extreme);
   float wish_speed =
       0.0f; // we set this because I think some float weirdness happens when
@@ -194,7 +194,7 @@ wish_t wish_of(const movement_settings_t& settings, const move_input_t& input, b
   return {.direction = normalize(wish_direction), .speed = wish_speed};
 }
 
-float horizontal_speed_limit_of(const movement_settings_t& settings, bool walking,
+float compute_horizontal_speed_limit(const movement_settings_t& settings, bool walking,
                                 float speed_entering_move)
 {
   if (!walking && !settings.quake.clip_air_speed)
@@ -309,9 +309,9 @@ void clip_model_memory(const movement_settings_t& settings, move_state_t& state,
 
 // The bug this fixes: an instant model remakes run speed from input every step, so a face steeper
 // than 45 degrees turned that refill into lift each step and launched the player off its top.
-steep_face_rule_t steep_face_rule_of(const movement_settings_t& settings)
+steep_face_rule_t get_steep_face_rule_for_locomotion_model(cvars::Locomotion_Model model)
 {
-  switch (settings.model)
+  switch (model)
   {
     case cvars::Locomotion_Model::quake:
       return steep_face_rule_t::Ramp;
@@ -320,7 +320,7 @@ steep_face_rule_t steep_face_rule_of(const movement_settings_t& settings)
     case cvars::Locomotion_Model::instant_redirect:
       return steep_face_rule_t::Wall;
   }
-  fatal_error("steep_face_rule_of: no arm for locomotion model {}", (int)settings.model);
+  fatal_error("get_steep_face_rule_for_locomotion_model: no arm for locomotion model {}", (int)model);
 }
 
 wanted_move_t decide_move(const movement_settings_t& settings, const contacts_t& contacts,

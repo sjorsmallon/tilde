@@ -165,7 +165,7 @@ struct gpu_bake_scene_t
   // uploaded: the GPU sees triangles, not brushes, and this is for a report.
   std::vector<entity_uid_t> triangle_object_uids;
 
-  // Where each of light_occlusion_of's other two answers BEGINS in `triangles`:
+  // Where each of compute_light_occlusion's other two answers BEGINS in `triangles`:
   // the opaque set runs from 0, the fences from `first_alpha_tested_triangle`,
   // the glass from `first_transmissive_triangle`, in that order. One array in
   // three ranges rather than three arrays, because a triangle index has to mean
@@ -276,7 +276,7 @@ struct shade_statistics_t
 // pass, because which lights may sum is exactly what the ranking has not decided
 // yet, and the dropped lights' bits on the residual one.
 void shade_sample_direct(const gpu_sample_t &sample, Span<const baked_light_t> lights,
-                         const shadow_scene_t &shadow, const gpu_bake_settings_t &settings,
+                         const shadow_casters_t &shadow, const gpu_bake_settings_t &settings,
                          uint64_t irradiance_light_mask, linalg::vec3 &out_irradiance,
                          Span<linalg::vec3> out_coverage, Span<float> out_weight,
                          shade_statistics_t &statistics);

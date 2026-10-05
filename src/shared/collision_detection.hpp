@@ -4,6 +4,7 @@
 #include "plane.hpp"
 #include "span.hpp"
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -146,7 +147,7 @@ inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LIT     = 2;
 inline constexpr uint8_t GEOMETRY_SOLID_UNLESS_ERASED = 3;
 
 [[nodiscard]] inline uint8_t
-geometry_state_of(Span<const uint8_t> disabled_geometry, Collision_Id id)
+get_geometry_state_by_collision_id(Span<const uint8_t> disabled_geometry, Collision_Id id)
 {
   if (id.type != Collision_Id::Type::Static_Geometry || id.index >= disabled_geometry.size())
     return GEOMETRY_SOLID;
@@ -156,7 +157,7 @@ geometry_state_of(Span<const uint8_t> disabled_geometry, Collision_Id id)
 [[nodiscard]] inline bool
 collision_is_disabled(Span<const uint8_t> disabled_geometry, Collision_Id id)
 {
-  const uint8_t state = geometry_state_of(disabled_geometry, id);
+  const uint8_t state = get_geometry_state_by_collision_id(disabled_geometry, id);
   return state != GEOMETRY_SOLID && state != GEOMETRY_SOLID_UNLESS_ERASED;
 }
 
@@ -202,6 +203,13 @@ struct sweep_hit_t
 [[nodiscard]] std::optional<sweep_hit_t>
 bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh, const vec3f& from, const vec3f& to,
                  float radius, Span<const uint8_t> disabled_geometry = {});
+
+// The same sweep, except a primitive the sphere would enter at `t` is passed through when `passes(primitive, t)`.
+[[nodiscard]] std::optional<sweep_hit_t>
+bvh_sweep_sphere_unless_passed(const Bounding_Volume_Hierarchy &bvh, const vec3f& from,
+                               const vec3f& to, float radius,
+                               Span<const uint8_t> disabled_geometry,
+                               const std::function<bool(const BVH_Primitive &, float)> &passes);
 
 // Möller–Trumbore ray-triangle intersection. Returns true and sets out_t to the
 // hit distance when the ray crosses the triangle in front of the origin.

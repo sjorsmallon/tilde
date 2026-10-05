@@ -43,7 +43,7 @@ struct reveal_cone_settings_t
   float overhead_height    = 0.f;
 };
 
-[[nodiscard]] reveal_cone_settings_t reveal_cone_settings_from(const cvars::cvar_state_t& cvars);
+[[nodiscard]] reveal_cone_settings_t reveal_cone_settings_from_cvars(const cvars::cvar_state_t& cvars);
 
 // A wider cone is not convex and no set of planes holds it, so the cone is never built wider.
 inline constexpr float    MAX_REVEAL_HALF_ANGLE_DEGREES = 89.f;
@@ -84,7 +84,7 @@ struct reveal_cone_t
 }
 
 // The one rule for where a holder's cone is: down its aim, or from above its head when `overhead` (Player_Entity::reveal_light_overhead).
-[[nodiscard]] inline reveal_cone_t reveal_cone_of(const linalg::vec3f& eye, float yaw_degrees,
+[[nodiscard]] inline reveal_cone_t compute_player_reveal_cone(const linalg::vec3f& eye, float yaw_degrees,
                                                   float pitch_degrees, bool overhead,
                                                   entities::Reveal_Cone_Kind    kind,
                                                   const reveal_cone_settings_t& settings)
@@ -113,7 +113,7 @@ struct reveal_cone_planes_t
                                                float tickrate);
 
 // The one rule for a map-placed light's cone: from the pose, down its orientation, by the light's own numbers.
-[[nodiscard]] reveal_cone_t reveal_cone_of(const entities::Reveal_Light_Entity& light, const path_pose_t& pose);
+[[nodiscard]] reveal_cone_t compute_light_reveal_cone(const entities::Reveal_Light_Entity& light, const path_pose_t& pose);
 
 [[nodiscard]] reveal_cone_planes_t planes_of_reveal_cone(const reveal_cone_t& cone);
 

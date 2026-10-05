@@ -53,7 +53,7 @@ canopy_poses_t canopy_poses_for_tick(const entities::Canopy_Entity& canopy,
 void collect_canopies(const Entity_System& system, uint32_t tick, uint32_t state_tick,
                       float tick_interval_seconds, std::vector<mover_t>& out)
 {
-  for (const entities::Canopy_Entity& canopy : system.entities_of<entities::Canopy_Entity>())
+  for (const entities::Canopy_Entity& canopy : system.entities_of_type<entities::Canopy_Entity>())
   {
     const entities::Player_Entity* carrier = system.get<entities::Player_Entity>(canopy.carrier_uid);
     if (carrier == nullptr)

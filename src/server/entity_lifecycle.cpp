@@ -86,7 +86,7 @@ void try_admit_player(server_context_t &context, int32_t slot)
   if (!current_mode(context).join_in_progress && is_round_live(context))
   {
     log_terminal("slot {} joined mid-round; spawning at the start of round {}",
-                 slot, match_of(context).round_number + 1);
+                 slot, get_match(context).round_number + 1);
     return;
   }
 
@@ -154,7 +154,7 @@ void restore_level_from_map(server_context_t &context)
 {
   shared::Entity_System &entity_system = context.world.session.entity_system;
 
-  for (entities::Player_Entity &player : entity_system.entities_of<entities::Player_Entity>())
+  for (entities::Player_Entity &player : entity_system.entities_of_type<entities::Player_Entity>())
     reset_player_to_construction(player);
 
   std::unordered_map<shared::entity_uid_t, entities::Playback> playback_before_restore;

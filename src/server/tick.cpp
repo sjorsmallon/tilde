@@ -88,7 +88,7 @@ bool Tick()
                                  .state_tick  = context.tick_number - 1,
                                  .tickrate_hz = context.cvars->sv_tickrate,
                                  .gravity     = context.cvars->g_gravity,
-                                 .reveal_cone = shared::reveal_cone_settings_from(*context.cvars)},
+                                 .reveal_cone = shared::reveal_cone_settings_from_cvars(*context.cvars)},
                                 predicted_world_storage);
   }
   const shared::predicted_world_storage_t& world = predicted_world_storage;
@@ -139,9 +139,9 @@ bool Tick()
 
     //@NOTE(SJM): why does this happen? repoint the orientation?
     {
-      const aim_settings_t settings = aim_settings_from(*context.cvars);
+      const aim_settings_t settings = aim_settings_from_cvars(*context.cvars);
       for (entities::Player_Entity& player :
-           context.world.session.entity_system.entities_of<entities::Player_Entity>())
+           context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
       {
         if (player.health.current_health <= 0) continue;
         advance_body_yaw(player.body_yaw, player.view_angle_yaw, tick_dt, settings);
@@ -176,12 +176,12 @@ bool Tick()
     // Before the delivery, so the tick a goal volume fires Complete_Level has its pose.
     // Not behind sv_ghost_record: the capture is also what measures the party a time is filed under.
     {
-      const entities::Match& match = match_of(context);
+      const entities::Match& match = get_match(context);
       if (match.phase == entities::Round_Phase::Live &&
           current_mode(context).win_condition == Win_Condition::Objective_Reached)
         shared::capture_ghost_poses(
             context.world.ghost_capture, match.phase_start_tick, context.tick_number,
-            context.world.session.entity_system.entities_of<entities::Player_Entity>());
+            context.world.session.entity_system.entities_of_type<entities::Player_Entity>());
     }
   }
 

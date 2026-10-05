@@ -111,10 +111,10 @@ private:
   per_connection_ui_t connection_ui;
   ui::list_menu_t pause_menu;
 
-  // This trip's pending `join_game`, taken off client_context_t in on_enter and
+  // The `join_game` this connection owes, taken off client_context_t in on_enter and
   // sent by enter_connected_phase. It cannot be sent any earlier: the line is
   // @Server, so it needs the forwarder that entering Connected installs.
-  bool pending_match_join = false;
+  bool pending_join_on_connect = false;
 
   // Taken off client_context_t in on_enter, spent on the first frame we own a
   // living body: a `setpos` before the join has admitted us moves nobody.

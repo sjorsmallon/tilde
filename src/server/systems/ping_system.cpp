@@ -30,7 +30,7 @@ bool try_place_ping(server_context_t& context, entities::Player_Entity& player, 
   // inside a minute.
   std::vector<shared::entity_uid_t> superseded;
   for (const entities::Ping_Marker_Entity& marker :
-       context.world.session.entity_system.entities_of<entities::Ping_Marker_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Ping_Marker_Entity>())
   {
     if (marker.pinged_by == player.entity_id)
       superseded.push_back(marker.entity_id);
@@ -73,7 +73,7 @@ void update_ping_markers(server_context_t& context, float dt)
 {
   std::vector<shared::entity_uid_t> expired;
   for (entities::Ping_Marker_Entity& marker :
-       context.world.session.entity_system.entities_of<entities::Ping_Marker_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Ping_Marker_Entity>())
   {
     // Zero is FOREVER, and it is checked against the field rather than against
     // the cvar: the lifetime a marker was spawned with is the one that applies

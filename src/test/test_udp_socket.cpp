@@ -107,14 +107,14 @@ int main()
     Udp_Socket sender;
 
     // Open Receiver on port 9000
-    if (!receiver.open(9000))
+    if (!receiver.try_open({.port_id = 9000}))
     {
       std::cerr << "Failed to open receiver socket on port 9000" << std::endl;
       return 1;
     }
 
     // Open Sender on any port
-    if (!sender.open(0))
+    if (!sender.try_open({.port_id = 0}))
     {
       std::cerr << "Failed to open sender socket" << std::endl;
       return 1;

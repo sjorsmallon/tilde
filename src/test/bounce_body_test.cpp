@@ -1,12 +1,14 @@
 // The pin for collision_world_plan.md step 5: a bounce body falls, returns by
 // its restitution, slides to rest by its friction, passes a switched-off brush,
-// lands on a mover, and wakes when written to.
+// lands on a mover, falls through an erased hole, and wakes when written to.
 #include "bounce_body.hpp"
 #include "collision_detection.hpp"
 #include "disabled_geometry.hpp"
 #include "map_geometry.hpp"
 #include "movers.hpp"
 #include "predicted_world.hpp"
+#include "projectile_sweep.hpp"
+#include "reveal_light.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -32,7 +34,7 @@ static constexpr float TICK    = 1.f / 60.f;
 static constexpr float GRAVITY = 800.f;
 static constexpr float RADIUS  = 8.f;
 
-static Bounding_Volume_Hierarchy world_of(const std::vector<shared::geometry_value_t>& boxes)
+static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::geometry_value_t>& boxes)
 {
   std::vector<BVH_Input> inputs;
   for (uint32_t index = 0; index < boxes.size(); ++index)
@@ -54,7 +56,7 @@ static Bounding_Volume_Hierarchy world_of(const std::vector<shared::geometry_val
 // The floor's top is y = 0; a second floor's top is y = -300 below it.
 static Bounding_Volume_Hierarchy two_floors()
 {
-  return world_of({shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
+  return build_world_from_boxes({shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
                    shared::make_box_brush({0.f, -364.f, 0.f}, {2048.f, 64.f, 2048.f})});
 }
 
@@ -144,6 +146,47 @@ int main()
     check(result.body.bounce.at_rest, "the body comes to rest");
     check(near(result.body.position.y, -300.f + RADIUS, 0.5f),
           "on the lower floor, through the switched-off one");
+  }
+
+  printf("a body passes an erasable brush only where an erase cone holds all it touches\n");
+  {
+    const shared::disabled_geometry_t erasable = {GEOMETRY_SOLID_UNLESS_ERASED, GEOMETRY_SOLID};
+    const auto cone_from_above = [](float half_angle_degrees, entities::Reveal_Cone_Kind kind)
+    {
+      return shared::planes_of_reveal_cone(
+          {.apex                 = {0.f, 256.f, 0.f},
+           .axis                 = {0.f, -1.f, 0.f},
+           .range                = 1024.f,
+           .cosine_of_half_angle = std::cos(linalg::to_radians(half_angle_degrees)),
+           .kind                 = kind});
+    };
+    const shared::reveal_cone_planes_t erases  = cone_from_above(25.f, entities::Reveal_Cone_Kind::Erases);
+    const shared::reveal_cone_planes_t pinhole = cone_from_above(2.f, entities::Reveal_Cone_Kind::Erases);
+    const shared::reveal_cone_planes_t reveals = cone_from_above(25.f, entities::Reveal_Cone_Kind::Reveals);
+
+    const auto resting_height = [&](Span<const shared::reveal_cone_planes_t> cones)
+    {
+      const shared::predicted_world_t world{.disabled_geometry = erasable, .reveal_cones = cones};
+      const run_t result = run(floors, world, dropped_from(100.f, 0.3f, 4.f), 1200);
+      return result.body.bounce.at_rest ? result.body.position.y : 1e9f;
+    };
+    check(near(resting_height({}), RADIUS, 0.5f), "with no cone it is a floor");
+    check(near(resting_height({&erases, 1}), -300.f + RADIUS, 0.5f),
+          "through the hole, onto the floor below");
+    check(near(resting_height({&pinhole, 1}), RADIUS, 0.5f), "a hole smaller than the body holds it");
+    check(near(resting_height({&reveals, 1}), RADIUS, 0.5f), "a Flashlight's cone erases nothing");
+
+    const shared::predicted_world_t dark{.disabled_geometry = erasable};
+    const shared::predicted_world_t erased{.disabled_geometry = erasable, .reveal_cones = {&erases, 1}};
+    const run_t rested = run(floors, dark, dropped_from(100.f, 0.3f, 4.f), 1200);
+    check(rested.body.bounce.at_rest && near(rested.body.position.y, RADIUS, 0.5f), "at rest on it first");
+    const run_t fallen = run(floors, erased, shared::bounce_step(floors, erased, rested.body, RADIUS, GRAVITY, TICK), 1200);
+    check(fallen.body.bounce.at_rest && near(fallen.body.position.y, -300.f + RADIUS, 0.5f),
+          "a resting body falls when the floor under it is erased");
+
+    const std::optional<shared::projectile_hit_t> shot =
+        shared::sweep_projectile(floors, erased, {0.f, 100.f, 0.f}, {0.f, -100.f, 0.f}, RADIUS);
+    check(shot && near(shot->position.y, RADIUS, 0.01f), "a shot still meets it, hole or not");
   }
 
   printf("a body lands on a mover at its end pose\n");

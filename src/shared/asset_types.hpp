@@ -80,7 +80,7 @@ struct material_maps_t
   asset_handle_t<texture_asset_t> orm;
   asset_handle_t<texture_asset_t> height;
 
-  // What the surface EMITS, in the units radiance_of(Light) hands back. An
+  // What the surface EMITS, in the units compute_radiance(Light) hands back. An
   // INVALID handle is the whole "this material does not glow" test -- there is
   // no strength, no flag and no file saying so, exactly as an absent normal map
   // is how a material says it is flat.

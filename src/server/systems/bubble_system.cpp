@@ -28,7 +28,7 @@ linalg::vec3f hashed_unit_vector(uint32_t seed)
   return {ring * std::cos(azimuth), z, ring * std::sin(azimuth)};
 }
 
-linalg::vec3f peel_direction_of(const server_context_t& context, const entities::Bubble_Entity& bubble,
+linalg::vec3f compute_bubble_peel_direction(const server_context_t& context, const entities::Bubble_Entity& bubble,
                                 shared::entity_uid_t popped_by)
 {
   const entities::Player_Entity* popper =
@@ -52,7 +52,7 @@ void update_bubbles(server_context_t& context, const shared::predicted_world_sto
   std::vector<shared::entity_uid_t> expired;
 
   for (entities::Bubble_Entity& bubble :
-       context.world.session.entity_system.entities_of<entities::Bubble_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Bubble_Entity>())
   {
     if (bubble.flight.launch_tick == 0)
       launch_fixed_arc_flight(context, bubble.projectile, bubble.position,
@@ -90,7 +90,7 @@ void pop_bubble(server_context_t& context, shared::entity_uid_t bubble_uid,
 
   bubble->popped_tick      = context.tick_number;
   bubble->popped_by        = popped_by;
-  bubble->popped_direction = peel_direction_of(context, *bubble, popped_by);
+  bubble->popped_direction = compute_bubble_peel_direction(context, *bubble, popped_by);
 }
 
 } // namespace server

@@ -195,10 +195,10 @@ static void test_previous_is_derived()
   link(system, nodes[3], nodes[1]);
   const shared::path_links_t links = shared::derive_path_links(system);
 
-  check(shared::previous_node_of(links, nodes[3]) == nodes[2], "a single predecessor is the previous");
-  check(shared::previous_node_of(links, nodes[0]) == shared::null_entity_uid,
+  check(shared::find_previous_node(links, nodes[3]) == nodes[2], "a single predecessor is the previous");
+  check(shared::find_previous_node(links, nodes[0]) == shared::null_entity_uid,
         "a head has no previous");
-  check(shared::previous_node_of(links, nodes[1]) == shared::null_entity_uid,
+  check(shared::find_previous_node(links, nodes[1]) == shared::null_entity_uid,
         "a node named by two has no single previous");
   check(links.named_by_several.size() == 1 && links.named_by_several[0] == nodes[1],
         "and is reported for the load to say so");

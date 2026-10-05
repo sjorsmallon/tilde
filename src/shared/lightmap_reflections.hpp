@@ -61,7 +61,7 @@ struct reflection_volume_coverage_t
   size_t overridden_as_placed = 0;
 };
 [[nodiscard]] reflection_volume_coverage_t
-reflection_volume_coverage_of(const reflection_capture_set_t &set, const aabb_bounds_t &bounds);
+compute_reflection_volume_coverage(const reflection_capture_set_t &set, const aabb_bounds_t &bounds);
 
 // One record per (capture, face, texel): `normal` the texel's direction,
 // `chart_index` capture-major, `seed` sample_hash(capture, face, texel, tag).

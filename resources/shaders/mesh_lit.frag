@@ -14,6 +14,7 @@
 #include "dissolve.glsl"
 #include "peel.glsl"
 #include "reveal.glsl"
+#include "pattern.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -71,6 +72,7 @@ Surface read_surface(vec3 geometric_normal, vec3 V)
 #endif
     // fragColor is the material's base colour times the draw's tint, so it tints rather than replaces.
     surface.albedo   = cel_flat_albedo(albedo, surface.uv, texture(albedo, surface.uv).rgb) * fragColor;
+    surface.albedo   = apply_pattern_preview(surface.albedo, fragUV);
     // Straight through, tinted by nothing: the tracer collects this same texel (lighting_def.md ss11).
     surface.emissive = texture(emissiveMap, surface.uv).rgb;
     return surface;
@@ -97,11 +99,13 @@ void main() {
         return;
     }
 
-    vec3 lit = light_surface(LOOK, surface, fragWorldPosition, V);
+    float solid_ink;
+    vec3  lit = light_surface(LOOK, surface, fragWorldPosition, V, solid_ink);
+    outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
 
     outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, surfaceAlpha), fragWorldPosition),
                                         fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition, geometric_normal);
 }

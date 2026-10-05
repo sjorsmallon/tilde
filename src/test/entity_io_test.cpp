@@ -872,7 +872,7 @@ void test_a_launcher_fires_its_weapon_row_along_its_aim()
   const auto bubble_count = [&entity_system]()
   {
     size_t count = 0;
-    for (const entities::Bubble_Entity& bubble : entity_system.entities_of<entities::Bubble_Entity>())
+    for (const entities::Bubble_Entity& bubble : entity_system.entities_of_type<entities::Bubble_Entity>())
     {
       (void)bubble;
       ++count;
@@ -884,7 +884,7 @@ void test_a_launcher_fires_its_weapon_row_along_its_aim()
   run_one_tick(context);
   check(bubble_count() == 1, "one touch is one bubble");
 
-  for (const entities::Bubble_Entity& bubble : entity_system.entities_of<entities::Bubble_Entity>())
+  for (const entities::Bubble_Entity& bubble : entity_system.entities_of_type<entities::Bubble_Entity>())
   {
     const entities::Launcher_Entity* in_session = entity_system.get<entities::Launcher_Entity>(launcher);
     check(bubble.projectile.owner_uid == launcher, "owned by the launcher, not by whoever touched");
@@ -933,7 +933,7 @@ std::vector<linalg::vec3f> launcher_shot_directions(uint32_t shot_count)
   }
 
   for (const entities::Rocket_Entity& rocket :
-       context.world.session.entity_system.entities_of<entities::Rocket_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Rocket_Entity>())
     directions.push_back(linalg::normalize(rocket.projectile.velocity));
   return directions;
 }
@@ -991,16 +991,16 @@ void test_a_launcher_with_an_interval_fires_on_its_own_clock()
     update_launchers(context);
   }
 
-  const auto rockets_of = [&](shared::entity_uid_t owner_uid) {
+  const auto count_rockets_by_owner = [&](shared::entity_uid_t owner_uid) {
     uint32_t count = 0;
     for (const entities::Rocket_Entity& rocket :
-         context.world.session.entity_system.entities_of<entities::Rocket_Entity>())
+         context.world.session.entity_system.entities_of_type<entities::Rocket_Entity>())
       if (rocket.projectile.owner_uid == owner_uid)
         ++count;
     return count;
   };
-  check(rockets_of(clocked_uid) == SHOT_COUNT, "one rocket per interval, the first on the first tick");
-  check(context.world.session.entity_system.entities_of<entities::Rocket_Entity>().size() == SHOT_COUNT,
+  check(count_rockets_by_owner(clocked_uid) == SHOT_COUNT, "one rocket per interval, the first on the first tick");
+  check(context.world.session.entity_system.entities_of_type<entities::Rocket_Entity>().size() == SHOT_COUNT,
         "a launcher with no interval fires nothing on its own");
 
   context.world.session.entity_system.get<entities::Launcher_Entity>(clocked_uid)->switch_state.value = false;
@@ -1009,7 +1009,7 @@ void test_a_launcher_with_an_interval_fires_on_its_own_clock()
     ++context.tick_number;
     update_launchers(context);
   }
-  check(rockets_of(clocked_uid) == SHOT_COUNT, "a disabled launcher's clock fires nothing");
+  check(count_rockets_by_owner(clocked_uid) == SHOT_COUNT, "a disabled launcher's clock fires nothing");
 }
 
 void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
@@ -1045,7 +1045,7 @@ void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
   }
 
   const float row_speed =
-      shared::fire_of(shared::WEAPON_DEFINITIONS[entities::Weapon::Bubble], entities::Fire_Trigger::Primary)
+      shared::get_weapon_fire_for_button(shared::WEAPON_DEFINITIONS[entities::Weapon::Bubble], entities::Fire_Trigger::Primary)
           .projectile.speed;
   const entities::Bubble_Entity defaults{};
 
@@ -1054,7 +1054,7 @@ void test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions()
   bool     speed_varies = false, flight_varies = false, rest_varies = false;
   float    first_speed = -1.f, first_flight = -1.f, first_rest = -1.f;
   for (const entities::Bubble_Entity& bubble :
-       context.world.session.entity_system.entities_of<entities::Bubble_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Bubble_Entity>())
   {
     const float speed = linalg::length(bubble.projectile.velocity);
     bounded = bounded && speed >= 0.5f * row_speed - 0.01f && speed <= 1.5f * row_speed + 0.01f &&
@@ -1240,7 +1240,7 @@ void test_a_damageable_emits_died_and_health_changed()
   cvars::cvar_state_t cvar_state;
   server_context_t    context;
   install(context, cvar_state, wired.map);
-  match_of(context).phase = entities::Round_Phase::Live;
+  get_match(context).phase = entities::Round_Phase::Live;
 
   const shared::entity_uid_t grazer =
       context.world.session.entity_system.spawn<entities::Player_Entity>();
@@ -1324,8 +1324,8 @@ void test_a_switched_light_leaves_the_frame()
   };
 
   check(!shared::light_is_switched_on(*lamp), "the light starts switched off");
-  check(shared::try_light_of(*lamp).has_value(),
-        "and is still a light -- try_light_of does not filter by the switch, so "
+  check(shared::try_convert_light_entity_to_scene_light(*lamp).has_value(),
+        "and is still a light -- try_convert_light_entity_to_scene_light does not filter by the switch, so "
         "the inspector can describe one that is off");
   check(tail_entries_for_the_lamp() == 0, "a switched-off light is in no frame");
 

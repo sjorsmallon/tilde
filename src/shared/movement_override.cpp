@@ -10,7 +10,7 @@ namespace shared
 namespace
 {
 
-[[nodiscard]] vec3 hull_center_of(const movement_settings_t& settings, const move_state_t& state)
+[[nodiscard]] vec3 compute_hull_center(const movement_settings_t& settings, const move_state_t& state)
 {
   return state.feet + vec3{0.f, settings.shared.half_height, 0.f};
 }
@@ -49,7 +49,7 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
 {
   entities::Movement& movement = state.movement;
 
-  const vec3  hull_center        = hull_center_of(settings, state);
+  const vec3  hull_center        = compute_hull_center(settings, state);
   const vec3  to_anchor          = movement.override_target_position - hull_center;
   const float distance_to_anchor = length(to_anchor);
 

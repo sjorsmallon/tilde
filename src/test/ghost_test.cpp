@@ -58,7 +58,7 @@ ghost_t make_ghost(uint32_t run_ticks, uint32_t track_count = 1)
   return ghost;
 }
 
-Span<const uint8_t> span_of(const std::vector<uint8_t>& bytes)
+Span<const uint8_t> make_span(const std::vector<uint8_t>& bytes)
 {
   return Span<const uint8_t>(bytes.data(), static_cast<uint32_t>(bytes.size()));
 }
@@ -77,7 +77,7 @@ void test_two_track_round_trip()
   ghost.tracks[1].poses[2].alive = false;
 
   const std::vector<uint8_t>   bytes = serialize_ghost(ghost);
-  const std::optional<ghost_t> read  = try_parse_ghost(span_of(bytes), "fixture");
+  const std::optional<ghost_t> read  = try_parse_ghost(make_span(bytes), "fixture");
   assert(read);
   assert(read->tickrate_hz == 60 && read->map_content_hash == 0xabcd1234 && read->run_ticks == 4);
   assert(read->tracks.size() == 2);
@@ -122,35 +122,35 @@ void test_refusals()
   const std::vector<uint8_t> bytes = serialize_ghost(make_ghost(3, 2));
 
   const std::vector<uint8_t> truncated(bytes.begin(), bytes.end() - 1);
-  assert(!try_parse_ghost(span_of(truncated), "truncated"));
+  assert(!try_parse_ghost(make_span(truncated), "truncated"));
 
   std::vector<uint8_t> bad_magic = bytes;
   bad_magic[0] ^= 0xff;
-  assert(!try_parse_ghost(span_of(bad_magic), "bad magic"));
+  assert(!try_parse_ghost(make_span(bad_magic), "bad magic"));
 
   std::vector<uint8_t> bad_version = bytes;
   bad_version[4] += 1;
-  assert(!try_parse_ghost(span_of(bad_version), "bad version"));
+  assert(!try_parse_ghost(make_span(bad_version), "bad version"));
 
-  assert(!try_parse_ghost(span_of(version_one_bytes()), "version 1"));
+  assert(!try_parse_ghost(make_span(version_one_bytes()), "version 1"));
 
   // track_count is the u32 at byte 20: one more than the bytes hold, one fewer, none.
   std::vector<uint8_t> too_many_tracks = bytes;
   too_many_tracks[20]                  = 3;
-  assert(!try_parse_ghost(span_of(too_many_tracks), "three tracks declared, two present"));
+  assert(!try_parse_ghost(make_span(too_many_tracks), "three tracks declared, two present"));
 
   std::vector<uint8_t> too_few_tracks = bytes;
   too_few_tracks[20]                  = 1;
-  assert(!try_parse_ghost(span_of(too_few_tracks), "one track declared, two present"));
+  assert(!try_parse_ghost(make_span(too_few_tracks), "one track declared, two present"));
 
   std::vector<uint8_t> no_tracks = bytes;
   no_tracks[20]                  = 0;
-  assert(!try_parse_ghost(span_of(no_tracks), "no tracks"));
+  assert(!try_parse_ghost(make_span(no_tracks), "no tracks"));
 
   // The first track opens with its team, straight after the 24-byte header.
   std::vector<uint8_t> bad_team = bytes;
   bad_team[24]                  = 200;
-  assert(!try_parse_ghost(span_of(bad_team), "a team outside the enum"));
+  assert(!try_parse_ghost(make_span(bad_team), "a team outside the enum"));
   std::printf("  refusals: truncated, magic, version 1, track count against the bytes, team: ok\n");
 }
 
@@ -216,7 +216,7 @@ void test_extraction_measures_the_party()
   // Serializable as extracted: every track is run_ticks + 1 long.
   ghost_t whole     = *ghost;
   whole.tickrate_hz = 60;
-  assert(try_parse_ghost(span_of(serialize_ghost(whole)), "extracted"));
+  assert(try_parse_ghost(make_span(serialize_ghost(whole)), "extracted"));
 
   // A run shorter than the capture cuts every track to it, and a runner who lived only AFTER it is not counted.
   ghost_capture_t                      late_capture;
@@ -316,7 +316,7 @@ void test_the_announcement_is_the_category_file()
   write_ghost_file(ghost_path_for(map_path, 2), make_ghost(5, 2));
   const ghost_announcement_t coop = load_ghost_announcement(map_path, 2);
   assert(coop.hash != 0 && coop.bytes == serialize_ghost(make_ghost(5, 2)));
-  assert(coop.hash == compute_ghost_hash(span_of(coop.bytes)));
+  assert(coop.hash == compute_ghost_hash(make_span(coop.bytes)));
   assert(load_ghost_announcement(map_path, 1).hash == 0);
 
   // A faster run is another file, so another hash: that change IS the re-announce.

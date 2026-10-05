@@ -84,7 +84,7 @@ static void test_real_skeleton()
 
   // The hierarchy reconstruction's whole reason to exist: without it the arms
   // are not descendants of the spine and aim/torso masking silently break.
-  auto index_of = [&skeleton](const char *name) -> int32_t
+  auto find_bone_index = [&skeleton](const char *name) -> int32_t
   {
     for (size_t index = 0; index < skeleton.bones.size(); ++index)
       if (skeleton.bones[index].name == name)
@@ -92,8 +92,8 @@ static void test_real_skeleton()
     return -1;
   };
 
-  const int32_t spine     = index_of("spine");
-  const int32_t upper_arm = index_of("upper_arm.L");
+  const int32_t spine     = find_bone_index("spine");
+  const int32_t upper_arm = find_bone_index("upper_arm.L");
   CHECK(spine >= 0, "no 'spine' bone");
   CHECK(upper_arm >= 0, "no 'upper_arm.L' bone");
 

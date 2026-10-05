@@ -62,7 +62,7 @@ static float phase_duration_seconds(Round_Phase phase, const round_timing_t &tim
 entities::Game_Rules_Entity *try_find_rules_entity(server_context_t &context)
 {
   Span<entities::Game_Rules_Entity> pool =
-      context.world.session.entity_system.entities_of<entities::Game_Rules_Entity>();
+      context.world.session.entity_system.entities_of_type<entities::Game_Rules_Entity>();
   return pool.empty() ? nullptr : &pool[0];
 }
 
@@ -71,23 +71,23 @@ const entities::Game_Rules_Entity *try_find_rules_entity(const server_context_t 
   return try_find_rules_entity(const_cast<server_context_t &>(context));
 }
 
-Match &match_of(server_context_t &context)
+Match &get_match(server_context_t &context)
 {
   entities::Game_Rules_Entity *rules = try_find_rules_entity(context);
   if (rules == nullptr)
-    fatal_error("match_of: the world has no Game_Rules_Entity; install_match did not run");
+    fatal_error("get_match: the world has no Game_Rules_Entity; install_match did not run");
   return rules->match;
 }
 
-const Match &match_of(const server_context_t &context)
+const Match &get_match(const server_context_t &context)
 {
-  return match_of(const_cast<server_context_t &>(context));
+  return get_match(const_cast<server_context_t &>(context));
 }
 
 // One lookup site, so nothing else indexes GAME_MODES directly.
 const game_mode_settings_t &current_mode(const server_context_t &context)
 {
-  return GAME_MODES[match_of(context).mode];
+  return GAME_MODES[get_match(context).mode];
 }
 
 uint32_t count_rules_entities(const shared::map_t &map)
@@ -122,7 +122,7 @@ static void emit_transition_signals(server_context_t &context,
 static void clear_ready_votes(server_context_t &context)
 {
   for (entities::Player_Entity &player :
-       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
     player.ready = false;
 }
 
@@ -169,7 +169,7 @@ static void enter_phase(server_context_t &context,
     if (mode.win_condition == Win_Condition::Objective_Reached)
       context.world.announced_ghost = shared::load_ghost_announcement(
           context.world.current_map_path,
-          context.world.session.entity_system.entities_of<entities::Player_Entity>().count);
+          context.world.session.entity_system.entities_of_type<entities::Player_Entity>().count);
   }
 
   log_terminal("Round {}: entering phase {} (ends tick {})", match.round_number, to_string(phase),
@@ -219,7 +219,7 @@ void install_match(server_context_t &context, uint32_t current_tick, uint32_t ti
                    bool replaces_a_started_match)
 {
   shared::Entity_System &entity_system = context.world.session.entity_system;
-  const size_t count = entity_system.entities_of<entities::Game_Rules_Entity>().size();
+  const size_t count = entity_system.entities_of_type<entities::Game_Rules_Entity>().size();
   if (count > 1)
     fatal_error("install_match: the world holds {} Game_Rules_Entity; the loader refuses a map "
                 "with more than one",
@@ -229,10 +229,10 @@ void install_match(server_context_t &context, uint32_t current_tick, uint32_t ti
   {
     const shared::entity_uid_t uid = entity_system.spawn<entities::Game_Rules_Entity>();
     log_warning("map '{}' has no Game_Rules_Entity; minted {} with the default mode ({})",
-                context.world.current_map_path, uid, to_string(match_of(context).mode));
+                context.world.current_map_path, uid, to_string(get_match(context).mode));
   }
 
-  Match &match = match_of(context);
+  Match &match = get_match(context);
   const entities::Game_Mode mode = match.mode;
   match = Match{};
   match.mode = mode;
@@ -284,7 +284,7 @@ entities::Team_Allegiance pick_team_for_new_player(server_context_t &context)
   uint32_t red = 0;
   uint32_t blu = 0;
   for (const entities::Player_Entity &player :
-       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
   {
     red += player.team_allegiance == entities::Team_Allegiance::Red ? 1 : 0;
     blu += player.team_allegiance == entities::Team_Allegiance::Blu ? 1 : 0;
@@ -368,7 +368,7 @@ static bool freeze_skip_vote_holds(server_context_t &context)
 // The mode's win condition, asked only in Live. A result means the round is over.
 static std::optional<round_result_t> poll_win_condition(server_context_t &context)
 {
-  const Match &match = match_of(context);
+  const Match &match = get_match(context);
 
   switch (current_mode(context).win_condition)
   {
@@ -377,7 +377,7 @@ static std::optional<round_result_t> poll_win_condition(server_context_t &contex
       // Counted over BODIES, not client slots: a bot belongs to a team too.
       Enum_Array<entities::Team_Allegiance, team_head_count_t> counts{};
       for (const entities::Player_Entity &player :
-           context.world.session.entity_system.entities_of<entities::Player_Entity>())
+           context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
       {
         team_head_count_t *count = counts.try_get(player.team_allegiance);
         if (count == nullptr)
@@ -426,7 +426,7 @@ static std::optional<round_result_t> poll_win_condition(server_context_t &contex
         return std::nullopt;
 
       for (const entities::Player_Entity &player :
-           context.world.session.entity_system.entities_of<entities::Player_Entity>())
+           context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
       {
         if (player.kills < limit)
           continue;
@@ -449,7 +449,7 @@ static void end_live_round(Match &match, const round_result_t &result)
 
 void update_match(server_context_t &context, uint32_t current_tick, uint32_t tickrate_hz)
 {
-  Match &match = match_of(context);
+  Match &match = get_match(context);
   const game_mode_settings_t &mode = current_mode(context);
 
   const Match_Request request = match.requested;
@@ -565,17 +565,17 @@ void update_match(server_context_t &context, uint32_t current_tick, uint32_t tic
 
 bool is_round_live(const server_context_t &context)
 {
-  return shared::is_round_live(match_of(context).phase);
+  return shared::is_round_live(get_match(context).phase);
 }
 
 bool is_movement_allowed(const server_context_t &context)
 {
-  return shared::is_movement_allowed(match_of(context).phase);
+  return shared::is_movement_allowed(get_match(context).phase);
 }
 
 bool can_take_damage(const server_context_t &context)
 {
-  return shared::can_take_damage(match_of(context).phase);
+  return shared::can_take_damage(get_match(context).phase);
 }
 
 } // namespace server

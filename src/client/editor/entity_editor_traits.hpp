@@ -55,8 +55,8 @@ using editor_shape_t = std::variant<shared::aabb_bounds_t, shared::spectate_frus
 editor_shape_t editor_shape_at(const entities::Entity* e, const linalg::vec3& position);
 
 // The two readings of editor_shape_at(e, e->position) the picking BVH wants.
-shared::aabb_bounds_t editor_bounds_of(const entities::Entity* e);
-std::vector<Plane>    editor_collision_planes_of(const entities::Entity* e);
+shared::aabb_bounds_t get_editor_bounds(const entities::Entity* e);
+std::vector<Plane>    get_editor_collision_planes(const entities::Entity* e);
 
 // Every context draws the same three layers: ART (the render component, else
 // the type's stand-in, else the shape as a wire box), the type's DIAGRAM on top

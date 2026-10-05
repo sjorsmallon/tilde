@@ -16,7 +16,7 @@ namespace
 // is DERIVED from the enum name rather than listed a second time. There used to
 // be an AIM_POSE_PREFIXES table here carrying a comment asking it not to drift
 // from the enum; a transformation cannot drift.
-std::string filename_prefix_of(entities::Aim_Pose pose)
+std::string get_filename_prefix_for_aim_pose(entities::Aim_Pose pose)
 {
   std::string prefix = entities::to_string(pose);
   for (char &character : prefix)
@@ -36,7 +36,7 @@ aim_pose_set_t load_aim_pose_set(const char *suffix)
   for (uint32_t index = 0; index < entities::Aim_Pose_COUNT; ++index)
   {
     const entities::Aim_Pose pose = (entities::Aim_Pose)index;
-    const std::string        name = filename_prefix_of(pose) + "_" + suffix;
+    const std::string        name = get_filename_prefix_for_aim_pose(pose) + "_" + suffix;
 
     // ANY missing pose is fatal, not just Forward. A set of five is meaningless
     // partial: falling back to Forward for a missing extreme ships a player who

@@ -30,9 +30,9 @@ bool player_can_carry_a_canopy(server_context_t& context, const entities::Player
   return weapon.primary_fire.resolution == entities::Fire_Resolution::Canopy;
 }
 
-entities::Canopy_Entity* try_find_canopy_of(shared::Entity_System& system, shared::entity_uid_t carrier_uid)
+entities::Canopy_Entity* try_find_canopy_by_carrier_uid(shared::Entity_System& system, shared::entity_uid_t carrier_uid)
 {
-  for (entities::Canopy_Entity& canopy : system.entities_of<entities::Canopy_Entity>())
+  for (entities::Canopy_Entity& canopy : system.entities_of_type<entities::Canopy_Entity>())
   {
     if (canopy.carrier_uid == carrier_uid) return &canopy;
   }
@@ -46,7 +46,7 @@ void toggle_canopy(server_context_t& context, const entities::Player_Entity& car
 {
   shared::Entity_System& system = context.world.session.entity_system;
 
-  if (const entities::Canopy_Entity* existing = try_find_canopy_of(system, carrier.entity_id))
+  if (const entities::Canopy_Entity* existing = try_find_canopy_by_carrier_uid(system, carrier.entity_id))
   {
     destroy_entity(context, existing->entity_id);
     return;
@@ -71,7 +71,7 @@ void update_canopies(server_context_t& context)
 
   std::vector<shared::entity_uid_t> dropped;
 
-  for (entities::Canopy_Entity& canopy : system.entities_of<entities::Canopy_Entity>())
+  for (entities::Canopy_Entity& canopy : system.entities_of_type<entities::Canopy_Entity>())
   {
     const entities::Player_Entity* carrier = system.get<entities::Player_Entity>(canopy.carrier_uid);
     if (carrier == nullptr || !player_can_carry_a_canopy(context, *carrier))

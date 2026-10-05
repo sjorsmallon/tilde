@@ -508,7 +508,7 @@ void test_geometry_block_round_trip()
 // adjacent subdivided faces meet exactly, and that a displaced brush still
 // reaches the collision path as convex pieces.
 
-shared::face_surface_t &top_face_of(shared::brush_geometry_t &brush, float height)
+shared::face_surface_t &find_top_face(shared::brush_geometry_t &brush, float height)
 {
   Plane top;
   top.normal = {0, 1, 0};
@@ -544,7 +544,7 @@ void test_the_grid_is_anchored_to_the_tangent_basis_not_the_winding()
   shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 16, 64});
   shared::sync_face_surfaces(brush);
 
-  shared::face_surface_t &top = top_face_of(brush, 16.f);
+  shared::face_surface_t &top = find_top_face(brush, 16.f);
   shared::resize_face_grid(top, 4);
   assert(top.offsets.size() == 25);
   assert(top.blend.size() == 25);
@@ -673,7 +673,7 @@ void test_a_displaced_brush_collides_as_convex_pieces()
   shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 16, 64});
   shared::sync_face_surfaces(brush);
 
-  shared::face_surface_t &top = top_face_of(brush, 16.f);
+  shared::face_surface_t &top = find_top_face(brush, 16.f);
   shared::resize_face_grid(top, 2);
   top.offsets[1 * 3 + 1] = {0, 24.f, 0}; // a bump in the middle
 
@@ -713,7 +713,7 @@ void test_a_real_sized_grid_decomposes_structurally()
   shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {336, 64, 462});
   shared::sync_face_surfaces(brush);
 
-  shared::face_surface_t &top = top_face_of(brush, 64.f);
+  shared::face_surface_t &top = find_top_face(brush, 64.f);
   shared::resize_face_grid(top, 24);
   assert(top.offsets.size() == 625);
 
@@ -929,7 +929,7 @@ void test_the_grid_survives_text_and_a_level_change()
 {
   shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 16, 64});
   shared::sync_face_surfaces(brush);
-  shared::face_surface_t &top = top_face_of(brush, 16.f);
+  shared::face_surface_t &top = find_top_face(brush, 16.f);
   shared::resize_face_grid(top, 4);
   top.offsets[2 * 5 + 2] = {0.5f, 32.25f, -0.125f};
   top.blend[2 * 5 + 2]   = 0.375f;
@@ -963,7 +963,7 @@ void test_the_grid_survives_text_and_a_level_change()
   // Raising the level resamples rather than flattening, so sculpting work is not
   // thrown away by a slider.
   shared::brush_geometry_t &restored = std::get<shared::brush_geometry_t>(reloaded);
-  shared::face_surface_t   &face     = top_face_of(restored, 16.f);
+  shared::face_surface_t   &face     = find_top_face(restored, 16.f);
   shared::resize_face_grid(face, 8);
   assert(face.offsets.size() == 81);
   assert(face.blend.size() == 81);
@@ -981,7 +981,7 @@ void test_a_face_that_stops_being_a_quad_loses_its_grid()
 {
   shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 16, 64});
   shared::sync_face_surfaces(brush);
-  shared::resize_face_grid(top_face_of(brush, 16.f), 4);
+  shared::resize_face_grid(find_top_face(brush, 16.f), 4);
 
   // Slice a corner off the top face: it becomes a pentagon, and a grid is a
   // bilinear patch over four corners. Loudly dropped rather than left to index
@@ -1205,7 +1205,7 @@ void test_a_blended_face_is_one_submesh_over_two_materials()
   const assets::mesh_asset_t flat = shared::generate_brush_mesh(brush, materials);
   assert(!flat.is_blended());
 
-  shared::face_surface_t &top = top_face_of(brush, 16.f);
+  shared::face_surface_t &top = find_top_face(brush, 16.f);
   top.material       = 1;
   top.blend_material = 2;
   shared::resize_face_grid(top, 2);
@@ -1307,7 +1307,7 @@ void test_map_round_trip_and_session_collision()
   std::cout << "test_map_round_trip_and_session_collision passed" << std::endl;
 }
 
-shared::aabb_bounds_t bounds_of(const std::vector<linalg::vec3> &points)
+shared::aabb_bounds_t compute_bounds(const std::vector<linalg::vec3> &points)
 {
   return shared::compute_brush_bounds(points);
 }
@@ -1348,8 +1348,8 @@ void test_filled_grid_cells_split_a_concave_footprint()
     assert(rectangle.size() == 4);
 
   // Wide piece first, tall piece second: the sweep is row-major.
-  assert(bounds_match(bounds_of((*rectangles)[0]), {0, 0, 0}, {128, 0, 64}));
-  assert(bounds_match(bounds_of((*rectangles)[1]), {0, 0, 64}, {64, 0, 128}));
+  assert(bounds_match(compute_bounds((*rectangles)[0]), {0, 0, 0}, {128, 0, 64}));
+  assert(bounds_match(compute_bounds((*rectangles)[1]), {0, 0, 64}, {64, 0, 128}));
 
   // Each piece extrudes into a solid of its own, and the three cells of the L
   // are covered exactly once between them.
@@ -1386,7 +1386,7 @@ void test_a_full_rectangle_stays_one_brush()
       shared::try_decompose_footprint_into_rectangles(footprint, {0, 1, 0}, step);
   assert(rectangles.has_value());
   assert(rectangles->size() == 1);
-  assert(bounds_match(bounds_of((*rectangles)[0]), {0, 0, 0}, {128, 0, 128}));
+  assert(bounds_match(compute_bounds((*rectangles)[0]), {0, 0, 0}, {128, 0, 128}));
 
   const std::vector<linalg::vec3> from_cells =
       shared::extrude_brush_hull((*rectangles)[0], {0, 1, 0}, 64.0f);

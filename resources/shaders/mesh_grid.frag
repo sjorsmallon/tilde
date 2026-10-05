@@ -25,6 +25,7 @@
 #include "dissolve.glsl"
 #include "peel.glsl"
 #include "reveal.glsl"
+#include "pattern.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -79,6 +80,7 @@ void main() {
     // A blockout face has no roughness: r_debug_channel = reflection shows the captures as a MIRROR.
     Surface surface;
     surface.albedo    = cel_flat_albedo(albedo, fragUV, texture(albedo, fragUV).rgb) * fragColor;
+    surface.albedo    = apply_pattern_preview(surface.albedo, fragUV);
     surface.normal    = N;
     surface.geometric_normal = N;
     surface.uv        = fragUV;
@@ -93,7 +95,9 @@ void main() {
         return;
     }
 
-    vec3 color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V);
+    float solid_ink;
+    vec3  color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V, solid_ink);
+    outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
 
     // Two levels, 8x apart. The minor one fades as it stops being resolvable and
     // the major one -- still 8x larger on screen -- carries on, so backing away
@@ -106,5 +110,5 @@ void main() {
         fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition, N);
 }

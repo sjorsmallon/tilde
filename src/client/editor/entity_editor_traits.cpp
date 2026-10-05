@@ -644,12 +644,12 @@ editor_shape_t editor_shape_at(const entities::Entity* e, const linalg::vec3& po
   return point_pick_box(position);
 }
 
-shared::aabb_bounds_t editor_bounds_of(const entities::Entity* e)
+shared::aabb_bounds_t get_editor_bounds(const entities::Entity* e)
 {
   return bounds_of_shape(editor_shape_at(e, e->position));
 }
 
-std::vector<Plane> editor_collision_planes_of(const entities::Entity* e)
+std::vector<Plane> get_editor_collision_planes(const entities::Entity* e)
 {
   const editor_shape_t shape = editor_shape_at(e, e->position);
   if (const shared::spectate_frustum_t* frustum = std::get_if<shared::spectate_frustum_t>(&shape))

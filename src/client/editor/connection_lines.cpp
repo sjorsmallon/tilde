@@ -46,7 +46,7 @@ constexpr float STUB_LENGTH_IN_PIXELS = 34.f;
 constexpr float STUB_DIRECTION_X      = 0.74f;
 constexpr float STUB_DIRECTION_Y      = -0.67f;
 
-[[nodiscard]] std::optional<linalg::vec2> try_anchor_of(const shared::map_t&    map,
+[[nodiscard]] std::optional<linalg::vec2> try_compute_screen_space_anchor_for_uid(const shared::map_t&    map,
                                                         const viewport_state_t& view,
                                                         shared::entity_uid_t    uid)
 {
@@ -178,7 +178,7 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
     else if (!selection.empty())
       color = DIMMED_COLOR;
 
-    const std::optional<linalg::vec2> from = try_anchor_of(map, view, row.sender);
+    const std::optional<linalg::vec2> from = try_compute_screen_space_anchor_for_uid(map, view, row.sender);
     if (!from)
       continue;
 
@@ -197,7 +197,7 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
       continue;
     }
 
-    const std::optional<linalg::vec2> to = try_anchor_of(map, view, row.target);
+    const std::optional<linalg::vec2> to = try_compute_screen_space_anchor_for_uid(map, view, row.target);
     if (!to)
       continue;
 

@@ -81,6 +81,7 @@ file only states them.
 | Rotation representation | `rotation_def.md` |
 | Assets, manifest, packaging | `asset_pipeline_def.md` |
 | Lighting model, renderer, descriptor sets | `lighting_def.md`, `renderer_def.md` |
+| Procedural surface patterns | `pattern_plan.md` |
 | Lightmap sidecar, bake, GPU bake, unwrap, transparency | `lightmap_def.md`, `lightmap_gpu_plan.md`, `lightmap_unwrap_plan.md`, `transparency_plan.md` |
 | Prediction, predicted world, disabled geometry | `prediction_def.md` |
 | Movement models, overrides, impulses | `movement_def.md`, `generalization_def.md` |
@@ -124,16 +125,16 @@ file only states them.
   asset extension. `-Werror=missing-prototypes` on the handler files catches
   the reverse. Helpers in those files go in an anonymous namespace.
 - Behaviour EVERY member of a closed enum answers for is a hand-written
-  **exhaustive switch** (`message_direction`, `target_shape_of`) or a table
+  **exhaustive switch** (`message_direction`, `get_target_shape_for_target_kind`) or a table
   pinned by `rows_in_enum_order` (`EDITOR_DATA_PER_ENTITY_TYPE`, the one site a
   new entity type must visit). `-Werror=switch` is the guard. Do not generate these,
   and do not add a registry, an owner table, a `think()` or a function-pointer
   field. A question only a FEW types answer is asked of those types
-  (`entity_as<T>`, `entities_of<T>()`, a sparse table whose absent row is the
+  (`entity_as<T>`, `entities_of_type<T>()`, a sparse table whose absent row is the
   default), never a switch that says "no" for the rest.
 - Entities are plain blittable structs, no virtuals: `entity_as<T>` not
   `dynamic_cast`, `destroy_entity()` not `delete`, component lookups through
-  `entities::get_*`. Iterate with `entities_of<T>()`,
+  `entities::get_*`. Iterate with `entities_of_type<T>()`,
   `entities_with<Components...>()` or `entities_with_trait<Trait>()`; ask what
   the `.def` declares, not what the layout happens to contain.
 
@@ -203,7 +204,7 @@ prediction writes `ctx.prediction`.
   `@Networked`, and a reconciliation replay restarts it unconditionally from
   the latest snapshot. A jump is an edge, not a level.
 - A face too steep to stand on (past 45 degrees) is a `steep_face_rule_t`,
-  answered per model by `steep_face_rule_of`: a `Ramp` under `quake` (surfing),
+  answered per model by `get_steep_face_rule_for_locomotion_model`: a `Ramp` under `quake` (surfing),
   a `Wall` under the instant models, which would otherwise turn their per-step
   run speed into lift and launch off its top.
 - `sweep_projectile` is the one question a flying thing asks, a hitscan
@@ -301,8 +302,8 @@ prediction writes `ctx.prediction`.
 
 - Four descriptor sets and four is the ceiling: 0 material, 1 bones, 2 blend
   layers, 3 the pass. A binding costs nothing; a set does.
-- `try_light_of` is the one fold from the three light types into a scene
-  light; `radiance_of` the one conversion to radiance; `light_is_switched_on`
+- `try_convert_light_entity_to_scene_light` is the one fold from the three light types into a scene
+  light; `compute_radiance` the one conversion to radiance; `light_is_switched_on`
   the one switch rule. `Light_Mode {Baked, Mixed, Dynamic}` is a correctness
   requirement, and bake term and shadow map compose by product.
 - The atlas stores VISIBILITY per light slot and residual irradiance; the

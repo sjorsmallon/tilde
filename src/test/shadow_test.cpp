@@ -278,12 +278,12 @@ int main()
     const shared::point_shadow_faces_t faces = shared::point_shadow_faces(point, view, RESOLUTION);
 
     // The face order is the shader's: +X, -X, +Y, -Y, +Z, -Z by major axis.
-    check(shared::point_shadow_face_of({5.f, 1.f, -2.f}) == 0, "+X is face 0");
-    check(shared::point_shadow_face_of({-5.f, 4.f, 4.f}) == 1, "-X is face 1");
-    check(shared::point_shadow_face_of({1.f, 9.f, -2.f}) == 2, "+Y is face 2");
-    check(shared::point_shadow_face_of({0.f, -3.f, 2.f}) == 3, "-Y is face 3");
-    check(shared::point_shadow_face_of({1.f, 1.f, 7.f}) == 4, "+Z is face 4");
-    check(shared::point_shadow_face_of({2.f, -2.f, -3.f}) == 5, "-Z is face 5");
+    check(shared::compute_point_shadow_face_for_direction({5.f, 1.f, -2.f}) == 0, "+X is face 0");
+    check(shared::compute_point_shadow_face_for_direction({-5.f, 4.f, 4.f}) == 1, "-X is face 1");
+    check(shared::compute_point_shadow_face_for_direction({1.f, 9.f, -2.f}) == 2, "+Y is face 2");
+    check(shared::compute_point_shadow_face_for_direction({0.f, -3.f, 2.f}) == 3, "-Y is face 3");
+    check(shared::compute_point_shadow_face_for_direction({1.f, 1.f, 7.f}) == 4, "+Z is face 4");
+    check(shared::compute_point_shadow_face_for_direction({2.f, -2.f, -3.f}) == 5, "-Z is face 5");
 
     // Each face's axis projects to its map centre and the range to depth 1.
     const vec3f axes[6] = {{1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
@@ -295,7 +295,7 @@ int main()
           project(faces.faces[face].projection.view_projection, axes[face] * point.range);
       axis_centred = axis_centred && near(at_range.x, 0.f) && near(at_range.y, 0.f) &&
                      near(at_range.z, 1.f, 1e-4f);
-      check(shared::point_shadow_face_of(axes[face]) == face, "a face's axis picks that face");
+      check(shared::compute_point_shadow_face_for_direction(axes[face]) == face, "a face's axis picks that face");
     }
     check(axis_centred, "every face's axis projects to its map centre at depth 1");
     check(near(faces.faces[0].projection.near_plane, shared::SHADOW_NEAR_PLANE) &&

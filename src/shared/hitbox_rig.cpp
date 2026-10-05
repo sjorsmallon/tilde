@@ -258,7 +258,7 @@ int32_t dominant_bone(const vertex_skin_t &skin)
   return best_bone;
 }
 
-int32_t bone_index_of(const skeleton_t &skeleton, const std::string &name)
+int32_t find_bone_index_by_name(const skeleton_t &skeleton, const std::string &name)
 {
   for (size_t index = 0; index < skeleton.bones.size(); ++index)
     if (skeleton.bones[index].name == name)
@@ -284,7 +284,7 @@ shared::hit_region_t guess_region(const std::string &bone_name)
 
 // The percentile of a scratch list, by nth_element rather than a full sort --
 // derivation runs over every vertex of every volume and this is the inner loop.
-float percentile_of(std::vector<float> &values, float percentile)
+float compute_percentile(std::vector<float> &values, float percentile)
 {
   if (values.empty())
     return 0.0f;
@@ -378,8 +378,8 @@ std::optional<hitbox_rig_t> try_resolve_hitbox_rig(const hitbox_rig_file_t &file
 
   for (const hitbox_volume_t &volume : file.volumes)
   {
-    const int32_t start_bone = bone_index_of(skeleton, volume.start_bone);
-    const int32_t end_bone   = bone_index_of(skeleton, volume.end_bone);
+    const int32_t start_bone = find_bone_index_by_name(skeleton, volume.start_bone);
+    const int32_t end_bone   = find_bone_index_by_name(skeleton, volume.end_bone);
     if (start_bone < 0 || end_bone < 0)
     {
       log_error("hitbox volume '{}' names bone(s) skeleton '{}' does not have: '{}' -> '{}'",
@@ -601,10 +601,10 @@ guesstimated_hitbox_from_bone_t guesstimate_hitbox_size(const mesh_asset_t &mesh
   }
 
   guesstimated_hitbox_from_bone_t guesstimated;
-  guesstimated.radius       = percentile_of(from_axis, HITBOX_SIZE_PERCENTILE);
-  guesstimated.half_extents = {percentile_of(along_right, HITBOX_SIZE_PERCENTILE),
-                               percentile_of(along_up, HITBOX_SIZE_PERCENTILE),
-                               percentile_of(along_forward, HITBOX_SIZE_PERCENTILE)};
+  guesstimated.radius       = compute_percentile(from_axis, HITBOX_SIZE_PERCENTILE);
+  guesstimated.half_extents = {compute_percentile(along_right, HITBOX_SIZE_PERCENTILE),
+                               compute_percentile(along_up, HITBOX_SIZE_PERCENTILE),
+                               compute_percentile(along_forward, HITBOX_SIZE_PERCENTILE)};
   return guesstimated;
 }
 

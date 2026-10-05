@@ -679,7 +679,7 @@ struct view_pass_t
   // here: it is a property of the world being drawn, not of any surface in it.
   // Invalid draws no sky at all and leaves the scene clear showing through.
   skybox_handle_t                           sky       = {};
-  // Already folded by shared::try_light_of, and LAID OUT: the first
+  // Already folded by shared::try_convert_light_entity_to_scene_light, and LAID OUT: the first
   // `baked_light_count` entries are INDEXED BY BAKED SLOT, so a lightmapped
   // surface reads the four its chart named and never walks the array. Past
   // MAX_LIGHTS the tail is dropped. shared::gather_frame_lights builds both.
@@ -722,6 +722,7 @@ struct look_settings_t
   linalg::vec3f cel_shadow_tint = {0.8f, 0.85f, 1.0f}; // r_cel_shadow_red, _green, _blue
   float   cel_bands = 0.0f; // r_cel_bands
   float   cel_flat_albedo = 0.0f; // r_cel_flat_albedo
+  float   cel_black       = 0.0f; // r_cel_black
   float   cel_halftone    = 0.0f; // r_cel_halftone
   float   cel_halftone_paper = 1.0f; // r_cel_halftone_paper
   cvars::Cel_Fill cel_fill         = cvars::Cel_Fill::none; // r_cel_fill
@@ -748,6 +749,14 @@ struct look_settings_t
   float   cel_pebble_size              = 0.25f; // r_cel_pebble_size
   float   cel_pebble_irregularity      = 0.5f;  // r_cel_pebble_irregularity
   float   cel_pebble_line_width_pixels = 1.5f;  // r_cel_pebble_width
+  cvars::Pattern_Kind pattern_preview   = cvars::Pattern_Kind::none; // r_pattern_preview
+  linalg::vec2f pattern_preview_spacing = {32.0f, 32.0f}; // r_pattern_preview_spacing_along, _across
+  float   pattern_preview_angle_degrees = 0.0f;  // r_pattern_preview_angle
+  float   pattern_preview_scroll_speed  = 0.0f;  // r_pattern_preview_scroll
+  float   pattern_preview_coverage      = 0.25f; // r_pattern_preview_coverage
+  float   pattern_preview_shape         = 0.0f;  // r_pattern_preview_shape
+  float   pattern_preview_strength      = 0.5f;  // r_pattern_preview_strength
+  linalg::vec3f pattern_preview_ink     = {0.0f, 0.0f, 0.0f}; // r_pattern_preview_red, _green, _blue
   bool    ink              = false; // r_ink
   float   ink_threshold    = 4.0f;  // r_ink_threshold
   int     ink_width_pixels = 1;     // r_ink_width
@@ -760,6 +769,9 @@ struct look_settings_t
   float   ink_weight_distance     = 256.0f; // r_ink_weight_distance
   float   rim              = 0.0f;  // r_rim
   int     rim_width_pixels = 3;     // r_rim_width
+  float   ink_on_black      = 1.0f;    // r_ink_on_black
+  float   misprint_pixels   = 0.0f;    // r_misprint
+  float   misprint_distance = 1024.0f; // r_misprint_distance
   bool    fog              = true;  // r_fog
   float   fog_distance     = 4096.0f; // r_fog_distance
   float   fog_anisotropy   = 0.5f;  // r_fog_anisotropy

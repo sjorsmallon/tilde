@@ -355,7 +355,7 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
 
     // The Flashlight's and the Eraser's toggle. The light is on only while this is set AND one of them is in hand (shared::reveal_light_is_on).
     reveal_light_on:   bool             @Networked
-    // The Flashlight's other toggle: the cone hangs above the head and points straight down (shared::reveal_cone_of).
+    // The Flashlight's other toggle: the cone hangs above the head and points straight down (shared::compute_player_reveal_cone).
     reveal_light_overhead: bool         @Networked
 
     // WHEN the in-flight reload finishes, in sub-tick time; 0 means not

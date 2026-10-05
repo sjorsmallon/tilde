@@ -113,13 +113,13 @@ inline uint64_t buttons_from_move_input(const Move_Input &input)
 }
 
 // How far the aim turns across a step, and how many pieces the air push is cut into along that turn.
-struct aim_sweep_t
+struct aim_turn_across_step_t
 {
   float    yaw_change_degrees = 0.f;
   uint32_t push_count         = 1;
 };
 
-inline aim_sweep_t aim_sweep_of(const shared::subtick_step_t& step)
+inline aim_turn_across_step_t compute_aim_turn_across_step(const shared::subtick_step_t& step)
 {
   return {.yaw_change_degrees = linalg::wrap_degrees(step.view_at_end.yaw - step.view.yaw),
           .push_count         = step.slot_count};
@@ -176,12 +176,12 @@ struct move_input_t
   Move_Input  buttons   = {};
   vec3        front     = {1.f, 0.f, 0.f};
   vec3        right     = {0.f, 0.f, 1.f};
-  aim_sweep_t aim_sweep = {};
+  aim_turn_across_step_t aim_turn_across_step = {};
   float       dt        = 0.f;
 };
 
 // The ONE derivation of the basis from a step's aim.
-[[nodiscard]] move_input_t move_input_of(const shared::subtick_step_t& step);
+[[nodiscard]] move_input_t move_input_from_subtick_step(const shared::subtick_step_t& step);
 
 // Keep leaves the axis alone, Add joins the impulse to the velocity the player
 // already has, Set REPLACES it -- per AXIS, because the writers already are: a
@@ -270,7 +270,7 @@ inline void apply_impulse(const movement_settings_t& settings, vec3& velocity,
 // in here: see push_player_by_movers below and mover_def.md ss12.
 //
 // `settings` is cut from the process's one cvar_state_t (the launcher's) by
-// movement_settings_from: the pm_* tunables are @Mirrored, so the client's
+// movement_settings_from_cvars: the pm_* tunables are @Mirrored, so the client's
 // prediction and the server's authoritative run must feed the SAME values into
 // this function or the client mispredicts every frame.
 //

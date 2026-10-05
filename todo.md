@@ -2121,23 +2121,23 @@ struct render_component_t
 - vector profiling to see where memory is allocated in each frame and switch to an arena / frame-based buffer.
 ## Naming: banish the `_of(` suffix
 
-`_of` carries no information when it means "build a T out of this" -- the name
-says the return type twice and never says what the transformation is. Convert
-those to a verb that names the work: `predicted_world_of` -> `cut_predicted_world`,
-`shadow_scene_of` -> `build_shadow_scene`, `try_light_of` -> `try_fold_entity_into_scene_light`,
-`move_input_of` / `aim_sweep_of` / `wish_of` / `ground_frame_of` / `drawn_tick_of` /
-`platform_view_of` / `fire_of` likewise. Prefer a name long enough to state the
-answer over a short one plus a comment explaining it (see
-`get_predicted_server_tick_which_this_input_will_be_simulated_on` in
-`src/client/states/play_state.cpp`).
+Decided 2026-10-05: every `_of` function of ours goes, the possession ones
+included. The verb says what kind of work happens:
 
-`_of` as plain English possession stays: `owner_of`, `player_of`, `position_of`,
-`index_of`, `luminance_of`, `radiance_of`, `centroid_of`, `entities_of`. Standard
-library spellings (`find_first_of`, `all_of`) are not ours to rename.
+- `compute_<thing>`: arithmetic on its arguments, nothing stored
+  (`compute_player_reveal_cone`). `calc_` / `calculate_` fold into it.
+- `get_<thing>` / `get_<thing>_for_<key>` / `get_<thing>_by_<key>`: reads what
+  already exists, a field, a table row, a selection
+  (`get_steep_face_rule_for_locomotion_model`, `get_player_by_uid`).
+- `find_` / `try_find_..._by_<key>`: a search that can miss
+  (`find_group_containing_member`).
+- `build_` / `make_`: constructs something the caller owns.
+- `<x>_to_<y>`: a unit conversion.
 
-About 130 distinct names, ~900 call sites; the conversion class is roughly 15 of
-them. CLAUDE.md and the design records name several of these directly and must be
-updated in the same pass.
+Swept 2026-10-05: no function of ours ends in `_of` any more, except
+`get_position_in_front_of`, which reads as English and stays. Standard library
+spellings (`find_first_of`, `all_of`) are not ours to rename. Not swept: names
+with `_of_` in the middle (`planes_of_reveal_cone`, `seconds_of_tick`).
 
 ## Naming: `subtick_input_t` -> `tick_input_t`
 

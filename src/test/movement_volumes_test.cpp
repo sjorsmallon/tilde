@@ -99,12 +99,12 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   }
 
   // A canopy answers only for a carrier the system holds: the one player spawned above.
-  for (entities::Canopy_Entity& canopy : system.entities_of<entities::Canopy_Entity>())
-    for (const entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (entities::Canopy_Entity& canopy : system.entities_of_type<entities::Canopy_Entity>())
+    for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
       canopy.carrier_uid = player.entity_id;
 
   // A player answers only while frozen.
-  for (entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
     player.movement.active_override = entities::Movement_Override::Stasis;
 
   std::vector<shared::movement_volume_t> volumes;
@@ -418,10 +418,10 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
   for (uint32_t team = 0; team < storage.disabled_geometry.count; ++team)
     shared::collect_disabled_geometry(system, owner_of, static_cast<entities::Team_Allegiance>(team),
                                       storage.disabled_geometry.values[team]);
-  check(shared::predicted_world_of(storage, entities::Team_Allegiance::Red).disabled_geometry[1] != 0 &&
-            shared::predicted_world_of(storage, entities::Team_Allegiance::Blu).disabled_geometry[1] == 0,
+  check(shared::get_predicted_world_for_team(storage, entities::Team_Allegiance::Red).disabled_geometry[1] != 0 &&
+            shared::get_predicted_world_for_team(storage, entities::Team_Allegiance::Blu).disabled_geometry[1] == 0,
         "the view is the mover's team's set");
-  check(shared::predicted_world_of(storage, static_cast<entities::Team_Allegiance>(200))
+  check(shared::get_predicted_world_for_team(storage, static_cast<entities::Team_Allegiance>(200))
                 .disabled_geometry[1] == 0,
         "a team off the wire that names no value passes no team wall");
 
@@ -548,7 +548,7 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
   check(cut_at(10 + 30).size() == 1, "the tick it lands is the tick it is solid");
   check(cut_at(10 + 30 + 119).size() == 1, "the last tick of its rest is still solid");
   check(cut_at(10 + 30 + 120).empty(), "two seconds at sixty hertz is 120 ticks of rest, and then it is gone");
-  const shared::platform_view_t view = shared::platform_view_of(*platform);
+  const shared::common_platform_fields_t view = shared::get_common_platform_fields(*platform);
   check(shared::platform_has_vanished_at_tick(view, 10 + 30 + 120, flight.tick_interval_seconds) &&
             !shared::platform_has_vanished_at_tick(view, 10 + 30 + 119, flight.tick_interval_seconds),
         "the server reaps it on the tick the cut drops it");
@@ -589,7 +589,7 @@ static void test_a_platform_grows_over_its_flight_and_lands_at_half_extents()
   platform->half_extents           = {128.f, 4.f, 128.f};
   platform->half_extents_at_launch = {8.f, 8.f, 8.f};
 
-  const shared::platform_view_t view = shared::platform_view_of(*platform);
+  const shared::common_platform_fields_t view = shared::get_common_platform_fields(*platform);
   const float                   dt   = flight.tick_interval_seconds;
 
   const linalg::vec3f at_launch = shared::platform_half_extents_at(view, 10, 0.f, dt);
@@ -630,7 +630,7 @@ static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
   platform->half_extents                = {64.f, 4.f, 64.f};
   platform->half_extents_when_vanishing = {8.f, 4.f, 8.f};
 
-  const shared::platform_view_t view = shared::platform_view_of(*platform);
+  const shared::common_platform_fields_t view = shared::get_common_platform_fields(*platform);
 
   std::vector<shared::mover_t> movers;
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&

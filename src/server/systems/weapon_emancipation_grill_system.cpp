@@ -75,14 +75,14 @@ void update_weapon_emancipation_grills(server_context_t& context)
   std::vector<taken_weapon_t>       taken_weapons;
 
   for (const entities::Weapon_Emancipation_Grill_Entity& grill :
-       entity_system.entities_of<entities::Weapon_Emancipation_Grill_Entity>())
+       entity_system.entities_of_type<entities::Weapon_Emancipation_Grill_Entity>())
   {
     if (!grill.switch_state.value)
       continue;
 
     const shared::aabb_bounds_t grill_bounds = shared::get_bounds(grill.volume, grill.position);
 
-    for (const entities::Player_Entity& player : entity_system.entities_of<entities::Player_Entity>())
+    for (const entities::Player_Entity& player : entity_system.entities_of_type<entities::Player_Entity>())
     {
       if (player.health.current_health <= 0)
         continue;
@@ -106,7 +106,7 @@ void update_weapon_emancipation_grills(server_context_t& context)
         stripped_players.push_back(player.entity_id);
     }
 
-    for (const entities::Weapon_Entity& weapon : entity_system.entities_of<entities::Weapon_Entity>())
+    for (const entities::Weapon_Entity& weapon : entity_system.entities_of_type<entities::Weapon_Entity>())
     {
       if (weapon.owner_uid != shared::null_entity_uid)
         continue;
@@ -135,7 +135,7 @@ void update_weapon_emancipation_grills(server_context_t& context)
   const float tick_interval_seconds = static_cast<float>(get_tick_interval());
   std::vector<shared::entity_uid_t> expired;
   for (const entities::Emancipated_Weapon_Entity& fizzled :
-       entity_system.entities_of<entities::Emancipated_Weapon_Entity>())
+       entity_system.entities_of_type<entities::Emancipated_Weapon_Entity>())
   {
     const float elapsed_seconds =
         static_cast<float>(context.tick_number - fizzled.spawned_tick) * tick_interval_seconds;

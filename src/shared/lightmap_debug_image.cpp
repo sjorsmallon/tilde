@@ -313,14 +313,14 @@ bool try_write_lightmap_l1_pages_png(const lightmap_pages_t &l1_pages,
         const Array<linalg::vec3, SH_L1_LAYERS_PER_PAGE> l1 =
             l1_pages.load_l1(page, x, y, l0);
 
-        const float scale = SH_L1_NORMALIZATION * luminance_of(l0);
+        const float scale = SH_L1_NORMALIZATION * compute_luminance(l0);
         const size_t offset =
             ((size_t)y * (size_t)l0_pages.size_in_texels + (size_t)x) * 3;
         if (!(scale > 0.f)) continue;
 
         for (int axis = 0; axis < SH_L1_LAYERS_PER_PAGE; ++axis)
           image[offset + (size_t)axis] =
-              to_direction_byte(luminance_of(l1[axis]) / scale);
+              to_direction_byte(compute_luminance(l1[axis]) / scale);
       }
 
     const std::string path = path_prefix + "_page" + std::to_string(page) + ".png";
@@ -363,7 +363,7 @@ bool try_write_lightmap_visibility_png(const lightmap_visibility_masks_t &masks,
       for (int y = 0; y < masks.size_in_texels; ++y)
         for (int x = 0; x < masks.size_in_texels; ++x)
         {
-          const float coverage = masks.coverage[masks.index_of(slot, page, x, y)];
+          const float coverage = masks.coverage[masks.compute_coverage_index(slot, page, x, y)];
           image[(size_t)y * (size_t)masks.size_in_texels + (size_t)x] =
               (uint8_t)std::clamp((int)std::lround(coverage * 255.f), 0, 255);
         }

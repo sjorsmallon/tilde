@@ -90,11 +90,41 @@ std::optional<projectile_hit_t> sweep_projectile(const Bounding_Volume_Hierarchy
   return nearest;
 }
 
+std::optional<projectile_hit_t> sweep_body(const Bounding_Volume_Hierarchy& bvh,
+                                           const predicted_world_t& world,
+                                           const linalg::vec3f& from, const linalg::vec3f& to,
+                                           float radius)
+{
+  std::optional<projectile_hit_t> nearest =
+      sweep_sphere_against_movers(world.movers, from, to, radius);
+
+  const linalg::vec3f reach{radius, radius, radius};
+  const auto passes_erased_hole = [&](const BVH_Primitive& primitive, float t)
+  {
+    if (get_geometry_state_by_collision_id(world.disabled_geometry, primitive.id) !=
+        GEOMETRY_SOLID_UNLESS_ERASED)
+      return false;
+    const linalg::vec3f center  = from + (to - from) * t;
+    const aabb_bounds_t contact = intersection_aabb({center - reach, center + reach}, primitive.aabb);
+    return any_erase_cone_contains_box(world.reveal_cones, contact);
+  };
+
+  const std::optional<sweep_hit_t> map_hit = bvh_sweep_sphere_unless_passed(
+      bvh, from, to, radius, world.disabled_geometry, passes_erased_hole);
+  if (map_hit && (!nearest || map_hit->t < nearest->t))
+    nearest = projectile_hit_t{.position   = from + (to - from) * map_hit->t,
+                               .normal     = map_hit->normal,
+                               .t          = map_hit->t,
+                               .entity_uid = null_entity_uid};
+
+  return nearest;
+}
+
 void collect_projectile_targets(const Entity_System& system, std::vector<projectile_target_t>& out)
 {
   out.clear();
 
-  for (const entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
     if (player.health.current_health <= 0)
       continue;
@@ -102,7 +132,7 @@ void collect_projectile_targets(const Entity_System& system, std::vector<project
   }
 
   for (const entities::Damageable_Entity& damageable :
-       system.entities_of<entities::Damageable_Entity>())
+       system.entities_of_type<entities::Damageable_Entity>())
   {
     if (damageable.health.current_health <= 0)
       continue;
@@ -110,13 +140,13 @@ void collect_projectile_targets(const Entity_System& system, std::vector<project
   }
 
   for (const entities::Physics_Body_Entity& body :
-       system.entities_of<entities::Physics_Body_Entity>())
+       system.entities_of_type<entities::Physics_Body_Entity>())
   {
     const linalg::vec3f half_extents = body.size * 0.5f;
     out.push_back({body.entity_id, {body.position - half_extents, body.position + half_extents}});
   }
 
-  for (const entities::Weapon_Entity& weapon : system.entities_of<entities::Weapon_Entity>())
+  for (const entities::Weapon_Entity& weapon : system.entities_of_type<entities::Weapon_Entity>())
   {
     if (weapon.owner_uid != null_entity_uid)
       continue;

@@ -14,14 +14,16 @@
 namespace shared
 {
 
-// Below this speed on a floor-like contact a body stops for good; a write to
-// its velocity through wake_bounce_body starts it again.
+// Below this speed on a floor-like contact a body stops; a write to its velocity
+// through wake_bounce_body starts it again, and so does losing what it rests on.
 constexpr float BOUNCE_REST_SPEED    = 20.f;
 constexpr float BOUNCE_REST_NORMAL_Y = 0.7f;
 // Contacts resolved inside one step before the remainder of the step is dropped.
 constexpr int BOUNCE_MAX_CONTACTS_PER_STEP = 4;
 // How far off a face a contact leaves the body, in world units.
 constexpr float BOUNCE_CONTACT_EPSILON = 0.01f;
+// How far below a resting body something must be for it to stay at rest.
+constexpr float BOUNCE_SUPPORT_PROBE = 1.f;
 
 struct bounce_body_t
 {
@@ -30,7 +32,9 @@ struct bounce_body_t
   entities::Bounce bounce;
 };
 
-// One tick. A body at rest comes back unchanged; angular_velocity is in
+// One tick. A body at rest comes back unchanged while something still holds it
+// up, and falls once nothing does (an erased floor, a brush switched off, a
+// mover gone); angular_velocity is in
 // degrees per second about a world axis and stops with the body.
 [[nodiscard]] bounce_body_t bounce_step(const Bounding_Volume_Hierarchy& bvh,
                                         const predicted_world_t& world, const bounce_body_t& body,

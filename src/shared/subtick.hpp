@@ -74,7 +74,7 @@ constexpr subtick_time_t subtick_time(uint32_t tick, uint32_t slot)
 
 // The slot half of a moment back out, for the one consumer that ships a slot
 // on its own (the shot debug message). The tick half is the caller's.
-constexpr uint32_t subtick_slot_of(subtick_time_t time)
+constexpr uint32_t subtick_time_to_slot(subtick_time_t time)
 {
   return static_cast<uint32_t>(time % SUBTICK_SLOT_COUNT);
 }

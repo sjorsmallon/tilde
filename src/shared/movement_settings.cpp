@@ -6,7 +6,7 @@ namespace shared
 namespace
 {
 
-quake_settings_t quake_settings_from(const cvars::cvar_state_t& cvars)
+quake_settings_t quake_settings_from_cvars(const cvars::cvar_state_t& cvars)
 {
   quake_settings_t quake{.friction            = cvars.pm_quake_friction,
                          .stop_speed          = cvars.pm_quake_stop_speed,
@@ -32,7 +32,7 @@ quake_settings_t quake_settings_from(const cvars::cvar_state_t& cvars)
 
 } // namespace
 
-movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars)
+movement_settings_t movement_settings_from_cvars(const cvars::cvar_state_t& cvars)
 {
   movement_settings_t settings;
 
@@ -54,7 +54,7 @@ movement_settings_t movement_settings_from(const cvars::cvar_state_t& cvars)
   switch (settings.model)
   {
     case cvars::Locomotion_Model::quake:
-      settings.quake = quake_settings_from(cvars);
+      settings.quake = quake_settings_from_cvars(cvars);
       break;
     case cvars::Locomotion_Model::instant:
       settings.instant = {.speed_return_seconds = cvars.pm_instant_speed_return_seconds};

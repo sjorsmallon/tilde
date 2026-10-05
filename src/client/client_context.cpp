@@ -76,7 +76,7 @@ std::string client_maps_directory()
 const entities::Player_Entity* try_find_player_in_slot(const client_context_t& context, int32_t slot)
 {
   for (const entities::Player_Entity& player :
-       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
     if (player.client_slot_index == slot)
       return &player;
   return nullptr;
@@ -98,7 +98,7 @@ const entities::Player_Entity* try_find_viewed_player(const client_context_t& co
 const entities::Match* try_find_match(const client_context_t& context)
 {
   Span<const entities::Game_Rules_Entity> rules =
-      context.world.session.entity_system.entities_of<entities::Game_Rules_Entity>();
+      context.world.session.entity_system.entities_of_type<entities::Game_Rules_Entity>();
   return rules.empty() ? nullptr : &rules[0].match;
 }
 

@@ -62,7 +62,7 @@ struct averaged_cube_t
   [[nodiscard]] linalg::vec3 fetch(float mip, const linalg::vec3 &direction) const
   {
     const int level = std::clamp((int)std::lround(mip), 0, mip_count - 1);
-    const reflection_cube_texel_t texel = reflection_cube_texel_of(direction, size_of_mip(level));
+    const reflection_cube_texel_t texel = compute_reflection_cube_texel_for_direction(direction, size_of_mip(level));
     return at(level, texel.face, texel.x, texel.y);
   }
 };
@@ -104,7 +104,7 @@ struct averaged_cube_t
 
 } // namespace
 
-reflection_cube_texel_t reflection_cube_texel_of(const linalg::vec3 &direction,
+reflection_cube_texel_t compute_reflection_cube_texel_for_direction(const linalg::vec3 &direction,
                                                  int size_in_texels)
 {
   const float ax = std::abs(direction.x);
@@ -276,8 +276,8 @@ reflection_capture_set_t build_reflection_captures(const map_t &map, const probe
   for (int y = 0; y < grid.count.y; y += stride)
   for (int x = 0; x < grid.count.x; x += stride)
   {
-    const size_t probe_index = grid.index_of(x, y, z);
-    if (!point_is_inside_bounds(geometry_bounds, grid.position_of({x, y, z}))) continue;
+    const size_t probe_index = grid.compute_cell_index(x, y, z);
+    if (!point_is_inside_bounds(geometry_bounds, grid.compute_cell_position({x, y, z}))) continue;
     if (inside[probe_index])
     {
       ++buried_count;
@@ -285,7 +285,7 @@ reflection_capture_set_t build_reflection_captures(const map_t &map, const probe
     }
 
     reflection_capture_t capture;
-    capture.position = grid.position_of({x, y, z});
+    capture.position = grid.compute_cell_position({x, y, z});
     capture.probe_index = (uint32_t)probe_index;
     capture.box = measure_reflection_box(occluders, capture.position,
                                          settings.open_face_extent, capture.open_faces);
@@ -352,7 +352,7 @@ reflection_lattice_t derive_reflection_lattice(const reflection_capture_set_t &s
         return {};
       }
     }
-    int32_t &slot = lattice.cells[lattice.index_of(cell)];
+    int32_t &slot = lattice.cells[lattice.compute_cell_index(cell)];
     if (slot >= 0)
     {
       log_error("[lightmap] reflection captures {} and {} share lattice cell ({}, {}, {}); "
@@ -392,7 +392,7 @@ reflection_capture_pick_t find_captures_for(const reflection_capture_set_t &set,
       cell[axis] = std::clamp(base[axis] + high, 0, lattice.count[axis] - 1);
     }
     if (weight <= 0.f) continue;
-    const int32_t index = lattice.cells[lattice.index_of(cell)];
+    const int32_t index = lattice.cells[lattice.compute_cell_index(cell)];
     if (index < 0) continue;
 
     uint32_t slot = 0;
@@ -428,7 +428,7 @@ reflection_capture_pick_t find_captures_for(const reflection_capture_set_t &set,
   return pick;
 }
 
-reflection_volume_coverage_t reflection_volume_coverage_of(const reflection_capture_set_t &set,
+reflection_volume_coverage_t compute_reflection_volume_coverage(const reflection_capture_set_t &set,
                                                            const aabb_bounds_t &bounds)
 {
   reflection_volume_coverage_t coverage;

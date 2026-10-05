@@ -13,7 +13,7 @@
 namespace shared
 {
 
-std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
+std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entities::Entity &entity)
 {
   if (const entities::Point_Light_Entity* point =
           entities::entity_as<entities::Point_Light_Entity>(&entity))
@@ -22,7 +22,7 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
     light.kind = light_kind_t::Point;
     light.mode = point->light.mode;
     light.position = point->position;
-    light.radiance = radiance_of(point->light, light_kind_t::Point);
+    light.radiance = compute_radiance(point->light, light_kind_t::Point);
     light.range = point->range;
     light.source_radius = std::max(point->light.source_radius, 0.f);
     light.casts_shadows = point->light.casts_shadows;
@@ -37,7 +37,7 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
     light.mode = spot->light.mode;
     light.position = spot->position;
     light.forward = linalg::basis_from(spot->orientation).forward;
-    light.radiance = radiance_of(spot->light, light_kind_t::Spot);
+    light.radiance = compute_radiance(spot->light, light_kind_t::Spot);
     light.range = spot->range;
     light.cos_inner = std::cos(linalg::to_radians(spot->inner_degrees));
     light.cos_outer = std::cos(linalg::to_radians(spot->outer_degrees));
@@ -53,7 +53,7 @@ std::optional<scene_light_t> try_light_of(const entities::Entity &entity)
     light.kind = light_kind_t::Directional;
     light.mode = directional->light.mode;
     light.forward  = linalg::basis_from(directional->orientation).forward;
-    light.radiance = radiance_of(directional->light, light_kind_t::Directional);
+    light.radiance = compute_radiance(directional->light, light_kind_t::Directional);
 
     // The sun's softness is an ANGLE, so it converts to the one radius everything
     // downstream takes by being measured at unit distance -- which is exactly the
@@ -210,7 +210,7 @@ shadow_cascades_t directional_shadow_cascades(const scene_light_t &light, const 
   return result;
 }
 
-uint32_t point_shadow_face_of(const linalg::vec3 &light_to_point)
+uint32_t compute_point_shadow_face_for_direction(const linalg::vec3 &light_to_point)
 {
   const linalg::vec3 magnitude = {std::abs(light_to_point.x), std::abs(light_to_point.y),
                                   std::abs(light_to_point.z)};
@@ -247,7 +247,7 @@ static bool every_point_outside(const oriented_plane_t &plane, Span<const linalg
   return true;
 }
 
-static linalg::vec3 centroid_of(Span<const linalg::vec3> points)
+static linalg::vec3 compute_centroid(Span<const linalg::vec3> points)
 {
   linalg::vec3 sum{0.f, 0.f, 0.f};
   for (const linalg::vec3 &point : points)
@@ -272,7 +272,7 @@ point_shadow_faces_t point_shadow_faces(const scene_light_t &light, const shadow
     camera_corners[corner]     = near_quad[corner];
     camera_corners[corner + 4] = far_quad[corner];
   }
-  const linalg::vec3              camera_inside = centroid_of(camera_corners);
+  const linalg::vec3              camera_inside = compute_centroid(camera_corners);
   const Array<oriented_plane_t, 6> camera_planes = {{
       plane_through(near_quad[0], near_quad[1], near_quad[2], camera_inside),
       plane_through(far_quad[0], far_quad[1], far_quad[2], camera_inside),
@@ -319,7 +319,7 @@ point_shadow_faces_t point_shadow_faces(const scene_light_t &light, const shadow
 
     // Separating-plane test in both directions. Either set of planes alone can
     // miss a separation the other sees; neither can invent one.
-    const linalg::vec3 face_inside = centroid_of(face.corners);
+    const linalg::vec3 face_inside = compute_centroid(face.corners);
     const Array<oriented_plane_t, 5> face_planes = {{
         plane_through(face.corners[1], face.corners[2], face.corners[3], face_inside),
         plane_through(face.corners[0], face.corners[1], face.corners[2], face_inside),
@@ -354,7 +354,7 @@ void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap)
 void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
                      entity_uid_t uid, const entities::Entity &entity)
 {
-  const std::optional<scene_light_t> gathered = try_light_of(entity);
+  const std::optional<scene_light_t> gathered = try_convert_light_entity_to_scene_light(entity);
   if (!gathered) return;
   if (!light_is_switched_on(entity)) return;
 

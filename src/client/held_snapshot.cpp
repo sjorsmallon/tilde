@@ -94,8 +94,8 @@ try_decode_snapshot(const client_context_t& context, const game::S2C_EntityPacka
     log_terminal("[net] snapshot {}: {}, {} players // {} bodies, {} bytes", server_tick,
                  baseline_tick.has_value() ? std::format("delta from {}", *baseline_tick)
                                            : std::string("full update"),
-                 decoded.frame.entities.entities_of<entities::Player_Entity>().size(),
-                 decoded.frame.entities.entities_of<entities::Physics_Body_Entity>().size(),
+                 decoded.frame.entities.entities_of_type<entities::Player_Entity>().size(),
+                 decoded.frame.entities.entities_of_type<entities::Physics_Body_Entity>().size(),
                  data_size);
   }
 
@@ -180,7 +180,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
                   });
 
   // --- 5. Seed prediction from our own body; feed the remotes' rings ---
-  for (const entities::Player_Entity& player : session.entities_of<entities::Player_Entity>())
+  for (const entities::Player_Entity& player : session.entities_of_type<entities::Player_Entity>())
   {
     const int32_t slot_index = player.client_slot_index;
     if (slot_index == context.connection.my_slot)

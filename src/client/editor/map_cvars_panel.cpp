@@ -79,7 +79,7 @@ std::string value_hint_for(const cvars::cvar_info_t &info)
 // Empty means the text is not a bool at all, and the caller falls back to the
 // text box: a checkbox cannot show "tru", and showing it UNCHECKED would read
 // as a legitimate "off" -- the silent correction this panel exists to prevent.
-std::optional<bool> try_bool_value_of(cvars::cvar_id id, const std::string &text)
+std::optional<bool> try_parse_bool_cvar_value(cvars::cvar_id id, const std::string &text)
 {
   static cvars::cvar_state_t scratch{};
   if (!cvars::try_cvar_from_text(scratch, id, text))
@@ -249,7 +249,7 @@ void draw_map_cvars_section(shared::map_t &map, const cvars::cvar_state_t &live_
       // the one the "add a cvar" button seeds from the live value.
       std::optional<bool> boolean_value;
       if (info != nullptr && info->type == cvars::CVAR_TYPE_BOOL)
-        boolean_value = try_bool_value_of(*id, row.value);
+        boolean_value = try_parse_bool_cvar_value(*id, row.value);
 
       if (boolean_value)
       {

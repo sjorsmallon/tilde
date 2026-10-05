@@ -85,7 +85,7 @@ vec3 baked_irradiance(vec3 world_position, vec3 N)
 
 // The cel look shades a WHITE surface off the geometric normal, so it holds the
 // light alone and can tell the lit side from the shadow side before the albedo goes on.
-vec3 light_surface_cel(Surface surface, vec3 world_position, vec3 V)
+vec3 light_surface_cel(Surface surface, vec3 world_position, vec3 V, out float solid_ink)
 {
     Surface white = surface;
     white.albedo  = vec3(1.0);
@@ -94,14 +94,17 @@ vec3 light_surface_cel(Surface surface, vec3 world_position, vec3 V)
     vec4 direct  = gather_direct_light(LOOK_CEL, white, world_position, V);
     vec3 ambient = shade_ambient(LOOK_CEL, white, V, world_position,
                                  baked_irradiance(world_position, white.normal), scene.ambient.rgb);
-    return compose_cel(surface, direct, ambient, world_position) + surface.emissive;
+    return compose_cel(surface, direct, ambient, world_position, solid_ink) + surface.emissive;
 }
 
-vec3 light_surface(int material_look, Surface surface, vec3 world_position, vec3 V)
+// `solid_ink` is how far the cel look drew the surface as solid ink (r_cel_black), for store_solid_ink.
+vec3 light_surface(int material_look, Surface surface, vec3 world_position, vec3 V, out float solid_ink)
 {
     int look = frame_look(material_look);
     if (look == LOOK_CEL)
-        return light_surface_cel(surface, world_position, V);
+        return light_surface_cel(surface, world_position, V, solid_ink);
+
+    solid_ink = 0.0;
 
     return gather_direct_light(look, surface, world_position, V).rgb +
            shade_ambient(look, surface, V, world_position,

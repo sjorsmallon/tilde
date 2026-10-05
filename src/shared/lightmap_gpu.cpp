@@ -153,7 +153,7 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
 
     for (const map_geometry_t &entry : map.geometry)
     {
-      if (light_occlusion_of(entry.value, map.materials) != pass)
+      if (compute_light_occlusion(entry.value, map.materials) != pass)
         continue;
 
       if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
@@ -313,13 +313,13 @@ void cpu_batch_solver_t::upload_scene(const batch_solver_scene_t &uploaded)
 
 // The shadow sets a CPU batch shades against: the uploaded occluder BVH, and the
 // uploaded traced scene as the glass when it holds any.
-static shadow_scene_t shadow_scene_of_batch(const batch_solver_scene_t &scene)
+static shadow_casters_t get_shadow_casters_for_batch(const batch_solver_scene_t &scene)
 {
   // The uploaded occluder BVH wins: a solver is handed the two spellings of one
   // world and must shade against the one it was uploaded with.
   if (!scene.bvh) fatal_error("[lightmap] a CPU batch with no occluder BVH.");
   if (!scene.traced) return {scene.bvh, nullptr, nullptr, nullptr};
-  return shadow_scene_for(*scene.bvh, *scene.traced);
+  return get_shadow_casters_with_occluders(*scene.bvh, *scene.traced);
 }
 
 void cpu_batch_solver_t::solve_direct(Span<const gpu_sample_t> samples,
@@ -340,7 +340,7 @@ void cpu_batch_solver_t::solve_direct(Span<const gpu_sample_t> samples,
                       "masks.",
                       i, sample.chart_index, chart_light_masks.size());
 
-        shade_sample_direct(sample, scene.lights, shadow_scene_of_batch(scene), scene.settings,
+        shade_sample_direct(sample, scene.lights, get_shadow_casters_for_batch(scene), scene.settings,
                             chart_light_masks[sample.chart_index], out.irradiance[i],
                             Span<linalg::vec3>(out.coverage.data() + i * light_count,
                                                (uint32_t)light_count),
@@ -484,7 +484,7 @@ probe_ray_report_t compare_probe_rays(Span<const float> reference, Span<const fl
 namespace
 {
 
-float coefficient_of(const indirect_sh_l1_t &value, size_t coefficient)
+float get_flattened_bake_value_by_index(const indirect_sh_l1_t &value, size_t coefficient)
 {
   const linalg::vec3 &channel =
       coefficient < 3 ? value.l0 : value.l1[(uint32_t)(coefficient / 3 - 1)];
@@ -496,16 +496,16 @@ float coefficient_of(const indirect_sh_l1_t &value, size_t coefficient)
   }
 }
 
-float coefficient_of(const probe_trace_t &value, size_t coefficient)
+float get_flattened_bake_value_by_index(const probe_trace_t &value, size_t coefficient)
 {
-  if (coefficient < SH_L1_COEFFICIENT_COUNT) return coefficient_of(value.light, coefficient);
+  if (coefficient < SH_L1_COEFFICIENT_COUNT) return get_flattened_bake_value_by_index(value.light, coefficient);
   return value.visibility[(uint32_t)(coefficient - SH_L1_COEFFICIENT_COUNT)];
 }
 
 // A direct answer flattened for the paired test: the irradiance, then each
 // light's coverage as three channels, then each light's weight. Same order as
 // direct_coefficient_name, and direct_floats_per_sample is how many there are.
-float coefficient_of(const gpu_direct_results_t &results, size_t record, size_t coefficient)
+float get_flattened_bake_value_by_index(const gpu_direct_results_t &results, size_t record, size_t coefficient)
 {
   if (coefficient < 3)
     return results.irradiance[record][(int)coefficient];
@@ -657,7 +657,7 @@ record_comparison_report_t compare_records(Span<const gpu_sample_t> samples,
     report.charts.push_back(std::move(compared));
   }
 
-  const auto brightness_of = [](const record_chart_comparison_t &chart) {
+  const auto compute_chart_brightness = [](const record_chart_comparison_t &chart) {
     double sum = 0.0;
     for (const float mean : chart.reference_mean) sum += std::abs(mean);
     return sum;
@@ -666,7 +666,7 @@ record_comparison_report_t compare_records(Span<const gpu_sample_t> samples,
             [&](const record_chart_comparison_t &left, const record_chart_comparison_t &right) {
               if (left.largest_sigma != right.largest_sigma)
                 return left.largest_sigma > right.largest_sigma;
-              return brightness_of(left) > brightness_of(right);
+              return compute_chart_brightness(left) > compute_chart_brightness(right);
             });
   return report;
 }
@@ -718,8 +718,8 @@ record_comparison_report_t compare_indirect_results(Span<const gpu_sample_t> sam
   const uint32_t scale_group[SH_L1_COEFFICIENT_COUNT] = {0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1};
   return compare_records(
       samples, charts, SH_L1_COEFFICIENT_COUNT, Span<const uint32_t>(scale_group),
-      [&](uint32_t i, size_t k) { return coefficient_of(reference[i], k); },
-      [&](uint32_t i, size_t k) { return coefficient_of(candidate[i], k); });
+      [&](uint32_t i, size_t k) { return get_flattened_bake_value_by_index(reference[i], k); },
+      [&](uint32_t i, size_t k) { return get_flattened_bake_value_by_index(candidate[i], k); });
 }
 
 record_comparison_report_t compare_direct_results(Span<const gpu_sample_t> samples,
@@ -750,8 +750,8 @@ record_comparison_report_t compare_direct_results(Span<const gpu_sample_t> sampl
 
   return compare_records(
       samples, charts, coefficient_count, Span<const uint32_t>(scale_group),
-      [&](uint32_t i, size_t k) { return coefficient_of(reference, i, k); },
-      [&](uint32_t i, size_t k) { return coefficient_of(candidate, i, k); });
+      [&](uint32_t i, size_t k) { return get_flattened_bake_value_by_index(reference, i, k); },
+      [&](uint32_t i, size_t k) { return get_flattened_bake_value_by_index(candidate, i, k); });
 }
 
 record_comparison_report_t compare_capture_results(Span<const gpu_sample_t> samples,
@@ -786,8 +786,8 @@ record_comparison_report_t compare_probe_results(Span<const gpu_sample_t> sample
     scale_group[k] = k < 3 ? 0 : k < SH_L1_COEFFICIENT_COUNT ? 1 : 2;
   return compare_records(
       samples, groups, PROBE_COEFFICIENT_COUNT, Span<const uint32_t>(scale_group),
-      [&](uint32_t i, size_t k) { return coefficient_of(reference[i], k); },
-      [&](uint32_t i, size_t k) { return coefficient_of(candidate[i], k); });
+      [&](uint32_t i, size_t k) { return get_flattened_bake_value_by_index(reference[i], k); },
+      [&](uint32_t i, size_t k) { return get_flattened_bake_value_by_index(candidate[i], k); });
 }
 
 const char *probe_coefficient_name(size_t coefficient)
@@ -844,7 +844,7 @@ lightmap_pages_t reduce_record_values_to_pages(const lightmap_t &lightmap,
   };
   std::vector<texel_sum_t> texels(pages.texel_count());
 
-  const auto texel_index_of = [&](int page, int x, int y) {
+  const auto compute_texel_index = [&](int page, int x, int y) {
     return ((size_t)page * (size_t)size + (size_t)y) * (size_t)size + (size_t)x;
   };
 
@@ -863,7 +863,7 @@ lightmap_pages_t reduce_record_values_to_pages(const lightmap_t &lightmap,
       fatal_error("[lightmap-gpu] record {} lands on page {} texel ({}, {}) of {} pages of {}.",
                   i, chart.page, x, y, pages.page_count, size);
 
-    texel_sum_t &texel = texels[texel_index_of(chart.page, x, y)];
+    texel_sum_t &texel = texels[compute_texel_index(chart.page, x, y)];
     texel.sum = texel.sum + values[i];
     ++texel.count;
   }
@@ -872,7 +872,7 @@ lightmap_pages_t reduce_record_values_to_pages(const lightmap_t &lightmap,
     for (int y = 0; y < size; ++y)
       for (int x = 0; x < size; ++x)
       {
-        const texel_sum_t &texel = texels[texel_index_of(page, x, y)];
+        const texel_sum_t &texel = texels[compute_texel_index(page, x, y)];
         if (texel.count == 0) continue;
         pages.store(page, x, y, texel.sum * (1.f / (float)texel.count));
       }

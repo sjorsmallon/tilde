@@ -11,7 +11,7 @@ namespace shared
 
 void collect_statues(const Entity_System& system, std::vector<mover_t>& out)
 {
-  for (const entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
     if (!override_freezes(player.movement.active_override) || player.health.current_health <= 0)
       continue;

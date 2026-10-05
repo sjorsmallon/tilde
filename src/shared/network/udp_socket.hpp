@@ -37,6 +37,12 @@ struct Address
   bool operator!=(const Address &other) const { return !(*this == other); }
 };
 
+struct socket_open_settings_t
+{
+  uint16 port_id = 0;
+  size_t buffer_size_in_bytes = client_receive_buffer_size_in_bytes;
+};
+
 class Udp_Socket
 {
 public:
@@ -44,14 +50,13 @@ public:
   ~Udp_Socket();
 
   // Open a socket on a specific port.
-  // If port is 0, the OS will choose a free port.
+  // If port_id is 0, the OS will choose a free port.
   //
-  // receive_buffer_size_in_bytes sizes the kernel's receive queue (SO_RCVBUF) --
+  // buffer_size_in_bytes sizes the kernel's receive queue (SO_RCVBUF) --
   // see network_types.hpp for why the default is far too small for us. It is a
   // HINT: Linux doubles the request for its own bookkeeping and clamps at
   // net.core.rmem_max, so the granted size is read back and reported.
-  bool open(uint16 port, size_t receive_buffer_size_in_bytes =
-                             client_receive_buffer_size_in_bytes);
+  [[nodiscard]] bool try_open(const socket_open_settings_t& settings);
 
   void close();
 

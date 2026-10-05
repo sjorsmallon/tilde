@@ -47,7 +47,7 @@ void play_gunshots(client_context_t& context, const ::network::snapshot_frame_t&
                    const ::network::snapshot_frame_t& current)
 {
   for (const entities::Player_Entity& player :
-       current.entities.entities_of<entities::Player_Entity>())
+       current.entities.entities_of_type<entities::Player_Entity>())
   {
     // Our own shot already played off prediction in Play_State.
     if (player.client_slot_index == context.connection.my_slot)
@@ -78,7 +78,7 @@ void play_hitmarker(client_context_t& context, const ::network::snapshot_frame_t
 {
   const entities::Player_Entity* me = nullptr;
   for (const entities::Player_Entity& player :
-       current.entities.entities_of<entities::Player_Entity>())
+       current.entities.entities_of_type<entities::Player_Entity>())
     if (player.client_slot_index == context.connection.my_slot)
       me = &player;
 
@@ -106,7 +106,7 @@ void play_breaks(client_context_t& context, const ::network::snapshot_frame_t& p
                  const ::network::snapshot_frame_t& current)
 {
   for (const entities::Damageable_Entity& damageable :
-       current.entities.entities_of<entities::Damageable_Entity>())
+       current.entities.entities_of_type<entities::Damageable_Entity>())
   {
     const entities::Damageable_Entity* before =
         previous.entities.get<entities::Damageable_Entity>(damageable.entity_id);
@@ -128,7 +128,7 @@ void play_bubble_pops(client_context_t& context, const ::network::snapshot_frame
                       const ::network::snapshot_frame_t& current)
 {
   for (const entities::Bubble_Entity& bubble :
-       current.entities.entities_of<entities::Bubble_Entity>())
+       current.entities.entities_of_type<entities::Bubble_Entity>())
   {
     const entities::Bubble_Entity* before =
         previous.entities.get<entities::Bubble_Entity>(bubble.entity_id);
@@ -153,7 +153,7 @@ void play_emitters(client_context_t& context, const ::network::snapshot_frame_t&
                    const ::network::snapshot_frame_t& current)
 {
   for (const entities::Sound_Emitter_Entity& emitter :
-       current.entities.entities_of<entities::Sound_Emitter_Entity>())
+       current.entities.entities_of_type<entities::Sound_Emitter_Entity>())
   {
     const entities::Sound_Emitter_Entity* local =
         context.world.session.entity_system.get<entities::Sound_Emitter_Entity>(emitter.entity_id);
@@ -206,16 +206,16 @@ void announce_match_edges(const ::network::snapshot_frame_t& previous,
                           const ::network::snapshot_frame_t& current)
 {
   Span<const entities::Game_Rules_Entity> before =
-      previous.entities.entities_of<entities::Game_Rules_Entity>();
+      previous.entities.entities_of_type<entities::Game_Rules_Entity>();
   Span<const entities::Game_Rules_Entity> after =
-      current.entities.entities_of<entities::Game_Rules_Entity>();
+      current.entities.entities_of_type<entities::Game_Rules_Entity>();
   if (before.empty() || after.empty())
     return;
 
   std::string_view frag_leader_name;
   int32_t most_kills = -1;
   for (const entities::Player_Entity& player :
-       current.entities.entities_of<entities::Player_Entity>())
+       current.entities.entities_of_type<entities::Player_Entity>())
   {
     if (player.kills <= most_kills)
       continue;

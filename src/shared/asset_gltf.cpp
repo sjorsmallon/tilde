@@ -52,7 +52,7 @@ mat4f engine_from_gltf()
   return result;
 }
 
-mat4f local_transform_of(const tinygltf::Node& node)
+mat4f compute_node_local_transform(const tinygltf::Node& node)
 {
   if (node.matrix.size() == 16)
   {
@@ -77,7 +77,7 @@ mat4f local_transform_of(const tinygltf::Node& node)
   return linalg::compose_transform(translation, rotation, scale);
 }
 
-vec3f column_of(const mat4f& transform, int column)
+vec3f get_matrix_column(const mat4f& transform, int column)
 {
   return {transform[column].x, transform[column].y, transform[column].z};
 }
@@ -413,7 +413,7 @@ float linear_to_srgb(float linear)
   return linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
 }
 
-asset_handle_t<texture_asset_t> occlusion_roughness_metallic_of(glb_import_t&             import,
+asset_handle_t<texture_asset_t> import_occlusion_roughness_metallic_texture(glb_import_t&             import,
                                                                 const tinygltf::Material& material,
                                                                 size_t material_index)
 {
@@ -481,7 +481,7 @@ asset_handle_t<texture_asset_t> occlusion_roughness_metallic_of(glb_import_t&   
   return register_dynamic_texture(composed_key, std::move(composed));
 }
 
-asset_handle_t<texture_asset_t> emissive_of(glb_import_t& import, const tinygltf::Material& material,
+asset_handle_t<texture_asset_t> import_emissive_texture(glb_import_t& import, const tinygltf::Material& material,
                                             size_t material_index)
 {
   const asset_handle_t<texture_asset_t> emissive =
@@ -569,8 +569,8 @@ void import_materials(glb_import_t& import)
 
     material.maps.albedo = texture_handle(import, pbr.baseColorTexture.index, pbr.baseColorTexture.texCoord);
     material.maps.normal = texture_handle(import, source.normalTexture.index, source.normalTexture.texCoord);
-    material.maps.orm      = occlusion_roughness_metallic_of(import, source, material_index);
-    material.maps.emissive = emissive_of(import, source, material_index);
+    material.maps.orm      = import_occlusion_roughness_metallic_texture(import, source, material_index);
+    material.maps.emissive = import_emissive_texture(import, source, material_index);
 
     // The declaration wins over the scan.
     if (source.alphaMode == "MASK")
@@ -673,9 +673,9 @@ void append_primitive(glb_import_t& import, const tinygltf::Primitive& primitive
   const std::vector<uint32_t> triangles = triangle_list_from(
       read_corners(import, primitive, vertex_count, role), primitive.mode, import, role);
 
-  const vec3f axis_x      = column_of(transform, 0);
-  const vec3f axis_y      = column_of(transform, 1);
-  const vec3f axis_z      = column_of(transform, 2);
+  const vec3f axis_x      = get_matrix_column(transform, 0);
+  const vec3f axis_y      = get_matrix_column(transform, 1);
+  const vec3f axis_z      = get_matrix_column(transform, 2);
   const float determinant = linalg::dot(axis_x, linalg::cross(axis_y, axis_z));
   if (determinant == 0.0f)
   {
@@ -689,12 +689,12 @@ void append_primitive(glb_import_t& import, const tinygltf::Primitive& primitive
   const vec3f normal_column_y = linalg::cross(axis_z, axis_x) * normal_sign;
   const vec3f normal_column_z = linalg::cross(axis_x, axis_y) * normal_sign;
 
-  auto position_of = [&](uint32_t vertex) -> vec3f
+  auto get_vertex_position = [&](uint32_t vertex) -> vec3f
   {
     return transform_point(transform, {positions[vertex * 3], positions[vertex * 3 + 1],
                                        positions[vertex * 3 + 2]});
   };
-  auto uv_of = [&](uint32_t vertex) -> vec2f
+  auto get_vertex_uv = [&](uint32_t vertex) -> vec2f
   { return uvs.empty() ? vec2f{0.0f, 0.0f} : vec2f{uvs[vertex * 2], uvs[vertex * 2 + 1]}; };
 
   mesh_asset_t&  mesh         = import.mesh;
@@ -707,10 +707,10 @@ void append_primitive(glb_import_t& import, const tinygltf::Primitive& primitive
     {
       const float* normal = &normals[vertex * 3];
       vertex_xnu   out{};
-      out.position = position_of(vertex);
+      out.position = get_vertex_position(vertex);
       out.normal   = normalize_or_zero(normal_column_x * normal[0] + normal_column_y * normal[1] +
                                        normal_column_z * normal[2]);
-      out.uv       = uv_of(vertex);
+      out.uv       = get_vertex_uv(vertex);
       mesh.vertices.push_back(out);
     }
     for (size_t at = 0; at < triangles.size(); at += 3)
@@ -726,16 +726,16 @@ void append_primitive(glb_import_t& import, const tinygltf::Primitive& primitive
     {
       const uint32_t corners[3] = {triangles[at], triangles[at + (mirrored ? 2 : 1)],
                                    triangles[at + (mirrored ? 1 : 2)]};
-      const vec3f    a          = position_of(corners[0]);
-      const vec3f    b          = position_of(corners[1]);
-      const vec3f    c          = position_of(corners[2]);
+      const vec3f    a          = get_vertex_position(corners[0]);
+      const vec3f    b          = get_vertex_position(corners[1]);
+      const vec3f    c          = get_vertex_position(corners[2]);
       const vec3f    face_normal = normalize_or_zero(linalg::cross(b - a, c - a));
       for (uint32_t corner : corners)
       {
         vertex_xnu out{};
-        out.position = position_of(corner);
+        out.position = get_vertex_position(corner);
         out.normal   = face_normal;
-        out.uv       = uv_of(corner);
+        out.uv       = get_vertex_uv(corner);
         mesh.indices.push_back((uint32_t)mesh.vertices.size());
         mesh.vertices.push_back(out);
       }
@@ -759,7 +759,7 @@ void walk_node(glb_import_t& import, int node_index, const mat4f& parent_transfo
     fatal_error("mesh '{}' node {} is its own ancestor", import.key, node_index);
 
   const tinygltf::Node& node      = model.nodes[node_index];
-  const mat4f           transform = parent_transform * local_transform_of(node);
+  const mat4f           transform = parent_transform * compute_node_local_transform(node);
 
   if (node.skin >= 0)
     note_ignored(import, "skinning (drawn in its bind pose)");
@@ -780,7 +780,7 @@ void walk_node(glb_import_t& import, int node_index, const mat4f& parent_transfo
     walk_node(import, child, transform, depth + 1);
 }
 
-std::vector<int> root_nodes_of(glb_import_t& import)
+std::vector<int> find_root_nodes(glb_import_t& import)
 {
   const tinygltf::Model& model = import.model;
   if (!model.scenes.empty())
@@ -838,7 +838,7 @@ mesh_asset_t decode_glb(Span<const uint8_t> bytes, const char* key)
   import_materials(import);
 
   const mat4f root_transform = engine_from_gltf();
-  for (int root : root_nodes_of(import))
+  for (int root : find_root_nodes(import))
     walk_node(import, root, root_transform, 0);
 
   if (mesh.indices.empty())

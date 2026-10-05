@@ -62,7 +62,7 @@ static constexpr int32_t invalid_slot_idx = -1;
 // Connected; the server withholds snapshots (its client_slot_t::map_ready)
 // until an input reports the hash it is running, so a Loading client -- which
 // sends no input at all -- receives no entity deltas. See play_state.cpp
-// update() and connection_t::awaiting_stream_content_hash.
+// update() and connection_t::downloading_map_content_hash.
 // Replaying has no peer at all: a file fills the inbox (replay_playback.hpp), so
 // every gate that assumes a server -- input, the reliable stream, the disconnect
 // message -- is off by being a different phase rather than a flag beside Connected.
@@ -191,7 +191,7 @@ struct connection_t
   // downloading is ignored rather than restarting the transfer under us --
   // begin_paced_transfer replaces whatever a slot was sending. Cleared once
   // S2C_MapData applies.
-  uint32_t awaiting_stream_content_hash = 0;
+  uint32_t downloading_map_content_hash = 0;
 
   // The slot we occupy on the server.
   int32_t my_slot = invalid_slot_idx;
@@ -391,6 +391,8 @@ struct prediction_t
   // predicted to run at latest_server_tick + (N - the processed number above),
   // which is where a mover is for it (mover_def.md ss12).
   uint32_t latest_server_tick = 0;
+  // latest_server_tick less the processed number, eased: what DRAWING adds to an input number. The step keeps the exact one.
+  double drawn_tick_gap = 0.0;
   bool received_server_update = false;
 
   // The canopy player_position stands on and where the step that put it there guessed that canopy to be.
@@ -538,18 +540,18 @@ struct client_context_t
 
   // Asked for by whoever sent us to Play_State: the editor's play button means
   // "play this map", not "spectate the map I just saved". Play_State reads it
-  // once in on_enter and clears it, so the request belongs to that one trip
-  // into the match rather than to whatever connects next -- unlike the address
+  // once in on_enter and clears it, so the request belongs to that one entry
+  // into the play state rather than to whatever connects next -- unlike the address
   // above, which is deliberately remembered.
   //
   // Not in the connection group: it is set BEFORE on_enter, which resets that.
-  bool requested_match_join = false;
+  bool requested_join_on_connect = false;
 
-  // The editor camera F1 left from: the first living body this trip gets is
-  // moved there and aimed along it. Same one-trip lifetime as the join above.
+  // The editor camera F1 left from: the first living body this connection gets is
+  // moved there and aimed along it. Read once and cleared, like the join above.
   std::optional<camera_t> requested_spawn_view;
 
-  // The reverse trip: the view play was showing when it went back to the
+  // The other direction: the view play was showing when it went back to the
   // editor, which the editor camera starts from instead of its default.
   std::optional<camera_t> requested_editor_view;
 

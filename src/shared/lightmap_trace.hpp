@@ -64,7 +64,7 @@ struct traced_scene_t
   const Bounding_Volume_Hierarchy *bvh = nullptr;
 
   // The two sets the occluder BVH above deliberately does not hold, which
-  // light_occlusion_of names: the FENCES and the GLASS. Null when the map has
+  // compute_light_occlusion names: the FENCES and the GLASS. Null when the map has
   // neither, which is every map authored before transparency -- and that null is
   // what makes a shadow ray skip both extra traversals and answer the 1-or-0 it
   // has always answered.
@@ -99,13 +99,13 @@ struct traced_scene_t
 // What a chain's next-event estimation casts against: the scene's own occluder
 // BVH, and the scene itself as the glass when it holds any. DERIVED rather than
 // held, so a chain cannot be tracing one world and shadowing against another.
-[[nodiscard]] shadow_scene_t shadow_scene_of(const traced_scene_t &scene);
+[[nodiscard]] shadow_casters_t get_shadow_casters(const traced_scene_t &scene);
 
 // The same thing for a caller holding the occluder BVH and a scene that may be
 // EMPTY -- a bake asked for no bounce, no probe, no solver and shading a map
 // with neither glass nor a fence builds no traced scene at all, and its shadow
 // rays must still be tested against something.
-[[nodiscard]] shadow_scene_t shadow_scene_for(const Bounding_Volume_Hierarchy &occluders,
+[[nodiscard]] shadow_casters_t get_shadow_casters_with_occluders(const Bounding_Volume_Hierarchy &occluders,
                                               const traced_scene_t &scene);
 
 [[nodiscard]] traced_scene_t build_traced_scene(const map_t &map,
@@ -138,7 +138,7 @@ struct traced_scene_t
 //
 // Emission is the material's emissive.png, sampled at the same UV, and its
 // PRESENCE is the whole of gate 4 -- a folder without one emits nothing. It is a
-// radiance, in the units radiance_of(Light) hands back, which is what makes it
+// radiance, in the units compute_radiance(Light) hands back, which is what makes it
 // the same lighting model as everything else.
 //
 // The face's LAYER 0 only. A blended face bounces its base material, which is

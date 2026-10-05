@@ -198,7 +198,7 @@ void cancel_reload(entities::Player_Entity& player)
 void reload_magazine(entities::Weapon_Entity& weapon)
 {
   const shared::magazine_t reloaded = shared::reloaded_magazine(
-      shared::get_weapon_definition(weapon.weapon_id), shared::magazine_of(weapon));
+      shared::get_weapon_definition(weapon.weapon_id), shared::get_magazine(weapon));
 
   weapon.ammo         = reloaded.ammo;
   weapon.reserve_ammo = reloaded.reserve_ammo;
@@ -231,7 +231,7 @@ void refill_magazines_on_ground(shared::game_session_t& session, const entities:
       continue;
 
     weapon_entity->ammo = shared::ammo_after_ground_refill(
-        definition, shared::magazine_of(*weapon_entity),
+        definition, shared::get_magazine(*weapon_entity),
         count_alive_shots(session.entity_system, player.entity_id, weapon_entity->weapon_id));
   }
 }
@@ -302,7 +302,7 @@ bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity&
 }
 
 // A cube of the box's longest half extent: a thrown weapon tumbles and the volume does not turn with it.
-static shared::aabb_bounds_t pickup_bounds_of(const entities::Weapon_Entity& weapon)
+static shared::aabb_bounds_t compute_pickup_bounds(const entities::Weapon_Entity& weapon)
 {
   const vec3f half_extents = weapon.volume.half_extents;
   const float reach        = std::max({half_extents.x, half_extents.y, half_extents.z});
@@ -344,8 +344,8 @@ void update_dropped_weapons(server_context_t& context, float tick_dt)
 {
   shared::game_session_t& session = context.world.session;
 
-  Span<entities::Weapon_Entity> weapons = session.entity_system.entities_of<entities::Weapon_Entity>();
-  Span<entities::Player_Entity> players = session.entity_system.entities_of<entities::Player_Entity>();
+  Span<entities::Weapon_Entity> weapons = session.entity_system.entities_of_type<entities::Weapon_Entity>();
+  Span<entities::Player_Entity> players = session.entity_system.entities_of_type<entities::Player_Entity>();
 
   for (entities::Weapon_Entity& weapon : weapons)
   {
@@ -355,7 +355,7 @@ void update_dropped_weapons(server_context_t& context, float tick_dt)
     if (context.tick_number < weapon.pickup_allowed_tick)
       continue;
 
-    const shared::aabb_bounds_t pickup = pickup_bounds_of(weapon);
+    const shared::aabb_bounds_t pickup = compute_pickup_bounds(weapon);
     const entities::Inventory_Slot slot = shared::get_weapon_definition(weapon.weapon_id).slot;
 
     for (entities::Player_Entity& player : players)

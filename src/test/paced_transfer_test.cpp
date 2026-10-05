@@ -45,7 +45,7 @@ struct wire_t
 
   wire_t(uint16 sender_port, uint16 receiver_port)
   {
-    if (!sender.open(sender_port) || !receiver.open(receiver_port))
+    if (!sender.try_open({.port_id = sender_port}) || !receiver.try_open({.port_id = receiver_port}))
     {
       printf("  FAILED to open the socket pair\n");
       exit(1);

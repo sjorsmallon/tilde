@@ -566,7 +566,7 @@ void vulkan_batch_solver_t::build_acceleration_structures(uint32_t vertex_count,
                                                           uint32_t first_transmissive_triangle)
 {
   // THREE structures over ranges of the SAME vertex and index buffers, one per
-  // answer light_occlusion_of gives: the opaque set, which stops a ray outright;
+  // answer compute_light_occlusion gives: the opaque set, which stops a ray outright;
   // the fences, which stop it where a texel says so; and the glass, which tints
   // one that got through. One buffer because a triangle index has to mean one
   // thing to the kernel, and the ranges are disjoint by construction --

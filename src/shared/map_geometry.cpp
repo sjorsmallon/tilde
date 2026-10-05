@@ -243,7 +243,7 @@ struct static_mesh_box_t
   linalg::vec3 half_extents;
 };
 
-static_mesh_box_t static_mesh_box_of(const static_mesh_geometry_t &static_mesh)
+static_mesh_box_t compute_static_mesh_box(const static_mesh_geometry_t &static_mesh)
 {
   constexpr float fallback_half_extent = 32.f;
 
@@ -283,7 +283,7 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry)
   {
     const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
     return static_mesh_world_half_extents(static_mesh,
-                                          static_mesh_box_of(static_mesh).half_extents);
+                                          compute_static_mesh_box(static_mesh).half_extents);
   }
 
   case geometry_kind_t::Brush:
@@ -332,7 +332,7 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
   case geometry_kind_t::Static_Mesh:
   {
     const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    const static_mesh_box_t box = static_mesh_box_of(static_mesh);
+    const static_mesh_box_t box = compute_static_mesh_box(static_mesh);
     const linalg::vec3 reach = static_mesh_world_half_extents(static_mesh, box.half_extents);
     return {box.center - reach, box.center + reach};
   }
@@ -691,7 +691,7 @@ try_build_boundary_pyramids(const brush_polyhedron_t &displaced,
 
 collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh)
 {
-  const static_mesh_box_t box = static_mesh_box_of(static_mesh);
+  const static_mesh_box_t box = compute_static_mesh_box(static_mesh);
   return piece_from_oriented_box(box.center, box.half_extents, static_mesh.orientation);
 }
 
@@ -942,7 +942,7 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
   return false;
 }
 
-light_occlusion_t light_occlusion_of(const geometry_value_t &geometry,
+light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
                                      Span<const std::string> materials)
 {
   // A static mesh's material is not resolved anywhere in the bake yet, so it is
@@ -2043,7 +2043,7 @@ std::vector<chart_unwrap_t> unwrap_static_mesh(const static_mesh_geometry_t &sta
   // Keyed by the SOURCE vertex a face corner names, not by xatlas's output
   // vertex: its xref goes through the colocal weld and can name another face's
   // copy of a shared corner, which carries that face's normal.
-  std::vector<uint32_t> local_index_of(vertices.size(), UINT32_MAX);
+  std::vector<uint32_t> chart_vertex_index_by_source_vertex(vertices.size(), UINT32_MAX);
   std::vector<uint32_t> touched;
   unwraps.reserve(output.chartCount);
 
@@ -2069,20 +2069,20 @@ std::vector<chart_unwrap_t> unwrap_static_mesh(const static_mesh_geometry_t &sta
       for (uint32_t corner = 0; corner < 3; ++corner)
       {
         const uint32_t source_vertex = mesh->indices[(size_t)face * 3 + corner];
-        if (local_index_of[source_vertex] == UINT32_MAX)
+        if (chart_vertex_index_by_source_vertex[source_vertex] == UINT32_MAX)
         {
           const xatlas::Vertex& vertex =
               output.vertexArray[output.indexArray[(size_t)face * 3 + corner]];
-          local_index_of[source_vertex] = (uint32_t)unwrap.vertices.size();
+          chart_vertex_index_by_source_vertex[source_vertex] = (uint32_t)unwrap.vertices.size();
           touched.push_back(source_vertex);
           unwrap.vertices.push_back({source_vertex,
                                      {vertex.uv[0] * world_units_per_atlas_texel,
                                       vertex.uv[1] * world_units_per_atlas_texel}});
         }
-        unwrap.indices.push_back(local_index_of[source_vertex]);
+        unwrap.indices.push_back(chart_vertex_index_by_source_vertex[source_vertex]);
       }
     }
-    for (uint32_t source_vertex : touched) local_index_of[source_vertex] = UINT32_MAX;
+    for (uint32_t source_vertex : touched) chart_vertex_index_by_source_vertex[source_vertex] = UINT32_MAX;
 
     linalg::vec2 minimum = unwrap.vertices[0].uv;
     for (const unwrapped_vertex_t& vertex : unwrap.vertices)

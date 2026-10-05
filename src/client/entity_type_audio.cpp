@@ -58,7 +58,7 @@ static_assert(every_row_names_a_different_type(),
               "ENTITY_TYPE_SOUNDS names one entity_type twice -- the lookup returns the first "
               "row, so the second is never played.");
 
-const entity_type_sounds_t& sounds_of(entities::entity_type type)
+const entity_type_sounds_t& get_sounds_for_entity_type(entities::entity_type type)
 {
   for (const entity_type_sounds_t& row : ENTITY_TYPE_SOUNDS)
     if (row.type == type)
@@ -70,12 +70,12 @@ const entity_type_sounds_t& sounds_of(entities::entity_type type)
 
 Span<const assets::sound_asset> impact_sounds_for(entities::entity_type type)
 {
-  return sounds_of(type).impact;
+  return get_sounds_for_entity_type(type).impact;
 }
 
 assets::sound_asset break_sound_for(entities::entity_type type)
 {
-  return sounds_of(type).break_sound;
+  return get_sounds_for_entity_type(type).break_sound;
 }
 
 } // namespace client

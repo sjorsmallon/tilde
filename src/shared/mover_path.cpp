@@ -58,7 +58,7 @@ path_links_t derive_path_links(const Entity_System& system)
   path_links_t links;
   std::unordered_map<entity_uid_t, uint32_t> predecessor_count;
 
-  for (const entities::Path_Node_Entity& node : system.entities_of<entities::Path_Node_Entity>())
+  for (const entities::Path_Node_Entity& node : system.entities_of_type<entities::Path_Node_Entity>())
   {
     if (node.next == null_entity_uid)
       continue;
@@ -77,7 +77,7 @@ path_links_t derive_path_links(const Entity_System& system)
   return links;
 }
 
-entity_uid_t previous_node_of(const path_links_t& links, entity_uid_t node)
+entity_uid_t find_previous_node(const path_links_t& links, entity_uid_t node)
 {
   const auto found = links.previous_of.find(node);
   return found == links.previous_of.end() ? null_entity_uid : found->second;
@@ -91,7 +91,7 @@ std::optional<path_segment_t> try_cut_path_segment(const Entity_System& system,
   if (from_node == nullptr)
     return std::nullopt;
 
-  const entity_uid_t to = direction >= 0 ? from_node->next : previous_node_of(links, from);
+  const entity_uid_t to = direction >= 0 ? from_node->next : find_previous_node(links, from);
   const entities::Path_Node_Entity* to_node = system.get<entities::Path_Node_Entity>(to);
   if (to_node == nullptr)
     return std::nullopt;

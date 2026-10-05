@@ -124,8 +124,7 @@ std::string describe_hovered_object(const shared::map_t &map, shared::entity_uid
 // same map keyed by uid, so the drag itself never asks which is which.
 void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx)
 {
-  drag_start_snapshots.clear();
-  drag_origins.clear();
+  drag_baseline.clear();
   if (!ctx.map)
     return;
 
@@ -135,19 +134,19 @@ void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx)
     if (!position)
       continue;
 
-    drag_origins.push_back(
+    drag_baseline.origins.push_back(
         {uid, *position,
          shared::try_get_object_orientation(*ctx.map, uid)
              .value_or(linalg::quatf::identity())});
 
     if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
     {
-      drag_start_snapshots[uid].geometry = geometry->value;
+      drag_baseline.snapshots[uid].geometry = geometry->value;
       continue;
     }
 
     if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      drag_start_snapshots[uid].entity = snapshot_entity(entry->entity.get());
+      drag_baseline.snapshots[uid].entity = snapshot_entity(entry->entity.get());
   }
 }
 
@@ -155,14 +154,14 @@ void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx)
 // selected objects at once rather than one at a time.
 void Selection_Tool::commit_drag_snapshots(editor_context_t& ctx, std::string name)
 {
-  if (drag_start_snapshots.empty() || !ctx.map)
+  if (drag_baseline.snapshots.empty() || !ctx.map)
   {
-    drag_start_snapshots.clear();
+    drag_baseline.snapshots.clear();
     return;
   }
 
   transaction_t transaction;
-  for (const auto &[uid, snapshot] : drag_start_snapshots)
+  for (const auto &[uid, snapshot] : drag_baseline.snapshots)
   {
     if (snapshot.geometry)
     {
@@ -175,8 +174,7 @@ void Selection_Tool::commit_drag_snapshots(editor_context_t& ctx, std::string na
       transaction.add_modified_from_diff(uid, snapshot.entity, entry->entity.get());
   }
   ctx.transaction_system.push(std::move(name), std::move(transaction));
-  drag_start_snapshots.clear();
-  drag_origins.clear();
+  drag_baseline.clear();
 }
 
 std::optional<shared::aabb_bounds_t>
@@ -217,15 +215,15 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
   // A reshape names one whole box, and the handles are only offered when the
   // selection is a single object that has one, so it is written through rather
   // than distributed as a delta.
-  if (drag.box && drag_origins.size() == 1)
+  if (drag.box && drag_baseline.origins.size() == 1)
   {
-    if (!shared::try_set_object_box(*ctx.map, drag_origins[0].uid, *drag.box))
+    if (!shared::try_set_object_box(*ctx.map, drag_baseline.origins[0].uid, *drag.box))
       log_error("selection tool: object {} took a reshape it cannot store",
-                drag_origins[0].uid);
+                drag_baseline.origins[0].uid);
   }
   else
   {
-    for (const drag_origin_t &origin : drag_origins)
+    for (const drag_origin_t &origin : drag_baseline.origins)
     {
       if (!shared::try_set_object_position(*ctx.map, origin.uid,
                                            origin.position + drag.translation))
@@ -240,9 +238,9 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
     // operations, and a group of one is the first, not a degenerate second.
     // Orbiting a lone object about its own bounds centre would also shift any
     // entity whose box volume sits off its origin, which nobody asked for.
-    const bool orbit = drag_origins.size() > 1;
+    const bool orbit = drag_baseline.origins.size() > 1;
 
-    for (const drag_origin_t &origin : drag_origins)
+    for (const drag_origin_t &origin : drag_baseline.origins)
     {
       if (orbit)
       {
@@ -403,7 +401,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
     const float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
 
     capture_drag_snapshots(ctx);
-    for (const drag_origin_t &origin : drag_origins)
+    for (const drag_origin_t &origin : drag_baseline.origins)
     {
       const linalg::vec3 snapped = {editor::snap(origin.position.x, step),
                                     editor::snap(origin.position.y, step),
@@ -436,9 +434,9 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
   }
 
   ImGui::Text("%zu object%s", selected_uids.size(), selected_uids.size() == 1 ? "" : "s");
-  ImGui::InputText("Name", prefab_name.data, prefab_name.size());
+  ImGui::InputText("Name", prefab_save.name.data, prefab_save.name.size());
 
-  const std::string name = prefab_name.data;
+  const std::string name = prefab_save.name.data;
   const std::string path =
       std::string(shared::PREFAB_DIRECTORY) + "/" + name + shared::PREFAB_EXTENSION;
 
@@ -456,7 +454,7 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
   if (already_exists)
   {
     ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "%s already exists.", path.c_str());
-    ImGui::Checkbox("Overwrite it", &prefab_overwrite);
+    ImGui::Checkbox("Overwrite it", &prefab_save.overwrite);
   }
 
   const std::vector<shared::connection_with_an_end_outside_t> outside_ends =
@@ -524,7 +522,7 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
 
   ImGui::Separator();
 
-  const bool can_write = name_is_usable && (!already_exists || prefab_overwrite);
+  const bool can_write = name_is_usable && (!already_exists || prefab_save.overwrite);
   ImGui::BeginDisabled(!can_write);
   if (ImGui::Button(outside_ends.empty() ? "Save" : "Continue as is and save"))
   {
@@ -536,14 +534,14 @@ void Selection_Tool::draw_prefab_save_popup(editor_context_t& ctx)
 
     if (shared::save_map(path, piece))
     {
-      prefab_status = std::format("saved {} ({} objects, {} connections)", path,
+      prefab_save.status = std::format("saved {} ({} objects, {} connections)", path,
                                   piece.object_count(), piece.connections.size());
-      hud::set_announcement(prefab_status);
+      hud::set_announcement(prefab_save.status);
       ImGui::CloseCurrentPopup();
     }
     else
     {
-      prefab_status = std::format("FAILED to write {}", path);
+      prefab_save.status = std::format("FAILED to write {}", path);
       log_error("selection_tool: could not write prefab \"{}\"", path);
     }
   }
@@ -582,12 +580,12 @@ void Selection_Tool::copy_selection_to_clipboard(editor_context_t& ctx)
     lost += outside_end.kept_as_unbound ? 0 : 1;
 
   adopt_clipboard(std::move(piece), lost);
-  clipboard_group_name.clear();
+  clipboard.group_name.clear();
 
-  if (clipboard_outside_end_count > 0)
+  if (clipboard.outside_end_count > 0)
     hud::set_announcement(std::format("copied {} object(s), {} connection(s) -- {} more cross "
                                       "the selection and were NOT copied",
-                                      copied, connections, clipboard_outside_end_count));
+                                      copied, connections, clipboard.outside_end_count));
   else
     hud::set_announcement(
         std::format("copied {} object(s), {} connection(s)", copied, connections));
@@ -595,14 +593,14 @@ void Selection_Tool::copy_selection_to_clipboard(editor_context_t& ctx)
 
 void Selection_Tool::adopt_clipboard(shared::map_t piece, size_t outside_end_count)
 {
-  clipboard_outside_end_count = outside_end_count;
+  clipboard.outside_end_count = outside_end_count;
 
-  clipboard_brush_hulls.clear();
-  clipboard_brush_hulls.reserve(piece.geometry.size());
+  clipboard.brush_hulls.clear();
+  clipboard.brush_hulls.reserve(piece.geometry.size());
   for (const shared::map_geometry_t &entry : piece.geometry)
   {
     const shared::brush_geometry_t *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
-    clipboard_brush_hulls.push_back(brush ? shared::try_build_brush_polyhedron(brush->hull_points)
+    clipboard.brush_hulls.push_back(brush ? shared::try_build_brush_polyhedron(brush->hull_points)
                                           : std::nullopt);
   }
 
@@ -623,35 +621,34 @@ void Selection_Tool::adopt_clipboard(shared::map_t piece, size_t outside_end_cou
     bounds                             = any ? shared::union_aabb(bounds, object) : object;
     any                                = true;
   }
-  clipboard_low_corner_offset = bounds.min;
+  clipboard.low_corner_offset = bounds.min;
 
-  clipboard = std::move(piece);
+  clipboard.piece = std::move(piece);
 }
 
 void Selection_Tool::begin_paste()
 {
-  if (!clipboard || clipboard->object_count() == 0)
+  if (!clipboard.piece || clipboard.piece->object_count() == 0)
   {
     log_warning("selection_tool: nothing on the clipboard to paste");
     return;
   }
 
-  paste_is_pending = true;
+  paste.pending = true;
   // Nothing is placeable until on_update has aimed the cursor at a surface.
-  paste_anchor_valid = false;
+  paste.anchor.reset();
 }
 
 void Selection_Tool::cancel_paste()
 {
   // The clipboard deliberately survives: cancelling says "not there", not
   // "forget what I copied".
-  paste_is_pending   = false;
-  paste_anchor_valid = false;
+  paste = {};
 }
 
 void Selection_Tool::commit_paste(editor_context_t& ctx)
 {
-  if (!paste_is_pending || !paste_anchor_valid || !clipboard || !ctx.map)
+  if (!paste.pending || !paste.anchor || !clipboard.piece || !ctx.map)
     return;
 
   // Captured BEFORE the paste: the wiring is a whole-list diff, so the baseline
@@ -659,7 +656,7 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   std::vector<shared::connection_t> connections_before = ctx.map->connections;
   std::vector<shared::map_group_t>  groups_before      = ctx.map->groups;
 
-  const shared::paste_result_t pasted = shared::paste_map_piece(*ctx.map, *clipboard, paste_anchor);
+  const shared::paste_result_t pasted = shared::paste_map_piece(*ctx.map, *clipboard.piece, *paste.anchor);
   if (pasted.uids.empty())
   {
     log_error("selection_tool: the clipboard would not paste");
@@ -670,8 +667,8 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   // A placed prefab is ONE group, so a click grabs the whole stamp. Any group
   // the piece carried inside it is pulled into this one -- a member belongs
   // to one group, and the stamp is the one the author placed.
-  if (!clipboard_group_name.empty())
-    (void)shared::group_objects(*ctx.map, pasted.uids, clipboard_group_name);
+  if (!clipboard.group_name.empty())
+    (void)shared::group_objects(*ctx.map, pasted.uids, clipboard.group_name);
 
   transaction_t transaction;
   for (shared::entity_uid_t uid : pasted.uids)
@@ -692,7 +689,7 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   // One transaction for the whole paste, so Ctrl+Z takes all of it back at once
   // -- the objects AND the wiring between them -- the same rule the
   // multi-object delete follows.
-  ctx.transaction_system.push(clipboard_group_name.empty() ? std::string("Paste") : std::format("Place prefab {}", clipboard_group_name), std::move(transaction));
+  ctx.transaction_system.push(clipboard.group_name.empty() ? std::string("Paste") : std::format("Place prefab {}", clipboard.group_name), std::move(transaction));
 
   // The copies become the selection: what you just placed is what the gizmo and
   // the arrow keys should be aimed at.
@@ -912,7 +909,7 @@ void Selection_Tool::ungroup_selection(editor_context_t& ctx)
 
   std::vector<shared::entity_uid_t> group_uids;
   for (shared::entity_uid_t selected : selected_uids)
-    if (const shared::map_group_t *group = shared::find_group_of(*ctx.map, selected))
+    if (const shared::map_group_t *group = shared::find_group_containing_member(*ctx.map, selected))
       if (std::find(group_uids.begin(), group_uids.end(), group->uid) == group_uids.end())
         group_uids.push_back(group->uid);
 
@@ -1199,7 +1196,7 @@ void Selection_Tool::on_enable(editor_context_t& ctx)
   editor_gizmo.clear_target();
   uid_pick.disarm();
   snap_pick = {};
-  click_consumed_by_gesture = false;
+  press_was_spent_on_pick_or_paste = false;
 }
 
 void Selection_Tool::on_disable(editor_context_t& ctx)
@@ -1210,26 +1207,26 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
   cancel_paste();
   uid_pick.disarm();
   snap_pick = {};
-  click_consumed_by_gesture = false;
+  press_was_spent_on_pick_or_paste = false;
 }
 
 void Selection_Tool::on_draw_ui(editor_context_t& ctx)
 {
   settle_inspector_edit(ctx);
 
-  if (is_dragging_box)
+  if (box_drag.active)
   {
     ImDrawList *draw_list = ImGui::GetForegroundDrawList();
     ImVec2 mouse_pos = ImGui::GetMousePos();
-    drag_current_position.x = (int)mouse_pos.x;
-    drag_current_position.y = (int)mouse_pos.y;
+    box_drag.current_position.x = (int)mouse_pos.x;
+    box_drag.current_position.y = (int)mouse_pos.y;
 
-    int dx = drag_current_position.x - drag_start_position.x;
-    int dy = drag_current_position.y - drag_start_position.y;
+    int dx = box_drag.current_position.x - press_position.x;
+    int dy = box_drag.current_position.y - press_position.y;
 
     if (dx * dx + dy * dy > 25)
     { // 5px threshold
-      ImVec2 p1 = ImVec2((float)drag_start_position.x, (float)drag_start_position.y);
+      ImVec2 p1 = ImVec2((float)press_position.x, (float)press_position.y);
       ImVec2 p2 = mouse_pos;
       draw_list->AddRect(p1, p2, IM_COL32(0, 255, 0, 255));
       draw_list->AddRectFilled(p1, p2, IM_COL32(0, 255, 0, 50));
@@ -1285,8 +1282,8 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   // proximity hit on a light in front of a wall is visibly a choice rather than
   // a surprise. Not drawn while another gesture owns the cursor -- a paste
   // preview, a drag or an armed pick each already say what the click will do.
-  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !snap_pick.armed && !paste_is_pending &&
-      !is_dragging_box && !is_dragging_object && !editor_gizmo.is_dragging())
+  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !snap_pick.armed && !paste.pending &&
+      !box_drag.active && !object_drag.active && !editor_gizmo.is_dragging())
   {
     const std::optional<linalg::vec3> anchor =
         shared::try_get_object_position(*ctx.map, hovered_uid);
@@ -1325,7 +1322,7 @@ void Selection_Tool::on_draw_inspector(editor_context_t& ctx)
       ImGui::EndTabItem();
     }
 
-    const connection_counts_t counts = count_connections_of(*ctx.map, uid);
+    const connection_counts_t counts = count_connections_by_uid(*ctx.map, uid);
     const std::string label =
         std::format("Connections ({} out, {} in)###connections", counts.outbound, counts.inbound);
     const ImGuiTabItemFlags flags = uid_pick.is_row_pick() ? ImGuiTabItemFlags_SetSelected : 0;
@@ -1353,7 +1350,7 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   {
     std::vector<shared::entity_uid_t> touched;
     for (shared::entity_uid_t selected : selected_uids)
-      if (const shared::map_group_t *group = shared::find_group_of(*ctx.map, selected))
+      if (const shared::map_group_t *group = shared::find_group_containing_member(*ctx.map, selected))
         if (std::find(touched.begin(), touched.end(), group->uid) == touched.end())
           touched.push_back(group->uid);
 
@@ -1519,12 +1516,12 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   ImGui::Separator();
   if (ImGui::Button("Save as prefab..."))
   {
-    prefab_overwrite = false;
-    prefab_status.clear();
+    prefab_save.overwrite = false;
+    prefab_save.status.clear();
     ImGui::OpenPopup("Save as prefab");
   }
-  if (!prefab_status.empty())
-    ImGui::TextUnformatted(prefab_status.c_str());
+  if (!prefab_save.status.empty())
+    ImGui::TextUnformatted(prefab_save.status.c_str());
 
   draw_prefab_save_popup(ctx);
 }
@@ -1537,7 +1534,7 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
                                             shared::entity_uid_t uid,
                                             const entities::Entity& entity)
 {
-  const std::optional<shared::scene_light_t> light = shared::try_light_of(entity);
+  const std::optional<shared::scene_light_t> light = shared::try_convert_light_entity_to_scene_light(entity);
   if (!light)
     return;
 
@@ -1586,8 +1583,8 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
   // and this says why.
   if (ImGui::Button("Explain what this light reaches"))
   {
-    light_reach_uid = uid;
-    light_reach_lines.clear();
+    light_reach.uid = uid;
+    light_reach.lines.clear();
 
     std::vector<shared::light_reach_on_face_t> reach = shared::probe_light_reach(
         *ctx.map, {uid, *light}, lightmap.settings, 0.25f, 100000.f, 24);
@@ -1602,7 +1599,7 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
 
     int total_visible = 0;
     for (const shared::light_reach_on_face_t& face : reach) total_visible += face.visible;
-    light_reach_lines.push_back(
+    light_reach.lines.push_back(
         std::format("{} faces sampled; {} samples lit in total. range {:.0f}{}",
                     reach.size(), total_visible, light->range,
                     light->kind == shared::light_kind_t::Spot
@@ -1627,7 +1624,7 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
       else
         why = "attenuation reached zero";
 
-      light_reach_lines.push_back(std::format(
+      light_reach.lines.push_back(std::format(
           "obj {} n({:+.0f},{:+.0f},{:+.0f}): {}/{} arrive, {} face it, {} lit; nearest {:.0f}{} -- {}",
           face.object_uid, face.normal.x, face.normal.y, face.normal.z, face.arrives,
           face.sampled, face.reaches, face.visible, face.nearest_distance,
@@ -1637,11 +1634,11 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
           why));
     }
     if (reach.size() > MAX_LINES)
-      light_reach_lines.push_back(std::format("...and {} more faces", reach.size() - MAX_LINES));
+      light_reach.lines.push_back(std::format("...and {} more faces", reach.size() - MAX_LINES));
   }
 
-  if (light_reach_uid == uid)
-    for (const std::string& line : light_reach_lines) ImGui::TextWrapped("%s", line.c_str());
+  if (light_reach.uid == uid)
+    for (const std::string& line : light_reach.lines) ImGui::TextWrapped("%s", line.c_str());
 
   if (!shared::light_is_baked(light->mode))
   {
@@ -1704,7 +1701,7 @@ void Selection_Tool::draw_reflection_volume_status(const editor_context_t& ctx,
     return;
   }
 
-  const shared::reflection_volume_coverage_t coverage = shared::reflection_volume_coverage_of(
+  const shared::reflection_volume_coverage_t coverage = shared::compute_reflection_volume_coverage(
       set, shared::get_bounds(volume->volume, volume->position));
   if (coverage.covered == 0)
     ImGui::TextColored(warning_color,
@@ -1749,7 +1746,7 @@ void Selection_Tool::on_update(editor_context_t& ctx,
   {
     adopt_clipboard(std::move(*ctx.requested_paste), 0);
     ctx.requested_paste.reset();
-    clipboard_group_name = std::move(ctx.requested_paste_group_name);
+    clipboard.group_name = std::move(ctx.requested_paste_group_name);
     ctx.requested_paste_group_name.clear();
     begin_paste();
   }
@@ -1797,18 +1794,15 @@ void Selection_Tool::on_update(editor_context_t& ctx,
 
   // A pending paste owns the cursor: no hover, no gizmo, no box drag, because
   // every one of those wants the same LMB that commits the placement.
-  if (paste_is_pending)
+  if (paste.pending)
   {
     editor_gizmo.clear_target();
     hovered_uid      = 0;
-    grid_hover_valid = false;
+    grid_hover.reset();
 
-    const std::optional<linalg::vec3> point = try_pick_placement_point(ctx, view);
-    paste_anchor_valid                      = point.has_value();
-    if (!point)
+    paste.anchor = try_pick_placement_point(ctx, view);
+    if (!paste.anchor)
       return;
-
-    paste_anchor = *point;
 
     // Put the GROUP's low corner on a grid line and carry the anchor with it, so
     // a pasted arrangement lands where the brush tool would snap a vertex and
@@ -1816,10 +1810,10 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     const float step = ctx.grid ? ctx.grid->step() : 0.0f;
     if (step > 0.0f)
     {
-      const linalg::vec3 low = paste_anchor + clipboard_low_corner_offset;
-      paste_anchor = paste_anchor + linalg::vec3{editor::snap(low.x, step) - low.x,
-                                                 editor::snap(low.y, step) - low.y,
-                                                 editor::snap(low.z, step) - low.z};
+      const linalg::vec3 low = *paste.anchor + clipboard.low_corner_offset;
+      paste.anchor = *paste.anchor + linalg::vec3{editor::snap(low.x, step) - low.x,
+                                                  editor::snap(low.y, step) - low.y,
+                                                  editor::snap(low.z, step) - low.z};
     }
     return;
   }
@@ -1895,13 +1889,13 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     editor_gizmo.update_hover(view.mouse_ray);
   }
 
-  if (!is_dragging_box)
+  if (!box_drag.active)
   {
     hovered_uid = 0;
 
     if (editor_gizmo.is_hovered())
     {
-      grid_hover_valid = false;
+      grid_hover.reset();
       return;
     }
 
@@ -1944,16 +1938,9 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     }
 
     if (!hit_bvh)
-    {
-      const std::optional<linalg::vec3> point = try_pick_work_plane_point(ctx, view);
-      grid_hover_valid                        = point.has_value();
-      if (point)
-        grid_hover_position = *point;
-    }
+      grid_hover = try_pick_work_plane_point(ctx, view);
     else
-    {
-      grid_hover_valid = false;
-    }
+      grid_hover.reset();
   }
 }
 
@@ -2068,7 +2055,7 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
   {
     if (snap_pick.armed && ctx.map)
     {
-      click_consumed_by_gesture = true;
+      press_was_spent_on_pick_or_paste = true;
       const bool with_orientation = snap_pick.with_orientation;
       snap_pick = {};
 
@@ -2085,7 +2072,7 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
     // and a pick must do neither.
     if (uid_pick.armed && ctx.map)
     {
-      click_consumed_by_gesture = true;
+      press_was_spent_on_pick_or_paste = true;
       uid_pick.armed    = false;
 
       const std::optional<shared::entity_uid_t> target = try_pick_entity_near_cursor(
@@ -2113,11 +2100,11 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
       return;
     }
 
-    if (paste_is_pending)
+    if (paste.pending)
     {
       // Swallowed like the connection pick: commit_paste selects what it
       // pasted, and this click's release would land on nothing and clear it.
-      click_consumed_by_gesture = true;
+      press_was_spent_on_pick_or_paste = true;
       commit_paste(ctx);
       return;
     }
@@ -2133,40 +2120,39 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
     // from a ctrl+CLICK, which adds to the selection instead.
     if (e.mods.ctrl && !selected_uids.empty() && ctx.map)
     {
-      drag_start_position   = e.position;
-      drag_current_position = e.position;
+      press_position   = e.position;
+      box_drag.current_position = e.position;
       capture_drag_snapshots(ctx);
 
-      if (!drag_origins.empty())
+      if (!drag_baseline.origins.empty())
       {
         linalg::vec3 center = {0, 0, 0};
-        for (const drag_origin_t &origin : drag_origins)
+        for (const drag_origin_t &origin : drag_baseline.origins)
           center = center + origin.position;
-        center = center * (1.0f / (float)drag_origins.size());
+        center = center * (1.0f / (float)drag_baseline.origins.size());
 
         auto basis = client::get_orientation_vectors(cached_viewport.camera);
-        drag_plane_normal = basis.forward;
+        object_drag.plane_normal = basis.forward;
 
         float t = 0.0f;
         if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
                                         cached_viewport.mouse_ray.direction,
-                                        center, drag_plane_normal, t) && t > 0)
+                                        center, object_drag.plane_normal, t) && t > 0)
         {
-          drag_plane_hit_start = cached_viewport.mouse_ray.origin +
+          object_drag.plane_hit_start = cached_viewport.mouse_ray.origin +
                                  cached_viewport.mouse_ray.direction * t;
-          is_dragging_object            = true;
-          object_drag_left_click_radius = false;
+          object_drag.active            = true;
+          object_drag.left_click_radius = false;
           return;
         }
 
-        drag_start_snapshots.clear();
-        drag_origins.clear();
+        drag_baseline.clear();
       }
     }
 
-    is_dragging_box = false;
-    drag_start_position = e.position;
-    drag_current_position = e.position;
+    box_drag.active = false;
+    press_position = e.position;
+    box_drag.current_position = e.position;
 
     ImVec2 m = ImGui::GetMousePos();
     if (std::abs(m.x - e.position.x) < 20 && std::abs(m.y - e.position.y) < 20)
@@ -2174,11 +2160,11 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
     }
     else
     {
-      drag_start_position = {(int)m.x, (int)m.y};
-      drag_current_position = drag_start_position;
+      press_position = {(int)m.x, (int)m.y};
+      box_drag.current_position = press_position;
     }
 
-    is_dragging_box = true;
+    box_drag.active = true;
 
   }
 }
@@ -2186,30 +2172,30 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
 void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
                                    const input::mouse_event_t &e)
 {
-  if (is_dragging_object && !drag_origins.empty() && ctx.map)
+  if (object_drag.active && !drag_baseline.origins.empty() && ctx.map)
   {
     // A ctrl+CLICK must move nothing: until the mouse leaves the click radius
     // this press may still be an add-to-selection, and a zero delta would
     // still snap a lone off-grid object onto the grid.
-    if (!object_drag_left_click_radius)
+    if (!object_drag.left_click_radius)
     {
-      const int drag_dx = e.position.x - drag_start_position.x;
-      const int drag_dy = e.position.y - drag_start_position.y;
+      const int drag_dx = e.position.x - press_position.x;
+      const int drag_dy = e.position.y - press_position.y;
       if (drag_dx * drag_dx + drag_dy * drag_dy <= CLICK_MOVEMENT_THRESHOLD_SQUARED)
         return;
-      object_drag_left_click_radius = true;
+      object_drag.left_click_radius = true;
     }
 
     // Use the first object's start position as the plane reference point
-    linalg::vec3 plane_point = drag_origins[0].position;
+    linalg::vec3 plane_point = drag_baseline.origins[0].position;
     float t = 0.0f;
     if (linalg::intersect_ray_plane(cached_viewport.mouse_ray.origin,
                                     cached_viewport.mouse_ray.direction,
-                                    plane_point, drag_plane_normal, t) && t > 0)
+                                    plane_point, object_drag.plane_normal, t) && t > 0)
     {
       linalg::vec3 current_hit = cached_viewport.mouse_ray.origin +
                                  cached_viewport.mouse_ray.direction * t;
-      linalg::vec3 delta = current_hit - drag_plane_hit_start;
+      linalg::vec3 delta = current_hit - object_drag.plane_hit_start;
 
       const float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
       const float snap_step = e.mods.alt ? 0.0f : grid_step;
@@ -2219,7 +2205,7 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
       // that was aligned stays aligned. Two drag styles for the same objects
       // reading the grid differently is indistinguishable from the grid itself
       // misbehaving -- which is exactly how it was reported.
-      const bool single = drag_origins.size() == 1;
+      const bool single = drag_baseline.origins.size() == 1;
       for (int axis = 0; axis < 3; ++axis)
       {
         if (!single)
@@ -2228,11 +2214,11 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
           continue;
         }
 
-        const float start = drag_origins[0].position[axis];
+        const float start = drag_baseline.origins[0].position[axis];
         delta[axis] = editor::snap(start + delta[axis], snap_step) - start;
       }
 
-      for (const drag_origin_t &origin : drag_origins)
+      for (const drag_origin_t &origin : drag_baseline.origins)
       {
         if (!shared::try_set_object_position(*ctx.map, origin.uid, origin.position + delta))
           log_error("selection tool: object {} vanished mid-drag", origin.uid);
@@ -2241,9 +2227,9 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
     return;
   }
 
-  if (is_dragging_box)
+  if (box_drag.active)
   {
-    drag_current_position = e.position;
+    box_drag.current_position = e.position;
   }
 }
 
@@ -2251,13 +2237,10 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
 {
   if (e.button == input::mouse_button_t::Left)
   {
-    // The press was a gesture -- a target pick or a paste commit -- so the
-    // release is the other half of it and must not fall through to the
-    // selection branch below.
-    if (click_consumed_by_gesture)
+    if (press_was_spent_on_pick_or_paste)
     {
-      click_consumed_by_gesture = false;
-      is_dragging_box          = false;
+      press_was_spent_on_pick_or_paste = false;
+      box_drag.active = false;
       return;
     }
 
@@ -2273,9 +2256,9 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       return;
     }
 
-    if (is_dragging_object)
+    if (object_drag.active)
     {
-      is_dragging_object = false;
+      object_drag.active = false;
       commit_drag_snapshots(ctx, "Move");
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -2284,14 +2267,14 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       // The two are one gesture until the mouse moves, so a press that never
       // did falls through to the selection branch below -- the commit above is
       // a no-op when nothing moved, so nothing lands on the undo stack.
-      if (object_drag_left_click_radius)
+      if (object_drag.left_click_radius)
         return;
     }
 
-    is_dragging_box = false;
+    box_drag.active = false;
 
-    int dx = e.position.x - drag_start_position.x;
-    int dy = e.position.y - drag_start_position.y;
+    int dx = e.position.x - press_position.x;
+    int dy = e.position.y - press_position.y;
     bool moved_significantly = (dx * dx + dy * dy) > CLICK_MOVEMENT_THRESHOLD_SQUARED;
 
     if (moved_significantly)
@@ -2299,10 +2282,10 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       if (!ctx.map)
         return;
 
-      int x_min = std::min(drag_start_position.x, drag_current_position.x);
-      int x_max = std::max(drag_start_position.x, drag_current_position.x);
-      int y_min = std::min(drag_start_position.y, drag_current_position.y);
-      int y_max = std::max(drag_start_position.y, drag_current_position.y);
+      int x_min = std::min(press_position.x, box_drag.current_position.x);
+      int x_max = std::max(press_position.x, box_drag.current_position.x);
+      int y_min = std::min(press_position.y, box_drag.current_position.y);
+      int y_max = std::max(press_position.y, box_drag.current_position.y);
 
       if (!e.mods.shift && !e.mods.ctrl)
       {
@@ -2532,33 +2515,33 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   // The paste preview is the placement tool's ghost, deliberately: a wireframe
   // is what "not placed yet" already looks like in this editor, and the
   // pulsating outline below already means "selected".
-  if (paste_is_pending && paste_anchor_valid)
+  if (paste.pending && paste.anchor)
   {
     // The piece's members are already anchored at its origin, so the whole
     // preview is one translation by the cursor's anchor.
-    for (size_t index = 0; clipboard && index < clipboard->geometry.size(); ++index)
+    for (size_t index = 0; clipboard.piece && index < clipboard.piece->geometry.size(); ++index)
     {
-      const shared::map_geometry_t &entry = clipboard->geometry[index];
+      const shared::map_geometry_t &entry = clipboard.piece->geometry[index];
 
-      if (index < clipboard_brush_hulls.size() && clipboard_brush_hulls[index])
+      if (index < clipboard.brush_hulls.size() && clipboard.brush_hulls[index])
       {
         // Traced from the hull captured at copy time. draw_geometry_ghost
         // would rebuild it every frame.
-        draw_brush_hull_wireframe(draws, *clipboard_brush_hulls[index], paste_anchor,
+        draw_brush_hull_wireframe(draws, *clipboard.brush_hulls[index], *paste.anchor,
                                   colors::yellow, 0.0f);
         continue;
       }
 
-      draw_geometry_ghost(entry.value, draws, paste_anchor + shared::get_position(entry.value));
+      draw_geometry_ghost(entry.value, draws, *paste.anchor + shared::get_position(entry.value));
     }
 
-    if (clipboard)
+    if (clipboard.piece)
     {
-      for (const shared::map_entity_t &entry : clipboard->entities)
+      for (const shared::map_entity_t &entry : clipboard.piece->entities)
       {
         if (!entry.entity)
           continue;
-        const linalg::vec3 position = paste_anchor + entry.entity->position;
+        const linalg::vec3 position = *paste.anchor + entry.entity->position;
         draw_entity_ghost(entry.entity.get(), draws, position, draw_settings);
       }
     }
@@ -2625,9 +2608,9 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   }
 
   // 2. Highlight Hovered Item - Yellow
-  int dx = drag_current_position.x - drag_start_position.x;
-  int dy = drag_current_position.y - drag_start_position.y;
-  bool is_dragging_significantly = is_dragging_box && (dx * dx + dy * dy > 25);
+  int dx = box_drag.current_position.x - press_position.x;
+  int dy = box_drag.current_position.y - press_position.y;
+  bool is_dragging_significantly = box_drag.active && (dx * dx + dy * dy > 25);
 
   // Every member the click would take, so a group reads as one thing before
   // it is one selection. Members already selected are drawn as selected.
@@ -2643,10 +2626,10 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   // 3. Highlight Box Selection candidates (Live Preview) - Yellow
   if (is_dragging_significantly)
   {
-    int x_min = std::min(drag_start_position.x, drag_current_position.x);
-    int x_max = std::max(drag_start_position.x, drag_current_position.x);
-    int y_min = std::min(drag_start_position.y, drag_current_position.y);
-    int y_max = std::max(drag_start_position.y, drag_current_position.y);
+    int x_min = std::min(press_position.x, box_drag.current_position.x);
+    int x_max = std::max(press_position.x, box_drag.current_position.x);
+    int y_min = std::min(press_position.y, box_drag.current_position.y);
+    int y_max = std::max(press_position.y, box_drag.current_position.y);
 
     const auto &view = cached_viewport;
 
@@ -2673,10 +2656,10 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   }
 
   // 4. Grid Indication
-  if (grid_hover_valid && hovered_uid == 0 &&
+  if (grid_hover && hovered_uid == 0 &&
       !is_dragging_significantly && !editor_gizmo.is_dragging())
   {
-    linalg::vec3 center = grid_hover_position;
+    linalg::vec3 center = *grid_hover;
     center.y -= 2.0f * editor::GRID_INDICATOR_HALF_H;
     linalg::vec3 half_extents = {editor::GRID_INDICATOR_HALF_W,
                                   editor::GRID_INDICATOR_HALF_H,

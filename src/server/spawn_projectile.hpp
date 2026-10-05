@@ -14,7 +14,7 @@ inline constexpr shared::alive_limit_t NO_ALIVE_LIMIT = {};
 // The trigger picks which half of the row it reads, and is stamped on the
 // Projectile so the flight AND the contact read the same half. Names no type:
 // what a kind does on arrival is its row's contact, not a field written here.
-// The limit is the firing Weapon_Entity's (shared::alive_limit_of); a shooter holding no weapon has none.
+// The limit is the firing Weapon_Entity's (shared::get_concurrent_projectiles_alive_limit); a shooter holding no weapon has none.
 shared::entity_uid_t spawn_projectile(
     server_context_t& context, shared::entity_uid_t owner_uid,
     const shared::weapon_definition_t& weapon, const vec3f& origin, const vec3f& direction,

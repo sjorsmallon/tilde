@@ -33,7 +33,7 @@ static int fail(const char *msg)
   return 1;
 }
 
-template <typename T> static size_t count_of(const map_t &m)
+template <typename T> static size_t count_entities_of_type(const map_t &m)
 {
   size_t n = 0;
   for (const auto &e : m.entities)
@@ -102,7 +102,7 @@ int main()
   // Geometry must NOT have landed in the entity list — that's the whole point.
   for (const auto &e : loaded.entities)
   {
-    const std::string classname = entities::classname_of(e.entity.get());
+    const std::string classname = entities::get_classname(e.entity.get());
     if (classname == "aabb_entity" || classname == "displacement_entity" ||
         classname == "static_mesh_entity" || classname == "wedge_entity")
       return fail("conversion: geometry is still in the entity list");

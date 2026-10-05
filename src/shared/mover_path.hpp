@@ -43,7 +43,7 @@ struct path_pose_t
 
 [[nodiscard]] path_links_t derive_path_links(const Entity_System& system);
 
-[[nodiscard]] entity_uid_t previous_node_of(const path_links_t& links, entity_uid_t node);
+[[nodiscard]] entity_uid_t find_previous_node(const path_links_t& links, entity_uid_t node);
 
 [[nodiscard]] std::optional<path_segment_t> try_cut_path_segment(const Entity_System& system,
                                                                  const path_links_t&  links,

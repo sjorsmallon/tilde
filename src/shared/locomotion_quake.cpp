@@ -15,8 +15,8 @@ wanted_move_t quake_step(const movement_settings_t& settings, const contacts_t& 
                          bool grounded, const vec3& velocity_entering_move, move_state_t& state,
                          const move_input_t& input)
 {
-  const ground_frame_t frame = ground_frame_of(contacts, grounded, velocity_entering_move.y);
-  const wish_t         wish  = wish_of(settings, input, frame.has_ground, frame.normal);
+  const ground_under_step_t frame = compute_ground_under_step(contacts, grounded, velocity_entering_move.y);
+  const wish_t         wish  = compute_wish_direction_and_speed(settings, input, frame.has_ground, frame.normal);
   const float          dt    = input.dt;
 
   if (frame.walking)
@@ -30,7 +30,7 @@ wanted_move_t quake_step(const movement_settings_t& settings, const contacts_t& 
                             settings.quake.ground_acceleration, friction.acceleration_duration);
 
     return {.velocity               = velocity,
-            .horizontal_speed_limit = horizontal_speed_limit_of(settings, true,
+            .horizontal_speed_limit = compute_horizontal_speed_limit(settings, true,
                                                                 length(friction.velocity))};
   }
 
@@ -41,9 +41,9 @@ wanted_move_t quake_step(const movement_settings_t& settings, const contacts_t& 
   {
     // if we are in the air, you have less control.
     const float target_speed   = std::min(wish.speed, settings.quake.air_target_speed);
-    const float pushes_in_step = static_cast<float>(input.aim_sweep.push_count);
-    const float turn_radians   = linalg::to_radians(input.aim_sweep.yaw_change_degrees);
-    for (uint32_t push = 0; push < input.aim_sweep.push_count; ++push)
+    const float pushes_in_step = static_cast<float>(input.aim_turn_across_step.push_count);
+    const float turn_radians   = linalg::to_radians(input.aim_turn_across_step.yaw_change_degrees);
+    for (uint32_t push = 0; push < input.aim_turn_across_step.push_count; ++push)
     {
       const vec3 push_direction = rotate_about_y(
           wish.direction, turn_radians * (static_cast<float>(push) + 0.5f) / pushes_in_step);
@@ -54,7 +54,7 @@ wanted_move_t quake_step(const movement_settings_t& settings, const contacts_t& 
 
   return {.velocity               = velocity,
           .vertical_velocity      = velocity_entering_move.y,
-          .horizontal_speed_limit = horizontal_speed_limit_of(settings, false, length(horizontal)),
+          .horizontal_speed_limit = compute_horizontal_speed_limit(settings, false, length(horizontal)),
           .gravity                = settings.shared.gravity};
 }
 

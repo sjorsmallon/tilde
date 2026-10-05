@@ -70,7 +70,7 @@ struct predicted_world_t
 // The disabled set is ONE PER TEAM, because a team wall is not there for one
 // team's movers and solid for the rest (disabled_geometry.hpp). The team is the
 // only input, so three sets serve every player; the view a mover takes is
-// picked by `predicted_world_of(storage, team)` and player_move never learns the team.
+// picked by `get_predicted_world_for_team(storage, team)` and player_move never learns the team.
 struct predicted_world_storage_t
 {
   Enum_Array<entities::Team_Allegiance, disabled_geometry_t> disabled_geometry;
@@ -80,7 +80,7 @@ struct predicted_world_storage_t
   std::vector<reveal_cone_planes_t>                          reveal_cones;
 };
 
-[[nodiscard]] inline predicted_world_t predicted_world_of(const predicted_world_storage_t& storage,
+[[nodiscard]] inline predicted_world_t get_predicted_world_for_team(const predicted_world_storage_t& storage,
                                                           entities::Team_Allegiance mover_team)
 {
   // `try_get` because a team is a replicated field: an out-of-range one reads as

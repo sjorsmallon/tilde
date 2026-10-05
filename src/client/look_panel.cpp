@@ -52,6 +52,7 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Cel", cvars::cvar_id::r_cel_shadow_red, 0.0f, 1.0f, 3, "r_cel_shadow rgb"},
     {"Cel", cvars::cvar_id::r_cel_bands, 0.0f, 8.0f},
     {"Cel", cvars::cvar_id::r_cel_flat_albedo},
+    {"Cel", cvars::cvar_id::r_cel_black, 0.0f, 0.5f},
     {"Fill", cvars::cvar_id::r_cel_halftone, 0.0f, 4.0f},
     {"Fill", cvars::cvar_id::r_cel_halftone_paper, 0.0f, 4.0f},
     {"Fill", cvars::cvar_id::r_cel_fill},
@@ -78,11 +79,21 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Pebble", cvars::cvar_id::r_cel_pebble_size, 0.0f, 0.5f},
     {"Pebble", cvars::cvar_id::r_cel_pebble_irregularity},
     {"Pebble", cvars::cvar_id::r_cel_pebble_width, 0.5f, 8.0f},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_spacing_along, 1.0f, 256.0f},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_spacing_across, 1.0f, 256.0f},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_angle, 0.0f, 180.0f},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_scroll, -128.0f, 128.0f},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_coverage},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_shape},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_strength},
+    {"Pattern preview", cvars::cvar_id::r_pattern_preview_red, 0.0f, 1.0f, 3, "r_pattern_preview rgb"},
     {"Ink", cvars::cvar_id::r_ink},
     {"Ink", cvars::cvar_id::r_ink_threshold, 0.0f, 20.0f},
     {"Ink", cvars::cvar_id::r_ink_crease_degrees, 1.0f, 90.0f},
     {"Ink", cvars::cvar_id::r_ink_width, 1.0f, 8.0f},
     {"Ink", cvars::cvar_id::r_ink_tint},
+    {"Ink", cvars::cvar_id::r_ink_on_black},
     {"Ink", cvars::cvar_id::r_ink_wobble, 0.0f, 8.0f},
     {"Ink", cvars::cvar_id::r_ink_wobble_scale, 4.0f, 200.0f},
     {"Ink", cvars::cvar_id::r_ink_boil, 0.0f, 24.0f},
@@ -90,6 +101,8 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Ink", cvars::cvar_id::r_ink_weight_distance, 16.0f, 2048.0f},
     {"Rim", cvars::cvar_id::r_rim},
     {"Rim", cvars::cvar_id::r_rim_width, 1.0f, 16.0f},
+    {"Misprint", cvars::cvar_id::r_misprint, 0.0f, 8.0f},
+    {"Misprint", cvars::cvar_id::r_misprint_distance, 64.0f, 8192.0f},
     {"Flashlight", cvars::cvar_id::r_flashlight_intensity, 0.0f, 200.0f},
     {"Flashlight", cvars::cvar_id::r_flashlight_red, 0.0f, 1.0f, 3, "r_flashlight rgb"},
     {"Flashlight", cvars::cvar_id::r_flashlight_inner, 0.0f, 0.99f},
@@ -100,18 +113,23 @@ static_assert(static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_green) ==
                   static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_blue) ==
                       static_cast<uint32_t>(cvars::cvar_id::r_cel_shadow_red) + 2,
               "The colour row reads r_cel_shadow_red, _green, _blue as three consecutive cvar ids.");
+static_assert(static_cast<uint32_t>(cvars::cvar_id::r_pattern_preview_green) ==
+                      static_cast<uint32_t>(cvars::cvar_id::r_pattern_preview_red) + 1 &&
+                  static_cast<uint32_t>(cvars::cvar_id::r_pattern_preview_blue) ==
+                      static_cast<uint32_t>(cvars::cvar_id::r_pattern_preview_red) + 2,
+              "The colour row reads r_pattern_preview_red, _green, _blue as three consecutive cvar ids.");
 static_assert(static_cast<uint32_t>(cvars::cvar_id::r_flashlight_green) ==
                       static_cast<uint32_t>(cvars::cvar_id::r_flashlight_red) + 1 &&
                   static_cast<uint32_t>(cvars::cvar_id::r_flashlight_blue) ==
                       static_cast<uint32_t>(cvars::cvar_id::r_flashlight_red) + 2,
               "The colour row reads r_flashlight_red, _green, _blue as three consecutive cvar ids.");
 
-[[nodiscard]] cvars::cvar_id channel_of(const look_row_t& row, uint32_t channel)
+[[nodiscard]] cvars::cvar_id get_cvar_id_for_color_channel(const look_row_t& row, uint32_t channel)
 {
   return static_cast<cvars::cvar_id>(static_cast<uint32_t>(row.id) + channel);
 }
 
-template <typename T> [[nodiscard]] T& value_of(cvars::cvar_state_t& state, cvars::cvar_id id)
+template <typename T> [[nodiscard]] T& get_cvar_value(cvars::cvar_state_t& state, cvars::cvar_id id)
 {
   return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(&state) + cvars::cvar_info(id).offset);
 }
@@ -120,10 +138,10 @@ void draw_colour_row(cvars::cvar_state_t& state, const look_row_t& row)
 {
   float colour[3];
   for (uint32_t channel = 0; channel < 3; ++channel)
-    colour[channel] = value_of<float>(state, channel_of(row, channel));
+    colour[channel] = get_cvar_value<float>(state, get_cvar_id_for_color_channel(row, channel));
   if (ImGui::ColorEdit3(row.colour_label, colour, ImGuiColorEditFlags_Float))
     for (uint32_t channel = 0; channel < 3; ++channel)
-      value_of<float>(state, channel_of(row, channel)) = colour[channel];
+      get_cvar_value<float>(state, get_cvar_id_for_color_channel(row, channel)) = colour[channel];
 }
 
 void draw_value_row(cvars::cvar_state_t& state, const look_row_t& row)
@@ -132,18 +150,18 @@ void draw_value_row(cvars::cvar_state_t& state, const look_row_t& row)
   switch (info.type)
   {
   case cvars::CVAR_TYPE_BOOL:
-    ImGui::Checkbox(info.name, &value_of<bool>(state, row.id));
+    ImGui::Checkbox(info.name, &get_cvar_value<bool>(state, row.id));
     break;
   case cvars::CVAR_TYPE_F32:
-    ImGui::SliderFloat(info.name, &value_of<float>(state, row.id), row.minimum, row.maximum, "%.3f");
+    ImGui::SliderFloat(info.name, &get_cvar_value<float>(state, row.id), row.minimum, row.maximum, "%.3f");
     break;
   case cvars::CVAR_TYPE_I32:
-    ImGui::SliderInt(info.name, &value_of<int32_t>(state, row.id), static_cast<int>(row.minimum),
+    ImGui::SliderInt(info.name, &get_cvar_value<int32_t>(state, row.id), static_cast<int>(row.minimum),
                      static_cast<int>(row.maximum));
     break;
   case cvars::CVAR_TYPE_ENUM:
   {
-    uint8_t&                       value = value_of<uint8_t>(state, row.id);
+    uint8_t&                       value = get_cvar_value<uint8_t>(state, row.id);
     const Span<const char* const>& names = info.enum_info->value_names;
     if (ImGui::BeginCombo(info.name, names[value]))
     {
@@ -183,7 +201,7 @@ void draw_value_row(cvars::cvar_state_t& state, const look_row_t& row)
 {
   for (const look_row_t& row : LOOK_ROWS)
     for (uint32_t channel = 0; channel < row.channel_count; ++channel)
-      if (channel_of(row, channel) == id)
+      if (get_cvar_id_for_color_channel(row, channel) == id)
         return true;
   return false;
 }
@@ -201,7 +219,7 @@ void draw_value_row(cvars::cvar_state_t& state, const look_row_t& row)
   for (const look_row_t& row : LOOK_ROWS)
     for (uint32_t channel = 0; channel < row.channel_count; ++channel)
     {
-      const cvars::cvar_id id = channel_of(row, channel);
+      const cvars::cvar_id id = get_cvar_id_for_color_channel(row, channel);
       file << cvars::cvar_info(id).name << ' ' << *cvars::try_cvar_to_text(state, id) << '\n';
     }
   return true;
@@ -212,7 +230,7 @@ void revert_look_to_defaults(cvars::cvar_state_t& state)
   for (const look_row_t& row : LOOK_ROWS)
     for (uint32_t channel = 0; channel < row.channel_count; ++channel)
     {
-      const cvars::cvar_id id = channel_of(row, channel);
+      const cvars::cvar_id id = get_cvar_id_for_color_channel(row, channel);
       shared::revert_cvars_to_defaults(state, Span<const cvars::cvar_id>(&id, 1));
     }
 }

@@ -124,7 +124,7 @@ void copy_networked_fields(const Entity& from, Entity& to);
 
 // The on-disk identity of an entity's type. "unknown" for a null or
 // invalid-tagged entity, which is always a bug at the call site.
-const char* classname_of(const Entity* entity);
+const char* get_classname(const Entity* entity);
 
 // --- Components -------------------------------------------------------------
 //

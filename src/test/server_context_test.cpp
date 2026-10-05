@@ -176,7 +176,7 @@ void test_reset_state_in_preparation_for_new_map_load()
 
   // The match went with the session; the next map load's install_match makes
   // the next one.
-  assert(context.world.session.entity_system.entities_of<entities::Game_Rules_Entity>().empty());
+  assert(context.world.session.entity_system.entities_of_type<entities::Game_Rules_Entity>().empty());
 
   // Survives: the tick clock. Absolute stamps (a match's phase_end_tick,
   // last_fire_tick / death_tick on entities) and both snapshot rings are keyed

@@ -52,6 +52,11 @@ sweep_sphere_against_movers(Span<const mover_t> movers, const linalg::vec3f& fro
 sweep_projectile(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                  const linalg::vec3f& from, const linalg::vec3f& to, float radius);
 
+// What a bounce body asks instead: the same sweep, except it passes an erasable piece where an erase cone holds all it touches, as a hull does.
+[[nodiscard]] std::optional<projectile_hit_t>
+sweep_body(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
+           const linalg::vec3f& from, const linalg::vec3f& to, float radius);
+
 // A living player by its hull, a living damageable by its volume, a physics
 // body by its size, a weapon lying in the world by its volume.
 void collect_projectile_targets(const Entity_System& system, std::vector<projectile_target_t>& out);

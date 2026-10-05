@@ -37,7 +37,7 @@ static bool near(const vec3f& a, const vec3f& b, float tolerance = 1e-3f)
 }
 
 // One box brush per entry, at consecutive geometry indices.
-static Bounding_Volume_Hierarchy world_of(const std::vector<shared::geometry_value_t>& boxes)
+static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::geometry_value_t>& boxes)
 {
   std::vector<BVH_Input> inputs;
   for (uint32_t index = 0; index < boxes.size(); ++index)
@@ -59,7 +59,7 @@ static Bounding_Volume_Hierarchy world_of(const std::vector<shared::geometry_val
 // A floor whose top face is y = 0, spanning 2048 either way.
 static Bounding_Volume_Hierarchy floor_world()
 {
-  return world_of({shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f})});
+  return build_world_from_boxes({shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f})});
 }
 
 static constexpr shared::entity_uid_t platform_uid = 77;
@@ -201,7 +201,7 @@ int main()
 
   printf("two solids: the nearer wins whatever the primitive order\n");
   {
-    const Bounding_Volume_Hierarchy two = world_of({
+    const Bounding_Volume_Hierarchy two = build_world_from_boxes({
         shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
         shared::make_box_brush({0.f, 40.f, 0.f}, {16.f, 8.f, 16.f}),
     });
@@ -263,7 +263,7 @@ int main()
     shared::collect_projectile_targets(system, targets);
     check(targets.size() == 1, "a physics body is a target by its size");
 
-    const Bounding_Volume_Hierarchy wall = world_of({
+    const Bounding_Volume_Hierarchy wall = build_world_from_boxes({
         shared::make_box_brush({200.f, 64.f, 0.f}, {8.f, 64.f, 64.f}),
     });
     const vec3f from{0.f, 8.f, 0.f};

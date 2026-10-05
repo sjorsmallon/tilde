@@ -121,8 +121,11 @@ Udp_Socket::Udp_Socket() : m_socket_handle(INVALID_SOCKET) {}
 
 Udp_Socket::~Udp_Socket() { close(); }
 
-bool Udp_Socket::open(uint16 port, size_t receive_buffer_size_in_bytes)
+bool Udp_Socket::try_open(const socket_open_settings_t& settings)
 {
+  const uint16 port = settings.port_id;
+  const size_t receive_buffer_size_in_bytes = settings.buffer_size_in_bytes;
+
     printf("[UDP] Attempting to open socket on port %d\n", port);
     close();
 

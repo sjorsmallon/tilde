@@ -33,7 +33,7 @@ bool player_is_piloting(const entities::Player_Entity& player)
   return player.movement.active_override == entities::Movement_Override::Pilot;
 }
 
-vec3f heading_of(const entities::Player_Entity& pilot)
+vec3f compute_pilot_heading(const entities::Player_Entity& pilot)
 {
   return linalg::direction_from_angles(pilot.view_angle_yaw, pilot.view_angle_pitch);
 }
@@ -44,9 +44,9 @@ void write_rocket_pose(entities::Guided_Rocket_Entity& rocket, const entities::P
   rocket.orientation = linalg::from_view_angles(pilot.view_angle_yaw, pilot.view_angle_pitch);
 }
 
-const shared::pilot_t* try_find_path_laying_pilot_of(entities::Weapon weapon_id)
+const shared::pilot_t* try_find_path_laying_pilot_by_weapon_id(entities::Weapon weapon_id)
 {
-  const shared::pilot_t* pilot = shared::try_find_pilot_of(shared::get_weapon_definition(weapon_id));
+  const shared::pilot_t* pilot = shared::try_find_pilot_for_weapon(shared::get_weapon_definition(weapon_id));
   if (pilot == nullptr || pilot->leaves != shared::pilot_leaves_t::Path)
     return nullptr;
   return pilot;
@@ -57,7 +57,7 @@ const shared::pilot_t* try_find_path_laying_pilot_of(entities::Weapon weapon_id)
 void solidify_flight_path(server_context_t& context, const ended_flight_t& flight,
                           float tick_interval_seconds)
 {
-  const shared::pilot_t* pilot = try_find_path_laying_pilot_of(flight.weapon_id);
+  const shared::pilot_t* pilot = try_find_path_laying_pilot_by_weapon_id(flight.weapon_id);
   if (pilot == nullptr)
     return;
 
@@ -65,7 +65,7 @@ void solidify_flight_path(server_context_t& context, const ended_flight_t& fligh
 
   std::vector<shared::entity_uid_t> replaced;
   for (const entities::Extending_Platform_Entity& platform :
-       system.entities_of<entities::Extending_Platform_Entity>())
+       system.entities_of_type<entities::Extending_Platform_Entity>())
   {
     if (platform.projectile.owner_uid == flight.pilot_uid &&
         platform.projectile.weapon_id == flight.weapon_id)
@@ -110,7 +110,7 @@ void update_guided_rockets(server_context_t& context, float tick_interval_second
   std::unordered_map<shared::entity_uid_t, shared::flight_path_t>& paths =
       context.world.flight_path_by_rocket_uid;
 
-  for (entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
     if (player_is_piloting(player) && player.health.current_health <= 0)
       (void)shared::try_end_pilot_flight(player.movement);
@@ -120,7 +120,7 @@ void update_guided_rockets(server_context_t& context, float tick_interval_second
   std::vector<shared::entity_uid_t> spent;
   std::vector<ended_flight_t>       ended;
 
-  for (entities::Guided_Rocket_Entity& rocket : system.entities_of<entities::Guided_Rocket_Entity>())
+  for (entities::Guided_Rocket_Entity& rocket : system.entities_of_type<entities::Guided_Rocket_Entity>())
   {
     const entities::Player_Entity* pilot = system.get<entities::Player_Entity>(rocket.pilot_uid);
     const bool pilot_is_alive = pilot != nullptr && pilot->health.current_health > 0;
@@ -131,9 +131,9 @@ void update_guided_rockets(server_context_t& context, float tick_interval_second
       write_rocket_pose(rocket, *pilot);
       piloted.push_back(pilot->entity_id);
 
-      const shared::pilot_t* row = try_find_path_laying_pilot_of(rocket.weapon_id);
+      const shared::pilot_t* row = try_find_path_laying_pilot_by_weapon_id(rocket.weapon_id);
       if (row != nullptr && path != paths.end())
-        shared::record_flight_path(path->second, row->path, rocket.position, heading_of(*pilot));
+        shared::record_flight_path(path->second, row->path, rocket.position, compute_pilot_heading(*pilot));
       continue;
     }
 
@@ -154,7 +154,7 @@ void update_guided_rockets(server_context_t& context, float tick_interval_second
   }
 
   std::vector<shared::entity_uid_t> launched;
-  for (const entities::Player_Entity& player : system.entities_of<entities::Player_Entity>())
+  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
     if (!player_is_piloting(player) || player.health.current_health <= 0)
       continue;
@@ -182,11 +182,11 @@ void update_guided_rockets(server_context_t& context, float tick_interval_second
     write_rocket_pose(*rocket, *pilot);
 
     // The body has held since the press, so the eye is still where the flight began.
-    if (const shared::pilot_t* row = try_find_path_laying_pilot_of(rocket->weapon_id))
+    if (const shared::pilot_t* row = try_find_path_laying_pilot_by_weapon_id(rocket->weapon_id))
     {
       shared::flight_path_t path = shared::begin_flight_path(
-          pilot->position + vec3f{0.f, shared::player_eye_height, 0.f}, heading_of(*pilot));
-      shared::record_flight_path(path, row->path, rocket->position, heading_of(*pilot));
+          pilot->position + vec3f{0.f, shared::player_eye_height, 0.f}, compute_pilot_heading(*pilot));
+      shared::record_flight_path(path, row->path, rocket->position, compute_pilot_heading(*pilot));
       paths[uid] = std::move(path);
     }
   }

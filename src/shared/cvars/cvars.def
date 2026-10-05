@@ -351,6 +351,7 @@ Client :: cvars {
     // starts eating sv_max_rewind_ticks (12), which is a fairness call rather
     // than a tuning knob -- see lag_compensation_def.md.
     cl_interpolation_delay_ticks: f32 = 2.0   @Client    "Server ticks behind the newest snapshot that remote entities are drawn"
+    cl_smooth_drawn_tick: bool = true         @Client    "Movers, moving lights and everything else drawn from the predicted tick glide when the server takes one of our inputs a tick late or early; off draws them at the snapshot's own count, which hops a whole tick"
 
     // A dry interpolation buffer is real packet loss, not a rendering detail:
     // it means loss exceeded cl_interpolation_delay_ticks and a remote player
@@ -499,6 +500,7 @@ Map :: cvars {
 
 Debug_Channel :: enum { off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals }
 Cel_Fill :: enum { none, hatch, dither3d, dither3d_original }
+Pattern_Kind :: enum { none, stripes, grid, checks, bricks, chevrons, dots }
 
 Debugging :: cvars {
 
@@ -536,6 +538,7 @@ Debugging :: cvars {
     r_cel_shadow_blue:      f32 = 1.0       @Client    "Blue of the colour the unlit side is multiplied by"
     r_cel_bands:            f32 = 2.0       @Client    "How many flat steps the light on a surface, direct and ambient together, is cut into per doubling of its brightness; 0 leaves it smooth"
     r_cel_flat_albedo:      f32 = 0.0       @Client    "How far a material's colour is drawn to the mean colour of its whole texture (0 = textured, 1 = one flat colour per material)"
+    r_cel_black:            f32 = 0.05      @Client    "Spotted blacks: a shadow whose ambient light is dimmer than this is drawn as solid ink, the end of the dots' tone ramp (0 = none)"
     r_cel_halftone:         f32 = 0.0       @Client    "Both dithers: 0 lets light darken a surface as usual; above 0 the dots alone carry a surface's light, none where it is lit this brightly and covering more of it the dimmer it is"
     r_cel_halftone_paper:   f32 = 1.0       @Client    "With r_cel_halftone above 0: how brightly every surface is drawn between the dots"
     r_cel_fill:             Cel_Fill = .dither3d @Client "What fills the unlit side: none, hatch (diagonal lines), dither3d (dots pinned to the surface that keep their size on screen, written as arithmetic), dither3d_original (runevision's own Dither3D shader and 3D texture)"
@@ -562,18 +565,32 @@ Debugging :: cvars {
     r_cel_pebble_size:      f32 = 0.25      @Client    "Radius of the largest pebble as a fraction of the spacing (0 to 0.5); the smallest is half that, and the rest of the half spacing is how far one strays from the middle of its square"
     r_cel_pebble_irregularity: f32 = 0.5    @Client    "How far a pebble is from a circle (0 to 1): how squashed it is and how much its outline wobbles"
     r_cel_pebble_width:     f32 = 1.5       @Client    "Width of a pebble's outline, in pixels"
+    r_pattern_preview:                Pattern_Kind = .none @Client "Draw one procedural pattern (pattern.glsl) over every surface, to judge it: none, stripes, grid, checks, bricks, chevrons, dots"
+    r_pattern_preview_spacing_along:  f32 = 32.0  @Client    "World units from one repeat of the previewed pattern to the next, in the direction stripes repeat, chevrons point and brick courses run"
+    r_pattern_preview_spacing_across: f32 = 32.0  @Client    "World units from one repeat of the previewed pattern to the next, across that direction; stripes and chevrons read it only for their wave and their fold"
+    r_pattern_preview_angle:          f32 = 0.0   @Client    "How far the previewed pattern is turned on the face, in degrees"
+    r_pattern_preview_scroll:         f32 = 0.0   @Client    "How fast the previewed pattern travels along its direction, in world units per second (0 = still)"
+    r_pattern_preview_coverage:       f32 = 0.25  @Client    "How much of a repeat is ink (0 to 1): a stripe's, grid line's, mortar joint's or chevron arm's thickness, or a dot's diameter; checks ignore it"
+    r_pattern_preview_shape:          f32 = 0.0   @Client    "The one number only the previewed kind reads: stripes waviness, bricks and dots how far each row is shifted (0.5 = classic brick), chevrons how pointed (0 = straight stripes)"
+    r_pattern_preview_strength:       f32 = 0.5   @Client    "How far the previewed pattern's ink replaces the surface's colour (0 = invisible, 1 = solid ink)"
+    r_pattern_preview_red:            f32 = 0.0   @Client    "Red of the previewed pattern's ink"
+    r_pattern_preview_green:          f32 = 0.0   @Client    "Green of the previewed pattern's ink"
+    r_pattern_preview_blue:           f32 = 0.0   @Client    "Blue of the previewed pattern's ink"
     r_ink:                  bool = true     @Client    "Draw ink lines where the scene depth jumps (outlines) and where the surface normal turns (creases)"
     r_ink_threshold:        f32 = 4.0       @Client    "How far the depth must jump before an outline is inked; lower draws more lines"
     r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the surface normal, normal map included, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
     r_ink_width:            i32 = 1         @Client    "Ink line reach in pixels"
     r_ink_tint:             f32 = 0.0       @Client    "How much of the colour under a line its ink keeps: 0 is black ink, 0.3 a line three tenths as bright as the surface it is drawn over"
-    r_ink_wobble:           f32 = 1.5       @Client    "How many pixels an ink line strays from the edge it draws, so it wavers like a hand-drawn one (0 = ruler straight)"
+    r_ink_on_black:         f32 = 1.0       @Client    "How white a line drawn inside r_cel_black's solid ink is (0 = it stays ink and is lost, 1 = white)"
+    r_ink_wobble:           f32 = 1.5      @Client    "How many pixels an ink line strays from the edge it draws, so it wavers like a hand-drawn one (0 = ruler straight)"
     r_ink_wobble_scale:     f32 = 40.0      @Client    "Length of one waver of r_ink_wobble, in pixels"
     r_ink_boil:             f32 = 5.0       @Client    "How many times a second the waver of r_ink_wobble is redrawn (0 = it holds still)"
     r_ink_weight_near:      f32 = 1.0       @Client    "How many times wider than r_ink_width and r_rim_width a line right at the camera is (1 = one width at every distance)"
     r_ink_weight_distance:  f32 = 256.0     @Client    "The distance, in world units, within which a line thickens: at half of it a line is twice as wide, up to r_ink_weight_near"
     r_rim:                  f32 = 0.0       @Client    "Rim light: how far towards white the near side of a depth jump is lit (0 = none, 1 = white); what counts as a jump is r_ink_threshold"
     r_rim_width:            i32 = 3         @Client    "How many pixels in from the edge the rim light reaches; the ink covers the outermost r_ink_width of them"
+    r_misprint:             f32 = 1.5       @Client    "Print misregistration: how many pixels the red and the blue of a far surface are drawn to either side of its green, the ink lines staying in place (0 = none)"
+    r_misprint_distance:    f32 = 1024.0    @Client    "The distance, in world units, at which r_misprint is reached; a nearer surface is offset in proportion, so what is close stays in register"
 
     r_flashlight_intensity: f32 = 20.0      @Client    "Brightness of the light a held Flashlight casts down its cone (a placed Reveal_Light_Entity carries its own), as the irradiance it delivers one metre away; 0 casts none and the cone still reveals"
     r_flashlight_red:       f32 = 1.0       @Client    "Red of a Flashlight's light"

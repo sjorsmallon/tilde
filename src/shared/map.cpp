@@ -1784,7 +1784,7 @@ std::string serialize_map_to_string(const map_t &map)
 
     map_block_out_t block;
     block.keyword = "entity";
-    block.properties.emplace_back("classname", entities::classname_of(entity));
+    block.properties.emplace_back("classname", entities::get_classname(entity));
     block.properties.emplace_back("_uid", std::to_string(entry.uid));
 
     const uint8_t *base = reinterpret_cast<const uint8_t *>(entity);
@@ -1797,7 +1797,7 @@ std::string serialize_map_to_string(const map_t &map)
       {
         log_error("map save: entity uid {} field {}.{} could not be written as text — "
                   "the key is omitted and the value will be lost on the next load",
-                  entry.uid, entities::classname_of(entity), leaf.name);
+                  entry.uid, entities::get_classname(entity), leaf.name);
         continue;
       }
       block.properties.emplace_back(leaf.name, value);

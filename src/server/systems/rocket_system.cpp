@@ -24,7 +24,7 @@ void update_rockets(server_context_t& context, const shared::predicted_world_sto
   std::vector<shared::projectile_target_t> targets;
   shared::collect_projectile_targets(entity_system, targets);
 
-  for (entities::Rocket_Entity& rocket : entity_system.entities_of<entities::Rocket_Entity>())
+  for (entities::Rocket_Entity& rocket : entity_system.entities_of_type<entities::Rocket_Entity>())
   {
     rocket.lifetime -= dt;
     if (rocket.lifetime <= 0.f)

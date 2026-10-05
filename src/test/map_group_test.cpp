@@ -68,8 +68,8 @@ int main()
     return fail("grouping three objects did not make one group of three");
   if (first < map.entities.size() + map.geometry.size() || map.next_uid != first + 1)
     return fail("the group's uid did not come out of the map's uid space");
-  if (find_group_of(map, floor) == nullptr || find_group_of(map, floor)->uid != first)
-    return fail("a brush member is not found by find_group_of");
+  if (find_group_containing_member(map, floor) == nullptr || find_group_containing_member(map, floor)->uid != first)
+    return fail("a brush member is not found by find_group_containing_member");
 
   const entity_uid_t bc[] = {b, c};
   const entity_uid_t second = group_objects(map, bc, "second");
@@ -88,7 +88,7 @@ int main()
     return fail("the first group, left with one member, was not dissolved");
   if (find_group_by_uid(map, second) != nullptr)
     return fail("the second group, left with one member, was not dissolved");
-  if (map.groups.size() != 1 || find_group_of(map, floor) != nullptr)
+  if (map.groups.size() != 1 || find_group_containing_member(map, floor) != nullptr)
     return fail("only the third group should remain, and the floor should be loose");
 
   const entity_uid_t lonely[] = {a, 9999};
@@ -121,7 +121,7 @@ int main()
     expand_to_group(scratch, a, live);
     if (live.size() != 1 || live[0] != a)
       return fail("a deleted member must not be in what a click selects");
-    if (!has_member(*find_group_of(scratch, a), c))
+    if (!has_member(*find_group_containing_member(scratch, a), c))
       return fail("a deleted member must stay in the group's list, inert, for undo");
   }
 
@@ -225,10 +225,10 @@ int main()
           return fail("a pasted group still names a source uid");
       }
     }
-    const map_group_t *first_stamp = find_group_of(destination, once.remap.at(a));
+    const map_group_t *first_stamp = find_group_containing_member(destination, once.remap.at(a));
     if (first_stamp == nullptr || !has_member(*first_stamp, once.remap.at(c)))
       return fail("the first paste's group does not hold the first paste's copies");
-    if (find_group_of(destination, twice.remap.at(a)) == first_stamp)
+    if (find_group_containing_member(destination, twice.remap.at(a)) == first_stamp)
       return fail("the second paste's copies landed in the first paste's group");
     if (destination.next_uid <= destination.groups[1].uid)
       return fail("the destination's next_uid did not clear the pasted group uids");

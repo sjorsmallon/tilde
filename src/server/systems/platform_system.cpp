@@ -25,11 +25,11 @@ namespace
 // Both platform types: latch the launch once, reap on the tick the cut drops it. How many one owner keeps is the
 // firing weapon's alive limit.
 template <typename Platform_T>
-void update_platforms_of(server_context_t& context, const shared::predicted_world_storage_t& world,
+void update_platforms_of_type(server_context_t& context, const shared::predicted_world_storage_t& world,
                          const shared::fixed_arc_flight_settings_t& flight,
                          std::vector<shared::entity_uid_t>& retired)
 {
-  Span<Platform_T> platforms = context.world.session.entity_system.entities_of<Platform_T>();
+  Span<Platform_T> platforms = context.world.session.entity_system.entities_of_type<Platform_T>();
 
   for (Platform_T& platform : platforms)
   {
@@ -41,7 +41,7 @@ void update_platforms_of(server_context_t& context, const shared::predicted_worl
                               flight, world, platform.flight);
     }
 
-    const shared::platform_view_t view = shared::platform_view_of(platform);
+    const shared::common_platform_fields_t view = shared::get_common_platform_fields(platform);
     platform.position = shared::platform_box_at_tick(view, context.tick_number, flight).center;
 
     if (shared::platform_has_vanished_at_tick(view, context.tick_number, flight.tick_interval_seconds))
@@ -59,13 +59,13 @@ void update_extending_platforms(server_context_t& context, const shared::predict
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
   for (entities::Extending_Platform_Entity& platform :
-       entity_system.entities_of<entities::Extending_Platform_Entity>())
+       entity_system.entities_of_type<entities::Extending_Platform_Entity>())
   {
     if (platform.spawned_tick == 0)
     {
       const entities::Player_Entity* owner =
           entity_system.get<entities::Player_Entity>(platform.projectile.owner_uid);
-      const shared::predicted_world_t view = shared::predicted_world_of(
+      const shared::predicted_world_t view = shared::get_predicted_world_for_team(
           world, owner != nullptr ? owner->team_allegiance : entities::Team_Allegiance::Free_For_All);
 
       const vec3f to = platform.position + linalg::forward(platform.orientation) * platform.max_length;
@@ -96,8 +96,8 @@ void update_platforms(server_context_t& context, const shared::predicted_world_s
                                                    .gravity = context.cvars->g_gravity};
 
   std::vector<shared::entity_uid_t> retired;
-  update_platforms_of<entities::Platform_Entity>(context, world, flight, retired);
-  update_platforms_of<entities::Shrinking_Platform_Entity>(context, world, flight, retired);
+  update_platforms_of_type<entities::Platform_Entity>(context, world, flight, retired);
+  update_platforms_of_type<entities::Shrinking_Platform_Entity>(context, world, flight, retired);
   update_extending_platforms(context, world, tick_interval_seconds, retired);
 
   std::sort(retired.begin(), retired.end());

@@ -34,9 +34,9 @@ std::string describe_diff(const edit_diff_t& diff)
   return std::visit(
       overloaded{
           [](const diff_entity_created_t& d)
-          { return std::format("created {} {}", entities::classname_of(d.snapshot.get()), d.uid); },
+          { return std::format("created {} {}", entities::get_classname(d.snapshot.get()), d.uid); },
           [](const diff_entity_removed_t& d)
-          { return std::format("deleted {} {}", entities::classname_of(d.snapshot.get()), d.uid); },
+          { return std::format("deleted {} {}", entities::get_classname(d.snapshot.get()), d.uid); },
           [](const diff_entity_modified_t& d)
           {
             return std::format("{} {}: {}", entities::entity_info(d.type).classname, d.uid,

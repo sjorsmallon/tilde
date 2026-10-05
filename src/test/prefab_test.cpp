@@ -46,7 +46,7 @@ static bool nearly(const linalg::vec3 &a, const linalg::vec3 &b)
 
 // The rule copy_map_piece rebases by, restated here so the test measures the
 // piece rather than trusting the function that made it.
-static linalg::vec3 anchor_of(const map_t &map)
+static linalg::vec3 compute_map_anchor(const map_t &map)
 {
   bool          any = false;
   aabb_bounds_t bounds{{0, 0, 0}, {0, 0, 0}};
@@ -256,7 +256,7 @@ int main()
   }
 
   // The anchor rule, measured rather than trusted: bottom-centre at the origin.
-  if (!nearly(anchor_of(piece), {0, 0, 0}))
+  if (!nearly(compute_map_anchor(piece), {0, 0, 0}))
     return fail("the piece's anchor is not at its origin");
 
   // ...and the arrangement inside it is untouched, which is usually the reason

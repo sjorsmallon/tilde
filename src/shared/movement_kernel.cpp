@@ -61,7 +61,7 @@ namespace
   return steep_faces == steep_face_rule_t::Wall && wall_normal.y > 0.f;
 }
 
-[[nodiscard]] vec3 flat_normal_of(const vec3& wall_normal)
+[[nodiscard]] vec3 compute_flat_normal(const vec3& wall_normal)
 {
   return normalize(vec3{wall_normal.x, 0.f, wall_normal.z});
 }
@@ -76,7 +76,7 @@ namespace
 
 } // namespace
 
-ground_frame_t ground_frame_of(const contacts_t& contacts, bool grounded, float vertical_velocity)
+ground_under_step_t compute_ground_under_step(const contacts_t& contacts, bool grounded, float vertical_velocity)
 {
   const bool walking        = grounded && vertical_velocity <= 0.f;
   const bool leaving_ground = grounded && !walking;
@@ -100,7 +100,7 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
   bvh_intersect_aabb(bvh, bounds, overlapping);
   for (const BVH_Primitive* primitive : overlapping)
   {
-    const uint8_t state = geometry_state_of(world.disabled_geometry, primitive->id);
+    const uint8_t state = get_geometry_state_by_collision_id(world.disabled_geometry, primitive->id);
     if (state == GEOMETRY_SOLID_WHERE_LIT)
     {
       const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
@@ -239,7 +239,7 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
       // Out of a wall-ruled steep face the hull leaves sideways, or walking into its foot lifts it.
       if (push_normal.y <= cos_45 && stops_speed_as_a_wall(steep_faces, push_normal))
       {
-        const vec3 flat_normal = flat_normal_of(push_normal);
+        const vec3 flat_normal = compute_flat_normal(push_normal);
         player_pos = player_pos + flat_normal * (push_amount / dot(flat_normal, push_normal));
       }
       else
@@ -284,7 +284,7 @@ slide_result_t slide(const movement_settings_t& settings, steep_face_rule_t stee
                      const vec3& hull_center, const float dt)
 {
   const float          overbounce = settings.shared.overbounce;
-  const ground_frame_t frame = ground_frame_of(contacts, grounded, wanted.vertical_velocity);
+  const ground_under_step_t frame = compute_ground_under_step(contacts, grounded, wanted.vertical_velocity);
   constexpr auto       world_down = vec3{0.f, -1.f, 0.f};
 
   // clip the new velocity against the ground plane. take the length before
@@ -307,7 +307,7 @@ slide_result_t slide(const movement_settings_t& settings, steep_face_rule_t stee
       // we should not collide with the plane if we are trying to move away from
       // it.
       const vec3 wall_normal = stops_speed_as_a_wall(steep_faces, collider_plane.normal)
-                                   ? flat_normal_of(collider_plane.normal)
+                                   ? compute_flat_normal(collider_plane.normal)
                                    : collider_plane.normal;
 
       new_speed = length(new_velocity);
@@ -398,7 +398,7 @@ slide_result_t slide(const movement_settings_t& settings, steep_face_rule_t stee
   {
     if (stops_speed_as_a_wall(steep_faces, collider_plane.normal))
       new_velocity =
-          without_horizontal_speed_into(new_velocity, flat_normal_of(collider_plane.normal));
+          without_horizontal_speed_into(new_velocity, compute_flat_normal(collider_plane.normal));
     if (dot(new_velocity, collider_plane.normal) < 0.f)
       new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
   }
@@ -453,7 +453,7 @@ settled_move_t resolve_after_move(const movement_settings_t& settings,
   for (const Plane& plane : post.wall_planes)
   {
     if (stops_speed_as_a_wall(steep_faces, plane.normal))
-      velocity = without_horizontal_speed_into(velocity, flat_normal_of(plane.normal));
+      velocity = without_horizontal_speed_into(velocity, compute_flat_normal(plane.normal));
     if (dot(velocity, plane.normal) < 0.f)
       velocity = clip_vector(velocity, plane.normal, overbounce);
   }

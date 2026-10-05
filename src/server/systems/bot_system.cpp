@@ -101,7 +101,7 @@ static void apply_bot_movement(server_context_t &context,
   if (rlen > 0.001f) right = right * (1.f / rlen);
 
   Move_Events move_events{};
-  shared::movement_settings_t settings = shared::movement_settings_from(*context.cvars);
+  shared::movement_settings_t settings = shared::movement_settings_from_cvars(*context.cvars);
   settings.shared.half_width           = half_width;
 
   // A bot is a Player_Entity, so it carries the same movement state and gets
@@ -171,7 +171,7 @@ void update_bots(server_context_t &context,
   // which is the real bridge; it lands in client replication_t::bot_debug_entries.
 
   Span<entities::Player_Entity> players =
-      session.entity_system.entities_of<entities::Player_Entity>();
+      session.entity_system.entities_of_type<entities::Player_Entity>();
 
   for (auto &bot : bots)
   {
@@ -196,7 +196,7 @@ void update_bots(server_context_t &context,
     // under an animation that is supposed to be settling.
     // A bot walks through its own team's walls like any player: the view is its team's.
     const shared::predicted_world_t world =
-        shared::predicted_world_of(world_storage, bot_ent->team_allegiance);
+        shared::get_predicted_world_for_team(world_storage, bot_ent->team_allegiance);
 
     if (bot_ent->health.current_health <= 0)
     {

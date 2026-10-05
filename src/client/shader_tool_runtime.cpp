@@ -125,7 +125,7 @@ struct gpu_light_t
 {
   float position[4];
   float direction[4];
-  float radiance[4]; // already through shared::radiance_of
+  float radiance[4]; // already through shared::compute_radiance
   float spot_params[4]; // cos_inner, cos_outer, range, type
 };
 

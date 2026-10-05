@@ -600,7 +600,7 @@ void test_map_connections()
   Transaction_System ts;
   map_t map;
 
-  const auto row_of = [](entities::entity_signal signal, entity_uid_t target,
+  const auto make_connection_row = [](entities::entity_signal signal, entity_uid_t target,
                          entities::entity_action action)
   {
     shared::connection_t row;
@@ -613,9 +613,9 @@ void test_map_connections()
   };
 
   const shared::connection_t touched_enable =
-      row_of(entities::entity_signal::Touched, 7, entities::entity_action::Enable);
+      make_connection_row(entities::entity_signal::Touched, 7, entities::entity_action::Enable);
   const shared::connection_t touched_disable =
-      row_of(entities::entity_signal::Touched, 7, entities::entity_action::Disable);
+      make_connection_row(entities::entity_signal::Touched, 7, entities::entity_action::Disable);
 
   {
     transaction_t transaction;
@@ -657,7 +657,7 @@ void test_map_connections()
   // bytes past it got there, which is what connections_equal is for and what a
   // memcmp of the whole struct would get wrong.
   {
-    shared::connection_t left  = row_of(entities::entity_signal::Touched, 7,
+    shared::connection_t left  = make_connection_row(entities::entity_signal::Touched, 7,
                                        entities::entity_action::Set_Health);
     shared::connection_t right = left;
     left.data.set_health.amount  = 25;

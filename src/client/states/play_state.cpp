@@ -69,7 +69,6 @@
 namespace client
 {
 
-
 // input here is not subtick-input, it just means all input entries in this tick.
 static uint32_t get_predicted_server_tick_which_this_input_will_be_simulated_on(
   const client_context_t &ctx,
@@ -109,12 +108,40 @@ struct drawn_tick_t
   float    tickrate{};
 };
 
-static drawn_tick_t drawn_tick_of(const client_context_t &ctx)
+static double get_exact_tick_gap(const client_context_t &ctx)
+{
+  return static_cast<double>(ctx.prediction.latest_server_tick) -
+         static_cast<double>(ctx.prediction.latest_input_number_processed_by_server);
+}
+
+// The server takes zero or two of our inputs on a tick whenever the two clocks beat, and the exact gap is a whole tick
+// off for that one snapshot. Drawing eases across it; a change larger than that is a real one and is adopted at once.
+static void update_drawn_tick_gap(client_context_t &ctx, float dt)
+{
+  constexpr double SNAP_BEYOND_TICKS = 2.0;
+  constexpr float  SMOOTHING_SECONDS = 0.25f;
+
+  const double exact = get_exact_tick_gap(ctx);
+  const bool   eased = ctx.cvars->cl_smooth_drawn_tick && ctx.connection.phase == Connection_Phase::Connected &&
+                       std::abs(exact - ctx.prediction.drawn_tick_gap) <= SNAP_BEYOND_TICKS;
+  if (!eased)
+  {
+    ctx.prediction.drawn_tick_gap = exact;
+    return;
+  }
+  ctx.prediction.drawn_tick_gap +=
+      (exact - ctx.prediction.drawn_tick_gap) * static_cast<double>(1.0f - std::exp(-dt / SMOOTHING_SECONDS));
+}
+
+static drawn_tick_t get_tick_and_fraction_used_for_drawing_this_frame(const client_context_t &ctx)
 {
   const float tickrate = static_cast<float>(ctx.connection.server_tickrate);
+  const float fraction = ctx.connection.phase == Connection_Phase::Connected ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f) : 0.0f;
+  const double clock   = std::max(0.0, static_cast<double>(ctx.prediction.input_number - 1) + ctx.prediction.drawn_tick_gap + static_cast<double>(fraction));
+  const double whole   = std::floor(clock);
   return drawn_tick_t{
-    .tick     = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, ctx.prediction.input_number - 1),
-    .fraction = ctx.connection.phase == Connection_Phase::Connected ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f) : 0.0f,
+    .tick     = static_cast<uint32_t>(whole),
+    .fraction = static_cast<float>(clock - whole),
     .tickrate = tickrate
   };
 }
@@ -132,7 +159,7 @@ struct drawn_pose_t
 };
 
 // sample correct interpolated pose.
-static drawn_pose_t drawn_pose_of(const client_context_t &ctx, const entities::Entity &entity)
+static drawn_pose_t get_interpolated_pose_for_entity(const client_context_t &ctx, const entities::Entity &entity)
 {
   const auto ring = ctx.replication.interpolated_entities.find(entity.entity_id);
   if (ring == ctx.replication.interpolated_entities.end() || ring->second.pushed == 0)
@@ -154,7 +181,7 @@ static drawn_pose_t drawn_pose_of(const client_context_t &ctx, const entities::E
 // interpolate bubble position according to its fixed arc.
 static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
-  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const shared::fixed_arc_flight_settings_t flight{
     .tick_interval_seconds = 1.0f / tickrate,
@@ -177,7 +204,7 @@ struct drawn_bubble_t
 
 static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
-  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
   const auto seconds_since = [&](uint32_t anchor_tick) {
     return (static_cast<float>(static_cast<int64_t>(tick) - static_cast<int64_t>(anchor_tick)) + fraction) / tickrate;
   };
@@ -231,9 +258,9 @@ struct drawn_platform_t
   float solid_fraction_elapsed{};
 };
 
-static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared::platform_view_t &platform)
+static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared::common_platform_fields_t &platform)
 {
-  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const float tick_interval_seconds = 1.0f / tickrate;
   const shared::fixed_arc_flight_settings_t flight{
@@ -262,7 +289,7 @@ struct drawn_ping_marker_t
 
 static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const entities::Ping_Marker_Entity &marker)
 {
-  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const float age_seconds =
       (std::max(0.0f, (float)(int32_t)(tick - marker.spawned_tick)) + fraction) / tickrate;
@@ -287,7 +314,7 @@ static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const 
   };
 }
 
-static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const entities::Mover_Entity &mover)
+static shared::path_pose_t get_rest_pose_for_mover(const client_context_t &ctx, const entities::Mover_Entity &mover)
 {
   const auto found = ctx.world.session.mover_rests.find(mover.entity_id);
   return found != ctx.world.session.mover_rests.end()
@@ -297,15 +324,18 @@ static shared::path_pose_t rest_frame_of(const client_context_t &ctx, const enti
 
 static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const entities::Mover_Entity &mover)
 {
-  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const shared::Entity_System& system = ctx.world.session.entity_system;
   const shared::path_links_t& links  = ctx.world.session.path_links;
-  const shared::path_pose_t rest = rest_frame_of(ctx, mover);
+  const shared::path_pose_t rest = get_rest_pose_for_mover(ctx, mover);
   const shared::path_pose_t at_tick = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
   const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
+  // `at_tick` is where the last predicted step stood its rider, on the exact tick and never the eased one.
+  const uint32_t stepped_tick =
+      get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, ctx.prediction.input_number - 1);
   return drawn_mover_poses_t{
-    .at_tick = at_tick,
+    .at_tick = shared::mover_pose_at(system, links, mover, rest, stepped_tick, tickrate),
     .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)
   };
 }
@@ -318,7 +348,7 @@ static shared::path_pose_t drawn_reveal_light_pose(const client_context_t &ctx,
       ctx.world.session.entity_system.get<entities::Mover_Entity>(light.follows);
   if (mover == nullptr)
     return placed;
-  return shared::carry_pose_by_mover(rest_frame_of(ctx, *mover), drawn_mover_poses(ctx, *mover).drawn,
+  return shared::carry_pose_by_mover(get_rest_pose_for_mover(ctx, *mover), drawn_mover_poses(ctx, *mover).drawn,
                                      placed);
 }
 
@@ -440,7 +470,7 @@ static void update_drawn_carry_shift(client_context_t &ctx)
 }
 
 // The same clock the movers are drawn on, so a wipe and a lift agree about now.
-static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared::entity_uid_t owner_uid,
+static renderer::clock_wipe_t compute_drawn_clock_wipe_for_geometry(const client_context_t &ctx, shared::entity_uid_t owner_uid,
                                             const shared::geometry_value_t &geometry)
 {
   const shared::Entity_System &system = ctx.world.session.entity_system;
@@ -454,7 +484,7 @@ static renderer::clock_wipe_t clock_wipe_of(const client_context_t &ctx, shared:
   if (timer_state == nullptr)
     return {};
 
-  const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
   return renderer::clock_wipe_t{
@@ -698,7 +728,7 @@ static void play_predicted_local_gunshot(
   if (!sound) return;
 
   const shared::weapon_definition_t &weapon = shared::get_weapon_definition(my_weapon);
-  const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
+  const shared::weapon_fire_t& fire = shared::get_weapon_fire_for_button(weapon, trigger);
 
   if (button_was_already_down && !fire.fires_while_held) return;
 
@@ -833,7 +863,7 @@ bool Play_State::switch_to_map_provided_by_map_package(const shared::map_package
     int32_t spot_index)
 {
   Span<entities::Player_Spectate_Entity> spectate_spots =
-      session.entity_system.entities_of<entities::Player_Spectate_Entity>();
+      session.entity_system.entities_of_type<entities::Player_Spectate_Entity>();
 
   if (spectate_spots.empty()) return false;
 
@@ -879,7 +909,7 @@ void Play_State::set_provisional_player_pose_for_new_map(client_context_t &ctx)
     log_terminal("[CLIENT] no spectate entities found, so posing camera on a player spawn entity.");
 
   Span<entities::Player_Spawn_Entity> spawns =
-      ctx.world.session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      ctx.world.session.entity_system.entities_of_type<entities::Player_Spawn_Entity>();
   if (!spawns.empty())
   {
     ctx.prediction.player_position = spawns.front().position;
@@ -925,24 +955,25 @@ void Play_State::switch_to_map(const shared::map_t &map)
 
 void Play_State::enter_connected_phase()
 {
-  auto &ctx  = state_manager::get_client_context();
+  auto &ctx = state_manager::get_client_context();
 
   ctx.connection.phase = Connection_Phase::Connected;
   // function pointer to forward commands to server, otherwise they end up nowhere.
   ctx.commands->forward_to_server = &forward_console_line_to_server;
 
   // autojoin_game when we enter connected phase.
-  if (pending_match_join)
+  if (pending_join_on_connect)
   {
-    pending_match_join = false;
+    pending_join_on_connect = false;
 
     auto reply = std::string{};
     const cvars::console_result_t result = cvars::execute_console_line(
         *ctx.cvars, *ctx.commands, "join_game", cvars::command_context_t{}, &reply);
 
-    if (result != cvars::console_result_t::forwarded &&
-        result != cvars::console_result_t::ok)
+    if (result != cvars::console_result_t::forwarded && result != cvars::console_result_t::ok)
+    {
       log_error("auto join_game on connect failed: {}", reply);
+    }
   }
 }
 
@@ -984,17 +1015,17 @@ void Play_State::on_enter()
 {
   auto &ctx = state_manager::get_client_context();
 
+  // this is a hack to enable it when we switch from the editor.
   ctx.cvars->r_stylized = true;
 
   connection_ui = {};
   reset_for_new_connection(ctx);
 
-  // Read once and cleared: whoever asked for this trip asked for THIS trip.
-  pending_match_join = ctx.requested_match_join;
-  ctx.requested_match_join = false;
+  // read once and cleared, so a later entry into the play state does not inherit them.
+  pending_join_on_connect = ctx.requested_join_on_connect;
   pending_spawn_view = ctx.requested_spawn_view;
+  ctx.requested_join_on_connect = false;
   ctx.requested_spawn_view.reset();
-
 
   const bool replay_requested = ctx.requested_replay.has_value();
   if (replay_requested)
@@ -1006,7 +1037,7 @@ void Play_State::on_enter()
   else
   {
     // try to load a map from last_map.txt if that existed.
-    std::string last_map;
+    auto last_map = std::string{};
     {
       std::ifstream f("last_map.txt");
       if (f.is_open())
@@ -1016,8 +1047,7 @@ void Play_State::on_enter()
     std::string map_path = shared::resolve_map_path(client_maps_directory(), last_map);
     if (!load_client_map(map_path))
     {
-      log_terminal("No local map '{}' at boot; will request it from the server "
-                   "after connecting.", map_path);
+      log_terminal("No local map '{}' at boot; will request it from the server after connecting.", map_path);
     }
   }
 
@@ -1032,15 +1062,14 @@ void Play_State::on_enter()
 
   // --- Connect to server ---
   auto &transport = ctx.transport_layer;
-  if (!transport.socket.is_open())
+  if (!transport.socket.is_open() &&
+      !transport.socket.try_open({
+        .port_id = 0,
+        .buffer_size_in_bytes = network::client_receive_buffer_size_in_bytes}))
   {
-    // Bind an ephemeral port (0 = OS assigns). A fixed client port breaks two
-    // clients on one machine: SO_REUSEADDR lets the second bind(5001) succeed,
-    // the server then sees both as 127.0.0.1:5001, and replies are delivered
-    // to whichever socket bound first — the second client hangs on connect.
-    // The server keys players by the address recvfrom reports, so it never
-    // cares which port a client uses.
-    transport.socket.open(0, network::client_receive_buffer_size_in_bytes);
+    log_error("play_state: could not open a client socket, not connecting");
+    ctx.connection.phase = Connection_Phase::Disconnected;
+    return;
   }
 
   transport.server_address = ctx.requested_server_address;
@@ -1065,6 +1094,7 @@ void Play_State::on_exit()
 
   shared::finish_replay_recording(ctx.replay_recorder);
   end_replay_playback(ctx.replay, *ctx.cvars);
+
   ctx.audio.set_muted(false);
 
   if (ctx.connection.phase != Connection_Phase::Disconnected &&
@@ -1073,8 +1103,8 @@ void Play_State::on_exit()
     game::C2S_Connection disconnect_cmd;
     disconnect_cmd.mutable_disconnect()->set_reason("Player left");
     network::send_protobuf_message(transport, disconnect_cmd);
-    ctx.connection.phase = Connection_Phase::Disconnected;
 
+    ctx.connection.phase = Connection_Phase::Disconnected;
     //commands that should go to the server now just go nowhere.
     ctx.commands->forward_to_server = nullptr;
   }
@@ -1082,13 +1112,13 @@ void Play_State::on_exit()
 
   input::set_relative_mouse_mode(false);
 
-
   ctx.connection.phase = Connection_Phase::Disconnected;
   ctx.world = {};
 
   if (ctx.server_session == nullptr && ctx.cvars)
+  {
     shared::revert_mirrored_cvars_to_defaults(*ctx.cvars);
-
+  }
 }
 
 // to reiterate: input can be understood as a reaction on the previously presented frame.
@@ -1102,14 +1132,13 @@ struct play_frame_t
   // because replays can play back at different speeds, this dt can be larger or smaller.
   float world_dt = 0.f;
 
-  // No console and no pause menu; and, for the body, no noclip either.
   bool body_input_allowed = false;
   bool noclip_active = false;
   bool mouse_look_allowed = false;
 
   float fov_degrees = 0.f;
   float mouse_sensitivity = 0.f;
-  uint64_t buttons = 0;
+  uint64_t buttons = {};
   bool local_player_is_dead = false;
 
   shared::predicted_world_storage_t predicted_world_storage{};
@@ -1121,36 +1150,32 @@ struct play_frame_t
   std::optional<shared::replay_view_sample_t> first_person_view{};
 };
 
-// The disabled set once per FRAME: it is a function of replicated switches
-// alone, so no tick names a different one (prediction_def.md ss4).
+// collected once per frame.
 static void collect_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
 {
   shared::collect_disabled_geometry_for_every_team(ctx.world.session, frame.predicted_world_storage);
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  frame.team = my_player != nullptr ? my_player->team_allegiance
-                                    : entities::Team_Allegiance::Free_For_All;
-  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage, frame.team);
+  frame.team = my_player != nullptr ? my_player->team_allegiance : entities::Team_Allegiance::Free_For_All;
+
+  frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
 }
 
-// The other two per INPUT, because both are functions of the TICK -- a bubble's
-// bounds and a mover's pose -- and the reconciliation replay walks several. That
-// replay deliberately uses the CURRENT switches rather than the ones at each
-// replayed input's tick: a switch that flipped inside the unacked window
-// mispredicts for that window and is corrected, which is what makes them need no
-// history (prediction_def.md ss1.4).
-//
-// The reveal cones are per input too. Everyone else's are the snapshot's; our own is cut from where
-// `input_number` finds us (`own_feet`, the aim and the toggle the input before it left), as the server cuts it.
-static void build_predicted_world_for_input(client_context_t& ctx, play_frame_t& frame,
-                                          int input_number, const vec3f& own_feet)
+
+static void build_predicted_world_for_input(
+  client_context_t& ctx,
+  play_frame_t& frame,
+  int32_t input_number,
+  const vec3f& own_feet)
 {
   const shared::predicted_world_settings_t settings{
-      .tick        = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number),
+      .tick = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number),
       // The session's entities are the newest snapshot's, so that is the tick their state describes.
-      .state_tick  = ctx.prediction.latest_server_tick,
+      .state_tick = ctx.prediction.latest_server_tick,
       .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
-      .gravity     = ctx.cvars->g_gravity,
-      .reveal_cone = shared::reveal_cone_settings_from(*ctx.cvars)};
+      .gravity = ctx.cvars->g_gravity,
+      .reveal_cone = shared::reveal_cone_settings_from_cvars(*ctx.cvars)
+  };
+
   shared::build_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
   shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
 
@@ -1164,14 +1189,14 @@ static void build_predicted_world_for_input(client_context_t& ctx, play_frame_t&
   {
     const shared::subtick_view_t view = local_view_entering(ctx, *my_player, input_number);
     frame.predicted_world_storage.reveal_cones.push_back(shared::planes_of_reveal_cone(
-        shared::reveal_cone_of(own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw,
+        shared::compute_player_reveal_cone(own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw,
                                view.pitch,
                                local_reveal_light_is_overhead_entering(ctx, *my_player, input_number),
                                *shared::try_reveal_light_in_hand(ctx.world.session.entity_system, *my_player),
                                settings.reveal_cone)));
   }
 
-  frame.predicted_world = shared::predicted_world_of(frame.predicted_world_storage, frame.team);
+  frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
 }
 
 
@@ -1247,9 +1272,6 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   }
 
   const bool console_open = console::get().is_open();
-
-  
-
 
   // suppress gameplay input instead of early returning
   // because there's more dt bookkeeping later in this function.
@@ -1341,10 +1363,6 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   return false;
 }
 
-// RECEIVE, second half: one drain of the inbox (or of the replay standing in for
-// it), every message kind in the order the stream needs them -- the handshake,
-// the map, the ghost, the reliable stream's own service, then the snapshot,
-// which is what the effect and event batches below it are dispatched against.
 void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
 {
   const float dt = frame.dt;
@@ -1367,18 +1385,16 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
   }
   else
   {
-    network::poll_client_network(transport,
-                                 network::client_receive_drain_cap_in_datagrams,
-                                 inbox);
+    network::poll_client_network(
+      transport,
+      network::client_receive_drain_cap_in_datagrams,
+      inbox);
   }
 
-  // The world's clock: the replay's pause and speed, or the frame's dt.
-  frame.world_dt = ctx.connection.phase == Connection_Phase::Replaying
-                             ? replay_world_dt(ctx.replay, dt)
-                             : dt;
-  ctx.audio.set_muted(ctx.connection.phase == Connection_Phase::Replaying &&
-                      !replay_plays_at_normal_speed(ctx.replay));
+  frame.world_dt = ctx.connection.phase == Connection_Phase::Replaying ? replay_world_dt(ctx.replay, dt) : dt;
 
+  // set the audio to mute if replayhing because slowing audio is not supported at this moment.
+  ctx.audio.set_muted(ctx.connection.phase == Connection_Phase::Replaying && !replay_plays_at_normal_speed(ctx.replay));
 
   // in case I forget again: poll_client_network already does all the reassembly for us.
   // this iterates over fully constructed messages. that's why the switch_to_map_provided_by_map_package
@@ -1410,7 +1426,7 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
                      reason, cmd.accept().map_name(), server_hash,
                      ctx.world.map_content_hash);
         ctx.connection.phase = Connection_Phase::Loading;
-        ctx.connection.awaiting_stream_content_hash = server_hash;
+        ctx.connection.downloading_map_content_hash = server_hash;
 
         hud::set_announcement("Downloading map...");
 
@@ -1443,25 +1459,23 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
 
   for (const auto &payload : inbox.change_map_messages)
   {
-    network::Bit_Reader reader(payload.data(), payload.size());
+    auto reader = network::Bit_Reader(payload.data(), payload.size());
     shared::change_map_message_t change = shared::deserialize_change_map(reader);
 
-    // Already running exactly this map. Nothing to do and nothing to say: the
-    // hash we hold rides every input we send, so the server works out that we
-    // are ready without being told.
-    if (ctx.connection.phase == Connection_Phase::Connected &&
-        ctx.world.map_content_hash == change.content_hash)
+    // we are running this map already.
+    if (ctx.connection.phase == Connection_Phase::Connected && ctx.world.map_content_hash == change.content_hash)
+    {
       continue;
+    }
 
-    // Already downloading exactly this map. The request is on the reliable
-    // stream, so it is still in flight or already delivered -- asking again
-    // would restart the transfer we are in the middle of receiving.
+    // we are already downloading this map. don't resend or do anything, the download is managed over the reliable stream.
     if (ctx.connection.phase == Connection_Phase::Loading &&
-        ctx.connection.awaiting_stream_content_hash == change.content_hash)
+        ctx.connection.downloading_map_content_hash == change.content_hash)
+    {
       continue;
+    }
 
-    log_terminal("Server switching map to '{}' (path '{}', hash {:#x})",
-                 change.map_name, change.map_path, change.content_hash);
+    log_terminal("Server switching map to '{}' (path '{}', hash {:#x})", change.map_name, change.map_path, change.content_hash);
     ctx.connection.phase = Connection_Phase::Loading;
     hud::set_announcement("Loading map...");
 
@@ -1470,17 +1484,15 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
     if (!load_client_map(local_path) ||
         ctx.world.map_content_hash != change.content_hash)
     {
-      log_terminal("No matching local copy of '{}' (cache miss/mismatch); "
-                   "requesting map from server.", change.map_name);
-      ctx.connection.awaiting_stream_content_hash = change.content_hash;
+      log_terminal("No matching local copy of '{}' (cache miss/mismatch); requesting map from server.", change.map_name);
+      ctx.connection.downloading_map_content_hash = change.content_hash;
       hud::set_announcement("Downloading map...");
       send_request_map_data(transport, change.map_name);
       continue;
     }
 
-    // Loaded and verified locally. Snapshots resume on their own: our input
-    // carries this hash from the next tick on, and the server compares it.
-    ctx.connection.awaiting_stream_content_hash = 0;
+    // reset the hash.
+    ctx.connection.downloading_map_content_hash = 0;
     ctx.connection.phase = Connection_Phase::Connected;
     log_terminal("Map switch to '{}' complete; now reporting hash {:#x}",
                  change.map_name, change.content_hash);
@@ -1488,23 +1500,22 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
 
   for (const auto &payload : inbox.map_data_messages)
   {
-    // Not loading into anything, so this is a package we did not ask for (or
-    // asked for and already applied). continue, not break: the rest of this
-    // frame's messages are unrelated and dropping them would be a second bug.
+    
     if (ctx.connection.phase != Connection_Phase::Loading)
     {
-      log_warning("received map data while phase is not Loading; ignoring it "
-                  "(late retransmit, or an eager server?)");
+      log_warning("received map data while phase is not Loading; ignoring it (late retransmit, or an eager server?)");
       continue;
     }
 
-    network::Bit_Reader reader(payload.data(), payload.size());
+    auto reader = network::Bit_Reader(payload.data(), payload.size());
     shared::map_data_message_t data = shared::deserialize_map_data(reader);
+    const std::optional<shared::map_package_t> package = shared::try_unpack_map_data_message(data);
 
-    const std::optional<shared::map_package_t> package =
-        shared::try_unpack_map_data_message(data);
     if (!package)
+    {
+      log_warning("unpacking map data message failed. doing nothing.");
       continue;
+    }
 
     if (!switch_to_map_provided_by_map_package(*package))
     {
@@ -1513,7 +1524,7 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
     }
 
     // map loaded.
-    ctx.connection.awaiting_stream_content_hash = 0;
+    ctx.connection.downloading_map_content_hash = 0;
     enter_connected_phase();
     log_terminal("Downloaded map '{}' ({} bytes on the wire, {} unpacked, package hash {:#x}); "
                  "now reporting content hash {:#x}",
@@ -1523,29 +1534,15 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
 
   consume_ghost_messages(ctx, inbox);
 
-  // Directly after the inbox loops above, because they are what QUEUE onto this
-  // stream -- a map request cut from this frame's CmdChangeMap or CmdAccept
-  // rides this frame's block rather than waiting for the next one. The server's
-  // send_reliable_blocks_if_there_are_any is the tick-clocked mirror and carries the same
-  // reasoning.
-  //
-  // Here and not at the end of update, which is where it belongs by that
-  // reasoning and is NOT a place every frame reaches: `if (!ctx.world.ready)
-  // return` sits between the two, and a client with no map has world.ready
-  // false -- which is exactly the client whose map request this is. At the tail
-  // it queued the request and never sent it, and since a Loading client sends
-  // nothing else, the connection went silent until sv_timeout dropped it.
-  //
-  // The one phase test it makes is Disconnected, which means there is no peer:
-  // a rejected connect would otherwise resend its unacked block at the frame
-  // rate to a server that is not listening. Connecting, Loading and Connected
-  // are all live, and the one that matters is Loading -- no tick loop, no ready
-  // world, and the request that gets it out of there is on this stream.
+  // send all the pending reliable data over the reliable stream in chunks.
+  // it happens here because a new map could just have been requested and we want 
+  // to send the correct chunks, and the world may not be ready so doing it after also doesn'\t work.
+  // this is fully skipped when disconnected or replaying (in both cases, there's no server to talk to).
   if (ctx.connection.phase != Connection_Phase::Disconnected &&
       ctx.connection.phase != Connection_Phase::Replaying)
     network::service_client_reliable_stream(transport);
 
-  // messages from the server that are forwarded to the console (not announcements.)
+  // text messages from the server that are forwarded to the console (not announcements.)
   for (const auto &msg : inbox.server_text_messages)
   {
     log_terminal("[SERVER] {}", msg.message());
@@ -1555,58 +1552,58 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
   // take on any cvar changes.
   for (const auto &payload : inbox.cvar_value_messages)
   {
-    network::Bit_Reader reader(payload.data(), payload.size());
+    auto reader = network::Bit_Reader(payload.data(), payload.size());
     shared::cvar_values_message_t values = shared::deserialize_cvar_values(reader);
     apply_cvar_values(*ctx.cvars, values);
 
     for (const shared::cvar_value_t &value : values.values)
-      log_terminal("[CLIENT] mirrored cvar '{}' = {}",
-                   cvars::cvar_info(value.id).name, value.text);
-  }
-
-  
-  for (const auto &msg : inbox.bot_debug_updates)
-  {
-    ctx.replication.bot_debug_entries.clear();
-
-    for (const auto &bot : msg.bots())
     {
-      auto entry = bot_debug_entry_t{};
-      entry.slot = bot.slot();
-      entry.goal = bot.goal();
-      entry.type = bot.type();
-      entry.path_index = bot.path_index();
-    
-      for (const auto &path_point : bot.path())
-      {
-        entry.path.push_back({path_point.x(), path_point.y(), path_point.z()});
-      }
-
-      ctx.replication.bot_debug_entries.push_back(std::move(entry));
+      log_terminal("[CLIENT] mirrored cvar '{}' = {}", cvars::cvar_info(value.id).name, value.text);
     }
   }
 
-  // find the move history.
-  // take the poses at that moment?
-  for (const auto &msg : inbox.shot_debug_updates)
+  // debug 
   {
-    
+    for (const auto& msg : inbox.bot_debug_updates)
+    {
+      ctx.replication.bot_debug_entries.clear();
 
-    const client::shot_debug_local_t* local =
-        shot_debug_history.find(msg.input_number());
+      for (const auto &bot : msg.bots())
+      {
+        auto entry = bot_debug_entry_t{};
+        entry.slot = bot.slot();
+        entry.goal = bot.goal();
+        entry.type = bot.type();
+        entry.path_index = bot.path_index();
+      
+        for (const auto &path_point : bot.path())
+        {
+          entry.path.push_back({path_point.x(), path_point.y(), path_point.z()});
+        }
 
-    client::draw_shot_debug_pair(scene.debug, local, msg,
-                                 aim_settings_from(*ctx.cvars),
-                                 ctx.cvars->cl_shot_debug_seconds);
+        ctx.replication.bot_debug_entries.push_back(std::move(entry));
+      }
+    }
+
+    // find the move history.// take the poses at that moment?
+    for (const auto &msg : inbox.shot_debug_updates)
+    {
+      const client::shot_debug_local_t* local =
+          shot_debug_history.find(msg.input_number());
+
+      client::draw_shot_debug_pair(scene.debug, local, msg,
+                                   aim_settings_from_cvars(*ctx.cvars),
+                                   ctx.cvars->cl_shot_debug_seconds);
+    }
+
   }
+
 
   // note that advancing the newest held snapshot does not in any way depend on any dt.
   for (const auto &pkg : inbox.entity_updates)
   {
-    
     std::optional<client::decoded_snapshot_t> decoded = client::try_decode_snapshot(ctx, pkg);
-    if (!decoded)
-      continue;
+    if (!decoded) continue;
 
     shared::record_replay_tick(ctx.replay_recorder, decoded->frame, {}, {}, *ctx.cvars);
 
@@ -1616,16 +1613,16 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
 
   if (ctx.replay_recorder.active)
   {
-    std::vector<uint8_t> batch_bytes;
-    for (const auto &batch : inbox.effect_batches)
+    auto batch_bytes = std::vector<uint8_t>{};
+    for (const auto& batch : inbox.effect_batches)
     {
       batch_bytes.resize(batch.ByteSizeLong());
       batch.SerializeToArray(batch_bytes.data(), static_cast<int>(batch_bytes.size()));
       shared::record_replay_batch(ctx.replay_recorder, shared::replay_record_kind_t::Effects,
                                   Span<const uint8_t>(batch_bytes));
     }
-    for (const auto &batch : inbox.game_event_batches)
-    {
+    for (const auto& batch : inbox.game_event_batches)
+    { 
       batch_bytes.resize(batch.ByteSizeLong());
       batch.SerializeToArray(batch_bytes.data(), static_cast<int>(batch_bytes.size()));
       shared::record_replay_batch(ctx.replay_recorder, shared::replay_record_kind_t::Events,
@@ -1637,12 +1634,10 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
   // after the newest snapshot is established, dispatch received effects and game events.
   for (const auto &batch : inbox.effect_batches)
   {
-    if (!batch.has_effect_data() || batch.effect_data().empty())
-      continue;
+    if (!batch.has_effect_data() || batch.effect_data().empty()) continue;
 
-    const auto* data =
-        reinterpret_cast<const network::uint8*>(batch.effect_data().data());
-    network::Bit_Reader reader(data, batch.effect_data().size());
+    const auto* data = reinterpret_cast<const network::uint8*>(batch.effect_data().data());
+    auto reader = network::Bit_Reader(data, batch.effect_data().size());
 
     dispatch_received_effects(ctx, reader, ctx.cvars->cl_event_debug);
   }
@@ -1652,24 +1647,18 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
     if (!batch.has_event_data() || batch.event_data().empty())
       continue;
 
-    const auto* data =
-        reinterpret_cast<const network::uint8*>(batch.event_data().data());
-    network::Bit_Reader reader(data, batch.event_data().size());
+    const auto* data = reinterpret_cast<const network::uint8*>(batch.event_data().data());
+    auto reader = network::Bit_Reader(data, batch.event_data().size());
 
     dispatch_received_game_events(ctx, reader, ctx.cvars->cl_event_debug);
   }
 }
 
-// Everything with a LIFETIME that this frame ages: the fps ring and the
-// explosion effects. Owned client state by ui_def.md's rule -- a discrete
-// occurrence pushed into a model with a lifetime, retired per frame, polled by
-// the draw -- and deliberately never a session entity.
+
 void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &frame)
 {
-  const float dt       = frame.dt;
+  const float dt = frame.dt;
   const float world_dt = frame.world_dt;
-
-  // anything related to dt or a fraction of it happens below here.
 
   // debug
   {
@@ -1680,7 +1669,10 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
   }
   
   for (auto &fx : ctx.visuals.explosion_effects)
+  {
     fx.time_remaining -= world_dt;
+  }
+
   std::erase_if(ctx.visuals.explosion_effects, [](const explosion_effect_t &fx) {
     return fx.time_remaining <= 0.f;
   });
@@ -1688,70 +1680,53 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
   shared::age_wall_ripples(ctx.visuals.team_wall_ripples, world_dt);
 }
 
-// SIMULATE: re-run every input the server has not acked, from the state it last
-// told us, against the world built above. The same two steps the live loop runs --
-// tick_def.md steps 2 and 3, through the same shared code -- which is what stops
-// a replay and a live step disagreeing.
 void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &frame)
 {
   // reconcile our locally predicted position with the server's simulated position of us.
-  if (ctx.prediction.received_server_update &&
-      ctx.connection.phase == Connection_Phase::Connected)
+  if (ctx.prediction.received_server_update && ctx.connection.phase == Connection_Phase::Connected)
   {
+    // reset.
     ctx.prediction.received_server_update = false;
 
     // intiialize from the server's authoritative state, then replay every command the server has not acked yet.
     vec3f reconciled_position = ctx.prediction.latest_server_position;
     vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
-    // Restarted from the SERVER's copy, exactly like the two above it -- this
-    // whole block exists to re-run our inputs against the server's answer, and
-    // a replay that kept the local movement state would be re-running them
-    // against our own guess.
+
+    // movement here means any auxiliary stuff. is_grounded, is_jumping, _being_carried, whatever.
     entities::Movement reconciled_movement = ctx.prediction.latest_server_movement;
 
-    // Hoisted: the replay is a loop over past ticks and this does not vary
-    // within it. See local_movement_is_allowed for why that is a stopgap.
+
     const bool movement_allowed = local_movement_is_allowed(ctx);
 
-    // The one thing the replay needs beyond movement, and the reason it needs
-    // it: a Fire_Resolution::Self_Impulse, on either button, lands on OUR OWN velocity
-    // (generalization_def.md §4), so an unacked dash that the replay does not
-    // re-apply is a dash undone for a round trip and then reinstated -- a
-    // rubber-band on the one ability whose whole point is that it is instant.
-    // Every other resolution's outcome is somewhere else and correctly absent
-    // from this loop.
-    const shared::weapon_definition_t *replayed_weapon =
-        try_find_local_weapon_definition(ctx);
+    const shared::weapon_definition_t* replayed_weapon = try_find_local_weapon_definition(ctx);
 
     float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
 
-    const shared::movement_settings_t move_settings = shared::movement_settings_from(*ctx.cvars);
-
+    const shared::movement_settings_t move_settings = shared::movement_settings_from_cvars(*ctx.cvars);
     int last_replayed_input = ctx.prediction.latest_input_number_processed_by_server;
 
     for (int replayed = ctx.prediction.latest_input_number_processed_by_server + 1;
-         replayed < ctx.prediction.input_number; ++replayed)
+         replayed < ctx.prediction.input_number;
+         ++replayed)
     {
       int idx = replayed % (int)ctx.prediction.pending_inputs.size();
-      const auto &pending_input = ctx.prediction.pending_inputs[idx];
-      if (pending_input.input_number != replayed)
-        break;
+      const auto& pending_input = ctx.prediction.pending_inputs[idx];
+      
+      if (pending_input.input_number != replayed) break;
       last_replayed_input = replayed;
 
       // reconstruct the sub-tick input from the stored per-tick input.
-      const shared::subtick_steps_t subtick_steps =
-          shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
+      const shared::subtick_steps_t subtick_steps = shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
       build_predicted_world_for_input(ctx, frame, replayed, reconciled_position);
-      reconciled_position =
-          predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
+
+      reconciled_position = predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
 
       for (const shared::subtick_step_t& step : subtick_steps)
       {
-        const uint64_t replay_pressed_in_this_step =
-            step.buttons & ~replay_previous_buttons;
+        const uint64_t replay_pressed_in_this_step = step.buttons & ~replay_previous_buttons;
         replay_previous_buttons = step.buttons;
 
         if (!movement_allowed)
@@ -1762,11 +1737,15 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
         // per-step aim because that's just correct.
         const shared::move_state_t replayed_state = player_move(
-            move_settings, ctx.world.session.bvh, frame.predicted_world,
+            move_settings,
+            ctx.world.session.bvh,
+            frame.predicted_world,
             {.feet     = reconciled_position,
              .velocity = reconciled_velocity,
              .movement = reconciled_movement},
-            shared::move_input_of(step), nullptr, &ctx.visuals.debug_collision_faces);
+            shared::move_input_from_subtick_step(step),
+            nullptr,
+            &ctx.visuals.debug_collision_faces);
 
         reconciled_position = replayed_state.feet;
         reconciled_velocity = replayed_state.velocity;
@@ -2069,7 +2048,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
     };
 
     // Where in the frame an arrival fell, as a plain ratio of a measured span.
-    auto fraction_into_frame_of = [&](uint64_t arrival_qpc_ticks) -> float {
+    auto compute_arrival_fraction_within_frame = [&](uint64_t arrival_qpc_ticks) -> float {
       if (arrival_span_ticks == 0)
         return 1.f;
       if (arrival_qpc_ticks < arrival_span.start_qpc_ticks ||
@@ -2186,7 +2165,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
       {
         // Both ends inclusive: the resync and focus-release edges, and every
         // edge on the SDL fallback path, are stamped exactly at the span end.
-        const float seconds_into_frame = fraction_into_frame_of(edge.arrival_qpc_ticks) * dt;
+        const float seconds_into_frame = compute_arrival_fraction_within_frame(edge.arrival_qpc_ticks) * dt;
 
         if (edge.device == input::input_device_t::Mouse_Motion)
         {
@@ -2535,7 +2514,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
               const shared::weapon_definition_t &held =
                   shared::get_weapon_definition(held_entity->weapon_id);
               if (ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
-                  shared::reload_may_start(held, shared::magazine_of(*held_entity)))
+                  shared::reload_may_start(held, shared::get_magazine(*held_entity)))
                 ctx.prediction.seconds_until_local_reload_complete =
                     held.reload_duration_seconds;
             }
@@ -2558,12 +2537,12 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             // along wherever the mouse finished the frame -- the aim half of the
             // quantization sub-tick already fixed for the buttons.
             const shared::move_state_t moved = player_move(
-                shared::movement_settings_from(*ctx.cvars), ctx.world.session.bvh,
+                shared::movement_settings_from_cvars(*ctx.cvars), ctx.world.session.bvh,
                 frame.predicted_world,
                 {.feet     = ctx.prediction.player_position,
                  .velocity = ctx.prediction.player_velocity,
                  .movement = ctx.prediction.player_movement},
-                shared::move_input_of(step), &step_events,
+                shared::move_input_from_subtick_step(step), &step_events,
                 &ctx.visuals.debug_collision_faces);
 
             ctx.prediction.player_position = moved.feet;
@@ -2586,7 +2565,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             const shared::weapon_definition_t *held_definition =
                 try_find_local_weapon_definition(ctx);
             const shared::movement_settings_t move_settings =
-                shared::movement_settings_from(*ctx.cvars);
+                shared::movement_settings_from_cvars(*ctx.cvars);
             if (fire_pressed_in_this_step)
               apply_trigger_press_to_own_movement(
                   move_settings, held_definition, entities::Fire_Trigger::Primary, step.view,
@@ -2754,6 +2733,8 @@ void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame
     if (linalg::length(ctx.prediction.visual_error_offset) < 0.001f)
       ctx.prediction.visual_error_offset = {0, 0, 0};
   }
+
+  update_drawn_tick_gap(ctx, dt);
 
   // move the cursor between frames ahead by dt so we know where to interpolate to / where our input is coming from.
   client::advance_interpolation_cursor(
@@ -3044,7 +3025,7 @@ void Play_State::draw_imgui_panels()
       if (remote_count > 0)
         ImGui::Text("%-20s %d", "remote players", remote_count);
 
-      int rocket_count = (int)ctx.world.session.entity_system.entities_of<entities::Rocket_Entity>().size();
+      int rocket_count = (int)ctx.world.session.entity_system.entities_of_type<entities::Rocket_Entity>().size();
       if (rocket_count > 0)
         ImGui::Text("%-20s %d", "remote rockets", rocket_count);
 
@@ -3188,7 +3169,7 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
 {
   const shared::Entity_System& system = ctx.world.session.entity_system;
   const vec3f eye_above_feet = {0.f, shared::player_eye_height, 0.f};
-  const shared::reveal_cone_settings_t settings = shared::reveal_cone_settings_from(*ctx.cvars);
+  const shared::reveal_cone_settings_t settings = shared::reveal_cone_settings_from_cvars(*ctx.cvars);
 
   if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
       my_player != nullptr && local_reveal_light_is_on(ctx, *my_player))
@@ -3196,9 +3177,9 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
     const bool                       overhead = local_reveal_light_is_overhead(ctx, *my_player);
     const entities::Reveal_Cone_Kind kind     = *shared::try_reveal_light_in_hand(system, *my_player);
     out.push_back({camera_is_my_eye
-                       ? shared::reveal_cone_of(camera.position, camera.yaw, camera.pitch, overhead,
+                       ? shared::compute_player_reveal_cone(camera.position, camera.yaw, camera.pitch, overhead,
                                                 kind, settings)
-                       : shared::reveal_cone_of(drawn_local_feet(ctx) + eye_above_feet,
+                       : shared::compute_player_reveal_cone(drawn_local_feet(ctx) + eye_above_feet,
                                                 my_player->view_angle_yaw,
                                                 my_player->view_angle_pitch, overhead, kind, settings),
                    held.color, held.intensity});
@@ -3211,16 +3192,16 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
     const entities::Player_Entity* player = try_find_player_in_slot(ctx, slot);
     if (player == nullptr || !shared::reveal_light_is_on(system, *player))
       continue;
-    out.push_back({shared::reveal_cone_of(remote_player.render_position + eye_above_feet,
+    out.push_back({shared::compute_player_reveal_cone(remote_player.render_position + eye_above_feet,
                                           remote_player.render_yaw, remote_player.render_pitch,
                                           player->reveal_light_overhead,
                                           *shared::try_reveal_light_in_hand(system, *player), settings),
                    held.color, held.intensity});
   }
 
-  for (const entities::Reveal_Light_Entity& light : system.entities_of<entities::Reveal_Light_Entity>())
+  for (const entities::Reveal_Light_Entity& light : system.entities_of_type<entities::Reveal_Light_Entity>())
     if (light.switch_state.value)
-      out.push_back({shared::reveal_cone_of(light, drawn_reveal_light_pose(ctx, light)), light.color,
+      out.push_back({shared::compute_light_reveal_cone(light, drawn_reveal_light_pose(ctx, light)), light.color,
                      light.intensity});
 
   if (out.size() > renderer::MAX_SCENE_REVEAL_CONES)
@@ -3305,9 +3286,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   if (!ctx.cvars->debug_hide_geometry)
   {
     auto mover_matrices  = std::unordered_map<shared::entity_uid_t, linalg::mat4f>{};
-    for (const entities::Mover_Entity &mover : entity_system.entities_of<entities::Mover_Entity>())
+    for (const entities::Mover_Entity &mover : entity_system.entities_of_type<entities::Mover_Entity>())
       mover_matrices[mover.entity_id] =
-          shared::mover_model_matrix(rest_frame_of(ctx, mover), drawn_mover_poses(ctx, mover).drawn);
+          shared::mover_model_matrix(get_rest_pose_for_mover(ctx, mover), drawn_mover_poses(ctx, mover).drawn);
 
     // A team wall is drawn in ITS team's colour: a ghost when it is ours to walk
     // through, solid when it is not, so it says whose it is either way. Which is
@@ -3346,7 +3327,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
-                    clock_wipe_of(ctx, owner_uid, entry.value), team_wall, light_cut);
+                    compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut);
     }
   }
 
@@ -3360,7 +3341,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)
     scene.reveal_cones.push_back(lit.cone);
 
-  for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of<entities::Fog_Volume_Entity>())
+  for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of_type<entities::Fog_Volume_Entity>())
     add_fog_volume(scene, fog);
 
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
@@ -3374,7 +3355,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)
     if (lit.light_intensity > 0.f)
       shared::add_dynamic_frame_light(scene.lights,
-                                      flashlight_of(lit, held_flashlight.inner_fraction));
+                                      build_spot_light_for_reveal_cone(lit, held_flashlight.inner_fraction));
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {
@@ -3411,7 +3392,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (!mesh.valid())
       continue;
 
-    const drawn_pose_t drawn_pose        = drawn_pose_of(ctx, entity);
+    const drawn_pose_t drawn_pose        = get_interpolated_pose_for_entity(ctx, entity);
     vec3f              drawn_position    = drawn_pose.position;
     quatf              drawn_orientation = drawn_pose.orientation;
     vec3f              drawn_scale    = render.scale;
@@ -3432,7 +3413,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
     if (const entities::Platform_Entity* platform = entities::entity_as<entities::Platform_Entity>(&entity))
     {
-      const drawn_platform_t drawn = drawn_platform(ctx, shared::platform_view_of(*platform));
+      const drawn_platform_t drawn = drawn_platform(ctx, shared::get_common_platform_fields(*platform));
       if (drawn.has_vanished)
         continue;
 
@@ -3448,7 +3429,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Shrinking_Platform_Entity* platform =
             entities::entity_as<entities::Shrinking_Platform_Entity>(&entity))
     {
-      const drawn_platform_t drawn = drawn_platform(ctx, shared::platform_view_of(*platform));
+      const drawn_platform_t drawn = drawn_platform(ctx, shared::get_common_platform_fields(*platform));
       if (drawn.has_vanished)
         continue;
 
@@ -3464,7 +3445,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Extending_Platform_Entity* platform =
             entities::entity_as<entities::Extending_Platform_Entity>(&entity))
     {
-      const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+      const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
       const float tick_interval_seconds = 1.0f / tickrate;
       if (!shared::extending_platform_exists_at_tick(*platform, tick, tick_interval_seconds))
         continue;
@@ -3492,7 +3473,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Timed_Movement_Modifier_Entity* zone =
             entities::entity_as<entities::Timed_Movement_Modifier_Entity>(&entity))
     {
-      const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+      const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
       if (!shared::timed_movement_modifier_is_active_at(*zone, tick, 1.0f / tickrate))
         continue;
       const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
@@ -3520,7 +3501,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Emancipated_Weapon_Entity* fizzled =
             entities::entity_as<entities::Emancipated_Weapon_Entity>(&entity))
     {
-      const auto [tick, fraction, tickrate] = drawn_tick_of(ctx);
+      const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
       const float elapsed_seconds =
           (static_cast<float>(tick) - static_cast<float>(fizzled->spawned_tick) + fraction) / tickrate;
       if (fizzled->lifetime_seconds <= 0.0f || elapsed_seconds >= fizzled->lifetime_seconds)
@@ -3587,7 +3568,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         if (const assets::skeleton_t* skeleton = assets::get(mesh_asset_data->skeleton))
           compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, ghost->view_pitch,
                                      linalg::wrap_degrees(ghost->view_yaw - ghost->body_yaw),
-                                     aim_settings_from(*ctx.cvars), posed);
+                                     aim_settings_from_cvars(*ctx.cvars), posed);
 
       renderer::mesh_draw_t draw{};
       draw.mesh      = mesh;
@@ -3679,7 +3660,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
           }
 
           compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, pitch, deviation,
-                                     aim_settings_from(*ctx.cvars), posed);
+                                     aim_settings_from_cvars(*ctx.cvars), posed);
         }
 
         renderer::mesh_draw_t draw{};
@@ -3750,7 +3731,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                        .body_yaw      = remote_player.body_yaw,
                                        .view_yaw      = remote_player.render_yaw,
                                        .view_pitch    = remote_player.render_pitch},
-                                      aim_settings_from(*ctx.cvars), volumes);
+                                      aim_settings_from_cvars(*ctx.cvars), volumes);
 
       // Both halves draw when occluded, because a hit volume lives INSIDE the
       // model it belongs to -- depth-tested only, the overlay is the few slivers
@@ -3924,7 +3905,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 
   for (const entities::Particle_Emitter_Entity &emitter :
-       entity_system.entities_of<entities::Particle_Emitter_Entity>())
+       entity_system.entities_of_type<entities::Particle_Emitter_Entity>())
     scene.particles.push_back(emitter_parameters(emitter, world_delta_seconds));
 
   for (const auto &fx : ctx.visuals.explosion_effects)
@@ -4010,7 +3991,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       int32_t joined = 0;
       int32_t voted  = 0;
       for (const entities::Player_Entity& player :
-           ctx.world.session.entity_system.entities_of<entities::Player_Entity>())
+           ctx.world.session.entity_system.entities_of_type<entities::Player_Entity>())
       {
         if (player.client_slot_index < 0 || player.client_slot_index >= network::sv_max_client_count)
           continue;
@@ -4066,7 +4047,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
             static_cast<float>(ticks_left) / static_cast<float>(ctx.connection.server_tickrate);
       }
       for (const entities::Player_Entity& player :
-           ctx.world.session.entity_system.entities_of<entities::Player_Entity>())
+           ctx.world.session.entity_system.entities_of_type<entities::Player_Entity>())
       {
         if (player.client_slot_index < 0 || player.client_slot_index >= network::sv_max_client_count)
           continue;
@@ -4092,7 +4073,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const ui::ui_font_t* font = ctx.font)
     {
       const Span<hud::scoreboard_row_t> rows = hud::collect_scoreboard_rows(
-          ctx.world.session.entity_system.entities_of<entities::Player_Entity>(),
+          ctx.world.session.entity_system.entities_of_type<entities::Player_Entity>(),
           ctx.connection.my_slot, scoreboard_rows);
       hud::draw_scoreboard(ui, *font, renderer::screen_size(), renderer::display_scale(), rows);
     }

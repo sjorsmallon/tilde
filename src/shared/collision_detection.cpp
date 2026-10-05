@@ -304,9 +304,15 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
   return out_hit.hit;
 }
 
-std::optional<sweep_hit_t> bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh,
-                                            const vec3f& from, const vec3f& to, float radius,
-                                            Span<const uint8_t> disabled_geometry)
+namespace
+{
+
+template <typename Passes_T>
+std::optional<sweep_hit_t> sweep_sphere_unless_passed(const Bounding_Volume_Hierarchy &bvh,
+                                                      const vec3f& from, const vec3f& to,
+                                                      float radius,
+                                                      Span<const uint8_t> disabled_geometry,
+                                                      Passes_T passes)
 {
   if (bvh.nodes.empty())
     return std::nullopt;
@@ -341,11 +347,34 @@ std::optional<sweep_hit_t> bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh
           return;
         if (nearest && t >= nearest->t)
           return;
+        if (passes(prim, t))
+          return;
         nearest = sweep_hit_t{.t = t, .id = prim.id, .normal = normal_prim};
       },
       radius);
 
   return nearest;
+}
+
+} // namespace
+
+std::optional<sweep_hit_t> bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh,
+                                            const vec3f& from, const vec3f& to, float radius,
+                                            Span<const uint8_t> disabled_geometry)
+{
+  return sweep_sphere_unless_passed(bvh, from, to, radius, disabled_geometry,
+                                    [](const BVH_Primitive &, float) { return false; });
+}
+
+std::optional<sweep_hit_t>
+bvh_sweep_sphere_unless_passed(const Bounding_Volume_Hierarchy &bvh, const vec3f& from,
+                               const vec3f& to, float radius,
+                               Span<const uint8_t> disabled_geometry,
+                               const std::function<bool(const BVH_Primitive &, float)> &passes)
+{
+  return sweep_sphere_unless_passed(bvh, from, to, radius, disabled_geometry,
+                                    [&](const BVH_Primitive &prim, float t)
+                                    { return passes(prim, t); });
 }
 
 void bvh_intersect_ray_all(const Bounding_Volume_Hierarchy &bvh, const vec3f& origin,

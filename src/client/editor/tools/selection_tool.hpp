@@ -14,8 +14,8 @@ namespace client
 
 struct object_snapshot_t
 {
-  entity_snapshot_t entity;
-  std::optional<shared::geometry_value_t> geometry;
+  entity_snapshot_t entity{};
+  std::optional<shared::geometry_value_t> geometry{};
 };
 
 class Selection_Tool : public Editor_Tool
@@ -40,105 +40,67 @@ public:
   Span<const shared::entity_uid_t> selected_objects() const override { return selected_uids; }
 
 private:
-  void draw_light_bake_status(const editor_context_t& ctx, shared::entity_uid_t uid,
-                              const entities::Entity& entity);
-  void draw_reflection_volume_status(const editor_context_t& ctx,
-                                     const entities::Entity& entity);
 
-  // The last "explain reach" probe, kept so the lines stay up while the author
-  // reads them; keyed by the light it was run for.
-  shared::entity_uid_t light_reach_uid = 0;
-  std::vector<std::string> light_reach_lines;
-  shared::entity_uid_t hovered_uid = 0;
-  std::vector<shared::entity_uid_t> selected_uids;
-
-  // The CLICK CYCLE: everything under the cursor, nearest first, each as its
-  // group and then as itself. A plain click in the same place takes the entry
-  // after the current selection, so what is behind is one more click away.
-  struct click_cycle_entry_t
-  {
-    shared::entity_uid_t              uid = 0;
-    std::vector<shared::entity_uid_t> members;
-  };
-  [[nodiscard]] std::vector<click_cycle_entry_t> collect_click_cycle(const editor_context_t& ctx) const;
-  linalg::vec2i last_plain_click_position = {-1000000, -1000000};
-
-  // "Target by click": the Connections panel arms it, the next viewport click
-  // resolves the hovered uid into the row and is SWALLOWED -- letting it through
-  // would reselect, and the panel the author was editing would be gone before
-  // the target landed in it.
-  uid_pick_t uid_pick;
-
-  // Ctrl+P arms it: the next viewport click names an entity and every selected ENTITY takes its
-  // position (Ctrl+Shift+P: its orientation too). Swallowed like the connection pick, so the selection stays.
-  struct snap_pick_t
-  {
-    bool armed            = false;
-    bool with_orientation = false;
-  };
-  snap_pick_t snap_pick;
-  void snap_selected_entities_onto(editor_context_t& ctx, shared::entity_uid_t target_uid,
-                                   bool with_orientation);
-
-  void commit_picked_field_uid(editor_context_t& ctx, const field_pick_target_t& target,
-                               shared::entity_uid_t picked);
-
-  // The inspector's open edit. `before` is re-seeded every frame nothing is
-  // pending, so an undo or a gizmo drag is never mistaken for one; a widget
-  // held across frames commits as ONE transaction when ImGui lets go of it.
-  struct inspector_edit_t
-  {
-    std::vector<shared::entity_uid_t>              uids;
-    std::vector<std::shared_ptr<entities::Entity>> before;
-    std::string                                    field;
-    bool                                           pending = false;
-  };
-  inspector_edit_t inspector_edit;
-
-  [[nodiscard]] std::vector<entities::Entity*> collect_inspected_entities(const editor_context_t& ctx) const;
-  void seed_inspector_edit(Span<entities::Entity* const> inspected);
-  void settle_inspector_edit(editor_context_t& ctx);
-  void commit_inspector_edit(editor_context_t& ctx);
-
-  // A press that MEANT something other than selecting, so its release must not
-  // fall through to the selection branch. Two gestures set it: the connection
-  // pick above, and the paste commit -- which hands the pasted copies to
-  // selected_uids, and a release landing on nothing would clear them again.
-  bool click_consumed_by_gesture = false;
-
-
-  // While a pick is armed the RAY is not the answer. A point light has no
-  // Render mesh, so editor_bounds_of gives it a small point box, which is
-  // sub-pixel at a distance -- what made clicking one finicky. This
-  // is screen-space instead: the nearest entity ANCHOR within a radius of the
-  // cursor, with a real BVH hit winning outright because that one is
-  // unambiguous. Deliberately scoped to the pick and not to ordinary selection,
-  // where a generous radius would mean grabbing a light you were not aiming at
-  // while you were modelling something else.
-  [[nodiscard]] std::optional<shared::entity_uid_t>
-  try_pick_entity_near_cursor(const editor_context_t &ctx, linalg::vec2 cursor) const;
-
-  // Drag box selection
-  bool is_dragging_box = false;
-  linalg::vec2i drag_start_position;
-  linalg::vec2i drag_current_position;
+shared::entity_uid_t hovered_uid = 0;
+  std::vector<shared::entity_uid_t> selected_uids{};
 
   // Cached viewport for projection in on_draw_ui / selection logic
-  viewport_state_t cached_viewport;
+  viewport_state_t cached_viewport{};
 
-  // Grid indication
-  bool grid_hover_valid = false;
-  linalg::vec3 grid_hover_position;
+  Editor_Gizmo editor_gizmo{};
 
-  // Gizmo. It owns no target of its own -- it is handed a box and reports a
-  // transform, and everything below is what applies that transform.
-  Editor_Gizmo editor_gizmo;
+  // position on the work plane if no entity is there.
+  std::optional<linalg::vec3> grid_hover{};
+
+  // where LMB went down.
+  linalg::vec2i press_position{};
+
+  // Selection happens on the release, so the release of a spent press must not select.
+  bool press_was_spent_on_pick_or_paste = false;
+
+  // if multiple entities occupy the same space or bounds, allows click through.
+  struct click_cycle_entry_t
+  {
+    shared::entity_uid_t uid = 0;
+    std::vector<shared::entity_uid_t> members{};
+  };
+  linalg::vec2i last_plain_click_position = {-1000000, -1000000};
+
+  // allows through select of a group member. armed by ctrl+W.
+  bool ignoring_groups = false;
+
+  // --- Armed picks: the next click answers a question --------------------------
+
+  // this is armed by the connections panel.
+  uid_pick_t uid_pick{};
+
+  // Ctrl+P arms it: the next viewport click names an entity and every selected ENTITY takes its
+  // position (Ctrl+Shift+P: its orientation too).
+  struct snap_pick_t
+  {
+    bool armed = false;
+    bool with_orientation = false;
+  };
+  snap_pick_t snap_pick{};
+
+  // --- Drags -------------------------------------------------------------------
+
+  struct box_drag_t
+  {
+    bool active = false;
+    linalg::vec2i current_position{};
+  };
+  box_drag_t box_drag{};
 
   // Direct object drag (Ctrl+LMB to move in camera view plane)
-  bool         is_dragging_object = false;
-  bool         object_drag_left_click_radius = false;
-  linalg::vec3 drag_plane_hit_start;
-  linalg::vec3 drag_plane_normal;
+  struct object_drag_t
+  {
+    bool active = false;
+    bool left_click_radius = false;
+    linalg::vec3 plane_hit_start{};
+    linalg::vec3 plane_normal{};
+  };
+  object_drag_t object_drag{};
 
   // The transform every selected object held when the drag opened. BOTH drag
   // styles -- the gizmo and Ctrl+LMB -- measure against this rather than
@@ -147,21 +109,163 @@ private:
   struct drag_origin_t
   {
     shared::entity_uid_t uid = 0;
-    linalg::vec3         position{0, 0, 0};
-    linalg::quatf        orientation = linalg::quatf::identity();
+    linalg::vec3 position{0, 0, 0};
+    linalg::quatf orientation = linalg::quatf::identity();
   };
-  std::vector<drag_origin_t>                        drag_origins;
-  std::map<shared::entity_uid_t, object_snapshot_t> drag_start_snapshots;
+  struct drag_baseline_t
+  {
+    std::vector<drag_origin_t> origins{};
+    std::map<shared::entity_uid_t, object_snapshot_t> snapshots{};
 
-  // Snapshot / commit for a multi-object drag, regime-agnostic at the call site.
+    void clear()
+    {
+      origins.clear();
+      snapshots.clear();
+    }
+  };
+  drag_baseline_t drag_baseline{};
+
+  // clipboard.
+  struct clipboard_t
+  {
+    // the clipboard is a map because a subset of a map is still a map.
+    // there was a lot of back-and-forth about what the simplest thing to do is,
+    // and it's this.
+    std::optional<shared::map_t> piece{};
+
+    // A brush's ghost is its hull, and building one is O(n^4) in the point count.
+    // The clipboard never changes, so the hulls are built once at copy time
+    // rather than per brush per frame for the whole life of a paste. Parallel to
+    // piece->geometry; the entry is empty for anything that is not a brush.
+    std::vector<std::optional<shared::brush_polyhedron_t>> brush_hulls{};
+
+    // this mentions the connections that have an endpoint outside the selection.
+    size_t outside_end_count = 0;
+
+    // The copied group's low corner, relative to its anchor. Paste puts THAT
+    // corner on a grid line, which is the rule compute_geometry_placement_center
+    // already follows for a single object.
+    linalg::vec3 low_corner_offset{0, 0, 0};
+
+    // The group the next paste of this clipboard becomes, named after the prefab
+    // it was loaded from; empty for a copied selection, which pastes loose.
+    std::string group_name{};
+  };
+  clipboard_t clipboard{};
+
+  struct paste_t
+  {
+    bool pending = false;
+    // Bottom-centre of where the group would land, already grid-aligned. Written
+    // once per frame in on_update; the overlay and the commit both read it, so
+    // what you see and what gets stored cannot disagree. Empty while the cursor
+    // is on nothing placeable.
+    std::optional<linalg::vec3> anchor{};
+  };
+  paste_t paste{};
+
+  // --- Panels ------------------------------------------------------------------
+
+  // The inspector's open edit. `before` is re-seeded every frame nothing is
+  // pending, so an undo or a gizmo drag is never mistaken for one; a widget
+  // held across frames commits as ONE transaction when ImGui lets go of it.
+  struct inspector_edit_t
+  {
+    std::vector<shared::entity_uid_t> uids{};
+    std::vector<std::shared_ptr<entities::Entity>> before;
+    std::string field{};
+    bool pending = false;
+  };
+  inspector_edit_t inspector_edit{};
+
+  // The inspector's group name field, re-seeded from the map while it is not
+  // being typed in.
+  struct group_name_edit_t
+  {
+    shared::entity_uid_t group_uid = shared::null_entity_uid;
+    Array<char, 96>      name;
+    bool                 active = false;
+  };
+  group_name_edit_t group_name_edit;
+
+  // What the panel's offset fields hold. Not applied until Apply is pressed:
+  // an edit-per-keystroke would push a transaction per digit typed.
+  linalg::vec3 panel_offset{0, 0, 0};
+
+  // The last "explain reach" probe, kept so the lines stay up while the author
+  // reads them; keyed by the light it was run for.
+  struct light_reach_t
+  {
+    shared::entity_uid_t uid = 0;
+    std::vector<std::string> lines{};
+  };
+  light_reach_t light_reach{};
+
+  // A name the author types and nothing else: a prefab's identity IS its
+  // filename (prefab_def.md), so there is no name field inside the file to keep
+  // in step with it.
+  struct prefab_save_popup_t
+  {
+    Array<char, 96> name{};
+    bool overwrite = false;
+    // What the last write said, kept so the answer survives the popup closing.
+    std::string status;
+  };
+  prefab_save_popup_t prefab_save{};
+
+  // =============================================================================
+  // Functions
+  // =============================================================================
+
+  // --- Picking -----------------------------------------------------------------
+
+  [[nodiscard]] std::vector<click_cycle_entry_t> collect_click_cycle(const editor_context_t& ctx) const;
+
+  [[nodiscard]] std::optional<shared::entity_uid_t>
+  try_pick_entity_near_cursor(const editor_context_t &ctx, linalg::vec2 cursor) const;
+
+  // The nearest visible entity whose ICON is within `radius` pixels of the
+  // cursor, if any. Pure proximity -- no ray, no BVH -- because an entity icon
+  // is a few pixels wide and a ray that misses it is not evidence the author
+  // meant something else.
+  [[nodiscard]] std::optional<shared::entity_uid_t>
+  try_pick_entity_within(const editor_context_t& ctx, linalg::vec2 cursor, float radius) const;
+
+  void append_pick(const editor_context_t& ctx, shared::entity_uid_t uid,
+                   std::vector<shared::entity_uid_t>& out) const;
+
+  // The ctrl/shift click: all of `picked` selected takes them out, else the
+  // rest come in. The viewport and the outliner both.
+  void toggle_in_selection(Span<const shared::entity_uid_t> picked);
+
+  void snap_selected_entities_onto(editor_context_t& ctx, shared::entity_uid_t target_uid,
+                                   bool with_orientation);
+
+  void commit_picked_field_uid(editor_context_t& ctx, const field_pick_target_t& target,
+                               shared::entity_uid_t picked);
+
+  // Arms the pick for the next group of the stamp's unbound rows, selecting
+  // that group's sender so the panel being filled is the one on screen. Does
+  // nothing when none are queued. Called after a paste and after each resolve.
+  void arm_next_unbound_pick(editor_context_t& ctx);
+
+  // --- Transforms --------------------------------------------------------------
+
+  [[nodiscard]] gizmo_view_t make_gizmo_view() const;
+
+  // World bounds of the whole selection. Empty when nothing is selected -- the
+  // union of no boxes is not a box at the origin, and three call sites would
+  // otherwise each have to remember that.
+  [[nodiscard]] std::optional<shared::aabb_bounds_t>
+  try_compute_selection_bounds(editor_context_t& ctx) const;
+
   void capture_drag_snapshots(editor_context_t& ctx);
   void commit_drag_snapshots(editor_context_t& ctx, std::string name);
 
   void apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t &drag);
 
-  // The panel's buttons go through apply_gizmo_drag too, wrapped in their own
-  // snapshot/commit. Sharing the application path is what stops a typed offset
-  // and a dragged one meaning different things.
+  // the panel buttons go through apply_gizmo_drag too, wrapped in their own
+  // snapshot/commit.
   void apply_transform_as_one_edit(editor_context_t& ctx, const gizmo_drag_t &transform,
                                    std::string name);
 
@@ -169,63 +273,8 @@ private:
   // button). One transform through apply_transform_as_one_edit, so a group
   // keeps its arrangement and one Ctrl+Z takes it back.
   void snap_selection_to_surface_below(editor_context_t& ctx);
-  void draw_multi_selection_panel(editor_context_t& ctx);
 
-  // What the panel's offset fields hold. Not applied until Apply is pressed:
-  // an edit-per-keystroke would push a transaction per digit typed.
-  linalg::vec3 panel_offset{0, 0, 0};
-
-  // --- Clipboard, and the pending paste ---------------------------------------
-  //
-  // Two keys, not one: Ctrl+C fills the clipboard, Ctrl+V opens a pending paste
-  // that follows the cursor until LMB commits it or Escape drops it. Splitting
-  // them is what makes a cancelled paste cost nothing and one copy pasteable
-  // repeatedly. The clipboard outlives the paste and the tool switch; the
-  // pending paste does not.
-  //
-  // THE CLIPBOARD IS A MAP -- a piece whose anchor is its own origin, which
-  // is exactly what a prefab file holds (prefab_def.md). Copy is
-  // copy_map_piece and paste is paste_map_piece, so Ctrl+C carries the
-  // CONNECTIONS between the copied objects, which the per-object clipboard this
-  // replaced silently dropped. Only the ANCHOR meets the grid at paste time --
-  // snapping each member on its own would deform the arrangement that was
-  // copied, which is usually the reason it was copied.
-  std::optional<shared::map_t> clipboard;
-
-  // A brush's ghost is its hull, and building one is O(n^4) in the point count.
-  // The clipboard never changes, so the hulls are built once at copy time
-  // rather than per brush per frame for the whole life of a paste. Parallel to
-  // clipboard->geometry; the entry is empty for anything that is not a brush.
-  std::vector<std::optional<shared::brush_polyhedron_t>> clipboard_brush_hulls;
-
-  // Rows the copy could not take, because one of their ends was not selected.
-  // Reported once at Ctrl+C: the same loss "Save as prefab" warns about, and
-  // the same walk decides both.
-  size_t clipboard_outside_end_count = 0;
-
-  // --- Save as prefab ----------------------------------------------------------
-  //
-  // A name the author types and nothing else: a prefab's identity IS its
-  // filename (prefab_def.md), so there is no name field inside the file to keep
-  // in step with it.
-  Array<char, 96> prefab_name;
-  bool            prefab_overwrite = false;
-  // What the last write said, kept so the answer survives the popup closing.
-  std::string prefab_status;
-
-  void draw_prefab_save_popup(editor_context_t& ctx);
-
-  // The copied group's low corner, relative to its anchor. Paste puts THAT
-  // corner on a grid line, which is the rule compute_geometry_placement_center
-  // already follows for a single object.
-  linalg::vec3 clipboard_low_corner_offset{0, 0, 0};
-
-  bool         paste_is_pending   = false;
-  bool         paste_anchor_valid = false;
-  // Bottom-centre of where the group would land, already grid-aligned. Written
-  // once per frame in on_update; the overlay and the commit both read it, so
-  // what you see and what gets stored cannot disagree.
-  linalg::vec3 paste_anchor{0, 0, 0};
+  // --- Clipboard and paste -----------------------------------------------------
 
   // The one way the clipboard is filled, whatever produced the piece: a
   // copied selection or a prefab off disk. Builds the ghost hulls and the low
@@ -236,9 +285,19 @@ private:
   void cancel_paste();
   void commit_paste(editor_context_t& ctx);
 
-  // The group the next paste of this clipboard becomes, named after the prefab
-  // it was loaded from; empty for a copied selection, which pastes loose.
-  std::string clipboard_group_name;
+  // --- Panels ------------------------------------------------------------------
+
+  void draw_light_bake_status(const editor_context_t& ctx, shared::entity_uid_t uid,
+                              const entities::Entity& entity);
+  void draw_reflection_volume_status(const editor_context_t& ctx,
+                                     const entities::Entity& entity);
+  void draw_multi_selection_panel(editor_context_t& ctx);
+  void draw_prefab_save_popup(editor_context_t& ctx);
+
+  [[nodiscard]] std::vector<entities::Entity*> collect_inspected_entities(const editor_context_t& ctx) const;
+  void seed_inspector_edit(Span<entities::Entity* const> inspected);
+  void settle_inspector_edit(editor_context_t& ctx);
+  void commit_inspector_edit(editor_context_t& ctx);
 
   // --- Groups ------------------------------------------------------------------
   //
@@ -251,26 +310,6 @@ private:
   void ungroup_by_uid(editor_context_t& ctx, shared::entity_uid_t group_uid);
   void select_group(editor_context_t& ctx, shared::entity_uid_t group_uid);
   void rename_group(editor_context_t& ctx, shared::entity_uid_t group_uid, std::string name);
-
-  // The ctrl/shift click: all of `picked` selected takes them out, else the
-  // rest come in. The viewport and the outliner both.
-  void toggle_in_selection(Span<const shared::entity_uid_t> picked);
-
-  // The inspector's group name field, re-seeded from the map while it is not
-  // being typed in.
-  struct group_name_edit_t
-  {
-    shared::entity_uid_t group_uid = shared::null_entity_uid;
-    Array<char, 96>      name;
-    bool                 active = false;
-  };
-  group_name_edit_t group_name_edit;
-
-  // Hammer's "Ignore Groups" (Ctrl+W): picks take the object alone. Editor
-  // state, never map data, and it survives switching tools.
-  bool ignoring_groups = false;
-  void append_pick(const editor_context_t& ctx, shared::entity_uid_t uid,
-                   std::vector<shared::entity_uid_t>& out) const;
 
   // --- The tie ------------------------------------------------------------------
   //
@@ -293,26 +332,6 @@ private:
   // answer that can disagree with it.
   void collect_owned_geometry(const editor_context_t& ctx, shared::entity_uid_t owner,
                               std::vector<shared::entity_uid_t>& out) const;
-
-  // Arms the pick for the next group of the stamp's unbound rows, selecting
-  // that group's sender so the panel being filled is the one on screen. Does
-  // nothing when none are queued. Called after a paste and after each resolve.
-  void arm_next_unbound_pick(editor_context_t& ctx);
-
-  // The nearest visible entity whose ICON is within `radius` pixels of the
-  // cursor, if any. Pure proximity -- no ray, no BVH -- because an entity icon
-  // is a few pixels wide and a ray that misses it is not evidence the author
-  // meant something else.
-  [[nodiscard]] std::optional<shared::entity_uid_t>
-  try_pick_entity_within(const editor_context_t& ctx, linalg::vec2 cursor, float radius) const;
-
-  [[nodiscard]] gizmo_view_t make_gizmo_view() const;
-
-  // World bounds of the whole selection. Empty when nothing is selected -- the
-  // union of no boxes is not a box at the origin, and three call sites would
-  // otherwise each have to remember that.
-  [[nodiscard]] std::optional<shared::aabb_bounds_t>
-  try_compute_selection_bounds(editor_context_t& ctx) const;
 };
 
 } // namespace client

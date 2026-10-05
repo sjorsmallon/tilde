@@ -165,7 +165,7 @@ void build_triangle_cells(lightmap_chart_t &chart)
   cells.width     = std::max(1, (int)std::ceil(extent_x / cells.cell_size));
   cells.height    = std::max(1, (int)std::ceil(extent_y / cells.cell_size));
 
-  const auto for_each_cell_of = [&](size_t triangle, const auto &visit) {
+  const auto for_each_cell_overlapping_triangle = [&](size_t triangle, const auto &visit) {
     linalg::vec2 low  = chart.triangles[triangle * 3];
     linalg::vec2 high = chart.triangles[triangle * 3];
     for (size_t corner = 1; corner < 3; ++corner)
@@ -186,14 +186,14 @@ void build_triangle_cells(lightmap_chart_t &chart)
   const size_t cell_count = (size_t)cells.width * (size_t)cells.height;
   cells.first.assign(cell_count + 1, 0);
   for (size_t triangle = 0; triangle < triangle_count; ++triangle)
-    for_each_cell_of(triangle, [&](size_t cell) { ++cells.first[cell + 1]; });
+    for_each_cell_overlapping_triangle(triangle, [&](size_t cell) { ++cells.first[cell + 1]; });
   for (size_t cell = 0; cell < cell_count; ++cell)
     cells.first[cell + 1] += cells.first[cell];
 
   std::vector<uint32_t> next(cells.first.begin(), cells.first.end() - 1);
   cells.triangles.resize(cells.first[cell_count]);
   for (size_t triangle = 0; triangle < triangle_count; ++triangle)
-    for_each_cell_of(triangle, [&](size_t cell) { cells.triangles[next[cell]++] = (uint32_t)triangle; });
+    for_each_cell_overlapping_triangle(triangle, [&](size_t cell) { cells.triangles[next[cell]++] = (uint32_t)triangle; });
 }
 
 // A subdivided face's coverage: the triangles and normals it draws with, so a texel is measured ON the raised surface.
@@ -693,7 +693,7 @@ size_t checked_offset(const lightmap_pages_t &pages, int page, int x, int y,
     fatal_error("[lightmap] a {} access to pages in format {}.", role,
                 (uint32_t)pages.format);
 
-  const size_t offset = pages.byte_offset_of(page, x, y);
+  const size_t offset = pages.compute_byte_offset(page, x, y);
   if (offset + (size_t)bytes_per_texel(pages.format) > pages.bytes.size())
     fatal_error("[lightmap] texel ({}, {}) on page {} is outside {} byte(s) of pages.",
                 x, y, page, pages.bytes.size());

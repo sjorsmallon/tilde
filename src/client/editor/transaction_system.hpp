@@ -165,8 +165,8 @@ struct transaction_t
     {
       log_error("transaction: uid {} was captured as {} but is now {} — the edit "
                 "is not undoable",
-                uid, entities::classname_of(before.get()),
-                entities::classname_of(after));
+                uid, entities::get_classname(before.get()),
+                entities::get_classname(after));
       return;
     }
 
@@ -394,7 +394,7 @@ private:
     {
       log_error("transaction: uid {} now holds a {} but the change was captured "
                 "against a {} — refusing to write field bytes into it",
-                diff.uid, entities::classname_of(entity),
+                diff.uid, entities::get_classname(entity),
                 entities::entity_info(diff.type).classname);
       return;
     }

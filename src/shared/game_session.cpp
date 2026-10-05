@@ -43,7 +43,7 @@ static void index_connections(game_session_t &session, const map_t &map)
 
 static void derive_mover_rest_frames(game_session_t &session)
 {
-  for (const entities::Mover_Entity &mover : session.entity_system.entities_of<entities::Mover_Entity>())
+  for (const entities::Mover_Entity &mover : session.entity_system.entities_of_type<entities::Mover_Entity>())
     session.mover_rests[mover.entity_id].frame = mover_rest_frame(session.entity_system, mover);
 }
 

@@ -29,7 +29,7 @@ struct connection_counts_t
 };
 
 // Rows this entity sends, and rows that name it by uid: the inbound list's rule.
-[[nodiscard]] connection_counts_t count_connections_of(const shared::map_t &map, shared::entity_uid_t uid);
+[[nodiscard]] connection_counts_t count_connections_by_uid(const shared::map_t &map, shared::entity_uid_t uid);
 
 // How a row's receiver is SPELLED, for the author: "!activator", "!self", or
 // the entity's label. Public because the viewport's connection lines label a

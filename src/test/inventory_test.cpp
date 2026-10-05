@@ -194,7 +194,7 @@ int main()
       const entities::Weapon_Entity* entity =
           session.entity_system.get<entities::Weapon_Entity>(uid);
       if (entity == nullptr || entity->weapon_id != weapon || entity->owner_uid != player_uid ||
-          entity->ammo != shared::full_magazine_of(shared::get_weapon_definition(weapon)))
+          entity->ammo != shared::get_full_magazine_ammo(shared::get_weapon_definition(weapon)))
         every_entity_agrees = false;
     }
     check(every_weapon_carried,
@@ -342,7 +342,7 @@ int main()
     equip(*player, entities::Weapon::Rocket_Launcher);
     const entities::Weapon_Entity* rocket = server::try_find_active_weapon(session, *player);
     check(rocket != nullptr &&
-              rocket->ammo == shared::full_magazine_of(shared::get_weapon_definition(
+              rocket->ammo == shared::get_full_magazine_ammo(shared::get_weapon_definition(
                                   entities::Weapon::Rocket_Launcher)),
           "one weapon's spent rounds are not another's");
   }
@@ -380,7 +380,7 @@ int main()
         shared::get_weapon_definition(entities::Weapon::Dash);
 
     const cvars::cvar_state_t         defaults{};
-    const shared::movement_settings_t settings = shared::movement_settings_from(defaults);
+    const shared::movement_settings_t settings = shared::movement_settings_from_cvars(defaults);
 
     entities::Movement movement{};
     vec3f              velocity{0.f, -400.f, 0.f};
@@ -406,7 +406,7 @@ int main()
     cvars::cvar_state_t instant_cvars{};
     instant_cvars.pm_model = cvars::Locomotion_Model::instant;
     const shared::movement_settings_t instant_settings =
-        shared::movement_settings_from(instant_cvars);
+        shared::movement_settings_from_cvars(instant_cvars);
 
     entities::Movement instant_movement{};
     vec3f              instant_velocity{0.f, 0.f, 0.f};
@@ -607,12 +607,12 @@ int main()
     entities::Weapon_Entity held;
     held.weapon_id = entities::Weapon::Modifier_Gun;
     shared::write_weapon_kind_counts(held);
-    check(shared::alive_limit_of(held).max_alive == modifier_gun.limit.max_alive &&
+    check(shared::get_concurrent_projectiles_alive_limit(held).max_alive == modifier_gun.limit.max_alive &&
               modifier_gun.limit.max_alive > 0,
           "a modifier gun is born with its kind's alive limit");
 
     held.max_alive = 4;
-    const shared::alive_limit_t limit = shared::alive_limit_of(held);
+    const shared::alive_limit_t limit = shared::get_concurrent_projectiles_alive_limit(held);
     const uint32_t max_alive          = limit.max_alive;
     check(max_alive == 4, "and the limit a shot reads is the one written on the weapon");
 
@@ -632,7 +632,7 @@ int main()
                                                entities::Fire_Trigger::Primary, limit));
 
     uint32_t alive = 0;
-    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of<entities::Modifier_Shot_Entity>())
+    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of_type<entities::Modifier_Shot_Entity>())
       if (shot.projectile.owner_uid == owner_uid)
         ++alive;
     check(alive == max_alive, "firing past the limit keeps max_alive shots alive");
@@ -644,9 +644,9 @@ int main()
     held.max_alive = 0;
     for (uint32_t shot = 0; shot < 3; ++shot)
       server::spawn_projectile(context, owner_uid, modifier_gun, origin, direction,
-                               entities::Fire_Trigger::Primary, shared::alive_limit_of(held));
+                               entities::Fire_Trigger::Primary, shared::get_concurrent_projectiles_alive_limit(held));
     alive = 0;
-    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of<entities::Modifier_Shot_Entity>())
+    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of_type<entities::Modifier_Shot_Entity>())
       if (shot.projectile.owner_uid == owner_uid)
         ++alive;
     check(alive == max_alive + 3, "a weapon written to 0 has no limit");
@@ -705,7 +705,7 @@ int main()
     const auto count_segments = [&]() {
       uint32_t count = 0;
       for (const entities::Extending_Platform_Entity& platform :
-           entity_system.entities_of<entities::Extending_Platform_Entity>())
+           entity_system.entities_of_type<entities::Extending_Platform_Entity>())
         if (platform.projectile.owner_uid == pilot_uid)
           ++count;
       return count;
@@ -727,7 +727,7 @@ int main()
 
     fly(100, 60);
     Span<entities::Guided_Rocket_Entity> rockets =
-        entity_system.entities_of<entities::Guided_Rocket_Entity>();
+        entity_system.entities_of_type<entities::Guided_Rocket_Entity>();
     check(rockets.size() == 1 && rockets[0].pilot_uid == pilot_uid, "a pilot has exactly one rocket");
     check(rockets.size() == 1 && rockets[0].position.x == 600.f &&
               rockets[0].position.y == shared::player_eye_height,
@@ -738,7 +738,7 @@ int main()
     context.tick_number               = 160;
     server::update_guided_rockets(context, tick_interval_seconds);
 
-    check(entity_system.entities_of<entities::Guided_Rocket_Entity>().empty(),
+    check(entity_system.entities_of_type<entities::Guided_Rocket_Entity>().empty(),
           "the rocket goes the tick the flight has ended");
     check(count_segments() == 3, "600 units of straight flight is three segments");
     check(context.world.flight_path_by_rocket_uid.empty(), "and the recording goes with the rocket");
@@ -746,7 +746,7 @@ int main()
     uint32_t earliest = 0xffffffffu;
     uint32_t latest   = 0;
     for (const entities::Extending_Platform_Entity& platform :
-         entity_system.entities_of<entities::Extending_Platform_Entity>())
+         entity_system.entities_of_type<entities::Extending_Platform_Entity>())
     {
       earliest = std::min(earliest, platform.spawned_tick);
       latest   = std::max(latest, platform.spawned_tick);
@@ -773,7 +773,7 @@ int main()
     context.tick_number            = 430;
     server::update_guided_rockets(context, tick_interval_seconds);
     check(pilot()->movement.override_seconds_remaining == 0.f, "a dead pilot's flight is let go");
-    check(entity_system.entities_of<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
+    check(entity_system.entities_of_type<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
     check(count_segments() == 2, "and it leaves no path of its own");
   }
 
@@ -890,7 +890,7 @@ int main()
     check(platform_ammo() == shared::UNLIMITED_AMMO, "and an unlimited one stays unlimited");
 
     const shared::alive_limit_t limit =
-        shared::alive_limit_of(*entity_system.get<entities::Weapon_Entity>(platform_uid));
+        shared::get_concurrent_projectiles_alive_limit(*entity_system.get<entities::Weapon_Entity>(platform_uid));
     check(limit.max_alive == 0, "a ground-refill gun is born with no alive limit: its magazine is one");
 
     const shared::entity_uid_t other_uid = entity_system.spawn<entities::Player_Entity>();

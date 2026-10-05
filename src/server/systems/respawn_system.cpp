@@ -101,7 +101,7 @@ try_pick_human_spawn(shared::game_session_t &session, Spawn_Policy policy,
                      entities::Team_Allegiance team, uint32_t rotation_index)
 {
   Span<entities::Player_Spawn_Entity> spawns =
-      session.entity_system.entities_of<entities::Player_Spawn_Entity>();
+      session.entity_system.entities_of_type<entities::Player_Spawn_Entity>();
 
   // One predicate, applied by both passes below, so "which markers are
   // eligible" cannot be answered differently by the count and by the pick --
@@ -165,7 +165,7 @@ void respawn_all_players(server_context_t &context)
 
   uint32_t rotation_index = 0;
   for (entities::Player_Entity &player :
-       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
   {
     const entities::Player_Spawn_Entity *marker =
         try_pick_human_spawn(context.world.session, policy, player.team_allegiance,

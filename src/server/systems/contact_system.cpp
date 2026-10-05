@@ -41,9 +41,9 @@ static constexpr float LONGEST_PULL_SECONDS      = 1.0f;
 static constexpr float LANDING_CLEARANCE         = 1.f;
 static constexpr int   LANDING_PUSH_OUT_ATTEMPTS = 4;
 
-static const shared::contact_t& contact_rule_of(const pending_contact_t& contact)
+static const shared::contact_t& get_contact_rule_for_pending_contact(const pending_contact_t& contact)
 {
-  return shared::fire_of(shared::get_weapon_definition(contact.weapon), contact.trigger).contact;
+  return shared::get_weapon_fire_for_button(shared::get_weapon_definition(contact.weapon), contact.trigger).contact;
 }
 
 // The kinds a body effect can act on. Everything else that stops a shot -- the map, a lift, a
@@ -59,7 +59,7 @@ static bool is_body(shared::Entity_System& entity_system, shared::entity_uid_t u
          entity_system.get<entities::Weapon_Entity>(uid) != nullptr;
 }
 
-static const char* type_name_of(shared::Entity_System& entity_system, shared::entity_uid_t uid)
+static const char* get_type_name_by_uid(shared::Entity_System& entity_system, shared::entity_uid_t uid)
 {
   const entities::Entity* entity = entity_system.try_find(uid);
   return entity != nullptr ? entities::entity_info(entity->type).display_name : "nothing";
@@ -92,12 +92,12 @@ static void impact_or_refuse(server_context_t& context, const pending_contact_t&
     return;
   }
   log_terminal("{} contact from uid {} dropped: it acts on {}, and uid {} is a {}",
-               to_string(contact_rule_of(contact).effect), contact.shooter_uid, acts_on,
-               contact.target_uid, type_name_of(entity_system, contact.target_uid));
+               to_string(get_contact_rule_for_pending_contact(contact).effect), contact.shooter_uid, acts_on,
+               contact.target_uid, get_type_name_by_uid(entity_system, contact.target_uid));
 }
 
 // player_move works on the hull CENTRE, so a reel aims at the anchor's, not at their feet.
-static vec3f reel_anchor_of(const entities::Player_Entity& anchor)
+static vec3f compute_reel_anchor_for_player(const entities::Player_Entity& anchor)
 {
   return anchor.position + vec3f{0.f, shared::player_half_height, 0.f};
 }
@@ -109,7 +109,7 @@ static void attach_reel(server_context_t& context, entities::Player_Entity& reel
 {
   reeled.movement.active_override            = entities::Movement_Override::Reel;
   reeled.movement.override_target_uid        = anchor.entity_id;
-  reeled.movement.override_target_position   = reel_anchor_of(anchor);
+  reeled.movement.override_target_position   = compute_reel_anchor_for_player(anchor);
   reeled.movement.override_seconds_remaining = seconds;
   reeled.movement.override_speed             = context.cvars->sv_hook_pull_speed;
   reeled.movement.override_radius     = context.cvars->sv_hook_arrive_radius;
@@ -124,7 +124,7 @@ static void throw_toward(server_context_t& context, entities::Player_Entity& thr
       std::clamp(linalg::length(to_destination) / context.cvars->sv_hook_pull_speed,
                  SHORTEST_PULL_SECONDS, LONGEST_PULL_SECONDS);
 
-  shared::apply_impulse(shared::movement_settings_from(*context.cvars), thrown.velocity,
+  shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), thrown.velocity,
                         thrown.movement,
                         {.velocity = to_destination * (1.f / flight_seconds) +
                                      vec3f{0.f, 0.5f * context.cvars->g_gravity * flight_seconds,
@@ -298,7 +298,7 @@ static void apply_magnet(server_context_t& context, const pending_contact_t& con
     return;
 
   const vec3f toward_target = to_target * (rule.speed / distance);
-  const shared::movement_settings_t settings = shared::movement_settings_from(*context.cvars);
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(*context.cvars);
 
   shared::apply_impulse(settings, shooter->velocity, shooter->movement,
                         {.horizontal = shared::impulse_mode_t::Add,
@@ -310,15 +310,15 @@ static void apply_magnet(server_context_t& context, const pending_contact_t& con
                          .velocity   = toward_target * -1.f});
 }
 
-// Reel and Throw share their cast: the shooter and the player hit, both alive, and the
+// Reel and Throw share their participants: the shooter and the player hit, both alive, and the
 // subject says which of the two moves.
-struct reel_cast_t
+struct reel_participants_t
 {
   entities::Player_Entity* moved;
   entities::Player_Entity* anchor;
 };
 
-[[nodiscard]] static std::optional<reel_cast_t> try_cast_of(server_context_t& context,
+[[nodiscard]] static std::optional<reel_participants_t> try_find_reel_participants(server_context_t& context,
                                                             const pending_contact_t& contact,
                                                             shared::contact_subject_t subject,
                                                             const char* effect_name)
@@ -343,8 +343,8 @@ struct reel_cast_t
 
   switch (subject)
   {
-  case shared::contact_subject_t::Target:  return reel_cast_t{.moved = target, .anchor = shooter};
-  case shared::contact_subject_t::Shooter: return reel_cast_t{.moved = shooter, .anchor = target};
+  case shared::contact_subject_t::Target:  return reel_participants_t{.moved = target, .anchor = shooter};
+  case shared::contact_subject_t::Shooter: return reel_participants_t{.moved = shooter, .anchor = target};
   }
   return std::nullopt;
 }
@@ -354,15 +354,15 @@ struct reel_cast_t
 static void apply_reel(server_context_t& context, const pending_contact_t& contact,
                        const shared::contact_reel_t& rule)
 {
-  if (const std::optional<reel_cast_t> cast = try_cast_of(context, contact, rule.subject, "Reel"))
-    attach_reel(context, *cast->moved, *cast->anchor, rule.seconds);
+  if (const std::optional<reel_participants_t> participants = try_find_reel_participants(context, contact, rule.subject, "Reel"))
+    attach_reel(context, *participants->moved, *participants->anchor, rule.seconds);
 }
 
 static void apply_throw(server_context_t& context, const pending_contact_t& contact,
                         const shared::contact_throw_t& rule)
 {
-  if (const std::optional<reel_cast_t> cast = try_cast_of(context, contact, rule.subject, "Throw"))
-    throw_toward(context, *cast->moved, *cast->anchor);
+  if (const std::optional<reel_participants_t> participants = try_find_reel_participants(context, contact, rule.subject, "Throw"))
+    throw_toward(context, *participants->moved, *participants->anchor);
 }
 
 // A hit on a player already frozen RELEASES them: the clock is spent and the next step thaws
@@ -392,7 +392,7 @@ static void apply_freeze(server_context_t& context, const pending_contact_t& con
   target->movement.override_seconds_remaining = rule.seconds;
 
   if (rule.kind == entities::Movement_Override::Statue)
-    shared::apply_impulse(shared::movement_settings_from(*context.cvars), target->velocity,
+    shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), target->velocity,
                           target->movement,
                           {.horizontal = shared::impulse_mode_t::Set,
                            .vertical   = shared::impulse_mode_t::Set,
@@ -424,7 +424,7 @@ static void apply_explode(server_context_t& context, const pending_contact_t& co
     const vec3f push      = direction * (rule.knockback * falloff);
 
     if (entities::Player_Entity* player = entity_system.get<entities::Player_Entity>(target.uid))
-      shared::apply_impulse(shared::movement_settings_from(*context.cvars), player->velocity,
+      shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), player->velocity,
                             player->movement,
                             {.horizontal = shared::impulse_mode_t::Add,
                              .vertical   = shared::impulse_mode_t::Add,
@@ -474,7 +474,7 @@ static void apply_land(server_context_t& context, const shared::predicted_world_
                                                              : vec3f{0.f, 1.f, 0.f};
 
   const std::optional<vec3f> feet = try_find_landing_feet(
-      context.world.session.bvh, shared::predicted_world_of(world, owner->team_allegiance),
+      context.world.session.bvh, shared::get_predicted_world_for_team(world, owner->team_allegiance),
       contact.point, normal);
   if (!feet)
   {
@@ -512,7 +512,7 @@ static void apply_leave_zone(server_context_t& context, const pending_contact_t&
 static void apply_contact(server_context_t& context, const shared::predicted_world_storage_t& world,
                           const pending_contact_t& contact, std::vector<pending_hit_t>& damage)
 {
-  const shared::contact_t& rule = contact_rule_of(contact);
+  const shared::contact_t& rule = get_contact_rule_for_pending_contact(contact);
   switch (rule.effect)
   {
   case shared::contact_effect_t::None:
@@ -574,7 +574,7 @@ static void finish_reloads_that_came_due(server_context_t& context)
   const shared::subtick_time_t end_of_tick =
       shared::subtick_time(context.tick_number + 1, 0);
   for (entities::Player_Entity& player :
-       context.world.session.entity_system.entities_of<entities::Player_Entity>())
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
   {
     if (is_reloading(player) && player.reload_complete_time <= end_of_tick)
       finish_reload(context.world.session, player);
@@ -589,7 +589,7 @@ static void refresh_reel_anchors(server_context_t& context)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
-  for (entities::Player_Entity& reeled : entity_system.entities_of<entities::Player_Entity>())
+  for (entities::Player_Entity& reeled : entity_system.entities_of_type<entities::Player_Entity>())
   {
     if (reeled.movement.active_override != entities::Movement_Override::Reel)
       continue;
@@ -602,12 +602,12 @@ static void refresh_reel_anchors(server_context_t& context)
       reeled.movement.active_override            = entities::Movement_Override::None;
       reeled.movement.override_target_uid        = shared::null_entity_uid;
       reeled.movement.override_seconds_remaining = 0.f;
-      shared::apply_impulse(shared::movement_settings_from(*context.cvars), reeled.velocity,
+      shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), reeled.velocity,
                             reeled.movement, {.velocity = reeled.velocity});
       continue;
     }
 
-    reeled.movement.override_target_position = reel_anchor_of(*anchor);
+    reeled.movement.override_target_position = compute_reel_anchor_for_player(*anchor);
   }
 }
 

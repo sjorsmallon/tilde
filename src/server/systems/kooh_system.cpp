@@ -23,7 +23,7 @@ void update_koohs(server_context_t& context, const shared::predicted_world_stora
   std::vector<shared::projectile_target_t> targets;
   shared::collect_projectile_targets(entity_system, targets);
 
-  for (entities::Kooh_Entity& kooh : entity_system.entities_of<entities::Kooh_Entity>())
+  for (entities::Kooh_Entity& kooh : entity_system.entities_of_type<entities::Kooh_Entity>())
   {
     kooh.lifetime -= dt;
     if (kooh.lifetime <= 0.f)

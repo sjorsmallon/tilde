@@ -10,9 +10,6 @@
 #include <algorithm>
 #include <optional>
 
-//@TODO(SMIA): in all honesty, the asset system should not live here.
-// just hand the spans over (and a mapping name?)
-
 namespace client
 {
 
@@ -36,15 +33,13 @@ struct voices_t
   Array<ma_sound, MAX_VOICE_COUNT> sounds;
   Array<uint32_t, MAX_VOICE_COUNT> generations;
 
-  // bit N set = slot N is free. All free at construction. The shift is 64-bit
-  // so that the count==32 case is not UB.
+  //creates a bitmask with the lowest MAX_VOICE_COUNT bits set to 1.
   uint32_t free_slots = (uint32_t)((1ull << MAX_VOICE_COUNT) - 1ull);
 };
 
 [[nodiscard]] static std::optional<uint32_t> try_find_free_voice(const voices_t& voices)
 {
-  if (voices.free_slots == 0)
-    return std::nullopt;
+  if (voices.free_slots == 0) return std::nullopt;
 
   return (uint32_t)std::countr_zero(voices.free_slots);
 }
@@ -55,7 +50,7 @@ static void make_voice_live(voices_t& voices, uint32_t index)
   ++voices.generations[index];
 }
 
-static voice_handle_t handle_of(const voices_t& voices, uint32_t index)
+static voice_handle_t get_voice_handle_by_index(const voices_t& voices, uint32_t index)
 {
   return {index, voices.generations[index]};
 }
@@ -74,9 +69,9 @@ static bool is_voice_live(const voices_t& voices, uint32_t index)
 struct audio_impl_t
 {
   ma_engine engine{};
-  voices_t voices;
+  voices_t voices{};
   // just so we don't spam the log.
-  Enum_Array<assets::sound_asset, bool> play_failure_reported;
+  Enum_Array<assets::sound_asset, bool> play_failure_reported{};
 };
 
 // The path a sound was registered with, which is the key every
@@ -263,7 +258,7 @@ static voice_handle_t start_3d_voice(audio_impl_t* impl, const sound_attenuation
   ma_sound_set_position(voice, position.x, position.y, position.z);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);
-  return handle_of(impl->voices, *slot);
+  return get_voice_handle_by_index(impl->voices, *slot);
 }
 
 voice_handle_t Audio_System::play_3d(assets::sound_asset sound, const linalg::vec3f& position,
@@ -293,7 +288,7 @@ voice_handle_t Audio_System::play_2d(assets::sound_asset sound, float volume)
   ma_sound_set_spatialization_enabled(voice, MA_FALSE);
   ma_sound_set_volume(voice, volume);
   ma_sound_start(voice);
-  return handle_of(impl->voices, *slot);
+  return get_voice_handle_by_index(impl->voices, *slot);
 }
 
 void Audio_System::stop_all()

@@ -21,7 +21,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
       .tick_interval_seconds = settings.tick_interval_seconds,
       .gravity               = settings.gravity};
 
-  for (const entities::Bubble_Entity& bubble : system.entities_of<entities::Bubble_Entity>())
+  for (const entities::Bubble_Entity& bubble : system.entities_of_type<entities::Bubble_Entity>())
   {
     const uint32_t arm_ticks =
         settings.tick_interval_seconds > 0.f
@@ -41,7 +41,7 @@ void collect_movement_volumes(Entity_System& system, const movement_volume_setti
     });
   }
 
-  for (const entities::Jump_Pad_Entity& pad : system.entities_of<entities::Jump_Pad_Entity>())
+  for (const entities::Jump_Pad_Entity& pad : system.entities_of_type<entities::Jump_Pad_Entity>())
   {
     out.push_back({
         .uid             = pad.entity_id,

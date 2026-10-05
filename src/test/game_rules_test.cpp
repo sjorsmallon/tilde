@@ -60,7 +60,7 @@ constexpr int32_t MATCH_ENDED_AMOUNT   = 1;
 
 entities::Match& match(server_context_t& context)
 {
-  return match_of(context);
+  return get_match(context);
 }
 
 void check_phase(server_context_t& context, Round_Phase expected, const std::string& what)
@@ -218,7 +218,7 @@ shared::entity_uid_t spawn_test_player(server_context_t& context,
   return uid;
 }
 
-entities::Player_Entity& player_of(server_context_t& context, shared::entity_uid_t uid)
+entities::Player_Entity& get_player_by_uid(server_context_t& context, shared::entity_uid_t uid)
 {
   return *context.world.session.entity_system.get<entities::Player_Entity>(uid);
 }
@@ -502,7 +502,7 @@ void test_action_beats_poll_beats_clock()
 
   // All three true in one tick: the deadline passed, the frag limit is reached,
   // and someone asked for a restart.
-  player_of(world.context, leader).kills = world.cvars.mp_frag_limit;
+  get_player_by_uid(world.context, leader).kills = world.cvars.mp_frag_limit;
   world.context.tick_number              = match(world.context).phase_end_tick;
   request_and_tick(world.context, entities::entity_action::Restart_Round);
   check_phase(world.context, Round_Phase::Live, "the request wins: the round restarts");
@@ -524,7 +524,7 @@ shared::entity_uid_t join_test_client(server_context_t& context, int32_t slot)
       spawn_test_player(context, entities::Team_Allegiance::Free_For_All, 100);
   context.transport_layer.clients[slot].occupied = true;
   context.clients[slot].player_uid               = uid;
-  player_of(context, uid).client_slot_index      = slot;
+  get_player_by_uid(context, uid).client_slot_index      = slot;
   return uid;
 }
 
@@ -545,7 +545,7 @@ void test_warmup_vote()
   check_phase(world.context, Round_Phase::Warmup, "nobody ready holds warmup");
   check(count_warmup_vote(world.context).joined == 2, "a bot is not a joined human");
 
-  player_of(world.context, first).ready = true;
+  get_player_by_uid(world.context, first).ready = true;
   tick(world.context);
   check_phase(world.context, Round_Phase::Warmup, "one of two ready holds warmup");
 
@@ -555,18 +555,18 @@ void test_warmup_vote()
               "everyone ready but under mp_players_to_start holds warmup");
   world.context.transport_layer.clients[1].occupied = true;
 
-  player_of(world.context, second).ready = true;
+  get_player_by_uid(world.context, second).ready = true;
   tick(world.context);
   check_phase(world.context, Round_Phase::Freeze,
               "every joined human ready starts the match, at once under mp_countdown_seconds 0");
 
   install_match(world.context, world.context.tick_number, tickrate, false);
-  check(!player_of(world.context, first).ready && !player_of(world.context, second).ready,
+  check(!get_player_by_uid(world.context, first).ready && !get_player_by_uid(world.context, second).ready,
         "installing the match clears every vote");
 
   test_world_t never;
   stand_up(never, entities::Game_Mode::rounds);
-  player_of(never.context, join_test_client(never.context, 0)).ready = true;
+  get_player_by_uid(never.context, join_test_client(never.context, 0)).ready = true;
   tick(never.context);
   check_phase(never.context, Round_Phase::Warmup, "mp_players_to_start 0 never starts from the vote");
 }
@@ -583,8 +583,8 @@ void test_match_countdown()
   const shared::entity_uid_t first  = join_test_client(world.context, 0);
   const shared::entity_uid_t second = join_test_client(world.context, 1);
 
-  player_of(world.context, first).ready  = true;
-  player_of(world.context, second).ready = true;
+  get_player_by_uid(world.context, first).ready  = true;
+  get_player_by_uid(world.context, second).ready = true;
   tick(world.context);
   check_phase(world.context, Round_Phase::Countdown, "an all-ready vote starts the countdown");
   check(match(world.context).phase_end_tick == world.context.tick_number + 2 * tickrate,
@@ -593,12 +593,12 @@ void test_match_countdown()
   check(queued_with_amount(world.context, MATCH_STARTED_AMOUNT) == 0,
         "entering the countdown has not started the match");
 
-  player_of(world.context, second).ready = false;
+  get_player_by_uid(world.context, second).ready = false;
   tick(world.context);
   check_phase(world.context, Round_Phase::Warmup, "un-readying cancels the countdown");
-  check(player_of(world.context, first).ready, "a cancel keeps everyone else's vote");
+  check(get_player_by_uid(world.context, first).ready, "a cancel keeps everyone else's vote");
 
-  player_of(world.context, second).ready = true;
+  get_player_by_uid(world.context, second).ready = true;
   tick(world.context);
   check_phase(world.context, Round_Phase::Countdown, "readying again restarts the countdown");
 
@@ -613,7 +613,7 @@ void test_match_countdown()
   stand_up(skipped, entities::Game_Mode::rounds);
   skipped.cvars.mp_players_to_start  = 1;
   skipped.cvars.mp_countdown_seconds = 5.f;
-  player_of(skipped.context, join_test_client(skipped.context, 0)).ready = true;
+  get_player_by_uid(skipped.context, join_test_client(skipped.context, 0)).ready = true;
   tick(skipped.context);
   check_phase(skipped.context, Round_Phase::Countdown, "the vote counts down");
   start_the_match(skipped.context);
@@ -647,7 +647,7 @@ void test_restart_round_resets_the_level()
   const shared::entity_uid_t carried_uid = entity_system.spawn<entities::Weapon_Entity>();
   const shared::entity_uid_t loose_uid   = entity_system.spawn<entities::Weapon_Entity>();
   const shared::entity_uid_t rocket_uid  = entity_system.spawn<entities::Rocket_Entity>();
-  player_of(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
+  get_player_by_uid(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
 
   start_the_match(world.context);
   run_until_live(world.context);
@@ -657,12 +657,12 @@ void test_restart_round_resets_the_level()
   entity_system.get<entities::Sound_Emitter_Entity>(emitter_uid)->playback = {.play_count = 3,
                                                                               .stop_count = 1};
   world.context.world.session.connections_by_sender[rules_uid].front().spent  = true;
-  player_of(world.context, player_uid).position       = {700.f, 0.f, 0.f};
-  player_of(world.context, player_uid).checkpoint_uid = crate_uid;
-  player_of(world.context, player_uid).kills          = 4;
-  player_of(world.context, player_uid).movement.seconds_until_impulse_ready = 2.f;
-  player_of(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
-  player_of(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Secondary] =
+  get_player_by_uid(world.context, player_uid).position       = {700.f, 0.f, 0.f};
+  get_player_by_uid(world.context, player_uid).checkpoint_uid = crate_uid;
+  get_player_by_uid(world.context, player_uid).kills          = 4;
+  get_player_by_uid(world.context, player_uid).movement.seconds_until_impulse_ready = 2.f;
+  get_player_by_uid(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
+  get_player_by_uid(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Secondary] =
       placed_weapon_uid;
   entity_system.get<entities::Weapon_Entity>(placed_weapon_uid)->owner_uid = player_uid;
 
@@ -678,9 +678,9 @@ void test_restart_round_resets_the_level()
 
   check_phase(world.context, Round_Phase::Freeze, "a restart counts down again");
   check(match(world.context).round_number == 2, "as the next round");
-  check(player_of(world.context, player_uid).position.x == 0.f,
+  check(get_player_by_uid(world.context, player_uid).position.x == 0.f,
         "everyone is back on the start line");
-  check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
+  check(get_player_by_uid(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
         "with their checkpoints dropped");
   check(entity_system.get<entities::Damageable_Entity>(crate_uid)->health.current_health == 50,
         "the damageables are back");
@@ -696,16 +696,16 @@ void test_restart_round_resets_the_level()
         "an action queued by the last round is dropped");
   check(entity_system.get<entities::Weapon_Entity>(carried_uid) == nullptr,
         "a carried weapon does not outlive the round");
-  for (const uint32_t weapon_uid : player_of(world.context, player_uid).inventory.weapons.values)
+  for (const uint32_t weapon_uid : get_player_by_uid(world.context, player_uid).inventory.weapons.values)
     check(weapon_uid == shared::null_entity_uid, "and the inventory that named it is empty");
   check(entity_system.get<entities::Weapon_Entity>(placed_weapon_uid) != nullptr &&
             entity_system.get<entities::Weapon_Entity>(placed_weapon_uid)->owner_uid ==
                 shared::null_entity_uid,
         "a weapon the map placed is back where the map has it, owned by nobody");
-  check(player_of(world.context, player_uid).movement.seconds_until_impulse_ready == 0.f,
+  check(get_player_by_uid(world.context, player_uid).movement.seconds_until_impulse_ready == 0.f,
         "a player's movement state is back at construction");
-  check(player_of(world.context, player_uid).kills == 4 &&
-            player_of(world.context, player_uid).team_allegiance == entities::Team_Allegiance::Red,
+  check(get_player_by_uid(world.context, player_uid).kills == 4 &&
+            get_player_by_uid(world.context, player_uid).team_allegiance == entities::Team_Allegiance::Red,
         "but their score and their team are who they are, and stay");
   check(entity_system.get<entities::Weapon_Entity>(loose_uid) == nullptr &&
             entity_system.try_find(rocket_uid) == nullptr,
@@ -740,11 +740,11 @@ void test_frag_limit()
       spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
   spawn_test_player(world.context, entities::Team_Allegiance::Free_For_All, 100);
 
-  player_of(world.context, leader).kills = world.cvars.mp_frag_limit - 1;
+  get_player_by_uid(world.context, leader).kills = world.cvars.mp_frag_limit - 1;
   tick(world.context);
   check_phase(world.context, Round_Phase::Live, "one frag short is not a win");
 
-  ++player_of(world.context, leader).kills;
+  ++get_player_by_uid(world.context, leader).kills;
   tick(world.context);
   check_phase(world.context, Round_Phase::Game_Over, "the frag limit ends the match");
   check(match(world.context).end_reason == Round_End_Reason::Frag_Limit,
@@ -756,7 +756,7 @@ void test_frag_limit()
   start_the_match(unlimited.context);
   const shared::entity_uid_t scorer =
       spawn_test_player(unlimited.context, entities::Team_Allegiance::Free_For_All, 100);
-  player_of(unlimited.context, scorer).kills = 999;
+  get_player_by_uid(unlimited.context, scorer).kills = 999;
   tick(unlimited.context);
   check_phase(unlimited.context, Round_Phase::Live, "mp_frag_limit 0 never ends a round");
 }
@@ -778,7 +778,7 @@ void test_team_elimination()
     tick(world.context);
     check_phase(world.context, Round_Phase::Live, "two live teams keep playing");
 
-    player_of(world.context, blu).health.current_health = 0;
+    get_player_by_uid(world.context, blu).health.current_health = 0;
     tick(world.context);
     check_phase(world.context, Round_Phase::Round_End, "eliminating a team ends the round");
     check(match(world.context).end_reason == Round_End_Reason::Team_Elimination,
@@ -797,8 +797,8 @@ void test_team_elimination()
         spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
     const shared::entity_uid_t blu =
         spawn_test_player(world.context, entities::Team_Allegiance::Blu, 100);
-    player_of(world.context, red).health.current_health = 0;
-    player_of(world.context, blu).health.current_health = 0;
+    get_player_by_uid(world.context, red).health.current_health = 0;
+    get_player_by_uid(world.context, blu).health.current_health = 0;
     tick(world.context);
     check(match(world.context).winning_team == entities::Team_Allegiance::Free_For_All,
           "a mutual elimination is a draw");
@@ -884,11 +884,11 @@ void test_speedrun_freeze_skip_and_next_map()
   start_the_match(world.context);
   check_phase(world.context, Round_Phase::Freeze, "the run counts down");
 
-  player_of(world.context, first).wants_to_skip_freeze = true;
+  get_player_by_uid(world.context, first).wants_to_skip_freeze = true;
   tick(world.context);
   check_phase(world.context, Round_Phase::Freeze, "one skip vote of two skips nothing");
 
-  player_of(world.context, second).wants_to_skip_freeze = true;
+  get_player_by_uid(world.context, second).wants_to_skip_freeze = true;
   tick(world.context);
   check_phase(world.context, Round_Phase::Live, "every joined player voting ends the freeze");
 
@@ -900,12 +900,12 @@ void test_speedrun_freeze_skip_and_next_map()
   request_and_tick(world.context, entities::entity_action::Restart_Round);
   check_phase(world.context, Round_Phase::Freeze, "a restart inside the hold cancels the map change");
   check(world.context.pending_map_change.empty(), "and asks for no map");
-  check(!player_of(world.context, first).wants_to_skip_freeze &&
-            !player_of(world.context, second).wants_to_skip_freeze,
+  check(!get_player_by_uid(world.context, first).wants_to_skip_freeze &&
+            !get_player_by_uid(world.context, second).wants_to_skip_freeze,
         "the round boundary clears the skip votes");
 
-  player_of(world.context, first).wants_to_skip_freeze  = true;
-  player_of(world.context, second).wants_to_skip_freeze = true;
+  get_player_by_uid(world.context, first).wants_to_skip_freeze  = true;
+  get_player_by_uid(world.context, second).wants_to_skip_freeze = true;
   tick(world.context);
   match(world.context).objective_reached = true;
   tick(world.context);
@@ -977,7 +977,7 @@ void test_a_started_match_carries_across_a_map_load()
   emptied.context.clients[0].map_ready = true;
   tick(emptied.context);
   check_phase(emptied.context, Round_Phase::Warmup, "so the next session votes again");
-  player_of(emptied.context, late).ready = true;
+  get_player_by_uid(emptied.context, late).ready = true;
   tick(emptied.context);
   check(match(emptied.context).phase != Round_Phase::Warmup, "and its vote starts it");
 }
@@ -992,7 +992,7 @@ void run_live_ticks(server_context_t& context, uint32_t count)
     tick(context);
     shared::capture_ghost_poses(context.world.ghost_capture, match(context).phase_start_tick,
                                 context.tick_number,
-                                context.world.session.entity_system.entities_of<entities::Player_Entity>());
+                                context.world.session.entity_system.entities_of_type<entities::Player_Entity>());
   }
 }
 
@@ -1030,7 +1030,7 @@ void test_run_categories()
 
   const shared::entity_uid_t red_uid =
       spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
-  player_of(world.context, red_uid).display_name = "red";
+  get_player_by_uid(world.context, red_uid).display_name = "red";
 
   start_the_match(world.context);
   run_until_live(world.context);
@@ -1058,7 +1058,7 @@ void test_run_categories()
   // A partner joins, and the pair is SLOWER than the solo run.
   const shared::entity_uid_t blu_uid =
       spawn_test_player(world.context, entities::Team_Allegiance::Blu, 100);
-  player_of(world.context, blu_uid).display_name = "blu";
+  get_player_by_uid(world.context, blu_uid).display_name = "blu";
 
   restart_and_run(world.context, 60);
   check(announced.party_size == 2 && announced.hash == 0,
@@ -1124,34 +1124,34 @@ void test_checkpoint_respawn()
   const shared::entity_uid_t checkpoint_uid =
       spawn_checkpoint(world.context, checkpoint_position);
 
-  player_of(world.context, player_uid).checkpoint_uid = 9999;
+  get_player_by_uid(world.context, player_uid).checkpoint_uid = 9999;
   world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
   update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
-  check(player_of(world.context, player_uid).position.x == 0.f,
+  check(get_player_by_uid(world.context, player_uid).position.x == 0.f,
         "a uid naming nothing respawns you at the start line");
 
   world.context.world.death_tick_by_player_uid[second_runner_uid] = world.context.tick_number;
   update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
-  check(player_of(world.context, second_runner_uid).position.x == 100.f,
+  check(get_player_by_uid(world.context, second_runner_uid).position.x == 100.f,
         "the second runner dies back to their own marker, not the first runner's");
 
-  player_of(world.context, player_uid).checkpoint_uid = checkpoint_uid;
+  get_player_by_uid(world.context, player_uid).checkpoint_uid = checkpoint_uid;
   world.context.world.death_tick_by_player_uid[player_uid] = world.context.tick_number;
   update_respawns(world.context, world.context.tick_number, tickrate, 0.f);
-  const vec3f respawned_at = player_of(world.context, player_uid).position;
+  const vec3f respawned_at = get_player_by_uid(world.context, player_uid).position;
   check(respawned_at.x == checkpoint_position.x && respawned_at.y == checkpoint_position.y &&
             respawned_at.z == checkpoint_position.z,
         "a death respawns you on the checkpoint you took");
-  check(player_of(world.context, player_uid).health.current_health == 100,
+  check(get_player_by_uid(world.context, player_uid).health.current_health == 100,
         "the checkpoint respawn is a full respawn, not a teleport");
 
   restore_level_from_map(world.context);
   respawn_all_players(world.context);
-  check(player_of(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
+  check(get_player_by_uid(world.context, player_uid).checkpoint_uid == shared::null_entity_uid,
         "a round boundary drops every checkpoint");
-  check(player_of(world.context, player_uid).position.x == 0.f,
+  check(get_player_by_uid(world.context, player_uid).position.x == 0.f,
         "...and puts the player back on the start line");
-  check(player_of(world.context, second_runner_uid).position.x == 100.f,
+  check(get_player_by_uid(world.context, second_runner_uid).position.x == 100.f,
         "...each on their own marker");
 }
 
@@ -1175,7 +1175,7 @@ void test_team_assignment()
   check(pick_team_for_new_player(world.context) == entities::Team_Allegiance::Red,
         "the third player evens Red up again");
 
-  player_of(world.context, blu_player).team_allegiance = entities::Team_Allegiance::Red;
+  get_player_by_uid(world.context, blu_player).team_allegiance = entities::Team_Allegiance::Red;
   check(pick_team_for_new_player(world.context) == entities::Team_Allegiance::Blu,
         "the count follows the bodies");
 

@@ -14,6 +14,7 @@
 #include "dissolve.glsl"
 #include "peel.glsl"
 #include "reveal.glsl"
+#include "pattern.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -56,7 +57,7 @@ void main() {
                   cel_flat_albedo(blendAlbedo1, fragUV, texture(blendAlbedo1, fragUV).rgb) * weight1;
 
     Surface surface;
-    surface.albedo    = layers * fragColor;
+    surface.albedo    = apply_pattern_preview(layers * fragColor, fragUV);
     surface.normal    = N;
     surface.geometric_normal = N;
     surface.uv        = fragUV;
@@ -74,11 +75,13 @@ void main() {
         return;
     }
 
-    vec3 color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V);
+    float solid_ink;
+    vec3  color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V, solid_ink);
+    outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
 
     outColor = reflection_capture_debug(
         shadow_cascade_debug(vec4(color, surfaceAlpha), fragWorldPosition), fragWorldPosition);
     outColor.rgb = dissolve_rim(outColor.rgb, fragUV);
     outColor.rgb = peel_rim(outColor.rgb, fragWorldPosition);
-    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition);
+    outColor.rgb = reveal_rim(outColor.rgb, fragWorldPosition, N);
 }

@@ -986,7 +986,7 @@ const shared::lightmap_chart_t *upward_chart(const shared::lightmap_t &lightmap)
 shared::entity_uid_t only_light_uid(const shared::map_t &map)
 {
   for (const shared::map_entity_t &entry : map.entities)
-    if (entry.entity && shared::try_light_of(*entry.entity)) return entry.uid;
+    if (entry.entity && shared::try_convert_light_entity_to_scene_light(*entry.entity)) return entry.uid;
   assert(false && "the map holds no light");
   return 0;
 }
@@ -1037,11 +1037,11 @@ void a_mask_slot_is_named_by_its_light_and_carries_the_shadow()
 
   int shadowed_x = 0, shadowed_y = 0;
   top_face_texel_nearest(lightmap, 0.f, shadowed_x, shadowed_y);
-  assert(masks.coverage[masks.index_of(0, chart.page, shadowed_x, shadowed_y)] == 0.f);
+  assert(masks.coverage[masks.compute_coverage_index(0, chart.page, shadowed_x, shadowed_y)] == 0.f);
 
   int clear_x = 0, clear_y = 0;
   top_face_texel_nearest(lightmap, 100.f, clear_x, clear_y);
-  assert(masks.coverage[masks.index_of(0, chart.page, clear_x, clear_y)] == 1.f);
+  assert(masks.coverage[masks.compute_coverage_index(0, chart.page, clear_x, clear_y)] == 1.f);
 }
 
 // The one that is invisible until it isn't (lighting_def.md ss14 step 6). The light
@@ -1080,7 +1080,7 @@ void a_mask_is_not_gated_on_the_flat_face_normal()
       lightmap.irradiance_pages.load(chart.page, texel_x, texel_y);
   assert(irradiance.x == 0.f && irradiance.y == 0.f && irradiance.z == 0.f);
 
-  assert(masks.coverage[masks.index_of(0, chart.page, texel_x, texel_y)] == 1.f);
+  assert(masks.coverage[masks.compute_coverage_index(0, chart.page, texel_x, texel_y)] == 1.f);
 }
 
 // Asking for masks costs shadow rays the sum does not need, and it must cost
@@ -1128,7 +1128,7 @@ std::vector<float> top_face_coverage(const shared::lightmap_t &lightmap,
     for (int x = 0; x < shared::chart_covered_width(chart, lightmap.settings); ++x)
     {
       if (!shared::sample_texel(chart, x, y).on_surface) continue;
-      coverage.push_back(masks.coverage[masks.index_of(0, chart.page, chart.atlas_rect.min_x + gutter + x,
+      coverage.push_back(masks.coverage[masks.compute_coverage_index(0, chart.page, chart.atlas_rect.min_x + gutter + x,
                                                        chart.atlas_rect.min_y + gutter + y)]);
     }
 
@@ -1234,7 +1234,7 @@ void one_shadow_ray_toward_the_disc_averages_to_the_spiral()
 
   // No glass in this map, so the transmissive half is absent and every answer
   // below is the white-or-black one it has always been.
-  const shared::shadow_scene_t shadow{&bvh, nullptr, nullptr, nullptr};
+  const shared::shadow_casters_t shadow{&bvh, nullptr, nullptr, nullptr};
 
   const linalg::vec3 spiral =
       shared::light_visibility(shadow, position, normal, arrival, 0.25f, 256, 0x2545f491u);
@@ -1532,7 +1532,7 @@ void the_gather_indexes_baked_lights_by_their_slot()
 // the player standing in front of the wall.
 void a_mixed_light_is_in_the_array_twice_and_a_baked_one_once()
 {
-  const auto tail_of = [](const shared::frame_lights_t &frame) {
+  const auto count_unbaked_lights = [](const shared::frame_lights_t &frame) {
     return frame.entries.size() - frame.baked_count;
   };
 
@@ -1543,7 +1543,7 @@ void a_mixed_light_is_in_the_array_twice_and_a_baked_one_once()
     const shared::frame_lights_t frame = gather_for(map, lightmap);
 
     assert(frame.baked_count == 1);
-    assert(tail_of(frame) == 0);
+    assert(count_unbaked_lights(frame) == 0);
   }
 
   {
@@ -1553,7 +1553,7 @@ void a_mixed_light_is_in_the_array_twice_and_a_baked_one_once()
     const shared::frame_lights_t frame = gather_for(map, lightmap);
 
     assert(frame.baked_count == 1);
-    assert(tail_of(frame) == 1);
+    assert(count_unbaked_lights(frame) == 1);
 
     // The tail copy carries the SLOT, which is what a lightmapped surface skips
     // it by -- it already shaded this light through its chart, with the shadow.
@@ -1569,7 +1569,7 @@ void a_mixed_light_is_in_the_array_twice_and_a_baked_one_once()
 
     // The bake never saw it, so it has no slot and the whole array is the tail.
     assert(frame.baked_count == 0);
-    assert(tail_of(frame) == 1);
+    assert(count_unbaked_lights(frame) == 1);
     assert(frame.entries[0].baked_slot == shared::LIGHTMAP_NO_LIGHT_SLOT);
   }
 }
@@ -2361,10 +2361,10 @@ void a_probe_inside_a_brush_is_inside_and_one_on_its_face_is_too()
   const std::vector<uint8_t> inside = shared::classify_probes_inside_solid(*grid, occluders);
   assert(inside.size() == grid->probe_count());
 
-  assert(inside[grid->index_of(2, 2, 2)] == 1); // the centre
-  assert(inside[grid->index_of(1, 2, 2)] == 1); // on the -x face
-  assert(inside[grid->index_of(0, 2, 2)] == 0); // one spacing outside it
-  assert(inside[grid->index_of(0, 0, 0)] == 0); // the padded corner
+  assert(inside[grid->compute_cell_index(2, 2, 2)] == 1); // the centre
+  assert(inside[grid->compute_cell_index(1, 2, 2)] == 1); // on the -x face
+  assert(inside[grid->compute_cell_index(0, 2, 2)] == 0); // one spacing outside it
+  assert(inside[grid->compute_cell_index(0, 0, 0)] == 0); // the padded corner
 
   // The solid spans three probes on each axis, faces included.
   size_t inside_count = 0;
@@ -2569,19 +2569,19 @@ void a_reflection_volume_overrides_the_measured_box()
 
   const shared::aabb_bounds_t as_placed = shared::get_bounds(volume->volume, volume->position);
   const shared::reflection_volume_coverage_t placed =
-      shared::reflection_volume_coverage_of(set, as_placed);
+      shared::compute_reflection_volume_coverage(set, as_placed);
   assert(placed.covered == 1);
   assert(placed.overridden_as_placed == 1);
 
   volume->volume.half_extents = {140, 100, 100};
   const shared::reflection_volume_coverage_t widened =
-      shared::reflection_volume_coverage_of(set, shared::get_bounds(volume->volume, volume->position));
+      shared::compute_reflection_volume_coverage(set, shared::get_bounds(volume->volume, volume->position));
   assert(widened.covered == 3);
   assert(widened.overridden_as_placed == 0);
 
   volume->position = {0, 1000, 0};
   const shared::reflection_volume_coverage_t moved_away =
-      shared::reflection_volume_coverage_of(set, shared::get_bounds(volume->volume, volume->position));
+      shared::compute_reflection_volume_coverage(set, shared::get_bounds(volume->volume, volume->position));
   assert(moved_away.covered == 0);
   assert(moved_away.overridden_as_placed == 0);
 }
@@ -2597,7 +2597,7 @@ void the_capture_pick_is_trilinear_over_the_lattice_cell()
   assert(near(lattice.origin.x, -128.f) && near(lattice.origin.y, 128.f) &&
          near(lattice.origin.z, -128.f));
 
-  const auto weight_of = [](const shared::reflection_capture_pick_t &pick, uint32_t index) {
+  const auto find_weight_by_index = [](const shared::reflection_capture_pick_t &pick, uint32_t index) {
     for (uint32_t slot = 0; slot < pick.count; ++slot)
       if (pick.indices[slot] == index) return pick.weights[slot];
     return 0.f;
@@ -2617,16 +2617,16 @@ void the_capture_pick_is_trilinear_over_the_lattice_cell()
   const shared::reflection_capture_pick_t between =
       shared::find_captures_for(set, lattice, {64, 128, 0});
   assert(between.count == 2);
-  assert(near(weight_of(between, index_at({0, 128, 0})), 0.5f));
-  assert(near(weight_of(between, index_at({128, 128, 0})), 0.5f));
+  assert(near(find_weight_by_index(between, index_at({0, 128, 0})), 0.5f));
+  assert(near(find_weight_by_index(between, index_at({128, 128, 0})), 0.5f));
 
   const shared::reflection_capture_pick_t inside =
       shared::find_captures_for(set, lattice, {32, 128, 96});
   assert(inside.count == 4);
-  assert(near(weight_of(inside, index_at({0, 128, 0})), 0.75f * 0.25f));
-  assert(near(weight_of(inside, index_at({128, 128, 0})), 0.25f * 0.25f));
-  assert(near(weight_of(inside, index_at({0, 128, 128})), 0.75f * 0.75f));
-  assert(near(weight_of(inside, index_at({128, 128, 128})), 0.25f * 0.75f));
+  assert(near(find_weight_by_index(inside, index_at({0, 128, 0})), 0.75f * 0.25f));
+  assert(near(find_weight_by_index(inside, index_at({128, 128, 0})), 0.25f * 0.25f));
+  assert(near(find_weight_by_index(inside, index_at({0, 128, 128})), 0.75f * 0.75f));
+  assert(near(find_weight_by_index(inside, index_at({128, 128, 128})), 0.25f * 0.75f));
   assert(inside.indices[0] == index_at({0, 128, 128}));
 
   const shared::reflection_capture_pick_t just_before =
@@ -2634,7 +2634,7 @@ void the_capture_pick_is_trilinear_over_the_lattice_cell()
   const shared::reflection_capture_pick_t just_after =
       shared::find_captures_for(set, lattice, {128.01f, 128, 10});
   for (uint32_t index = 0; index < set.captures.size(); ++index)
-    assert(std::abs(weight_of(just_before, index) - weight_of(just_after, index)) < 1e-3f);
+    assert(std::abs(find_weight_by_index(just_before, index) - find_weight_by_index(just_after, index)) < 1e-3f);
 
   const shared::reflection_capture_pick_t beyond =
       shared::find_captures_for(set, lattice, {300, 128, 0});
@@ -2886,12 +2886,12 @@ void a_cube_texel_direction_round_trips_to_its_texel()
         {
           const linalg::vec3 direction = shared::reflection_cube_direction(face, x, y, size);
           const shared::reflection_cube_texel_t texel =
-              shared::reflection_cube_texel_of(direction, size);
+              shared::compute_reflection_cube_texel_for_direction(direction, size);
           assert(texel.face == face && texel.x == x && texel.y == y);
         }
 
   const shared::reflection_cube_texel_t coarse =
-      shared::reflection_cube_texel_of(shared::reflection_cube_direction(2, 5, 6, 8), 4);
+      shared::compute_reflection_cube_texel_for_direction(shared::reflection_cube_direction(2, 5, 6, 8), 4);
   assert(coarse.face == 2 && coarse.x == 2 && coarse.y == 3);
 }
 
@@ -2902,7 +2902,7 @@ void a_prefiltered_cube_keeps_mip_zero_and_averages_a_uniform_cube()
   assert(cube.mip_count == 4);
   assert(cube.texels_in_mip(0) == 6 * 64 && cube.texels_in_mip(3) == 6);
   assert(cube.texel_count() == 6 * (64 + 16 + 4 + 1));
-  assert(cube.texel_index_of(1, 0, 0, 0) == 6 * 64);
+  assert(cube.compute_texel_index(1, 0, 0, 0) == 6 * 64);
 
   const linalg::vec3 constant{0.5f, 0.25f, 0.125f};
   for (size_t texel = 0; texel < cube.texels_in_mip(0); ++texel) cube.store(texel, constant);
@@ -3147,7 +3147,7 @@ void a_probe_bake_fills_the_volume_and_dilates_into_solids()
 
   const auto index_at = [&](const linalg::vec3 &position) {
     const linalg::vec3 offset = (position - grid.origin) * (1.f / grid.spacing);
-    return grid.index_of((int)std::lround(offset.x), (int)std::lround(offset.y),
+    return grid.compute_cell_index((int)std::lround(offset.x), (int)std::lround(offset.y),
                          (int)std::lround(offset.z));
   };
 
@@ -3177,7 +3177,7 @@ void a_probe_bake_carries_a_mixed_lights_visibility_through_the_volume()
   const shared::probe_grid_t &grid = lightmap.probes.grid;
   const auto index_at = [&](const linalg::vec3 &position) {
     const linalg::vec3 offset = (position - grid.origin) * (1.f / grid.spacing);
-    return grid.index_of((int)std::lround(offset.x), (int)std::lround(offset.y),
+    return grid.compute_cell_index((int)std::lround(offset.x), (int)std::lround(offset.y),
                          (int)std::lround(offset.z));
   };
 
@@ -3615,23 +3615,23 @@ void a_sidecar_round_trips_an_unwrap()
 }
 
 // Straight up from `from`, 200 units: what a shadow ray delivers there.
-linalg::vec3 upward_transmittance(const shared::shadow_scene_t &shadow,
+linalg::vec3 upward_transmittance(const shared::shadow_casters_t &shadow,
                                   const linalg::vec3 &from)
 {
   return shared::shadow_ray_transmittance(shadow, from, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, 200.f,
                                           0.5f);
 }
 
-bool ray_is_blocked(const shared::shadow_scene_t &shadow, const linalg::vec3 &from)
+bool ray_is_blocked(const shared::shadow_casters_t &shadow, const linalg::vec3 &from)
 {
-  return shared::luminance_of(upward_transmittance(shadow, from)) <= 0.f;
+  return shared::compute_luminance(upward_transmittance(shadow, from)) <= 0.f;
 }
 
 void a_static_mesh_casts_a_shadow_in_the_bake()
 {
   const shared::map_t map = map_with_a_box_mesh();
   const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
-  const shared::shadow_scene_t shadow{&occluders, nullptr, nullptr, nullptr};
+  const shared::shadow_casters_t shadow{&occluders, nullptr, nullptr, nullptr};
 
   // Straight up through the box from underneath: blocked. Beside it: not.
   assert(ray_is_blocked(shadow, {0.f, -100.f, 0.f}));
@@ -3750,7 +3750,7 @@ void a_cutout_brush_casts_a_holey_shadow()
   for (shared::face_surface_t &face : fence.face_surfaces) face.material = 1;
 
   // Its own set: neither the opaque one nor the glass.
-  assert(shared::light_occlusion_of(map.geometry[0].value, map.materials) ==
+  assert(shared::compute_light_occlusion(map.geometry[0].value, map.materials) ==
          shared::light_occlusion_t::Alpha_Tested);
 
   const Bounding_Volume_Hierarchy occluders = shared::build_occluder_bvh(map);
@@ -3759,7 +3759,7 @@ void a_cutout_brush_casts_a_holey_shadow()
 
   const shared::traced_scene_t traced =
       shared::build_traced_scene(map, occluders, &alpha_tested, nullptr);
-  const shared::shadow_scene_t shadow = shared::shadow_scene_for(occluders, traced);
+  const shared::shadow_casters_t shadow = shared::get_shadow_casters_with_occluders(occluders, traced);
 
   // The face's uv runs with the world at 128 units a repeat, so this 64-wide
   // brush spans HALF of one -- its two texels meet at x = 0. A sweep across that
@@ -3821,7 +3821,7 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
   assert(!transmissive.primitives.empty());
 
   const shared::traced_scene_t traced = shared::build_traced_scene(map, occluders, nullptr, &transmissive);
-  const shared::shadow_scene_t shadow = shared::shadow_scene_of(traced);
+  const shared::shadow_casters_t shadow = shared::get_shadow_casters(traced);
 
   // What the fixture's glass filters by: its albedo, sRGB-decoded, times what it
   // did not stop. Read off the LOADED texture rather than off the bytes written,
@@ -3867,7 +3867,7 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
   const shared::traced_scene_t traced_pair =
       shared::build_traced_scene(map, occluders, nullptr, &two_panes);
   const linalg::vec3 twice =
-      upward_transmittance(shared::shadow_scene_of(traced_pair), {0.f, -100.f, 0.f});
+      upward_transmittance(shared::get_shadow_casters(traced_pair), {0.f, -100.f, 0.f});
   for (int channel = 0; channel < 3; ++channel)
     assert(std::abs(twice[channel] - expected[channel] * expected[channel]) < 1e-5f);
 
@@ -3879,7 +3879,7 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
   const Bounding_Volume_Hierarchy wall = shared::build_occluder_bvh(with_a_wall);
   const Bounding_Volume_Hierarchy behind = shared::build_transmissive_bvh(with_a_wall);
   const shared::traced_scene_t walled = shared::build_traced_scene(with_a_wall, wall, nullptr, &behind);
-  assert(ray_is_blocked(shared::shadow_scene_of(walled), {0.f, -100.f, 0.f}));
+  assert(ray_is_blocked(shared::get_shadow_casters(walled), {0.f, -100.f, 0.f}));
 }
 
 #endif
@@ -4635,8 +4635,8 @@ void probe_records_name_their_probe_and_skip_the_buried_ones()
     assert(i == 0 || sample.chart_index > previous);
     previous = sample.chart_index;
     assert(!inside[sample.chart_index]);
-    const linalg::vec3i at = grid->coordinates_of(sample.chart_index);
-    const linalg::vec3 position = grid->position_of(at);
+    const linalg::vec3i at = grid->compute_cell_coordinates(sample.chart_index);
+    const linalg::vec3 position = grid->compute_cell_position(at);
     assert(sample.position.x == position.x && sample.position.y == position.y &&
            sample.position.z == position.z);
     assert(sample.seed == shared::sample_hash(at.x, at.y, at.z, 0x50524f42));

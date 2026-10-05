@@ -71,8 +71,8 @@ wanted_move_t instant_momentum_step(const movement_settings_t& settings,
                                     const vec3& velocity_entering_move, move_state_t& state,
                                     const move_input_t& input)
 {
-  const ground_frame_t frame = ground_frame_of(contacts, grounded, velocity_entering_move.y);
-  const wish_t         wish  = wish_of(settings, input, frame.has_ground, frame.normal);
+  const ground_under_step_t frame = compute_ground_under_step(contacts, grounded, velocity_entering_move.y);
+  const wish_t         wish  = compute_wish_direction_and_speed(settings, input, frame.has_ground, frame.normal);
 
   // Exponential decay composes exactly under any split of dt, for the reason
   // friction already does.
@@ -95,7 +95,7 @@ wanted_move_t instant_momentum_step(const movement_settings_t& settings,
 
   // An instant answer reads the aim at the END of the step, or an extra edge
   // moves the direction the whole tick is spent along.
-  const vec3 direction = last_push_direction_of(wish.direction, input.aim_sweep);
+  const vec3 direction = compute_last_push_direction(wish.direction, input.aim_turn_across_step);
   const vec3 own       = own_move_beside(settings, direction * wish.speed, momentum);
 
   return {.velocity          = own + momentum,

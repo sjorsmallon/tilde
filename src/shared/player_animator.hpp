@@ -42,7 +42,7 @@ struct aim_settings_t
 // server's hitbox pose and the Animation tool -- and three copies of a
 // three-field struct literal is three chances to read a different cvar. The
 // values are @Mirrored, so both sides read the same numbers.
-inline aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
+inline aim_settings_t aim_settings_from_cvars(const cvars::cvar_state_t &cvars)
 {
   return aim_settings_t{.max_pitch_degrees = cvars.sv_aim_max_pitch,
                         .max_yaw_degrees   = cvars.sv_aim_max_yaw,
@@ -56,7 +56,7 @@ inline aim_settings_t aim_settings_from(const cvars::cvar_state_t &cvars)
 // up, which reads as a rigging bug rather than as a missing file.
 //
 // The name is still DERIVED from the enum rather than listed a second time --
-// see filename_prefix_of. What is gone is the directory: the manifest knows
+// see get_filename_prefix_for_aim_pose. What is gone is the directory: the manifest knows
 // where a clip lives, so a naming convention no longer has to also be a path
 // convention.
 aim_pose_set_t load_aim_pose_set(const char *suffix);

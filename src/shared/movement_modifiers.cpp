@@ -28,7 +28,7 @@ void collect_movement_modifiers(Entity_System& system, uint32_t tick,
   out.clear();
 
   for (const entities::Movement_Modifier_Entity& modifier :
-       system.entities_of<entities::Movement_Modifier_Entity>())
+       system.entities_of_type<entities::Movement_Modifier_Entity>())
   {
     out.push_back({
         .uid              = modifier.entity_id,
@@ -44,7 +44,7 @@ void collect_movement_modifiers(Entity_System& system, uint32_t tick,
 
   // Emitted while inactive too, as disabled: a spawned zone is a modifier whether or not it is live yet.
   for (const entities::Timed_Movement_Modifier_Entity& modifier :
-       system.entities_of<entities::Timed_Movement_Modifier_Entity>())
+       system.entities_of_type<entities::Timed_Movement_Modifier_Entity>())
   {
     const linalg::vec3f center =
         flight_position_at(modifier.projectile, modifier.flight, modifier.position, tick, flight);

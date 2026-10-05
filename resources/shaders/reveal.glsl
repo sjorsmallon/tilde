@@ -2,6 +2,7 @@
 #define REVEAL_GLSL
 
 #include "scene.glsl"
+#include "shading_cel.glsl"
 
 // renderer.hpp's light_cut_t. A revealed draw keeps only the fragments inside a cone that reveals;
 // an erased draw loses the fragments inside a cone that erases (shared/reveal_light.hpp).
@@ -15,6 +16,11 @@ const int LIGHT_CUT_ERASED   = 2;
 const float REVEAL_RIM_COSINE = 0.012;
 const float REVEAL_RIM_UNITS  = 24.0;
 const vec3  REVEAL_RIM_COLOR  = vec3(1.2, 2.6, 3.0);
+
+// Under the cel look the edge is drawn, not lit: an ink line this many pixels wide along the cut,
+// and dots that thicken towards it across the width the bright edge has.
+const float REVEAL_LINE_PIXELS = 2.0;
+const vec3  REVEAL_INK_COLOR   = vec3(0.0);
 
 // How far inside the nearest boundary of cones [first, first + count), in rim widths; negative is outside every one, and never below -1.
 float cone_margin(vec3 world_position, int first, int count)
@@ -56,14 +62,23 @@ void discard_outside_reveal(vec3 world_position)
         discard;
 }
 
-vec3 reveal_rim(vec3 color, vec3 world_position)
+vec3 reveal_rim(vec3 color, vec3 world_position, vec3 geometric_normal)
 {
     if (LIGHT_CUT == LIGHT_CUT_NONE)
         return color;
     float distance_from_edge = LIGHT_CUT == LIGHT_CUT_REVEALED ? reveal_margin(world_position)
                                                                : -erase_margin(world_position);
     float rim = 1.0 - smoothstep(0.0, 1.0, distance_from_edge);
-    return mix(color, REVEAL_RIM_COLOR, rim);
+    if (scene.look.x <= 0.5)
+        return mix(color, REVEAL_RIM_COLOR, rim);
+
+    float pixels_from_edge = distance_from_edge / max(fwidth(distance_from_edge), 1e-6);
+    float line             = 1.0 - smoothstep(REVEAL_LINE_PIXELS - 0.5, REVEAL_LINE_PIXELS + 0.5, pixels_from_edge);
+
+    vec2            plane     = face_plane(world_position, geometric_normal);
+    Pixel_Footprint footprint = pixel_footprint(world_position, geometric_normal);
+    float           dots      = dither_coverage(plane, footprint, rim * DITHER_DARKEST_TONE);
+    return mix(color, REVEAL_INK_COLOR, max(line, dots));
 }
 
 #endif

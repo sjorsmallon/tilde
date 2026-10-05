@@ -108,9 +108,9 @@ linalg::vec3 direct_irradiance_at(const traced_scene_t &scene,
     // spiral here cost soft_shadow_samples rays per light per vertex for a
     // penumbra the estimate already converges to. lightmap_gpu_plan.md step 0.
     const linalg::vec3 visibility = light_visibility_single_ray(
-        shadow_scene_of(scene), position, normal, arrival, settings.shadow_ray_bias,
+        get_shadow_casters(scene), position, normal, arrival, settings.shadow_ray_bias,
         hash_mix(bits, slot));
-    if (luminance_of(visibility) <= 0.f) continue;
+    if (compute_luminance(visibility) <= 0.f) continue;
 
     irradiance = irradiance + multiply_channels(light.radiance, visibility) *
                                   (arrival.attenuation * arrival.normal_dot_light);
@@ -133,7 +133,7 @@ linalg::vec3 trace_one_chain(const traced_scene_t &scene, Span<const baked_light
   linalg::vec3 throughput{1.f, 1.f, 1.f};
   linalg::vec3 from = position;
   linalg::vec3 from_normal = normal;
-  const shadow_scene_t shadow = shadow_scene_of(scene);
+  const shadow_casters_t shadow = get_shadow_casters(scene);
 
   for (int bounce = 0; bounce < std::max(settings.max_bounces, 1); ++bounce)
   {
@@ -191,7 +191,7 @@ linalg::vec3 trace_one_chain(const traced_scene_t &scene, Span<const baked_light
     // unbiased.
     if (bounce + 1 >= settings.bounces_before_roulette)
     {
-      const float survival = std::clamp(luminance_of(throughput), 0.f, 1.f);
+      const float survival = std::clamp(compute_luminance(throughput), 0.f, 1.f);
       if (unit_float_from(hash_mix(bits, 0x9e3779b9u)) >= survival) break;
       throughput = throughput * (1.f / survival);
     }
@@ -288,19 +288,19 @@ traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierar
 
   // An invalid handle is a material with no texture, and asking the pool about
   // one is not merely pointless: a headless bake has no asset state to ask.
-  const auto pixels_of = [](const assets::asset_handle_t<assets::texture_asset_t> &handle) {
+  const auto try_get_pixels = [](const assets::asset_handle_t<assets::texture_asset_t> &handle) {
     return handle.valid() ? assets::get(handle) : nullptr;
   };
 
   scene.materials.reserve(resolved.size());
   for (const assets::material_maps_t &maps : resolved)
-    scene.materials.push_back({pixels_of(maps.albedo), pixels_of(maps.emissive),
+    scene.materials.push_back({try_get_pixels(maps.albedo), try_get_pixels(maps.emissive),
                                maps.alpha_mode, maps.alpha_cutoff});
 
   return scene;
 }
 
-shadow_scene_t shadow_scene_of(const traced_scene_t &scene)
+shadow_casters_t get_shadow_casters(const traced_scene_t &scene)
 {
   // The occluders are what a bounce hits, and the glass is this same scene when
   // it has any. Derived rather than stored, so a chain cannot be tracing one
@@ -310,10 +310,10 @@ shadow_scene_t shadow_scene_of(const traced_scene_t &scene)
           resolves_a_material ? &scene : nullptr};
 }
 
-shadow_scene_t shadow_scene_for(const Bounding_Volume_Hierarchy &occluders,
+shadow_casters_t get_shadow_casters_with_occluders(const Bounding_Volume_Hierarchy &occluders,
                                 const traced_scene_t &scene)
 {
-  shadow_scene_t shadow = shadow_scene_of(scene);
+  shadow_casters_t shadow = get_shadow_casters(scene);
   shadow.occluders = &occluders;
   return shadow;
 }
@@ -487,7 +487,7 @@ probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_li
     const light_arrival_t arrival =
         arrival_at(light, position, probe.direction, settings.directional_shadow_distance);
     const linalg::vec3 visibility =
-        light_visibility(shadow_scene_of(scene), position, arrival.direction, arrival,
+        light_visibility(get_shadow_casters(scene), position, arrival.direction, arrival,
                          settings.shadow_ray_bias, settings.soft_shadow_samples,
                          hash_mix(hash, 0x7f4a7c15u + slot));
 
@@ -498,10 +498,10 @@ probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_li
       // four Mixed lights and there is no room for a colour beside them
       // (lightmap.hpp's probe_volume_t). A chart's slots carry the colour; a
       // probe's carry how much.
-      traced.visibility[(uint32_t)channel] = luminance_of(visibility);
+      traced.visibility[(uint32_t)channel] = compute_luminance(visibility);
       continue;
     }
-    if (luminance_of(visibility) <= 0.f) continue;
+    if (compute_luminance(visibility) <= 0.f) continue;
 
     add_from_direction(multiply_channels(light.radiance, visibility) * arrival.attenuation,
                        arrival.direction);

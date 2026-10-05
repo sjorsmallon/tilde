@@ -55,7 +55,7 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
                                       entities::Fire_Trigger trigger,
                                       const shared::alive_limit_t& limit)
 {
-  const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
+  const shared::weapon_fire_t& fire = shared::get_weapon_fire_for_button(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Projectile)
     fatal_error("spawn_projectile: {}'s {} fire does not resolve as a projectile",
                 weapon.display_name, to_string(trigger));
@@ -99,7 +99,7 @@ shared::entity_uid_t spawn_placed_entity(server_context_t& context, shared::enti
                                          entities::Fire_Trigger trigger,
                                          const shared::alive_limit_t& limit)
 {
-  const shared::weapon_fire_t& fire = shared::fire_of(weapon, trigger);
+  const shared::weapon_fire_t& fire = shared::get_weapon_fire_for_button(weapon, trigger);
   if (fire.resolution != entities::Fire_Resolution::Place)
     fatal_error("spawn_placed_entity: {}'s {} fire does not resolve as a placement",
                 weapon.display_name, to_string(trigger));

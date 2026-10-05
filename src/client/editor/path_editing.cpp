@@ -51,12 +51,12 @@ std::vector<shared::entity_uid_t> chain_through(const path_scratch_t& scratch,
   if (scratch.system.get<entities::Path_Node_Entity>(node) == nullptr)
     return chain;
 
-  const size_t limit = scratch.system.entities_of<entities::Path_Node_Entity>().size();
+  const size_t limit = scratch.system.entities_of_type<entities::Path_Node_Entity>().size();
 
   shared::entity_uid_t head = node;
   for (size_t step = 0; step < limit; ++step)
   {
-    const shared::entity_uid_t previous = shared::previous_node_of(scratch.links, head);
+    const shared::entity_uid_t previous = shared::find_previous_node(scratch.links, head);
     if (previous == shared::null_entity_uid || previous == node)
       break;
     head = previous;

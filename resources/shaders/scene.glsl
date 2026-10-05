@@ -147,8 +147,15 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   cel_dither3d;
     // x = r_cel_pebble, y = r_cel_pebble_spacing, z = r_cel_pebble_density, w = r_cel_pebble_size.
     vec4   cel_pebble;
-    // x = r_cel_pebble_irregularity, y = r_cel_pebble_width, z = r_cel_halftone_paper.
+    // x = r_cel_pebble_irregularity, y = r_cel_pebble_width, z = r_cel_halftone_paper, w = r_cel_black.
     vec4   cel_pebble_shape;
+    // x = r_pattern_preview as one of pattern.glsl's PATTERN_*, y = r_pattern_preview_spacing_along,
+    // z = r_pattern_preview_spacing_across, w = r_pattern_preview_angle in radians.
+    vec4   pattern_preview_cells;
+    // x = r_pattern_preview_coverage, y = r_pattern_preview_shape, z = r_pattern_preview_scroll.
+    vec4   pattern_preview_shape;
+    // rgb = r_pattern_preview_red, _green, _blue, a = r_pattern_preview_strength.
+    vec4   pattern_preview_ink;
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
