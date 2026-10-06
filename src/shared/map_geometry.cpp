@@ -898,7 +898,8 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
     const static_mesh_geometry_t &b = std::get<static_mesh_geometry_t>(rhs);
     return vec3_equal(a.position, b.position) && quat_equal(a.orientation, b.orientation) &&
            vec3_equal(a.scale, b.scale) && surfaces_equal(a.surface, b.surface) &&
-           a.collides == b.collides && a.owner_uid == b.owner_uid;
+           a.collides == b.collides && a.casts_shadows == b.casts_shadows &&
+           a.owner_uid == b.owner_uid;
   }
 
   case geometry_kind_t::Brush:
@@ -946,9 +947,11 @@ light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
                                      Span<const std::string> materials)
 {
   // A static mesh's material is not resolved anywhere in the bake yet, so it is
-  // opaque the way it always was.
+  // opaque the way it always was, unless its author switched its shadow off.
   const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&geometry);
-  if (!brush) return light_occlusion_t::Opaque;
+  if (!brush)
+    return std::get<static_mesh_geometry_t>(geometry).casts_shadows ? light_occlusion_t::Opaque
+                                                                     : light_occlusion_t::None;
 
   const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush->hull_points);
   if (!hull || hull->faces.empty()) return light_occlusion_t::Opaque;
@@ -2931,6 +2934,8 @@ void serialize_geometry(const geometry_value_t &geometry,
     write_surface(static_mesh.surface, out_properties);
     if (!static_mesh.collides)
       out_properties.emplace_back("collides", format_bool(static_mesh.collides));
+    if (!static_mesh.casts_shadows)
+      out_properties.emplace_back("casts_shadows", format_bool(static_mesh.casts_shadows));
     write_owner(static_mesh.owner_uid, out_properties);
     return;
   }
@@ -2991,6 +2996,7 @@ bool parse_geometry(const std::string &keyword,
     read_vec3(properties, "scale", static_mesh.scale);
     read_surface(properties, static_mesh.surface);
     read_bool(properties, "collides", static_mesh.collides);
+    read_bool(properties, "casts_shadows", static_mesh.casts_shadows);
     read_owner(properties, static_mesh.owner_uid);
     out_geometry = std::move(static_mesh);
     return true;

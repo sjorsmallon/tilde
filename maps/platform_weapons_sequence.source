@@ -191,6 +191,19 @@ groups
       "uid" "108"
     }
   }
+  group
+  {
+    "_uid" "123"
+    "name" "mover_entity 122"
+    member
+    {
+      "uid" "122"
+    }
+    member
+    {
+      "uid" "119"
+    }
+  }
 }
 brush
 {
@@ -3558,6 +3571,33 @@ brush
     "smoothing_group" "0"
   }
 }
+static_mesh
+{
+  "_uid" "119"
+  "position" "642.853760 545.287720 -896.000000"
+  "rotation" "-0.0482515432 -0.922618747 -0.0199864395 0.382161111"
+  "scale" "3.000000 3.000000 3.000000"
+  "mesh_path" "resources/glb/spotlight.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  "owner" "122"
+}
+static_mesh
+{
+  "_uid" "124"
+  "position" "428.614990 384.000000 388.387726"
+  "rotation" "0 -0.707106769 0 0.707106769"
+  "scale" "3.000000 3.000000 3.000000"
+  "mesh_path" "resources/glb/spotlight.glb"
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+}
 entity
 {
   "classname" "player_spawn_entity"
@@ -4287,6 +4327,7 @@ entity
   "range" "793.9"
   "inner_degrees" "20"
   "outer_degrees" "24.6"
+  "beam" "true"
 }
 entity
 {
@@ -4321,7 +4362,8 @@ entity
   "rides.mover" "0"
   "range" "1024"
   "inner_degrees" "20"
-  "outer_degrees" "35"
+  "outer_degrees" "18"
+  "beam" "true"
 }
 entity
 {
@@ -4356,4 +4398,14 @@ entity
   "traversal_seconds" "1"
   "wait_seconds" "0"
   "easing" "Linear"
+}
+entity
+{
+  "classname" "mover_entity"
+  "_uid" "122"
+  "position" "56.994705 40.40672 -456.12286"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "follow.from" "113"
 }

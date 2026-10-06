@@ -59,6 +59,8 @@ struct shadow_volume_t
   uint32_t                                      side_count = 0;
   entity_uid_t                                  caster     = null_entity_uid;
   entity_uid_t                                  light      = null_entity_uid;
+  // The light's cuts_geometry: only such a volume is read by collision; one thrown for a beam alone cuts the beam.
+  bool                                          cuts_geometry = true;
 };
 
 // What a light contributes: a point the rays leave, or a direction they all share.
@@ -72,10 +74,14 @@ struct shadow_light_t
   float         range       = 0.f;
   // A spot's beam: a piece with no corner inside the cone about `direction` casts nothing. -2 is no beam.
   float         cosine_of_outer_angle = -2.f;
+  // The light's cuts_geometry, carried onto every volume it throws.
+  bool          cuts_geometry         = true;
+  // The spot draws its beam (spot_beam_plan.md ss5): its volumes are kept whether or not one reaches a receiver.
+  bool          draws_beam            = false;
 };
 
 // The one fold from the three light types into a shadow light: a switched-on Point, Spot or
-// Directional light whose `cuts_geometry` is set, at `pose`. Empty is "casts no volume".
+// Directional light whose `cuts_geometry` is set, or a Spot whose `beam` is, at `pose`. Empty is "casts no volume".
 [[nodiscard]] std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entity& entity,
                                                                          const path_pose_t&      pose);
 
@@ -134,8 +140,8 @@ struct shadow_volume_report_t
 // Every cuts_geometry light against every caster piece: every static piece in the BVH whose owner is
 // switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
 // every mover, at the end-of-tick pose the movers were already cut at; a light that rides one is
-// read at the same pose. A volume that touches no receiver's bounds is dropped: nothing would read
-// it, and the scene block holds few.
+// read at the same pose. A volume that touches no receiver's bounds is dropped unless its light draws
+// a beam the volume cuts: nothing else would read it, and the scene block holds few.
 shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               const mover_rests_t& rests, std::vector<shadow_volume_t>& out);

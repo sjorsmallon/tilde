@@ -208,7 +208,7 @@ void Audio_System::update(const linalg::vec3f& listener_position,
     if (reported != nullptr && !*reported)
     {
       *reported = true;
-      log_error("Audio_System: '{}' has no file behind it — nothing to play",
+      log_warning("Audio_System: '{}' has no file behind it — nothing to play",
                 assets::to_string(sound));
     }
     return std::nullopt;

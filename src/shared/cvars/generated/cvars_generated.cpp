@@ -206,6 +206,11 @@ cvar_state_t::cvar_state_t()
     r_fog(true),
     r_fog_distance(4096.0f),
     r_fog_anisotropy(0.5f),
+    r_beam(true),
+    r_beam_alpha(0.12f),
+    r_beam_fill(Beam_Fill::tint),
+    r_beam_dot_spacing(8.0f),
+    r_beam_edge_pixels(2.0f),
     r_look_panel(false),
     sv_skybox(""),
     debug_show_collisions(false),
@@ -266,6 +271,11 @@ constexpr const char* Cel_Fill_VALUE_NAMES[] = {
   "dither3d_original",
 };
 
+constexpr const char* Beam_Fill_VALUE_NAMES[] = {
+  "tint",
+  "dots",
+};
+
 constexpr const char* Pattern_Kind_VALUE_NAMES[] = {
   "none",
   "stripes",
@@ -287,6 +297,7 @@ constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Locomotion_Model", {Locomotion_Model_VALUE_NAMES, 4}},
   {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 13}},
   {"Cel_Fill", {Cel_Fill_VALUE_NAMES, 4}},
+  {"Beam_Fill", {Beam_Fill_VALUE_NAMES, 2}},
   {"Pattern_Kind", {Pattern_Kind_VALUE_NAMES, 7}},
   {"Bot_Mode", {Bot_Mode_VALUE_NAMES, 3}},
 };
@@ -1547,7 +1558,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .offset = offsetof(cvar_state_t, r_pattern_preview),
      .size = sizeof(cvar_state_t::r_pattern_preview),
      .string_capacity = 0,
-     .enum_info = &ENUM_INFOS[4]},
+     .enum_info = &ENUM_INFOS[5]},
     {.name = "r_pattern_preview_spacing_along",
      .description = "World units from one repeat of the previewed pattern to the next, in the direction stripes repeat, chevrons point and brick courses run",
      .flags = CVAR_FLAG_CLIENT,
@@ -1826,6 +1837,46 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, r_fog_anisotropy),
      .size = sizeof(cvar_state_t::r_fog_anisotropy),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_beam",
+     .description = "Draw the beam of every Spot_Light_Entity with `beam` ticked: a pyramid from the fixture to its range, stopped by the world",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, r_beam),
+     .size = sizeof(cvar_state_t::r_beam),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_beam_alpha",
+     .description = "How much a beam tints the air it fills, the same at every length and from every side; the edges carry the beam, the fill only confirms it",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_beam_alpha),
+     .size = sizeof(cvar_state_t::r_beam_alpha),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_beam_fill",
+     .description = "What fills a beam: tint is a flat wash, dots a screentone of ink dots with nothing between them, at the same average tint as the wash",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_ENUM,
+     .offset = offsetof(cvar_state_t, r_beam_fill),
+     .size = sizeof(cvar_state_t::r_beam_fill),
+     .string_capacity = 0,
+     .enum_info = &ENUM_INFOS[4]},
+    {.name = "r_beam_dot_spacing",
+     .description = "Pixels between the dots of a screentone beam fill",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_beam_dot_spacing),
+     .size = sizeof(cvar_state_t::r_beam_dot_spacing),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_beam_edge_pixels",
+     .description = "Width on screen of the four lines along a beam's edges, in the light's colour; 0 draws none",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_beam_edge_pixels),
+     .size = sizeof(cvar_state_t::r_beam_edge_pixels),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_look_panel",
@@ -2491,6 +2542,24 @@ template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view t
   if (text == "hatch") return Cel_Fill::hatch;
   if (text == "dither3d") return Cel_Fill::dither3d;
   if (text == "dither3d_original") return Cel_Fill::dither3d_original;
+  return std::nullopt;
+}
+
+const char* to_string(Beam_Fill value)
+{
+  switch (value)
+  {
+    case Beam_Fill::tint: return "tint";
+    case Beam_Fill::dots: return "dots";
+  }
+  assert(false && "invalid Beam_Fill");
+  return "";
+}
+
+template <> std::optional<Beam_Fill> try_from_string<Beam_Fill>(std::string_view text)
+{
+  if (text == "tint") return Beam_Fill::tint;
+  if (text == "dots") return Beam_Fill::dots;
   return std::nullopt;
 }
 

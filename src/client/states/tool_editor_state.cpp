@@ -2,6 +2,7 @@
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"
 #include "entities/generated/entities/reveal_light_entity_generated.hpp"
+#include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "tool_editor_state.hpp"
 
@@ -35,6 +36,7 @@
 #include "../shadow_debug_draw.hpp"
 #include "../hud/announcement.hpp"
 #include "../fly_camera.hpp"
+#include "../spot_beam.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
@@ -1549,8 +1551,13 @@ void Tool_Editor_State::build_frame(float delta_seconds,
 
       // The editor lays the frame's lights out exactly as the game does, which
       // is what makes a bake previewed here the bake that ships.
-      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity,
-                              shared::get_placed_pose_for_entity(*entry.entity));
+      const shared::path_pose_t light_pose = shared::get_placed_pose_for_entity(*entry.entity);
+      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity, light_pose);
+      if (state_manager::get_client_context().cvars->r_beam)
+        if (const entities::Spot_Light_Entity* spot =
+                entities::entity_as<entities::Spot_Light_Entity>(entry.entity.get());
+            spot != nullptr && spot->beam && shared::light_is_switched_on(*entry.entity))
+          draw_spot_beam(scene, build_spot_beam_for_spot_light(*spot, light_pose));
 
       if (const entities::Reveal_Light_Entity* reveal_light =
               entities::entity_as<entities::Reveal_Light_Entity>(entry.entity.get());

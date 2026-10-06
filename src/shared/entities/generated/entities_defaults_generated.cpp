@@ -251,7 +251,8 @@ Spot_Light_Entity::Spot_Light_Entity()
     rides{},
     range(512.0f),
     inner_degrees(20.0f),
-    outer_degrees(35.0f)
+    outer_degrees(35.0f),
+    beam(false)
 {
   type = entity_type::Spot_Light_Entity;
 }

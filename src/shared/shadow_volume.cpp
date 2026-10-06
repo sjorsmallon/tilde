@@ -29,13 +29,15 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
   }
   if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity))
   {
-    if (!spot->light.cuts_geometry || !light_is_switched_on(entity))
+    if ((!spot->light.cuts_geometry && !spot->beam) || !light_is_switched_on(entity))
       return std::nullopt;
     return shadow_light_t{.uid                   = spot->entity_id,
                           .apex                  = pose.position,
                           .direction             = linalg::normalize(linalg::basis_from(pose.orientation).forward),
                           .range                 = spot->range,
-                          .cosine_of_outer_angle = std::cos(linalg::to_radians(spot->outer_degrees))};
+                          .cosine_of_outer_angle = std::cos(linalg::to_radians(spot->outer_degrees)),
+                          .cuts_geometry         = spot->light.cuts_geometry,
+                          .draws_beam            = spot->beam};
   }
   if (const entities::Directional_Light_Entity* directional =
           entities::entity_as<entities::Directional_Light_Entity>(&entity))
@@ -109,6 +111,7 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
   shadow_volume_t& volume = cast.volume;
   volume.caster           = caster;
   volume.light            = light.uid;
+  volume.cuts_geometry    = light.cuts_geometry;
 
   // A face is BACK when it faces away from the light. Every face away is the light inside the piece.
   std::vector<bool> faces_away(piece_planes.size(), false);
@@ -292,7 +295,7 @@ bool shadow_volume_touches_box(const shadow_volume_t& volume, const aabb_bounds_
 bool any_shadow_volume_touches_box(Span<const shadow_volume_t> volumes, const aabb_bounds_t& box)
 {
   for (const shadow_volume_t& volume : volumes)
-    if (shadow_volume_touches_box(volume, box))
+    if (volume.cuts_geometry && shadow_volume_touches_box(volume, box))
       return true;
   return false;
 }
@@ -313,7 +316,7 @@ bool shadow_volume_contains_box(const shadow_volume_t& volume, const aabb_bounds
 bool any_shadow_volume_contains_box(Span<const shadow_volume_t> volumes, const aabb_bounds_t& box)
 {
   for (const shadow_volume_t& volume : volumes)
-    if (shadow_volume_contains_box(volume, box))
+    if (volume.cuts_geometry && shadow_volume_contains_box(volume, box))
       return true;
   return false;
 }
@@ -408,7 +411,10 @@ shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const
       receiver_bounds.push_back(primitive.aabb);
   report.receiver_pieces = static_cast<uint32_t>(receiver_bounds.size());
 
-  if (lights.empty() || receiver_bounds.empty())
+  bool any_light_draws_beam = false;
+  for (const shadow_light_t& light : lights)
+    any_light_draws_beam = any_light_draws_beam || light.draws_beam;
+  if (lights.empty() || (receiver_bounds.empty() && !any_light_draws_beam))
     return report;
 
   const auto cast_from_every_light = [&](Span<const Plane> piece_planes,
@@ -435,7 +441,7 @@ shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const
           reaches_a_receiver = true;
           break;
         }
-      if (!reaches_a_receiver)
+      if (!reaches_a_receiver && !light.draws_beam)
       {
         ++report.culled_reaching_nothing;
         continue;

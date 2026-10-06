@@ -54,6 +54,7 @@
 #include "../hitbox_debug_draw.hpp"
 #include "../shadow_debug_draw.hpp"
 #include "../blob_shadow.hpp"
+#include "../spot_beam.hpp"
 #include "../fly_camera.hpp"
 #include "../input.hpp"
 #include "../../shared/player_animator.hpp"
@@ -3407,8 +3408,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
   {
     (void)light;
-    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id, entity,
-                            drawn_ridden_pose(ctx, entity));
+    const shared::path_pose_t light_pose = drawn_ridden_pose(ctx, entity);
+    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id, entity, light_pose);
+    if (ctx.cvars->r_beam)
+      if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity);
+          spot != nullptr && spot->beam && shared::light_is_switched_on(entity))
+        draw_spot_beam(scene, build_spot_beam_for_spot_light(*spot, light_pose));
   }
 
   for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)

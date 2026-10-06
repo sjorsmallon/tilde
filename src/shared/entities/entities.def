@@ -629,6 +629,8 @@ Spot_Light_Entity :: entity is Colorable, Switchable {
     // being rejected, and the editor cone draws what the value says.
     inner_degrees: f32 = 20.0           @Editable
     outer_degrees: f32 = 35.0           @Editable
+    // Draws the light's reach as a pyramid in the air, from the fixture to its range (spot_beam_plan.md).
+    beam:          bool = false         @Editable
 }
 
 // No range and no position falloff -- a directional light is a direction and a

@@ -692,6 +692,9 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_unlit.frag
     ${SHADER_SRC_DIR}/mesh_ghost.frag
     ${SHADER_SRC_DIR}/mesh_procedural_blending.frag
+    ${SHADER_SRC_DIR}/mesh_beam_edge.vert
+    ${SHADER_SRC_DIR}/mesh_beam_edge.frag
+    ${SHADER_SRC_DIR}/beam.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/shadow_cutout.frag
     ${SHADER_SRC_DIR}/particle.comp
@@ -839,6 +842,7 @@ add_library(game_client SHARED
     src/client/fly_camera.cpp
     src/client/shadow_debug_draw.cpp
     src/client/blob_shadow.cpp
+    src/client/spot_beam.cpp
     src/client/skybox_selection.cpp
     src/client/lightmap_gpu_vulkan.cpp
     # Decode one entity snapshot, then advance the newest held snapshot to it. Its own

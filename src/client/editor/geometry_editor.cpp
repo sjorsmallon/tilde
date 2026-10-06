@@ -420,6 +420,9 @@ bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
   changed |= ImGui::Checkbox("collides as its box", &static_mesh.collides);
   if (!static_mesh.collides)
     ImGui::TextDisabled("no collision of its own: block it out with clip brushes");
+  changed |= ImGui::Checkbox("casts shadows", &static_mesh.casts_shadows);
+  if (!static_mesh.casts_shadows)
+    ImGui::TextDisabled("a light inside it shines through it");
   changed |= draw_surface_inspector(static_mesh.surface);
   return changed;
 }

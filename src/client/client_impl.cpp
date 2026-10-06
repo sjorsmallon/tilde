@@ -318,6 +318,10 @@ bool Tick()
     look.rim              = cvars.r_stylized ? cvars.r_rim : 0.0f;
     look.rim_width_pixels = cvars.r_rim_width;
     look.ink_on_black      = cvars.r_ink_on_black;
+    look.beam_alpha              = cvars.r_beam_alpha;
+    look.beam_fill               = cvars.r_beam_fill;
+    look.beam_dot_spacing_pixels = cvars.r_beam_dot_spacing;
+    look.beam_edge_pixels        = cvars.r_beam_edge_pixels;
     look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
     look.misprint_distance = cvars.r_misprint_distance;
     look.fog              = cvars.r_fog;

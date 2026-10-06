@@ -93,6 +93,17 @@ constexpr uint32_t Cel_Fill_COUNT = 4;
 const char* to_string(Cel_Fill value);
 template <> std::optional<Cel_Fill> try_from_string<Cel_Fill>(std::string_view text);
 
+enum class Beam_Fill : uint8_t
+{
+  tint = 0,
+  dots = 1,
+};
+
+constexpr uint32_t Beam_Fill_COUNT = 2;
+
+const char* to_string(Beam_Fill value);
+template <> std::optional<Beam_Fill> try_from_string<Beam_Fill>(std::string_view text);
+
 enum class Pattern_Kind : uint8_t
 {
   none = 0,
@@ -330,6 +341,11 @@ struct cvar_state_t
   bool r_fog;
   float r_fog_distance;
   float r_fog_anisotropy;
+  bool r_beam;
+  float r_beam_alpha;
+  Beam_Fill r_beam_fill;
+  float r_beam_dot_spacing;
+  float r_beam_edge_pixels;
   bool r_look_panel;
   network::pascal_string_t<64> sv_skybox;
   bool debug_show_collisions;
@@ -552,29 +568,34 @@ enum class cvar_id : uint16_t
   r_fog = 189,
   r_fog_distance = 190,
   r_fog_anisotropy = 191,
-  r_look_panel = 192,
-  sv_skybox = 193,
-  debug_show_collisions = 194,
-  debug_show_hitboxes = 195,
-  debug_show_navmesh = 196,
-  debug_show_box_volumes = 197,
-  debug_hide_geometry = 198,
-  cl_shot_debug_seconds = 199,
-  cl_shadow_volume_debug = 200,
-  debug_show_entity_counts = 201,
-  net_snapshot_debug = 202,
-  sv_event_debug = 203,
-  cl_event_debug = 204,
-  sv_reliable_debug = 205,
-  sv_io_debug = 206,
-  replay_keyframe_seconds = 207,
-  sv_replay_auto = 208,
-  sv_ghost_record = 209,
+  r_beam = 192,
+  r_beam_alpha = 193,
+  r_beam_fill = 194,
+  r_beam_dot_spacing = 195,
+  r_beam_edge_pixels = 196,
+  r_look_panel = 197,
+  sv_skybox = 198,
+  debug_show_collisions = 199,
+  debug_show_hitboxes = 200,
+  debug_show_navmesh = 201,
+  debug_show_box_volumes = 202,
+  debug_hide_geometry = 203,
+  cl_shot_debug_seconds = 204,
+  cl_shadow_volume_debug = 205,
+  debug_show_entity_counts = 206,
+  net_snapshot_debug = 207,
+  sv_event_debug = 208,
+  cl_event_debug = 209,
+  sv_reliable_debug = 210,
+  sv_io_debug = 211,
+  replay_keyframe_seconds = 212,
+  sv_replay_auto = 213,
+  sv_ghost_record = 214,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 210;
+constexpr uint32_t CVAR_COUNT = 215;
 
 enum class command_id : uint16_t
 {
@@ -858,6 +879,11 @@ template <> struct enum_traits<cvars::Debug_Channel>
 template <> struct enum_traits<cvars::Cel_Fill>
 {
   static constexpr uint32_t count = cvars::Cel_Fill_COUNT;
+};
+
+template <> struct enum_traits<cvars::Beam_Fill>
+{
+  static constexpr uint32_t count = cvars::Beam_Fill_COUNT;
 };
 
 template <> struct enum_traits<cvars::Pattern_Kind>

@@ -30,12 +30,18 @@
 #define MAX_SHADOW_VOLUME_PLANES 37
 // shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its back planes.
 #define SHADOW_VOLUME_SIDE_SLOTS 25
+// renderer.hpp's MAX_SCENE_BEAMS, kept one number by the same assert.
+#define MAX_BEAMS 8
 
 // scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
 #define CEL_FILL_NONE     0
 #define CEL_FILL_HATCH    1
 #define CEL_FILL_DITHER3D 2
 #define CEL_FILL_DITHER3D_ORIGINAL 3
+
+// scene.beam.x, from r_beam_fill -- renderer.cpp's get_beam_fill_pattern_for_beam_fill.
+#define BEAM_FILL_TINT 0
+#define BEAM_FILL_DOTS 1
 
 // scene.debug_flags, from r_debug_channel. One text for every fragment shader
 // that reads them, so a channel added here is a channel every shader can show.
@@ -86,6 +92,15 @@ struct FogVolume {
     vec4 minimum_density;
     vec4 maximum;
     vec4 color;
+};
+
+// renderer.hpp's beam_t: a spot's beam as the pyramid beam.frag fills.
+struct Beam {
+    vec4 apex_range;      // apex xyz, range
+    vec4 forward_tangent; // forward xyz, tan(outer)
+    vec4 up;
+    vec4 right;
+    vec4 color_light;     // rgb the light's colour, w its uid as int bits (floatBitsToInt)
 };
 
 layout(set = 3, binding = 1) uniform SceneUniform {
@@ -163,6 +178,17 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   pattern_preview_shape;
     // rgb = r_pattern_preview_red, _green, _blue, a = r_pattern_preview_strength.
     vec4   pattern_preview_ink;
+    // x = r_beam_fill as one of BEAM_FILL_*, y = r_beam_alpha, z = r_beam_dot_spacing in pixels,
+    // w = r_beam_edge_pixels.
+    vec4   beam;
+    // This pass's viewport in pixels: xy where it starts, zw its size. mesh_beam_edge.vert widens an edge by it,
+    // beam.frag finds its line of sight by it.
+    vec4   beam_viewport;
+    // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z.
+    vec4   beam_settings;
+    Beam   beams[MAX_BEAMS];
+    // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
+    vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
@@ -175,11 +201,18 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `fog_volumes` are live, y = the view depth the fog grid starts at, z = the view depth it ends at,
     // w = r_fog_anisotropy.
     vec4       fog_settings;
-    // The camera's right and up, each as long as half the view is wide or tall one unit of view depth away (fog_grid.glsl).
-    vec4       fog_view_right;
-    vec4       fog_view_up;
+    // The camera's right and up, each as long as half the view is wide or tall one unit of view depth away (view_ray).
+    vec4       view_right;
+    vec4       view_up;
     FogVolume  fog_volumes[MAX_FOG_VOLUMES];
 } scene;
+
+// The line of sight through `position` (0..1 across the pass's view, y down), one unit of view depth long.
+vec3 view_ray(vec2 position)
+{
+    vec2 screen = position * 2.0 - 1.0;
+    return scene.camera_forward.xyz + screen.x * scene.view_right.xyz - screen.y * scene.view_up.xyz;
+}
 
 // r_cel_flat_albedo: a material's colour drawn towards its smallest mip, the mean of the whole texture.
 vec3 cel_flat_albedo(sampler2D map, vec2 uv, vec3 sampled)

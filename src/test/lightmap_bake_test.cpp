@@ -3646,6 +3646,19 @@ void a_static_mesh_casts_a_shadow_in_the_bake()
   assert(!ray_is_blocked(shadow, {0.f, 64.f, 0.f}));
 }
 
+// A light fixture's housing: the mesh draws, but a light inside it shines through.
+void a_static_mesh_with_shadows_off_is_in_no_occluder_set()
+{
+  shared::map_t map = map_with_a_box_mesh();
+  std::get<shared::static_mesh_geometry_t>(map.geometry[0].value).casts_shadows = false;
+
+  assert(shared::compute_light_occlusion(map.geometry[0].value, map.materials) ==
+         shared::light_occlusion_t::None);
+  assert(shared::build_occluder_bvh(map).primitives.empty());
+  assert(shared::build_alpha_tested_bvh(map).primitives.empty());
+  assert(shared::build_transmissive_bvh(map).primitives.empty());
+}
+
 #if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
 
 const char *GLASS_TGA_PATH = "cmake_build/lightmap_test_fixtures/glass.tga";
@@ -4717,6 +4730,7 @@ int main()
   a_lightmapped_static_mesh_draws_through_its_unwrap();
   a_sidecar_round_trips_an_unwrap();
   a_static_mesh_casts_a_shadow_in_the_bake();
+  a_static_mesh_with_shadows_off_is_in_no_occluder_set();
 #if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
   a_blend_faced_brush_does_not_occlude_the_bake();
   a_blend_faced_brush_tints_the_light_that_passes_through_it();

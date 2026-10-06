@@ -101,6 +101,18 @@ const uint32_t mesh_procedural_blending_frag_spv[] =
 #include "mesh_procedural_blending.frag.spv.h"
     ;
 
+const uint32_t beam_frag_spv[] =
+#include "beam.frag.spv.h"
+    ;
+
+const uint32_t mesh_beam_edge_vert_spv[] =
+#include "mesh_beam_edge.vert.spv.h"
+    ;
+
+const uint32_t mesh_beam_edge_frag_spv[] =
+#include "mesh_beam_edge.frag.spv.h"
+    ;
+
 const uint32_t mesh_grid_frag_spv[] =
 #include "mesh_grid.frag.spv.h"
     ;
@@ -293,10 +305,10 @@ struct pipeline_key_hash_t
     // Every field is a small enumeration, so the whole key packs into one
     // integer and needs no hash combine.
     return (size_t)key.state.shader | ((size_t)key.state.blend_mode << 3) |
-           ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 6) |
-           ((size_t)key.state.depth_write << 7) | ((size_t)key.vertex_layout << 8) |
-           ((size_t)key.fill << 11) | ((size_t)key.state.alpha_cutoff << 12) |
-           ((size_t)key.discard_effects << 20) | ((size_t)key.light_cut << 21);
+           ((size_t)key.state.cull_mode << 5) | ((size_t)key.state.depth_test << 7) |
+           ((size_t)key.state.depth_write << 8) | ((size_t)key.vertex_layout << 9) |
+           ((size_t)key.fill << 12) | ((size_t)key.state.alpha_cutoff << 13) |
+           ((size_t)key.discard_effects << 21) | ((size_t)key.light_cut << 22);
   }
 };
 
@@ -770,19 +782,25 @@ struct scene_uniform_t
   float       pattern_preview_cells[4]                      = {}; // x one of pattern.glsl's PATTERN_*, y spacing along, z spacing across, w angle in radians
   float       pattern_preview_shape[4]                      = {}; // x coverage, y the kind's own number, z scroll speed
   float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
+  float       beam[4]                                       = {}; // x one of scene.glsl's BEAM_FILL_*, y the tint alpha, z the dot spacing in pixels, w the edge width in pixels
+  float       beam_viewport[4]                              = {}; // this pass's viewport in pixels: xy where it starts, zw its size
+  float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z
+  float       beams[MAX_SCENE_BEAMS][20]                    = {}; // apex xyz and range, forward xyz and tan(outer), up xyz, right xyz, colour rgb and the light's uid bits
+  float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
   float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
   float       shadow_volume_settings[4]                     = {}; // x how many of `shadow_volumes` are live
   float       shadow_volumes[MAX_SCENE_SHADOW_VOLUMES][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as normal xyz and dot(normal, point), side slots then back slots; an unused one is (0, 0, 0, 1e9)
   float       fog_settings[4]                               = {}; // x how many of `fog_volumes` are live, y the view depth the fog grid starts at, z where it ends, w anisotropy
-  float       fog_view_right[4]                             = {}; // the camera's right, as long as half the view is wide one unit of view depth away
-  float       fog_view_up[4]                                = {}; // the camera's up, as long as half the view is tall
+  float       view_right[4]                                 = {}; // the camera's right, as long as half the view is wide one unit of view depth away
+  float       view_up[4]                                    = {}; // the camera's up, as long as half the view is tall
   float       fog_volumes[MAX_SCENE_FOG_VOLUMES][12]        = {}; // lowest corner xyz and density, highest corner xyz and edge softness, then the scattered colour rgb
 };
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 48 + 16 + 32 * MAX_SCENE_REVEAL_CONES + 16 +
+                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + 80 * MAX_SCENE_BEAMS +
+                      4 * MAX_SCENE_SHADOW_VOLUMES + 32 * MAX_SCENE_REVEAL_CONES + 16 +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES + 48 +
                       48 * MAX_SCENE_FOG_VOLUMES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
@@ -873,6 +891,7 @@ struct screen_target_t
 struct fullscreen_draw_t
 {
   VkDescriptorSetLayout set_layout                 = VK_NULL_HANDLE;
+  VkDescriptorSetLayout empty_set_layout           = VK_NULL_HANDLE; // the sets between the inputs and the pass's, when it binds one
   VkDescriptorPool      pool                       = VK_NULL_HANDLE;
   VkDescriptorSet       sets[MAX_FRAMES_IN_FLIGHT] = {};
   VkPipelineLayout      pipeline_layout            = VK_NULL_HANDLE;
@@ -908,6 +927,13 @@ static VkSampler       g_screen_linear_sampler  = VK_NULL_HANDLE;
 static VkRenderPass g_scene_render_pass      = VK_NULL_HANDLE;
 static VkRenderPass g_tonemapped_render_pass = VK_NULL_HANDLE;
 static VkRenderPass g_present_render_pass    = VK_NULL_HANDLE;
+
+// The beam pass (spot_beam_plan.md ss5): beam.frag over the HDR target after the scene pass, with the
+// scene depth as a texture, which no fragment of the scene pass itself could read. Its framebuffers
+// are the HDR target's images under this pass's own attachment description.
+static VkRenderPass      g_beam_render_pass                       = VK_NULL_HANDLE;
+static VkFramebuffer     g_beam_framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
+static fullscreen_draw_t g_beam_draw;
 
 // The selection outline: a per-frame mask the outlined draws render into after the
 // scene pass, against the scene's depth, and the present pass edge-detects it.
@@ -1525,10 +1551,28 @@ static void create_screen_targets()
   create_screen_target(g_hdr_target, g_scene_render_pass, g_depth_view, g_scene_data_images);
   create_screen_target(g_tonemapped_target, g_tonemapped_render_pass, VK_NULL_HANDLE, {});
   create_screen_target(g_outline_mask_target, g_outline_mask_render_pass, g_depth_view, {});
+
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass      = g_beam_render_pass;
+    framebuffer_info.attachmentCount = 1;
+    framebuffer_info.pAttachments    = &g_hdr_target.views[frame];
+    framebuffer_info.width           = g_swapchain_extent.width;
+    framebuffer_info.height          = g_swapchain_extent.height;
+    framebuffer_info.layers          = 1;
+    if (vkCreateFramebuffer(g_device, &framebuffer_info, nullptr, &g_beam_framebuffers[frame]) != VK_SUCCESS)
+      fatal_error("[renderer] could not create the beam framebuffer");
+  }
 }
 
 static void destroy_screen_targets()
 {
+  for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+  {
+    vkDestroyFramebuffer(g_device, g_beam_framebuffers[frame], nullptr);
+    g_beam_framebuffers[frame] = VK_NULL_HANDLE;
+  }
   destroy_screen_target(g_hdr_target, g_scene_data_images);
   destroy_screen_target(g_tonemapped_target, {});
   destroy_screen_target(g_outline_mask_target, {});
@@ -2005,7 +2049,12 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
 
   const uint32_t *vert_spv  = mesh_vert_spv;
   size_t          vert_size = sizeof(mesh_vert_spv);
-  if (skinned)
+  if (key.state.shader == shader_t::beam_edge)
+  {
+    vert_spv  = mesh_beam_edge_vert_spv;
+    vert_size = sizeof(mesh_beam_edge_vert_spv);
+  }
+  else if (skinned)
   {
     vert_spv  = mesh_skinned_vert_spv;
     vert_size = sizeof(mesh_skinned_vert_spv);
@@ -2046,6 +2095,10 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   case shader_t::procedural_blending:
     frag_spv  = mesh_procedural_blending_frag_spv;
     frag_size = sizeof(mesh_procedural_blending_frag_spv);
+    break;
+  case shader_t::beam_edge:
+    frag_spv  = mesh_beam_edge_frag_spv;
+    frag_size = sizeof(mesh_beam_edge_frag_spv);
     break;
   case shader_t::grid:
     frag_spv  = lightmapped ? mesh_grid_lightmapped_frag_spv : mesh_grid_frag_spv;
@@ -2184,9 +2237,8 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   rasterizer.polygonMode = (wireframe && g_supports_wireframe) ? VK_POLYGON_MODE_LINE
                                                                : VK_POLYGON_MODE_FILL;
   rasterizer.lineWidth   = 1.0f;
-  rasterizer.cullMode    = (wireframe || key.state.cull_mode == cull_mode_t::none)
-                               ? VK_CULL_MODE_NONE
-                               : VK_CULL_MODE_BACK_BIT;
+  rasterizer.cullMode    = (wireframe || key.state.cull_mode == cull_mode_t::none) ? VK_CULL_MODE_NONE
+                                                                                  : VK_CULL_MODE_BACK_BIT;
   rasterizer.frontFace                = HOUSE_FRONT_FACE;
   rasterizer.depthBiasEnable          = wireframe ? VK_TRUE : VK_FALSE;
   rasterizer.depthBiasConstantFactor  = wireframe ? -2.0f : 0.0f;
@@ -2772,6 +2824,8 @@ struct fullscreen_draw_settings_t
   uint32_t             input_count        = 0;
   uint32_t             push_constant_size = 0;
   bool                 alpha_blend        = false;
+  // The draw reads one view pass's scene block: its set rides at PASS_DESCRIPTOR_SET, as it does for a mesh.
+  bool                 binds_pass_set     = false;
 };
 
 static fullscreen_draw_t create_fullscreen_draw(const fullscreen_draw_settings_t& settings)
@@ -2827,9 +2881,23 @@ static fullscreen_draw_t create_fullscreen_draw(const fullscreen_draw_settings_t
   push_range.offset     = 0;
   push_range.size       = settings.push_constant_size;
 
+  VkDescriptorSetLayout set_layouts[PASS_DESCRIPTOR_SET + 1] = {};
+  uint32_t              set_layout_count                     = 0;
+  if (settings.input_count > 0)
+    set_layouts[set_layout_count++] = draw.set_layout;
+  if (settings.binds_pass_set)
+  {
+    const VkDescriptorSetLayoutCreateInfo empty_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    if (vkCreateDescriptorSetLayout(g_device, &empty_layout_info, nullptr, &draw.empty_set_layout) != VK_SUCCESS)
+      fatal_error("[renderer] could not create the {} draw's empty descriptor set layout", settings.name);
+    while (set_layout_count < PASS_DESCRIPTOR_SET)
+      set_layouts[set_layout_count++] = draw.empty_set_layout;
+    set_layouts[set_layout_count++] = g_pass_ds_layout;
+  }
+
   VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  layout_info.setLayoutCount         = settings.input_count > 0 ? 1 : 0;
-  layout_info.pSetLayouts            = &draw.set_layout;
+  layout_info.setLayoutCount         = set_layout_count;
+  layout_info.pSetLayouts            = set_layouts;
   layout_info.pushConstantRangeCount = settings.push_constant_size > 0 ? 1 : 0;
   layout_info.pPushConstantRanges    = &push_range;
   if (vkCreatePipelineLayout(g_device, &layout_info, nullptr, &draw.pipeline_layout) !=
@@ -2929,6 +2997,7 @@ static void destroy_fullscreen_draw(fullscreen_draw_t& draw)
   vkDestroyPipelineLayout(g_device, draw.pipeline_layout, nullptr);
   vkDestroyDescriptorPool(g_device, draw.pool, nullptr);
   vkDestroyDescriptorSetLayout(g_device, draw.set_layout, nullptr);
+  vkDestroyDescriptorSetLayout(g_device, draw.empty_set_layout, nullptr);
   draw = {};
 }
 
@@ -3002,6 +3071,61 @@ static VkRenderPass create_sampled_color_render_pass(VkFormat format, const char
   return render_pass;
 }
 
+// A colour-only pass over an image an earlier pass wrote and a later one samples: what it holds is
+// kept and drawn over.
+static VkRenderPass create_blended_over_color_render_pass(VkFormat format, const char* name)
+{
+  VkAttachmentDescription attachment{};
+  attachment.format         = format;
+  attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+  attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+  attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  attachment.initialLayout  = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkAttachmentReference color_reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+
+  VkSubpassDescription subpass{};
+  subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments    = &color_reference;
+
+  VkSubpassDependency dependencies[2] = {};
+  dependencies[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+  dependencies[0].dstSubpass    = 0;
+  dependencies[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  dependencies[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                  VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+
+  dependencies[1].srcSubpass    = 0;
+  dependencies[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+  dependencies[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  VkRenderPassCreateInfo render_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+  render_pass_info.attachmentCount = 1;
+  render_pass_info.pAttachments    = &attachment;
+  render_pass_info.subpassCount    = 1;
+  render_pass_info.pSubpasses      = &subpass;
+  render_pass_info.dependencyCount = 2;
+  render_pass_info.pDependencies   = dependencies;
+
+  VkRenderPass render_pass = VK_NULL_HANDLE;
+  if (vkCreateRenderPass(g_device, &render_pass_info, nullptr, &render_pass) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {} render pass", name);
+  return render_pass;
+}
+
 // The caller sets the viewport: a draw covers whatever rect it is given.
 template <typename Push_Constants>
 static void record_fullscreen_draw(VkCommandBuffer cmd, const fullscreen_draw_t& draw,
@@ -3013,6 +3137,19 @@ static void record_fullscreen_draw(VkCommandBuffer cmd, const fullscreen_draw_t&
                             &draw.sets[g_current_frame_idx_in_swapchain], 0, nullptr);
   vkCmdPushConstants(cmd, draw.pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                      sizeof(Push_Constants), &push);
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
+// A draw built with binds_pass_set and no push constants, over one view pass's scene block.
+static void record_fullscreen_pass_draw(VkCommandBuffer cmd, const fullscreen_draw_t& draw,
+                                        VkDescriptorSet pass_set, uint32_t scene_block_offset)
+{
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.pipeline);
+  if (draw.pool != VK_NULL_HANDLE)
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.pipeline_layout, 0, 1,
+                            &draw.sets[g_current_frame_idx_in_swapchain], 0, nullptr);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.pipeline_layout, PASS_DESCRIPTOR_SET, 1,
+                          &pass_set, 1, &scene_block_offset);
   vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
@@ -3357,6 +3494,25 @@ static void destroy_tonemap_resources()
     vkDestroySampler(g_device, g_screen_nearest_sampler, nullptr);
 }
 
+// --- Beams ---
+
+static void create_beam_resources()
+{
+  fullscreen_draw_settings_t settings;
+  settings.name           = "beam";
+  settings.fragment_code  = beam_frag_spv;
+  settings.render_pass    = g_beam_render_pass;
+  settings.input_count    = 1; // the scene depth
+  settings.alpha_blend    = true;
+  settings.binds_pass_set = true;
+  g_beam_draw             = create_fullscreen_draw(settings);
+}
+
+static void destroy_beam_resources()
+{
+  destroy_fullscreen_draw(g_beam_draw);
+}
+
 // --- Antialiasing ---
 //
 // First in the present pass, over the tonemapped and inked frame and under the
@@ -3563,6 +3719,10 @@ static void write_screen_target_inputs()
          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {g_screen_linear_sampler, g_fog_totals.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     write_fullscreen_draw_inputs(g_tonemap_draw, frame, tonemap_inputs);
+
+    const VkDescriptorImageInfo beam_inputs[] = {
+        {g_screen_nearest_sampler, g_depth_view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}};
+    write_fullscreen_draw_inputs(g_beam_draw, frame, beam_inputs);
 
     const VkDescriptorImageInfo fxaa_inputs[] = {
         {g_screen_linear_sampler, g_tonemapped_target.views[frame],
@@ -6786,6 +6946,16 @@ static void pack_peel(const peel_t& peel, mesh_push_constants_t& out)
   out.clock_wipe_axis_y[3] = peel.front_angle;
 }
 
+// The viewport rect in PIXELS. Derived from the same view value the pass draws
+// with, rather than retained in a global: screen projection needs the rect the
+// NDC cube was mapped onto, and every caller re-deriving it from the swapchain
+// extent is how the two silently disagree.
+struct viewport_pixels_t
+{
+  float x, y, width, height;
+};
+static viewport_pixels_t viewport_in_pixels(const viewport_t &viewport);
+
 // Per pass, so a second viewport with its own camera gets its own block for free.
 static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
 {
@@ -6799,6 +6969,12 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   scene.camera_position[1] = eye.y;
   scene.camera_position[2] = eye.z;
   scene.camera_position[3] = 0.0f;
+
+  const viewport_pixels_t viewport_pixels = viewport_in_pixels(pass.view.viewport);
+  scene.beam_viewport[0]                  = viewport_pixels.x;
+  scene.beam_viewport[1]                  = viewport_pixels.y;
+  scene.beam_viewport[2]                  = viewport_pixels.width;
+  scene.beam_viewport[3]                  = viewport_pixels.height;
 
   const linalg::vec3f forward =
       linalg::direction_from_angles(pass.view.camera.yaw, pass.view.camera.pitch);
@@ -6914,8 +7090,57 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
       plane_out[2] = plane->normal.z;
       plane_out[3] = linalg::dot(plane->normal, plane->point);
     }
+    static_assert(sizeof(volume.light) == sizeof(float));
+    memcpy(&scene.shadow_volume_lights[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
+           &volume.light, sizeof(float));
   }
   scene.shadow_volume_settings[0] = (float)written_volume_count;
+
+  if (pass.beams.size() > MAX_SCENE_BEAMS)
+  {
+    log_error("[renderer] this view pass carries {} beams; only the first {} are drawn", pass.beams.size(),
+              MAX_SCENE_BEAMS);
+  }
+  const size_t beam_count = pass.view.camera.orthographic ? 0 : std::min<size_t>(pass.beams.size(), MAX_SCENE_BEAMS);
+  scene.beam_settings[0]  = (float)beam_count;
+  scene.beam_settings[1]  = (VIEW_FAR_PLANE - VIEW_NEAR_PLANE) / (VIEW_NEAR_PLANE * VIEW_FAR_PLANE);
+  scene.beam_settings[2]  = 1.0f / VIEW_FAR_PLANE;
+  for (size_t index = 0; index < beam_count; ++index)
+  {
+    const beam_t& beam = pass.beams[(uint32_t)index];
+    float*        out  = scene.beams[index];
+    out[0]  = beam.apex.x;
+    out[1]  = beam.apex.y;
+    out[2]  = beam.apex.z;
+    out[3]  = beam.range;
+    out[4]  = beam.forward.x;
+    out[5]  = beam.forward.y;
+    out[6]  = beam.forward.z;
+    out[7]  = beam.tangent_of_outer_angle;
+    out[8]  = beam.up.x;
+    out[9]  = beam.up.y;
+    out[10] = beam.up.z;
+    out[12] = beam.right.x;
+    out[13] = beam.right.y;
+    out[14] = beam.right.z;
+    out[16] = beam.color.x;
+    out[17] = beam.color.y;
+    out[18] = beam.color.z;
+    static_assert(sizeof(beam.light) == sizeof(float));
+    memcpy(&out[19], &beam.light, sizeof(float));
+  }
+
+  // Read back out of the projection, for record_skybox_draw's reason.
+  const camera_basis_t view_basis        = get_orientation_vectors(pass.view.camera);
+  const linalg::mat4f  projection_matrix = view_matrices(pass.view).projection;
+  const linalg::vec3f  view_right        = view_basis.right * (1.0f / projection_matrix[0].x);
+  const linalg::vec3f  view_up           = view_basis.up * (-1.0f / projection_matrix[1].y);
+  scene.view_right[0]                  = view_right.x;
+  scene.view_right[1]                  = view_right.y;
+  scene.view_right[2]                  = view_right.z;
+  scene.view_up[0]                     = view_up.x;
+  scene.view_up[1]                     = view_up.y;
+  scene.view_up[2]                     = view_up.z;
 
   scene.clock[0] = pass.seconds;
 
@@ -6945,18 +7170,6 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
       out[9]  = volume.color.y;
       out[10] = volume.color.z;
     }
-
-    // Read back out of the projection, for record_skybox_draw's reason.
-    const camera_basis_t basis      = get_orientation_vectors(pass.view.camera);
-    const linalg::mat4f  projection = view_matrices(pass.view).projection;
-    const linalg::vec3f  right      = basis.right * (1.0f / projection[0].x);
-    const linalg::vec3f  up         = basis.up * (-1.0f / projection[1].y);
-    scene.fog_view_right[0] = right.x;
-    scene.fog_view_right[1] = right.y;
-    scene.fog_view_right[2] = right.z;
-    scene.fog_view_up[0]    = up.x;
-    scene.fog_view_up[1]    = up.y;
-    scene.fog_view_up[2]    = up.z;
   }
 
   // Clamped to what actually fits, or a chart naming slot 70 would index past
@@ -7042,6 +7255,17 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   case cvars::Cel_Fill::dither3d_original: return 3.0f;
   }
   fatal_error("get_cel_fill_pattern_for_cel_fill: {} is not a Cel_Fill", static_cast<uint32_t>(fill));
+}
+
+// scene.glsl's BEAM_FILL_*.
+[[nodiscard]] float get_beam_fill_pattern_for_beam_fill(cvars::Beam_Fill fill)
+{
+  switch (fill)
+  {
+  case cvars::Beam_Fill::tint: return 0.0f;
+  case cvars::Beam_Fill::dots: return 1.0f;
+  }
+  fatal_error("get_beam_fill_pattern_for_beam_fill: {} is not a Beam_Fill", static_cast<uint32_t>(fill));
 }
 
 // pattern.glsl's PATTERN_*.
@@ -7694,15 +7918,6 @@ linalg::vec2 logical_window_points_to_framebuffer_pixels(linalg::vec2 window_poi
   return {window_point.x * (float)g_swapchain_extent.width / (float)window_width,
           window_point.y * (float)g_swapchain_extent.height / (float)window_height};
 }
-
-// The viewport rect in PIXELS. Derived HERE from the same view value the pass
-// draws with, rather than retained in a global: screen projection needs the rect
-// the NDC cube was mapped onto, and every caller re-deriving it from the
-// swapchain extent is how the two silently disagree.
-struct viewport_pixels_t
-{
-  float x, y, width, height;
-};
 
 static viewport_pixels_t viewport_in_pixels(const viewport_t &viewport)
 {
@@ -8671,6 +8886,7 @@ bool init(SDL_Window *window)
   g_tonemapped_target.format = g_swapchain_image_format;
   g_tonemapped_render_pass =
       create_sampled_color_render_pass(g_swapchain_image_format, "tonemapped");
+  g_beam_render_pass = create_blended_over_color_render_pass(HDR_TARGET_FORMAT, "beam");
 
   // The PRESENT pass: antialiasing, then the UI, then ImGui, into the sRGB swapchain.
   // No depth attachment -- nothing in it is three-dimensional -- and no colour
@@ -8809,6 +9025,7 @@ bool init(SDL_Window *window)
   create_outline_resources(); // borrows the mesh pipeline layout
   create_background_resources();
   create_fog_resources(); // before the screen target inputs: the tonemap samples the fog totals
+  create_beam_resources(); // after create_mesh_resources: it binds the pass set layout
   write_screen_target_inputs();
   create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
@@ -8952,6 +9169,7 @@ void shutdown()
   destroy_outline_resources();
   destroy_background_resources();
   destroy_fog_resources();
+  destroy_beam_resources();
   destroy_skybox_resources();
   destroy_shadow_resources();
   cleanup_registered_resources();
@@ -8961,6 +9179,7 @@ void shutdown()
 
   vkDestroyRenderPass(g_device, g_scene_render_pass, nullptr);
   vkDestroyRenderPass(g_device, g_tonemapped_render_pass, nullptr);
+  vkDestroyRenderPass(g_device, g_beam_render_pass, nullptr);
   vkDestroyRenderPass(g_device, g_present_render_pass, nullptr);
   vkDestroyRenderPass(g_device, g_outline_mask_render_pass, nullptr);
   vkDestroyDevice(g_device, nullptr);
@@ -9172,6 +9391,10 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.pattern_preview_ink[1]   = look.pattern_preview_ink.y;
     scene.pattern_preview_ink[2]   = look.pattern_preview_ink.z;
     scene.pattern_preview_ink[3]   = std::clamp(look.pattern_preview_strength, 0.0f, 1.0f);
+    scene.beam[0]                  = get_beam_fill_pattern_for_beam_fill(look.beam_fill);
+    scene.beam[1]                  = std::clamp(look.beam_alpha, 0.0f, 1.0f);
+    scene.beam[2]                  = std::max(look.beam_dot_spacing_pixels, 1.0f);
+    scene.beam[3]                  = std::max(look.beam_edge_pixels, 0.0f);
     scene.fog_settings[1]     = FOG_GRID_NEAR;
     scene.fog_settings[2]     = fog_far;
     scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);
@@ -9310,6 +9533,34 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
                                 Span<const frame_uniform_allocation_t>(
                                     g_draw_skinning.data() + prepared.skinning_base,
                                     pass.draws.size()));
+    }
+    vkCmdEndRenderPass(cmd);
+  }
+
+  // 5c. The BEAM pass: every perspective pass's beams over the HDR target, against the depth the
+  //     scene pass wrote, which is what lets a shadow volume bite a shaft out of a beam.
+  bool any_beams = false;
+  for (const view_pass_t& pass : passes)
+    any_beams = any_beams || (!pass.beams.empty() && !pass.view.camera.orthographic);
+
+  if (any_beams)
+  {
+    VkRenderPassBeginInfo beam_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    beam_pass_info.renderPass        = g_beam_render_pass;
+    beam_pass_info.framebuffer       = g_beam_framebuffers[g_current_frame_idx_in_swapchain];
+    beam_pass_info.renderArea.extent = g_swapchain_extent;
+
+    vkCmdBeginRenderPass(cmd, &beam_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+    for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index)
+    {
+      const view_pass_t& pass = passes[pass_index];
+      if (pass.beams.empty() || pass.view.camera.orthographic)
+        continue;
+      const VkDescriptorSet pass_set = resolve_pass_set(pass.lightmap);
+      if (pass_set == VK_NULL_HANDLE)
+        continue;
+      apply_viewport(cmd, pass.view.viewport);
+      record_fullscreen_pass_draw(cmd, g_beam_draw, pass_set, g_prepared_passes[pass_index].scene_block_offset);
     }
     vkCmdEndRenderPass(cmd);
   }

@@ -129,7 +129,11 @@ enum class shader_t : uint8_t
   // Unlit tint with a fresnel-rim alpha; pair with blend_mode_t::alpha.
   ghost,
   // Unlit tint over an animated noise pattern that reads no texture; runs on view_pass_t::seconds.
-  procedural_blending
+  procedural_blending,
+  // One of a spot beam's four edges (spot_beam_plan.md), a quad mesh_beam_edge.vert widens to
+  // look_settings_t's beam edge pixels on screen and mesh_beam_edge.frag feathers; pair with
+  // blend_mode_t::alpha and cull_mode_t::none. The beam's fill is view_pass_t::beams, not a material.
+  beam_edge
 };
 
 // The renderer's copy of assets::alpha_mode_t; fixed per material at
@@ -383,8 +387,28 @@ inline constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 // scene.glsl's MAX_FOG_VOLUMES, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
-// scene.glsl's MAX_SHADOW_VOLUMES, kept one number by the same assert.
+// scene.glsl's MAX_SHADOW_VOLUMES, kept one number by the same assert. A multiple of four: the
+// volumes' light uids ride the scene block four to a vec4.
 inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 8;
+static_assert(MAX_SCENE_SHADOW_VOLUMES % 4 == 0);
+
+// scene.glsl's MAX_BEAMS, kept one number by the same assert.
+inline constexpr uint32_t MAX_SCENE_BEAMS = 8;
+
+// A spot light's beam (spot_beam_plan.md): a pyramid from `apex` along `forward` to a cap `range`
+// away, half as wide there as range * tangent_of_outer_angle. The beam pass fills it over the drawn
+// scene, clipped by the surface under each pixel and cut by the shadow volumes `light` throws.
+struct beam_t
+{
+  linalg::vec3f        apex;
+  linalg::vec3f        forward;
+  linalg::vec3f        up;
+  linalg::vec3f        right;
+  float                range                   = 0.0f;
+  float                tangent_of_outer_angle  = 0.0f;
+  linalg::vec3f        color                   = {1.0f, 1.0f, 1.0f};
+  shared::entity_uid_t light                   = shared::null_entity_uid;
+};
 
 // A world-space box of fog: the colour the air inside scatters, and how much of what is behind it one world unit of it hides.
 struct fog_volume_t
@@ -708,6 +732,8 @@ struct view_pass_t
   Span<const shared::shadow_volume_t>       shadow_volumes = {};
   // Drawn for the FIRST perspective pass of the frame that carries any: there is one fog grid.
   Span<const fog_volume_t>                  fog_volumes = {};
+  // Filled by the beam pass after the scene pass, for a perspective pass only. Past MAX_SCENE_BEAMS the tail is dropped.
+  Span<const beam_t>                        beams = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
   float                                     seconds   = 0.0f;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass
@@ -786,6 +812,10 @@ struct look_settings_t
   bool    fog              = true;  // r_fog
   float   fog_distance     = 4096.0f; // r_fog_distance
   float   fog_anisotropy   = 0.5f;  // r_fog_anisotropy
+  float   beam_alpha              = 0.12f; // r_beam_alpha
+  cvars::Beam_Fill beam_fill      = cvars::Beam_Fill::tint; // r_beam_fill
+  float   beam_dot_spacing_pixels = 8.0f;  // r_beam_dot_spacing
+  float   beam_edge_pixels        = 2.0f;  // r_beam_edge_pixels
 };
 
 struct antialiasing_settings_t

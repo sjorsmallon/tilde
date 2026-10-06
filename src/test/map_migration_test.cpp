@@ -325,6 +325,25 @@ int main()
       return fail("mesh collision: a reloaded non-colliding mesh compares unequal to itself");
   }
 
+  // A static mesh can switch its shadow off, and only then does the file say so.
+  {
+    static_mesh_geometry_t mesh;
+    map_t casting;
+    casting.add_geometry(mesh);
+    if (serialize_map_to_string(casting).find("\"casts_shadows\"") != std::string::npos)
+      return fail("mesh shadow: a shadowing mesh writes a key it does not need");
+
+    mesh.casts_shadows = false;
+    map_t fixture;
+    fixture.add_geometry(mesh);
+    const map_t reloaded = parse_map_from_string(serialize_map_to_string(fixture));
+    const auto *reloaded_mesh = std::get_if<static_mesh_geometry_t>(&reloaded.geometry[0].value);
+    if (!reloaded_mesh || reloaded_mesh->casts_shadows)
+      return fail("mesh shadow: casts_shadows = false did not survive the file");
+    if (geometry_values_equal(reloaded.geometry[0].value, casting.geometry[0].value))
+      return fail("mesh shadow: the flag does not take part in equality");
+  }
+
   // --- 5. Trigger volume round-trip (the "is save losing it?" check) -----
   // Build a tiny map with one trigger volume programmatically, save, reload,
   // and assert every editable field survives. This is independent of the

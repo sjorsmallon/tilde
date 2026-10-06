@@ -84,6 +84,8 @@ file only states them.
 | Procedural surface patterns | `pattern_plan.md` |
 | Lightmap sidecar, bake, GPU bake, unwrap, transparency | `lightmap_def.md`, `lightmap_gpu_plan.md`, `lightmap_unwrap_plan.md`, `transparency_plan.md` |
 | Prediction, predicted world, disabled geometry | `prediction_def.md` |
+| Shadow volumes: solid shadows, shadow holes | `shadow_volume_plan.md` |
+| Spot beam, hard-edged patch, fixture shadow flag | `spot_beam_plan.md` |
 | Movement models, overrides, impulses | `movement_def.md`, `generalization_def.md` |
 | Movers, platforms, canopy | `mover_def.md` |
 | Collision world, projectile sweep, bounce bodies | `collision_world_plan.md` |
@@ -199,6 +201,11 @@ prediction writes `ctx.prediction`.
   `shared::predicted_world_t` and passed as a parameter. The client cuts the
   same value through the same `cut_*` functions, which is what "predicted"
   means. Nothing but the bounce body simulates; everything queries.
+- Movers follow paths; everything else RIDES a mover. `Path_Follow` is a
+  trajectory and `Mover_Entity` is its only owner; a placed entity (a light)
+  opts into `Rides { mover }` and is carried rigidly from where it was authored
+  (`ridden_pose_at`). A brushless mover is the dolly a light patrols on. A
+  riding light is `Dynamic`. No general parenting, and nothing simulated rides.
 - `player_move` is a pure function of its arguments and stays one. Its one
   mutable parameter is the `Movement` component, every field of which is
   `@Networked`, and a reconciliation replay restarts it unconditionally from

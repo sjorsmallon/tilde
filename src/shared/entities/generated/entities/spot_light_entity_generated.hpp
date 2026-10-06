@@ -25,6 +25,7 @@ struct Spot_Light_Entity : Entity
   float range;
   float inner_degrees;
   float outer_degrees;
+  bool beam;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

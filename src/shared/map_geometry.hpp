@@ -79,6 +79,9 @@ struct static_mesh_geometry_t
   // Off for a prop whose collision is authored as clip brushes around it.
   bool collides = true;
 
+  // Off for a light fixture: the housing a light sits inside must not shadow it.
+  bool casts_shadows = true;
+
   // The Geometry_Owner_Entity this object is tied to, or null_entity_uid for plain world
   // geometry. See brush_geometry_t::owner_uid -- the argument is the same and
   // is written there.
@@ -426,6 +429,8 @@ enum class light_occlusion_t : uint8_t
   // Stops nothing, and TINTS what it passes (transparency_plan.md step 7).
   // Every face resolves to a `blend` material.
   Transmissive,
+  // In no set at all: a static mesh with `casts_shadows` off.
+  None,
 };
 
 [[nodiscard]] light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,

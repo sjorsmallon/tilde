@@ -19,7 +19,7 @@ void main()
         return;
 
     // A line of sight off the screen's centre crosses a slice at a slant.
-    float units_per_depth = length(fog_view_ray((vec2(column) + 0.5) / vec2(size.xy)));
+    float units_per_depth = length(view_ray((vec2(column) + 0.5) / vec2(size.xy)));
 
     vec3  light_total = vec3(0.0);
     float see_through = 1.0;

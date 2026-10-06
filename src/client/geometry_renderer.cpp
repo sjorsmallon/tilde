@@ -349,7 +349,8 @@ void light_cut_draw(renderer::mesh_draw_t& draw, renderer::light_cut_t light_cut
 bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
                        renderer::mesh_handle_t mesh, const linalg::mat4f &transform,
                        const linalg::mat4f* moved_by, const renderer::clock_wipe_t& clock_wipe,
-                       std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut)
+                       std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut,
+                       bool casts_shadows)
 {
   if (!surface.visible)
     return true; // resolved to "draw nothing", which is not a fallback case
@@ -360,8 +361,9 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
   renderer::mesh_draw_t draw{};
   draw.mesh          = mesh;
   draw.transform     = moved_by != nullptr ? *moved_by * transform : transform;
-  draw.shadow_caster = moved_by != nullptr ? renderer::shadow_caster_t::dynamic_object
-                                           : renderer::shadow_caster_t::static_geometry;
+  draw.shadow_caster = !casts_shadows     ? renderer::shadow_caster_t::none
+                       : moved_by != nullptr ? renderer::shadow_caster_t::dynamic_object
+                                             : renderer::shadow_caster_t::static_geometry;
   draw.clock_wipe    = moved_clock_wipe(clock_wipe, moved_by);
 
   if (surface.is_wireframe)
@@ -412,13 +414,13 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
       const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
       if (draw_surface_mesh(draws, surface, get_render_mesh(assets::find_mesh_in_cache(cache_key)),
                             linalg::mat4f::identity(), moved_by, clock_wipe, team_wall,
-                            light_cut))
+                            light_cut, static_mesh.casts_shadows))
         return;
     }
     else if (draw_surface_mesh(draws, surface,
                                get_render_mesh(shared::resolve_surface_mesh(surface)),
                                shared::static_mesh_transform(static_mesh), moved_by, clock_wipe,
-                               team_wall, light_cut))
+                               team_wall, light_cut, static_mesh.casts_shadows))
       return;
 
     // A static mesh with no resolvable mesh has nothing to draw but its bound —
@@ -437,7 +439,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                           get_render_mesh(shared::resolve_surface_mesh(surface)),
                           linalg::compose_transform(shared::get_position(geometry), {0, 0, 0, 1},
                                                     {1, 1, 1}),
-                          moved_by, clock_wipe, team_wall, light_cut))
+                          moved_by, clock_wipe, team_wall, light_cut, true))
       return;
 
     if (!surface.visible)
