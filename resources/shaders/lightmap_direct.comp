@@ -29,6 +29,7 @@ layout(push_constant) uniform Push
   float shadow_ray_bias;
   int soft_shadow_samples;
   float directional_shadow_distance;
+  float firefly_clamp;
   // How much glass the scene holds: zero is no second instance, no second ray
   // and the bake every map without any has always had.
   uint transmissive_triangle_count;

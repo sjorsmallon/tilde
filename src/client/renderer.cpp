@@ -766,11 +766,14 @@ struct scene_uniform_t
   float       cel_dither3d[4]                               = {}; // x size variability, y contrast, z stretch smoothness, w halftone white level
   float       cel_pebble[4]                                 = {}; // x strength, y spacing in world units, z density, w largest radius of the spacing
   float       cel_pebble_shape[4]                           = {}; // x irregularity, y outline width px, z halftone paper, w ambient below which a shadow is solid ink
+  float       cel_halftone[4]                               = {}; // x a dot's brightness as a share of the paper, y the lightness exponent
   float       pattern_preview_cells[4]                      = {}; // x one of pattern.glsl's PATTERN_*, y spacing along, z spacing across, w angle in radians
   float       pattern_preview_shape[4]                      = {}; // x coverage, y the kind's own number, z scroll speed
   float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
   float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
+  float       shadow_volume_settings[4]                     = {}; // x how many of `shadow_volumes` are live
+  float       shadow_volumes[MAX_SCENE_SHADOW_VOLUMES][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as normal xyz and dot(normal, point), side slots then back slots; an unused one is (0, 0, 0, 1e9)
   float       fog_settings[4]                               = {}; // x how many of `fog_volumes` are live, y the view depth the fog grid starts at, z where it ends, w anisotropy
   float       fog_view_right[4]                             = {}; // the camera's right, as long as half the view is wide one unit of view depth away
   float       fog_view_up[4]                                = {}; // the camera's up, as long as half the view is tall
@@ -779,7 +782,8 @@ struct scene_uniform_t
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 144 + 48 + 16 + 32 * MAX_SCENE_REVEAL_CONES + 48 +
+                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 48 + 16 + 32 * MAX_SCENE_REVEAL_CONES + 16 +
+                      16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES + 48 +
                       48 * MAX_SCENE_FOG_VOLUMES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
@@ -6877,6 +6881,42 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
         (float)(written_cone_count - first_of_kind);
   }
 
+  if (pass.shadow_volumes.size() > MAX_SCENE_SHADOW_VOLUMES)
+  {
+    log_error("[renderer] this view pass carries {} shadow volumes; only the first {} cut anything",
+              pass.shadow_volumes.size(), MAX_SCENE_SHADOW_VOLUMES);
+  }
+  size_t written_volume_count = 0;
+  for (const shared::shadow_volume_t& volume : pass.shadow_volumes)
+  {
+    if (written_volume_count == MAX_SCENE_SHADOW_VOLUMES)
+      break;
+    float* out = scene.shadow_volumes[written_volume_count++];
+    // Side slots then back slots, as reveal.glsl's shadow_margin splits them; an unused slot is
+    // (0, 0, 0, +big), which a side reads as "far inside" and a back plane as "far from outside".
+    for (uint32_t slot = 0; slot < shared::MAX_SHADOW_VOLUME_PLANES; ++slot)
+    {
+      float*       plane_out = out + 4 * slot;
+      const bool   side      = slot < shared::SHADOW_VOLUME_SIDE_SLOTS;
+      const Plane* plane     = nullptr;
+      if (side && slot < volume.side_plane_count)
+        plane = &volume.side_planes[slot];
+      else if (!side && slot - shared::SHADOW_VOLUME_SIDE_SLOTS < volume.back_plane_count)
+        plane = &volume.back_planes[slot - shared::SHADOW_VOLUME_SIDE_SLOTS];
+      if (plane == nullptr)
+      {
+        plane_out[0] = plane_out[1] = plane_out[2] = 0.0f;
+        plane_out[3] = 1.0e9f;
+        continue;
+      }
+      plane_out[0] = plane->normal.x;
+      plane_out[1] = plane->normal.y;
+      plane_out[2] = plane->normal.z;
+      plane_out[3] = linalg::dot(plane->normal, plane->point);
+    }
+  }
+  scene.shadow_volume_settings[0] = (float)written_volume_count;
+
   scene.clock[0] = pass.seconds;
 
   if (pass.fog_volumes.size() > MAX_SCENE_FOG_VOLUMES)
@@ -9118,6 +9158,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.cel_dither3d[3]    = std::max(look.cel_halftone, 0.0f);
     scene.cel_pebble_shape[2] = std::max(look.cel_halftone_paper, 0.0f);
     scene.cel_pebble_shape[3] = std::max(look.cel_black, 0.0f);
+    scene.cel_halftone[0]     = std::clamp(look.cel_halftone_ink, 0.0f, 1.0f);
+    scene.cel_halftone[1]     = std::max(look.cel_halftone_gamma, 0.1f);
     scene.cel_fill_pattern[3] = look.cel ? std::clamp(look.cel_flat_albedo, 0.0f, 1.0f) : 0.0f;
     scene.pattern_preview_cells[0] = get_pattern_shader_kind_for_pattern_kind(look.pattern_preview);
     scene.pattern_preview_cells[1] = std::max(look.pattern_preview_spacing.x, 0.01f);

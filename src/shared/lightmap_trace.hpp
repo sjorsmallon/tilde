@@ -51,7 +51,23 @@ struct indirect_trace_settings_t
   float shadow_ray_bias = 0.25f;
   int soft_shadow_samples = 8;
   float directional_shadow_distance = 100000.f;
+
+  // The firefly rule, applied to every set of chains fired from one point before
+  // it is averaged: the chains are split into FIREFLY_GROUPS contiguous groups,
+  // the median of the group means is the reference, and a chain whose luminance
+  // exceeds firefly_clamp times the reference is scaled down to that cap, hue
+  // kept. A rare bright chain is what a single lucky hit under a lamp looks like
+  // and what one texel's neighbours never repeat; the cap trades a little bounce
+  // under that lamp for a page with no white texels. A reference of zero clamps
+  // nothing: a point whose median group saw no light cannot judge the ones that
+  // did. Zero is off. lightmap_indirect.comp applies the same rule.
+  float firefly_clamp = 16.f;
 };
+
+// How many chains one point may fire: the slider's ceiling, and the size of the
+// buffer the clamp above holds them in. lightmap_indirect.comp's MAX_CHAINS_PER_SAMPLE.
+inline constexpr int MAX_INDIRECT_RAYS_PER_SAMPLE = 512;
+inline constexpr int FIREFLY_GROUPS = 8;
 
 // Everything a bounce needs that is not the ray: what the surface it landed on
 // IS. Built ONCE, before the workers -- resolving a material loads a texture,

@@ -41,6 +41,9 @@ struct path_pose_t
   linalg::quatf orientation = linalg::quatf::identity();
 };
 
+// Where an entity was authored: its own position and orientation.
+[[nodiscard]] path_pose_t get_placed_pose_for_entity(const entities::Entity& entity);
+
 [[nodiscard]] path_links_t derive_path_links(const Entity_System& system);
 
 [[nodiscard]] entity_uid_t find_previous_node(const path_links_t& links, entity_uid_t node);

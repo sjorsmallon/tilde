@@ -13,7 +13,8 @@
 namespace shared
 {
 
-std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entities::Entity &entity)
+std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entities::Entity &entity,
+                                                                     const path_pose_t &pose)
 {
   if (const entities::Point_Light_Entity* point =
           entities::entity_as<entities::Point_Light_Entity>(&entity))
@@ -21,7 +22,7 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     scene_light_t light;
     light.kind = light_kind_t::Point;
     light.mode = point->light.mode;
-    light.position = point->position;
+    light.position = pose.position;
     light.radiance = compute_radiance(point->light, light_kind_t::Point);
     light.range = point->range;
     light.source_radius = std::max(point->light.source_radius, 0.f);
@@ -35,8 +36,8 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     scene_light_t light;
     light.kind = light_kind_t::Spot;
     light.mode = spot->light.mode;
-    light.position = spot->position;
-    light.forward = linalg::basis_from(spot->orientation).forward;
+    light.position = pose.position;
+    light.forward = linalg::basis_from(pose.orientation).forward;
     light.radiance = compute_radiance(spot->light, light_kind_t::Spot);
     light.range = spot->range;
     light.cos_inner = std::cos(linalg::to_radians(spot->inner_degrees));
@@ -52,7 +53,7 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     scene_light_t light;
     light.kind = light_kind_t::Directional;
     light.mode = directional->light.mode;
-    light.forward  = linalg::basis_from(directional->orientation).forward;
+    light.forward  = linalg::basis_from(pose.orientation).forward;
     light.radiance = compute_radiance(directional->light, light_kind_t::Directional);
 
     // The sun's softness is an ANGLE, so it converts to the one radius everything
@@ -352,9 +353,9 @@ void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap)
 }
 
 void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
-                     entity_uid_t uid, const entities::Entity &entity)
+                     entity_uid_t uid, const entities::Entity &entity, const path_pose_t &pose)
 {
-  const std::optional<scene_light_t> gathered = try_convert_light_entity_to_scene_light(entity);
+  const std::optional<scene_light_t> gathered = try_convert_light_entity_to_scene_light(entity, pose);
   if (!gathered) return;
   if (!light_is_switched_on(entity)) return;
 

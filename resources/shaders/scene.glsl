@@ -25,6 +25,11 @@
 #define MAX_REVEAL_CONES 8
 // renderer.hpp's MAX_SCENE_FOG_VOLUMES, kept one number by the same assert.
 #define MAX_FOG_VOLUMES 8
+// renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
+#define MAX_SHADOW_VOLUMES 8
+#define MAX_SHADOW_VOLUME_PLANES 37
+// shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its back planes.
+#define SHADOW_VOLUME_SIDE_SLOTS 25
 
 // scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
 #define CEL_FILL_NONE     0
@@ -149,6 +154,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   cel_pebble;
     // x = r_cel_pebble_irregularity, y = r_cel_pebble_width, z = r_cel_halftone_paper, w = r_cel_black.
     vec4   cel_pebble_shape;
+    // x = r_cel_halftone_ink, y = r_cel_halftone_gamma.
+    vec4   cel_halftone;
     // x = r_pattern_preview as one of pattern.glsl's PATTERN_*, y = r_pattern_preview_spacing_along,
     // z = r_pattern_preview_spacing_across, w = r_pattern_preview_angle in radians.
     vec4   pattern_preview_cells;
@@ -159,6 +166,12 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
+    // x = how many of `shadow_volumes` are live.
+    vec4       shadow_volume_settings;
+    // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).
+    // In shadow where inside every side plane and outside at least one back plane (reveal.glsl's shadow_margin);
+    // an unused slot is (0, 0, 0, 1e9), which neither test ever picks.
+    vec4       shadow_volumes[MAX_SHADOW_VOLUMES * MAX_SHADOW_VOLUME_PLANES];
     // x = how many of `fog_volumes` are live, y = the view depth the fog grid starts at, z = the view depth it ends at,
     // w = r_fog_anisotropy.
     vec4       fog_settings;

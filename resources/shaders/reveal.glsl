@@ -5,12 +5,18 @@
 #include "shading_cel.glsl"
 
 // renderer.hpp's light_cut_t. A revealed draw keeps only the fragments inside a cone that reveals;
-// an erased draw loses the fragments inside a cone that erases (shared/reveal_light.hpp).
+// an erased draw loses the fragments inside a cone that erases (shared/reveal_light.hpp). A shadow_solid
+// draw keeps only the fragments inside a shadow volume, a shadow_hole draw loses them (shared/shadow_volume.hpp).
 layout(constant_id = 3) const int LIGHT_CUT = 0;
 
-const int LIGHT_CUT_NONE     = 0;
-const int LIGHT_CUT_REVEALED = 1;
-const int LIGHT_CUT_ERASED   = 2;
+const int LIGHT_CUT_NONE         = 0;
+const int LIGHT_CUT_REVEALED     = 1;
+const int LIGHT_CUT_ERASED       = 2;
+const int LIGHT_CUT_SHADOW_SOLID = 3;
+const int LIGHT_CUT_SHADOW_HOLE  = 4;
+
+// A shadow volume's rim, in world units inside its nearest plane.
+const float SHADOW_RIM_UNITS = 12.0;
 
 // The bright edge's width, as a cosine off the cone's side and as world units off its far end.
 const float REVEAL_RIM_COSINE = 0.012;
@@ -54,11 +60,52 @@ float erase_margin(vec3 world_position)
     return cone_margin(world_position, int(scene.reveal_settings.x), int(scene.reveal_settings.y));
 }
 
+// How deep in shadow, in rim widths: inside every side plane of a volume and past one of its back
+// planes (shared/shadow_volume.hpp). Negative is in no volume's shadow, never below -1.
+float shadow_margin(vec3 world_position)
+{
+    float margin = -1.0;
+    const int volume_count = int(scene.shadow_volume_settings.x);
+    for (int volume = 0; volume < volume_count; ++volume) {
+        const int first  = volume * MAX_SHADOW_VOLUME_PLANES;
+        float     inside = 1e9;
+        for (int slot = 0; slot < SHADOW_VOLUME_SIDE_SLOTS; ++slot) {
+            const vec4 side = scene.shadow_volumes[first + slot];
+            inside = min(inside, (side.w - dot(side.xyz, world_position)) / SHADOW_RIM_UNITS);
+        }
+        float past_back = -1e9;
+        for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < MAX_SHADOW_VOLUME_PLANES; ++slot) {
+            const vec4 back = scene.shadow_volumes[first + slot];
+            past_back = max(past_back, (dot(back.xyz, world_position) - back.w) / SHADOW_RIM_UNITS);
+        }
+        margin = max(margin, min(inside, past_back));
+    }
+    return max(margin, -1.0);
+}
+
+// Positive inside whatever this draw is kept by, negative outside it; the cut's one rule, which the discard and the rim share.
+float cut_margin(vec3 world_position)
+{
+    if (LIGHT_CUT == LIGHT_CUT_REVEALED)
+        return reveal_margin(world_position);
+    if (LIGHT_CUT == LIGHT_CUT_ERASED)
+        return -erase_margin(world_position);
+    if (LIGHT_CUT == LIGHT_CUT_SHADOW_SOLID)
+        return shadow_margin(world_position);
+    if (LIGHT_CUT == LIGHT_CUT_SHADOW_HOLE)
+        return -shadow_margin(world_position);
+    return 1.0;
+}
+
 void discard_outside_reveal(vec3 world_position)
 {
     if (LIGHT_CUT == LIGHT_CUT_REVEALED && reveal_margin(world_position) < 0.0)
         discard;
     if (LIGHT_CUT == LIGHT_CUT_ERASED && erase_margin(world_position) >= 0.0)
+        discard;
+    if (LIGHT_CUT == LIGHT_CUT_SHADOW_SOLID && shadow_margin(world_position) < 0.0)
+        discard;
+    if (LIGHT_CUT == LIGHT_CUT_SHADOW_HOLE && shadow_margin(world_position) >= 0.0)
         discard;
 }
 
@@ -66,8 +113,7 @@ vec3 reveal_rim(vec3 color, vec3 world_position, vec3 geometric_normal)
 {
     if (LIGHT_CUT == LIGHT_CUT_NONE)
         return color;
-    float distance_from_edge = LIGHT_CUT == LIGHT_CUT_REVEALED ? reveal_margin(world_position)
-                                                               : -erase_margin(world_position);
+    float distance_from_edge = cut_margin(world_position);
     float rim = 1.0 - smoothstep(0.0, 1.0, distance_from_edge);
     if (scene.look.x <= 0.5)
         return mix(color, REVEAL_RIM_COLOR, rim);

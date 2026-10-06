@@ -203,6 +203,46 @@ linalg::vec3 trace_one_chain(const traced_scene_t &scene, Span<const baked_light
   return collected;
 }
 
+using chain_lights_t = Array<linalg::vec3, (uint32_t)MAX_INDIRECT_RAYS_PER_SAMPLE>;
+
+int chain_count_for(const indirect_trace_settings_t &settings)
+{
+  if (settings.rays_per_sample > MAX_INDIRECT_RAYS_PER_SAMPLE)
+    fatal_error("[lightmap] {} chains per sample; the ceiling is {}.", settings.rays_per_sample,
+                MAX_INDIRECT_RAYS_PER_SAMPLE);
+  return settings.rays_per_sample;
+}
+
+float firefly_reference(Span<const linalg::vec3> chains)
+{
+  const int count = (int)chains.size();
+  const int group_count = std::min(FIREFLY_GROUPS, count);
+  Array<float, (uint32_t)FIREFLY_GROUPS> group_luminance;
+  Array<int, (uint32_t)FIREFLY_GROUPS> group_size;
+  for (int chain = 0; chain < count; ++chain)
+  {
+    const uint32_t group = (uint32_t)(chain * group_count / count);
+    group_luminance[group] += compute_luminance(chains[(uint32_t)chain]);
+    group_size[group] += 1;
+  }
+  for (uint32_t group = 0; group < (uint32_t)group_count; ++group)
+    group_luminance[group] /= (float)group_size[group];
+  std::sort(group_luminance.begin(), group_luminance.begin() + group_count);
+  return group_luminance[(uint32_t)(group_count / 2)];
+}
+
+void clamp_fireflies(Span<linalg::vec3> chains, float firefly_clamp)
+{
+  if (firefly_clamp <= 0.f || chains.size() < 2) return;
+  const float cap = firefly_clamp * firefly_reference(chains);
+  if (cap <= 0.f) return;
+  for (linalg::vec3& chain : chains)
+  {
+    const float luminance = compute_luminance(chain);
+    if (luminance > cap) chain = chain * (cap / luminance);
+  }
+}
+
 } // namespace
 
 float srgb_byte_to_linear(uint8_t encoded)
@@ -412,14 +452,24 @@ indirect_sh_l1_t trace_indirect_light(const traced_scene_t &scene,
   // Y is {0.282095, 0.488603 * d.x, 0.488603 * d.y, 0.488603 * d.z} -- four
   // multiplies and no trig, because the first four spherical harmonics are the
   // polynomials {1, x, y, z} restricted to the sphere.
-  const float weight = 2.f / (float)settings.rays_per_sample;
+  const int count = chain_count_for(settings);
+  const float weight = 2.f / (float)count;
 
-  for (int ray = 0; ray < settings.rays_per_sample; ++ray)
+  chain_lights_t chains;
+  for (int ray = 0; ray < count; ++ray)
   {
     const uint32_t bits = hash_mix(hash, (uint32_t)ray);
     const linalg::vec3 first_leg = uniform_hemisphere_direction(normal, bits);
-    const linalg::vec3 collected =
+    chains[(uint32_t)ray] =
         trace_one_chain(scene, lights, position, normal, first_leg, settings, bits);
+  }
+  clamp_fireflies(Span<linalg::vec3>(chains.data, (uint32_t)count), settings.firefly_clamp);
+
+  for (int ray = 0; ray < count; ++ray)
+  {
+    const uint32_t bits = hash_mix(hash, (uint32_t)ray);
+    const linalg::vec3 first_leg = uniform_hemisphere_direction(normal, bits);
+    const linalg::vec3 collected = chains[(uint32_t)ray];
 
     projected.l0 = projected.l0 + collected * (weight * SH_L1_Y0);
     projected.l1[0] = projected.l1[0] + collected * (weight * SH_L1_Y1 * first_leg.x);
@@ -437,13 +487,19 @@ linalg::vec3 trace_capture_direction(const traced_scene_t &scene,
 {
   if (!scene.bvh || settings.rays_per_sample <= 0) return {0.f, 0.f, 0.f};
 
-  linalg::vec3 sum{0.f, 0.f, 0.f};
-  for (int ray = 0; ray < settings.rays_per_sample; ++ray)
+  const int count = chain_count_for(settings);
+  chain_lights_t chains;
+  for (int ray = 0; ray < count; ++ray)
   {
     const uint32_t bits = hash_mix(hash, (uint32_t)ray);
-    sum = sum + trace_one_chain(scene, lights, position, direction, direction, settings, bits);
+    chains[(uint32_t)ray] =
+        trace_one_chain(scene, lights, position, direction, direction, settings, bits);
   }
-  return sum * (1.f / (PI * (float)settings.rays_per_sample));
+  clamp_fireflies(Span<linalg::vec3>(chains.data, (uint32_t)count), settings.firefly_clamp);
+
+  linalg::vec3 sum{0.f, 0.f, 0.f};
+  for (int ray = 0; ray < count; ++ray) sum = sum + chains[(uint32_t)ray];
+  return sum * (1.f / (PI * (float)count));
 }
 
 probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_light_t> lights,
@@ -513,16 +569,24 @@ probe_trace_t trace_probe_light(const traced_scene_t &scene, Span<const baked_li
   // the chain still hands back pi * L(d): the flat 2 becomes a flat 4. The chain
   // is given the first leg as its "normal" so its origin bias steps along the
   // ray; nothing else in it reads the normal on the first bounce.
-  const float weight = 4.f / (float)settings.rays_per_sample;
+  const int count = chain_count_for(settings);
+  const float weight = 4.f / (float)count;
 
-  for (int ray = 0; ray < settings.rays_per_sample; ++ray)
+  chain_lights_t chains;
+  for (int ray = 0; ray < count; ++ray)
   {
     const uint32_t bits = hash_mix(hash, (uint32_t)ray);
     const linalg::vec3 first_leg = uniform_sphere_direction(bits);
-    const linalg::vec3 collected =
+    chains[(uint32_t)ray] =
         trace_one_chain(scene, lights, position, first_leg, first_leg, settings, bits);
+  }
+  clamp_fireflies(Span<linalg::vec3>(chains.data, (uint32_t)count), settings.firefly_clamp);
 
-    add_from_direction(collected * weight, first_leg);
+  for (int ray = 0; ray < count; ++ray)
+  {
+    const uint32_t bits = hash_mix(hash, (uint32_t)ray);
+    const linalg::vec3 first_leg = uniform_sphere_direction(bits);
+    add_from_direction(chains[(uint32_t)ray] * weight, first_leg);
   }
 
   return traced;

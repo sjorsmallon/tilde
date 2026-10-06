@@ -575,6 +575,7 @@ add_library(game_shared STATIC
     src/shared/flight_path.cpp
     src/shared/canopy.cpp
     src/shared/reveal_light.cpp
+    src/shared/shadow_volume.cpp
     src/shared/statues.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
@@ -1264,6 +1265,10 @@ add_executable(reveal_cone_test src/test/reveal_cone_test.cpp)
 target_include_directories(reveal_cone_test PRIVATE src src/shared)
 target_link_libraries(reveal_cone_test PRIVATE game_shared)
 
+add_executable(shadow_volume_test src/test/shadow_volume_test.cpp)
+target_include_directories(shadow_volume_test PRIVATE src src/shared)
+target_link_libraries(shadow_volume_test PRIVATE game_shared)
+
 # 22. CVar / command test — tables, text conversion, console dispatch,
 # argument binders, and the @Mirrored wire path.
 #
@@ -1544,6 +1549,7 @@ set(GAME_TESTS
     bounce_body_test
     team_wall_ripples_test
     reveal_cone_test
+    shadow_volume_test
     mover_path_test
     prefab_test
     map_group_test

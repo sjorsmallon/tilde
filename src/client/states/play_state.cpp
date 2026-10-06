@@ -340,12 +340,14 @@ static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const 
   };
 }
 
-static shared::path_pose_t drawn_reveal_light_pose(const client_context_t &ctx,
-                                                   const entities::Reveal_Light_Entity &light)
+// Where a Rides entity is drawn this frame: carried by its mover's drawn pose, where it was placed otherwise.
+static shared::path_pose_t drawn_ridden_pose(const client_context_t &ctx, const entities::Entity &entity)
 {
-  const shared::path_pose_t placed = {.position = light.position, .orientation = light.orientation};
-  const entities::Mover_Entity* mover =
-      ctx.world.session.entity_system.get<entities::Mover_Entity>(light.follows);
+  const shared::path_pose_t placed = shared::get_placed_pose_for_entity(entity);
+  const entities::Rides* rides = entities::get_rides(&entity);
+  if (rides == nullptr)
+    return placed;
+  const entities::Mover_Entity* mover = ctx.world.session.entity_system.get<entities::Mover_Entity>(rides->mover);
   if (mover == nullptr)
     return placed;
   return shared::carry_pose_by_mover(get_rest_pose_for_mover(ctx, *mover), drawn_mover_poses(ctx, *mover).drawn,
@@ -1178,6 +1180,8 @@ static void build_predicted_world_for_input(
 
   shared::build_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
   shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
+  ctx.visuals.drawn_shadow_volume_report =
+      shared::build_shadow_volumes(ctx.world.session, frame.predicted_world_storage);
 
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   shared::collect_reveal_cones(ctx.world.session.entity_system, ctx.world.session.path_links,
@@ -2904,6 +2908,7 @@ void Play_State::update(float dt)
   resolve_aim_and_buttons(ctx, frame);
   place_input_edges_on_the_tick_timeline(ctx, frame);
   run_predicted_ticks(ctx, frame);
+  ctx.visuals.drawn_shadow_volumes = frame.predicted_world_storage.shadow_volumes;
   follow_pilot_flight(ctx);
   play_local_movement_sounds(ctx, frame);
 
@@ -3201,7 +3206,7 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
 
   for (const entities::Reveal_Light_Entity& light : system.entities_of_type<entities::Reveal_Light_Entity>())
     if (light.switch_state.value)
-      out.push_back({shared::compute_light_reveal_cone(light, drawn_reveal_light_pose(ctx, light)), light.color,
+      out.push_back({shared::compute_light_reveal_cone(light, drawn_ridden_pose(ctx, light)), light.color,
                      light.intensity});
 
   if (out.size() > renderer::MAX_SCENE_REVEAL_CONES)
@@ -3323,6 +3328,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         light_cut = renderer::light_cut_t::erased;
       else if (owner != nullptr && owner->revealed_by_light)
         light_cut = renderer::light_cut_t::revealed;
+      else if (owner != nullptr && owner->erased_in_shadow)
+        light_cut = renderer::light_cut_t::shadow_hole;
+      else if (owner != nullptr && owner->solid_only_in_shadow)
+        light_cut = renderer::light_cut_t::shadow_solid;
 
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
@@ -3332,6 +3341,56 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 
   scene.ripples = ctx.visuals.team_wall_ripples.ripples;
+  scene.shadow_volumes = ctx.visuals.drawn_shadow_volumes;
+  if (ctx.cvars->cl_shadow_volume_debug)
+  {
+    // The counts and the (caster, light) pairs, printed when they change: the planes move every tick, so they stay out.
+    const shared::shadow_volume_report_t& report = ctx.visuals.drawn_shadow_volume_report;
+    std::string line = std::format(
+        "shadow volumes: lights {} receivers {} casters {} cast {} kept {}{} | refused: beside light {} too many "
+        "planes {} outside beam {} reaching nothing {} | caster/light:",
+        report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast, report.kept,
+        report.kept > renderer::MAX_SCENE_SHADOW_VOLUMES
+            ? std::format(" (ONLY {} DRAWN)", renderer::MAX_SCENE_SHADOW_VOLUMES)
+            : std::string{},
+        report.refused_beside_light, report.refused_too_many_planes, report.refused_outside_beam,
+        report.culled_reaching_nothing);
+    for (const shared::shadow_volume_t& volume : ctx.visuals.drawn_shadow_volumes)
+      line += std::format(" {}/{}", volume.caster, volume.light);
+    if (line != ctx.visuals.shadow_volume_debug_line)
+    {
+      console::get().print(line.c_str());
+      ctx.visuals.shadow_volume_debug_line = line;
+    }
+
+    // One colour per light, so two lights' pyramids through one caster read apart.
+    constexpr Array<color_t, 6> LIGHT_COLORS = {colors::magenta, colors::cyan,   colors::yellow,
+                                                colors::orange,  colors::green,  colors::hot_pink};
+    std::vector<shared::entity_uid_t> lights_seen;
+    for (const shared::shadow_volume_t& volume : ctx.visuals.drawn_shadow_volumes)
+    {
+      auto seen = std::find(lights_seen.begin(), lights_seen.end(), volume.light);
+      if (seen == lights_seen.end())
+        seen = lights_seen.insert(lights_seen.end(), volume.light);
+      const color_t color = LIGHT_COLORS[static_cast<uint32_t>(seen - lights_seen.begin()) % LIGHT_COLORS.size()];
+
+      linalg::vec3f near_center{0.f, 0.f, 0.f};
+      for (uint32_t side = 0; side < volume.side_count; ++side)
+      {
+        const uint32_t next = (side + 1) % volume.side_count;
+        scene.debug.line(volume.near_ring[side], volume.near_ring[next], color, 0.f, 0.f, true);
+        scene.debug.line(volume.far_ring[side], volume.far_ring[next], color, 0.f, 0.f, true);
+        scene.debug.line(volume.near_ring[side], volume.far_ring[side], color, 0.f, 0.f, true);
+        near_center = near_center + volume.near_ring[side];
+      }
+      if (volume.side_count > 0)
+      {
+        near_center = near_center * (1.f / static_cast<float>(volume.side_count));
+        const std::string label = std::format("caster {} / light {}", volume.caster, volume.light);
+        scene.debug.text(near_center, label.c_str(), color);
+      }
+    }
+  }
   const flashlight_settings_t held_flashlight = {
       .color          = {ctx.cvars->r_flashlight_red, ctx.cvars->r_flashlight_green,
                          ctx.cvars->r_flashlight_blue},
@@ -3348,8 +3407,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
   {
     (void)light;
-    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id,
-                            entity);
+    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id, entity,
+                            drawn_ridden_pose(ctx, entity));
   }
 
   for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)

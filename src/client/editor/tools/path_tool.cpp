@@ -582,13 +582,12 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
     if (rest)
       draw_posed_box(draws, rest_frame, pose, *rest, colors::magenta);
 
-    for (const entities::Reveal_Light_Entity& light :
-         scratch.system.entities_of_type<entities::Reveal_Light_Entity>())
+    for (auto [rider, rides] : scratch.system.entities_with<entities::Rides>())
     {
-      if (light.follows != mover.entity_id)
+      if (rides.mover != mover.entity_id)
         continue;
-      const shared::path_pose_t carried = shared::carry_pose_by_mover(
-          rest_frame, pose, {.position = light.position, .orientation = light.orientation});
+      const shared::path_pose_t carried =
+          shared::carry_pose_by_mover(rest_frame, pose, shared::get_placed_pose_for_entity(rider));
       draws.debug.wire_sphere(carried.position, NODE_MARKER_RADIUS, colors::cyan);
       draws.debug.arrow(carried.position,
                         carried.position + linalg::forward(carried.orientation) * RIDING_LIGHT_ARROW_LENGTH,

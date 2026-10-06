@@ -21,6 +21,7 @@ struct Point_Light_Entity : Entity
 
   Enabled switch_state;
   Light light;
+  Rides rides;
   float range;
 };
 

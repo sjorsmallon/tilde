@@ -19,7 +19,7 @@ struct Reveal_Light_Entity : Entity
   Reveal_Light_Entity();
 
   Enabled switch_state;
-  shared::entity_uid_t follows;
+  Rides rides;
   Reveal_Cone_Kind kind;
   float range;
   float half_angle_degrees;

@@ -73,6 +73,10 @@ struct lightmap_solve_settings_t
   int indirect_bounces_before_roulette = 2;
   int indirect_max_bounces = 16;
 
+  // A chain brighter than this many times the sample's median chain is capped
+  // there (lightmap_trace.hpp's clamp_fireflies). Zero is off.
+  float indirect_firefly_clamp = 16.f;
+
   // --- Irradiance probes, lighting_def.md gate 5 -----------------------------
   //
   // Whether the probe volume is baked. Its grid comes from the bake settings'

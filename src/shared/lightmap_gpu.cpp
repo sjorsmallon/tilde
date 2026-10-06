@@ -235,6 +235,7 @@ gpu_bake_settings_t gpu_bake_settings_from(const lightmap_solve_settings_t &solv
   settings.shadow_ray_bias = solve_settings.shadow_ray_bias;
   settings.soft_shadow_samples = solve_settings.soft_shadow_samples;
   settings.directional_shadow_distance = solve_settings.directional_shadow_distance;
+  settings.firefly_clamp = solve_settings.indirect_firefly_clamp;
   return settings;
 }
 
@@ -248,6 +249,7 @@ indirect_trace_settings_t indirect_trace_settings_from(const gpu_bake_settings_t
   indirect.shadow_ray_bias = settings.shadow_ray_bias;
   indirect.soft_shadow_samples = settings.soft_shadow_samples;
   indirect.directional_shadow_distance = settings.directional_shadow_distance;
+  indirect.firefly_clamp = settings.firefly_clamp;
   return indirect;
 }
 

@@ -67,7 +67,8 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
       frozen ? shared::predicted_world_t{.disabled_geometry  = world_as_cut.disabled_geometry,
                                          .movement_volumes   = world_as_cut.movement_volumes,
                                          .movement_modifiers = world_as_cut.movement_modifiers,
-                                         .reveal_cones       = world_as_cut.reveal_cones}
+                                         .reveal_cones       = world_as_cut.reveal_cones,
+                                         .shadow_volumes     = world_as_cut.shadow_volumes}
              : world_as_cut;
 
   // The hull is tested where the step OPENS, so every number below is one value for the whole step.

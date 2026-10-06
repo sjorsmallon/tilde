@@ -2,6 +2,7 @@
 // and the @Server command handlers the generated binder calls. The TICK is in
 // tick.cpp -- tick_def.md is the design of record for what runs in what order.
 
+#include "../shared/predicted_world.hpp"
 #include "entities/generated/entities/game_rules_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"
@@ -34,6 +35,7 @@
 #include "systems/respawn_system.hpp"
 #include "weapon_fire.hpp"
 
+#include <print>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -680,6 +682,20 @@ void sv_mem_report(int32_t top, const command_context_t &)
 void sv_frame_report(const command_context_t &)
 {
   frame_timing::report();
+}
+
+void sv_shadow_volume_report(const command_context_t &)
+{
+  server::server_context_t& context = server::g_server_context;
+  shared::predicted_world_storage_t storage;
+  shared::build_movers(context.world.session,
+                       {.tick        = context.tick_number,
+                        .state_tick  = context.tick_number > 0 ? context.tick_number - 1 : 0,
+                        .tickrate_hz = context.cvars->sv_tickrate,
+                        .gravity     = context.cvars->g_gravity},
+                       storage);
+  const shared::shadow_volume_report_t counts = shared::build_shadow_volumes(context.world.session, storage);
+  std::println("{}", shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 
 void sv_hitch_report(int32_t top, const command_context_t &)

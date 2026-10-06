@@ -986,7 +986,9 @@ const shared::lightmap_chart_t *upward_chart(const shared::lightmap_t &lightmap)
 shared::entity_uid_t only_light_uid(const shared::map_t &map)
 {
   for (const shared::map_entity_t &entry : map.entities)
-    if (entry.entity && shared::try_convert_light_entity_to_scene_light(*entry.entity)) return entry.uid;
+    if (entry.entity && shared::try_convert_light_entity_to_scene_light(
+                            *entry.entity, shared::get_placed_pose_for_entity(*entry.entity)))
+      return entry.uid;
   assert(false && "the map holds no light");
   return 0;
 }
@@ -1489,7 +1491,9 @@ shared::frame_lights_t gather_for(const shared::map_t &map,
   shared::frame_lights_t frame;
   shared::begin_frame_lights(frame, lightmap);
   for (const shared::map_entity_t &entry : map.entities)
-    if (entry.entity) shared::add_frame_light(frame, lightmap, entry.uid, *entry.entity);
+    if (entry.entity)
+      shared::add_frame_light(frame, lightmap, entry.uid, *entry.entity,
+                              shared::get_placed_pose_for_entity(*entry.entity));
   return frame;
 }
 

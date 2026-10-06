@@ -4,7 +4,10 @@
 #include "game_session.hpp"
 #include "log.hpp"
 #include "map.hpp" // shared::create_entity_by_classname
+#include "predicted_world.hpp"
+#include "shadow_volume.hpp"
 #include <cassert>
+#include <format>
 #include <cmath>
 #include <iostream>
 #include <utility>
@@ -785,6 +788,88 @@ int main()
     if (validate_map_paths(broken_chain).size() != 2)
     {
       log_error("a next naming a brush and a mover starting from nothing were not both refused");
+      return 1;
+    }
+
+    // A rider: anything placed that names a mover (mover_def.md ss17). A light that rides is Dynamic.
+    map_t riding_map;
+    auto [ridden_start_uid, ridden_start_entity] = spawn_entity(riding_map, entities::entity_type::Path_Node_Entity);
+    auto [ridden_mover_uid, ridden_mover_entity] = spawn_entity(riding_map, entities::entity_type::Mover_Entity);
+    auto [lamp_uid, lamp_entity]                 = spawn_entity(riding_map, entities::entity_type::Spot_Light_Entity);
+    entities::entity_as<entities::Mover_Entity>(ridden_mover_entity.get())->follow.from = ridden_start_uid;
+    entities::Spot_Light_Entity* lamp = entities::entity_as<entities::Spot_Light_Entity>(lamp_entity.get());
+    lamp->rides.mover = ridden_mover_uid;
+    if (validate_map_paths(riding_map).size() != 1)
+    {
+      log_error("a Baked light riding a mover was not refused");
+      return 1;
+    }
+    lamp->light.mode = entities::Light_Mode::Dynamic;
+    if (!validate_map_paths(riding_map).empty())
+    {
+      log_error("a Dynamic light riding a mover was refused");
+      return 1;
+    }
+    lamp->rides.mover = ridden_start_uid;
+    if (validate_map_paths(riding_map).size() != 1)
+    {
+      log_error("a light riding a path node was not refused");
+      return 1;
+    }
+  }
+
+  // A plain brush with no owner casts a shadow volume onto a receiver (shadow_volume_plan.md ss3).
+  {
+    const auto describe = [](const shadow_volume_report_t& report)
+    {
+      return std::format("lights {} receivers {} casters {} cast {} beside {} planes {} beam {} reaching nothing {} kept {}",
+                         report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast,
+                         report.refused_beside_light, report.refused_too_many_planes, report.refused_outside_beam,
+                         report.culled_reaching_nothing, report.kept);
+    };
+    const auto shadow_scene = [&](const linalg::vec3f& caster_center, const linalg::vec3f& caster_half_extents,
+                                  entities::entity_type light_type, const linalg::vec3f& light_position)
+    {
+      map_t shadow_map;
+      (void)shadow_map.add_geometry(make_box_brush(caster_center, caster_half_extents));
+      const entity_uid_t platform = shadow_map.add_geometry(make_box_brush({0, 0, 0}, {256, 4, 256}));
+      auto [owner_uid, owner_entity] = spawn_entity(shadow_map, entities::entity_type::Geometry_Owner_Entity);
+      entities::entity_as<entities::Geometry_Owner_Entity>(owner_entity.get())->solid_only_in_shadow = true;
+      set_owner_uid(shadow_map.find_geometry_by_uid(platform)->value, owner_uid);
+      auto [light_uid, light_entity] = spawn_entity(shadow_map, light_type);
+      light_entity->position = light_position;
+      light_entity->orientation = linalg::from_view_angles(0.f, -90.f);
+      entities::get_component<entities::Light>(light_entity.get())->cuts_geometry = true;
+      if (entities::Point_Light_Entity* point = entities::entity_as<entities::Point_Light_Entity>(light_entity.get()))
+        point->range = 2000.f;
+      if (entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(light_entity.get()))
+        spot->range = 2000.f;
+      game_session_t          shadow_session = build_session(shadow_map);
+      predicted_world_storage_t storage;
+      return build_shadow_volumes(shadow_session, storage);
+    };
+
+    const shadow_volume_report_t crate =
+        shadow_scene({0, 100, 0}, {16, 16, 16}, entities::entity_type::Point_Light_Entity, {0, 300, 0});
+    if (crate.kept != 1)
+    {
+      log_error("a plain brush under a cutting point light did not cast one kept volume: {}", describe(crate));
+      return 1;
+    }
+    const shadow_volume_report_t crate_under_spot =
+        shadow_scene({0, 100, 0}, {16, 16, 16}, entities::entity_type::Spot_Light_Entity, {0, 300, 0});
+    if (crate_under_spot.kept != 1)
+    {
+      log_error("a plain brush under a cutting spot light did not cast one kept volume: {}",
+                describe(crate_under_spot));
+      return 1;
+    }
+    const shadow_volume_report_t wide_slab_under_spot =
+        shadow_scene({0, 100, 0}, {400, 8, 400}, entities::entity_type::Spot_Light_Entity, {0, 300, 0});
+    if (wide_slab_under_spot.kept != 1)
+    {
+      log_error("a brush wider than a spot light's beam, hit by it square, did not cast: {}",
+                describe(wide_slab_under_spot));
       return 1;
     }
   }

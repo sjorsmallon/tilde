@@ -19,6 +19,7 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"gripper", "resources/glb/gripper.glb"},
   {"high_res_sphere", "resources/glb/high_res_sphere.glb"},
   {"hookshot", "resources/glb/hookshot.glb"},
+  {"light_dodecahedron", "resources/glb/light_dodecahedron.glb"},
   {"magnet", "resources/glb/magnet.glb"},
   {"mvmt", "resources/glb/mvmt.glb"},
   {"rocket", "resources/glb/rocket.glb"},
@@ -30,7 +31,9 @@ constexpr asset_info_t mesh_asset_MANIFEST[] = {
   {"sequence_6", "resources/glb/sequence_6.glb"},
   {"sequence_7", "resources/glb/sequence_7.glb"},
   {"shattered_glass", "resources/glb/shattered_glass.glb"},
+  {"spotlight", "resources/glb/spotlight.glb"},
   {"stopwatch", "resources/glb/stopwatch.glb"},
+  {"stylish_ceiling_lamp", "resources/glb/stylish_ceiling_lamp.glb"},
   {"target", "resources/glb/target.glb"},
   {"Box", "resources/models/Box.mesh"},
   {"Leet_Full", "resources/models/Leet_Full.mesh"},
@@ -151,6 +154,7 @@ constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"glass_teal", "resources/textures/glass_teal"},
   {"glass_white", "resources/textures/glass_white"},
   {"harsh_bricks", "resources/textures/harsh_bricks"},
+  {"rough_fabric", "resources/textures/rough_fabric"},
   {"scuffed_plastic", "resources/textures/scuffed_plastic"},
   {"scuffed_plastic_blue", "resources/textures/scuffed_plastic_blue"},
   {"scuffed_plastic_green", "resources/textures/scuffed_plastic_green"},
@@ -162,6 +166,7 @@ constexpr asset_info_t pbr_material_MANIFEST[] = {
   {"sloppy_mortar_stone", "resources/textures/sloppy_mortar_stone"},
   {"stringy_marble", "resources/textures/stringy_marble"},
   {"titanium_scuffed", "resources/textures/titanium_scuffed"},
+  {"yoga_mat", "resources/textures/yoga_mat"},
 };
 
 constexpr asset_info_t cubemap_asset_MANIFEST[] = {

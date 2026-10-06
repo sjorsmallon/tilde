@@ -52,6 +52,10 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
                              return GEOMETRY_NOT_THERE;
                            if (owner.erased_by_light)
                              return GEOMETRY_SOLID_UNLESS_ERASED;
+                           if (owner.erased_in_shadow)
+                             return GEOMETRY_SOLID_UNLESS_SHADOWED;
+                           if (owner.solid_only_in_shadow)
+                             return GEOMETRY_SOLID_IN_SHADOW;
                            return owner.solid_only_when_revealed ? GEOMETRY_SOLID_WHERE_LIT
                                                                  : GEOMETRY_SOLID;
                          });

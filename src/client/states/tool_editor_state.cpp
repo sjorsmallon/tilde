@@ -1549,14 +1549,14 @@ void Tool_Editor_State::build_frame(float delta_seconds,
 
       // The editor lays the frame's lights out exactly as the game does, which
       // is what makes a bake previewed here the bake that ships.
-      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity);
+      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity,
+                              shared::get_placed_pose_for_entity(*entry.entity));
 
       if (const entities::Reveal_Light_Entity* reveal_light =
               entities::entity_as<entities::Reveal_Light_Entity>(entry.entity.get());
           reveal_light != nullptr && reveal_light->switch_state.value && reveal_light->intensity > 0.f)
       {
-        const shared::path_pose_t placed = {.position    = reveal_light->position,
-                                            .orientation = reveal_light->orientation};
+        const shared::path_pose_t placed = shared::get_placed_pose_for_entity(*reveal_light);
         shared::add_dynamic_frame_light(
             scene.lights,
             build_spot_light_for_reveal_cone({shared::compute_light_reveal_cone(*reveal_light, placed), reveal_light->color,

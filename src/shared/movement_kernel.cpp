@@ -113,6 +113,18 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
       if (shared::any_erase_cone_contains_box(world.reveal_cones, contact))
         continue;
     }
+    else if (state == GEOMETRY_SOLID_IN_SHADOW)
+    {
+      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
+      if (!shared::any_shadow_volume_touches_box(world.shadow_volumes, contact))
+        continue;
+    }
+    else if (state == GEOMETRY_SOLID_UNLESS_SHADOWED)
+    {
+      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
+      if (shared::any_shadow_volume_contains_box(world.shadow_volumes, contact))
+        continue;
+    }
     else if (state != GEOMETRY_SOLID)
     {
       continue;

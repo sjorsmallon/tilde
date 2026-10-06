@@ -775,9 +775,13 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
   ImGui::Checkbox("Trace indirect light", &solve_settings.trace_indirect_light);
   ImGui::BeginDisabled(!solve_settings.trace_indirect_light);
   ImGui::SliderInt("Chains / texel sample", &solve_settings.indirect_rays_per_sample, 1,
-                   512, "%d", ImGuiSliderFlags_Logarithmic);
+                   shared::MAX_INDIRECT_RAYS_PER_SAMPLE, "%d", ImGuiSliderFlags_Logarithmic);
   ImGui::SliderInt("Roulette after", &solve_settings.indirect_bounces_before_roulette, 1,
                    8);
+  // A chain brighter than this many times the sample's median chain is capped
+  // there; 0 keeps every chain as traced.
+  ImGui::SliderFloat("Firefly clamp (x median chain)", &solve_settings.indirect_firefly_clamp,
+                     0.f, 64.f, "%.0f");
 
   // The cost, before it is paid rather than after. A chain is tens of rays and
   // this multiplies against the supersampling, so the difference between a

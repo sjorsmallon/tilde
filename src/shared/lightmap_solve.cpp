@@ -886,6 +886,7 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
   const int gutter = settings.gutter_in_texels;
   const bool trace_indirect = traces_indirect(in, out);
   const size_t strata = (size_t)std::max(solve_settings.samples_per_texel_edge, 1);
+  check_heap_integrity("the bake's start");
 
   // A record's answer is direct_floats_per_sample() floats direct and 12 indirect, and
   // the budget covers the larger. A batch is cut by the UPPER bound of what a
@@ -951,6 +952,7 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
       batch_texels += texels;
     }
     if (entries.empty()) continue;
+    check_heap_integrity("collect_chart_samples");
 
     statistics.samples += samples.size();
     ++out_batch_count;
@@ -965,9 +967,11 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
       statistics.direct_nanoseconds += nanoseconds_since(started);
     }
     check_direct_results(samples.size());
+    check_heap_integrity("the direct dispatch");
     for (const batch_entry_t &entry : entries)
       reduce_direct(scratches[entry.scratch], gutter, 0, entry.sample_count, direct_results,
                     entry.first_sample, false);
+    check_heap_integrity("reduce_direct");
 
     if (trace_indirect)
     {
@@ -977,9 +981,11 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
       if (indirect_results.values.size() != samples.size())
         fatal_error("[lightmap] {} answered {} record(s) with {} indirect value(s).",
                     solver.name(), samples.size(), indirect_results.values.size());
+      check_heap_integrity("the indirect dispatch");
       for (const batch_entry_t &entry : entries)
         reduce_indirect(scratches[entry.scratch], gutter, 0, entry.sample_count,
                         indirect_results.values, entry.first_sample);
+      check_heap_integrity("reduce_indirect");
     }
 
     for (const batch_entry_t &entry : entries)
@@ -987,6 +993,7 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
       normalize_texels(scratches[entry.scratch], light_count, trace_indirect, false);
       choose_chart_lights(charts[entry.chart], scratches[entry.scratch], lights, dropped);
     }
+    check_heap_integrity("choose_chart_lights");
 
     // PASS TWO, for the charts that could not keep every light that reached
     // them: their records again, under the mask of what each dropped. ONE
@@ -1029,6 +1036,7 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
                         direct_results, entry.first_sample, true);
           normalize_texels(scratches[entry.scratch], light_count, trace_indirect, true);
         }
+        check_heap_integrity("the residual pass");
       }
     }
 
@@ -1037,6 +1045,7 @@ void solve_charts_in_batches(std::vector<lightmap_chart_t> &charts,
       if (solve_settings.dilate_into_the_gutter) fill_the_gutter(scratches[entry.scratch]);
       store_chart(charts[entry.chart], scratches[entry.scratch], out, light_count);
     }
+    check_heap_integrity("store_chart");
 
     progress.solved_texels.fetch_add(batch_texels, std::memory_order_relaxed);
     progress.solved_charts.fetch_add(entries.size(), std::memory_order_relaxed);

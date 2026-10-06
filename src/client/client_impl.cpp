@@ -269,6 +269,8 @@ bool Tick()
     look.cel_black       = cvars.r_cel_black;
     look.cel_halftone    = cvars.r_cel_halftone;
     look.cel_halftone_paper = cvars.r_cel_halftone_paper;
+    look.cel_halftone_ink   = cvars.r_cel_halftone_ink;
+    look.cel_halftone_gamma = cvars.r_cel_halftone_gamma;
     look.cel_fill                 = cvars.r_cel_fill;
     look.cel_fill_strength        = cvars.r_cel_fill_strength;
     look.cel_fill_spacing_pixels  = cvars.r_cel_fill_spacing;

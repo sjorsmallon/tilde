@@ -198,6 +198,8 @@ void sv_mem_report(int32_t, const command_context_t&) {}
 void frame_report(const command_context_t&) {}
 void frame_reset(const command_context_t&) {}
 void sv_frame_report(const command_context_t&) {}
+void sv_shadow_volume_report(const command_context_t&) {}
+void shadow_volume_report(const command_context_t&) {}
 void hitch_report(int32_t, const command_context_t&) {}
 void sv_hitch_report(int32_t, const command_context_t&) {}
 void ent_fire(uint32_t, std::string_view, std::string_view, const command_context_t&) {}

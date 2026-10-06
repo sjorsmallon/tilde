@@ -7,6 +7,8 @@
 #endif
 #include <Windows.h>
 #include <DbgHelp.h>
+#include <crtdbg.h>
+#include <cstdint>
 #include <cstdio>
 #include <csignal>
 #include <cstdlib>
@@ -70,10 +72,8 @@ inline LONG WINAPI exception_handler(EXCEPTION_POINTERS *ex)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-inline void abort_handler(int)
+inline void print_current_stack()
 {
-    fprintf(stderr, "\n=== CRASH: abort/terminate called ===\n");
-
     HANDLE process = GetCurrentProcess();
     SymInitialize(process, NULL, TRUE);
 
@@ -109,10 +109,51 @@ inline void abort_handler(int)
     fflush(stderr);
 }
 
+inline void abort_handler(int)
+{
+    fprintf(stderr, "\n=== CRASH: abort/terminate called ===\n");
+    print_current_stack();
+}
+
+// A failed assert() or a Debug STL check (_STL_VERIFY) reports through
+// _CrtDbgReport and then dies through _invalid_parameter, which fast-fails past
+// both the exception filter and SIGABRT: without these two the message is one
+// line and no stack. The hook prints the stack at the assertion itself, where
+// the checking frame's CALLER is the line that matters.
+inline bool assertion_stack_printed = false;
+
+#ifdef _DEBUG
+inline int assertion_report_hook(int report_kind, char *message, int *return_value)
+{
+    if (report_kind == _CRT_ASSERT || report_kind == _CRT_ERROR)
+    {
+        fprintf(stderr, "\n=== ASSERTION: %s ===\n", message ? message : "");
+        print_current_stack();
+        assertion_stack_printed = true;
+    }
+    *return_value = 0;
+    return FALSE;
+}
+#endif
+
+inline void invalid_parameter_handler(const wchar_t *expression, const wchar_t *function,
+                                      const wchar_t *file, unsigned int line, uintptr_t)
+{
+    fprintf(stderr, "\n=== CRASH: invalid parameter %ls in %ls (%ls:%u) ===\n",
+            expression ? expression : L"", function ? function : L"", file ? file : L"", line);
+    if (!assertion_stack_printed) print_current_stack();
+    fflush(stderr);
+    _exit(3);
+}
+
 inline void install()
 {
     SetUnhandledExceptionFilter(exception_handler);
     signal(SIGABRT, abort_handler);
+#ifdef _DEBUG
+    _CrtSetReportHook(assertion_report_hook);
+#endif
+    _set_invalid_parameter_handler(invalid_parameter_handler);
     std::set_terminate([]()
     {
         fprintf(stderr, "\n=== CRASH: std::terminate called ===\n");

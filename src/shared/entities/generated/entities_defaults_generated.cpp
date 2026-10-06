@@ -239,6 +239,7 @@ Sound_Emitter_Entity::Sound_Emitter_Entity()
 Point_Light_Entity::Point_Light_Entity()
   : switch_state{},
     light{},
+    rides{},
     range(256.0f)
 {
   type = entity_type::Point_Light_Entity;
@@ -247,6 +248,7 @@ Point_Light_Entity::Point_Light_Entity()
 Spot_Light_Entity::Spot_Light_Entity()
   : switch_state{},
     light{},
+    rides{},
     range(512.0f),
     inner_degrees(20.0f),
     outer_degrees(35.0f)
@@ -301,7 +303,9 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     passable_by(Team_Allegiance::Free_For_All),
     revealed_by_light(false),
     solid_only_when_revealed(false),
-    erased_by_light(false)
+    erased_by_light(false),
+    solid_only_in_shadow(false),
+    erased_in_shadow(false)
 {
   type = entity_type::Geometry_Owner_Entity;
 }
@@ -428,7 +432,7 @@ Void_Entity::Void_Entity()
 
 Reveal_Light_Entity::Reveal_Light_Entity()
   : switch_state{},
-    follows{},
+    rides{},
     kind(Reveal_Cone_Kind::Reveals),
     range(1024.0f),
     half_angle_degrees(25.0f),

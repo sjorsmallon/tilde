@@ -38,6 +38,7 @@
 #include "../shared/lightmap.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/reveal_light.hpp"
+#include "../shared/shadow_volume.hpp"
 #include "../shared/span.hpp"
 #include "../shared/team_wall_ripples.hpp"
 #include "camera.hpp"
@@ -382,6 +383,9 @@ inline constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 // scene.glsl's MAX_FOG_VOLUMES, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
+// scene.glsl's MAX_SHADOW_VOLUMES, kept one number by the same assert.
+inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 8;
+
 // A world-space box of fog: the colour the air inside scatters, and how much of what is behind it one world unit of it hides.
 struct fog_volume_t
 {
@@ -398,7 +402,10 @@ enum class light_cut_t : uint8_t
 {
   none,
   revealed,
-  erased
+  erased,
+  // Kept only inside a shadow volume (the shadow is the platform), or only outside every one (the shadow is a hole).
+  shadow_solid,
+  shadow_hole
 };
 
 struct mesh_draw_t
@@ -697,6 +704,8 @@ struct view_pass_t
   Span<const shared::wall_ripple_t>         ripples   = {};
   // Where a revealed draw exists and an erased one does not; the caller decides whose cones these are.
   Span<const shared::reveal_cone_t>         reveal_cones = {};
+  // Where a shadow_solid draw exists and a shadow_hole one does not (shared/shadow_volume.hpp).
+  Span<const shared::shadow_volume_t>       shadow_volumes = {};
   // Drawn for the FIRST perspective pass of the frame that carries any: there is one fog grid.
   Span<const fog_volume_t>                  fog_volumes = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
@@ -725,6 +734,8 @@ struct look_settings_t
   float   cel_black       = 0.0f; // r_cel_black
   float   cel_halftone    = 0.0f; // r_cel_halftone
   float   cel_halftone_paper = 1.0f; // r_cel_halftone_paper
+  float   cel_halftone_ink   = 0.0f; // r_cel_halftone_ink
+  float   cel_halftone_gamma = 1.0f; // r_cel_halftone_gamma
   cvars::Cel_Fill cel_fill         = cvars::Cel_Fill::none; // r_cel_fill
   float   cel_fill_strength        = 0.5f; // r_cel_fill_strength
   float   cel_fill_spacing_pixels  = 5.0f; // r_cel_fill_spacing

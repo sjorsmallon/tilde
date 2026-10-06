@@ -282,8 +282,8 @@ int main()
     system.get<entities::Mover_Entity>(mover_uid)->follow = {.from = first_uid, .segment_start_tick = 1, .direction = 1};
 
     entities::Reveal_Light_Entity* light = system.get<entities::Reveal_Light_Entity>(light_uid);
-    light->position = {0.f, 150.f, 0.f};
-    light->follows  = mover_uid;
+    light->position    = {0.f, 150.f, 0.f};
+    light->rides.mover = mover_uid;
 
     const shared::path_links_t links = shared::derive_path_links(system);
     const shared::reveal_cone_settings_t player_settings = {.range = 1024.f, .half_angle_degrees = 25.f};
@@ -309,10 +309,10 @@ int main()
     check(collected.empty(), "switched off it is no cone, wherever its mover has it");
 
     light->switch_state.value = true;
-    light->follows            = first_uid;
+    light->rides.mover        = first_uid;
     shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
     check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-3f,
-          "following something that is not a mover, it stays where it was placed");
+          "riding something that is not a mover, it stays where it was placed");
   }
 
   printf(failure_count == 0 ? "\nALL PASSED\n" : "\n%d FAILED\n", failure_count);

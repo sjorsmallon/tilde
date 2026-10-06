@@ -1319,12 +1319,12 @@ void test_a_switched_light_leaves_the_frame()
   {
     shared::frame_lights_t frame;
     shared::begin_frame_lights(frame, unbaked);
-    shared::add_frame_light(frame, unbaked, wired.light, *lamp);
+    shared::add_frame_light(frame, unbaked, wired.light, *lamp, shared::get_placed_pose_for_entity(*lamp));
     return frame.entries.size();
   };
 
   check(!shared::light_is_switched_on(*lamp), "the light starts switched off");
-  check(shared::try_convert_light_entity_to_scene_light(*lamp).has_value(),
+  check(shared::try_convert_light_entity_to_scene_light(*lamp, shared::get_placed_pose_for_entity(*lamp)).has_value(),
         "and is still a light -- try_convert_light_entity_to_scene_light does not filter by the switch, so "
         "the inspector can describe one that is off");
   check(tail_entries_for_the_lamp() == 0, "a switched-off light is in no frame");

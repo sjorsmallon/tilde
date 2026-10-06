@@ -21,6 +21,7 @@ struct Spot_Light_Entity : Entity
 
   Enabled switch_state;
   Light light;
+  Rides rides;
   float range;
   float inner_degrees;
   float outer_degrees;

@@ -61,6 +61,8 @@ void drop_repeated_points(std::vector<linalg::vec3> &polygon)
   polygon = std::move(kept);
 }
 
+} // namespace
+
 // Keeps the half at or behind the plane; a polygon entirely in front comes back
 // empty. `inset` pushes the cut into the back side, which is how a face lying ON
 // a cell boundary is told from one passing through the cell interior.
@@ -100,6 +102,9 @@ std::vector<linalg::vec3> clip_polygon_behind(Span<const linalg::vec3> polygon,
 
   return clipped;
 }
+
+namespace
+{
 
 // The quad a cell face starts as, before every other cell plane clips it down.
 // Wound arbitrarily -- brush_face_grid_tangents is a grid basis, not a winding

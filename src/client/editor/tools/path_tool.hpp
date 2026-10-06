@@ -32,40 +32,40 @@ public:
 private:
   struct drag_origin_t
   {
-    shared::entity_uid_t          uid = shared::null_entity_uid;
-    linalg::vec3                  position = {0, 0, 0};
-    std::optional<linalg::quatf>  orientation;
-    entity_snapshot_t             entity_before;
-    std::optional<shared::geometry_value_t> geometry_before;
+    shared::entity_uid_t uid = shared::null_entity_uid;
+    linalg::vec3 position = {0, 0, 0};
+    std::optional<linalg::quatf> orientation{};
+    entity_snapshot_t entity_before{};
+    std::optional<shared::geometry_value_t> geometry_before{};
   };
 
   struct field_edit_t
   {
     shared::entity_uid_t uid = shared::null_entity_uid;
-    entity_snapshot_t    before;
+    entity_snapshot_t before{};
   };
 
   path_scratch_t scratch;
 
-  shared::entity_uid_t active_node   = shared::null_entity_uid;
+  shared::entity_uid_t active_node = shared::null_entity_uid;
   shared::entity_uid_t subject_mover = shared::null_entity_uid;
-  shared::entity_uid_t hovered_uid   = shared::null_entity_uid;
-  std::optional<linalg::vec3> placement_point;
+  shared::entity_uid_t hovered_uid = shared::null_entity_uid;
+  std::optional<linalg::vec3> placement_point{};
 
-  std::vector<shared::entity_uid_t> chain;
-  std::vector<shared::entity_uid_t> active_selection;
+  std::vector<shared::entity_uid_t> chain{};
+  std::vector<shared::entity_uid_t> active_selection{};
 
   viewport_state_t cached_viewport{};
-  Editor_Gizmo     gizmo;
-  std::vector<drag_origin_t> drag_origins;
+  Editor_Gizmo gizmo{};
+  std::vector<drag_origin_t> drag_origins{};
 
-  std::optional<field_edit_t> field_edit;
+  std::optional<field_edit_t> field_edit{};
 
-  bool  show_preview     = true;
-  bool  playing          = false;
-  float preview_seconds  = 0.0f;
-  float playback_speed   = 1.0f;
-  float cycle_seconds    = 0.0f;
+  bool show_preview = true;
+  bool playing = false;
+  float preview_seconds = 0.0f;
+  float playback_speed = 1.0f;
+  float cycle_seconds = 0.0f;
 
   void refresh(editor_context_t& ctx);
   [[nodiscard]] gizmo_view_t make_gizmo_view() const;

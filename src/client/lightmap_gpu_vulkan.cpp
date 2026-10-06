@@ -40,7 +40,7 @@ struct bake_push_t
   uint32_t light_count = 0;
   shared::gpu_bake_settings_t settings;
 };
-static_assert(sizeof(bake_push_t) == 40 && offsetof(bake_push_t, settings) == 8,
+static_assert(sizeof(bake_push_t) == 44 && offsetof(bake_push_t, settings) == 8,
               "bake_push_t is the push block lightmap_indirect.comp and lightmap_direct.comp read");
 
 // lightmap_direct.comp's: the shared one, then how much glass the scene holds --
@@ -50,25 +50,27 @@ struct direct_push_t
   bake_push_t bake;
   uint32_t transmissive_triangle_count = 0;
 };
-static_assert(sizeof(direct_push_t) == 44 && offsetof(direct_push_t, transmissive_triangle_count) == 40,
+static_assert(sizeof(direct_push_t) == 48 && offsetof(direct_push_t, transmissive_triangle_count) == 44,
               "direct_push_t is the push block lightmap_direct.comp reads");
 
 // lightmap_indirect.comp's push block: the shared one, then the probe half --
-// the Mixed-light mask as the uvec2 the kernel reads, the four channel slots,
-// and the flag that makes a dispatch shade probes rather than texels.
+// the flag that makes a dispatch shade probes rather than texels, the
+// Mixed-light mask as the uvec2 the kernel reads and the four channel slots.
+// The scalars come first so the uvec2 lands on 8 and the ivec4 on 16, the
+// alignments std430 gives them.
 struct indirect_push_t
 {
   bake_push_t bake;
-  uint32_t analytic_lights[2] = {0, 0};
-  int32_t visibility_slots[4] = {-1, -1, -1, -1};
   uint32_t probes = 0;
   uint32_t capture = 0;
   uint32_t transmissive_triangle_count = 0;
+  uint32_t analytic_lights[2] = {0, 0};
+  int32_t visibility_slots[4] = {-1, -1, -1, -1};
 };
-static_assert(sizeof(indirect_push_t) == 76 && offsetof(indirect_push_t, analytic_lights) == 40 &&
-                  offsetof(indirect_push_t, visibility_slots) == 48 &&
-                  offsetof(indirect_push_t, probes) == 64 &&
-                  offsetof(indirect_push_t, transmissive_triangle_count) == 72,
+static_assert(sizeof(indirect_push_t) == 80 && offsetof(indirect_push_t, probes) == 44 &&
+                  offsetof(indirect_push_t, transmissive_triangle_count) == 52 &&
+                  offsetof(indirect_push_t, analytic_lights) == 56 &&
+                  offsetof(indirect_push_t, visibility_slots) == 64,
               "indirect_push_t is the push block lightmap_indirect.comp reads");
 
 // lightmap_direct.comp's results: a vec4 per record (irradiance rgb, shadow rays

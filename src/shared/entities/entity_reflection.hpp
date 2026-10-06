@@ -170,6 +170,9 @@ inline const Box_Volume* get_box_volume(const Entity* entity)
 inline Render*       get_render(Entity* entity) { return get_component<Render>(entity); }
 inline const Render* get_render(const Entity* entity) { return get_component<Render>(entity); }
 
+inline Rides*       get_rides(Entity* entity) { return get_component<Rides>(entity); }
+inline const Rides* get_rides(const Entity* entity) { return get_component<Rides>(entity); }
+
 // --- Type queries -----------------------------------------------------------
 
 // The replacement for dynamic_cast<T*>. Returns the pointer typed as T* if the

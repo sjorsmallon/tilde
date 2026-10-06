@@ -1534,7 +1534,8 @@ void Selection_Tool::draw_light_bake_status(const editor_context_t& ctx,
                                             shared::entity_uid_t uid,
                                             const entities::Entity& entity)
 {
-  const std::optional<shared::scene_light_t> light = shared::try_convert_light_entity_to_scene_light(entity);
+  const std::optional<shared::scene_light_t> light =
+      shared::try_convert_light_entity_to_scene_light(entity, shared::get_placed_pose_for_entity(entity));
   if (!light)
     return;
 

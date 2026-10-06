@@ -1,5 +1,4 @@
 #include "entities/generated/entities/path_node_entity_generated.hpp"
-#include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "movers.hpp"
 
 #include "entity_system.hpp"
@@ -61,18 +60,50 @@ std::vector<path_refusal_t> validate_map_paths(const map_t& map)
                                                    describe_map_entity(map, entry.uid),
                                                    describe_map_entity(map, mover->follow.from))});
     }
-    else if (const entities::Reveal_Light_Entity* light =
-                 entities::entity_as<entities::Reveal_Light_Entity>(entry.entity.get()))
+    else if (const entities::Rides* rides = entities::get_rides(entry.entity.get());
+             rides != nullptr && rides->mover != null_entity_uid)
     {
-      const map_entity_t* followed = map.find_by_uid(light->follows);
-      if (light->follows != null_entity_uid &&
-          (followed == nullptr || !entities::entity_as<entities::Mover_Entity>(followed->entity.get())))
-        refusals.push_back({entry.uid, std::format("{}: follows {}, which is not a mover",
+      const map_entity_t* ridden = map.find_by_uid(rides->mover);
+      if (ridden == nullptr || !entities::entity_as<entities::Mover_Entity>(ridden->entity.get()))
+        refusals.push_back({entry.uid, std::format("{}: rides {}, which is not a mover",
                                                    describe_map_entity(map, entry.uid),
-                                                   describe_map_entity(map, light->follows))});
+                                                   describe_map_entity(map, rides->mover))});
+
+      const entities::Light* light = entities::get_component<entities::Light>(entry.entity.get());
+      if (light != nullptr && light->mode != entities::Light_Mode::Dynamic)
+        refusals.push_back({entry.uid, std::format("{}: rides {} but its light is {}; the bake cannot follow "
+                                                   "a mover, so a riding light is Dynamic",
+                                                   describe_map_entity(map, entry.uid),
+                                                   describe_map_entity(map, rides->mover),
+                                                   entities::to_string(light->mode))});
     }
   }
   return refusals;
+}
+
+path_pose_t ridden_pose_at(const Entity_System& system, const path_links_t& links, const mover_rests_t& rests,
+                           const path_pose_t& placed, const entities::Rides& rides, uint32_t tick,
+                           float tickrate)
+{
+  const entities::Mover_Entity* mover = system.get<entities::Mover_Entity>(rides.mover);
+  if (mover == nullptr)
+    return placed;
+
+  const auto        found = rests.find(mover->entity_id);
+  const path_pose_t rest  = found != rests.end() ? found->second.frame : mover_rest_frame(system, *mover);
+  return carry_pose_by_mover(rest, mover_pose_at(system, links, *mover, rest, tick, tickrate), placed);
+}
+
+path_pose_t ridden_pose_in_cut(Span<const mover_t> movers, const mover_rests_t& rests, const path_pose_t& placed,
+                               const entities::Rides& rides)
+{
+  const auto rest = rests.find(rides.mover);
+  if (rest == rests.end())
+    return placed;
+  for (const mover_t& mover : movers)
+    if (mover.uid == rides.mover)
+      return carry_pose_by_mover(rest->second.frame, mover.pose_at_tick_end, placed);
+  return placed;
 }
 
 path_pose_t mover_rest_frame(const Entity_System& system, const entities::Mover_Entity& mover)

@@ -106,12 +106,6 @@ struct reveal_cone_planes_t
   entities::Reveal_Cone_Kind           kind                 = entities::Reveal_Cone_Kind::Reveals;
 };
 
-// Where a map-placed light is at `tick`: carried by the mover it `follows`, where it was placed otherwise.
-[[nodiscard]] path_pose_t reveal_light_pose_at(const Entity_System& system, const path_links_t& links,
-                                               const mover_rests_t&                 rests,
-                                               const entities::Reveal_Light_Entity& light, uint32_t tick,
-                                               float tickrate);
-
 // The one rule for a map-placed light's cone: from the pose, down its orientation, by the light's own numbers.
 [[nodiscard]] reveal_cone_t compute_light_reveal_cone(const entities::Reveal_Light_Entity& light, const path_pose_t& pose);
 

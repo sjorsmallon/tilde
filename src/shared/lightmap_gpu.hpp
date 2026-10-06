@@ -242,8 +242,9 @@ struct gpu_bake_settings_t
   float shadow_ray_bias = 0.25f;
   int32_t soft_shadow_samples = 8;
   float directional_shadow_distance = 100000.f;
+  float firefly_clamp = 16.f;
 };
-static_assert(sizeof(gpu_bake_settings_t) == 32,
+static_assert(sizeof(gpu_bake_settings_t) == 36,
               "gpu_bake_settings_t is the std430 uniform block the kernels read");
 
 [[nodiscard]] gpu_bake_settings_t

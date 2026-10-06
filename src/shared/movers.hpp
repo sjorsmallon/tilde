@@ -7,6 +7,7 @@
 #include "entity_uid.hpp"
 #include "map_geometry.hpp"
 #include "mover_path.hpp"
+#include "span.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -62,6 +63,15 @@ struct path_refusal_t
 // What rides a mover that is not a brush: `placed` is where it was authored, with the mover at rest.
 [[nodiscard]] path_pose_t carry_pose_by_mover(const path_pose_t& rest, const path_pose_t& pose,
                                               const path_pose_t& placed);
+
+// Where a Rides entity is at `tick`: carried by the mover it rides, where it was placed otherwise. mover_def.md ss17.
+[[nodiscard]] path_pose_t ridden_pose_at(const Entity_System& system, const path_links_t& links,
+                                         const mover_rests_t& rests, const path_pose_t& placed,
+                                         const entities::Rides& rides, uint32_t tick, float tickrate);
+
+// The same answer read off an already cut tick (collect_movers' end pose), for what runs after build_movers.
+[[nodiscard]] path_pose_t ridden_pose_in_cut(Span<const mover_t> movers, const mover_rests_t& rests,
+                                             const path_pose_t& placed, const entities::Rides& rides);
 
 // A draw between two ticks: t in [0, 1] across ONE tick, so nlerp is exact enough.
 [[nodiscard]] path_pose_t blend_path_poses(const path_pose_t& from, const path_pose_t& to, float t);

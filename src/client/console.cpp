@@ -1,3 +1,4 @@
+#include "../shared/predicted_world.hpp"
 #include "../shared/frame_timing.hpp"
 #include "../shared/memory_audit.hpp"
 #include "console.hpp"
@@ -489,6 +490,26 @@ void frame_report(const command_context_t &)
 {
   frame_timing::report();
   client::console::get().print("frame_report: written to the terminal");
+}
+
+void shadow_volume_report(const command_context_t &)
+{
+  client::client_context_t& ctx = client::state_manager::get_client_context();
+  if (!ctx.world.ready)
+  {
+    client::console::get().print("shadow_volume_report: no world");
+    return;
+  }
+  shared::predicted_world_storage_t storage;
+  shared::build_movers(ctx.world.session,
+                       {.tick        = ctx.prediction.latest_server_tick,
+                        .state_tick  = ctx.prediction.latest_server_tick,
+                        .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
+                        .gravity     = ctx.cvars->g_gravity},
+                       storage);
+  const shared::shadow_volume_report_t counts = shared::build_shadow_volumes(ctx.world.session, storage);
+  const std::string report = shared::describe_shadow_volume_report(counts, storage.shadow_volumes);
+  client::console::get().print(report.c_str());
 }
 
 void hitch_report(int32_t top, const command_context_t &)

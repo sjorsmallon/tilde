@@ -342,7 +342,7 @@ void team_wall_draw(renderer::mesh_draw_t& draw, const team_wall_tint_t& team_wa
 void light_cut_draw(renderer::mesh_draw_t& draw, renderer::light_cut_t light_cut)
 {
   draw.light_cut = light_cut;
-  if (light_cut == renderer::light_cut_t::revealed)
+  if (light_cut == renderer::light_cut_t::revealed || light_cut == renderer::light_cut_t::shadow_solid)
     draw.shadow_caster = renderer::shadow_caster_t::none;
 }
 

@@ -91,7 +91,8 @@ void main() {
     vec3 V                = normalize(scene.camera_position.xyz - fragWorldPosition);
 
     Surface surface = read_surface(geometric_normal, V);
-    outSurfaceNormal = store_surface_normal(surface.normal);
+    // The ink's crease is where two FACES meet; inking a normal map traces every bump in the texture.
+    outSurfaceNormal = store_surface_normal(geometric_normal);
 
     if (showing_debug_channel())
     {

@@ -239,18 +239,9 @@ Server :: cvars {
     // is a handshake fact, not a live-synced value.
     sv_tickrate:            f32 = 60.0      @Server    "Server tick rate in Hz"
 
-    // A connected client sends a move every tick, so silence this long means the
-    // peer is gone: a crash, a pulled cable, or a CmdDisconnect that was itself
-    // lost. 0 disables it, which is what you want while stepping a client
-    // through a debugger.
-    sv_timeout:             f32 = 30.0      @Server    "Seconds of silence before a client is dropped (0 = never)"
+    sv_timeout:             f32 = 60.0      @Server    "Seconds of silence before a client is dropped (0 = never)"
 
-    // A client accrues one move credit per tick and spends one per executed
-    // move, so it can never execute more moves over time than the server
-    // ticked. This is how many it may BANK -- the burst that absorbs a network
-    // stall without the client losing input it honestly generated. Beyond it,
-    // moves are dropped and the client rubber-bands. See server/move_budget.hpp
-    // for why a per-tick cap does not bound the exploit at all.
+
     sv_max_move_backlog:    i32 = 8         @Server    "Move commands a client may bank and execute in one tick after a stall"
 
     // UDP has no flow control, so a bulk send is bounded here or not at all. A
@@ -541,8 +532,10 @@ Debugging :: cvars {
     r_cel_black:            f32 = 0.05      @Client    "Spotted blacks: a shadow whose ambient light is dimmer than this is drawn as solid ink, the end of the dots' tone ramp (0 = none)"
     r_cel_halftone:         f32 = 0.0       @Client    "Both dithers: 0 lets light darken a surface as usual; above 0 the dots alone carry a surface's light, none where it is lit this brightly and covering more of it the dimmer it is"
     r_cel_halftone_paper:   f32 = 1.0       @Client    "With r_cel_halftone above 0: how brightly every surface is drawn between the dots"
+    r_cel_halftone_ink:     f32 = 0.0       @Client    "With r_cel_halftone above 0: how bright a dot is as a share of the paper it sits on (0 = black ink, 0.35 = a darker shade of the surface's own colour)"
+    r_cel_halftone_gamma:   f32 = 1.0       @Client    "With r_cel_halftone above 0: the dots cover what the surface lacks in lightness measured to this power (1 = in light, 2.2 = as the eye sees)"
     r_cel_fill:             Cel_Fill = .dither3d @Client "What fills the unlit side: none, hatch (diagonal lines), dither3d (dots pinned to the surface that keep their size on screen, written as arithmetic), dither3d_original (runevision's own Dither3D shader and 3D texture)"
-    r_cel_fill_strength:    f32 = 0.5       @Client    "How dark the fill's ink is (0 = invisible, 1 = solid ink)"
+    r_cel_fill_strength:    f32 = 0.5       @Client    "How dark the fill's ink is (0 = invisible, 1 = solid ink); ignored with r_cel_halftone above 0, where the dots are drawn solid"
     r_cel_fill_spacing:     f32 = 5.0       @Client    "Distance in pixels between hatch lines, between dither3d dots in the darkest shadow, or between dither3d_original dots at half tone"
     r_cel_fill_edge:        f32 = 0.5       @Client    "A surface is filled where direct light adds less than this many times its ambient light"
     r_cel_fill_shadow_tone_dark:        f32 = 0.45      @Client    "Both dithers: the share of the DARKEST shadow the dots cover (0 to 0.75)"
@@ -578,7 +571,7 @@ Debugging :: cvars {
     r_pattern_preview_blue:           f32 = 0.0   @Client    "Blue of the previewed pattern's ink"
     r_ink:                  bool = true     @Client    "Draw ink lines where the scene depth jumps (outlines) and where the surface normal turns (creases)"
     r_ink_threshold:        f32 = 4.0       @Client    "How far the depth must jump before an outline is inked; lower draws more lines"
-    r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the surface normal, normal map included, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
+    r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the face normal, normal map excluded, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
     r_ink_width:            i32 = 1         @Client    "Ink line reach in pixels"
     r_ink_tint:             f32 = 0.0       @Client    "How much of the colour under a line its ink keeps: 0 is black ink, 0.3 a line three tenths as bright as the surface it is drawn over"
     r_ink_on_black:         f32 = 1.0       @Client    "How white a line drawn inside r_cel_black's solid ink is (0 = it stays ink and is lost, 1 = white)"
@@ -639,6 +632,7 @@ Debugging :: cvars {
     // debug_draw_list_t entries carry their own lifetime, which is what this
     // feeds. 0 disables the draw without turning off the server's send.
     cl_shot_debug_seconds:     f32 = 4.0 @Client     "Seconds a shot-debug overlay stays on screen (0 = off)"
+    cl_shadow_volume_debug:    bool = false @Client    "Draw the shadow volumes the prediction cut this frame as pyramids, and print the cut's counts and caster/light pairs to the console whenever they change (shadow_volume_plan.md)"
     debug_show_entity_counts:  bool = false @Client     "Per-type entity count overlay"
 
     net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"
@@ -747,6 +741,7 @@ Server_Commands :: commands {
     // The server's unit is a TICK, not a frame: its loop period is set by the
     // accumulator, so what is measured here is how long a tick took to run.
     sv_frame_report()                  @Server  "Print the tick time distribution and the worst ticks so far"
+    sv_shadow_volume_report()          @Server  "Print how the shadow volumes cut this tick: lights, casters, receivers and every refusal"
     sv_hitch_report(top: i32 = 15)     @Server  "What the worst tick allocated, by call site"
 
     // Source's ent_fire, and the reason it is here BEFORE any level is wired:
@@ -776,6 +771,7 @@ Server_Commands :: commands {
 }
 
 Client_Commands :: commands {
+    shadow_volume_report()                 @Client  "Print how the shadow volumes cut for the newest snapshot: lights, casters, receivers and every refusal"
     bind(key: string, command: string...)  @Client  "Bind a key (a-z, 0-9, f1-f12, space, arrows, kp_0-kp_9) to a command line"
 
     // @Client even though it is about the server: it picks WHICH server, so it

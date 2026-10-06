@@ -80,6 +80,8 @@ float cel_fill_tone_lit()      { return scene.cel_fill_tone_range.w; } // r_cel_
 float cel_fill_material()      { return scene.cel_fill_pattern.z; }    // r_cel_fill_material
 float cel_halftone_white()     { return scene.cel_dither3d.w; }        // r_cel_halftone
 float cel_halftone_paper()     { return scene.cel_pebble_shape.z; }    // r_cel_halftone_paper
+float cel_halftone_ink()       { return scene.cel_halftone.x; }        // r_cel_halftone_ink
+float cel_halftone_gamma()     { return scene.cel_halftone.y; }        // r_cel_halftone_gamma
 
 const vec3 CEL_FILL_COLOR = vec3(0.0);
 
@@ -388,13 +390,22 @@ vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position
     if (cel_fill_pattern() == CEL_FILL_NONE)
         return mix(color, CEL_FILL_COLOR, solid_ink);
 
+    vec3  ink_color   = CEL_FILL_COLOR;
+    float ink_opacity = cel_fill_strength();
+    bool  halftone    = cel_halftone_white() > 0.0 && cel_fill_pattern() != CEL_FILL_HATCH;
     float tone;
-    if (cel_halftone_white() > 0.0 && cel_fill_pattern() != CEL_FILL_HATCH)
+    if (halftone)
     {
-        // The surface as r_cel_halftone_paper of light would show it; the dots cover what it lacks of r_cel_halftone.
+        // The surface as r_cel_halftone_paper of light would show it. The dots, each r_cel_halftone_ink of
+        // the paper's own colour, cover what it lacks of r_cel_halftone in lightness to the r_cel_halftone_gamma.
         float level = luminance(light);
         color      *= cel_halftone_paper() / max(level, 1e-6);
-        tone        = clamp((1.0 - level / cel_halftone_white()) / max(cel_fill_strength(), 0.001), 0.0, 1.0);
+        ink_color   = color * cel_halftone_ink();
+        ink_opacity = 1.0;
+        float exponent      = 1.0 / cel_halftone_gamma();
+        float lightness     = pow(clamp(level / cel_halftone_white(), 0.0, 1.0), exponent);
+        float ink_lightness = pow(clamp(cel_halftone_ink(), 0.0, 1.0), exponent);
+        tone        = clamp((1.0 - lightness) / max(1.0 - ink_lightness, 0.001), 0.0, 1.0);
         tone        = min(tone + material_relief(surface) * cel_fill_material(), 1.0);
     }
     else
@@ -411,9 +422,11 @@ vec3 compose_cel(Surface surface, vec4 direct, vec3 ambient, vec3 world_position
         ink = hatch_coverage(plane) * in_shadow;
     else if (cel_fill_pattern() == CEL_FILL_DITHER3D_ORIGINAL)
         ink = dither3d_original_coverage(plane, footprint, tone);
+    else if (halftone && tone > 0.5)
+        ink = 1.0 - dither_coverage(plane, footprint, 1.0 - tone);
     else
         ink = dither_coverage(plane, footprint, tone);
-    return mix(color, CEL_FILL_COLOR, max(ink * cel_fill_strength(), solid_ink));
+    return mix(color, ink_color, max(ink * ink_opacity, solid_ink));
 }
 
 #endif // SHADING_CEL_GLSL

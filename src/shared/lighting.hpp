@@ -8,6 +8,7 @@
 #include "entities/generated/entities_core_generated.hpp"
 #include "lightmap.hpp"
 #include "linalg.hpp"
+#include "mover_path.hpp"
 
 #include <optional>
 #include <vector>
@@ -256,8 +257,10 @@ struct point_shadow_faces_t
 // The ONE fold from the three authoring light types; empty means "not a light".
 // It does NOT filter by mode -- see scene_light_t::mode -- and it does NOT
 // filter by the switch either, because the editor's inspector wants to describe
-// a light that is currently off rather than say nothing about it.
-[[nodiscard]] std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entities::Entity &entity);
+// a light that is currently off rather than say nothing about it. `pose` is
+// where the light IS: get_placed_pose_for_entity, or ridden_pose_at for a Rides light.
+[[nodiscard]] std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entities::Entity &entity,
+                                                                                   const path_pose_t &pose);
 
 // Whether Switchable has this light on. A type with no Enabled component (a
 // directional light) is always on -- there is no switch to be off. The two
@@ -301,7 +304,7 @@ void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap);
 // session entity carries it as `entity_id`, a map entry as `map_entity_t::uid`
 // -- and it is what the bake's resolve table is keyed by.
 void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
-                     entity_uid_t uid, const entities::Entity &entity);
+                     entity_uid_t uid, const entities::Entity &entity, const path_pose_t &pose);
 
 // A Dynamic light no entity holds and no bake saw (a Flashlight's beam): the tail alone. After begin_frame_lights.
 void add_dynamic_frame_light(frame_lights_t &frame, const scene_light_t &light);

@@ -101,12 +101,14 @@ std::optional<projectile_hit_t> sweep_body(const Bounding_Volume_Hierarchy& bvh,
   const linalg::vec3f reach{radius, radius, radius};
   const auto passes_erased_hole = [&](const BVH_Primitive& primitive, float t)
   {
-    if (get_geometry_state_by_collision_id(world.disabled_geometry, primitive.id) !=
-        GEOMETRY_SOLID_UNLESS_ERASED)
+    const uint8_t state = get_geometry_state_by_collision_id(world.disabled_geometry, primitive.id);
+    if (state != GEOMETRY_SOLID_UNLESS_ERASED && state != GEOMETRY_SOLID_UNLESS_SHADOWED)
       return false;
     const linalg::vec3f center  = from + (to - from) * t;
     const aabb_bounds_t contact = intersection_aabb({center - reach, center + reach}, primitive.aabb);
-    return any_erase_cone_contains_box(world.reveal_cones, contact);
+    return state == GEOMETRY_SOLID_UNLESS_ERASED
+               ? any_erase_cone_contains_box(world.reveal_cones, contact)
+               : any_shadow_volume_contains_box(world.shadow_volumes, contact);
   };
 
   const std::optional<sweep_hit_t> map_hit = bvh_sweep_sphere_unless_passed(

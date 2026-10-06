@@ -55,6 +55,7 @@ struct pass_builder_t
   std::vector<shared::reveal_cone_t>                   reveal_cones;
   // Where `reveal_cones` and their lights come from; the pass reads neither from here.
   std::vector<lit_reveal_cone_t>                       lit_reveal_cones;
+  std::vector<shared::shadow_volume_t>                 shadow_volumes;
   std::vector<renderer::fog_volume_t>                 fog_volumes;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
@@ -117,6 +118,7 @@ struct pass_builder_t
     ripples.clear();
     reveal_cones.clear();
     lit_reveal_cones.clear();
+    shadow_volumes.clear();
     fog_volumes.clear();
     custom.clear();
     debug.retire(delta_seconds);
@@ -133,6 +135,7 @@ struct pass_builder_t
     pass.baked_light_count = lights.baked_count;
     pass.ripples           = ripples;
     pass.reveal_cones      = reveal_cones;
+    pass.shadow_volumes    = shadow_volumes;
     pass.fog_volumes       = fog_volumes;
     pass.seconds          = seconds;
     pass.debug_channel = debug_channel;

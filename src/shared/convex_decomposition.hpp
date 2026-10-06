@@ -48,6 +48,11 @@ inline constexpr uint32_t MAX_CONVEX_INPUT_FACES = 128;
 // hull it built passes this by construction.
 bool polyhedron_is_convex(const brush_polyhedron_t &polyhedron);
 
+// The polygon's half at or behind the plane (normals point out, so: inside); empty when none is left.
+// `inset` moves the cut into the back side.
+[[nodiscard]] std::vector<linalg::vec3> clip_polygon_behind(Span<const linalg::vec3> polygon,
+                                                            const Plane &plane, float inset);
+
 // N convex pieces whose union is `polyhedron`. A convex input comes back
 // unchanged as a single piece, so no map on disk today has its collision moved
 // by a float.

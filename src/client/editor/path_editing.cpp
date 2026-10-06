@@ -185,17 +185,18 @@ void draw_path_links(const shared::map_t& map, const editor_context_t& ctx, pass
     draws.debug.line(mover->position, start->position, colors::magenta);
   }
 
-  for (const auto [uid, light] : map.entities_of_type<entities::Reveal_Light_Entity>())
+  for (const shared::map_entity_t& entry : map.entities)
   {
-    if (!ctx.object_is_visible(uid) || light->follows == shared::null_entity_uid)
+    const entities::Rides* rides = entities::get_rides(entry.entity.get());
+    if (rides == nullptr || rides->mover == shared::null_entity_uid || !ctx.object_is_visible(entry.uid))
       continue;
-    const shared::map_entity_t* followed = map.find_by_uid(light->follows);
-    if (followed == nullptr || !entities::entity_as<entities::Mover_Entity>(followed->entity.get()))
+    const shared::map_entity_t* ridden = map.find_by_uid(rides->mover);
+    if (ridden == nullptr || !entities::entity_as<entities::Mover_Entity>(ridden->entity.get()))
     {
-      draws.debug.backed_text(light->position, "follows no mover", colors::red);
+      draws.debug.backed_text(entry.entity->position, "rides no mover", colors::red);
       continue;
     }
-    draws.debug.line(light->position, followed->entity->position, colors::cyan);
+    draws.debug.line(entry.entity->position, ridden->entity->position, colors::cyan);
   }
 }
 

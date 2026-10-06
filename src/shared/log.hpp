@@ -213,3 +213,16 @@ void log_warning_impl(const std::source_location &loc,
 #define fatal_error(fmt, ...)                                                  \
   ::logging::detail::fatal_error_impl(std::source_location::current(), fmt,    \
                                       ##__VA_ARGS__)
+
+// Walks the CRT debug heap and dies naming `phase` if a block's guard bytes were
+// overwritten. A no-op outside a Windows Debug build. For a long loop whose
+// crashes land in STL bookkeeping: one call per phase says which phase wrote
+// where it should not have.
+inline void check_heap_integrity(const char* phase)
+{
+#if defined(_WIN32) && defined(_DEBUG)
+  if (!_CrtCheckMemory()) fatal_error("[heap] corrupted after {}.", phase);
+#else
+  (void)phase;
+#endif
+}

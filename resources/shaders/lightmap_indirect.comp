@@ -38,17 +38,19 @@ layout(push_constant) uniform Push
   float shadow_ray_bias;
   int soft_shadow_samples;
   float directional_shadow_distance;
-  // One bit per light slot that is MIXED (analytic at runtime): a probe adds no
-  // direct term for one, and stores its visibility only in the channel
-  // visibility_slots names for it -- LIGHTMAP_NO_LIGHT_SLOT (-1) is an
-  // unclaimed channel.
-  uvec2 analytic_lights;
-  ivec4 visibility_slots;
+  float firefly_clamp;
   uint probes;
   uint capture;
   // How much glass the scene holds: zero is no second instance, no second ray
   // and the bake every map without any has always had.
   uint transmissive_triangle_count;
+  // One bit per light slot that is MIXED (analytic at runtime): a probe adds no
+  // direct term for one, and stores its visibility only in the channel
+  // visibility_slots names for it -- LIGHTMAP_NO_LIGHT_SLOT (-1) is an
+  // unclaimed channel. Last, with the scalars before them, so std430 puts the
+  // uvec2 on 8 and the ivec4 on 16 where indirect_push_t has them.
+  uvec2 analytic_lights;
+  ivec4 visibility_slots;
 } push;
 
 #include "lightmap_bake.glsl"
@@ -213,6 +215,66 @@ vec3 trace_one_chain(vec3 position, vec3 normal, vec3 first_leg, uint bits)
   return collected;
 }
 
+// --- The firefly rule, lightmap_trace.cpp's clamp_fireflies -----------------------
+
+// lightmap_trace.hpp's MAX_INDIRECT_RAYS_PER_SAMPLE and FIREFLY_GROUPS.
+const int MAX_CHAINS_PER_SAMPLE = 512;
+const int FIREFLY_GROUPS = 8;
+
+// One point's chains, held until all are fired: the clamp needs the whole set
+// before it can judge any one of them. Private to the invocation.
+vec3 g_chains[MAX_CHAINS_PER_SAMPLE];
+
+int chain_count()
+{
+  return min(push.rays_per_sample, MAX_CHAINS_PER_SAMPLE);
+}
+
+float firefly_reference(int count)
+{
+  const int group_count = min(FIREFLY_GROUPS, count);
+  float group_luminance[FIREFLY_GROUPS];
+  int group_size[FIREFLY_GROUPS];
+  for (int group = 0; group < FIREFLY_GROUPS; ++group)
+  {
+    group_luminance[group] = 0.0;
+    group_size[group] = 0;
+  }
+  for (int chain = 0; chain < count; ++chain)
+  {
+    const int group = chain * group_count / count;
+    group_luminance[group] += luminance_of(g_chains[chain]);
+    group_size[group] += 1;
+  }
+  for (int group = 0; group < group_count; ++group)
+    group_luminance[group] /= float(group_size[group]);
+
+  for (int sorted = 1; sorted < group_count; ++sorted)
+  {
+    const float value = group_luminance[sorted];
+    int at = sorted - 1;
+    while (at >= 0 && group_luminance[at] > value)
+    {
+      group_luminance[at + 1] = group_luminance[at];
+      --at;
+    }
+    group_luminance[at + 1] = value;
+  }
+  return group_luminance[group_count / 2];
+}
+
+void clamp_fireflies(int count)
+{
+  if (push.firefly_clamp <= 0.0 || count < 2) return;
+  const float cap = push.firefly_clamp * firefly_reference(count);
+  if (cap <= 0.0) return;
+  for (int chain = 0; chain < count; ++chain)
+  {
+    const float luminance = luminance_of(g_chains[chain]);
+    if (luminance > cap) g_chains[chain] *= cap / luminance;
+  }
+}
+
 // --- The two records -------------------------------------------------------------
 
 // The SH L1 projection of one direction's irradiance, trace_probe_light's
@@ -262,14 +324,23 @@ void shade_texel(uint i, gpu_sample_t sample_record)
   if (push.rays_per_sample > 0)
   {
     const uint hash = hash_mix(sample_record.seed, 0x1b873593u);
-    const float weight = 2.0 / float(push.rays_per_sample);
+    const int count = chain_count();
+    const float weight = 2.0 / float(count);
 
-    for (int ray = 0; ray < push.rays_per_sample; ++ray)
+    for (int ray = 0; ray < count; ++ray)
     {
       const uint bits = hash_mix(hash, uint(ray));
       const vec3 first_leg = uniform_hemisphere_direction(sample_record.normal, bits);
-      const vec3 collected =
+      g_chains[ray] =
           trace_one_chain(sample_record.position, sample_record.normal, first_leg, bits);
+    }
+    clamp_fireflies(count);
+
+    for (int ray = 0; ray < count; ++ray)
+    {
+      const uint bits = hash_mix(hash, uint(ray));
+      const vec3 first_leg = uniform_hemisphere_direction(sample_record.normal, bits);
+      const vec3 collected = g_chains[ray];
 
       projected.l0 += collected * (weight * SH_L1_Y0);
       projected.l1_x += collected * (weight * SH_L1_Y1 * first_leg.x);
@@ -329,15 +400,22 @@ void shade_probe(uint i, gpu_sample_t sample_record)
   if (push.rays_per_sample > 0)
   {
     // The sphere's uniform pdf is 1/(4pi) where the hemisphere's was 1/(2pi).
-    const float weight = 4.0 / float(push.rays_per_sample);
+    const int count = chain_count();
+    const float weight = 4.0 / float(count);
 
-    for (int ray = 0; ray < push.rays_per_sample; ++ray)
+    for (int ray = 0; ray < count; ++ray)
     {
       const uint bits = hash_mix(hash, uint(ray));
       const vec3 first_leg = uniform_sphere_direction(bits);
-      const vec3 collected = trace_one_chain(position, first_leg, first_leg, bits);
+      g_chains[ray] = trace_one_chain(position, first_leg, first_leg, bits);
+    }
+    clamp_fireflies(count);
 
-      add_from_direction(projected, collected * weight, first_leg);
+    for (int ray = 0; ray < count; ++ray)
+    {
+      const uint bits = hash_mix(hash, uint(ray));
+      const vec3 first_leg = uniform_sphere_direction(bits);
+      add_from_direction(projected, g_chains[ray] * weight, first_leg);
     }
   }
 
@@ -356,13 +434,17 @@ void shade_capture(uint i, gpu_sample_t sample_record)
   vec3 sum = vec3(0.0);
   if (push.rays_per_sample > 0)
   {
-    for (int ray = 0; ray < push.rays_per_sample; ++ray)
+    const int count = chain_count();
+    for (int ray = 0; ray < count; ++ray)
     {
       const uint bits = hash_mix(sample_record.seed, uint(ray));
-      sum += trace_one_chain(sample_record.position, sample_record.normal,
-                             sample_record.normal, bits);
+      g_chains[ray] = trace_one_chain(sample_record.position, sample_record.normal,
+                                      sample_record.normal, bits);
     }
-    sum *= 1.0 / (PI * float(push.rays_per_sample));
+    clamp_fireflies(count);
+
+    for (int ray = 0; ray < count; ++ray) sum += g_chains[ray];
+    sum *= 1.0 / (PI * float(count));
   }
 
   const uint at = i * 3u;

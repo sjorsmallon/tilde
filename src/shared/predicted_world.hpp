@@ -27,6 +27,7 @@
 #include "movement_volumes.hpp"
 #include "movers.hpp"
 #include "reveal_light.hpp"
+#include "shadow_volume.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -60,6 +61,9 @@ struct predicted_world_t
 
   // Where a GEOMETRY_SOLID_WHERE_LIT byte of the disabled set is solid (reveal_light.hpp).
   Span<const reveal_cone_planes_t> reveal_cones;
+
+  // Where a GEOMETRY_SOLID_IN_SHADOW byte is solid and a GEOMETRY_SOLID_UNLESS_SHADOWED one is not (shadow_volume.hpp).
+  Span<const shadow_volume_t> shadow_volumes;
 };
 
 // The STORAGE the three views are over, held by the caller across ticks so a
@@ -78,6 +82,7 @@ struct predicted_world_storage_t
   std::vector<movement_modifier_t>                           movement_modifiers;
   std::vector<mover_t>                                       movers;
   std::vector<reveal_cone_planes_t>                          reveal_cones;
+  std::vector<shadow_volume_t>                               shadow_volumes;
 };
 
 [[nodiscard]] inline predicted_world_t get_predicted_world_for_team(const predicted_world_storage_t& storage,
@@ -92,7 +97,8 @@ struct predicted_world_storage_t
           .movement_volumes   = storage.movement_volumes,
           .movement_modifiers = storage.movement_modifiers,
           .movers             = storage.movers,
-          .reveal_cones       = storage.reveal_cones};
+          .reveal_cones       = storage.reveal_cones,
+          .shadow_volumes     = storage.shadow_volumes};
 }
 
 // The tick a build is FOR. `tick_interval_seconds` is DERIVED from the tickrate
@@ -126,6 +132,8 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
                 predicted_world_storage_t& out);
 void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
                         predicted_world_storage_t& out);
+// After build_movers: a moving caster's pieces are the movers'. The report is for the two report commands.
+shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out);
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out);
 

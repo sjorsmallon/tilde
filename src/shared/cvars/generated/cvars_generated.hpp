@@ -268,6 +268,8 @@ struct cvar_state_t
   float r_cel_black;
   float r_cel_halftone;
   float r_cel_halftone_paper;
+  float r_cel_halftone_ink;
+  float r_cel_halftone_gamma;
   Cel_Fill r_cel_fill;
   float r_cel_fill_strength;
   float r_cel_fill_spacing;
@@ -336,6 +338,7 @@ struct cvar_state_t
   bool debug_show_box_volumes;
   bool debug_hide_geometry;
   float cl_shot_debug_seconds;
+  bool cl_shadow_volume_debug;
   bool debug_show_entity_counts;
   bool net_snapshot_debug;
   bool sv_event_debug;
@@ -487,88 +490,91 @@ enum class cvar_id : uint16_t
   r_cel_black = 127,
   r_cel_halftone = 128,
   r_cel_halftone_paper = 129,
-  r_cel_fill = 130,
-  r_cel_fill_strength = 131,
-  r_cel_fill_spacing = 132,
-  r_cel_fill_edge = 133,
-  r_cel_fill_shadow_tone_dark = 134,
-  r_cel_fill_shadow_tone_light = 135,
-  r_cel_fill_ambient_dark = 136,
-  r_cel_fill_ambient_light = 137,
-  r_cel_fill_tone_lit = 138,
-  r_cel_fill_material = 139,
-  r_cel_hatch_width = 140,
-  r_cel_dither3d_size_variability = 141,
-  r_cel_dither3d_contrast = 142,
-  r_cel_dither3d_stretch_smoothness = 143,
-  r_cel_speckle = 144,
-  r_cel_speckle_spacing = 145,
-  r_cel_speckle_density = 146,
-  r_cel_speckle_radius = 147,
-  r_cel_pebble = 148,
-  r_cel_pebble_spacing = 149,
-  r_cel_pebble_density = 150,
-  r_cel_pebble_size = 151,
-  r_cel_pebble_irregularity = 152,
-  r_cel_pebble_width = 153,
-  r_pattern_preview = 154,
-  r_pattern_preview_spacing_along = 155,
-  r_pattern_preview_spacing_across = 156,
-  r_pattern_preview_angle = 157,
-  r_pattern_preview_scroll = 158,
-  r_pattern_preview_coverage = 159,
-  r_pattern_preview_shape = 160,
-  r_pattern_preview_strength = 161,
-  r_pattern_preview_red = 162,
-  r_pattern_preview_green = 163,
-  r_pattern_preview_blue = 164,
-  r_ink = 165,
-  r_ink_threshold = 166,
-  r_ink_crease_degrees = 167,
-  r_ink_width = 168,
-  r_ink_tint = 169,
-  r_ink_on_black = 170,
-  r_ink_wobble = 171,
-  r_ink_wobble_scale = 172,
-  r_ink_boil = 173,
-  r_ink_weight_near = 174,
-  r_ink_weight_distance = 175,
-  r_rim = 176,
-  r_rim_width = 177,
-  r_misprint = 178,
-  r_misprint_distance = 179,
-  r_flashlight_intensity = 180,
-  r_flashlight_red = 181,
-  r_flashlight_green = 182,
-  r_flashlight_blue = 183,
-  r_flashlight_inner = 184,
-  r_fxaa = 185,
-  r_fxaa_subpixel = 186,
-  r_fog = 187,
-  r_fog_distance = 188,
-  r_fog_anisotropy = 189,
-  r_look_panel = 190,
-  sv_skybox = 191,
-  debug_show_collisions = 192,
-  debug_show_hitboxes = 193,
-  debug_show_navmesh = 194,
-  debug_show_box_volumes = 195,
-  debug_hide_geometry = 196,
-  cl_shot_debug_seconds = 197,
-  debug_show_entity_counts = 198,
-  net_snapshot_debug = 199,
-  sv_event_debug = 200,
-  cl_event_debug = 201,
-  sv_reliable_debug = 202,
-  sv_io_debug = 203,
-  replay_keyframe_seconds = 204,
-  sv_replay_auto = 205,
-  sv_ghost_record = 206,
+  r_cel_halftone_ink = 130,
+  r_cel_halftone_gamma = 131,
+  r_cel_fill = 132,
+  r_cel_fill_strength = 133,
+  r_cel_fill_spacing = 134,
+  r_cel_fill_edge = 135,
+  r_cel_fill_shadow_tone_dark = 136,
+  r_cel_fill_shadow_tone_light = 137,
+  r_cel_fill_ambient_dark = 138,
+  r_cel_fill_ambient_light = 139,
+  r_cel_fill_tone_lit = 140,
+  r_cel_fill_material = 141,
+  r_cel_hatch_width = 142,
+  r_cel_dither3d_size_variability = 143,
+  r_cel_dither3d_contrast = 144,
+  r_cel_dither3d_stretch_smoothness = 145,
+  r_cel_speckle = 146,
+  r_cel_speckle_spacing = 147,
+  r_cel_speckle_density = 148,
+  r_cel_speckle_radius = 149,
+  r_cel_pebble = 150,
+  r_cel_pebble_spacing = 151,
+  r_cel_pebble_density = 152,
+  r_cel_pebble_size = 153,
+  r_cel_pebble_irregularity = 154,
+  r_cel_pebble_width = 155,
+  r_pattern_preview = 156,
+  r_pattern_preview_spacing_along = 157,
+  r_pattern_preview_spacing_across = 158,
+  r_pattern_preview_angle = 159,
+  r_pattern_preview_scroll = 160,
+  r_pattern_preview_coverage = 161,
+  r_pattern_preview_shape = 162,
+  r_pattern_preview_strength = 163,
+  r_pattern_preview_red = 164,
+  r_pattern_preview_green = 165,
+  r_pattern_preview_blue = 166,
+  r_ink = 167,
+  r_ink_threshold = 168,
+  r_ink_crease_degrees = 169,
+  r_ink_width = 170,
+  r_ink_tint = 171,
+  r_ink_on_black = 172,
+  r_ink_wobble = 173,
+  r_ink_wobble_scale = 174,
+  r_ink_boil = 175,
+  r_ink_weight_near = 176,
+  r_ink_weight_distance = 177,
+  r_rim = 178,
+  r_rim_width = 179,
+  r_misprint = 180,
+  r_misprint_distance = 181,
+  r_flashlight_intensity = 182,
+  r_flashlight_red = 183,
+  r_flashlight_green = 184,
+  r_flashlight_blue = 185,
+  r_flashlight_inner = 186,
+  r_fxaa = 187,
+  r_fxaa_subpixel = 188,
+  r_fog = 189,
+  r_fog_distance = 190,
+  r_fog_anisotropy = 191,
+  r_look_panel = 192,
+  sv_skybox = 193,
+  debug_show_collisions = 194,
+  debug_show_hitboxes = 195,
+  debug_show_navmesh = 196,
+  debug_show_box_volumes = 197,
+  debug_hide_geometry = 198,
+  cl_shot_debug_seconds = 199,
+  cl_shadow_volume_debug = 200,
+  debug_show_entity_counts = 201,
+  net_snapshot_debug = 202,
+  sv_event_debug = 203,
+  cl_event_debug = 204,
+  sv_reliable_debug = 205,
+  sv_io_debug = 206,
+  replay_keyframe_seconds = 207,
+  sv_replay_auto = 208,
+  sv_ghost_record = 209,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 207;
+constexpr uint32_t CVAR_COUNT = 210;
 
 enum class command_id : uint16_t
 {
@@ -581,33 +587,35 @@ enum class command_id : uint16_t
   spectate = 6,
   sv_mem_report = 7,
   sv_frame_report = 8,
-  sv_hitch_report = 9,
-  ent_fire = 10,
-  restart_round = 11,
-  end_match = 12,
-  ready = 13,
-  sv_replay_record = 14,
-  sv_replay_stop = 15,
-  bind = 16,
-  connect = 17,
-  announce = 18,
-  noclip = 19,
-  mem_report = 20,
-  mem_frame = 21,
-  mem_stacks = 22,
-  frame_report = 23,
-  frame_reset = 24,
-  hitch_report = 25,
-  replay_record = 26,
-  replay_play = 27,
-  replay_stop = 28,
-  replay_pause = 29,
-  replay_speed = 30,
-  replay_seek = 31,
-  replay_skip = 32,
+  sv_shadow_volume_report = 9,
+  sv_hitch_report = 10,
+  ent_fire = 11,
+  restart_round = 12,
+  end_match = 13,
+  ready = 14,
+  sv_replay_record = 15,
+  sv_replay_stop = 16,
+  shadow_volume_report = 17,
+  bind = 18,
+  connect = 19,
+  announce = 20,
+  noclip = 21,
+  mem_report = 22,
+  mem_frame = 23,
+  mem_stacks = 24,
+  frame_report = 25,
+  frame_reset = 26,
+  hitch_report = 27,
+  replay_record = 28,
+  replay_play = 29,
+  replay_stop = 30,
+  replay_pause = 31,
+  replay_speed = 32,
+  replay_seek = 33,
+  replay_skip = 34,
 };
 
-constexpr uint32_t COMMAND_COUNT = 33;
+constexpr uint32_t COMMAND_COUNT = 35;
 
 enum cvar_type : uint8_t
 {
@@ -717,6 +725,9 @@ void sv_mem_report(int32_t top, const command_context_t& context);
 // @Server  Print the tick time distribution and the worst ticks so far
 // usage: sv_frame_report
 void sv_frame_report(const command_context_t& context);
+// @Server  Print how the shadow volumes cut this tick: lights, casters, receivers and every refusal
+// usage: sv_shadow_volume_report
+void sv_shadow_volume_report(const command_context_t& context);
 // @Server  What the worst tick allocated, by call site
 // usage: sv_hitch_report [top]
 void sv_hitch_report(int32_t top, const command_context_t& context);
@@ -738,6 +749,9 @@ void sv_replay_record(std::string_view name, const command_context_t& context);
 // @Server  Finish the server's replay recording
 // usage: sv_replay_stop
 void sv_replay_stop(const command_context_t& context);
+// @Client  Print how the shadow volumes cut for the newest snapshot: lights, casters, receivers and every refusal
+// usage: shadow_volume_report
+void shadow_volume_report(const command_context_t& context);
 // @Client  Bind a key (a-z, 0-9, f1-f12, space, arrows, kp_0-kp_9) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);

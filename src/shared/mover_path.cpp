@@ -53,6 +53,11 @@ void advance(const Entity_System& system, const path_links_t& links, entities::P
 
 } // namespace
 
+path_pose_t get_placed_pose_for_entity(const entities::Entity& entity)
+{
+  return {.position = entity.position, .orientation = entity.orientation};
+}
+
 path_links_t derive_path_links(const Entity_System& system)
 {
   path_links_t links;

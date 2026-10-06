@@ -386,9 +386,10 @@ enum class component_type : uint16_t
   Timer_State = 13,
   Match = 14,
   Path_Follow = 15,
+  Rides = 16,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 16;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 17;
 
 } // namespace entities
 
@@ -626,6 +627,7 @@ struct Light
   Light_Mode mode = Light_Mode::Baked;
   float source_radius = 0.0f;
   bool casts_shadows = true;
+  bool cuts_geometry = false;
 };
 
 struct Movement
@@ -693,6 +695,13 @@ struct Path_Follow
   uint32_t segment_start_tick = 0;
   int32_t direction = 1;
   uint32_t frozen_at_tick = 0;
+};
+
+struct Rides
+{
+  static constexpr component_type static_component = component_type::Rides;
+
+  shared::entity_uid_t mover = {};
 };
 
 struct Entity

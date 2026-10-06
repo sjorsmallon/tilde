@@ -50,20 +50,6 @@ bool reveal_light_is_on(const Entity_System& system, const entities::Player_Enti
   return player.reveal_light_on && reveal_light_is_in_hand(system, player);
 }
 
-path_pose_t reveal_light_pose_at(const Entity_System& system, const path_links_t& links,
-                                 const mover_rests_t& rests, const entities::Reveal_Light_Entity& light,
-                                 uint32_t tick, float tickrate)
-{
-  const path_pose_t placed = {.position = light.position, .orientation = light.orientation};
-  const entities::Mover_Entity* mover = system.get<entities::Mover_Entity>(light.follows);
-  if (mover == nullptr)
-    return placed;
-
-  const auto        found = rests.find(mover->entity_id);
-  const path_pose_t rest  = found != rests.end() ? found->second.frame : mover_rest_frame(system, *mover);
-  return carry_pose_by_mover(rest, mover_pose_at(system, links, *mover, rest, tick, tickrate), placed);
-}
-
 reveal_cone_t compute_light_reveal_cone(const entities::Reveal_Light_Entity& light, const path_pose_t& pose)
 {
   return {.apex                 = pose.position,
@@ -169,8 +155,9 @@ void collect_reveal_cones(const Entity_System& system, const path_links_t& links
 
   for (const entities::Reveal_Light_Entity& light : system.entities_of_type<entities::Reveal_Light_Entity>())
     if (light.switch_state.value)
-      out.push_back(planes_of_reveal_cone(
-          compute_light_reveal_cone(light, reveal_light_pose_at(system, links, rests, light, tick, tickrate))));
+      out.push_back(planes_of_reveal_cone(compute_light_reveal_cone(
+          light, ridden_pose_at(system, links, rests, get_placed_pose_for_entity(light), light.rides, tick,
+                                tickrate))));
 }
 
 } // namespace shared

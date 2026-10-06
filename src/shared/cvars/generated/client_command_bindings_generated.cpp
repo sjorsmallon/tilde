@@ -63,6 +63,20 @@ std::optional<bool> try_parse_bool_token(std::string_view text)
   return std::nullopt;
 }
 
+// shadow_volume_report
+bool invoke_shadow_volume_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::shadow_volume_report, args.size());
+    return false;
+  }
+
+  commands::shadow_volume_report(context);
+  return true;
+}
+
 // bind <key> <command...>
 bool invoke_bind(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -398,6 +412,7 @@ bool invoke_replay_skip(Span<std::string_view> args, const command_context_t& co
 
 void bind_client_commands(command_table_t& table)
 {
+  table.binders[(uint32_t)command_id::shadow_volume_report] = &invoke_shadow_volume_report;
   table.binders[(uint32_t)command_id::bind] = &invoke_bind;
   table.binders[(uint32_t)command_id::connect] = &invoke_connect;
   table.binders[(uint32_t)command_id::announce] = &invoke_announce;

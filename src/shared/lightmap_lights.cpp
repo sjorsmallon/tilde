@@ -35,7 +35,8 @@ std::vector<baked_light_t> collect_lights(const map_t &map)
     if (!entry.entity)
       continue;
 
-    const std::optional<scene_light_t> light = try_convert_light_entity_to_scene_light(*entry.entity);
+    const std::optional<scene_light_t> light =
+        try_convert_light_entity_to_scene_light(*entry.entity, get_placed_pose_for_entity(*entry.entity));
     if (!light) continue;
 
     // A light the author left switched off is off for the bake too: baking it

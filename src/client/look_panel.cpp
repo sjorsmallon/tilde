@@ -55,6 +55,8 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Cel", cvars::cvar_id::r_cel_black, 0.0f, 0.5f},
     {"Fill", cvars::cvar_id::r_cel_halftone, 0.0f, 4.0f},
     {"Fill", cvars::cvar_id::r_cel_halftone_paper, 0.0f, 4.0f},
+    {"Fill", cvars::cvar_id::r_cel_halftone_ink, 0.0f, 1.0f},
+    {"Fill", cvars::cvar_id::r_cel_halftone_gamma, 0.5f, 3.0f},
     {"Fill", cvars::cvar_id::r_cel_fill},
     {"Fill", cvars::cvar_id::r_cel_fill_strength},
     {"Fill", cvars::cvar_id::r_cel_fill_spacing, 2.0f, 32.0f},

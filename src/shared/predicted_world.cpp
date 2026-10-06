@@ -52,6 +52,12 @@ void build_reveal_cones(game_session_t& session, const predicted_world_settings_
                        out.reveal_cones);
 }
 
+shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out)
+{
+  return collect_shadow_volumes(session.entity_system, session.bvh, session.owner_of, out.movers,
+                                session.mover_rests, out.shadow_volumes);
+}
+
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out)
 {
@@ -59,6 +65,7 @@ void build_predicted_world(game_session_t& session, const predicted_world_settin
   build_movement_volumes(session, settings, out);
   build_movers(session, settings, out);
   build_reveal_cones(session, settings, out);
+  build_shadow_volumes(session, out);
 }
 
 } // namespace shared
