@@ -188,18 +188,22 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z.
     vec4   beam_settings;
     Beam   beams[MAX_BEAMS];
+    // The box around beam b's cone cut to its range: min at [2b], max at [2b + 1]. beam.vert draws it, so the
+    // beam's shader runs there alone.
+    vec4   beam_boxes[MAX_BEAMS * 2];
     // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
     vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
     // Volume v's live plane counts, floatBitsToInt(shadow_volume_counts[v >> 2][v & 3]): sides in the low byte,
     // back planes in the next; the slots past them are planes at infinity and need no visit.
     vec4   shadow_volume_counts[MAX_SHADOW_VOLUMES / 4];
-    // A sphere (centre xyz, radius w) around drawn volume v's body: its caster and every receiver it lands on.
-    // A ray that misses it draws nothing of the volume; radius 0 is a volume that lands on nothing.
-    vec4   shadow_volume_bounds[MAX_SHADOW_VOLUMES];
+    // The box around drawn volume v's body, its caster's shadow pyramid cut to what it lands on: min at [2v],
+    // max at [2v + 1]. shadow_body.vert draws it, so the body's shader runs there alone; an empty box is a
+    // volume that lands on nothing and draws nothing.
+    vec4   shadow_volume_boxes[MAX_SHADOW_VOLUMES * 2];
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
-    // x = how many of `shadow_volumes` are live, y = r_shadow_volume_alpha, z = 1 when beam.frag draws the volumes,
+    // x = how many of `shadow_volumes` are live, y = r_shadow_volume_alpha, z = 1 when the volumes' bodies are drawn,
     // w = how many of `shadow_occluders` are live.
     vec4       shadow_volume_settings;
     // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).

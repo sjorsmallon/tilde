@@ -70,6 +70,10 @@ struct shadow_volume_t
   linalg::vec3f                                 light_apex        = {0.f, 0.f, 0.f};
   linalg::vec3f                                 light_direction   = {0.f, -1.f, 0.f};
   bool                                          light_directional = false;
+  // The side slots are the silhouette's planes [0, ring_plane_count), then a spot beam's cone planes that cut
+  // the pyramid, then the far cap when `has_far_cap`, in the last slot.
+  uint32_t                                      ring_plane_count = 0;
+  bool                                          has_far_cap      = false;
 };
 
 // What a DRAWN volume lands on or is stopped by (shadow_volume_plan.md ss5): a piece the volume touches, as

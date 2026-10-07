@@ -198,6 +198,7 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
       return refused(shadow_cast_refusal_t::Light_Beside_Caster);
     volume.side_planes[volume.side_plane_count++] = plane_outward_from(edge.a, normal, center);
   }
+  volume.ring_plane_count = volume.side_plane_count;
 
   // The beam clips the pyramid. Both pass through the apex, so a cone plane every silhouette corner is
   // inside of has every ray inside of it too and is left out; one some corner is outside of is a side.
@@ -221,7 +222,10 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
   }
 
   if (const std::optional<Plane> far_cap = try_shadow_light_far_cap(light, center))
+  {
     volume.side_planes[volume.side_plane_count++] = *far_cap;
+    volume.has_far_cap                            = true;
+  }
 
   // The rings for the debug draw: the silhouette chained into its loop (face windings need not agree,
   // so an edge is taken either way round), and each corner down its ray.
@@ -343,11 +347,20 @@ std::optional<aabb_bounds_t> try_compute_drawn_shadow_body_bounds(const shadow_v
   if (!lands)
     return std::nullopt;
 
-  // Every vertex of the pyramid cut to the box, and nothing else: either polytope's corners inside the
-  // other, the pyramid's edges through the box's faces, the box's edges through the side planes. The
-  // bounds of those are the cut's bounds, with no polyhedron built and nothing allocated.
-  constexpr float         TOLERANCE = 0.5f;
-  const Span<const Plane> sides(volume.side_planes.data, volume.side_plane_count);
+  // The silhouette's pyramid with its far cap, which holds the spot-clipped volume and so its body, cut to
+  // the box: every vertex of that cut and nothing else. Either polytope's corners inside the other, the
+  // pyramid's edges (the ray to each far corner, the cap's rim) through the box's faces, the box's edges
+  // through the pyramid's planes. The bounds of those are the cut's bounds, with nothing allocated.
+  if (volume.side_count == 0)
+    return box;
+  constexpr float TOLERANCE   = 0.5f;
+  Array<Plane, SHADOW_VOLUME_SIDE_SLOTS> planes;
+  uint32_t                               plane_count = 0;
+  for (uint32_t index = 0; index < volume.ring_plane_count; ++index)
+    planes[plane_count++] = volume.side_planes[index];
+  if (volume.has_far_cap)
+    planes[plane_count++] = volume.side_planes[volume.side_plane_count - 1];
+  const Span<const Plane> sides(planes.data, plane_count);
   bool                    any    = false;
   aabb_bounds_t           bounds = {};
   const auto consider = [&](const linalg::vec3f& point)
@@ -383,10 +396,11 @@ std::optional<aabb_bounds_t> try_compute_drawn_shadow_body_bounds(const shadow_v
   const float reach = linalg::length(box.max - box.min) + 1.f;
   for (uint32_t side = 0; side < volume.side_count; ++side)
   {
-    const linalg::vec3f near_corner = volume.near_ring[side];
-    consider_segment_through_box_faces(near_corner, volume.far_ring[side]);
+    const linalg::vec3f far_corner = volume.far_ring[side];
     consider_segment_through_box_faces(
-        near_corner, volume.light_directional ? near_corner - volume.light_direction * reach : volume.light_apex);
+        volume.light_directional ? volume.near_ring[side] - volume.light_direction * reach : volume.light_apex,
+        far_corner);
+    consider_segment_through_box_faces(far_corner, volume.far_ring[(side + 1) % volume.side_count]);
   }
 
   const linalg::vec3f corners[8] = {

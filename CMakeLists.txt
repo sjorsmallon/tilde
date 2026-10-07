@@ -693,7 +693,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_unlit.frag
     ${SHADER_SRC_DIR}/mesh_ghost.frag
     ${SHADER_SRC_DIR}/mesh_procedural_blending.frag
+    ${SHADER_SRC_DIR}/beam.vert
     ${SHADER_SRC_DIR}/beam.frag
+    ${SHADER_SRC_DIR}/shadow_body.vert
+    ${SHADER_SRC_DIR}/shadow_body.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/shadow_cutout.frag
     ${SHADER_SRC_DIR}/particle.comp
@@ -749,6 +752,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/peel.glsl
                     ${SHADER_SRC_DIR}/ripple.glsl
                     ${SHADER_SRC_DIR}/reveal.glsl
+                    ${SHADER_SRC_DIR}/shadow_chord.glsl
                     ${SHADER_SRC_DIR}/fog_grid.glsl
                     ${SHADER_SRC_DIR}/dissolve.glsl
                     ${SHADER_SRC_DIR}/simplex_noise.glsl

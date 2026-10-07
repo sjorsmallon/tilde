@@ -213,6 +213,24 @@ int main()
           "and only as wide as the pyramid is there, not as wide as the floor");
     check(!shared::try_compute_drawn_shadow_body_bounds(*crate_volume, Span<const shared::shadow_occluder_t>(&*occluder, 1), 1u << 2).has_value(),
           "a volume the floor was not asked about lands on nothing");
+
+    const shared::shadow_light_t narrow_spot = {.apex                  = {0.f, 200.f, 0.f},
+                                                .direction             = {0.f, -1.f, 0.f},
+                                                .range                 = 400.f,
+                                                .cosine_of_outer_angle = std::cos(linalg::to_radians(6.f))};
+    const std::optional<shared::shadow_volume_t> clipped_volume = try_cast(narrow_spot, crate);
+    const std::optional<shared::shadow_occluder_t> spot_floor =
+        shared::try_cast_shadow_occluder(narrow_spot, floor.planes, floor.face_polygons, 1u, true);
+    check(clipped_volume && clipped_volume->side_plane_count > clipped_volume->ring_plane_count + 1,
+          "a beam narrower than the crate's silhouette cuts its pyramid with cone planes");
+    const std::optional<shared::aabb_bounds_t> clipped_body =
+        clipped_volume && spot_floor
+            ? shared::try_compute_drawn_shadow_body_bounds(*clipped_volume, Span<const shared::shadow_occluder_t>(&*spot_floor, 1), 1u)
+            : std::nullopt;
+    check(clipped_body && clipped_body->min.y <= -91.f && clipped_body->max.y >= -1.f &&
+              clipped_body->min.x <= -15.f && clipped_body->max.x >= 15.f && clipped_body->min.z <= -15.f &&
+              clipped_body->max.z >= 15.f,
+          "the box still holds the body under the crate down to the floor when the cone cuts the pyramid");
     check(occluder && shared::shadow_occluder_is_behind_point(*occluder, {0.f, -500.f, 0.f}), "and so is everything below it");
     check(occluder && !shared::shadow_occluder_pyramid_contains_point(*occluder, {1000.f, -500.f, 0.f}),
           "past the pyramid the floor spans from the light nothing lands on it");
