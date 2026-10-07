@@ -21,9 +21,9 @@ namespace
 
 // renders a leaf field. components are flattened inside an entity so you can just take offsets and walk the size.
 bool render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id,
-                       shared::entity_uid_t uid, const shared::map_t* map, uid_pick_t* pick)
+                       shared::entity_uid_t uid, const shared::map_t& map, uid_pick_t* pick)
 {
-  if (leaf.info->type != FIELD_TYPE_ENTITY_UID || map == nullptr || pick == nullptr)
+  if (leaf.info->type != FIELD_TYPE_ENTITY_UID || pick == nullptr)
     return render_field_widget(base + leaf.offset, *leaf.info, leaf.name.c_str(), id, map);
 
   ImGui::PushID(id);
@@ -35,7 +35,7 @@ bool render_leaf_field(uint8_t* base, const entities::leaf_field_t& leaf, int id
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - pick_button_width - label_width -
                           ImGui::GetStyle().ItemSpacing.x);
   const bool changed =
-      draw_entity_uid_combo(*map, leaf.name.c_str(), *reinterpret_cast<shared::entity_uid_t*>(base + leaf.offset));
+      draw_entity_uid_combo(map, leaf.name.c_str(), *reinterpret_cast<shared::entity_uid_t*>(base + leaf.offset));
   
   ImGui::SameLine();
   if (picking_here)
@@ -119,7 +119,7 @@ bool draw_entity_uid_combo(const shared::map_t& map, const char* label, shared::
 }
 
 bool render_field_widget(void* field_ptr, const field_info_t& field, const char* label, int id,
-                         const shared::map_t* map)
+                         const shared::map_t& map)
 {
   ImGui::PushID(id);
   bool changed = false;
@@ -142,10 +142,7 @@ bool render_field_widget(void* field_ptr, const field_info_t& field, const char*
       changed = ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
       break;
     case FIELD_TYPE_ENTITY_UID:
-      if (map != nullptr)
-        changed = draw_entity_uid_combo(*map, label, *static_cast<shared::entity_uid_t*>(field_ptr));
-      else
-        changed = ImGui::InputScalar(label, ImGuiDataType_U32, field_ptr);
+      changed = draw_entity_uid_combo(map, label, *static_cast<shared::entity_uid_t*>(field_ptr));
       break;
     case FIELD_TYPE_U64:
       changed = ImGui::InputScalar(label, ImGuiDataType_U64, field_ptr);
@@ -280,7 +277,7 @@ bool edit_rotation_as_euler(const char *label, linalg::quatf &rotation)
 }
 
 std::optional<std::string> render_entity_fields_in_an_imgui_window(
-    Span<entities::Entity* const> entities, shared::entity_uid_t uid, const shared::map_t* map,
+    Span<entities::Entity* const> entities, shared::entity_uid_t uid, const shared::map_t& map,
     uid_pick_t* pick)
 {
   if (entities.size() == 0)

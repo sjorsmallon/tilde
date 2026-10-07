@@ -59,6 +59,21 @@ void process_event(const SDL_Event *event);
 // false, so a skipped frame costs the caller nothing but the early return.
 [[nodiscard]] bool new_frame();
 
+// --- GPU timing ---
+// One timestamp after each pass render_frame records, read back when that frame's fence
+// comes round again. The CPU timers (frame_timing) see the GPU only as a fence wait; this
+// is what says which pass the wait was. The last row is the whole frame.
+struct gpu_pass_readout_t
+{
+  const char* name                = nullptr;
+  double      last_milliseconds   = 0.0;
+  double      median_milliseconds = 0.0;
+  double      p95_milliseconds    = 0.0;
+};
+Span<const gpu_pass_readout_t> get_gpu_pass_readouts();
+void                           report_gpu_timing();
+void                           reset_gpu_timing();
+
 // --- Handles ---
 // Renderer-owned storage. Invalid by default; registration returns invalid on
 // failure (already logged) -- the same shape as assets::load_mesh. Submitting a
@@ -129,11 +144,7 @@ enum class shader_t : uint8_t
   // Unlit tint with a fresnel-rim alpha; pair with blend_mode_t::alpha.
   ghost,
   // Unlit tint over an animated noise pattern that reads no texture; runs on view_pass_t::seconds.
-  procedural_blending,
-  // One of a spot beam's four edges (spot_beam_plan.md), a quad mesh_beam_edge.vert widens to
-  // look_settings_t's beam edge pixels on screen and mesh_beam_edge.frag feathers; pair with
-  // blend_mode_t::alpha and cull_mode_t::none. The beam's fill is view_pass_t::beams, not a material.
-  beam_edge
+  procedural_blending
 };
 
 // The renderer's copy of assets::alpha_mode_t; fixed per material at
@@ -391,23 +402,24 @@ inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 // volumes' light uids ride the scene block four to a vec4.
 inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 8;
 static_assert(MAX_SCENE_SHADOW_VOLUMES % 4 == 0);
+// What the drawn volumes are drawn up to (shadow_volume_plan.md ss5); the tail past this is dropped and logged.
+inline constexpr uint32_t MAX_SCENE_SHADOW_OCCLUDERS = 16;
+static_assert(MAX_SCENE_SHADOW_OCCLUDERS % 4 == 0);
 
 // scene.glsl's MAX_BEAMS, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_BEAMS = 8;
 
-// A spot light's beam (spot_beam_plan.md): a pyramid from `apex` along `forward` to a cap `range`
-// away, half as wide there as range * tangent_of_outer_angle. The beam pass fills it over the drawn
-// scene, clipped by the surface under each pixel and cut by the shadow volumes `light` throws.
+// A spot light's beam (spot_beam_plan.md): the light's cone from `apex` along `forward`, reaching
+// `range`. The beam pass fills it over the drawn scene, clipped by the surface under each pixel and
+// cut by the shadow volumes `light` throws, and draws a line where it ends on screen.
 struct beam_t
 {
   linalg::vec3f        apex;
   linalg::vec3f        forward;
-  linalg::vec3f        up;
-  linalg::vec3f        right;
-  float                range                   = 0.0f;
-  float                tangent_of_outer_angle  = 0.0f;
-  linalg::vec3f        color                   = {1.0f, 1.0f, 1.0f};
-  shared::entity_uid_t light                   = shared::null_entity_uid;
+  float                range                 = 0.0f;
+  float                cosine_of_outer_angle = 0.0f;
+  linalg::vec3f        color                 = {1.0f, 1.0f, 1.0f};
+  shared::entity_uid_t light                 = shared::null_entity_uid;
 };
 
 // A world-space box of fog: the colour the air inside scatters, and how much of what is behind it one world unit of it hides.
@@ -730,6 +742,7 @@ struct view_pass_t
   Span<const shared::reveal_cone_t>         reveal_cones = {};
   // Where a shadow_solid draw exists and a shadow_hole one does not (shared/shadow_volume.hpp).
   Span<const shared::shadow_volume_t>       shadow_volumes = {};
+  Span<const shared::shadow_occluder_t>     shadow_occluders = {};
   // Drawn for the FIRST perspective pass of the frame that carries any: there is one fog grid.
   Span<const fog_volume_t>                  fog_volumes = {};
   // Filled by the beam pass after the scene pass, for a perspective pass only. Past MAX_SCENE_BEAMS the tail is dropped.
@@ -816,6 +829,8 @@ struct look_settings_t
   cvars::Beam_Fill beam_fill      = cvars::Beam_Fill::tint; // r_beam_fill
   float   beam_dot_spacing_pixels = 8.0f;  // r_beam_dot_spacing
   float   beam_edge_pixels        = 2.0f;  // r_beam_edge_pixels
+  bool    shadow_volume           = true;  // r_shadow_volume
+  float   shadow_volume_alpha     = 0.25f; // r_shadow_volume_alpha
 };
 
 struct antialiasing_settings_t

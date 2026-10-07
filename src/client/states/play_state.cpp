@@ -2910,6 +2910,13 @@ void Play_State::update(float dt)
   place_input_edges_on_the_tick_timeline(ctx, frame);
   run_predicted_ticks(ctx, frame);
   ctx.visuals.drawn_shadow_volumes = frame.predicted_world_storage.shadow_volumes;
+  ctx.visuals.drawn_shadow_occluders_skipped = shared::collect_shadow_occluders(
+      ctx.world.session.entity_system, ctx.world.session.bvh, ctx.world.session.owner_of,
+      frame.predicted_world_storage.movers, ctx.world.session.mover_rests,
+      Span<const shared::shadow_volume_t>(
+          ctx.visuals.drawn_shadow_volumes.data(),
+          static_cast<uint32_t>(std::min<size_t>(ctx.visuals.drawn_shadow_volumes.size(), renderer::MAX_SCENE_SHADOW_VOLUMES))),
+      ctx.visuals.drawn_shadow_occluders);
   follow_pilot_flight(ctx);
   play_local_movement_sounds(ctx, frame);
 
@@ -3342,20 +3349,25 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 
   scene.ripples = ctx.visuals.team_wall_ripples.ripples;
-  scene.shadow_volumes = ctx.visuals.drawn_shadow_volumes;
+  scene.shadow_volumes   = ctx.visuals.drawn_shadow_volumes;
+  scene.shadow_occluders = ctx.visuals.drawn_shadow_occluders;
   if (ctx.cvars->cl_shadow_volume_debug)
   {
     // The counts and the (caster, light) pairs, printed when they change: the planes move every tick, so they stay out.
     const shared::shadow_volume_report_t& report = ctx.visuals.drawn_shadow_volume_report;
     std::string line = std::format(
         "shadow volumes: lights {} receivers {} casters {} cast {} kept {}{} | refused: beside light {} too many "
-        "planes {} outside beam {} reaching nothing {} | caster/light:",
+        "planes {} outside beam {} reaching nothing {} | occluders {}{} skipped {} | caster/light:",
         report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast, report.kept,
         report.kept > renderer::MAX_SCENE_SHADOW_VOLUMES
             ? std::format(" (ONLY {} DRAWN)", renderer::MAX_SCENE_SHADOW_VOLUMES)
             : std::string{},
         report.refused_beside_light, report.refused_too_many_planes, report.refused_outside_beam,
-        report.culled_reaching_nothing);
+        report.culled_reaching_nothing, ctx.visuals.drawn_shadow_occluders.size(),
+        ctx.visuals.drawn_shadow_occluders.size() > renderer::MAX_SCENE_SHADOW_OCCLUDERS
+            ? std::format(" (ONLY {} USED)", renderer::MAX_SCENE_SHADOW_OCCLUDERS)
+            : std::string{},
+        ctx.visuals.drawn_shadow_occluders_skipped);
     for (const shared::shadow_volume_t& volume : ctx.visuals.drawn_shadow_volumes)
       line += std::format(" {}/{}", volume.caster, volume.light);
     if (line != ctx.visuals.shadow_volume_debug_line)

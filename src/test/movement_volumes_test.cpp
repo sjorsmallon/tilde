@@ -23,6 +23,7 @@
 #include "shapes.hpp"
 #include "canopy.hpp"
 #include "statues.hpp"
+#include "solid_beams.hpp"
 #include "spawned_platforms.hpp"
 
 #include <cmath>
@@ -103,6 +104,12 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
       canopy.carrier_uid = player.entity_id;
 
+  for (entities::Spot_Light_Entity& spot : system.entities_of_type<entities::Spot_Light_Entity>())
+  {
+    spot.switch_state.value = true;
+    spot.solid_beam         = true;
+  }
+
   // A player answers only while frozen.
   for (entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
     player.movement.active_override = entities::Movement_Override::Stasis;
@@ -132,6 +139,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
                                     movers);
   shared::collect_statues(system, movers);
+  shared::collect_solid_beams(system, {}, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -195,6 +203,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a canopy with a carrier is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Player_Entity) > 0,
         "a frozen player is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Spot_Light_Entity) > 0,
+        "a solid beam spot is a mover");
 
   // Not vacuous: if nothing is @predicted the loop above passes by saying
   // nothing, which is the one way this pin could quietly stop measuring.
@@ -735,8 +745,67 @@ static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_
         "turned to face up it reaches up, and its thickness lies across the aim");
 }
 
+static bool piece_contains_point(const shared::collision_piece_t& piece, const linalg::vec3f& point)
+{
+  for (const Plane& plane : piece.planes)
+    if (linalg::dot(point - linalg::vec3f(plane.point), linalg::vec3f(plane.normal)) > 0.f)
+      return false;
+  return true;
+}
+
+static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
+{
+  printf("\n[pin] a solid_beam spot is a pyramid from the fixture to its range, and only while it is on\n");
+
+  shared::Entity_System system;
+  const shared::entity_uid_t uid = system.spawn(entities::entity_type::Spot_Light_Entity);
+  entities::Spot_Light_Entity* spot = system.get<entities::Spot_Light_Entity>(uid);
+  spot->position      = {0.f, 100.f, 0.f};
+  spot->range         = 400.f;
+  spot->outer_degrees = 30.f;
+  spot->solid_beam    = true;
+
+  std::vector<shared::mover_t> movers;
+  shared::collect_solid_beams(system, {}, movers);
+  check(movers.size() == 1 && movers[0].uid == uid, "one switched-on solid beam is one mover");
+  if (movers.size() != 1)
+    return;
+
+  const shared::collision_piece_t& piece = movers[0].pieces[0];
+  const linalg::basis_t basis = linalg::basis_from(spot->orientation);
+  const linalg::vec3f   apex  = spot->position;
+  const linalg::vec3f   axis  = linalg::normalize(basis.forward);
+  const linalg::vec3f   side  = linalg::normalize(basis.right);
+
+  check(piece.planes.size() == shared::SOLID_BEAM_SIDE_COUNT + 1 &&
+            piece.face_polygons.size() == piece.planes.size(),
+        "a plane and a polygon for each side and the cap");
+  check(piece_contains_point(piece, apex + axis * 200.f), "the middle of the axis is inside");
+  check(piece_contains_point(piece, apex + axis * 390.f), "just short of the range is inside");
+  check(!piece_contains_point(piece, apex + axis * 410.f), "past the range is outside");
+  check(!piece_contains_point(piece, apex - axis * 10.f), "behind the fixture is outside");
+  check(piece_contains_point(piece, apex + axis * 300.f + side * 100.f),
+        "inside the half angle at that depth is inside");
+  check(!piece_contains_point(piece, apex + axis * 300.f + side * 300.f),
+        "beside the cone at that depth is outside");
+  check(linalg::length(movers[0].pose_at_tick_start.position - movers[0].pose_at_tick_end.position) == 0.f &&
+            !movers[0].crushes,
+        "equal poses, and it crushes nobody");
+
+  spot->switch_state.value = false;
+  movers.clear();
+  shared::collect_solid_beams(system, {}, movers);
+  check(movers.empty(), "switched off it is not there");
+
+  spot->switch_state.value = true;
+  spot->solid_beam         = false;
+  shared::collect_solid_beams(system, {}, movers);
+  check(movers.empty(), "a spot without solid_beam is not there");
+}
+
 int main()
 {
+  test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range();
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
   test_a_modifier_scales_the_settings_of_a_hull_inside_it();

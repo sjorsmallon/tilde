@@ -6,6 +6,7 @@
 #include "input.hpp"
 #include "key_names.hpp"
 #include "log.hpp"
+#include "renderer.hpp"
 #include "state_manager.hpp"
 #include "hud/announcement.hpp"
 #include "../shared/network/network_types.hpp"
@@ -527,6 +528,18 @@ void frame_reset(const command_context_t &)
 {
   frame_timing::reset();
   client::console::get().print("frame_reset: distribution cleared");
+}
+
+void gpu_report(const command_context_t &)
+{
+  client::renderer::report_gpu_timing();
+  client::console::get().print("gpu_report: written to the terminal");
+}
+
+void gpu_reset(const command_context_t &)
+{
+  client::renderer::reset_gpu_timing();
+  client::console::get().print("gpu_reset: distribution cleared");
 }
 
 } // namespace cvars::commands

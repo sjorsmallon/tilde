@@ -67,14 +67,15 @@ float shadow_margin(vec3 world_position)
     float margin = -1.0;
     const int volume_count = int(scene.shadow_volume_settings.x);
     for (int volume = 0; volume < volume_count; ++volume) {
-        const int first  = volume * MAX_SHADOW_VOLUME_PLANES;
-        float     inside = 1e9;
-        for (int slot = 0; slot < SHADOW_VOLUME_SIDE_SLOTS; ++slot) {
+        const int   first  = volume * MAX_SHADOW_VOLUME_PLANES;
+        const ivec2 counts = shadow_volume_plane_counts(volume);
+        float       inside = 1e9;
+        for (int slot = 0; slot < counts.x; ++slot) {
             const vec4 side = scene.shadow_volumes[first + slot];
             inside = min(inside, (side.w - dot(side.xyz, world_position)) / SHADOW_RIM_UNITS);
         }
         float past_back = -1e9;
-        for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < MAX_SHADOW_VOLUME_PLANES; ++slot) {
+        for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot) {
             const vec4 back = scene.shadow_volumes[first + slot];
             past_back = max(past_back, (dot(back.xyz, world_position) - back.w) / SHADOW_RIM_UNITS);
         }

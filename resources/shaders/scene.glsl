@@ -28,6 +28,10 @@
 // renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
 #define MAX_SHADOW_VOLUMES 8
 #define MAX_SHADOW_VOLUME_PLANES 37
+// renderer.hpp's MAX_SCENE_SHADOW_OCCLUDERS, kept one number by the same assert.
+#define MAX_SHADOW_OCCLUDERS 16
+// shadow_volume.hpp's SHADOW_OCCLUDER_RECEIVES_BIT.
+#define SHADOW_OCCLUDER_RECEIVES (1 << 31)
 // shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its back planes.
 #define SHADOW_VOLUME_SIDE_SLOTS 25
 // renderer.hpp's MAX_SCENE_BEAMS, kept one number by the same assert.
@@ -94,13 +98,11 @@ struct FogVolume {
     vec4 color;
 };
 
-// renderer.hpp's beam_t: a spot's beam as the pyramid beam.frag fills.
+// renderer.hpp's beam_t: a spot's beam as the cone beam.frag fills.
 struct Beam {
-    vec4 apex_range;      // apex xyz, range
-    vec4 forward_tangent; // forward xyz, tan(outer)
-    vec4 up;
-    vec4 right;
-    vec4 color_light;     // rgb the light's colour, w its uid as int bits (floatBitsToInt)
+    vec4 apex_range;     // apex xyz, range
+    vec4 forward_cosine; // forward xyz, cos(outer)
+    vec4 color_light;    // rgb the light's colour, w its uid as int bits (floatBitsToInt)
 };
 
 layout(set = 3, binding = 1) uniform SceneUniform {
@@ -179,25 +181,40 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // rgb = r_pattern_preview_red, _green, _blue, a = r_pattern_preview_strength.
     vec4   pattern_preview_ink;
     // x = r_beam_fill as one of BEAM_FILL_*, y = r_beam_alpha, z = r_beam_dot_spacing in pixels,
-    // w = r_beam_edge_pixels.
+    // w = r_beam_edge_pixels, the width of the line beam.frag draws where a beam ends on screen.
     vec4   beam;
-    // This pass's viewport in pixels: xy where it starts, zw its size. mesh_beam_edge.vert widens an edge by it,
-    // beam.frag finds its line of sight by it.
+    // This pass's viewport in pixels: xy where it starts, zw its size. beam.frag finds its line of sight by it.
     vec4   beam_viewport;
     // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z.
     vec4   beam_settings;
     Beam   beams[MAX_BEAMS];
     // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
     vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
+    // Volume v's live plane counts, floatBitsToInt(shadow_volume_counts[v >> 2][v & 3]): sides in the low byte,
+    // back planes in the next; the slots past them are planes at infinity and need no visit.
+    vec4   shadow_volume_counts[MAX_SHADOW_VOLUMES / 4];
+    // A sphere (centre xyz, radius w) around drawn volume v's body: its caster and every receiver it lands on.
+    // A ray that misses it draws nothing of the volume; radius 0 is a volume that lands on nothing.
+    vec4   shadow_volume_bounds[MAX_SHADOW_VOLUMES];
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
-    // x = how many of `shadow_volumes` are live.
+    // x = how many of `shadow_volumes` are live, y = r_shadow_volume_alpha, z = 1 when beam.frag draws the volumes,
+    // w = how many of `shadow_occluders` are live.
     vec4       shadow_volume_settings;
     // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).
     // In shadow where inside every side plane and outside at least one back plane (reveal.glsl's shadow_margin);
     // an unused slot is (0, 0, 0, 1e9), which neither test ever picks.
     vec4       shadow_volumes[MAX_SHADOW_VOLUMES * MAX_SHADOW_VOLUME_PLANES];
+    // Drawn volume v touches occluder o where bit v of floatBitsToInt(shadow_occluder_bits[o >> 2][o & 3]) is set;
+    // bit 31 (SHADOW_OCCLUDER_RECEIVES) says the piece receives, so the body is drawn down to it rather than only stopped.
+    vec4       shadow_occluder_bits[MAX_SHADOW_OCCLUDERS / 4];
+    // Occluder o's live plane counts as shadow_volume_counts: pyramid planes in the low byte, lit faces in the next.
+    vec4       shadow_occluder_counts[MAX_SHADOW_OCCLUDERS / 4];
+    // Occluder o's plane p is [o * MAX_SHADOW_VOLUME_PLANES + p]: the side slots hold the pyramid the piece spans
+    // from its light, the back slots the piece's lit faces; behind the piece is inside all of both. An unused
+    // slot is (0, 0, 0, 1e9), inside for every point.
+    vec4       shadow_occluders[MAX_SHADOW_OCCLUDERS * MAX_SHADOW_VOLUME_PLANES];
     // x = how many of `fog_volumes` are live, y = the view depth the fog grid starts at, z = the view depth it ends at,
     // w = r_fog_anisotropy.
     vec4       fog_settings;
@@ -219,6 +236,18 @@ vec3 cel_flat_albedo(sampler2D map, vec2 uv, vec3 sampled)
 {
     float flatness = scene.cel_fill_pattern.w;
     return flatness > 0.0 ? mix(sampled, textureLod(map, uv, 1000.0).rgb, flatness) : sampled;
+}
+
+// The live plane counts of volume `volume` / occluder `occluder`: x sides or pyramid planes, y back planes or lit faces.
+ivec2 shadow_volume_plane_counts(int volume)
+{
+    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
+    return ivec2(packed & 0xff, (packed >> 8) & 0xff);
+}
+ivec2 shadow_occluder_plane_counts(int occluder)
+{
+    int packed = floatBitsToInt(scene.shadow_occluder_counts[occluder >> 2][occluder & 3]);
+    return ivec2(packed & 0xff, (packed >> 8) & 0xff);
 }
 
 #endif // SCENE_GLSL

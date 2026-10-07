@@ -37,7 +37,9 @@ namespace client
 // second place that has to agree about culling.
 // `hidden` is what the outliner hid; an icon for something you cannot see is a
 // glyph you cannot click.
-void draw_entity_icons(const shared::map_t& map, const viewport_state_t& view,
-                       Span<const shared::entity_uid_t> hidden);
+void draw_entity_icons(
+    const shared::map_t& map,
+    const viewport_state_t& view,
+    Span<const shared::entity_uid_t> hidden);
 
 } // namespace client

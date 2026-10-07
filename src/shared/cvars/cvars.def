@@ -599,11 +599,13 @@ Debugging :: cvars {
     r_fog_distance:         f32 = 4096.0    @Client    "How far from the camera the fog grid reaches, in world units; fog past it is not drawn, and a shorter reach is a finer grid"
     r_fog_anisotropy:       f32 = 0.5       @Client    "How much of the light fog scatters carries on the way it was going: 0 glows alike from every side, towards 0.9 a beam glows mostly when you look up it at its light"
 
-    r_beam:                 bool = true     @Client    "Draw the beam of every Spot_Light_Entity with `beam` ticked: a pyramid from the fixture to its range, stopped by the world"
+    r_beam:                 bool = true     @Client    "Draw the beam of every Spot_Light_Entity with `beam` ticked: its cone from the fixture to its range, stopped by the world"
     r_beam_alpha:           f32 = 0.12      @Client    "How much a beam tints the air it fills, the same at every length and from every side; the edges carry the beam, the fill only confirms it"
     r_beam_fill:            Beam_Fill = .tint @Client  "What fills a beam: tint is a flat wash, dots a screentone of ink dots with nothing between them, at the same average tint as the wash"
     r_beam_dot_spacing:     f32 = 8.0       @Client    "Pixels between the dots of a screentone beam fill"
-    r_beam_edge_pixels:     f32 = 2.0       @Client    "Width on screen of the four lines along a beam's edges, in the light's colour; 0 draws none"
+    r_beam_edge_pixels:     f32 = 2.0       @Client    "Width on screen of the line drawn where a beam ends on screen, its silhouette and where it lands, in the light's colour; 0 draws none"
+    r_shadow_volume:        bool = true     @Client    "Draw every shadow volume the collision reads as a dark body in the air, lines where it ends on screen and a rim where it lands, the whole volume and not only the part inside a beam"
+    r_shadow_volume_alpha:  f32 = 0.25      @Client    "How much a drawn shadow volume darkens the air it fills, the same at every length and from every side"
 
     r_look_panel:           bool = false    @Client    "Show the look panel: a slider per comic look cvar, and an export and load of their values as looks/<name>.look"
 
@@ -819,6 +821,12 @@ Client_Commands :: commands {
     // is no reason to gate it behind the audit.
     frame_report()                         @Client  "Print the frame time distribution and the worst frames so far"
     frame_reset()                          @Client  "Discard the frame time distribution and start measuring again"
+
+    // The GPU's side of the frame, per pass of render_frame, from timestamps
+    // read back when the frame's fence comes round. frame_report sees the GPU
+    // only as a fence wait; this says which pass the wait was.
+    gpu_report()                           @Client  "Print the GPU time distribution per render pass so far"
+    gpu_reset()                            @Client  "Discard the GPU time distribution and start measuring again"
 
     // What the single worst frame ALLOCATED, by call site. The cumulative
     // mem_report answers "what allocates in this game"; this answers "what

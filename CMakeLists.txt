@@ -577,6 +577,7 @@ add_library(game_shared STATIC
     src/shared/reveal_light.cpp
     src/shared/shadow_volume.cpp
     src/shared/statues.cpp
+    src/shared/solid_beams.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
@@ -692,8 +693,6 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_unlit.frag
     ${SHADER_SRC_DIR}/mesh_ghost.frag
     ${SHADER_SRC_DIR}/mesh_procedural_blending.frag
-    ${SHADER_SRC_DIR}/mesh_beam_edge.vert
-    ${SHADER_SRC_DIR}/mesh_beam_edge.frag
     ${SHADER_SRC_DIR}/beam.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/shadow_cutout.frag
@@ -911,7 +910,7 @@ add_library(game_client SHARED
     src/client/editor/connection_lines.cpp
     src/client/editor/entity_outliner.cpp
     src/client/editor/editor_sidebar.cpp
-    src/client/editor/history_panel.cpp
+    src/client/editor/edit_history_panel.cpp
     src/client/input.cpp
     src/client/geometry_renderer.cpp
     src/client/render_assets.cpp

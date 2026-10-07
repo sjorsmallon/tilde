@@ -5,6 +5,7 @@
 #include "hud/announcement.hpp"
 #include "imgui.h"
 #include "log.hpp"
+#include "renderer.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -50,6 +51,8 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Beam", cvars::cvar_id::r_beam_fill},
     {"Beam", cvars::cvar_id::r_beam_dot_spacing, 2.0f, 32.0f},
     {"Beam", cvars::cvar_id::r_beam_edge_pixels, 0.0f, 8.0f},
+    {"Beam", cvars::cvar_id::r_shadow_volume},
+    {"Beam", cvars::cvar_id::r_shadow_volume_alpha, 0.0f, 1.0f},
     {"Cel", cvars::cvar_id::r_cel},
     {"Cel", cvars::cvar_id::r_cel_terminator},
     {"Cel", cvars::cvar_id::r_cel_shadow_edge},
@@ -308,6 +311,14 @@ void draw_look_panel(cvars::cvar_state_t& state)
         draw_value_row(state, row);
     }
     ImGui::PopItemWidth();
+
+    ImGui::SeparatorText("GPU ms per pass (last / median / p95)");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Timestamps read back when the frame's fence comes round; gpu_report "
+                        "prints the full distribution, gpu_reset clears it");
+    for (const renderer::gpu_pass_readout_t& readout : renderer::get_gpu_pass_readouts())
+      ImGui::Text("%-24s %6.3f %6.3f %6.3f", readout.name, readout.last_milliseconds,
+                  readout.median_milliseconds, readout.p95_milliseconds);
 
     ImGui::Separator();
     ImGui::SetNextItemWidth(160.0f);

@@ -322,6 +322,8 @@ bool Tick()
     look.beam_fill               = cvars.r_beam_fill;
     look.beam_dot_spacing_pixels = cvars.r_beam_dot_spacing;
     look.beam_edge_pixels        = cvars.r_beam_edge_pixels;
+    look.shadow_volume           = cvars.r_shadow_volume;
+    look.shadow_volume_alpha     = cvars.r_shadow_volume_alpha;
     look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
     look.misprint_distance = cvars.r_misprint_distance;
     look.fog              = cvars.r_fog;

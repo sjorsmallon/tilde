@@ -19,7 +19,7 @@
 #include "../editor/editor_sidebar.hpp"
 #include "../editor/entity_outliner.hpp"
 #include "../editor/geometry_editor.hpp"
-#include "../editor/history_panel.hpp"
+#include "../editor/edit_history_panel.hpp"
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/brush_tool.hpp"
@@ -1341,7 +1341,7 @@ void Tool_Editor_State::draw_imgui_panels()
       hud::set_announcement("Nothing to rename: select one entity or one whole group");
   }
 
-  if (show_edit_history && draw_history_panel(transaction_system, map, show_edit_history))
+  if (show_edit_history && draw_edit_history_panel(transaction_system, map, show_edit_history))
     geometry_updated_flag = true;
 
   // Icons before the tool's own overlay, and both under the panels: the tool is

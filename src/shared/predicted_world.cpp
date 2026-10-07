@@ -2,6 +2,7 @@
 
 #include "canopy.hpp"
 #include "game_session.hpp"
+#include "solid_beams.hpp"
 #include "spawned_platforms.hpp"
 #include "statues.hpp"
 
@@ -42,6 +43,7 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
   collect_canopies(session.entity_system, settings.tick, settings.state_tick,
                    settings.tick_interval_seconds(), out.movers);
   collect_statues(session.entity_system, out.movers);
+  collect_solid_beams(session.entity_system, session.mover_rests, out.movers);
 }
 
 void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,

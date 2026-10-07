@@ -45,19 +45,24 @@ namespace
 void write_kind_counts_of_weapons(Span<entities::Entity* const> inspected)
 {
   for (entities::Entity* entity : inspected)
+  {
     if (entities::Weapon_Entity* weapon = entities::entity_as<entities::Weapon_Entity>(entity))
-      shared::write_weapon_kind_counts(*weapon);
+    {
+          shared::write_weapon_kind_counts(*weapon);
+    }
+  }
+    
 }
 
 const char* gizmo_drag_name(gizmo_handle_t handle)
 {
   switch (handle.kind)
   {
-  case gizmo_handle_t::kind_t::None:            return "Gizmo drag";
-  case gizmo_handle_t::kind_t::Translate:       return "Move";
-  case gizmo_handle_t::kind_t::Translate_Plane: return "Move";
-  case gizmo_handle_t::kind_t::Rotate:          return "Rotate";
-  case gizmo_handle_t::kind_t::Reshape:         return "Reshape";
+    case gizmo_handle_t::kind_t::None:            return "Gizmo drag";
+    case gizmo_handle_t::kind_t::Translate:       return "Move";
+    case gizmo_handle_t::kind_t::Translate_Plane: return "Move";
+    case gizmo_handle_t::kind_t::Rotate:          return "Rotate";
+    case gizmo_handle_t::kind_t::Reshape:         return "Reshape";
   }
   return "Gizmo drag";
 }
@@ -1486,7 +1491,7 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
     if (!inspector_edit.pending)
       seed_inspector_edit(inspected);
     if (const std::optional<std::string> field =
-            render_entity_fields_in_an_imgui_window(inspected, uid, ctx.map, &uid_pick))
+            render_entity_fields_in_an_imgui_window(inspected, uid, *ctx.map, &uid_pick))
     {
       inspector_edit.pending = true;
       inspector_edit.field   = *field;

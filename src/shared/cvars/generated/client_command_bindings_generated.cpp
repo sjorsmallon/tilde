@@ -249,6 +249,34 @@ bool invoke_frame_reset(Span<std::string_view> args, const command_context_t& co
   return true;
 }
 
+// gpu_report
+bool invoke_gpu_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::gpu_report, args.size());
+    return false;
+  }
+
+  commands::gpu_report(context);
+  return true;
+}
+
+// gpu_reset
+bool invoke_gpu_reset(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::gpu_reset, args.size());
+    return false;
+  }
+
+  commands::gpu_reset(context);
+  return true;
+}
+
 // hitch_report [top]
 bool invoke_hitch_report(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -422,6 +450,8 @@ void bind_client_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::mem_stacks] = &invoke_mem_stacks;
   table.binders[(uint32_t)command_id::frame_report] = &invoke_frame_report;
   table.binders[(uint32_t)command_id::frame_reset] = &invoke_frame_reset;
+  table.binders[(uint32_t)command_id::gpu_report] = &invoke_gpu_report;
+  table.binders[(uint32_t)command_id::gpu_reset] = &invoke_gpu_reset;
   table.binders[(uint32_t)command_id::hitch_report] = &invoke_hitch_report;
   table.binders[(uint32_t)command_id::replay_record] = &invoke_replay_record;
   table.binders[(uint32_t)command_id::replay_play] = &invoke_replay_play;

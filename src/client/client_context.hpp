@@ -511,6 +511,10 @@ struct visual_effects_t
   // The shadow volumes the newest predicted tick was cut with, copied each update so the draw
   // cuts the same volumes the floor did (shadow_volume_plan.md ss5).
   std::vector<shared::shadow_volume_t> drawn_shadow_volumes;
+  // What those volumes are drawn up to, for the first renderer::MAX_SCENE_SHADOW_VOLUMES of them, and how
+  // many pieces outran the plane slots (shadow_volume_plan.md ss5).
+  std::vector<shared::shadow_occluder_t> drawn_shadow_occluders;
+  uint32_t                               drawn_shadow_occluders_skipped = 0;
   // The same cut's counts, and the line cl_shadow_volume_debug last printed for them.
   shared::shadow_volume_report_t       drawn_shadow_volume_report;
   std::string                          shadow_volume_debug_line;

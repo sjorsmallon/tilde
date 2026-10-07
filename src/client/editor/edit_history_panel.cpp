@@ -1,5 +1,5 @@
 #include "entities/generated/entities_tables_generated.hpp"
-#include "history_panel.hpp"
+#include "edit_history_panel.hpp"
 
 #include "../../shared/entities/entity_reflection.hpp"
 #include "imgui.h"
@@ -19,11 +19,11 @@ constexpr size_t MAX_TOOLTIP_LINES = 16;
 std::string describe_field_changes(const diff_entity_modified_t& diff)
 {
   const Span<const field_info_t> fields = entities::entity_info(diff.type).fields;
-  std::string names;
+  auto names = std::string{};
   for (const entities::field_change_t& change : diff.changes)
   {
-    if (!names.empty())
-      names += ", ";
+    if (!names.empty()) names += ", ";
+
     names += change.index < fields.size() ? fields[change.index].name : "?";
   }
   return names;
@@ -56,20 +56,23 @@ std::string describe_diff(const edit_diff_t& diff)
 
 void draw_transaction_tooltip(const transaction_t& transaction)
 {
-  if (!ImGui::IsItemHovered())
-    return;
+  if (!ImGui::IsItemHovered()) return;
 
   ImGui::BeginTooltip();
   for (size_t index = 0; index < transaction.diffs.size() && index < MAX_TOOLTIP_LINES; ++index)
+  {
     ImGui::TextUnformatted(describe_diff(transaction.diffs[index]).c_str());
+  }
   if (transaction.diffs.size() > MAX_TOOLTIP_LINES)
+  {
     ImGui::TextDisabled("and %zu more", transaction.diffs.size() - MAX_TOOLTIP_LINES);
+  }
   ImGui::EndTooltip();
 }
 
 } // namespace
 
-bool draw_history_panel(Transaction_System& transactions, shared::map_t& map, bool& open)
+bool draw_edit_history_panel(Transaction_System& transactions, shared::map_t& map, bool& open)
 {
   static size_t scrolled_to_applied_count = SIZE_MAX;
 

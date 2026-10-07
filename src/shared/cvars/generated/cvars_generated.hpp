@@ -346,6 +346,8 @@ struct cvar_state_t
   Beam_Fill r_beam_fill;
   float r_beam_dot_spacing;
   float r_beam_edge_pixels;
+  bool r_shadow_volume;
+  float r_shadow_volume_alpha;
   bool r_look_panel;
   network::pascal_string_t<64> sv_skybox;
   bool debug_show_collisions;
@@ -573,29 +575,31 @@ enum class cvar_id : uint16_t
   r_beam_fill = 194,
   r_beam_dot_spacing = 195,
   r_beam_edge_pixels = 196,
-  r_look_panel = 197,
-  sv_skybox = 198,
-  debug_show_collisions = 199,
-  debug_show_hitboxes = 200,
-  debug_show_navmesh = 201,
-  debug_show_box_volumes = 202,
-  debug_hide_geometry = 203,
-  cl_shot_debug_seconds = 204,
-  cl_shadow_volume_debug = 205,
-  debug_show_entity_counts = 206,
-  net_snapshot_debug = 207,
-  sv_event_debug = 208,
-  cl_event_debug = 209,
-  sv_reliable_debug = 210,
-  sv_io_debug = 211,
-  replay_keyframe_seconds = 212,
-  sv_replay_auto = 213,
-  sv_ghost_record = 214,
+  r_shadow_volume = 197,
+  r_shadow_volume_alpha = 198,
+  r_look_panel = 199,
+  sv_skybox = 200,
+  debug_show_collisions = 201,
+  debug_show_hitboxes = 202,
+  debug_show_navmesh = 203,
+  debug_show_box_volumes = 204,
+  debug_hide_geometry = 205,
+  cl_shot_debug_seconds = 206,
+  cl_shadow_volume_debug = 207,
+  debug_show_entity_counts = 208,
+  net_snapshot_debug = 209,
+  sv_event_debug = 210,
+  cl_event_debug = 211,
+  sv_reliable_debug = 212,
+  sv_io_debug = 213,
+  replay_keyframe_seconds = 214,
+  sv_replay_auto = 215,
+  sv_ghost_record = 216,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 215;
+constexpr uint32_t CVAR_COUNT = 217;
 
 enum class command_id : uint16_t
 {
@@ -626,17 +630,19 @@ enum class command_id : uint16_t
   mem_stacks = 24,
   frame_report = 25,
   frame_reset = 26,
-  hitch_report = 27,
-  replay_record = 28,
-  replay_play = 29,
-  replay_stop = 30,
-  replay_pause = 31,
-  replay_speed = 32,
-  replay_seek = 33,
-  replay_skip = 34,
+  gpu_report = 27,
+  gpu_reset = 28,
+  hitch_report = 29,
+  replay_record = 30,
+  replay_play = 31,
+  replay_stop = 32,
+  replay_pause = 33,
+  replay_speed = 34,
+  replay_seek = 35,
+  replay_skip = 36,
 };
 
-constexpr uint32_t COMMAND_COUNT = 35;
+constexpr uint32_t COMMAND_COUNT = 37;
 
 enum cvar_type : uint8_t
 {
@@ -800,6 +806,12 @@ void frame_report(const command_context_t& context);
 // @Client  Discard the frame time distribution and start measuring again
 // usage: frame_reset
 void frame_reset(const command_context_t& context);
+// @Client  Print the GPU time distribution per render pass so far
+// usage: gpu_report
+void gpu_report(const command_context_t& context);
+// @Client  Discard the GPU time distribution and start measuring again
+// usage: gpu_reset
+void gpu_reset(const command_context_t& context);
 // @Client  What the worst frame allocated, by call site
 // usage: hitch_report [top]
 void hitch_report(int32_t top, const command_context_t& context);

@@ -197,6 +197,8 @@ void setpos(float, float, float, const command_context_t&) {}
 void sv_mem_report(int32_t, const command_context_t&) {}
 void frame_report(const command_context_t&) {}
 void frame_reset(const command_context_t&) {}
+void gpu_report(const command_context_t&) {}
+void gpu_reset(const command_context_t&) {}
 void sv_frame_report(const command_context_t&) {}
 void sv_shadow_volume_report(const command_context_t&) {}
 void shadow_volume_report(const command_context_t&) {}

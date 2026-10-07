@@ -336,6 +336,12 @@ prediction writes `ctx.prediction`.
 - A post pass is a `screen_target_t` it writes and a `fullscreen_draw_t` that
   reads one; `render_frame` stays the hand-written ORDER. No pass list, no
   render graph.
+- A spot's `beam` is the light's own CONE, filled and outlined by the beam
+  pass (`beam.frag`) over the HDR target after the scene pass and cut by the
+  shadow volumes its own light throws, never by a shadow map; the fill is one
+  fixed faint alpha times the lit share of the chord, never scaled by depth.
+  A `beam` spot throws volumes; collision reads only those whose light
+  `cuts_geometry`.
 - The material table is passed at the call site, never held in the renderer.
   A material folder is `albedo.png`, `normal.png`, `orm.png`, `height.png`,
   `emissive.png`; an absent map is a default, never a branch, and an absent

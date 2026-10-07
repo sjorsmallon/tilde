@@ -161,6 +161,63 @@ int main()
           "the floor under the far end, outside the beam, is not");
   }
 
+  printf("[pin] the floor a shadow lands on occludes the drawn volume from its lit face onward\n");
+  {
+    const shared::shadow_light_t light = {.apex = {0.f, 200.f, 0.f}, .range = 0.f};
+    const shared::collision_piece_t floor =
+        shared::piece_from_aabb({.center = {0.f, -100.f, 0.f}, .half_extents = {256.f, 8.f, 256.f}});
+    const std::optional<shared::shadow_occluder_t> occluder =
+        shared::try_cast_shadow_occluder(light, floor.planes, floor.face_polygons, 1u << 3, true);
+    check(occluder.has_value(), "a floor under the light occludes");
+    check(occluder && occluder->volume_bits == (1u << 3) && occluder->receives, "for the volumes it was asked about");
+    const shared::shadow_light_t short_light = {.apex = {0.f, 200.f, 0.f}, .range = 150.f};
+    const std::optional<shared::shadow_occluder_t> unbounded =
+        shared::try_cast_shadow_occluder(short_light, floor.planes, floor.face_polygons, 1u, false);
+    check(unbounded && shared::shadow_occluder_pyramid_contains_point(*unbounded, {0.f, -500.f, 0.f}),
+          "a point light's pyramid ignores its range: the volume's own cap bounds the body");
+
+    const shared::collision_piece_t long_floor =
+        shared::piece_from_aabb({.center = {0.f, -100.f, 0.f}, .half_extents = {1024.f, 8.f, 64.f}});
+    const shared::shadow_light_t spot = {.apex                  = {0.f, 200.f, 0.f},
+                                         .direction             = linalg::normalize(linalg::vec3f{1.f, -1.f, 0.f}),
+                                         .range                 = 300.f,
+                                         .cosine_of_outer_angle = std::cos(linalg::to_radians(80.f))};
+    const std::optional<shared::shadow_occluder_t> within_reach =
+        shared::try_cast_shadow_occluder(spot, long_floor.planes, long_floor.face_polygons, 1u, true);
+    check(within_reach.has_value(), "a floor running past a spot's reach is still landed on");
+    check(within_reach && shared::shadow_occluder_pyramid_contains_point(*within_reach, {0.f, 0.f, 0.f}),
+          "on the ray to its near part, within reach");
+    check(within_reach && !shared::shadow_occluder_pyramid_contains_point(*within_reach, {800.f, -50.f, 0.f}),
+          "not on the ray to its far part, which the spot's reach ends before");
+    const shared::collision_piece_t far_floor =
+        shared::piece_from_aabb({.center = {600.f, -100.f, 0.f}, .half_extents = {64.f, 8.f, 64.f}});
+    check(!shared::try_cast_shadow_occluder(spot, far_floor.planes, far_floor.face_polygons, 1u, true).has_value(),
+          "a floor wholly past the reach is landed on by nothing");
+    check(occluder && shared::shadow_occluder_pyramid_contains_point(*occluder, {0.f, 0.f, 0.f}),
+          "the air between the light and the floor lands on it");
+    check(occluder && !shared::shadow_occluder_is_behind_point(*occluder, {0.f, 0.f, 0.f}), "and is not behind it");
+    check(occluder && shared::shadow_occluder_is_behind_point(*occluder, {0.f, -96.f, 0.f}),
+          "the floor's own thickness is behind its lit face");
+
+    const shared::collision_piece_t crate =
+        shared::piece_from_aabb({.center = {0.f, 0.f, 0.f}, .half_extents = {16.f, 16.f, 16.f}});
+    const std::optional<shared::shadow_volume_t> crate_volume = try_cast(light, crate);
+    check(crate_volume.has_value(), "a crate under the light casts");
+    const std::optional<shared::aabb_bounds_t> body =
+        crate_volume && occluder
+            ? shared::try_compute_drawn_shadow_body_bounds(*crate_volume, Span<const shared::shadow_occluder_t>(&*occluder, 1), 1u << 3)
+            : std::nullopt;
+    check(body.has_value(), "the drawn body landing on the floor has bounds");
+    check(body && body->min.y >= -109.f && body->max.y <= 17.f, "from the crate down to the floor's slab");
+    check(body && body->min.x > -40.f && body->max.x < 40.f && body->min.z > -40.f && body->max.z < 40.f,
+          "and only as wide as the pyramid is there, not as wide as the floor");
+    check(!shared::try_compute_drawn_shadow_body_bounds(*crate_volume, Span<const shared::shadow_occluder_t>(&*occluder, 1), 1u << 2).has_value(),
+          "a volume the floor was not asked about lands on nothing");
+    check(occluder && shared::shadow_occluder_is_behind_point(*occluder, {0.f, -500.f, 0.f}), "and so is everything below it");
+    check(occluder && !shared::shadow_occluder_pyramid_contains_point(*occluder, {1000.f, -500.f, 0.f}),
+          "past the pyramid the floor spans from the light nothing lands on it");
+  }
+
   printf("%s\n", failure_count == 0 ? "ALL PASSED" : "FAILURES");
   return failure_count == 0 ? 0 : 1;
 }

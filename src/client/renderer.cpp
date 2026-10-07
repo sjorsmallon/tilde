@@ -3,6 +3,7 @@
 #include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 #include <iostream>
@@ -103,14 +104,6 @@ const uint32_t mesh_procedural_blending_frag_spv[] =
 
 const uint32_t beam_frag_spv[] =
 #include "beam.frag.spv.h"
-    ;
-
-const uint32_t mesh_beam_edge_vert_spv[] =
-#include "mesh_beam_edge.vert.spv.h"
-    ;
-
-const uint32_t mesh_beam_edge_frag_spv[] =
-#include "mesh_beam_edge.frag.spv.h"
     ;
 
 const uint32_t mesh_grid_frag_spv[] =
@@ -782,15 +775,20 @@ struct scene_uniform_t
   float       pattern_preview_cells[4]                      = {}; // x one of pattern.glsl's PATTERN_*, y spacing along, z spacing across, w angle in radians
   float       pattern_preview_shape[4]                      = {}; // x coverage, y the kind's own number, z scroll speed
   float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
-  float       beam[4]                                       = {}; // x one of scene.glsl's BEAM_FILL_*, y the tint alpha, z the dot spacing in pixels, w the edge width in pixels
+  float       beam[4]                                       = {}; // x one of scene.glsl's BEAM_FILL_*, y the tint alpha, z the dot spacing in pixels, w the outline width in pixels
   float       beam_viewport[4]                              = {}; // this pass's viewport in pixels: xy where it starts, zw its size
   float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z
-  float       beams[MAX_SCENE_BEAMS][20]                    = {}; // apex xyz and range, forward xyz and tan(outer), up xyz, right xyz, colour rgb and the light's uid bits
+  float       beams[MAX_SCENE_BEAMS][12]                    = {}; // apex xyz and range, forward xyz and cos(outer), colour rgb and the light's uid bits
   float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
-  float       reveal_settings[4]                            = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
+  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | back plane count << 8, as float bits, at [v / 4][v % 4]
+  float       shadow_volume_bounds[MAX_SCENE_SHADOW_VOLUMES][4]     = {}; // a sphere around drawn volume v's body (caster and receivers): centre xyz, radius w
+  float       reveal_settings[4]                           = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
-  float       shadow_volume_settings[4]                     = {}; // x how many of `shadow_volumes` are live
+  float       shadow_volume_settings[4]                     = {}; // x how many of `shadow_volumes` are live, y r_shadow_volume_alpha, z 1 when the volumes are drawn, w how many of `shadow_occluders` are live
   float       shadow_volumes[MAX_SCENE_SHADOW_VOLUMES][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as normal xyz and dot(normal, point), side slots then back slots; an unused one is (0, 0, 0, 1e9)
+  float       shadow_occluder_bits[MAX_SCENE_SHADOW_OCCLUDERS / 4][4] = {}; // occluder o's volume_bits, bit 31 its receives, at [o / 4][o % 4], as float bits
+  float       shadow_occluder_counts[MAX_SCENE_SHADOW_OCCLUDERS / 4][4] = {}; // occluder o's pyramid plane count | front plane count << 8, as float bits
+  float       shadow_occluders[MAX_SCENE_SHADOW_OCCLUDERS][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as the volumes': pyramid planes in the side slots, the piece's lit faces in the back slots
   float       fog_settings[4]                               = {}; // x how many of `fog_volumes` are live, y the view depth the fog grid starts at, z where it ends, w anisotropy
   float       view_right[4]                                 = {}; // the camera's right, as long as half the view is wide one unit of view depth away
   float       view_up[4]                                    = {}; // the camera's up, as long as half the view is tall
@@ -799,9 +797,12 @@ struct scene_uniform_t
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + 80 * MAX_SCENE_BEAMS +
-                      4 * MAX_SCENE_SHADOW_VOLUMES + 32 * MAX_SCENE_REVEAL_CONES + 16 +
-                      16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES + 48 +
+                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + 48 * MAX_SCENE_BEAMS +
+                      8 * MAX_SCENE_SHADOW_VOLUMES + 16 * MAX_SCENE_SHADOW_VOLUMES +
+                      32 * MAX_SCENE_REVEAL_CONES + 16 +
+                      16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
+                      8 * MAX_SCENE_SHADOW_OCCLUDERS +
+                      16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_OCCLUDERS + 48 +
                       48 * MAX_SCENE_FOG_VOLUMES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
@@ -1000,6 +1001,252 @@ static std::vector<VkFence> g_in_flight_fences;
 
 static uint32_t g_current_frame_idx_in_swapchain = 0;
 static bool g_swapchain_rebuild = false;
+
+enum class gpu_pass_t : uint8_t
+{
+  Particles,
+  Shadows,
+  Fog,
+  Scene,
+  Outline_Mask,
+  Beam,
+  Tonemap,
+  Present,
+  Count
+};
+
+} // namespace renderer
+} // namespace client
+
+template <> struct enum_traits<client::renderer::gpu_pass_t>
+{
+  static constexpr uint32_t count = (uint32_t)client::renderer::gpu_pass_t::Count;
+};
+
+namespace client
+{
+namespace renderer
+{
+
+struct gpu_pass_name_t
+{
+  gpu_pass_t  pass;
+  const char* name;
+};
+
+constexpr Enum_Array<gpu_pass_t, gpu_pass_name_t> GPU_PASS_NAMES = {{
+    {gpu_pass_t::Particles, "particle compute"},
+    {gpu_pass_t::Shadows, "shadow maps"},
+    {gpu_pass_t::Fog, "fog grid"},
+    {gpu_pass_t::Scene, "scene"},
+    {gpu_pass_t::Outline_Mask, "outline mask"},
+    {gpu_pass_t::Beam, "beams + shadow volumes"},
+    {gpu_pass_t::Tonemap, "tonemap + ink"},
+    {gpu_pass_t::Present, "antialiasing + ui"},
+}};
+static_assert(rows_in_enum_order<&gpu_pass_name_t::pass>(GPU_PASS_NAMES),
+              "GPU_PASS_NAMES must list every gpu_pass_t in enum order");
+
+constexpr uint32_t GPU_TIMESTAMPS_PER_FRAME     = (uint32_t)gpu_pass_t::Count + 1;
+constexpr uint32_t GPU_TIMING_BUCKET_COUNT      = 401;
+constexpr double   GPU_TIMING_BUCKET_MILLISECONDS = 0.05;
+
+struct gpu_pass_timing_t
+{
+  uint64_t buckets[GPU_TIMING_BUCKET_COUNT] = {};
+  uint64_t count                             = 0;
+  double   total_milliseconds                = 0.0;
+  double   max_milliseconds                  = 0.0;
+  uint64_t max_frame                         = 0;
+  double   last_milliseconds                 = 0.0;
+};
+
+struct gpu_timing_state_t
+{
+  VkQueryPool pool                               = VK_NULL_HANDLE;
+  double      milliseconds_per_tick              = 0.0;
+  uint64_t    valid_mask                         = 0;
+  bool        recorded[MAX_FRAMES_IN_FLIGHT]     = {};
+  uint64_t    submitted_frame[MAX_FRAMES_IN_FLIGHT] = {};
+  uint64_t    submitted_count                    = 0;
+  Enum_Array<gpu_pass_t, gpu_pass_timing_t> passes;
+  gpu_pass_timing_t                         whole_frame;
+  gpu_pass_readout_t                        readouts[GPU_TIMESTAMPS_PER_FRAME] = {};
+};
+static gpu_timing_state_t g_gpu_timing;
+
+static void create_gpu_timing(uint32_t graphics_family)
+{
+  uint32_t queue_family_count = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(g_physical_device, &queue_family_count, nullptr);
+  std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
+  vkGetPhysicalDeviceQueueFamilyProperties(g_physical_device, &queue_family_count,
+                                           queue_families.data());
+  const uint32_t valid_bits = queue_families[graphics_family].timestampValidBits;
+  if (valid_bits == 0)
+  {
+    log_warning("[renderer] the graphics queue writes no timestamps; gpu_report is empty");
+    return;
+  }
+
+  VkPhysicalDeviceProperties properties{};
+  vkGetPhysicalDeviceProperties(g_physical_device, &properties);
+  g_gpu_timing.milliseconds_per_tick = (double)properties.limits.timestampPeriod * 1.0e-6;
+  g_gpu_timing.valid_mask = valid_bits >= 64 ? ~0ull : ((1ull << valid_bits) - 1);
+
+  VkQueryPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+  pool_info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+  pool_info.queryCount = MAX_FRAMES_IN_FLIGHT * GPU_TIMESTAMPS_PER_FRAME;
+  if (vkCreateQueryPool(g_device, &pool_info, nullptr, &g_gpu_timing.pool) != VK_SUCCESS)
+    fatal_error("[renderer] failed to create the timestamp query pool");
+}
+
+static void destroy_gpu_timing()
+{
+  if (g_gpu_timing.pool != VK_NULL_HANDLE)
+    vkDestroyQueryPool(g_device, g_gpu_timing.pool, nullptr);
+  g_gpu_timing.pool = VK_NULL_HANDLE;
+}
+
+static void record_gpu_pass_sample(gpu_pass_timing_t& timing, double milliseconds, uint64_t frame)
+{
+  const uint32_t index = milliseconds <= 0.0
+                             ? 0
+                             : (uint32_t)(milliseconds / GPU_TIMING_BUCKET_MILLISECONDS);
+  timing.buckets[index >= GPU_TIMING_BUCKET_COUNT ? GPU_TIMING_BUCKET_COUNT - 1 : index]++;
+  timing.count++;
+  timing.total_milliseconds += milliseconds;
+  timing.last_milliseconds = milliseconds;
+  if (milliseconds > timing.max_milliseconds)
+  {
+    timing.max_milliseconds = milliseconds;
+    timing.max_frame        = frame;
+  }
+}
+
+static double gpu_pass_percentile(const gpu_pass_timing_t& timing, double fraction)
+{
+  if (timing.count == 0)
+    return 0.0;
+  const uint64_t target = (uint64_t)((double)timing.count * fraction);
+  uint64_t       seen   = 0;
+  for (uint32_t index = 0; index < GPU_TIMING_BUCKET_COUNT; ++index)
+  {
+    seen += timing.buckets[index];
+    if (seen > target)
+      return (index + 0.5) * GPU_TIMING_BUCKET_MILLISECONDS;
+  }
+  return timing.max_milliseconds;
+}
+
+static void begin_gpu_timing(VkCommandBuffer cmd, uint32_t frame)
+{
+  if (g_gpu_timing.pool == VK_NULL_HANDLE)
+    return;
+  const uint32_t first = frame * GPU_TIMESTAMPS_PER_FRAME;
+  vkCmdResetQueryPool(cmd, g_gpu_timing.pool, first, GPU_TIMESTAMPS_PER_FRAME);
+  vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_gpu_timing.pool, first);
+}
+
+static void mark_gpu_pass_end(VkCommandBuffer cmd, uint32_t frame, gpu_pass_t pass)
+{
+  if (g_gpu_timing.pool == VK_NULL_HANDLE)
+    return;
+  vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_gpu_timing.pool,
+                      frame * GPU_TIMESTAMPS_PER_FRAME + (uint32_t)pass + 1);
+}
+
+static void mark_gpu_timing_submitted(uint32_t frame)
+{
+  if (g_gpu_timing.pool == VK_NULL_HANDLE)
+    return;
+  g_gpu_timing.recorded[frame]        = true;
+  g_gpu_timing.submitted_frame[frame] = g_gpu_timing.submitted_count++;
+}
+
+static void collect_gpu_timing(uint32_t frame)
+{
+  if (g_gpu_timing.pool == VK_NULL_HANDLE || !g_gpu_timing.recorded[frame])
+    return;
+  g_gpu_timing.recorded[frame] = false;
+
+  uint64_t stamps[GPU_TIMESTAMPS_PER_FRAME] = {};
+  const VkResult result = vkGetQueryPoolResults(
+      g_device, g_gpu_timing.pool, frame * GPU_TIMESTAMPS_PER_FRAME, GPU_TIMESTAMPS_PER_FRAME,
+      sizeof(stamps), stamps, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+  if (result != VK_SUCCESS)
+  {
+    log_error("[renderer] timestamp readback failed ({})", (int32_t)result);
+    return;
+  }
+
+  const uint64_t submitted = g_gpu_timing.submitted_frame[frame];
+  for (uint32_t index = 0; index < (uint32_t)gpu_pass_t::Count; ++index)
+  {
+    const uint64_t ticks = (stamps[index + 1] - stamps[index]) & g_gpu_timing.valid_mask;
+    record_gpu_pass_sample(g_gpu_timing.passes[(gpu_pass_t)index],
+                           (double)ticks * g_gpu_timing.milliseconds_per_tick, submitted);
+  }
+  const uint64_t whole_ticks =
+      (stamps[GPU_TIMESTAMPS_PER_FRAME - 1] - stamps[0]) & g_gpu_timing.valid_mask;
+  record_gpu_pass_sample(g_gpu_timing.whole_frame,
+                         (double)whole_ticks * g_gpu_timing.milliseconds_per_tick, submitted);
+}
+
+Span<const gpu_pass_readout_t> get_gpu_pass_readouts()
+{
+  const auto fill = [](gpu_pass_readout_t& readout, const char* name,
+                       const gpu_pass_timing_t& timing)
+  {
+    readout.name                = name;
+    readout.last_milliseconds   = timing.last_milliseconds;
+    readout.median_milliseconds = gpu_pass_percentile(timing, 0.50);
+    readout.p95_milliseconds    = gpu_pass_percentile(timing, 0.95);
+  };
+  for (uint32_t index = 0; index < (uint32_t)gpu_pass_t::Count; ++index)
+    fill(g_gpu_timing.readouts[index], GPU_PASS_NAMES[(gpu_pass_t)index].name,
+         g_gpu_timing.passes[(gpu_pass_t)index]);
+  fill(g_gpu_timing.readouts[(uint32_t)gpu_pass_t::Count], "whole frame", g_gpu_timing.whole_frame);
+  return Span<const gpu_pass_readout_t>(g_gpu_timing.readouts, GPU_TIMESTAMPS_PER_FRAME);
+}
+
+void report_gpu_timing()
+{
+  if (g_gpu_timing.pool == VK_NULL_HANDLE)
+  {
+    std::printf("[gpu-timing] the graphics queue writes no timestamps\n");
+    return;
+  }
+  if (g_gpu_timing.whole_frame.count == 0)
+  {
+    std::printf("[gpu-timing] no frames measured yet\n");
+    return;
+  }
+  std::printf("\n[gpu-timing] %llu frames measured, %.3f ns per tick, read two frames late\n",
+              (unsigned long long)g_gpu_timing.whole_frame.count,
+              g_gpu_timing.milliseconds_per_tick * 1.0e6);
+  std::printf("[gpu-timing]   %-24s %8s %8s %8s %8s %9s %12s\n", "pass", "p50", "p95", "p99",
+              "mean", "max", "max frame");
+  const auto print_row = [](const char* name, const gpu_pass_timing_t& timing)
+  {
+    std::printf("[gpu-timing]   %-24s %8.3f %8.3f %8.3f %8.3f %9.3f %12llu\n", name,
+                gpu_pass_percentile(timing, 0.50), gpu_pass_percentile(timing, 0.95),
+                gpu_pass_percentile(timing, 0.99),
+                timing.count ? timing.total_milliseconds / (double)timing.count : 0.0,
+                timing.max_milliseconds, (unsigned long long)timing.max_frame);
+  };
+  for (uint32_t index = 0; index < (uint32_t)gpu_pass_t::Count; ++index)
+    print_row(GPU_PASS_NAMES[(gpu_pass_t)index].name, g_gpu_timing.passes[(gpu_pass_t)index]);
+  print_row("whole frame", g_gpu_timing.whole_frame);
+  std::printf("[gpu-timing]   (ms; the first pass that writes colour may also hold the vsync wait)\n\n");
+}
+
+void reset_gpu_timing()
+{
+  for (gpu_pass_timing_t& timing : g_gpu_timing.passes)
+    timing = gpu_pass_timing_t{};
+  g_gpu_timing.whole_frame = gpu_pass_timing_t{};
+}
 static uint32_t g_image_index = 0; // Stored between begin_frame and end_frame
 
 // --- Particle System ---
@@ -2049,12 +2296,7 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
 
   const uint32_t *vert_spv  = mesh_vert_spv;
   size_t          vert_size = sizeof(mesh_vert_spv);
-  if (key.state.shader == shader_t::beam_edge)
-  {
-    vert_spv  = mesh_beam_edge_vert_spv;
-    vert_size = sizeof(mesh_beam_edge_vert_spv);
-  }
-  else if (skinned)
+  if (skinned)
   {
     vert_spv  = mesh_skinned_vert_spv;
     vert_size = sizeof(mesh_skinned_vert_spv);
@@ -2095,10 +2337,6 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   case shader_t::procedural_blending:
     frag_spv  = mesh_procedural_blending_frag_spv;
     frag_size = sizeof(mesh_procedural_blending_frag_spv);
-    break;
-  case shader_t::beam_edge:
-    frag_spv  = mesh_beam_edge_frag_spv;
-    frag_size = sizeof(mesh_beam_edge_frag_spv);
     break;
   case shader_t::grid:
     frag_spv  = lightmapped ? mesh_grid_lightmapped_frag_spv : mesh_grid_frag_spv;
@@ -7057,9 +7295,11 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
         (float)(written_cone_count - first_of_kind);
   }
 
-  if (pass.shadow_volumes.size() > MAX_SCENE_SHADOW_VOLUMES)
+  static size_t most_shadow_volumes_warned_about = MAX_SCENE_SHADOW_VOLUMES;
+  if (pass.shadow_volumes.size() > most_shadow_volumes_warned_about)
   {
-    log_error("[renderer] this view pass carries {} shadow volumes; only the first {} cut anything",
+    most_shadow_volumes_warned_about = pass.shadow_volumes.size();
+    log_warning("[renderer] this view pass carries {} shadow volumes; only the first {} cut anything",
               pass.shadow_volumes.size(), MAX_SCENE_SHADOW_VOLUMES);
   }
   size_t written_volume_count = 0;
@@ -7093,8 +7333,64 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     static_assert(sizeof(volume.light) == sizeof(float));
     memcpy(&scene.shadow_volume_lights[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume.light, sizeof(float));
+    const uint32_t volume_counts = volume.side_plane_count | (volume.back_plane_count << 8);
+    memcpy(&scene.shadow_volume_counts[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
+           &volume_counts, sizeof(float));
+
+    const std::optional<shared::aabb_bounds_t> body_bounds = shared::try_compute_drawn_shadow_body_bounds(
+        volume,
+        Span<const shared::shadow_occluder_t>(pass.shadow_occluders.data,
+                                              std::min(pass.shadow_occluders.count, MAX_SCENE_SHADOW_OCCLUDERS)),
+        1u << (written_volume_count - 1));
+    const linalg::vec3 body_center = body_bounds ? get_aabb_center(*body_bounds) : linalg::vec3{};
+    float*             bounds_out  = scene.shadow_volume_bounds[written_volume_count - 1];
+    bounds_out[0]                  = body_center.x;
+    bounds_out[1]                  = body_center.y;
+    bounds_out[2]                  = body_center.z;
+    bounds_out[3] = body_bounds ? linalg::length(body_bounds->max - body_center) : 0.0f;
   }
   scene.shadow_volume_settings[0] = (float)written_volume_count;
+
+  if (pass.shadow_occluders.size() > MAX_SCENE_SHADOW_OCCLUDERS)
+  {
+    log_error("[renderer] this view pass carries {} shadow occluders; only the first {} end a drawn volume",
+              pass.shadow_occluders.size(), MAX_SCENE_SHADOW_OCCLUDERS);
+  }
+  size_t written_occluder_count = 0;
+  for (const shared::shadow_occluder_t& occluder : pass.shadow_occluders)
+  {
+    if (written_occluder_count == MAX_SCENE_SHADOW_OCCLUDERS)
+      break;
+    float* out = scene.shadow_occluders[written_occluder_count++];
+    for (uint32_t slot = 0; slot < shared::MAX_SHADOW_VOLUME_PLANES; ++slot)
+    {
+      float*       plane_out = out + 4 * slot;
+      const bool   pyramid   = slot < shared::SHADOW_VOLUME_SIDE_SLOTS;
+      const Plane* plane     = nullptr;
+      if (pyramid && slot < occluder.pyramid_plane_count)
+        plane = &occluder.pyramid_planes[slot];
+      else if (!pyramid && slot - shared::SHADOW_VOLUME_SIDE_SLOTS < occluder.front_plane_count)
+        plane = &occluder.front_planes[slot - shared::SHADOW_VOLUME_SIDE_SLOTS];
+      if (plane == nullptr)
+      {
+        plane_out[0] = plane_out[1] = plane_out[2] = 0.0f;
+        plane_out[3] = 1.0e9f;
+        continue;
+      }
+      plane_out[0] = plane->normal.x;
+      plane_out[1] = plane->normal.y;
+      plane_out[2] = plane->normal.z;
+      plane_out[3] = linalg::dot(plane->normal, plane->point);
+    }
+    const uint32_t word = occluder.volume_bits | (occluder.receives ? shared::SHADOW_OCCLUDER_RECEIVES_BIT : 0u);
+    static_assert(sizeof(word) == sizeof(float));
+    memcpy(&scene.shadow_occluder_bits[(written_occluder_count - 1) / 4][(written_occluder_count - 1) % 4],
+           &word, sizeof(float));
+    const uint32_t occluder_counts = occluder.pyramid_plane_count | (occluder.front_plane_count << 8);
+    memcpy(&scene.shadow_occluder_counts[(written_occluder_count - 1) / 4][(written_occluder_count - 1) % 4],
+           &occluder_counts, sizeof(float));
+  }
+  scene.shadow_volume_settings[3] = (float)written_occluder_count;
 
   if (pass.beams.size() > MAX_SCENE_BEAMS)
   {
@@ -7116,18 +7412,12 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     out[4]  = beam.forward.x;
     out[5]  = beam.forward.y;
     out[6]  = beam.forward.z;
-    out[7]  = beam.tangent_of_outer_angle;
-    out[8]  = beam.up.x;
-    out[9]  = beam.up.y;
-    out[10] = beam.up.z;
-    out[12] = beam.right.x;
-    out[13] = beam.right.y;
-    out[14] = beam.right.z;
-    out[16] = beam.color.x;
-    out[17] = beam.color.y;
-    out[18] = beam.color.z;
+    out[7]  = beam.cosine_of_outer_angle;
+    out[8]  = beam.color.x;
+    out[9]  = beam.color.y;
+    out[10] = beam.color.z;
     static_assert(sizeof(beam.light) == sizeof(float));
-    memcpy(&out[19], &beam.light, sizeof(float));
+    memcpy(&out[11], &beam.light, sizeof(float));
   }
 
   // Read back out of the projection, for record_skybox_draw's reason.
@@ -8745,6 +9035,7 @@ bool init(SDL_Window *window)
                    &g_graphics_queue);
   vkGetDeviceQueue(g_device, indices.present_family.value(), 0,
                    &g_present_queue);
+  create_gpu_timing(indices.graphics_family.value());
 
   // The acceleration structure entry points are extension functions the loader
   // does not export; a driver that enabled the extension and exports none of
@@ -9161,6 +9452,7 @@ void shutdown()
   }
 
   vkDestroyCommandPool(g_device, g_command_pool, nullptr);
+  destroy_gpu_timing();
 
   destroy_debug_resources();
   destroy_ui_resources();
@@ -9223,6 +9515,7 @@ bool new_frame()
 
   vkWaitForFences(g_device, 1, &g_in_flight_fences[g_current_frame_idx_in_swapchain], VK_TRUE,
                   UINT64_MAX);
+  collect_gpu_timing(g_current_frame_idx_in_swapchain);
 
   const VkResult result =
       vkAcquireNextImageKHR(g_device, g_swapchain, UINT64_MAX,
@@ -9286,10 +9579,12 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
                   const tonemap_settings_t &tonemap, const look_settings_t &look,
                   const antialiasing_settings_t &antialiasing, const shadow_settings_t &shadows)
 {
-  VkCommandBuffer cmd = g_command_buffers[g_current_frame_idx_in_swapchain];
+  VkCommandBuffer cmd   = g_command_buffers[g_current_frame_idx_in_swapchain];
+  const uint32_t  frame = g_current_frame_idx_in_swapchain;
 
   // Before anything is recorded: a pool rebuild waits for the device.
   ensure_shadow_pool(shadows);
+  begin_gpu_timing(cmd, frame);
 
   // 1. Particle compute, OUTSIDE the render pass. The ordering is a Vulkan fact
   //    rather than a caller decision, which is why emitters ride the pass
@@ -9297,6 +9592,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   for (const view_pass_t &pass : passes)
     for (const particle_emitter_parameters_t &emitter : pass.particles)
       record_particle_compute(cmd, emitter);
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Particles);
 
   // 2. Everything ImGui, CPU-side, before the pass opens: world labels project
   //    through their OWN pass's view, which is the thing a single global matrix
@@ -9395,6 +9691,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.beam[1]                  = std::clamp(look.beam_alpha, 0.0f, 1.0f);
     scene.beam[2]                  = std::max(look.beam_dot_spacing_pixels, 1.0f);
     scene.beam[3]                  = std::max(look.beam_edge_pixels, 0.0f);
+    scene.shadow_volume_settings[1] = look.shadow_volume ? std::clamp(look.shadow_volume_alpha, 0.0f, 1.0f) : 0.0f;
+    scene.shadow_volume_settings[2] = look.shadow_volume ? 1.0f : 0.0f;
     scene.fog_settings[1]     = FOG_GRID_NEAR;
     scene.fog_settings[2]     = fog_far;
     scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);
@@ -9431,6 +9729,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     for (uint32_t job = 0; job < prepared.job_count; ++job)
       record_shadow_layer(cmd, prepared.jobs[job], pass.draws, skinning, shadows);
   }
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Shadows);
 
   // 4b. The fog grid of the one pass that carries fog, between render passes and ahead of the tonemap that reads it.
   const VkDescriptorSet fogged_pass_set =
@@ -9445,6 +9744,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     fogged_pass.reset();
     record_unused_fog_grid(cmd);
   }
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Fog);
 
   // 5. The SCENE pass, into the HDR target, and every view pass inside it in the
   //    order given. Its framebuffer is indexed by frame in flight rather than by
@@ -9503,6 +9803,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   }
 
   vkCmdEndRenderPass(cmd);
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Scene);
 
   // 5b. The selection outline's mask, against the depth the scene pass just wrote.
   bool any_outlined = false;
@@ -9536,12 +9837,18 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     }
     vkCmdEndRenderPass(cmd);
   }
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Outline_Mask);
 
-  // 5c. The BEAM pass: every perspective pass's beams over the HDR target, against the depth the
-  //     scene pass wrote, which is what lets a shadow volume bite a shaft out of a beam.
+  // 5c. The BEAM pass: every perspective pass's beams and drawn shadow volumes over the HDR target,
+  //     against the depth the scene pass wrote, which is what lets a shadow volume bite a shaft out of a beam.
+  const auto pass_draws_beams = [&](const view_pass_t& pass) -> bool
+  {
+    const bool drawn_volumes = look.shadow_volume && !pass.shadow_volumes.empty();
+    return (!pass.beams.empty() || drawn_volumes) && !pass.view.camera.orthographic;
+  };
   bool any_beams = false;
   for (const view_pass_t& pass : passes)
-    any_beams = any_beams || (!pass.beams.empty() && !pass.view.camera.orthographic);
+    any_beams = any_beams || pass_draws_beams(pass);
 
   if (any_beams)
   {
@@ -9554,7 +9861,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index)
     {
       const view_pass_t& pass = passes[pass_index];
-      if (pass.beams.empty() || pass.view.camera.orthographic)
+      if (!pass_draws_beams(pass))
         continue;
       const VkDescriptorSet pass_set = resolve_pass_set(pass.lightmap);
       if (pass_set == VK_NULL_HANDLE)
@@ -9564,6 +9871,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     }
     vkCmdEndRenderPass(cmd);
   }
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Beam);
 
   // 6. The TONEMAPPED pass: the curve and the ink. The draw covers every pixel,
   //    which is why the attachment needs no clear.
@@ -9619,6 +9927,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       std::max(look.misprint_distance, 1.0f)};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Tonemap);
 
   // 7. The PRESENT pass. The antialiasing draw is first and covers every pixel,
   //    for the same reason; switched off it copies the frame through.
@@ -9648,6 +9957,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
   vkCmdEndRenderPass(cmd);
+  mark_gpu_pass_end(cmd, frame, gpu_pass_t::Present);
 
   if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
   {
@@ -9675,6 +9985,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     log_error("[renderer] failed to submit the frame command buffer");
     return;
   }
+  mark_gpu_timing_submitted(frame);
 
   VkSwapchainKHR swapchains[] = {g_swapchain};
 

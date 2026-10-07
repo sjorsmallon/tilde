@@ -616,7 +616,8 @@ Point_Light_Entity :: entity is Colorable, Switchable {
     range: f32 = 256.0                  @Editable
 }
 
-Spot_Light_Entity :: entity is Colorable, Switchable {
+// @predicted because a solid_beam spot is a mover (shared/solid_beams.hpp): the cut is a function of replicated state.
+Spot_Light_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:      Enabled
     light:         Light
     rides:         Rides
@@ -629,8 +630,10 @@ Spot_Light_Entity :: entity is Colorable, Switchable {
     // being rejected, and the editor cone draws what the value says.
     inner_degrees: f32 = 20.0           @Editable
     outer_degrees: f32 = 35.0           @Editable
-    // Draws the light's reach as a pyramid in the air, from the fixture to its range (spot_beam_plan.md).
+    // Draws the light's reach as a cone of tinted air, from the fixture to its range (spot_beam_plan.md).
     beam:          bool = false         @Editable
+    // The cone is a solid others stand on and bump into, from the fixture to its range (solid_beams.hpp).
+    solid_beam:    bool = false         @Editable
 }
 
 // No range and no position falloff -- a directional light is a direction and a

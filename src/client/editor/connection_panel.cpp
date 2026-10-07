@@ -409,7 +409,7 @@ void draw_payload_editor(const shared::map_t& map, shared::connection_t &row)
   for (uint32_t index = 0; index < fields.size(); ++index)
   {
     const field_info_t &field = fields[index];
-    render_field_widget(payload + field.offset, field, field.name, (int)index, &map);
+    render_field_widget(payload + field.offset, field, field.name, (int)index, map);
   }
   ImGui::Unindent();
 }
