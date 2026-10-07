@@ -43,7 +43,6 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
   collect_canopies(session.entity_system, settings.tick, settings.state_tick,
                    settings.tick_interval_seconds(), out.movers);
   collect_statues(session.entity_system, out.movers);
-  collect_solid_beams(session.entity_system, session.mover_rests, out.movers);
 }
 
 void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
@@ -60,6 +59,11 @@ shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_w
                                 session.mover_rests, out.shadow_volumes);
 }
 
+void build_solid_beams(game_session_t& session, predicted_world_storage_t& out)
+{
+  collect_solid_beams(session.entity_system, session.mover_rests, out.shadow_volumes, out.movers);
+}
+
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out)
 {
@@ -68,6 +72,7 @@ void build_predicted_world(game_session_t& session, const predicted_world_settin
   build_movers(session, settings, out);
   build_reveal_cones(session, settings, out);
   build_shadow_volumes(session, out);
+  build_solid_beams(session, out);
 }
 
 } // namespace shared

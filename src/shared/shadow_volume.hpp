@@ -61,6 +61,9 @@ struct shadow_volume_t
   entity_uid_t                                  light      = null_entity_uid;
   // The light's cuts_geometry: only such a volume is read by collision; one thrown for a beam alone cuts the beam.
   bool                                          cuts_geometry = true;
+  // Some receiver's bounds are within it. The collect puts the volumes that cut geometry AND reach one first,
+  // so the renderer's few slots hold what changes the floor before what only darkens a beam.
+  bool                                          reaches_receiver = false;
   // Which piece cast it, in the collect's visiting order (static pieces, then every mover's), so the drawn
   // volume's occluders can leave the caster itself out; an owner uid cannot, two unowned brushes share one.
   uint32_t                                      caster_piece = 0;
@@ -117,8 +120,9 @@ struct shadow_light_t
   float         cosine_of_outer_angle = -2.f;
   // The light's cuts_geometry, carried onto every volume it throws.
   bool          cuts_geometry         = true;
-  // The spot draws its beam (spot_beam_plan.md ss5): its volumes are kept whether or not one reaches a receiver.
-  bool          draws_beam            = false;
+  // The spot draws its beam (spot_beam_plan.md ss5) or is solid as one (solid_beams.hpp): its volumes are kept
+  // whether or not one reaches a receiver, since the beam itself reads them.
+  bool          keeps_every_volume    = false;
 };
 
 // Where a light's reach ends, as the plane that caps its volumes: a spot's is square to its direction, a
@@ -126,8 +130,8 @@ struct shadow_light_t
 // has none. Normal points away from the light.
 [[nodiscard]] std::optional<Plane> try_shadow_light_far_cap(const shadow_light_t& light, const linalg::vec3f& center);
 
-// The one fold from the three light types into a shadow light: a switched-on Point, Spot or
-// Directional light whose `cuts_geometry` is set, or a Spot whose `beam` is, at `pose`. Empty is "casts no volume".
+// The one fold from the three light types into a shadow light: a switched-on Point, Spot or Directional light
+// whose `cuts_geometry` is set, or a Spot whose `beam` or `solid_beam` is, at `pose`. Empty is "casts no volume".
 [[nodiscard]] std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entity& entity,
                                                                          const path_pose_t&      pose);
 
@@ -203,9 +207,11 @@ struct shadow_volume_report_t
 
 // Every cuts_geometry light against every caster piece: every static piece in the BVH whose owner is
 // switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
-// every mover, at the end-of-tick pose the movers were already cut at; a light that rides one is
+// every mover but a solid beam (light casts no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
 // read at the same pose. A volume that touches no receiver's bounds is dropped unless its light draws
-// a beam the volume cuts: nothing else would read it, and the scene block holds few.
+// a beam the volume cuts: nothing else would read it, and the scene block holds few. The kept list is
+// ordered, stably, with the volumes that cut geometry and reach a receiver first: the renderer draws the
+// first MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a platform past that.
 shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               const mover_rests_t& rests, std::vector<shadow_volume_t>& out);

@@ -30,7 +30,7 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
   }
   if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity))
   {
-    if ((!spot->light.cuts_geometry && !spot->beam) || !light_is_switched_on(entity))
+    if ((!spot->light.cuts_geometry && !spot->beam && !spot->solid_beam) || !light_is_switched_on(entity))
       return std::nullopt;
     return shadow_light_t{.uid                   = spot->entity_id,
                           .apex                  = pose.position,
@@ -38,7 +38,7 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                           .range                 = spot->range,
                           .cosine_of_outer_angle = std::cos(linalg::to_radians(spot->outer_degrees)),
                           .cuts_geometry         = spot->light.cuts_geometry,
-                          .draws_beam            = spot->beam};
+                          .keeps_every_volume    = spot->beam || spot->solid_beam};
   }
   if (const entities::Directional_Light_Entity* directional =
           entities::entity_as<entities::Directional_Light_Entity>(&entity))
@@ -627,10 +627,12 @@ struct visited_piece_t
 };
 
 // Every piece in the one order both collects agree on, keyed by its place in it: the static pieces
-// in the BVH's order, then every mover's pieces. A mover's pieces cast and occlude; none receives.
+// in the BVH's order, then every mover's pieces. A mover's pieces cast and occlude; none receives. A
+// solid beam is a mover and is light: it casts no shadow and stops none, whichever collect it is in by.
 template <typename Visit_T>
-void for_each_shadow_piece(const Bounding_Volume_Hierarchy& bvh, Span<const entity_uid_t> owner_of,
-                           Span<const piece_role_t> role_of, Span<const mover_t> movers, Visit_T&& visit)
+void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
+                           Span<const entity_uid_t> owner_of, Span<const piece_role_t> role_of,
+                           Span<const mover_t> movers, Visit_T&& visit)
 {
   uint32_t key = 0;
   for (const BVH_Primitive& primitive : bvh.primitives)
@@ -645,6 +647,9 @@ void for_each_shadow_piece(const Bounding_Volume_Hierarchy& bvh, Span<const enti
                           .polygons = primitive.face_polygons});
   }
   for (const mover_t& mover : movers)
+  {
+    if (entities::entity_as<entities::Spot_Light_Entity>(system.try_find(mover.uid)) != nullptr)
+      continue;
     for (const collision_piece_t& piece : mover.pieces)
       visit(visited_piece_t{.key      = key++,
                             .role     = piece_role_t::Casts,
@@ -652,6 +657,7 @@ void for_each_shadow_piece(const Bounding_Volume_Hierarchy& bvh, Span<const enti
                             .bounds   = piece.bounds,
                             .planes   = piece.planes,
                             .polygons = piece.face_polygons});
+  }
 }
 
 } // namespace
@@ -674,13 +680,13 @@ shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const
       receiver_bounds.push_back(primitive.aabb);
   report.receiver_pieces = static_cast<uint32_t>(receiver_bounds.size());
 
-  bool any_light_draws_beam = false;
+  bool any_light_keeps_every_volume = false;
   for (const shadow_light_t& light : lights)
-    any_light_draws_beam = any_light_draws_beam || light.draws_beam;
-  if (lights.empty() || (receiver_bounds.empty() && !any_light_draws_beam))
+    any_light_keeps_every_volume = any_light_keeps_every_volume || light.keeps_every_volume;
+  if (lights.empty() || (receiver_bounds.empty() && !any_light_keeps_every_volume))
     return report;
 
-  for_each_shadow_piece(bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
+  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
   {
     if (piece.role != piece_role_t::Casts)
       return;
@@ -705,15 +711,18 @@ shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const
           reaches_a_receiver = true;
           break;
         }
-      if (!reaches_a_receiver && !light.draws_beam)
+      if (!reaches_a_receiver && !light.keeps_every_volume)
       {
         ++report.culled_reaching_nothing;
         continue;
       }
+      cast.volume.reaches_receiver = reaches_a_receiver;
       out.push_back(cast.volume);
     }
   });
 
+  std::stable_partition(out.begin(), out.end(), [](const shadow_volume_t& volume)
+                        { return volume.cuts_geometry && volume.reaches_receiver; });
   report.kept = static_cast<uint32_t>(out.size());
   return report;
 }
@@ -733,7 +742,7 @@ uint32_t collect_shadow_occluders(const Entity_System& system, const Bounding_Vo
   const std::vector<piece_role_t>   role_of = resolve_piece_roles(system, owner_of);
   uint32_t                          skipped = 0;
 
-  for_each_shadow_piece(bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
+  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
   {
     if (piece.role == piece_role_t::Nothing)
       return;

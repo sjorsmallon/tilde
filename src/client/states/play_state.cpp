@@ -1183,6 +1183,10 @@ static void build_predicted_world_for_input(
   shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
   ctx.visuals.drawn_shadow_volume_report =
       shared::build_shadow_volumes(ctx.world.session, frame.predicted_world_storage);
+  {
+    FRAME_ZONE("build_solid_beams");
+    shared::build_solid_beams(ctx.world.session, frame.predicted_world_storage);
+  }
 
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   shared::collect_reveal_cones(ctx.world.session.entity_system, ctx.world.session.path_links,

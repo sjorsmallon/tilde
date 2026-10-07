@@ -139,7 +139,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
                                     movers);
   shared::collect_statues(system, movers);
-  shared::collect_solid_beams(system, {}, movers);
+  shared::collect_solid_beams(system, {}, {}, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -766,7 +766,7 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
   spot->solid_beam    = true;
 
   std::vector<shared::mover_t> movers;
-  shared::collect_solid_beams(system, {}, movers);
+  shared::collect_solid_beams(system, {}, {}, movers);
   check(movers.size() == 1 && movers[0].uid == uid, "one switched-on solid beam is one mover");
   if (movers.size() != 1)
     return;
@@ -794,18 +794,79 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
 
   spot->switch_state.value = false;
   movers.clear();
-  shared::collect_solid_beams(system, {}, movers);
+  shared::collect_solid_beams(system, {}, {}, movers);
   check(movers.empty(), "switched off it is not there");
 
   spot->switch_state.value = true;
   spot->solid_beam         = false;
-  shared::collect_solid_beams(system, {}, movers);
+  shared::collect_solid_beams(system, {}, {}, movers);
   check(movers.empty(), "a spot without solid_beam is not there");
+}
+
+static bool any_piece_contains_point(const shared::mover_t& mover, const linalg::vec3f& point)
+{
+  for (const shared::collision_piece_t& piece : mover.pieces)
+    if (piece_contains_point(piece, point))
+      return true;
+  return false;
+}
+
+static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
+{
+  printf("\n[pin] a solid_beam is solid where its light reaches: a crate in it leaves a hole behind itself\n");
+
+  shared::Entity_System system;
+  const shared::entity_uid_t uid = system.spawn(entities::entity_type::Spot_Light_Entity);
+  entities::Spot_Light_Entity* spot = system.get<entities::Spot_Light_Entity>(uid);
+  spot->position      = {0.f, 100.f, 0.f};
+  spot->range         = 400.f;
+  spot->outer_degrees = 30.f;
+  spot->solid_beam    = true;
+
+  const linalg::basis_t basis = linalg::basis_from(spot->orientation);
+  const linalg::vec3f   apex  = spot->position;
+  const linalg::vec3f   axis  = linalg::normalize(basis.forward);
+  const linalg::vec3f   side  = linalg::normalize(basis.right);
+
+  const shared::collision_piece_t crate =
+      shared::piece_from_aabb({.center = apex + axis * 200.f, .half_extents = {20.f, 20.f, 20.f}});
+  const shared::shadow_light_t light = {.uid                   = uid,
+                                        .apex                  = apex,
+                                        .direction             = axis,
+                                        .range                 = spot->range,
+                                        .cosine_of_outer_angle = std::cos(linalg::to_radians(30.f)),
+                                        .cuts_geometry         = false,
+                                        .keeps_every_volume    = true};
+  const shared::shadow_cast_t cast = shared::cast_shadow_volume(light, crate.planes, crate.face_polygons, 99);
+  check(cast.refusal == shared::shadow_cast_refusal_t::None, "the crate casts");
+  const shared::shadow_volume_t volumes[] = {cast.volume};
+
+  std::vector<shared::mover_t> movers;
+  shared::collect_solid_beams(system, {}, volumes, movers);
+  check(movers.size() == 1 && movers[0].uid == uid, "still one mover");
+  if (movers.size() != 1)
+    return;
+  const shared::mover_t& beam = movers[0];
+  check(beam.pieces.size() > 1, "the beam is several pieces once something is in it");
+  check(any_piece_contains_point(beam, apex + axis * 100.f), "between the fixture and the crate is solid");
+  check(!any_piece_contains_point(beam, apex + axis * 300.f), "straight behind the crate is not");
+  check(!any_piece_contains_point(beam, apex + axis * 390.f), "nor just short of the range on the axis");
+  check(any_piece_contains_point(beam, apex + axis * 300.f + side * 80.f), "beside the crate's shadow is solid");
+  check(any_piece_contains_point(beam, apex + axis * 200.f + side * 60.f), "beside the crate itself is solid");
+  check(!any_piece_contains_point(beam, apex + axis * 300.f + side * 300.f), "outside the cone is still not");
+
+  uint32_t pieces_holding_a_lit_point = 0;
+  for (const shared::collision_piece_t& piece : beam.pieces)
+    if (piece_contains_point(piece, apex + axis * 300.f + side * 80.f))
+      ++pieces_holding_a_lit_point;
+  check(pieces_holding_a_lit_point == 1, "the pieces are disjoint: a lit point is in exactly one");
+
 }
 
 int main()
 {
   test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range();
+  test_a_solid_beam_is_carved_by_its_own_shadow_volumes();
   test_every_predicted_type_feeds_exactly_one_collect();
   test_a_pad_is_flattened_into_what_the_step_reads();
   test_a_modifier_scales_the_settings_of_a_hull_inside_it();

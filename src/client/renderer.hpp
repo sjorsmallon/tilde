@@ -400,7 +400,7 @@ inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
 // scene.glsl's MAX_SHADOW_VOLUMES, kept one number by the same assert. A multiple of four: the
 // volumes' light uids ride the scene block four to a vec4.
-inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 8;
+inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 16;
 static_assert(MAX_SCENE_SHADOW_VOLUMES % 4 == 0);
 // What the drawn volumes are drawn up to (shadow_volume_plan.md ss5); the tail past this is dropped and logged.
 inline constexpr uint32_t MAX_SCENE_SHADOW_OCCLUDERS = 16;

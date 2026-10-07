@@ -872,6 +872,43 @@ int main()
                 describe(wide_slab_under_spot));
       return 1;
     }
+
+    // The kept list puts the volumes that cut geometry and reach a receiver first: a beam-only spot spawned
+    // before a cutting one still comes after it, so the renderer's cap never drops a hole for a beam.
+    {
+      map_t ordered_map;
+      (void)ordered_map.add_geometry(make_box_brush({0, 100, 0}, {16, 16, 16}));
+      const entity_uid_t platform = ordered_map.add_geometry(make_box_brush({0, 0, 0}, {256, 4, 256}));
+      auto [owner_uid, owner_entity] = spawn_entity(ordered_map, entities::entity_type::Geometry_Owner_Entity);
+      entities::entity_as<entities::Geometry_Owner_Entity>(owner_entity.get())->erased_in_shadow = true;
+      set_owner_uid(ordered_map.find_geometry_by_uid(platform)->value, owner_uid);
+      const auto spawn_spot = [&](bool cuts_geometry)
+      {
+        auto [spot_uid, spot_entity] = spawn_entity(ordered_map, entities::entity_type::Spot_Light_Entity);
+        spot_entity->position        = {0, 300, 0};
+        spot_entity->orientation     = linalg::from_view_angles(0.f, -90.f);
+        entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(spot_entity.get());
+        spot->light.cuts_geometry         = cuts_geometry;
+        spot->beam                        = true;
+        spot->range                       = 2000.f;
+        return spot_uid;
+      };
+      const entity_uid_t beam_only = spawn_spot(false);
+      const entity_uid_t cutting   = spawn_spot(true);
+      game_session_t            ordered_session = build_session(ordered_map);
+      predicted_world_storage_t storage;
+      const shadow_volume_report_t report = build_shadow_volumes(ordered_session, storage);
+      const bool ordered = report.kept == 2 && storage.shadow_volumes[0].light == cutting &&
+                           storage.shadow_volumes[0].cuts_geometry && storage.shadow_volumes[0].reaches_receiver &&
+                           storage.shadow_volumes[1].light == beam_only && !storage.shadow_volumes[1].cuts_geometry;
+      if (!ordered)
+      {
+        log_error("the cutting spot's volume did not come before the beam-only spot's: {} (first light {}, second {})",
+                  describe(report), report.kept > 0 ? storage.shadow_volumes[0].light : 0,
+                  report.kept > 1 ? storage.shadow_volumes[1].light : 0);
+        return 1;
+      }
+    }
   }
 
   // Every object along a ray, nearest first, once each: the editor's click cycle.

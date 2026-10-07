@@ -56,7 +56,8 @@ struct predicted_world_t
   // Moving platforms, collided with at their pose at the END of the tick. The
   // carry is NOT in player_move -- see push_player_by_movers. A landed
   // Platform_Entity and Shrinking_Platform_Entity are in here too, as movers whose two poses are equal,
-  // and so is a growing Extending_Platform_Entity, an oriented box whose length is a clock.
+  // and so is a growing Extending_Platform_Entity, an oriented box whose length is a clock, and a
+  // spot's solid beam, carved by the shadow volumes below and so appended after them.
   Span<const mover_t> movers;
 
   // Where a GEOMETRY_SOLID_WHERE_LIT byte of the disabled set is solid (reveal_light.hpp).
@@ -134,6 +135,8 @@ void build_reveal_cones(game_session_t& session, const predicted_world_settings_
                         predicted_world_storage_t& out);
 // After build_movers: a moving caster's pieces are the movers'. The report is for the two report commands.
 shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out);
+// After build_shadow_volumes: a solid beam is a mover carved by the volumes its own light threw (solid_beams.hpp).
+void build_solid_beams(game_session_t& session, predicted_world_storage_t& out);
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out);
 

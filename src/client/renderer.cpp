@@ -732,6 +732,8 @@ struct gpu_light_t
 constexpr uint32_t MAX_SCENE_LIGHTS = 64;
 // scene.glsl's MAX_RIPPLES; the size assert below keeps the two one number.
 constexpr uint32_t MAX_SCENE_RIPPLES = 16;
+// Bit 16 of a volume's packed counts, above the two byte-wide plane counts: scene.glsl's shadow_volume_cuts_geometry.
+constexpr uint32_t SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT = 1u << 16;
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -794,7 +796,7 @@ struct scene_uniform_t
   float       beams[MAX_SCENE_BEAMS][12]                    = {}; // apex xyz and range, forward xyz and cos(outer), colour rgb and the light's uid bits
   float       beam_boxes[MAX_SCENE_BEAMS][8]                = {}; // the box around beam b's cone, min xyz then max xyz; beam.vert draws it
   float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
-  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | back plane count << 8, as float bits, at [v / 4][v % 4]
+  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | back plane count << 8 | cuts_geometry << 16, as float bits, at [v / 4][v % 4]
   float       shadow_volume_boxes[MAX_SCENE_SHADOW_VOLUMES][8]      = {}; // the box around drawn volume v's body, min xyz then max xyz; shadow_body.vert draws it
   float       reveal_settings[4]                           = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
@@ -835,6 +837,7 @@ constexpr int32_t DEBUG_FLAG_RENDER_PROBE_VISIBILITY  = 1 << 7;
 constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   = 1 << 8;
 constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION         = 1 << 9;
 constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION_CAPTURE = 1 << 10;
+constexpr int32_t DEBUG_FLAG_RENDER_BEAM_TERMS         = 1 << 11;
 
 constexpr uint32_t MAX_VIEW_PASSES_PER_FRAME = 8;
 
@@ -7396,7 +7399,8 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     static_assert(sizeof(volume.light) == sizeof(float));
     memcpy(&scene.shadow_volume_lights[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume.light, sizeof(float));
-    const uint32_t volume_counts = volume.side_plane_count | (volume.back_plane_count << 8);
+    const uint32_t volume_counts = volume.side_plane_count | (volume.back_plane_count << 8) |
+                                   (volume.cuts_geometry ? SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT : 0u);
     memcpy(&scene.shadow_volume_counts[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume_counts, sizeof(float));
 
@@ -7602,6 +7606,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     scene.debug_flags = DEBUG_FLAG_RENDER_REFLECTION_CAPTURE;
     break;
   case cvars::Debug_Channel::ink_normals: break; // the tonemap pass shows the image, the scene draws as usual
+  case cvars::Debug_Channel::beam_terms: scene.debug_flags = DEBUG_FLAG_RENDER_BEAM_TERMS; break;
   }
 
   return scene;
