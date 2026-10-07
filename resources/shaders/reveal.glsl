@@ -61,12 +61,15 @@ float erase_margin(vec3 world_position)
 }
 
 // How deep in shadow, in rim widths: inside every side plane of a volume and past one of its back
-// planes (shared/shadow_volume.hpp). Negative is in no volume's shadow, never below -1.
+// planes (shared/shadow_volume.hpp). Negative is in no volume's shadow, never below -1. A volume thrown for
+// a beam alone is skipped, as collision skips it: the picture and the floor read the same volumes.
 float shadow_margin(vec3 world_position)
 {
     float margin = -1.0;
     const int volume_count = int(scene.shadow_volume_settings.x);
     for (int volume = 0; volume < volume_count; ++volume) {
+        if (!shadow_volume_cuts_geometry(volume))
+            continue;
         const int   first  = volume * MAX_SHADOW_VOLUME_PLANES;
         const ivec2 counts = shadow_volume_plane_counts(volume);
         float       inside = 1e9;

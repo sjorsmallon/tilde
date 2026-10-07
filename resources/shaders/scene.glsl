@@ -26,7 +26,7 @@
 // renderer.hpp's MAX_SCENE_FOG_VOLUMES, kept one number by the same assert.
 #define MAX_FOG_VOLUMES 8
 // renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
-#define MAX_SHADOW_VOLUMES 8
+#define MAX_SHADOW_VOLUMES 16
 #define MAX_SHADOW_VOLUME_PLANES 37
 // renderer.hpp's MAX_SCENE_SHADOW_OCCLUDERS, kept one number by the same assert.
 #define MAX_SHADOW_OCCLUDERS 16
@@ -194,7 +194,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
     vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
     // Volume v's live plane counts, floatBitsToInt(shadow_volume_counts[v >> 2][v & 3]): sides in the low byte,
-    // back planes in the next; the slots past them are planes at infinity and need no visit.
+    // back planes in the next; the slots past them are planes at infinity and need no visit. Bit 16 is the
+    // light's cuts_geometry: only such a volume cuts a shadow_solid or shadow_hole draw, as only it cuts collision.
     vec4   shadow_volume_counts[MAX_SHADOW_VOLUMES / 4];
     // The box around drawn volume v's body, its caster's shadow pyramid cut to what it lands on: min at [2v],
     // max at [2v + 1]. shadow_body.vert draws it, so the body's shader runs there alone; an empty box is a
@@ -247,6 +248,11 @@ ivec2 shadow_volume_plane_counts(int volume)
 {
     int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
     return ivec2(packed & 0xff, (packed >> 8) & 0xff);
+}
+bool shadow_volume_cuts_geometry(int volume)
+{
+    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
+    return (packed & (1 << 16)) != 0;
 }
 ivec2 shadow_occluder_plane_counts(int occluder)
 {
