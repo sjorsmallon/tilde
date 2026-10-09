@@ -36,6 +36,8 @@
 #include "../shared/weapons.hpp"
 #include "../shared/canopy.hpp"
 #include "../shared/statues.hpp"
+#include "../shared/merge.hpp"
+#include "../shared/projectile_sweep.hpp"
 #include "../shared/spawned_platforms.hpp"
 #include "entities/generated/entities/canopy_entity_generated.hpp"
 #include "entities/generated/entities/platform_entity_generated.hpp"
@@ -1733,6 +1735,70 @@ static void test_a_frozen_player_is_a_statue(const cvar_state_t& cvars)
         "nor is it pushed or crushed by it");
 }
 
+// --- 16d'. a merged passenger holds inside the driver, is nobody's target, and shoots from the driver's body ---
+static void test_a_merged_passenger_holds_inside_its_driver(const cvar_state_t& cvars)
+{
+  printf("\n[pin] merge: the passenger holds, lets go once with the velocity it was carried at, and is no target\n");
+
+  const Bounding_Volume_Hierarchy bvh = empty_world();
+  const vec3  start{0.f, 500.f, 0.f};
+  const vec3  carried_velocity{300.f, 200.f, 0.f};
+  const float merge_seconds = 0.5f;
+  Move_Input  jumping{};
+  jumping.jump_pressed    = true;
+  jumping.forward_pressed = true;
+
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    movement.active_override            = entities::Movement_Override::Merged;
+    movement.override_seconds_remaining = merge_seconds;
+
+    hook_probe_t  probe{};
+    move_result_t result{start, carried_velocity};
+    for (int tick = 0; tick < 20; ++tick)
+      result = run_split(cvars, bvh, jumping, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    check(same_vec3(result.position, start), "a passenger does not move, under gravity or its own keys");
+    check(same_vec3(result.velocity, carried_velocity), "and keeps the velocity it is carried at");
+    check(probe.releases == 0, "it has not been let out yet");
+    check(movement.air_jumps_used == 0, "a jump held through it spends nothing");
+
+    for (int tick = 20; tick < 40; ++tick)
+      result = run_split(cvars, bvh, Move_Input{}, result.position, result.velocity, tick_dt, sub_steps,
+                         &movement, {}, nullptr, {}, {}, &probe);
+
+    check(probe.releases == 1, "the merge lets go exactly once");
+    check(probe.released_kind == entities::Movement_Override::Merged, "and says which kind let go");
+    check(same_vec3(probe.release_velocity, carried_velocity), "with the velocity it was carried at");
+    check(movement.active_override == entities::Movement_Override::None, "letting go clears the override");
+  }
+
+  shared::Entity_System      system;
+  const shared::entity_uid_t driver_uid    = system.spawn(entities::entity_type::Player_Entity);
+  const shared::entity_uid_t passenger_uid = system.spawn(entities::entity_type::Player_Entity);
+  entities::Player_Entity*   passenger     = system.get<entities::Player_Entity>(passenger_uid);
+  passenger->movement.active_override            = entities::Movement_Override::Merged;
+  passenger->movement.override_target_uid        = driver_uid;
+  passenger->movement.override_seconds_remaining = 10.f;
+
+  const entities::Player_Entity* found = shared::try_find_passenger_by_driver_uid(system, driver_uid);
+  check(found != nullptr && found->entity_id == passenger_uid, "the driver's passenger is found from the driver");
+  check(shared::try_find_passenger_by_driver_uid(system, passenger_uid) == nullptr, "a passenger carries nobody");
+  check(shared::get_body_uid_for_player_uid(system, passenger_uid) == driver_uid,
+        "a passenger's shots pass through the driver's body");
+  check(shared::get_body_uid_for_player_uid(system, driver_uid) == driver_uid, "a driver's through their own");
+
+  std::vector<shared::mover_t> movers;
+  shared::collect_statues(system, movers);
+  check(movers.empty(), "a passenger is not a statue: nobody stands on one");
+
+  std::vector<shared::projectile_target_t> targets;
+  shared::collect_projectile_targets(system, targets);
+  check(targets.size() == 1 && targets[0].uid == driver_uid, "the pair is one target, and it is the driver");
+}
+
 // --- 16e. a pilot holds while its rocket flies the aim, to a wall, the time, or a second press ---
 static void test_a_pilot_holds_while_its_rocket_flies(const cvar_state_t& cvars)
 {
@@ -2746,6 +2812,7 @@ int main()
   test_a_canopy_carries_its_rider_a_tick_behind(cvars);
   test_a_rider_keeps_its_place_on_a_canopy(cvars);
   test_a_frozen_player_is_a_statue(cvars);
+  test_a_merged_passenger_holds_inside_its_driver(cvars);
   test_a_pilot_holds_while_its_rocket_flies(cvars);
   test_instant_velocity_is_the_input(cvars);
   test_instant_borrowed_speed_is_steered(cvars);

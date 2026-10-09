@@ -11,6 +11,7 @@
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/events/generated/events_generated.hpp"
 #include "../shared/log.hpp"
+#include "../shared/merge.hpp"
 #include "../shared/movement_kernel.hpp"
 #include "../shared/movement_override.hpp"
 #include "../shared/player_constants.hpp"
@@ -399,6 +400,53 @@ static void apply_freeze(server_context_t& context, const pending_contact_t& con
                            .velocity   = {}});
 }
 
+// The player hit becomes the shooter's passenger. One body holds two players and no more, and a
+// player some other override is moving is left to it: each refusal says which.
+static void apply_merge(server_context_t& context, const pending_contact_t& contact,
+                        const shared::contact_merge_t& rule)
+{
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+
+  entities::Player_Entity* passenger = entity_system.get<entities::Player_Entity>(contact.target_uid);
+  if (passenger == nullptr)
+  {
+    impact_or_refuse(context, contact, "a player");
+    return;
+  }
+  entities::Player_Entity* driver = entity_system.get<entities::Player_Entity>(contact.shooter_uid);
+  if (driver == nullptr)
+  {
+    log_error("Merge from uid {} onto uid {} dropped: the shooter is no longer a player",
+              contact.shooter_uid, contact.target_uid);
+    return;
+  }
+  if (driver->health.current_health <= 0 || passenger->health.current_health <= 0)
+    return;
+
+  for (const entities::Player_Entity* player : {driver, passenger})
+  {
+    if (player->movement.active_override != entities::Movement_Override::None)
+    {
+      log_terminal("Merge from uid {} onto uid {} refused: uid {} is under a {} override",
+                   contact.shooter_uid, contact.target_uid, player->entity_id,
+                   to_string(player->movement.active_override));
+      return;
+    }
+    if (shared::try_find_passenger_by_driver_uid(entity_system, player->entity_id) != nullptr)
+    {
+      log_terminal("Merge from uid {} onto uid {} refused: uid {} already carries a passenger",
+                   contact.shooter_uid, contact.target_uid, player->entity_id);
+      return;
+    }
+  }
+
+  passenger->movement.active_override            = entities::Movement_Override::Merged;
+  passenger->movement.override_target_uid        = driver->entity_id;
+  passenger->movement.override_seconds_remaining = rule.seconds;
+  passenger->position                            = driver->position;
+  passenger->velocity                            = driver->velocity;
+}
+
 // Positional: the splash pushes everything a projectile can land on within the radius, measured
 // to each box's CENTER, and does not care what stopped the shot. A zero normal is an airburst.
 static void apply_explode(server_context_t& context, const pending_contact_t& contact,
@@ -531,6 +579,7 @@ static void apply_contact(server_context_t& context, const shared::predicted_wor
   case shared::contact_effect_t::Explode:    apply_explode(context, contact, rule.explode); return;
   case shared::contact_effect_t::Land:       apply_land(context, world, contact); return;
   case shared::contact_effect_t::Leave_Zone: apply_leave_zone(context, contact); return;
+  case shared::contact_effect_t::Merge:      apply_merge(context, contact, rule.merge); return;
   }
 }
 
@@ -581,6 +630,15 @@ static void finish_reloads_that_came_due(server_context_t& context)
   }
 }
 
+static void detach_override(server_context_t& context, entities::Player_Entity& player)
+{
+  player.movement.active_override            = entities::Movement_Override::None;
+  player.movement.override_target_uid        = shared::null_entity_uid;
+  player.movement.override_seconds_remaining = 0.f;
+  shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), player.velocity,
+                        player.movement, {.velocity = player.velocity});
+}
+
 // The reel's other half: player_move is pure and cannot resolve a uid, so the anchor travels as
 // a position and this is the ONE place it is written. An anchor who left, died or dropped the
 // hook detaches here rather than leaving the reeled player pulling toward a stale point --
@@ -599,15 +657,37 @@ static void refresh_reel_anchors(server_context_t& context)
 
     if (anchor == nullptr || anchor->health.current_health <= 0)
     {
-      reeled.movement.active_override            = entities::Movement_Override::None;
-      reeled.movement.override_target_uid        = shared::null_entity_uid;
-      reeled.movement.override_seconds_remaining = 0.f;
-      shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), reeled.velocity,
-                            reeled.movement, {.velocity = reeled.velocity});
+      detach_override(context, reeled);
       continue;
     }
 
     reeled.movement.override_target_position = compute_reel_anchor_for_player(*anchor);
+  }
+}
+
+// The merge's other half, for the reel's reason: a passenger is carried here, once per tick, to where
+// the driver's inputs left the body. A pair either of whom died or left comes apart here.
+static void carry_merged_passengers(server_context_t& context)
+{
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+
+  for (entities::Player_Entity& passenger : entity_system.entities_of_type<entities::Player_Entity>())
+  {
+    if (!shared::player_is_merged_passenger(passenger))
+      continue;
+
+    const entities::Player_Entity* driver =
+        entity_system.get<entities::Player_Entity>(passenger.movement.override_target_uid);
+
+    if (driver == nullptr || driver->health.current_health <= 0 ||
+        passenger.health.current_health <= 0)
+    {
+      detach_override(context, passenger);
+      continue;
+    }
+
+    passenger.position = driver->position;
+    passenger.velocity = driver->velocity;
   }
 }
 
@@ -621,6 +701,7 @@ void update_contacts(server_context_t& context, const shared::predicted_world_st
 
   finish_reloads_that_came_due(context);
   refresh_reel_anchors(context);
+  carry_merged_passengers(context);
 }
 
 } // namespace server

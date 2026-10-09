@@ -19,6 +19,7 @@
 #include "../shared/player_move.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/beam_ripples.hpp"
 #include "../shared/team_wall_ripples.hpp"
 #include "../shared/shadow_volume.hpp"
 
@@ -507,6 +508,8 @@ struct visual_effects_t
   // Derived per frame from positions every client already holds, so nothing is
   // networked; aged in retire_per_frame_visuals, drawn by the ghost shader.
   shared::wall_ripple_state_t team_wall_ripples;
+  // Where players landed on a solid beam lately, and who stands on one now; derived per frame as the above.
+  shared::beam_ripple_state_t beam_ripples;
 
   // The shadow volumes the newest predicted tick was cut with, copied each update so the draw
   // cuts the same volumes the floor did (shadow_volume_plan.md ss5).

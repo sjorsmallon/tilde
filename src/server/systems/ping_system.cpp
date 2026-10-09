@@ -13,6 +13,23 @@
 namespace server
 {
 
+namespace
+{
+
+quatf rotation_from_world_up_to(vec3f normal)
+{
+  constexpr vec3f WORLD_UP        = {0.f, 1.f, 0.f};
+  constexpr float PARALLEL_SINE   = 1e-4f;
+  const vec3f     axis            = linalg::cross(WORLD_UP, normal);
+  const float     sine            = linalg::length(axis);
+  const float     cosine          = linalg::dot(WORLD_UP, normal);
+  if (sine < PARALLEL_SINE)
+    return cosine > 0.f ? quatf{0.f, 0.f, 0.f, 1.f} : linalg::from_axis_angle({1.f, 0.f, 0.f}, 180.f);
+  return linalg::from_axis_angle(axis * (1.f / sine), linalg::to_degrees(std::atan2(sine, cosine)));
+}
+
+} // namespace
+
 bool try_place_ping(server_context_t& context, entities::Player_Entity& player, vec3f eye,
                     vec3f aim_direction, Span<const uint8_t> disabled_geometry)
 {
@@ -58,8 +75,10 @@ bool try_place_ping(server_context_t& context, entities::Player_Entity& player, 
   // Faces whoever pinged it, which on a floor ping is the difference between a
   // duck and the back of a duck. Derived from the ray rather than from the
   // player's view angles so a ping placed by anything else lands the same way.
-  marker->orientation = linalg::from_view_angles(
-      linalg::to_degrees(std::atan2(-aim_direction.z, -aim_direction.x)), 0.f);
+  // Then stood on the surface: its up is the surface's normal, which the client's hover and bob follow.
+  marker->orientation = rotation_from_world_up_to(linalg::normalize(world_hit.normal)) *
+                        linalg::from_view_angles(
+                            linalg::to_degrees(std::atan2(-aim_direction.z, -aim_direction.x)), 0.f);
 
   shared::Ping fx{};
   fx.origin          = origin;

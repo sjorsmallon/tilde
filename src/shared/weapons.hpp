@@ -575,6 +575,20 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead},
      .sounds                  = {.fire         = assets::sound_asset::Missing,
                                  .world_impact = assets::sound_asset::Missing}},
+    // The player hit rides inside the shooter for the row's seconds: the shooter walks and jumps, the one hit aims and fires.
+    {.weapon                  = entities::Weapon::Merge,
+     .display_name            = "Merge",
+     .slot                    = entities::Inventory_Slot::Primary,
+     .fire_interval_seconds   = 0.5f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Merge,
+                                                .merge  = {.seconds = 10.0f}}},
+     .sounds                  = {.fire         = assets::sound_asset::Missing,
+                                 .world_impact = assets::sound_asset::Missing}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -666,6 +680,7 @@ constexpr bool contact_parameters_match_effect(const contact_t& contact)
   const bool freeze_is_zero  = contact.freeze.kind == entities::Movement_Override::None &&
                                contact.freeze.seconds == 0.f;
   const bool explode_is_zero = contact.explode.radius == 0.f && contact.explode.knockback == 0.f;
+  const bool merge_is_zero   = contact.merge.seconds == 0.f;
   const bool aims_at_bodies  = contact.targets == contact_targets_t::Bodies;
 
   switch (contact.effect)
@@ -675,31 +690,35 @@ constexpr bool contact_parameters_match_effect(const contact_t& contact)
   case contact_effect_t::Land:
   case contact_effect_t::Leave_Zone:
     return damage_is_zero && magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero &&
-           explode_is_zero && aims_at_bodies;
+           explode_is_zero && merge_is_zero && aims_at_bodies;
   case contact_effect_t::Damage:
     return contact.damage.amount > 0.f && contact.damage.headshot_multiplier > 0.f &&
            magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero && explode_is_zero &&
-           aims_at_bodies;
+           merge_is_zero && aims_at_bodies;
   case contact_effect_t::Magnet:
     return contact.magnet.speed != 0.f && damage_is_zero && reel_is_zero && throw_is_zero &&
-           freeze_is_zero && explode_is_zero && aims_at_bodies;
+           freeze_is_zero && explode_is_zero && merge_is_zero && aims_at_bodies;
   case contact_effect_t::Reel:
     return contact.reel.seconds > 0.f && damage_is_zero && magnet_is_zero && throw_is_zero &&
-           freeze_is_zero && explode_is_zero && aims_at_bodies;
+           freeze_is_zero && explode_is_zero && merge_is_zero && aims_at_bodies;
   case contact_effect_t::Throw:
     return damage_is_zero && magnet_is_zero && reel_is_zero && freeze_is_zero &&
-           explode_is_zero && aims_at_bodies;
+           explode_is_zero && merge_is_zero && aims_at_bodies;
   case contact_effect_t::Teleport:
     return damage_is_zero && magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero &&
-           explode_is_zero && contact.targets == contact_targets_t::Own_Remnants;
+           explode_is_zero && merge_is_zero && contact.targets == contact_targets_t::Own_Remnants;
   case contact_effect_t::Freeze:
     return (contact.freeze.kind == entities::Movement_Override::Stasis ||
             contact.freeze.kind == entities::Movement_Override::Statue) &&
            contact.freeze.seconds > 0.f && damage_is_zero && magnet_is_zero && reel_is_zero &&
-           throw_is_zero && explode_is_zero && aims_at_bodies;
+           throw_is_zero && explode_is_zero && merge_is_zero && aims_at_bodies;
   case contact_effect_t::Explode:
     return contact.explode.radius > 0.f && contact.explode.knockback > 0.f && damage_is_zero &&
-           magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero && aims_at_bodies;
+           magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero && merge_is_zero &&
+           aims_at_bodies;
+  case contact_effect_t::Merge:
+    return contact.merge.seconds > 0.f && damage_is_zero && magnet_is_zero && reel_is_zero &&
+           throw_is_zero && freeze_is_zero && explode_is_zero && aims_at_bodies;
   }
   return false;
 }
@@ -808,7 +827,7 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "contact_effect_t::None. The contact fills the sub-struct of its own effect "
               "(Damage: positive amount and headshot_multiplier; Magnet: a non-zero speed; Reel: "
               "positive seconds; Freeze: Stasis or Statue and positive seconds; Explode: positive "
-              "radius and knockback) and leaves the others zero; Teleport aims at Own_Remnants and "
+              "radius and knockback; Merge: positive seconds) and leaves the others zero; Teleport aims at Own_Remnants and "
               "everything else at Bodies. fires_while_held is for a Hitscan or Projectile fire on "
               "a row with a positive fire_interval_seconds: with no interval a held trigger fires "
               "once per sub-tick step, which is a rate set by how many edges the tick had. A held "

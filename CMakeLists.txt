@@ -556,6 +556,7 @@ add_library(game_shared STATIC
     src/shared/movement_volumes.cpp
     src/shared/disabled_geometry.cpp
     src/shared/team_wall_ripples.cpp
+    src/shared/beam_ripples.cpp
     # The three cuts above as ONE value: what player_move reads that is state
     # rather than shape, built by the server tick and by both client prediction
     # loops through the same functions. tick_def.md step 2.
@@ -1267,6 +1268,11 @@ add_executable(team_wall_ripples_test src/test/team_wall_ripples_test.cpp)
 target_include_directories(team_wall_ripples_test PRIVATE src src/shared)
 target_link_libraries(team_wall_ripples_test PRIVATE game_shared)
 
+# A solid beam ripples once per landing, at the feet, on the beam landed on.
+add_executable(beam_ripples_test src/test/beam_ripples_test.cpp)
+target_include_directories(beam_ripples_test PRIVATE src src/shared)
+target_link_libraries(beam_ripples_test PRIVATE game_shared)
+
 # A reveal cone's planes hold everything the shader draws; its range is a distance from the eye.
 add_executable(reveal_cone_test src/test/reveal_cone_test.cpp)
 target_include_directories(reveal_cone_test PRIVATE src src/shared)
@@ -1555,6 +1561,7 @@ set(GAME_TESTS
     projectile_sweep_test
     bounce_body_test
     team_wall_ripples_test
+    beam_ripples_test
     reveal_cone_test
     shadow_volume_test
     mover_path_test

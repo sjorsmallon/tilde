@@ -40,6 +40,7 @@
 #include "../shared/reveal_light.hpp"
 #include "../shared/shadow_volume.hpp"
 #include "../shared/span.hpp"
+#include "../shared/beam_ripples.hpp"
 #include "../shared/team_wall_ripples.hpp"
 #include "camera.hpp"
 
@@ -752,6 +753,9 @@ struct view_pass_t
   // shader reads them all and confines each to the face it names. Past
   // MAX_SCENE_RIPPLES the oldest are dropped.
   Span<const shared::wall_ripple_t>         ripples   = {};
+  // Where players landed on a solid beam this last while; beam.frag rings each on the beam it names. Past
+  // MAX_SCENE_BEAM_RIPPLES the oldest are dropped.
+  Span<const shared::beam_ripple_t>         beam_ripples = {};
   // Where a revealed draw exists and an erased one does not; the caller decides whose cones these are.
   Span<const shared::reveal_cone_t>         reveal_cones = {};
   // Where a shadow_solid draw exists and a shadow_hole one does not (shared/shadow_volume.hpp).

@@ -5,6 +5,7 @@
 #include "projectile_sweep.hpp"
 
 #include "entity_system.hpp"
+#include "merge.hpp"
 #include "player_constants.hpp"
 #include "shapes.hpp"
 
@@ -128,7 +129,7 @@ void collect_projectile_targets(const Entity_System& system, std::vector<project
 
   for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
-    if (player.health.current_health <= 0)
+    if (player.health.current_health <= 0 || player_is_merged_passenger(player))
       continue;
     out.push_back({player.entity_id, player_hull_bounds(player.position)});
   }

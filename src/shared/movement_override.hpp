@@ -52,7 +52,8 @@ struct override_step_t
 // The hull takes no input while one of these is live, so a jump press spends no charge.
 [[nodiscard]] constexpr bool override_ignores_input(entities::Movement_Override kind)
 {
-  return override_freezes(kind) || kind == entities::Movement_Override::Pilot;
+  return override_freezes(kind) || kind == entities::Movement_Override::Pilot ||
+         kind == entities::Movement_Override::Merged;
 }
 
 } // namespace shared

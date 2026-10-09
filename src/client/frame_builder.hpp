@@ -52,6 +52,7 @@ struct pass_builder_t
   shared::frame_lights_t                               lights;
   // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
   std::vector<shared::wall_ripple_t>                   ripples;
+  std::vector<shared::beam_ripple_t>                   beam_ripples;
   std::vector<shared::reveal_cone_t>                   reveal_cones;
   // Where `reveal_cones` and their lights come from; the pass reads neither from here.
   std::vector<lit_reveal_cone_t>                       lit_reveal_cones;
@@ -118,6 +119,7 @@ struct pass_builder_t
     lights.entries.clear();
     lights.baked_count = 0;
     ripples.clear();
+    beam_ripples.clear();
     reveal_cones.clear();
     lit_reveal_cones.clear();
     shadow_volumes.clear();
@@ -138,6 +140,7 @@ struct pass_builder_t
     pass.lights            = lights.entries;
     pass.baked_light_count = lights.baked_count;
     pass.ripples           = ripples;
+    pass.beam_ripples      = beam_ripples;
     pass.reveal_cones      = reveal_cones;
     pass.shadow_volumes    = shadow_volumes;
     pass.shadow_occluders  = shadow_occluders;

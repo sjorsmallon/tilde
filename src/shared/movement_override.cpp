@@ -158,6 +158,23 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   return result;
 }
 
+// A passenger holds inside the driver's hull; whoever carries them writes the feet and the velocity
+// from the driver's every tick, so the velocity it lets go with is the driver's.
+[[nodiscard]] override_step_t step_merged(const movement_settings_t& settings, move_state_t& state,
+                                          float dt)
+{
+  entities::Movement& movement = state.movement;
+
+  override_step_t result{};
+  result.holds = true;
+
+  movement.override_seconds_remaining -= dt;
+  if (movement.override_seconds_remaining <= 0.f)
+    end_override(settings, state, state.velocity, result);
+
+  return result;
+}
+
 } // namespace
 
 override_step_t step_override(const movement_settings_t& settings,
@@ -176,6 +193,8 @@ override_step_t step_override(const movement_settings_t& settings,
       return step_statue(settings, state, dt);
     case entities::Movement_Override::Pilot:
       return step_pilot(settings, bvh, world, state, aim_direction, dt);
+    case entities::Movement_Override::Merged:
+      return step_merged(settings, state, dt);
   }
   fatal_error("step_override: no arm for movement override {}",
               (int)state.movement.active_override);

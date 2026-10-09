@@ -24,7 +24,8 @@ enum class contact_effect_t : uint8_t
   Freeze,
   Explode,
   Land,
-  Leave_Zone
+  Leave_Zone,
+  Merge
 };
 
 // Who is moved by a Reel or a Throw.
@@ -81,6 +82,12 @@ struct contact_explode_t
   float knockback;
 };
 
+// The player hit rides inside the shooter for `seconds`: the shooter walks, the one hit aims (shared/merge.hpp).
+struct contact_merge_t
+{
+  float seconds;
+};
+
 // Union-shaped over `effect`: each arm reads exactly one sub-struct and the
 // others are zero (static_asserted over WEAPON_DEFINITIONS in weapons.hpp).
 struct contact_t
@@ -93,6 +100,7 @@ struct contact_t
   contact_throw_t   throw_;
   contact_freeze_t  freeze;
   contact_explode_t explode;
+  contact_merge_t   merge;
 };
 
 constexpr const char* to_string(contact_effect_t effect)
@@ -110,6 +118,7 @@ constexpr const char* to_string(contact_effect_t effect)
   case contact_effect_t::Explode:    return "Explode";
   case contact_effect_t::Land:       return "Land";
   case contact_effect_t::Leave_Zone: return "Leave_Zone";
+  case contact_effect_t::Merge:      return "Merge";
   }
   return "?";
 }

@@ -316,7 +316,7 @@ Ping_Marker_Entity::Ping_Marker_Entity()
   : lifetime(10.0f),
     pinged_by{},
     spawned_tick(0),
-    render({.mesh = assets::mesh_asset::arrow, .rotation = {0.0f, 0.0f, -0.7071068f, 0.7071068f}})
+    render({.mesh = assets::mesh_asset::arrow})
 {
   type = entity_type::Ping_Marker_Entity;
 }

@@ -79,9 +79,10 @@ enum class Weapon : uint8_t
   Guided_Rocket = 18,
   Flashlight = 19,
   Eraser = 20,
+  Merge = 21,
 };
 
-constexpr uint32_t Weapon_COUNT = 21;
+constexpr uint32_t Weapon_COUNT = 22;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -282,9 +283,10 @@ enum class Movement_Override : uint8_t
   Stasis = 2,
   Statue = 3,
   Pilot = 4,
+  Merged = 5,
 };
 
-constexpr uint32_t Movement_Override_COUNT = 5;
+constexpr uint32_t Movement_Override_COUNT = 6;
 
 const char* to_string(Movement_Override value);
 template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text);

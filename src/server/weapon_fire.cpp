@@ -5,6 +5,7 @@
 #include "../shared/hitscan.hpp"
 #include "../shared/lag_compensation.hpp"
 #include "../shared/log.hpp"
+#include "../shared/merge.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/player_animator.hpp"
 #include "../shared/player_constants.hpp"
@@ -461,8 +462,23 @@ void resolve_player_shot(
         }
       }
 
+      // A merged passenger is inside their driver's body: no shot lands on one, and their own
+      // leaves from the driver's, so that is the body it passes through.
+      const shared::Entity_System& entity_system = context.world.session.entity_system;
+      std::vector<shared::hitscan_target_t> targets_without_passengers;
+      targets_without_passengers.reserve(targets.size());
+      for (const shared::hitscan_target_t& target : targets)
+      {
+        const entities::Player_Entity* target_player =
+            entity_system.get<entities::Player_Entity>(target.uid);
+        if (target_player == nullptr || !shared::player_is_merged_passenger(*target_player))
+          targets_without_passengers.push_back(target);
+      }
+      targets = Span<const shared::hitscan_target_t>{targets_without_passengers};
+
       const shared::hitscan_result_t hit = shared::resolve_hitscan(
-          eye, direction, body_range, targets, player->entity_id);
+          eye, direction, body_range, targets,
+          shared::get_body_uid_for_player_uid(entity_system, player->entity_id));
 
       if (context.cvars->sv_shot_debug)
         send_shot_debug(context, client_slot, input, shared::subtick_time_to_slot(fire_time), eye,

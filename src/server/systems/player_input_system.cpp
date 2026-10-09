@@ -4,6 +4,7 @@
 
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/effects/generated/effects_generated.hpp"
+#include "../shared/merge.hpp"
 #include "../shared/network/subtick_codec.hpp"
 #include "../shared/player_constants.hpp"
 #include "../shared/player_move.hpp"
@@ -275,6 +276,11 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       for (const trigger_button_t& trigger_button : trigger_buttons)
       {
         if (!allowed_to_move || world_is_frozen)
+          continue;
+
+        // A driver walks the merged body and the passenger fires from it.
+        if (shared::try_find_passenger_by_driver_uid(context.world.session.entity_system,
+                                                     player->entity_id) != nullptr)
           continue;
 
         // A pilot's hands are on the rocket: a press lets go of it and nothing fires.

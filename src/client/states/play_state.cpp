@@ -28,6 +28,7 @@
 #include "../../shared/fixed_arc_flight.hpp"
 #include "../../shared/tween.hpp"
 #include "../../shared/canopy.hpp"
+#include "../../shared/merge.hpp"
 #include "../../shared/spawned_platforms.hpp"
 #include "../../shared/movement_modifiers.hpp"
 #include "../../shared/movement_volumes.hpp"
@@ -284,7 +285,7 @@ static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared
 // embeds the height / scale of the marker so we can evaluate it over time.
 struct drawn_ping_marker_t
 {
-  float lift{}; // 0-8 (arbitrary but this is what is applied in drawn_ping_marker.)
+  float lift{}; // 12-20 along the marker's up, the pinged surface's normal.
   float scale{}; // 0-1
 };
 
@@ -296,8 +297,8 @@ static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const 
       (std::max(0.0f, (float)(int32_t)(tick - marker.spawned_tick)) + fraction) / tickrate;
 
   constexpr shared::tween_t bob = {
-    .from = 0.0f,
-    .to = 8.0f,
+    .from = 92.0f,
+    .to = 110.0f,
     .duration = 0.6f,
     .easing = entities::Easing::In_Out_Cubic
   };
@@ -355,9 +356,60 @@ static shared::path_pose_t drawn_ridden_pose(const client_context_t &ctx, const 
                                      placed);
 }
 
+static const Remote_Player_State* try_find_remote_player_by_uid(const client_context_t &ctx,
+                                                                shared::entity_uid_t uid)
+{
+  for (const auto &[slot, remote_player] : ctx.replication.remote_players)
+    if (remote_player.active && remote_player.entity_uid == uid)
+      return &remote_player;
+  return nullptr;
+}
+
+// The body we ride in as a merged passenger (shared/merge.hpp): the driver's, drawn where it is interpolated.
+static const Remote_Player_State* try_find_remote_driver(const client_context_t &ctx)
+{
+  if (ctx.prediction.player_movement.active_override != entities::Movement_Override::Merged)
+    return nullptr;
+  return try_find_remote_player_by_uid(ctx, ctx.prediction.player_movement.override_target_uid);
+}
+
+// The passenger riding in OUR body: theirs is the aim we are shown and steer along.
+static const Remote_Player_State* try_find_remote_passenger(const client_context_t &ctx)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr)
+    return nullptr;
+  const entities::Player_Entity* passenger =
+      shared::try_find_passenger_by_driver_uid(ctx.world.session.entity_system, my_player->entity_id);
+  return passenger != nullptr ? try_find_remote_player_by_uid(ctx, passenger->entity_id) : nullptr;
+}
+
+// The server fires nothing for a driver, so nothing a trigger does is predicted for one.
+static bool local_player_drives_a_merged_body(const client_context_t &ctx)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  return my_player != nullptr &&
+         shared::try_find_passenger_by_driver_uid(ctx.world.session.entity_system,
+                                                  my_player->entity_id) != nullptr;
+}
+
+// A passenger is inside their driver's body, and while we ride that body is the one our eye is in.
+static bool remote_player_is_hidden_by_a_merge(const client_context_t &ctx,
+                                               const Remote_Player_State &remote_player)
+{
+  const entities::Player_Entity* player =
+      ctx.world.session.entity_system.get<entities::Player_Entity>(remote_player.entity_uid);
+  if (player != nullptr && shared::player_is_merged_passenger(*player))
+    return true;
+  return try_find_remote_driver(ctx) == &remote_player;
+}
+
 // where are we? what's the carry here?
 static vec3f drawn_local_feet(const client_context_t &ctx)
 {
+  if (const Remote_Player_State* driver = try_find_remote_driver(ctx))
+    return driver->render_position;
+
   const float extrapolation_factor =
       ctx.connection.phase == Connection_Phase::Connected ? ctx.prediction.physics_accumulator : 0.f;
   vec3f feet = ctx.prediction.player_position +
@@ -649,7 +701,8 @@ static void predict_local_reveal_light_toggle(client_context_t &ctx, entities::F
 {
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   if (my_player == nullptr || !local_movement_is_allowed(ctx) ||
-      ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot)
+      ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot ||
+      local_player_drives_a_merged_body(ctx))
     return;
 
   if (!shared::reveal_light_is_in_hand(ctx.world.session.entity_system, *my_player))
@@ -722,6 +775,8 @@ static void play_predicted_local_gunshot(
 {
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   if (my_player == nullptr) return;
+
+  if (local_player_drives_a_merged_body(ctx)) return;
 
   const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *my_player);
   if (held == nullptr) return;
@@ -1688,6 +1743,7 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
   });
 
   shared::age_wall_ripples(ctx.visuals.team_wall_ripples, world_dt);
+  shared::age_beam_ripples(ctx.visuals.beam_ripples, world_dt);
 }
 
 void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &frame)
@@ -1707,6 +1763,7 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
 
     const bool movement_allowed = local_movement_is_allowed(ctx);
+    const bool drives_a_merged_body = local_player_drives_a_merged_body(ctx);
 
     const shared::weapon_definition_t* replayed_weapon = try_find_local_weapon_definition(ctx);
 
@@ -1767,6 +1824,8 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
         // a few lines up -- so a dash the server has already applied is not
         // applied twice, and one it has not seen yet is applied here on the
         // same cooldown the server will charge.
+        if (drives_a_merged_body)
+          continue;
         if (replay_pressed_in_this_step & Button::Fire)
           apply_trigger_press_to_own_movement(move_settings, replayed_weapon,
                                               entities::Fire_Trigger::Primary, step.view,
@@ -1998,9 +2057,18 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
   // ctx.prediction.player_yaw underneath in both cases -- it just isn't always
   // what the view shows. The steering BASIS is no longer resolved once per
   // frame: every sub-step recomputes it from the aim in effect at that step.
+  // A driver's aim is the passenger's, as drawn: it rides our own input, so the server steers the
+  // body along exactly what we were shown and the prediction below stays exact.
+  const Remote_Player_State* passenger = try_find_remote_passenger(ctx);
+  if (passenger != nullptr)
+  {
+    ctx.prediction.player_yaw   = passenger->render_yaw;
+    ctx.prediction.player_pitch = passenger->render_pitch;
+  }
+
   auto apply_mouse_travel = [&](linalg::vec2i motion)
   {
-    if (!mouse_look_allowed)
+    if (!mouse_look_allowed || passenger != nullptr)
       return;
     ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
     ctx.prediction.player_pitch -= motion.y * mouse_sensitivity;
@@ -2570,7 +2638,8 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
           // reconciliation replay above runs the identical call, which is what
           // stops an unacked dash being undone for a round trip.
           if ((fire_pressed_in_this_step || secondary_fire_pressed_in_this_step) &&
-              have_own_body && local_movement_is_allowed(ctx))
+              have_own_body && local_movement_is_allowed(ctx) &&
+              !local_player_drives_a_merged_body(ctx))
           {
             const shared::weapon_definition_t *held_definition =
                 try_find_local_weapon_definition(ctx);
@@ -2725,6 +2794,31 @@ void Play_State::ripple_team_walls(client_context_t &ctx, play_frame_t &frame)
   shared::detect_team_wall_crossings(ctx.world.session.entity_system, ctx.world.session.geometry,
                                      ctx.world.session.owner_of, crossers,
                                      ctx.visuals.team_wall_ripples);
+}
+
+// RENDER: who came to stand on a solid beam this frame, by the same positions ripple_team_walls reads.
+void Play_State::ripple_solid_beams(client_context_t &ctx, play_frame_t &frame)
+{
+  std::vector<shared::beam_stander_t> standers;
+  if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
+      my_player != nullptr && !frame.local_player_is_dead)
+    standers.push_back({.uid              = my_player->entity_id,
+                        .ground_mover_uid = ctx.prediction.player_movement.ground_mover_uid,
+                        .feet             = ctx.prediction.player_position});
+
+  for (const auto& [slot, remote_player] : ctx.replication.remote_players)
+  {
+    if (!remote_player.active || slot == ctx.connection.my_slot || remote_player.death_tick != 0)
+      continue;
+    const entities::Player_Entity* player = try_find_player_in_slot(ctx, slot);
+    if (player == nullptr)
+      continue;
+    standers.push_back({.uid              = player->entity_id,
+                        .ground_mover_uid = player->movement.ground_mover_uid,
+                        .feet             = remote_player.render_position});
+  }
+
+  shared::detect_beam_landings(ctx.world.session.entity_system, standers, ctx.visuals.beam_ripples);
 }
 
 void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame)
@@ -2933,6 +3027,7 @@ void Play_State::update(float dt)
   // ------------------------------------------------------------------- RENDER
   advance_render_state(ctx, frame);
   ripple_team_walls(ctx, frame);
+  ripple_solid_beams(ctx, frame);
   resolve_camera(ctx, frame);
   update_audio_listener(ctx, frame);
 }
@@ -3359,6 +3454,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   }
 
   scene.ripples = ctx.visuals.team_wall_ripples.ripples;
+  scene.beam_ripples = ctx.visuals.beam_ripples.ripples;
   scene.shadow_volumes   = ctx.visuals.drawn_shadow_volumes;
   scene.shadow_occluders = ctx.visuals.drawn_shadow_occluders;
   if (ctx.cvars->cl_shadow_volume_debug)
@@ -3641,7 +3737,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Ping_Marker_Entity* marker = entities::entity_as<entities::Ping_Marker_Entity>(&entity))
     {
       const drawn_ping_marker_t drawn = drawn_ping_marker(ctx, *marker);
-      drawn_position = drawn_position + vec3f{0.0f, drawn.lift, 0.0f};
+      drawn_position = drawn_position + linalg::rotate(drawn_orientation, vec3f{0.0f, 1.0f, 0.0f}) * drawn.lift;
       drawn_scale = drawn_scale * drawn.scale;
     }
 
@@ -3714,6 +3810,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   {
     if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot ||
         remote_player.slot_index == first_person_slot)
+      continue;
+
+    if (remote_player_is_hidden_by_a_merge(ctx, remote_player))
       continue;
 
     draw_player_blob_shadow(remote_player.render_position);

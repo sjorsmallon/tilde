@@ -732,6 +732,8 @@ struct gpu_light_t
 constexpr uint32_t MAX_SCENE_LIGHTS = 64;
 // scene.glsl's MAX_RIPPLES; the size assert below keeps the two one number.
 constexpr uint32_t MAX_SCENE_RIPPLES = 16;
+// scene.glsl's MAX_BEAM_RIPPLES, kept one number by the same assert.
+constexpr uint32_t MAX_SCENE_BEAM_RIPPLES = 4;
 // Bit 16 of a volume's packed counts, above the two byte-wide plane counts: scene.glsl's shadow_volume_cuts_geometry.
 constexpr uint32_t SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT = 1u << 16;
 
@@ -797,6 +799,8 @@ struct scene_uniform_t
   float       beam_boxes[MAX_SCENE_BEAMS][8]                = {}; // the box around beam b's cone, min xyz then max xyz; beam.vert draws it
   float       beam_pieces[MAX_SCENE_BEAM_PIECES / 4][4]     = {}; // piece p's first plane | plane count << 16, as float bits, at [p / 4][p % 4]
   float       beam_planes[MAX_SCENE_BEAM_PLANES][4]         = {}; // a carved piece's cut planes as the volumes' planes: outward normal xyz and dot(normal, point)
+  float       beam_ripple_settings[4]                       = {}; // x how many of `beam_ripples` are live, y the age one is dropped at
+  float       beam_ripples[MAX_SCENE_BEAM_RIPPLES][8]       = {}; // where a player landed xyz and how long ago, then the beam's light uid bits and three spare
   float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
   float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | front plane count << 8 | cuts_geometry << 16, as float bits, at [v / 4][v % 4]
   float       shadow_volume_boxes[MAX_SCENE_SHADOW_VOLUMES][8]      = {}; // the box around drawn volume v's body, min xyz then max xyz; shadow_body.vert draws it
@@ -817,6 +821,7 @@ static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
                       32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + (64 + 32) * MAX_SCENE_BEAMS +
                       4 * MAX_SCENE_BEAM_PIECES + 16 * MAX_SCENE_BEAM_PLANES +
+                      16 + 32 * MAX_SCENE_BEAM_RIPPLES +
                       8 * MAX_SCENE_SHADOW_VOLUMES + 32 * MAX_SCENE_SHADOW_VOLUMES +
                       32 * MAX_SCENE_REVEAL_CONES + 16 +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
@@ -7335,6 +7340,22 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     out[5] = ripple.normal.y;
     out[6] = ripple.normal.z;
     out[7] = linalg::dot(ripple.normal, ripple.center);
+  }
+
+  const size_t beam_ripple_count     = std::min<size_t>(pass.beam_ripples.size(), MAX_SCENE_BEAM_RIPPLES);
+  const size_t first_beam_ripple     = pass.beam_ripples.size() - beam_ripple_count;
+  scene.beam_ripple_settings[0]      = (float)beam_ripple_count;
+  scene.beam_ripple_settings[1]      = shared::BEAM_RIPPLE_MAX_AGE_SECONDS;
+  for (size_t index = 0; index < beam_ripple_count; ++index)
+  {
+    const shared::beam_ripple_t& ripple = pass.beam_ripples[(uint32_t)(first_beam_ripple + index)];
+    float*                       out    = scene.beam_ripples[index];
+    out[0] = ripple.center.x;
+    out[1] = ripple.center.y;
+    out[2] = ripple.center.z;
+    out[3] = ripple.age_seconds;
+    static_assert(sizeof(ripple.beam) == sizeof(float));
+    memcpy(&out[4], &ripple.beam, sizeof(float));
   }
 
   if (pass.reveal_cones.size() > MAX_SCENE_REVEAL_CONES)

@@ -1,6 +1,7 @@
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "projectile_flight.hpp"
 
+#include "../../shared/merge.hpp"
 #include "../../shared/weapons.hpp"
 
 namespace server
@@ -26,7 +27,8 @@ fly_projectile(server_context_t& context, const shared::predicted_world_storage_
       context.world.session.bvh, view, entity.position, step.position, collision_radius);
 
   const std::optional<shared::projectile_hit_t> target_hit = shared::sweep_sphere_against_targets(
-      targets, entity.position, step.position, collision_radius, projectile.owner_uid);
+      targets, entity.position, step.position, collision_radius,
+      shared::get_body_uid_for_player_uid(context.world.session.entity_system, projectile.owner_uid));
   if (target_hit && (!hit || target_hit->t < hit->t))
     hit = target_hit;
 

@@ -42,6 +42,38 @@ float beam_fill_factor()
     return inside_dot / coverage;
 }
 
+// A landing's ring on a solid beam (shared/beam_ripples.hpp): world units per second, the ring spacing, the
+// decay's time constant, how far a ring reaches, and the alpha a crest adds to the fill.
+const float BEAM_RIPPLE_SPEED      = 140.0;
+const float BEAM_RIPPLE_WAVELENGTH = 36.0;
+const float BEAM_RIPPLE_LIFETIME   = 2.0;
+const float BEAM_RIPPLE_REACH      = 260.0;
+const float BEAM_RIPPLE_ALPHA      = 0.5;
+// A chord that ends this share short of the surface under the pixel ends on the beam's own skin.
+const float BEAM_RIPPLE_AIR_SHARE  = 0.999;
+
+// The rings of every landing on beam `light` at a point of its skin: spheres growing from where the feet came down.
+float beam_ripple_crest(vec3 world_position, int light)
+{
+    float crest   = 0.0;
+    int   count   = int(scene.beam_ripple_settings.x);
+    float max_age = scene.beam_ripple_settings.y;
+    for (int index = 0; index < count; ++index)
+    {
+        BeamRipple ripple = scene.beam_ripples[index];
+        if (floatBitsToInt(ripple.light.x) != light)
+            continue;
+        float age      = ripple.center_age.w;
+        float reach    = distance(world_position, ripple.center_age.xyz);
+        float front    = BEAM_RIPPLE_SPEED * age;
+        float envelope = exp(-age / BEAM_RIPPLE_LIFETIME) * (1.0 - smoothstep(0.5 * max_age, max_age, age))
+                       * exp(-reach / BEAM_RIPPLE_REACH)
+                       * smoothstep(0.0, BEAM_RIPPLE_WAVELENGTH, front - reach);
+        crest += envelope * max(sin(2.0 * PI * (reach - front) / BEAM_RIPPLE_WAVELENGTH), 0.0);
+    }
+    return crest;
+}
+
 void main()
 {
     vec2  position    = (gl_FragCoord.xy - scene.beam_viewport.xy) / scene.beam_viewport.zw;
@@ -72,6 +104,8 @@ void main()
     int   piece_first = int(beam.pieces.x);
     int   piece_count = int(beam.pieces.y);
     float lit         = piece_count > 0 ? 0.0 : chord;
+    float first_enter = piece_count > 0 ? EMPTY_ENTER : enter;
+    float last_leave  = piece_count > 0 ? 0.0 : leave;
     for (int piece = piece_first; piece < piece_first + piece_count; ++piece)
     {
         int   packed      = floatBitsToInt(scene.beam_pieces[piece >> 2][piece & 3]);
@@ -85,6 +119,23 @@ void main()
             clip_to_half_space(piece_enter, piece_leave, plane.xyz, plane.w, origin, ray);
         }
         lit += max(piece_leave - piece_enter, 0.0);
+        if (piece_leave > piece_enter)
+        {
+            first_enter = min(first_enter, piece_enter);
+            last_leave  = max(last_leave, piece_leave);
+        }
+    }
+
+    // Where the line of sight crosses the lit body's skin: going in, unless the eye is inside it, and coming
+    // out, unless what ends the chord is the surface under the pixel.
+    float ripple = 0.0;
+    if (lit > 0.0 && scene.beam_ripple_settings.x > 0.0)
+    {
+        int light = floatBitsToInt(beam.color_light.w);
+        if (first_enter > 0.0)
+            ripple = beam_ripple_crest(origin + ray * first_enter, light);
+        if (last_leave < view_depth * (1.0 - SURFACE_BIAS_SHARE) * BEAM_RIPPLE_AIR_SHARE)
+            ripple = max(ripple, beam_ripple_crest(origin + ray * last_leave, light));
     }
 
     // Every derivative is read before any pixel is let go. The cone's and the range's silhouettes are
@@ -117,7 +168,8 @@ void main()
         return;
     }
     float wash  = scene.beam.y * fill * lit_cover;
-    float alpha = clamp(max(wash, max(rim_line, cut_line)), 0.0, 1.0);
+    float ring  = BEAM_RIPPLE_ALPHA * min(ripple, 1.0) * lit_cover;
+    float alpha = clamp(max(wash + ring, max(rim_line, cut_line)), 0.0, 1.0);
 
     outColor = vec4(beam.color_light.rgb, alpha);
 }

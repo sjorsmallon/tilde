@@ -35,7 +35,8 @@ Weapon :: enum {
     Extending_Platform,
     Guided_Rocket,
     Flashlight,
-    Eraser
+    Eraser,
+    Merge
 }
 
 Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead, Erase_Light }
@@ -68,7 +69,8 @@ Reveal_Cone_Kind :: enum { Reveals, Erases }
 // Stasis holds the hull with its velocity kept; Statue zeroes it and lets gravity keep acting. Both are
 // a Movement_Override so the frozen player predicts their own hold (shared/movement_override.hpp).
 // Pilot holds the hull while a rocket flies along the player's aim: override_target_position is the rocket.
-Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot }
+// Merged holds the hull inside another player's: override_target_uid is the driver, who walks for both (shared/merge.hpp).
+Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot, Merged }
 
 // ---------------------------------------------------------------------------
 // COMPONENTS
@@ -702,7 +704,7 @@ Ping_Marker_Entity :: entity @runtime_only {
     pinged_by: entity
     // The tick it was placed; the client's bob and pop are functions of the age this gives.
     spawned_tick: u32 = 0 @Networked
-    render: Render = { mesh = .arrow,rotation = {0, 0, -0.7071068, 0.7071068} }
+    render: Render = { mesh = .arrow}
 
 }
 

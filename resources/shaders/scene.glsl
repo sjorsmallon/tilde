@@ -39,6 +39,8 @@
 // renderer.hpp's MAX_SCENE_BEAM_PIECES and MAX_SCENE_BEAM_PLANES, kept one number by the same assert.
 #define MAX_BEAM_PIECES 128
 #define MAX_BEAM_PLANES 512
+// renderer.cpp's MAX_SCENE_BEAM_RIPPLES, kept one number by the same assert.
+#define MAX_BEAM_RIPPLES 4
 
 // scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
 #define CEL_FILL_NONE     0
@@ -111,6 +113,12 @@ struct Beam {
     vec4 forward_cosine; // forward xyz, cos(outer)
     vec4 color_light;    // rgb the light's colour, w its uid as int bits (floatBitsToInt)
     vec4 pieces;         // x the first of the beam's carved pieces in beam_pieces, y how many; none draws the whole cone
+};
+
+// One landing on a solid beam: where the feet came down (xyz) and how long ago (w); the beam's light uid as int bits (x).
+struct BeamRipple {
+    vec4 center_age;
+    vec4 light;
 };
 
 layout(set = 3, binding = 1) uniform SceneUniform {
@@ -203,6 +211,9 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // first | count << 16 = floatBitsToInt(beam_pieces[p >> 2][p & 3]); planes as shadow_volumes'.
     vec4   beam_pieces[MAX_BEAM_PIECES / 4];
     vec4   beam_planes[MAX_BEAM_PLANES];
+    // x = how many of `beam_ripples` are live, the newest last; y = the age a ripple is dropped at.
+    vec4       beam_ripple_settings;
+    BeamRipple beam_ripples[MAX_BEAM_RIPPLES];
     // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
     vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
     // Volume v's live plane counts, floatBitsToInt(shadow_volume_counts[v >> 2][v & 3]): sides in the low byte,

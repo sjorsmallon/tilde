@@ -80,6 +80,7 @@ constexpr asset_info_t sound_asset_MANIFEST[] = {
   {"a_new_record", "resources/sounds/a_new_record.wav"},
   {"bubble_pop", "resources/sounds/bubble_pop.wav"},
   {"congratulations", "resources/sounds/congratulations.wav"},
+  {"glass_dink", "resources/sounds/glass_dink.wav"},
   {"gust_of_wind", "resources/sounds/gust_of_wind.wav"},
   {"headshot1", "resources/sounds/headshot1.wav"},
   {"headshot2", "resources/sounds/headshot2.wav"},

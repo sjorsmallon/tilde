@@ -47,6 +47,7 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Guided_Rocket",
   "Flashlight",
   "Eraser",
+  "Merge",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -160,12 +161,13 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
   "Stasis",
   "Statue",
   "Pilot",
+  "Merged",
 };
 
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 21}},
+  {"Weapon", {Weapon_VALUE_NAMES, 22}},
   {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 12}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
@@ -180,7 +182,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Match_Request", {Match_Request_VALUE_NAMES, 5}},
   {"Easing", {Easing_VALUE_NAMES, 5}},
   {"Reveal_Cone_Kind", {Reveal_Cone_Kind_VALUE_NAMES, 2}},
-  {"Movement_Override", {Movement_Override_VALUE_NAMES, 5}},
+  {"Movement_Override", {Movement_Override_VALUE_NAMES, 6}},
 };
 
 namespace
@@ -5016,6 +5018,7 @@ const char* to_string(Weapon value)
     case Weapon::Guided_Rocket: return "Guided_Rocket";
     case Weapon::Flashlight: return "Flashlight";
     case Weapon::Eraser: return "Eraser";
+    case Weapon::Merge: return "Merge";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -5044,6 +5047,7 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Guided_Rocket") return Weapon::Guided_Rocket;
   if (text == "Flashlight") return Weapon::Flashlight;
   if (text == "Eraser") return Weapon::Eraser;
+  if (text == "Merge") return Weapon::Merge;
   return std::nullopt;
 }
 
@@ -5378,6 +5382,7 @@ const char* to_string(Movement_Override value)
     case Movement_Override::Stasis: return "Stasis";
     case Movement_Override::Statue: return "Statue";
     case Movement_Override::Pilot: return "Pilot";
+    case Movement_Override::Merged: return "Merged";
   }
   assert(false && "invalid Movement_Override");
   return "";
@@ -5390,6 +5395,7 @@ template <> std::optional<Movement_Override> try_from_string<Movement_Override>(
   if (text == "Stasis") return Movement_Override::Stasis;
   if (text == "Statue") return Movement_Override::Statue;
   if (text == "Pilot") return Movement_Override::Pilot;
+  if (text == "Merged") return Movement_Override::Merged;
   return std::nullopt;
 }
 
@@ -5555,6 +5561,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xfcf3e7adu;
+const uint32_t SCHEMA_HASH = 0xb262fa46u;
 
 } // namespace entities
