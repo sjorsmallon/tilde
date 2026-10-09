@@ -18,7 +18,7 @@ reveal_cone_settings_t reveal_cone_settings_from_cvars(const cvars::cvar_state_t
           .overhead_height    = cvars.sv_reveal_light_overhead_height};
 }
 
-std::optional<entities::Reveal_Cone_Kind> try_reveal_light_in_hand(const Entity_System&           system,
+std::optional<entities::Reveal_Cone_Kind> try_checking_whether_player_is_wielding_either_revealer_or_eraser(const Entity_System&           system,
                                                                     const entities::Player_Entity& player)
 {
   if (player.health.current_health <= 0)
@@ -42,7 +42,7 @@ std::optional<entities::Reveal_Cone_Kind> try_reveal_light_in_hand(const Entity_
 
 bool reveal_light_is_in_hand(const Entity_System& system, const entities::Player_Entity& player)
 {
-  return try_reveal_light_in_hand(system, player).has_value();
+  return try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, player).has_value();
 }
 
 bool reveal_light_is_on(const Entity_System& system, const entities::Player_Entity& player)
@@ -143,15 +143,20 @@ bool any_erase_cone_contains_box(Span<const reveal_cone_planes_t> cones, const a
   return false;
 }
 
-void collect_reveal_cones(const Entity_System& system, const path_links_t& links,
-                          const mover_rests_t& rests, const reveal_cone_settings_t& settings,
-                          uint32_t tick, float tickrate,
-                          entity_uid_t predicted_by_caller, std::vector<reveal_cone_planes_t>& out)
+void collect_reveal_cones(
+  const Entity_System& system,
+  const path_links_t& links,
+  const mover_rests_t& rests,
+  const reveal_cone_settings_t& settings,
+  uint32_t tick,
+  float tickrate,
+  entity_uid_t predicted_by_caller,
+  std::vector<reveal_cone_planes_t>& out)
 {
   out.clear();
   for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {
-    const std::optional<entities::Reveal_Cone_Kind> kind = try_reveal_light_in_hand(system, player);
+    const std::optional<entities::Reveal_Cone_Kind> kind = try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, player);
     if (player.entity_id == predicted_by_caller || !player.reveal_light_on || !kind)
       continue;
     out.push_back(planes_of_reveal_cone(

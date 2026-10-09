@@ -142,7 +142,7 @@ void collect_reveal_cones(const Entity_System& system, const path_links_t& links
                           entity_uid_t predicted_by_caller, std::vector<reveal_cone_planes_t>& out);
 
 // The player is alive and the weapon in hand is a Flashlight or an Eraser, and which: a press toggles it, and only then can it be on.
-[[nodiscard]] std::optional<entities::Reveal_Cone_Kind> try_reveal_light_in_hand(
+[[nodiscard]] std::optional<entities::Reveal_Cone_Kind> try_checking_whether_player_is_wielding_either_revealer_or_eraser(
     const Entity_System& system, const entities::Player_Entity& player);
 
 [[nodiscard]] bool reveal_light_is_in_hand(const Entity_System& system, const entities::Player_Entity& player);

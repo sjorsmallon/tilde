@@ -1202,7 +1202,7 @@ static void build_predicted_world_for_input(
         shared::compute_player_reveal_cone(own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw,
                                view.pitch,
                                local_reveal_light_is_overhead_entering(ctx, *my_player, input_number),
-                               *shared::try_reveal_light_in_hand(ctx.world.session.entity_system, *my_player),
+                               *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(ctx.world.session.entity_system, *my_player),
                                settings.reveal_cone)));
   }
 
@@ -3198,7 +3198,7 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
       my_player != nullptr && local_reveal_light_is_on(ctx, *my_player))
   {
     const bool                       overhead = local_reveal_light_is_overhead(ctx, *my_player);
-    const entities::Reveal_Cone_Kind kind     = *shared::try_reveal_light_in_hand(system, *my_player);
+    const entities::Reveal_Cone_Kind kind     = *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, *my_player);
     out.push_back({camera_is_my_eye
                        ? shared::compute_player_reveal_cone(camera.position, camera.yaw, camera.pitch, overhead,
                                                 kind, settings)
@@ -3218,7 +3218,7 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
     out.push_back({shared::compute_player_reveal_cone(remote_player.render_position + eye_above_feet,
                                           remote_player.render_yaw, remote_player.render_pitch,
                                           player->reveal_light_overhead,
-                                          *shared::try_reveal_light_in_hand(system, *player), settings),
+                                          *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, *player), settings),
                    held.color, held.intensity});
   }
 

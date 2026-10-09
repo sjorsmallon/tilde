@@ -17,21 +17,11 @@
 namespace shared
 {
 
-// Speed along the AIM at the moment of the press, and speed straight up. Two
-// numbers rather than one direction because the two abilities this exists for
-// want opposite halves of it: a Godspeed-shaped dash is aim with a little lift,
-// an Elevate-shaped launch is up with none. The lift is not decoration on a
-// dash either -- a purely horizontal shove taken while grounded is most of the
-// way eaten by ground friction before it is felt.
-//
-// Under Add the upward half is applied like a jump (it cancels a fall rather
-// than summing with it) and the aim half is added, so a dash off a ledge is a
-// dash, not a dash minus however long you had been falling.
 struct self_impulse_t
 {
   impulse_mode_t mode;
-  float          along_aim_speed;
-  float          upward_speed;
+  float along_aim_speed;
+  float upward_speed;
 };
 
 // Fire_Resolution::Hitscan's parameters: the flight alone. What the shot does
@@ -66,14 +56,13 @@ inline projectile_step_t advance_projectile(const projectile_t& projectile, floa
                                             vec3f position, vec3f velocity, float dt)
 {
   const vec3f acceleration = {0.f, -gravity * projectile.gravity_scale, 0.f};
-  return {.position = position + velocity * dt + acceleration * (0.5f * dt * dt),
-          .velocity = velocity + acceleration * dt};
+  return projectile_step_t{
+    .position = position + velocity * dt + acceleration * (0.5f * dt * dt),
+    .velocity = velocity + acceleration * dt
+  };
 }
 
-// Where a Fire_Resolution::Place fire is set down. Feet: where the shooter STANDS, facing their yaw; a
-// teleport destination has to fit a hull, and where you stood is the one place known to. Eye: at the
-// shooter's eye, facing the whole aim, for a type that grows or reaches from there. Waist: Eye's facing from
-// player_waist_height, low enough to jump onto and high enough to clear the floor the shooter stands on.
+// originate an entity from this position for projectiles.
 enum class place_anchor_t : uint8_t
 {
   Feet,
@@ -86,7 +75,7 @@ enum class place_anchor_t : uint8_t
 struct place_t
 {
   entities::entity_type spawns;
-  place_anchor_t        anchor;
+  place_anchor_t anchor;
 };
 
 // What a piloted flight leaves behind when it ends.
@@ -100,9 +89,9 @@ enum class pilot_leaves_t : uint8_t
 // Fire_Resolution::Pilot's parameters: the rocket the shooter rides, written into Movement at the press.
 struct pilot_t
 {
-  float                  speed;
-  float                  radius;
-  float                  seconds;
+  float speed;
+  float radius;
+  float seconds;
   pilot_leaves_t         leaves;
   flight_path_settings_t path;
 };
