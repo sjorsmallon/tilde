@@ -51,6 +51,7 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Beam", cvars::cvar_id::r_beam_fill},
     {"Beam", cvars::cvar_id::r_beam_dot_spacing, 2.0f, 32.0f},
     {"Beam", cvars::cvar_id::r_beam_edge_pixels, 0.0f, 8.0f},
+    {"Beam", cvars::cvar_id::r_beam_surface_bias},
     {"Beam", cvars::cvar_id::r_shadow_volume},
     {"Beam", cvars::cvar_id::r_shadow_volume_alpha, 0.0f, 1.0f},
     {"Cel", cvars::cvar_id::r_cel},

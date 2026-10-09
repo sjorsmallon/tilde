@@ -74,9 +74,10 @@ enum class Debug_Channel : uint8_t
   reflection_capture = 11,
   ink_normals = 12,
   beam_terms = 13,
+  beam_shadow = 14,
 };
 
-constexpr uint32_t Debug_Channel_COUNT = 14;
+constexpr uint32_t Debug_Channel_COUNT = 15;
 
 const char* to_string(Debug_Channel value);
 template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::string_view text);
@@ -347,6 +348,7 @@ struct cvar_state_t
   Beam_Fill r_beam_fill;
   float r_beam_dot_spacing;
   float r_beam_edge_pixels;
+  bool r_beam_surface_bias;
   bool r_shadow_volume;
   float r_shadow_volume_alpha;
   bool r_look_panel;
@@ -358,6 +360,7 @@ struct cvar_state_t
   bool debug_hide_geometry;
   float cl_shot_debug_seconds;
   bool cl_shadow_volume_debug;
+  bool cl_solid_beam_debug;
   bool debug_show_entity_counts;
   bool net_snapshot_debug;
   bool sv_event_debug;
@@ -576,31 +579,33 @@ enum class cvar_id : uint16_t
   r_beam_fill = 194,
   r_beam_dot_spacing = 195,
   r_beam_edge_pixels = 196,
-  r_shadow_volume = 197,
-  r_shadow_volume_alpha = 198,
-  r_look_panel = 199,
-  sv_skybox = 200,
-  debug_show_collisions = 201,
-  debug_show_hitboxes = 202,
-  debug_show_navmesh = 203,
-  debug_show_box_volumes = 204,
-  debug_hide_geometry = 205,
-  cl_shot_debug_seconds = 206,
-  cl_shadow_volume_debug = 207,
-  debug_show_entity_counts = 208,
-  net_snapshot_debug = 209,
-  sv_event_debug = 210,
-  cl_event_debug = 211,
-  sv_reliable_debug = 212,
-  sv_io_debug = 213,
-  replay_keyframe_seconds = 214,
-  sv_replay_auto = 215,
-  sv_ghost_record = 216,
+  r_beam_surface_bias = 197,
+  r_shadow_volume = 198,
+  r_shadow_volume_alpha = 199,
+  r_look_panel = 200,
+  sv_skybox = 201,
+  debug_show_collisions = 202,
+  debug_show_hitboxes = 203,
+  debug_show_navmesh = 204,
+  debug_show_box_volumes = 205,
+  debug_hide_geometry = 206,
+  cl_shot_debug_seconds = 207,
+  cl_shadow_volume_debug = 208,
+  cl_solid_beam_debug = 209,
+  debug_show_entity_counts = 210,
+  net_snapshot_debug = 211,
+  sv_event_debug = 212,
+  cl_event_debug = 213,
+  sv_reliable_debug = 214,
+  sv_io_debug = 215,
+  replay_keyframe_seconds = 216,
+  sv_replay_auto = 217,
+  sv_ghost_record = 218,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 217;
+constexpr uint32_t CVAR_COUNT = 219;
 
 enum class command_id : uint16_t
 {

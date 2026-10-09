@@ -69,6 +69,10 @@
 // roughness, and the shaded result tinted by which capture won the pick.
 #define DEBUG_FLAG_RENDER_REFLECTION         (1 << 9)
 #define DEBUG_FLAG_RENDER_REFLECTION_CAPTURE (1 << 10)
+// The beam pass alone (beam.frag): its terms, and the volume that shadows each pixel's chord most.
+#define DEBUG_FLAG_RENDER_BEAM_TERMS         (1 << 11)
+#define DEBUG_FLAG_RENDER_BEAM_SHADOW        (1 << 12)
+#define DEBUG_FLAGS_SHOWING_BEAM             (DEBUG_FLAG_RENDER_BEAM_TERMS | DEBUG_FLAG_RENDER_BEAM_SHADOW)
 
 // `Light` and LIGHT_BAKED_SLOT are light_arrival.glsl's -- the struct sits with
 // the maths that reads it, so the shader tool's preview binds the same LAYOUT
@@ -185,7 +189,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   beam;
     // This pass's viewport in pixels: xy where it starts, zw its size. beam.frag finds its line of sight by it.
     vec4   beam_viewport;
-    // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z.
+    // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z;
+    // w = r_beam_surface_bias: 1 is a tolerance on a caster's lit faces at the chord's end, 0 the old lift.
     vec4   beam_settings;
     Beam   beams[MAX_BEAMS];
     // The box around beam b's cone cut to its range: min at [2b], max at [2b + 1]. beam.vert draws it, so the

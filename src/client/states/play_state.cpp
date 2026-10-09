@@ -2914,6 +2914,11 @@ void Play_State::update(float dt)
   place_input_edges_on_the_tick_timeline(ctx, frame);
   run_predicted_ticks(ctx, frame);
   ctx.visuals.drawn_shadow_volumes = frame.predicted_world_storage.shadow_volumes;
+  ctx.visuals.drawn_solid_beams.clear();
+  if (ctx.cvars->cl_solid_beam_debug)
+    for (const shared::mover_t& mover : frame.predicted_world_storage.movers)
+      if (entities::entity_as<entities::Spot_Light_Entity>(ctx.world.session.entity_system.try_find(mover.uid)) != nullptr)
+        ctx.visuals.drawn_solid_beams.push_back(mover);
   ctx.visuals.drawn_shadow_occluders_skipped = shared::collect_shadow_occluders(
       ctx.world.session.entity_system, ctx.world.session.bvh, ctx.world.session.owner_of,
       frame.predicted_world_storage.movers, ctx.world.session.mover_rests,
@@ -3384,8 +3389,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     constexpr Array<color_t, 6> LIGHT_COLORS = {colors::magenta, colors::cyan,   colors::yellow,
                                                 colors::orange,  colors::green,  colors::hot_pink};
     std::vector<shared::entity_uid_t> lights_seen;
-    for (const shared::shadow_volume_t& volume : ctx.visuals.drawn_shadow_volumes)
+    for (size_t volume_index = 0; volume_index < ctx.visuals.drawn_shadow_volumes.size(); ++volume_index)
     {
+      const shared::shadow_volume_t& volume = ctx.visuals.drawn_shadow_volumes[volume_index];
       auto seen = std::find(lights_seen.begin(), lights_seen.end(), volume.light);
       if (seen == lights_seen.end())
         seen = lights_seen.insert(lights_seen.end(), volume.light);
@@ -3403,9 +3409,35 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       if (volume.side_count > 0)
       {
         near_center = near_center * (1.f / static_cast<float>(volume.side_count));
-        const std::string label = std::format("caster {} / light {}", volume.caster, volume.light);
+        const std::string label = volume_index < renderer::MAX_SCENE_SHADOW_VOLUMES
+                                      ? std::format("volume {}: caster {} / light {}", volume_index, volume.caster, volume.light)
+                                      : std::format("NOT DRAWN: caster {} / light {}", volume.caster, volume.light);
         scene.debug.text(near_center, label.c_str(), color);
       }
+    }
+  }
+  if (ctx.cvars->cl_solid_beam_debug)
+  {
+    constexpr Array<color_t, 8> PIECE_COLORS = {colors::cyan,   colors::yellow, colors::magenta, colors::green,
+                                                colors::orange, colors::white,  colors::hot_pink, colors::blue};
+    for (const shared::mover_t& beam : ctx.visuals.drawn_solid_beams)
+    {
+      for (size_t index = 0; index < beam.pieces.size(); ++index)
+      {
+        const shared::collision_piece_t& piece = beam.pieces[index];
+        const color_t                    color = PIECE_COLORS[static_cast<uint32_t>(index) % PIECE_COLORS.size()];
+        for (const std::vector<linalg::vec3>& polygon : piece.face_polygons)
+        {
+          for (size_t corner = 0; corner < polygon.size(); ++corner)
+            scene.debug.line(polygon[corner], polygon[(corner + 1) % polygon.size()], color, 0.f, 0.f, true);
+          scene.debug.filled_polygon(Span<const linalg::vec3f>(polygon.data(), static_cast<uint32_t>(polygon.size())),
+                                     with_alpha(color, 24), 0.f, {.rim = true});
+        }
+        scene.debug.text(get_aabb_center(piece.bounds), std::format("piece {}", index).c_str(), color);
+      }
+      scene.debug.backed_text(beam.pose_at_tick_end.position,
+                              std::format("solid beam {}: {} pieces", beam.uid, beam.pieces.size()).c_str(),
+                              colors::white);
     }
   }
   const flashlight_settings_t held_flashlight = {

@@ -20,6 +20,8 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
+    if ((scene.debug_flags & DEBUG_FLAGS_SHOWING_BEAM) != 0)
+        discard;
     vec2  position    = (gl_FragCoord.xy - scene.beam_viewport.xy) / scene.beam_viewport.zw;
     float stored      = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;
     float view_depth  = view_depth_from_stored(stored);
@@ -32,7 +34,7 @@ void main()
     vec3  surface_point    = origin + surface_t * ray;
     vec2  lengths          = drawn_shadow_lengths(in_volume, origin, ray, surface_t);
     float in_shadow        = lengths.x;
-    float margin           = shadow_margin_at(in_volume, surface_point);
+    float margin           = shadow_margin_at(in_volume, surface_point, 0.0);
     float line_measure     = one_surface ? in_shadow : lengths.y;
     float line_pixels      = pixels_to_zero(line_measure);
     float rim_pixels       = pixels_to_zero(margin);

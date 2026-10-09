@@ -518,6 +518,8 @@ struct visual_effects_t
   // The same cut's counts, and the line cl_shadow_volume_debug last printed for them.
   shared::shadow_volume_report_t       drawn_shadow_volume_report;
   std::string                          shadow_volume_debug_line;
+  // The solid beams the same cut carved, copied only while cl_solid_beam_debug draws them.
+  std::vector<shared::mover_t>         drawn_solid_beams;
 
   // Which local input number the run's pose 0 is, latched once per Live phase so the ghost
   // advances with our own input counter rather than with snapshot arrival.

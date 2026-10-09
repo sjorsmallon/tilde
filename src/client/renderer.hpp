@@ -829,6 +829,7 @@ struct look_settings_t
   cvars::Beam_Fill beam_fill      = cvars::Beam_Fill::tint; // r_beam_fill
   float   beam_dot_spacing_pixels = 8.0f;  // r_beam_dot_spacing
   float   beam_edge_pixels        = 2.0f;  // r_beam_edge_pixels
+  bool    beam_surface_bias       = true;  // r_beam_surface_bias
   bool    shadow_volume           = true;  // r_shadow_volume
   float   shadow_volume_alpha     = 0.25f; // r_shadow_volume_alpha
 };

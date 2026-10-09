@@ -12,8 +12,9 @@ const float EMPTY_LEAVE      = -1e9;
 const float FLAT_QUADRATIC   = 1e-6;
 // A depth step larger than this share of the depth is a jump between two surfaces, not one surface's slope.
 const float DEPTH_JUMP_SHARE = 0.1;
-// The shadow terms stop this share of the depth short of the surface: a chord ending ON a caster's face
-// ends on its own volume's boundary, where the depth's rounding would flicker the face in and out of the shaft.
+// A chord ending ON a caster's lit face ends on its own volume's back plane, where the depth's rounding would
+// flicker the face in and out of the shaft; a point this share of its depth in front of a back plane counts as
+// lit. shadow_body.frag instead stops its surface point this share short along the view ray.
 const float SURFACE_BIAS_SHARE = 0.002;
 
 // A pixel's view depth from what the scene pass stored.
@@ -276,8 +277,9 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
 }
 
 // Signed distance of `point` to shadow volume `volume`'s boundary, negative inside: inside every side plane
-// and behind the caster, which is outside at least one back plane.
-float shadow_margin_at(int volume, vec3 point)
+// and behind the caster, which is outside at least one back plane. A point within `lit_face_tolerance` in
+// front of a back plane is outside: the caster's own lit face, at the depth's rounding.
+float shadow_margin_at(int volume, vec3 point, float lit_face_tolerance)
 {
     int   first         = volume * MAX_SHADOW_VOLUME_PLANES;
     ivec2 counts        = shadow_volume_plane_counts(volume);
@@ -293,7 +295,7 @@ float shadow_margin_at(int volume, vec3 point)
         vec4 back     = scene.shadow_volumes[first + slot];
         behind_caster = max(behind_caster, dot(back.xyz, point) - back.w);
     }
-    return max(outside_sides, -behind_caster);
+    return max(outside_sides, lit_face_tolerance - behind_caster);
 }
 
 // The line's coverage this many pixels inside an edge, r_beam_edge_pixels wide and feathered one pixel.

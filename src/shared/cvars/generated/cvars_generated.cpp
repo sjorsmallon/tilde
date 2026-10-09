@@ -211,6 +211,7 @@ cvar_state_t::cvar_state_t()
     r_beam_fill(Beam_Fill::tint),
     r_beam_dot_spacing(8.0f),
     r_beam_edge_pixels(2.0f),
+    r_beam_surface_bias(true),
     r_shadow_volume(true),
     r_shadow_volume_alpha(0.25f),
     r_look_panel(false),
@@ -222,6 +223,7 @@ cvar_state_t::cvar_state_t()
     debug_hide_geometry(false),
     cl_shot_debug_seconds(4.0f),
     cl_shadow_volume_debug(false),
+    cl_solid_beam_debug(false),
     debug_show_entity_counts(false),
     net_snapshot_debug(false),
     sv_event_debug(false),
@@ -265,6 +267,7 @@ constexpr const char* Debug_Channel_VALUE_NAMES[] = {
   "reflection_capture",
   "ink_normals",
   "beam_terms",
+  "beam_shadow",
 };
 
 constexpr const char* Cel_Fill_VALUE_NAMES[] = {
@@ -298,7 +301,7 @@ constexpr const char* Bot_Mode_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[] = {
   {"Bunnyhop_Mode", {Bunnyhop_Mode_VALUE_NAMES, 3}},
   {"Locomotion_Model", {Locomotion_Model_VALUE_NAMES, 4}},
-  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 14}},
+  {"Debug_Channel", {Debug_Channel_VALUE_NAMES, 15}},
   {"Cel_Fill", {Cel_Fill_VALUE_NAMES, 4}},
   {"Beam_Fill", {Beam_Fill_VALUE_NAMES, 2}},
   {"Pattern_Kind", {Pattern_Kind_VALUE_NAMES, 7}},
@@ -1219,7 +1222,7 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "r_debug_channel",
-     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals, beam_terms: the beam pass as its line terms, red the outline, green a shaft, blue a hole rim, grey the lit share)",
+     .description = "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals, beam_terms: the beam pass as its terms, grey the lit share of the chord, red the outline, green a shaft line, blue a hole rim, magenta where the chord ends inside a shaft and nothing is drawn; beam_shadow: the beam pass by the shadow volume that takes the most out of each pixel's chord, one colour per scene volume index as cl_shadow_volume_debug labels them, brighter the more it takes, dark grey where no volume touches the chord)",
      .flags = CVAR_FLAG_CLIENT,
      .type = CVAR_TYPE_ENUM,
      .offset = offsetof(cvar_state_t, r_debug_channel),
@@ -1882,6 +1885,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_beam_edge_pixels),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_beam_surface_bias",
+     .description = "Count a beam chord's end as lit when it is within a hair of a caster's own lit face, the chord measured whole; off is the old lift of every chord's end along the view ray, which left a false lit crescent at the rim of a shaft against the air and a soft lit band at the far edge of a shaft on a floor",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, r_beam_surface_bias),
+     .size = sizeof(cvar_state_t::r_beam_surface_bias),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "r_shadow_volume",
      .description = "Draw every shadow volume the collision reads as a dark body in the air, lines where it ends on screen and a rim where it lands, the whole volume and not only the part inside a beam",
      .flags = CVAR_FLAG_CLIENT,
@@ -1968,6 +1979,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_BOOL,
      .offset = offsetof(cvar_state_t, cl_shadow_volume_debug),
      .size = sizeof(cvar_state_t::cl_shadow_volume_debug),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "cl_solid_beam_debug",
+     .description = "Draw every solid beam the prediction cut this frame as its convex pieces, one colour per piece with its index, and the beam's piece count at the fixture; the picture to hold against r_debug_channel beam_shadow",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_BOOL,
+     .offset = offsetof(cvar_state_t, cl_solid_beam_debug),
+     .size = sizeof(cvar_state_t::cl_solid_beam_debug),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "debug_show_entity_counts",
@@ -2528,6 +2547,7 @@ const char* to_string(Debug_Channel value)
     case Debug_Channel::reflection_capture: return "reflection_capture";
     case Debug_Channel::ink_normals: return "ink_normals";
     case Debug_Channel::beam_terms: return "beam_terms";
+    case Debug_Channel::beam_shadow: return "beam_shadow";
   }
   assert(false && "invalid Debug_Channel");
   return "";
@@ -2549,6 +2569,7 @@ template <> std::optional<Debug_Channel> try_from_string<Debug_Channel>(std::str
   if (text == "reflection_capture") return Debug_Channel::reflection_capture;
   if (text == "ink_normals") return Debug_Channel::ink_normals;
   if (text == "beam_terms") return Debug_Channel::beam_terms;
+  if (text == "beam_shadow") return Debug_Channel::beam_shadow;
   return std::nullopt;
 }
 

@@ -792,7 +792,7 @@ struct scene_uniform_t
   float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
   float       beam[4]                                       = {}; // x one of scene.glsl's BEAM_FILL_*, y the tint alpha, z the dot spacing in pixels, w the outline width in pixels
   float       beam_viewport[4]                              = {}; // this pass's viewport in pixels: xy where it starts, zw its size
-  float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z
+  float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z, w 1 when the surface bias applies only to chords ending on a surface
   float       beams[MAX_SCENE_BEAMS][12]                    = {}; // apex xyz and range, forward xyz and cos(outer), colour rgb and the light's uid bits
   float       beam_boxes[MAX_SCENE_BEAMS][8]                = {}; // the box around beam b's cone, min xyz then max xyz; beam.vert draws it
   float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
@@ -838,6 +838,7 @@ constexpr int32_t DEBUG_FLAG_RENDER_SHADOW_PENUMBRA   = 1 << 8;
 constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION         = 1 << 9;
 constexpr int32_t DEBUG_FLAG_RENDER_REFLECTION_CAPTURE = 1 << 10;
 constexpr int32_t DEBUG_FLAG_RENDER_BEAM_TERMS         = 1 << 11;
+constexpr int32_t DEBUG_FLAG_RENDER_BEAM_SHADOW        = 1 << 12;
 
 constexpr uint32_t MAX_VIEW_PASSES_PER_FRAME = 8;
 
@@ -7607,6 +7608,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     break;
   case cvars::Debug_Channel::ink_normals: break; // the tonemap pass shows the image, the scene draws as usual
   case cvars::Debug_Channel::beam_terms: scene.debug_flags = DEBUG_FLAG_RENDER_BEAM_TERMS; break;
+  case cvars::Debug_Channel::beam_shadow: scene.debug_flags = DEBUG_FLAG_RENDER_BEAM_SHADOW; break;
   }
 
   return scene;
@@ -9769,6 +9771,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.beam[1]                  = std::clamp(look.beam_alpha, 0.0f, 1.0f);
     scene.beam[2]                  = std::max(look.beam_dot_spacing_pixels, 1.0f);
     scene.beam[3]                  = std::max(look.beam_edge_pixels, 0.0f);
+    scene.beam_settings[3]         = look.beam_surface_bias ? 1.0f : 0.0f;
     scene.shadow_volume_settings[1] = look.shadow_volume ? std::clamp(look.shadow_volume_alpha, 0.0f, 1.0f) : 0.0f;
     scene.shadow_volume_settings[2] = look.shadow_volume ? 1.0f : 0.0f;
     scene.fog_settings[1]     = FOG_GRID_NEAR;
