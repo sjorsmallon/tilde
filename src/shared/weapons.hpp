@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "array.hpp"
+#include "asset_id.hpp"
 #include "color_map.hpp"
 #include "contact.hpp"
 #include "entities/generated/entities_core_generated.hpp"
@@ -130,13 +131,15 @@ struct alive_limit_t
 };
 
 // What the weapon sounds like. Client-only facts, on the shared row (see
-// above). Missing is a declared absence, logged once per id by the audio
-// system, never a silent skip.
+// above). Names rather than ids, because this table is constexpr and an id is
+// numbered at startup; the client resolves them at the play site. The empty
+// name is a declared absence, resolved to Missing and logged once per id by
+// the audio system, never a silent skip.
 struct weapon_sounds_t
 {
-  assets::sound_asset fire;
+  assets::asset_name_t fire;
   // A Shot_Impact on static geometry. Scout has no bullet-on-wall file on disk.
-  assets::sound_asset world_impact;
+  assets::asset_name_t world_impact;
 };
 
 // What ONE button does: the resolution and the parameters it reads, and what
@@ -231,8 +234,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .hitscan    = {.range = 50.f, .leaves_bullet_impact = false},
                                  .contact    = {.effect = contact_effect_t::Damage,
                                                 .damage = {.amount = 50.f, .headshot_multiplier = 1.0f}}},
-     .sounds                  = {.fire         = assets::sound_asset::knife_slash1,
-                                 .world_impact = assets::sound_asset::knife_hitwall1}},
+     .sounds                  = {.fire         = "knife_slash1",
+                                 .world_impact = "knife_hitwall1"}},
     {.weapon                  = entities::Weapon::Scout,
      .display_name            = "Scout",
      .slot                    = entities::Inventory_Slot::Primary,
@@ -245,8 +248,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .contact    = {.effect = contact_effect_t::Damage,
                                                 .damage = {.amount = 60.f, .headshot_multiplier = 2.0f}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Zoom},
-     .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = "scout_fire_1",
+                                 .world_impact = assets::NO_ASSET_NAME}},
     {.weapon                  = entities::Weapon::Rocket_Launcher,
      .display_name            = "Rocket Launcher",
      .slot                    = entities::Inventory_Slot::Secondary,
@@ -260,8 +263,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                 .spawns = entities::entity_type::Rocket_Entity},
                                  .contact    = {.effect  = contact_effect_t::Explode,
                                                 .explode = {.radius = 120.f, .knockback = 600.f}}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     {.weapon                        = entities::Weapon::Dash,
      .display_name                  = "Dash",
      .slot                          = entities::Inventory_Slot::Utility_1,
@@ -280,8 +283,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                         .along_aim_speed = 900.f,
                                                         .upward_speed    = 0.f}},
      .self_impulse_cooldown_seconds = 1.5f,
-     .sounds                        = {.fire         = assets::sound_asset::gust_of_wind,
-                                       .world_impact = assets::sound_asset::Missing}},
+     .sounds                        = {.fire         = "gust_of_wind",
+                                       .world_impact = assets::NO_ASSET_NAME}},
     {.weapon                  = entities::Weapon::Swapper,
      .display_name            = "Swapper",
      .slot                    = entities::Inventory_Slot::Utility_2,
@@ -292,8 +295,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
                                  .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
                                  .contact    = {.effect = contact_effect_t::Swap}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // The same hook on both buttons: the primary throws the player hit at the shooter, the secondary reels them in.
     {.weapon                  = entities::Weapon::Hook,
      .display_name            = "Hook",
@@ -315,8 +318,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .contact    = {.effect = contact_effect_t::Reel,
                                                 .reel   = {.subject = contact_subject_t::Target,
                                                            .seconds = 1.5f}}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     {.weapon                  = entities::Weapon::Bubble,
      .display_name            = "Bubble",
      .slot                    = entities::Inventory_Slot::Primary,
@@ -329,8 +332,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .projectile = {.speed         = 500.f,
                                                 .gravity_scale = -0.5f,
                                                 .spawns = entities::entity_type::Bubble_Entity}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 
     {.weapon                  = entities::Weapon::Kooh,
      .display_name            = "Kooh",
@@ -352,8 +355,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .contact    = {.effect = contact_effect_t::Reel,
                                                 .reel   = {.subject = contact_subject_t::Shooter,
                                                            .seconds = 1.5f}}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 
     {.weapon                  = entities::Weapon::Magnet,
      .display_name            = "Magnet",
@@ -370,8 +373,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .hitscan    = {.range = 1500.f, .leaves_bullet_impact = false},
                                  .contact    = {.effect = contact_effect_t::Magnet,
                                                 .magnet = {.speed = -600.f}}},
-     .sounds                  = {.fire         = assets::sound_asset::scout_fire_1,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = "scout_fire_1",
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // The fiddle row: both buttons repeat while held, a reel toward the player hit (a lease the next held
     // hit renews) and a bullet stream.
     {.weapon                  = entities::Weapon::Mock,
@@ -392,8 +395,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .contact          = {.effect = contact_effect_t::Damage,
                                                       .damage = {.amount = 8.f, .headshot_multiplier = 2.0f}},
                                  .fires_while_held = true},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 
     {.weapon                  = entities::Weapon::Platform,
      .display_name            = "Platform",
@@ -408,8 +411,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                 .gravity_scale = 0.f,
                                                 .spawns = entities::entity_type::Platform_Entity}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Recall},
-     .sounds                 = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                 = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 
     {.weapon                  = entities::Weapon::Shrinking_Platform,
      .display_name            = "Shrinking Platform",
@@ -424,8 +427,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                 .gravity_scale = 0.f,
                                                 .spawns = entities::entity_type::Shrinking_Platform_Entity}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Recall},
-     .sounds                 = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                 = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 
     {.weapon                  = entities::Weapon::Remnant,
      .display_name            = "Remnant",
@@ -442,8 +445,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
                                  .contact    = {.effect  = contact_effect_t::Teleport,
                                                 .targets = contact_targets_t::Own_Remnants}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     {.weapon                  = entities::Weapon::Ricochet,
      .display_name            = "Ricochet",
      .slot                    = entities::Inventory_Slot::Secondary,
@@ -456,8 +459,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                 .gravity_scale = 1.f,
                                                 .spawns = entities::entity_type::Ricochet_Entity},
                                  .contact    = {.effect = contact_effect_t::Land}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // A toggle, not a shot: a press raises or lowers the canopy (canopy_system), so the row has no clocks.
     {.weapon                  = entities::Weapon::Canopy,
      .display_name            = "Canopy",
@@ -467,8 +470,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .magazine_size           = 0,
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Canopy},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // Both buttons freeze the player hit for the same two seconds; the left keeps their momentum, the right
     // drops them. Shooting a frozen player again with either releases them early.
     {.weapon                  = entities::Weapon::Statue,
@@ -488,8 +491,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .contact    = {.effect = contact_effect_t::Freeze,
                                                 .freeze = {.kind    = entities::Movement_Override::Statue,
                                                            .seconds = 2.0f}}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // LMB delivers the zone to a surface by a shot; RMB fires the zone itself on a straight, unclipped fixed arc.
     // Both rows are the flight alone: the zone's numbers are Timed_Movement_Modifier_Entity's own defaults.
     {.weapon                  = entities::Weapon::Modifier_Gun,
@@ -509,8 +512,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .projectile = {.speed         = 700.f,
                                                 .gravity_scale = 0.f,
                                                 .spawns = entities::entity_type::Timed_Movement_Modifier_Entity}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // Set down at the waist facing the aim; how far it grows is one sweep at fire time, and every other
     // number is Extending_Platform_Entity's own default.
     {.weapon                  = entities::Weapon::Extending_Platform,
@@ -525,8 +528,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .place      = {.spawns = entities::entity_type::Extending_Platform_Entity,
                                                 .anchor = place_anchor_t::Waist}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Recall},
-     .sounds                 = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                 = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // The shooter rides the rocket: the body holds, the aim is the heading, a second press lets go.
     // The path lies an eye's height under the flight, so the flight is the view of whoever walks it.
     {.weapon                        = entities::Weapon::Guided_Rocket,
@@ -549,8 +552,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                                                   .half_width = 46.f,
                                                                   .colors     = RAINBOW_COLORS}}},
      .self_impulse_cooldown_seconds = 1.f,
-     .sounds                        = {.fire         = assets::sound_asset::Missing,
-                                       .world_impact = assets::sound_asset::Missing}},
+     .sounds                        = {.fire         = assets::NO_ASSET_NAME,
+                                       .world_impact = assets::NO_ASSET_NAME}},
     // Two toggles, not shots: a press flips Player_Entity::reveal_light_on or reveal_light_overhead, so the row has no clocks.
     {.weapon                  = entities::Weapon::Flashlight,
      .display_name            = "Flashlight",
@@ -561,8 +564,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Reveal_Light},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // The Flashlight's two toggles on the same two player flags; the cone it casts Erases (shared/reveal_light.hpp).
     {.weapon                  = entities::Weapon::Eraser,
      .display_name            = "Eraser",
@@ -573,8 +576,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .reload_duration_seconds = 0.f,
      .primary_fire            = {.resolution = entities::Fire_Resolution::Erase_Light},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
     // The player hit rides inside the shooter for the row's seconds: the shooter walks and jumps, the one hit aims and fires.
     {.weapon                  = entities::Weapon::Merge,
      .display_name            = "Merge",
@@ -587,8 +590,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
                                  .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
                                  .contact    = {.effect = contact_effect_t::Merge,
                                                 .merge  = {.seconds = 10.0f}}},
-     .sounds                  = {.fire         = assets::sound_asset::Missing,
-                                 .world_impact = assets::sound_asset::Missing}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 }};
 
 // The one check, and it has to carry both failures.

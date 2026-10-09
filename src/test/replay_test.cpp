@@ -1,6 +1,7 @@
 // replay_def.md §8 steps 1, 2 and 5: the .replay container, the recorder that
 // deltas against the last frame it wrote, and the seek that rebuilds a frame.
 
+#include "asset_state.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/rocket_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
@@ -35,10 +36,15 @@ std::vector<uint8_t> read_bytes(const std::string& path)
   return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
+// The container does not care which tree numbered the ids, only that the
+// reader's hash matches the writer's, so the test never touches resources/.
+constexpr uint32_t TEST_ASSET_TABLE_HASH = 0xA55E7u;
+
 replay_header_t make_header()
 {
   replay_header_t header;
   header.schema_hash      = entities::SCHEMA_HASH;
+  header.asset_table_hash = TEST_ASSET_TABLE_HASH;
   header.tickrate_hz      = 60;
   header.map_content_hash = 0xC0FFEE11;
   header.map_name         = "bunnyhop.source";
@@ -70,7 +76,7 @@ void test_header_and_records_round_trip()
 {
   const std::string        path = write_small_replay("round_trip.replay");
   std::string              reason;
-  std::optional<replay_t>  replay = try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+  std::optional<replay_t>  replay = try_read_replay_file(path, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason);
   assert(replay);
 
   assert(replay->header.tickrate_hz == 60);
@@ -141,7 +147,7 @@ void test_keyframes_are_found_with_and_without_the_index()
 {
   const std::string path  = write_small_replay("index.replay");
   std::string       reason;
-  std::optional<replay_t> with_index = try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+  std::optional<replay_t> with_index = try_read_replay_file(path, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason);
   assert(with_index && !with_index->index_was_rebuilt);
   check_keyframe_lookup(*with_index);
 
@@ -157,7 +163,7 @@ void test_keyframes_are_found_with_and_without_the_index()
 
   std::vector<uint8_t> without = with_index->bytes;
   without.resize((size_t)index_offset);
-  std::optional<replay_t> rebuilt = try_open_replay(without, entities::SCHEMA_HASH, reason);
+  std::optional<replay_t> rebuilt = try_open_replay(without, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason);
   assert(rebuilt && rebuilt->index_was_rebuilt);
   assert(rebuilt->index.first_tick == 10 && rebuilt->index.last_tick == 40);
   assert(rebuilt->index.keyframes.size() == with_index->index.keyframes.size());
@@ -165,7 +171,7 @@ void test_keyframes_are_found_with_and_without_the_index()
 
   std::vector<uint8_t> crashed = without;
   crashed.resize(crashed.size() - 3);
-  std::optional<replay_t> cut = try_open_replay(crashed, entities::SCHEMA_HASH, reason);
+  std::optional<replay_t> cut = try_open_replay(crashed, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason);
   assert(cut && cut->index_was_rebuilt);
   assert(cut->index.last_tick == 39);
   assert(cut->index.keyframes.size() == 3);
@@ -180,18 +186,20 @@ void test_refusals_are_named()
 
   std::vector<uint8_t> bad_magic = good;
   bad_magic[REPLAY_RECORD_HEADER_SIZE] = 'X';
-  assert(!try_open_replay(bad_magic, entities::SCHEMA_HASH, reason));
+  assert(!try_open_replay(bad_magic, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason));
   assert(reason.find("magic") != std::string::npos);
 
   std::vector<uint8_t> bad_version = good;
   bad_version[REPLAY_RECORD_HEADER_SIZE + sizeof(REPLAY_MAGIC)] = 99;
-  assert(!try_open_replay(bad_version, entities::SCHEMA_HASH, reason));
+  assert(!try_open_replay(bad_version, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason));
   assert(reason.find("version 99") != std::string::npos);
 
-  assert(!try_open_replay(good, entities::SCHEMA_HASH + 1, reason));
+  assert(!try_open_replay(good, entities::SCHEMA_HASH + 1, TEST_ASSET_TABLE_HASH, reason));
   assert(reason.find("schema hash") != std::string::npos);
+  assert(!try_open_replay(good, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH + 1, reason));
+  assert(reason.find("asset table hash") != std::string::npos);
 
-  assert(!try_open_replay({}, entities::SCHEMA_HASH, reason));
+  assert(!try_open_replay({}, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason));
   std::printf("  wrong magic, version and schema hash refused by name: ok\n");
 }
 
@@ -297,7 +305,7 @@ void test_recorder_frames_decode_bit_exact_across_a_gap()
   assert(!recorder.active);
 
   std::string             reason;
-  std::optional<replay_t> replay = try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+  std::optional<replay_t> replay = try_read_replay_file(path, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason);
   assert(replay);
   assert(replay->index.keyframes.size() == 10);
   assert(replay->index.first_tick == 1 && replay->index.last_tick == 300);
@@ -461,7 +469,7 @@ void test_player_view_tracks_sample_the_recorded_aim()
   finish_replay_recording(recorder);
 
   std::string             reason;
-  std::optional<replay_t> replay = try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+  std::optional<replay_t> replay = try_read_replay_file(path, entities::SCHEMA_HASH, TEST_ASSET_TABLE_HASH, reason);
   assert(replay);
 
   const replay_view_tracks_t tracks = build_replay_view_tracks(*replay);
@@ -492,6 +500,10 @@ void test_player_view_tracks_sample_the_recorded_aim()
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::printf("[TEST] replay_test\n");
   std::filesystem::create_directories(FIXTURE_DIRECTORY);
 

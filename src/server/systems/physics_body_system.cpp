@@ -39,8 +39,8 @@ spawn_physics_body(server_context_t &context,
   body->render.scale = size;
   switch (shape)
   {
-  case entities::Shape_Kind::Box:    body->render.mesh = assets::mesh_asset::Box; break;
-  case entities::Shape_Kind::Sphere: body->render.mesh = assets::mesh_asset::Sphere; break;
+  case entities::Shape_Kind::Box:    body->render.mesh = assets::mesh_id("Box"); break;
+  case entities::Shape_Kind::Sphere: body->render.mesh = assets::mesh_id("Sphere"); break;
   }
 
   return body_uid;

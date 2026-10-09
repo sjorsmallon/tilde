@@ -1,6 +1,7 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "replay_recorder.hpp"
 
+#include "asset_id.hpp"
 #include "log.hpp"
 #include "map.hpp"
 #include "network/cvar_mirror.hpp"
@@ -97,6 +98,7 @@ std::optional<std::string> try_start_replay_recording_of_map(replay_recorder_t& 
 {
   replay_header_t header;
   header.schema_hash      = entities::SCHEMA_HASH;
+  header.asset_table_hash = assets::asset_table_hash();
   header.tickrate_hz      = tickrate_hz;
   header.map_content_hash = compute_map_content_hash(map);
   header.map_name         = map_name;

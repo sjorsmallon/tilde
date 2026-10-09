@@ -1138,6 +1138,7 @@ void Play_State::on_enter()
   connect_cmd->set_protocol_version(1);
   connect_cmd->set_player_name(ctx.cvars->name.c_str());
   connect_cmd->set_schema_hash(entities::SCHEMA_HASH);
+  connect_cmd->set_asset_table_hash(assets::asset_table_hash());
 
   network::send_protobuf_message(transport, connect_message);
   ctx.connection.phase = Connection_Phase::Connecting;
@@ -1505,15 +1506,24 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
     }
     else if (cmd.has_reject())
     {
-      // got a server reject. check the entity schema hash.
-      const uint32_t server_schema_hash = cmd.reject().server_schema_hash();
+      // got a server reject. check the entity schema hash and the asset table hash.
+      const uint32_t server_schema_hash      = cmd.reject().server_schema_hash();
+      const uint32_t server_asset_table_hash = cmd.reject().server_asset_table_hash();
       if (server_schema_hash != 0 && server_schema_hash != entities::SCHEMA_HASH)
       {
         log_error("Connection rejected -- schema hash mismatch (client "
                   "{:#010x}, server {:#010x}). The two builds disagree about "
-                  "entity layout; rebuild both from the same entities.def and "
-                  "asset set. Server said: {}",
+                  "entity layout; rebuild both from the same .def files. "
+                  "Server said: {}",
                   entities::SCHEMA_HASH, server_schema_hash,
+                  cmd.reject().reason());
+      }
+      if (server_asset_table_hash != 0 && server_asset_table_hash != assets::asset_table_hash())
+      {
+        log_error("Connection rejected -- asset table hash mismatch (client "
+                  "{:#010x}, server {:#010x}). The two resource trees differ, so "
+                  "an asset id would name different files on each side. Server said: {}",
+                  assets::asset_table_hash(), server_asset_table_hash,
                   cmd.reject().reason());
       }
       // otherwise: extracurricular reason?
@@ -2745,15 +2755,15 @@ void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t 
   // Local player's movement sounds — centered (2D), since it's us. Other
   // players' jumps/lands arrive as spatialized cosmetic effects from the server.
   if (frame.move_events.jumped)
-    ctx.audio.play_2d(assets::sound_asset::player_jump);
+    ctx.audio.play_2d(assets::sound_id("player_jump"));
   if (frame.move_events.landed &&
       frame.move_events.land_impact_speed > ctx.cvars->pm_minimum_land_impact_speed)
-    ctx.audio.play_2d(assets::sound_asset::player_land_new);
+    ctx.audio.play_2d(assets::sound_id("player_land_new"));
 
   if (frame.move_events.launched_by_pad)
     ctx.audio.play_3d(frame.move_events.pad_kind == shared::movement_volume_kind_t::Bounce
-                          ? assets::sound_asset::bubble_pop
-                          : assets::sound_asset::twang,
+                          ? assets::sound_id("bubble_pop")
+                          : assets::sound_id("twang"),
                       shared::movement_volume_origin(frame.predicted_world.movement_volumes,
                                                      frame.move_events.pad_uid,
                                                      ctx.prediction.player_position));
@@ -4346,7 +4356,7 @@ void replay_play(std::string_view path, const command_context_t &)
 
   std::string reason;
   std::optional<shared::replay_t> replay =
-      shared::try_read_replay_file(*resolved, entities::SCHEMA_HASH, reason);
+      shared::try_read_replay_file(*resolved, entities::SCHEMA_HASH, assets::asset_table_hash(), reason);
   if (!replay)
   {
     client::console::get().print("replay_play: '%s' %s", resolved->c_str(), reason.c_str());

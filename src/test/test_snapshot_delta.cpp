@@ -12,6 +12,7 @@
 // held_snapshot.cpp -- that is exercised by running a MyGame_Client against a
 // MyGame_Server.
 
+#include "../shared/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
 #include "../shared/network/entity_snapshot.hpp"
@@ -143,6 +144,10 @@ entities::Rocket_Entity make_rocket(shared::entity_uid_t uid, float x)
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::cout << "[TEST] Starting Snapshot Delta Test..." << std::endl;
 
   {

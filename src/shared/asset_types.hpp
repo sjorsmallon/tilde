@@ -3,12 +3,10 @@
 // The asset system's VALUE TYPES and its byte layer -- everything under the id
 // space rather than in it.
 //
-// Split out of asset.hpp so the GENERATED state (asset_state_generated.hpp) can
-// name these types without dragging in what asset.hpp knows. def_gen emits one
-// `Asset_Pool<T>` and one `Enum_Array<class, asset_handle_t<T>>` per manifest
-// class, and the manifest names the header each T lives in -- this one for the
-// four types the asset system owns outright, animation.hpp and hitbox_rig.hpp
-// for the two it borrows from the domain.
+// Split out of asset.hpp so the state (asset_state.hpp) can name these types
+// without dragging in what asset.hpp knows. This header holds the types the
+// asset system owns outright; animation.hpp and hitbox_rig.hpp hold the two it
+// borrows from the domain.
 
 #include "aabb.hpp"
 #include "array.hpp"

@@ -30,11 +30,7 @@ namespace
 // stays quiet.
 constexpr uint32_t MAX_STAMP_AGE_TICKS = 12;
 
-constexpr assets::sound_asset HEADSHOT_SOUNDS[] = {
-    assets::sound_asset::headshot1,
-    assets::sound_asset::headshot2,
-    assets::sound_asset::headshot3,
-};
+constexpr assets::asset_name_t HEADSHOT_SOUNDS[] = {"headshot1", "headshot2", "headshot3"};
 
 // Guards the subtraction as well as the age: a stamp ahead of the snapshot
 // tick would wrap and read as ancient.
@@ -96,7 +92,8 @@ void play_hitmarker(client_context_t& context, const ::network::snapshot_frame_t
     return;
 
   static uint32_t next_variant = 0;
-  const assets::sound_asset sound = HEADSHOT_SOUNDS[next_variant % std::size(HEADSHOT_SOUNDS)];
+  const assets::sound_asset sound =
+      assets::sound_id(HEADSHOT_SOUNDS[next_variant % std::size(HEADSHOT_SOUNDS)]);
   ++next_variant;
 
   context.audio.play_2d(sound);
@@ -119,7 +116,7 @@ void play_breaks(client_context_t& context, const ::network::snapshot_frame_t& p
     const entities::Damageable_Entity* local =
         context.world.session.entity_system.get<entities::Damageable_Entity>(damageable.entity_id);
     if (local != nullptr)
-      context.audio.play_3d(break_sound_for(local->type), local->position);
+      context.audio.play_3d(assets::sound_id(break_sound_for(local->type)), local->position);
   }
 }
 
@@ -140,7 +137,7 @@ void play_bubble_pops(client_context_t& context, const ::network::snapshot_frame
     if (bubble.popped_by == context.connection.my_entity_uid)
       continue;
 
-    context.audio.play_3d(assets::sound_asset::bubble_pop, bubble.position);
+    context.audio.play_3d(assets::sound_id("bubble_pop"), bubble.position);
   }
 }
 

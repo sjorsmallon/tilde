@@ -1,5 +1,11 @@
 Fully_Serializable :: [@Networked, @Editable]
 
+// The asset classes a field may be typed by. Their members are the files under
+// resources/, numbered at startup; asset_id.hpp defines the C++ side.
+mesh_asset    :: asset
+texture_asset :: asset
+sound_asset   :: asset
+
 Entity :: base {
     entity_id:   entity                 @Networked
     position:    v3                     @Fully_Serializable

@@ -27,7 +27,7 @@ namespace client
 namespace
 {
 
-constexpr assets::mesh_asset PREVIEW_MESH = assets::mesh_asset::Leet_Full;
+constexpr assets::asset_name_t PREVIEW_MESH{"Leet_Full"};
 
 // a leaf bone has no child to draw toward, so its segment is a stub along the
 // bone's own local +Y (its height). Long enough to see which way the bone points.
@@ -70,12 +70,12 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   model.posed    = false;
   model.skeleton = nullptr;
 
-  model.mesh = assets::get_mesh(PREVIEW_MESH);
+  model.mesh = assets::get_mesh(assets::mesh_id(PREVIEW_MESH));
   if (!model.mesh.valid())
   {
     if (should_report_failure)
       log_error("[animation] preview mesh '{}' did not resolve through the asset manifest",
-                assets::to_string(PREVIEW_MESH));
+                PREVIEW_MESH.text);
     return false;
   }
 
@@ -84,7 +84,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   {
     if (should_report_failure)
       log_error("[animation] preview mesh '{}' has no skin arrays: it exported unskinned",
-                assets::to_string(PREVIEW_MESH));
+                PREVIEW_MESH.text);
     return false;
   }
 
@@ -93,7 +93,7 @@ assets::aim_poses_blend_weights_t blend_weights_for_an_individual_pose(entities:
   {
     if (should_report_failure)
       log_error("[animation] preview mesh '{}' names a skeleton that is not in the cache",
-                assets::to_string(PREVIEW_MESH));
+                PREVIEW_MESH.text);
     return false;
   }
 
@@ -165,8 +165,9 @@ void select_clip(clip_playback_t &clip, assets::animation_asset id)
 
 assets::animation_asset first_clip()
 {
-  return assets::animation_asset_COUNT > 1 ? (assets::animation_asset)1
-                                           : assets::animation_asset::Missing;
+  return assets::asset_count(assets::asset_class_t::animation_asset) > 1
+             ? (assets::animation_asset)1
+             : assets::animation_asset::Missing;
 }
 
 void advance_clip(clip_playback_t &clip, const assets::animation_asset_t &asset, float dt)
@@ -204,9 +205,10 @@ void advance_clip(clip_playback_t &clip, const assets::animation_asset_t &asset,
 std::string get_hitbox_rig_path(const hitbox_workspace_t &workspace, const assets::skeleton_t &skeleton)
 {
   if (workspace.file_based_hitbox_rig)
-    return assets::hitbox_rig_manifest()[(size_t)*workspace.file_based_hitbox_rig].path;
+    return assets::asset_class_entries(assets::asset_class_t::hitbox_rig)[(size_t)*workspace.file_based_hitbox_rig].path;
 
-  const std::filesystem::path mesh_path = assets::mesh_asset_manifest()[(size_t)PREVIEW_MESH].path;
+  const std::filesystem::path mesh_path =
+      assets::asset_class_entries(assets::asset_class_t::mesh_asset)[(size_t)assets::mesh_id(PREVIEW_MESH)].path;
   return (mesh_path.parent_path() / (skeleton.name + ".hitboxes")).generic_string();
 }
 
@@ -708,12 +710,13 @@ void draw_hitbox_panel(hitbox_workspace_t &workspace, const preview_model_t &mod
 void draw_animation_clip_panel(clip_playback_t &clip)
 {
   const char* preview = clip.selected == assets::animation_asset::Missing
-                            ? "(no clips in the manifest)"
+                            ? "(no clips under resources/)"
                             : assets::to_string(clip.selected);
 
   if (ImGui::BeginCombo("Animation Clip", preview))
   {
-    for (uint32_t index = 1; index < assets::animation_asset_COUNT; ++index)
+    const uint32_t clip_count = assets::asset_count(assets::asset_class_t::animation_asset);
+    for (uint32_t index = 1; index < clip_count; ++index)
     {
       const assets::animation_asset candidate = (assets::animation_asset)index;
       if (ImGui::Selectable(assets::to_string(candidate), candidate == clip.selected))

@@ -1,6 +1,6 @@
 #include "player_animator.hpp"
 
-#include "assets/generated/asset_state_generated.hpp"
+#include "asset.hpp"
 #include "log.hpp"
 #include "skinning.hpp"
 
@@ -142,7 +142,7 @@ const assets::animation_asset_t &death_clip()
   // rather than stored, which is what keeps this correct if the pool ever
   // relocates its storage.
   static const assets::asset_handle_t<assets::animation_asset_t> handle =
-      assets::get_animation(assets::animation_asset::Death);
+      assets::get_animation(assets::animation_id("Death"));
 
   return *assets::get(handle);
 }

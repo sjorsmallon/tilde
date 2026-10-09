@@ -2,7 +2,6 @@
 
 #include "../../../shared/animation.hpp"
 #include "../../../shared/asset.hpp"
-#include "../../../shared/assets/generated/assets_generated.hpp"
 #include "../../../shared/hitbox_rig.hpp"
 #include "../../../shared/player_animator.hpp"
 #include "../../../shared/skinning.hpp"

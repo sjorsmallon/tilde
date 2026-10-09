@@ -1,5 +1,6 @@
 // shared/ghost -- the .ghost file, the always-on capture it is cut from, and the sampler.
 
+#include "asset_state.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "shared/ghost.hpp"
 #include "shared/network/ghost_transfer.hpp"
@@ -338,6 +339,10 @@ void test_the_announcement_is_the_category_file()
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::printf("[ghost]\n");
   test_path_is_beside_the_map_and_names_the_party();
   test_two_track_round_trip();

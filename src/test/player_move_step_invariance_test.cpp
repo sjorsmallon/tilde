@@ -26,6 +26,7 @@
 //
 // Links game_shared alone: player_move takes a bvh and a cvar_state_t by
 // reference and nothing else, so there is no context, no socket and no assets.
+#include "../shared/asset_state.hpp"
 #include "../shared/collision_detection.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/map_geometry.hpp"
@@ -2775,6 +2776,10 @@ static void test_a_steep_face_is_a_wall_under_the_instant_models(const cvar_stat
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   printf("player_move_step_invariance_test\n");
   printf("  dt = %.6f (60Hz), g_gravity = 800, pm_quake_friction = 6\n", tick_dt);
   printf("  gravity position scheme: %s\n",

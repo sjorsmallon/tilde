@@ -12,7 +12,7 @@
 #include "network/network_types.hpp"
 #include "reflection.hpp"
 #include "span.hpp"
-#include "assets/generated/assets_generated.hpp"
+#include "asset_id.hpp"
 #include <cstdint>
 #include <optional>
 #include <string_view>

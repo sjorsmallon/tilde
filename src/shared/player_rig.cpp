@@ -1,7 +1,7 @@
 #include "player_rig.hpp"
 
 #include "animation.hpp"
-#include "assets/generated/asset_state_generated.hpp"
+#include "asset.hpp"
 #include "log.hpp"
 #include "skinning.hpp"
 
@@ -17,7 +17,7 @@ namespace
 // one place the parse, the skeleton resolve and the hash check happen -- this
 // used to repeat all three, which is three chances to disagree with the loader
 // every other caller goes through.
-constexpr assets::hitbox_rig PLAYER_RIG = assets::hitbox_rig::rig;
+constexpr assets::asset_name_t PLAYER_RIG{"rig"};
 
 player_rig_t load_player_rig()
 {
@@ -29,12 +29,12 @@ player_rig_t load_player_rig()
   // here, so there is nothing left to branch on. The skeleton comes with it:
   // a resolved rig's bone indices are indices into exactly one skeleton, and
   // loading a second copy by path was how they could stop being the same one.
-  loaded.rig      = *assets::get(assets::get_hitbox_rig(PLAYER_RIG));
+  loaded.rig      = *assets::get(assets::get_hitbox_rig(assets::hitbox_rig_id(PLAYER_RIG)));
   loaded.skeleton = loaded.rig.skeleton;
 
   if (loaded.rig.volumes.empty() || !loaded.skeleton)
     fatal_error("player hit volumes '{}' resolved to nothing; without them nothing can be hit",
-                assets::to_string(PLAYER_RIG));
+                PLAYER_RIG.text);
 
   log_terminal("[hitbox] player rig '{}': {} volumes on skeleton '{}' ({} bones)",
                loaded.rig.name, loaded.rig.volumes.size(), loaded.skeleton->name,

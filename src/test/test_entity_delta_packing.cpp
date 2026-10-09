@@ -5,6 +5,7 @@
 // no longer declare its own synthetic entity, so this drives a real generated
 // one through the real pack/unpack path.
 
+#include "../shared/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
@@ -16,6 +17,10 @@
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::cout << "[TEST] Starting Entity Delta Packing Test..." << std::endl;
 
   entities::Player_Entity player;

@@ -1,5 +1,7 @@
 // Verifies the properties the inheritance layout was chosen for, plus the
 // factory / placeable-type surface the generator emits on top of it.
+#include "asset_state.hpp"
+#include "asset_walk.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"
@@ -12,6 +14,7 @@
 #include "entities/generated/entity_io_generated.hpp"
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <type_traits>
 #include <vector>
 
@@ -37,6 +40,14 @@ static void check(bool condition, const char* description)
 
 int main()
 {
+  // An entity's constructor resolves its asset defaults by name, so the ids
+  // have to be numbered before the first one is built. From the real tree:
+  // ctest runs from the project root, and a default naming a file that is not
+  // there is exactly what this should catch.
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   Spot_Light_Entity light;
   light.position = {1.0f, 2.0f, 3.0f};
 
@@ -95,7 +106,7 @@ int main()
         "a field the use-site literal does not name keeps the component's own default");
 
   Player_Entity player;
-  check(player.render.mesh == assets::mesh_asset::Leet_Full,
+  check(player.render.mesh == assets::mesh_id("Leet_Full"),
         "a use-site component default reaches the entity struct");
   check(player.render.visible && player.render.scale.x == 1.0f && player.render.scale.y == 1.0f &&
             player.render.scale.z == 1.0f,
@@ -320,78 +331,61 @@ int main()
     printf("\n");
   }
 
-  // --- asset manifest ---
+  // --- asset ids ---
   //
-  // The manifest models IDENTITY and nothing else. There is no source column
-  // any more: it existed to tell a file-backed asset from a generated one, and
-  // no consumer of an id ever asked. Two columns is the whole table.
+  // Numbered at startup from resources/ (asset_pipeline_def.md, "Runtime
+  // minting"). The table models IDENTITY and nothing else: a name and the
+  // path behind it.
   {
     Render render;
     check(render.mesh == assets::mesh_asset::Missing,
           "an unassigned mesh field reads as Missing, not as whichever asset sorted first");
 
     Particle_Emitter_Entity emitter;
-    check(emitter.sprite == assets::texture_asset::Smoke,
-          "a declared asset default resolves by name");
+    check(emitter.sprite == assets::texture_id("Smoke") &&
+              emitter.sprite != assets::texture_asset::Missing,
+          "a declared asset default resolves by name when the entity is constructed");
 
-    check(strcmp(to_string(assets::mesh_asset::Pyramid), "Pyramid") == 0, "asset to_string");
-    check(assets::try_from_string<assets::mesh_asset>("Sphere") == assets::mesh_asset::Sphere,
-          "asset try_from_string round trip");
+    const assets::mesh_asset pyramid = assets::mesh_id("Pyramid");
+    check(strcmp(to_string(pyramid), "Pyramid") == 0, "asset to_string");
+    check(assets::try_from_string<assets::mesh_asset>("Sphere") == assets::mesh_id("Sphere"),
+          "asset try_from_string agrees with the compile-time name");
     check(!assets::try_from_string<assets::mesh_asset>("No_Such_Mesh"),
           "asset try_from_string rejects an unknown name");
+    check(assets::mesh_id(assets::NO_ASSET_NAME) == assets::mesh_asset::Missing,
+          "the empty name resolves to Missing");
 
-    Span<const assets::asset_info_t> meshes = assets::mesh_asset_manifest();
-
-    check(meshes.size() == assets::mesh_asset_COUNT, "the manifest covers every id in the enum");
+    const Span<const assets::asset_entry_t> meshes =
+        assets::asset_class_entries(assets::asset_class_t::mesh_asset);
 
     // Slot 0 has NO PATH, in every class. Its bytes are a compiled-in constant,
     // which is the whole job of a placeholder -- a placeholder that is a file
-    // can be the thing that is missing. resources/obj/Error.obj is still an
-    // asset, it is just an ordinary one now.
-    check(strcmp(meshes[0].name, "Missing") == 0 && meshes[0].path == nullptr,
-          "slot 0 is Missing with no file behind it");
-
-    bool every_other_entry_has_a_path = true;
-    for (uint32_t index = 1; index < meshes.size(); ++index)
-      every_other_entry_has_a_path &= meshes[index].path != nullptr && meshes[index].path[0] != 0;
-    check(every_other_entry_has_a_path,
-          "every id but 0 names a file, so register_all can populate the manifest eagerly");
+    // can be the thing that is missing.
+    bool every_class_starts_at_missing = true;
+    bool every_other_entry_has_a_path  = true;
+    for (uint32_t which = 0; which < assets::ASSET_CLASS_COUNT; ++which)
+    {
+      const Span<const assets::asset_entry_t> entries =
+          assets::asset_class_entries((assets::asset_class_t)which);
+      every_class_starts_at_missing &=
+          entries.size() > 0 && entries[0].name == "Missing" && entries[0].path.empty();
+      for (uint32_t index = 1; index < entries.size(); ++index)
+        every_other_entry_has_a_path &= !entries[index].path.empty();
+    }
+    check(every_class_starts_at_missing, "id 0 of every class is the pathless placeholder");
+    check(every_other_entry_has_a_path, "every id but 0 names a file");
 
     // One class, two on-disk forms: a .obj static prop and a .mesh exported
     // with skin weights. Nothing that resolves a mesh_asset has to know which,
     // and that is why they are deliberately not two classes.
-    auto ends_with = [](const char* text, const char* suffix)
-    {
-      const size_t text_length   = strlen(text);
-      const size_t suffix_length = strlen(suffix);
-      return text_length >= suffix_length &&
-             strcmp(text + text_length - suffix_length, suffix) == 0;
-    };
-
     bool saw_obj      = false;
     bool saw_dot_mesh = false;
     for (uint32_t index = 1; index < meshes.size(); ++index)
     {
-      saw_obj |= ends_with(meshes[index].path, ".obj");
-      saw_dot_mesh |= ends_with(meshes[index].path, ".mesh");
+      saw_obj |= meshes[index].path.ends_with(".obj");
+      saw_dot_mesh |= meshes[index].path.ends_with(".mesh");
     }
     check(saw_obj && saw_dot_mesh, "one class carries both .obj and .mesh files");
-
-    // Every class starts at Missing, not just this one -- the generated
-    // get_<class> falls back to slot 0 for an id that came off the wire, so a
-    // class whose slot 0 were an ordinary asset would resolve garbage to a real
-    // thing.
-    const Span<const assets::asset_info_t> classes[] = {
-        assets::mesh_asset_manifest(),  assets::texture_asset_manifest(),
-        assets::sound_asset_manifest(), assets::animation_asset_manifest(),
-        assets::hitbox_rig_manifest(),  assets::font_asset_manifest(),
-    };
-    bool every_class_starts_at_missing = true;
-    for (const Span<const assets::asset_info_t>& entries : classes)
-      every_class_starts_at_missing &=
-          entries.size() > 0 && strcmp(entries[0].name, "Missing") == 0 &&
-          entries[0].path == nullptr;
-    check(every_class_starts_at_missing, "id 0 of every class is the pathless placeholder");
 
     // The field table records which class a field draws from, so a generic
     // consumer (the editor inspector) can offer the right closed set without
@@ -402,13 +396,25 @@ int main()
     {
       if (strcmp(field.name, "sprite") == 0)
         sprite_field_names_its_class =
-            field.type == FIELD_TYPE_ASSET && field.asset_class_id != NOT_AN_ASSET_CLASS;
+            field.type == FIELD_TYPE_ASSET &&
+            field.asset_class_id == (int32_t)assets::asset_class_t::texture_asset;
     }
     check(sprite_field_names_its_class, "an asset field records which asset class it draws from");
 
-    printf("mesh manifest (%u):", meshes.size());
-    for (const assets::asset_info_t& mesh : meshes)
-      printf(" %s", mesh.name);
+    // Every type once: a .def asset default the generator could not check is
+    // a lookup in the constructor, and this is where a misspelled one dies.
+    for (uint32_t which = 1; which < ENTITY_TYPE_COUNT; ++which)
+    {
+      const entity_type_info_t& info   = entity_info((entity_type)which);
+      void*                     memory = ::operator new(info.size_in_bytes, std::align_val_t(info.alignment));
+      Entity*                   built  = info.construct_at(memory);
+      check(built->type == (entity_type)which, "construct_at builds the type it was asked for");
+      ::operator delete(memory, std::align_val_t(info.alignment));
+    }
+
+    printf("mesh ids (%u):", meshes.size());
+    for (const assets::asset_entry_t& mesh : meshes)
+      printf(" %s", mesh.name.c_str());
     printf("\n");
   }
 

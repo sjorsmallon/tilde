@@ -1,6 +1,6 @@
 #include "reflection.hpp"
 
-#include "assets/generated/assets_generated.hpp"
+#include "asset_id.hpp"
 #include "log.hpp"
 #include "parse_number.hpp"
 
@@ -257,11 +257,11 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
     case FIELD_TYPE_ASSET:
     {
       assert(field.asset_class_id != NOT_AN_ASSET_CLASS && "asset-typed field with no asset class id");
-      const Span<const assets::asset_info_t> manifest = assets::asset_class_manifest(field.asset_class_id);
+      const Span<const assets::asset_entry_t> entries = assets::asset_class_entries(field.asset_class_id);
       const uint64_t value = (uint64_t)load_integer(field_bytes, field.size_in_bytes, false);
-      if (value >= manifest.size())
+      if (value >= entries.size())
         return false;
-      out_text = manifest[value].name;
+      out_text = entries[value].name;
       return true;
     }
 
@@ -391,10 +391,10 @@ bool field_from_text(const std::string& text, const field_info_t& field, void* f
     case FIELD_TYPE_ASSET:
     {
       assert(field.asset_class_id != NOT_AN_ASSET_CLASS && "asset-typed field with no asset class id");
-      const Span<const assets::asset_info_t> manifest = assets::asset_class_manifest(field.asset_class_id);
-      for (uint32_t index = 0; index < manifest.size(); ++index)
+      const Span<const assets::asset_entry_t> entries = assets::asset_class_entries(field.asset_class_id);
+      for (uint32_t index = 0; index < entries.size(); ++index)
       {
-        if (text != manifest[index].name)
+        if (text != entries[index].name)
           continue;
         store_integer(field_bytes, field.size_in_bytes, (int64_t)index);
         return true;

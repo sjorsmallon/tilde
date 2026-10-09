@@ -1,6 +1,7 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "server_receive.hpp"
 
+#include "../shared/asset_id.hpp"
 #include "../shared/cvars/cvar_console.hpp"
 #include "../shared/network/bitstream.hpp"
 #include "../shared/network/cvar_mirror.hpp"
@@ -30,12 +31,14 @@ static void send_message_to_reject_incoming_connection(
   server_context_t &context,
   const network::Address& sender,
   std::string_view reason,
-  uint32_t server_schema_hash)
+  uint32_t server_schema_hash,
+  uint32_t server_asset_table_hash)
 {
   game::S2C_Connection reply;
   auto *reject = reply.mutable_reject();
   reject->set_reason(std::string(reason));
   reject->set_server_schema_hash(server_schema_hash);
+  reject->set_server_asset_table_hash(server_asset_table_hash);
 
   ::send_protobuf_message(context, sender, reply);
 }
@@ -108,7 +111,7 @@ static void handle_connection_messages(server_context_t &context)
       {
         log_error("Refusing connection from {}: schema hash mismatch "
                   "(client {:#010x}, server {:#010x}). Both sides must be "
-                  "built from the same entities.def and asset set.",
+                  "built from the same .def files.",
                   cmd.connect().player_name(), client_schema_hash,
                   entities::SCHEMA_HASH);
         send_message_to_reject_incoming_connection(context, sender,
@@ -116,7 +119,26 @@ static void handle_connection_messages(server_context_t &context)
                                 "{:#010x} -- rebuild against the same "
                                 "entities.def",
                                 client_schema_hash, entities::SCHEMA_HASH),
-                    entities::SCHEMA_HASH);
+                    entities::SCHEMA_HASH, 0);
+        continue;
+      }
+
+      // and did we number our assets from the same resource tree? An asset id
+      // on the wire names a file by position, so the trees must agree.
+      const uint32_t client_asset_table_hash = cmd.connect().asset_table_hash();
+      const uint32_t server_asset_table_hash = assets::asset_table_hash();
+      if (client_asset_table_hash != server_asset_table_hash)
+      {
+        log_error("Refusing connection from {}: asset table hash mismatch "
+                  "(client {:#010x}, server {:#010x}). Both sides must run "
+                  "against the same resources/ tree.",
+                  cmd.connect().player_name(), client_asset_table_hash,
+                  server_asset_table_hash);
+        send_message_to_reject_incoming_connection(context, sender,
+                    std::format("Asset table mismatch: client {:#010x}, server "
+                                "{:#010x} -- the two resources/ trees differ",
+                                client_asset_table_hash, server_asset_table_hash),
+                    0, server_asset_table_hash);
         continue;
       }
 
@@ -165,7 +187,7 @@ static void handle_connection_messages(server_context_t &context)
       }
       else
       {
-        send_message_to_reject_incoming_connection(context, sender, "Server is Full. please try again later.", 0);
+        send_message_to_reject_incoming_connection(context, sender, "Server is Full. please try again later.", 0, 0);
       }
     }
     else if (cmd.has_disconnect())

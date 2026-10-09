@@ -164,6 +164,7 @@ std::optional<replay_writer_t> try_open_replay_writer(const std::string&     pat
   payload.insert(payload.end(), REPLAY_MAGIC, REPLAY_MAGIC + sizeof(REPLAY_MAGIC));
   append_u32(payload, REPLAY_VERSION);
   append_u32(payload, header.schema_hash);
+  append_u32(payload, header.asset_table_hash);
   append_u32(payload, header.tickrate_hz);
   append_u32(payload, header.map_content_hash);
   append_string(payload, header.map_name);
@@ -261,7 +262,7 @@ std::optional<replay_record_t> try_read_replay_record(const replay_t& replay, ui
 }
 
 std::optional<replay_t> try_open_replay(std::vector<uint8_t> bytes, uint32_t expected_schema_hash,
-                                        std::string& out_reason)
+                                        uint32_t expected_asset_table_hash, std::string& out_reason)
 {
   replay_t replay;
   replay.bytes = std::move(bytes);
@@ -285,11 +286,12 @@ std::optional<replay_t> try_open_replay(std::vector<uint8_t> bytes, uint32_t exp
   }
 
   const std::optional<uint32_t>    schema_hash      = cursor.try_u32();
+  const std::optional<uint32_t>    asset_table_hash = cursor.try_u32();
   const std::optional<uint32_t>    tickrate_hz      = cursor.try_u32();
   const std::optional<uint32_t>    map_content_hash = cursor.try_u32();
   const std::optional<std::string> map_name         = cursor.try_string();
   const std::optional<std::string> date             = cursor.try_string();
-  if (!schema_hash || !tickrate_hz || !map_content_hash || !map_name || !date)
+  if (!schema_hash || !asset_table_hash || !tickrate_hz || !map_content_hash || !map_name || !date)
   {
     out_reason = "has a header record cut short";
     return std::nullopt;
@@ -300,8 +302,16 @@ std::optional<replay_t> try_open_replay(std::vector<uint8_t> bytes, uint32_t exp
                              *schema_hash, expected_schema_hash);
     return std::nullopt;
   }
+  if (*asset_table_hash != expected_asset_table_hash)
+  {
+    out_reason = std::format("was recorded with asset table hash {:08x}, this resources/ tree "
+                             "numbers to {:08x}; an asset id in it would name a different file",
+                             *asset_table_hash, expected_asset_table_hash);
+    return std::nullopt;
+  }
 
   replay.header.schema_hash      = *schema_hash;
+  replay.header.asset_table_hash = *asset_table_hash;
   replay.header.tickrate_hz      = *tickrate_hz;
   replay.header.map_content_hash = *map_content_hash;
   replay.header.map_name         = *map_name;
@@ -376,7 +386,7 @@ std::optional<replay_t> try_open_replay(std::vector<uint8_t> bytes, uint32_t exp
 }
 
 std::optional<replay_t> try_read_replay_file(const std::string& path, uint32_t expected_schema_hash,
-                                             std::string& out_reason)
+                                             uint32_t expected_asset_table_hash, std::string& out_reason)
 {
   std::ifstream file(path, std::ios::binary);
   if (!file)
@@ -385,7 +395,7 @@ std::optional<replay_t> try_read_replay_file(const std::string& path, uint32_t e
     return std::nullopt;
   }
   std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-  return try_open_replay(std::move(bytes), expected_schema_hash, out_reason);
+  return try_open_replay(std::move(bytes), expected_schema_hash, expected_asset_table_hash, out_reason);
 }
 
 std::optional<replay_snapshot_payload_t> try_split_replay_snapshot(const replay_record_t& record)

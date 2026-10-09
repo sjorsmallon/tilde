@@ -1,5 +1,6 @@
 // The pin for collision_world_plan.md step 1: a swept sphere stops where a
 // player's hull would, through the same disabled set and the same mover list.
+#include "asset_state.hpp"
 #include "collision_detection.hpp"
 #include "disabled_geometry.hpp"
 #include "entities/generated/entities/physics_body_entity_generated.hpp"
@@ -78,6 +79,10 @@ static shared::mover_t platform_resting_at(const vec3f& center, const vec3f& hal
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   const Bounding_Volume_Hierarchy floor = floor_world();
 
   printf("a sphere stops at a face by its radius\n");

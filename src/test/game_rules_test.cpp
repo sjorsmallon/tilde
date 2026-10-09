@@ -8,6 +8,7 @@
 // signal fired.
 //
 
+#include "asset_state.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "server/entity_io_context.hpp"
 #include "server/entity_io_queue.hpp"
@@ -1235,6 +1236,10 @@ void test_spawn_policy()
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::printf("=== game_rules_test ===\n");
 
   std::setvbuf(stdout, nullptr, _IONBF, 0);

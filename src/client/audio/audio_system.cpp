@@ -9,6 +9,7 @@
 #include <bit>
 #include <algorithm>
 #include <optional>
+#include <vector>
 
 namespace client
 {
@@ -71,7 +72,7 @@ struct audio_impl_t
   ma_engine engine{};
   voices_t voices{};
   // just so we don't spam the log.
-  Enum_Array<assets::sound_asset, bool> play_failure_reported{};
+  std::vector<uint8_t> play_failure_reported;
 };
 
 // The path a sound was registered with, which is the key every
@@ -86,8 +87,11 @@ static void register_every_sound(audio_impl_t* impl)
 {
   ma_resource_manager* resource_manager = ma_engine_get_resource_manager(&impl->engine);
 
+  const uint32_t sound_count = assets::asset_count(assets::asset_class_t::sound_asset);
+  impl->play_failure_reported.assign(sound_count, 0);
+
   // skip 0 because it is a sentinel for "no sound".
-  for (uint32_t which = 1; which < assets::sound_asset_COUNT; ++which)
+  for (uint32_t which = 1; which < sound_count; ++which)
   {
     const char* path = registered_path_for((assets::sound_asset)which);
     const Span<const uint8_t> bytes = assets::read_asset_bytes(path);
@@ -204,7 +208,9 @@ void Audio_System::update(const linalg::vec3f& listener_position,
   // this shouldn't happen but whatever.
   if (path[0] == '\0')
   {
-    bool* reported = impl->play_failure_reported.try_get(sound);
+    uint8_t* reported = (uint32_t)sound < impl->play_failure_reported.size()
+                            ? &impl->play_failure_reported[(uint32_t)sound]
+                            : nullptr;
     if (reported != nullptr && !*reported)
     {
       *reported = true;
@@ -226,7 +232,9 @@ void Audio_System::update(const linalg::vec3f& listener_position,
   ma_result result = ma_sound_init_from_file(&impl->engine, path, flags, nullptr, nullptr, voice);
   if (result != MA_SUCCESS)
   {
-    bool* reported = impl->play_failure_reported.try_get(sound);
+    uint8_t* reported = (uint32_t)sound < impl->play_failure_reported.size()
+                            ? &impl->play_failure_reported[(uint32_t)sound]
+                            : nullptr;
     if (reported != nullptr && !*reported)
     {
       *reported = true;

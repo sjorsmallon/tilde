@@ -11,6 +11,7 @@
 // They are one pin rather than one file each because the question is WHICH of
 // them a type feeds, and a per-collect pin cannot ask that: it would pass on a
 // type that feeds two, or none.
+#include "asset_state.hpp"
 #include "collision_detection.hpp"
 #include "disabled_geometry.hpp"
 #include "movement_modifiers.hpp"
@@ -915,6 +916,10 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range();
   test_a_solid_beam_is_carved_by_its_own_shadow_volumes();
   test_every_predicted_type_feeds_exactly_one_collect();

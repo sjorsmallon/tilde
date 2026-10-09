@@ -21,6 +21,7 @@
 //      map's, and a target destroyed during the delay is dropped rather than
 //      fatal.
 
+#include "asset_state.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "server/damage.hpp"
 #include "server/entity_io_console.hpp"
@@ -1418,6 +1419,10 @@ void test_the_console_parses_a_parameter_tail()
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::printf("--- entity I/O: connections, the load check and the queue ---\n");
 
   test_a_connection_survives_the_file();

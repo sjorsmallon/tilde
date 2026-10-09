@@ -530,8 +530,8 @@ asset_handle_t<texture_asset_t> import_emissive_texture(glb_import_t& import, co
 
 void take_material_folder(glb_import_t& import, material_t& material, pbr_material folder)
 {
-  const pbr_material_asset_t* resolved =
-      get(load_pbr_material(pbr_material_manifest()[(uint32_t)folder].path));
+  const pbr_material_asset_t* resolved = get(load_pbr_material(
+      asset_class_entries(asset_class_t::pbr_material)[(uint32_t)folder].path.c_str()));
   if (resolved == nullptr)
     fatal_error("mesh '{}' material '{}' names material folder '{}', which did not load",
                 import.key, material.name, to_string(folder));

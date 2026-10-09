@@ -1,4 +1,4 @@
-#include "../../shared/assets/generated/assets_generated.hpp"
+#include "../../shared/asset_id.hpp"
 #include "../../shared/run_times.hpp"
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
@@ -32,8 +32,8 @@ void on_objective_reached(client_context_t &context, const shared::Objective_Rea
   }
   hud::set_announcement(text);
 
-  context.audio.play_2d(is_record ? assets::sound_asset::a_new_record
-                                  : assets::sound_asset::wow_incredible,
+  context.audio.play_2d(is_record ? assets::sound_id("a_new_record")
+                                  : assets::sound_id("wow_incredible"),
                         1.0f);
 }
 

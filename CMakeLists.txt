@@ -181,9 +181,11 @@ set(MEMORY_AUDIT_HOOK src/shared/memory_audit_hook.cpp)
 #   ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def #       --asset-manifest src/shared/assets/generated/assets.manifest --dump
 add_executable(def_gen src/tools/def_gen.cpp)
 
-# The asset walker: one walk of resources/, producing the manifest def_gen
-# reads. Allowed project knowledge (an extension table); def_gen has none.
-add_executable(asset_pack src/tools/asset_pack.cpp src/shared/asset_package.cpp)
+# The package writer. It classifies the tree through the same asset_walk.cpp
+# the game numbers its ids from at startup, so the package holds exactly what
+# a loose build would have seen.
+add_executable(asset_pack src/tools/asset_pack.cpp src/shared/asset_package.cpp
+                          src/shared/asset_walk.cpp)
 
 # Generated structs and tables. These land in the source tree rather than the
 # build dir, on purpose: they are meant to be readable, opened without building,
@@ -243,18 +245,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         COMPILE_OPTIONS "-Werror=missing-prototypes")
 endif()
 
-# The asset manifest. NOT a .def and not hand-authored: asset_pack walks
-# resources/ and writes it, def_gen reads it through --asset-manifest. That is
-# the one crossing between the two tools, and it is why def_gen carries no
-# directory list, no extension table and no filesystem access at all.
-set(ASSET_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/assets/generated)
-set(ASSET_MANIFEST_FILE ${ASSET_GEN_OUT_DIR}/assets.manifest)
-set(ASSET_GEN_HEADER ${ASSET_GEN_OUT_DIR}/assets_generated.hpp)
-set(ASSET_GEN_SOURCE ${ASSET_GEN_OUT_DIR}/assets_generated.cpp)
-set(ASSET_GEN_STATE_HEADER ${ASSET_GEN_OUT_DIR}/asset_state_generated.hpp)
-set(ASSET_GEN_BINDINGS ${ASSET_GEN_OUT_DIR}/assets_bindings_generated.cpp)
-file(MAKE_DIRECTORY ${ASSET_GEN_OUT_DIR})
-
 set(CVAR_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/cvars.def)
 set(CVAR_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/cvars/generated)
 set(CVAR_GEN_HEADER ${CVAR_GEN_OUT_DIR}/cvars_generated.hpp)
@@ -284,47 +274,33 @@ set(EVENT_GEN_SOURCE ${EVENT_GEN_OUT_DIR}/events_generated.cpp)
 set(EVENT_GEN_CLIENT_BINDINGS ${EVENT_GEN_OUT_DIR}/client_events_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${EVENT_GEN_OUT_DIR})
 
-# The manifest depends on what is IN the resource tree, not on any declaration,
-# so the glob is over everything asset_pack classifies. CONFIGURE_DEPENDS
-# re-runs it on build, and asset_pack itself is write-if-different -- so
-# dropping in a mesh regenerates, and touching nothing rebuilds nothing.
+# assets.pkg -- the resource tree with bytes, for the pkg and embed builds.
+# Nothing in a loose build depends on it: the game numbers its ids from the
+# tree at startup, so dropping a file into resources/ rebuilds nothing. The
+# package is written only when a pkg or embed build asks for it, from the same
+# classification (asset_walk.cpp) the game applies.
 #
-# This replaces a hand-maintained mirror of assets.def's scan list. Nothing
-# checked that the two agreed, which is exactly the class of bug the one-walk
-# rule exists to delete.
+# The glob is over everything asset_pack classifies, so a changed tree
+# re-packs; CONFIGURE_DEPENDS picks up a file that appeared since the last
+# configure, and the glob's own result written to a file makes "a file appeared
+# or vanished" a dependency in its own right, since ninja decides by mtime and
+# a file copied in with an old timestamp would otherwise never re-run it.
 file(GLOB_RECURSE ASSET_PACK_INPUTS CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/*
 )
 list(FILTER ASSET_PACK_INPUTS EXCLUDE REGEX "/resources/(blender|shaders)/")
 
-# Ninja decides a custom command by mtime, so a file ADDED to the tree with an
-# old timestamp (copied in, extracted from an archive) never re-runs it: every
-# input is older than the manifest. The glob's own result written to a file --
-# rewritten only when the list changes -- makes "a file appeared or vanished" a
-# dependency in its own right.
 set(ASSET_PACK_INPUT_LIST ${CMAKE_CURRENT_BINARY_DIR}/asset_pack_inputs.txt)
 list(JOIN ASSET_PACK_INPUTS "
 " ASSET_PACK_INPUT_LIST_CONTENT)
 file(CONFIGURE OUTPUT ${ASSET_PACK_INPUT_LIST} CONTENT "${ASSET_PACK_INPUT_LIST_CONTENT}
 " @ONLY)
 
-add_custom_command(
-    OUTPUT ${ASSET_MANIFEST_FILE}
-    COMMAND asset_pack ${CMAKE_CURRENT_SOURCE_DIR}/resources
-            --manifest ${ASSET_MANIFEST_FILE}
-    DEPENDS asset_pack ${ASSET_PACK_INPUTS} ${ASSET_PACK_INPUT_LIST}
-    COMMENT "Walking resources/ for the asset manifest..."
-)
-
-# assets.pkg -- the SAME walk that wrote the manifest, carrying bytes as well as
-# names. Built unconditionally so `pkg` mode is one CMake flag away and never a
-# stale artifact; write-if-different, so an unchanged tree copies nothing.
 set(ASSET_PACKAGE_FILE ${CMAKE_CURRENT_BINARY_DIR}/assets.pkg)
 
 add_custom_command(
     OUTPUT ${ASSET_PACKAGE_FILE}
     COMMAND asset_pack ${CMAKE_CURRENT_SOURCE_DIR}/resources
-            --manifest ${ASSET_MANIFEST_FILE}
             --package ${ASSET_PACKAGE_FILE}
     DEPENDS asset_pack ${ASSET_PACK_INPUTS} ${ASSET_PACK_INPUT_LIST}
     COMMENT "Packing resources/ into assets.pkg..."
@@ -333,8 +309,7 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 
 # ONE invocation over EVERY .def, not one per file. SCHEMA_HASH is computed
 # across all of them and emitted once, so a per-file run would write a hash that
-# disagrees with a full build. The manifest is mixed in too, and it is an INPUT
-# here rather than an output: asset_pack owns it.
+# disagrees with a full build.
 #
 # The OUTPUT is a stamp, not the generated files. def_gen only replaces a file
 # whose bytes changed, so an untouched header keeps its mtime and the objects
@@ -357,7 +332,6 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 # against a header that did not exist.
 file(GLOB_RECURSE DEF_GEN_GLOBBED_HEADERS CONFIGURE_DEPENDS
     ${ENTITY_GEN_OUT_DIR}/*_generated.hpp
-    ${ASSET_GEN_OUT_DIR}/*_generated.hpp
     ${CVAR_GEN_OUT_DIR}/*_generated.hpp
     ${EFFECT_GEN_OUT_DIR}/*_generated.hpp
     ${EVENT_GEN_OUT_DIR}/*_generated.hpp
@@ -365,8 +339,6 @@ file(GLOB_RECURSE DEF_GEN_GLOBBED_HEADERS CONFIGURE_DEPENDS
 set(DEF_GEN_BYPRODUCTS
     ${ENTITY_GEN_HEADER} ${ENTITY_GEN_TABLES_HEADER} ${ENTITY_GEN_SOURCE} ${ENTITY_GEN_DEFAULTS}
     ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
-    ${ASSET_GEN_HEADER} ${ASSET_GEN_SOURCE}
-    ${ASSET_GEN_STATE_HEADER} ${ASSET_GEN_BINDINGS}
     ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
     ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
     ${EFFECT_GEN_HEADER} ${EFFECT_GEN_SOURCE} ${EFFECT_GEN_CLIENT_BINDINGS}
@@ -382,12 +354,10 @@ add_custom_command(
     COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
             --emit
-            --asset-manifest ${ASSET_MANIFEST_FILE}
     COMMAND ${CMAKE_COMMAND} -E touch ${DEF_GEN_STAMP}
     DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
             ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
-            ${ASSET_MANIFEST_FILE}
-    COMMENT "Generating definitions from entities.def, cvars.def, effects.def, events.def and the asset manifest..."
+    COMMENT "Generating definitions from entities.def, cvars.def, effects.def and events.def..."
 )
 add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 
@@ -423,11 +393,6 @@ add_library(game_shared STATIC
     src/shared/frame_timing.cpp
     src/shared/cpu_topology.hpp
     src/shared/cpu_topology.cpp
-    ${ASSET_GEN_SOURCE}
-    # The per-class loaders and register_all. References decode_* and
-    # make_missing_* by name, which is what makes a class with no decoder a
-    # link error rather than a silent gap.
-    ${ASSET_GEN_BINDINGS}
     ${ENTITY_GEN_SOURCE}
     ${ENTITY_GEN_DEFAULTS}
     ${ENTITY_IO_GEN_SOURCE}
@@ -516,6 +481,15 @@ add_library(game_shared STATIC
     src/shared/game_session.cpp
     src/shared/asset.hpp
     src/shared/asset.cpp
+    # The id space, numbered at startup: the classes, the walk that classifies
+    # the tree, the state and the name tables (asset_pipeline_def.md, "Runtime
+    # minting"). asset_pack compiles asset_walk.cpp too, which is what keeps
+    # the package and the ids the game numbers one classification.
+    src/shared/asset_id.hpp
+    src/shared/asset_state.hpp
+    src/shared/asset_walk.hpp
+    src/shared/asset_walk.cpp
+    src/shared/asset_tables.cpp
     src/shared/asset_gltf.cpp
     src/shared/world_units.hpp
     # tinygltf v2.9.6, verbatim (MIT): the .glb decoder's parser.
@@ -1229,10 +1203,14 @@ target_link_libraries(navmesh_test PRIVATE game_shared)
 # Guards the generated entity layout: trivial copyability (memcpy snapshots and
 # memcmp diffing) and derived-to-base conversion, which the inheritance layout
 # was chosen to preserve.
+# The asset tables ride along because an entity's constructor resolves its
+# asset defaults by name, and the text conversion reads the class tables; the
+# test numbers them from resources/ itself.
 add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE}
                                   ${ENTITY_GEN_DEFAULTS}
-                                 ${ENTITY_IO_GEN_SOURCE}
-                                  ${ASSET_GEN_SOURCE}
+                                  ${ENTITY_IO_GEN_SOURCE}
+                                  src/shared/asset_walk.cpp
+                                  src/shared/asset_tables.cpp
                                   src/shared/entities/entity_reflection.cpp
                                   src/shared/reflection.cpp)
 target_include_directories(entity_layout_test PRIVATE src/shared)

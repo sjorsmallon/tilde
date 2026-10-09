@@ -12,6 +12,7 @@
 // real generated entity -- which is also the only option left, since the closed
 // entity_type enum means a test cannot invent an entity type any more.
 
+#include "../shared/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
@@ -22,6 +23,10 @@
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   std::cout << "[TEST] Starting Network Serialization Test..." << std::endl;
 
   // Values are chosen to survive write_coord, which keeps 5 fractional bits:

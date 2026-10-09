@@ -13,7 +13,7 @@ entities.def  ──def_gen──▶  generated/entities_generated.{hpp,cpp}
 
 | File | What it is |
 |---|---|
-| `entities.def` | **The source of truth.** Every entity, component and enum. Edit this. (Asset classes are not declared anywhere — `asset_pack` walks `resources/` and writes `../assets/generated/assets.manifest`.) |
+| `entities.def` | **The source of truth.** Every entity, component and enum, plus the asset classes a field may be typed by (`mesh_asset :: asset`). Edit this. The members of an asset class are the files under `resources/`, numbered at startup. |
 | `../../tools/def_gen.cpp` | The schema compiler: parser + generator for every `.def`. Standalone, no project dependencies. |
 | `generated/entities_generated.hpp` | Structs, enums, `entity_type`, `SCHEMA_HASH`. Generated — do not edit. |
 | `generated/entities_generated.cpp` | `ENTITY_INFOS[]`, `COMPONENT_OFFSETS[][]`, the factory. Generated — do not edit. |
@@ -31,20 +31,21 @@ produces the single `SCHEMA_HASH` the connect handshake compares. Pass every
 disagrees with a full build. The families share the lexer, the primitive type
 table and the hash, and nothing else.
 
-Asset classes reach this file through `--asset-manifest`, not through a `.def`.
-`asset_pack` walks `resources/` and writes `../assets/generated/assets.manifest`;
-def_gen reads it, which is what makes `mesh: mesh_asset` resolvable here and
-emitted as `assets::mesh_asset`. `import` and its three validation rules are
-gone with it — the crossing stopped being a special case and became an argument.
-It still runs in one direction only: the asset side knows nothing about
-entities.
+An asset class is declared in the `.def` with no body (`mesh_asset :: asset`),
+which is what makes `mesh: mesh_asset` resolvable here and emitted as
+`assets::mesh_asset`. The generator knows nothing about the files: ids are
+numbered at startup from `resources/` (asset_pipeline_def.md, "Runtime
+minting"), and a `.Leet_Full` default is emitted as `assets::mesh_id("Leet_Full")`
+in the entity's constructor. The C++ side of a class is hand-written in
+`src/shared/asset_id.hpp`, so a misspelled declaration is a compile error in
+the generated field table.
 
 Inspect the parsed IR without building the game (and without writing anything —
 emission is opt-in via `--emit`):
 
 ```bash
 ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def \
-    --asset-manifest src/shared/assets/generated/assets.manifest --dump
+    src/shared/effects/effects.def src/shared/events/events.def --dump
 ```
 
 ## The old macro system is gone
@@ -143,12 +144,13 @@ it as one opaque blob and never flatten.
 
 ## SCHEMA_HASH
 
-A digest of every declaration in the `.def` plus the resolved asset manifest.
-It rides in `CmdConnect`; the server refuses a client whose hash differs and
-reports both. A mismatch means the two builds disagree about entity layout or
-about what asset id 3 means, so every snapshot after the handshake would be
+A digest of every declaration in the `.def` files. It rides in `CmdConnect`
+beside `assets::asset_table_hash()`, the runtime digest of the ids numbered
+from `resources/`; the server refuses a client whose hash differs on either
+and reports both. A mismatch means the two sides disagree about entity layout
+or about what asset id 3 means, so every snapshot after the handshake would be
 misparsed.
 
-That is also why asset ids need not be stable across adding a file to a scanned
-directory: names are the on-disk identity (a map file stores `"Cube"`, never
-`3`), and a build whose ids shifted refuses to talk to one whose didn't.
+That is also why asset ids need not be stable across adding a file: names are
+the on-disk identity (a map file stores `"Cube"`, never `3`), and a process
+whose ids shifted refuses to talk to one whose didn't.

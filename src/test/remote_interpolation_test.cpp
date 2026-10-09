@@ -15,6 +15,7 @@
 // lerping two poses needs a device, a socket or a window. Same trick ui_test
 // uses.
 #include "../client/remote_interpolation.hpp"
+#include "../shared/asset_state.hpp"
 #include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"
@@ -385,6 +386,10 @@ static void test_entity_rings()
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   printf("remote_interpolation_test\n");
 
   // -- The cursor ------------------------------------------------------------

@@ -36,11 +36,11 @@ snapshot and map streaming path). To test streaming on one machine run
 Other tools:
 
 ```bash
-# Inspect what the DSL parsed. Pass EVERY .def plus the manifest: SCHEMA_HASH spans all of them.
-./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def src/shared/effects/effects.def src/shared/events/events.def --asset-manifest src/shared/assets/generated/assets.manifest --dump
+# Inspect what the DSL parsed. Pass EVERY .def: SCHEMA_HASH spans all of them.
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def src/shared/effects/effects.def src/shared/events/events.def --dump
 # --emit writes generated/ beside each .def; --scaffold writes missing handler files (write-if-absent, never part of a build)
 
-./cmake_build/bin/asset_pack resources --manifest src/shared/assets/generated/assets.manifest [--package cmake_build/assets.pkg]
+./cmake_build/bin/asset_pack resources --package cmake_build/assets.pkg   # pkg and embed builds only; loose reads the tree
 ./cmake_build/bin/map_convert --check maps/*.source   # legacy map formats; maps/test stays legacy on purpose (a test fixture)
 ```
 
@@ -55,7 +55,7 @@ src/
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
 │   ├── effects/      effects.def (cosmetic channel), generated/
 │   ├── events/       events.def (gameplay channel), generated/
-│   ├── assets/       generated/ only; the manifest is written by asset_pack
+│   ├── assets/       embedded_package.cpp only; the id space is asset_id.hpp, the walk asset_walk.cpp
 │   └── network/      wire serialization, bitstream, UDP, reliable stream, transfers
 ├── client/           game_client (shared lib): Vulkan, SDL2, ImGui, states/, editor/, hud/, ui/
 ├── server/           game_server (shared lib): tick.cpp, systems/, traits/, entities/
@@ -110,9 +110,10 @@ file only states them.
   is emitted by `def_gen` (or `assets.manifest` by `asset_pack`). **Never
   hand-edit generated files**; edit the `.def` or the emitters in
   `src/tools/def_gen.cpp` and rebuild. Emitted file names end in `_generated`.
-- `SCHEMA_HASH` is mixed from the parsed `.def` content and the manifest, and
-  the connect handshake refuses a mismatch. Defaults are excluded from it.
-  Enum and channel-member order is the wire id: append, never reorder.
+- `SCHEMA_HASH` is mixed from the parsed `.def` content, and the connect
+  handshake refuses a mismatch, beside `assets::asset_table_hash()` for the
+  resource tree. Defaults are excluded from it. Enum and channel-member order
+  is the wire id: append, never reorder.
 - Field flags: `@Networked` (rides the snapshot), `@Editable` (inspector and
   map I/O). `Fully_Serializable :: [@Networked, @Editable]` at the top of
   `entities.def` is a flag alias. A type replicates when one of its own fields
@@ -356,10 +357,20 @@ prediction writes `ctx.prediction`.
 
 ### Assets
 
-- One walk (`asset_pack`) owns what exists. A claimed file (in a material
+- One classification (`asset_walk.cpp`) owns what exists; the game numbers
+  its ids from it at STARTUP, `asset_pack` packs from it. Dropping a file into
+  `resources/` needs a restart, never a build. A claimed file (in a material
   folder, or `.mtl` / `.skeleton`) has no id; extension decides the class;
   directory names carry no meaning. Names are basenames and must be valid C++
   identifiers. Entry 0 of every class is `Missing`, compiled in.
+- An id enum has one named member (`mesh_asset::Missing`). Code names an
+  asset by a literal, hashed at compile time: `sound_id("twang")` dies if no
+  file carries the name; a `constexpr` table stores the `asset_name_t` and the
+  use site resolves it. Data (maps, console) goes through `try_from_string`.
+  `entities.def` declares the classes it types fields by (`mesh_asset ::
+  asset`); the C++ side is hand-written in `asset_id.hpp`. The connect
+  handshake and a replay header carry `asset_table_hash()` and refuse a
+  different tree.
 - Nothing but the byte layer (`mount_asset_source`, `read_asset_bytes`,
   `asset_exists`) opens a file; every decoder takes a `Span<const uint8_t>`.
   Spans live for the process. Loaders take no `try_` and never fail: a

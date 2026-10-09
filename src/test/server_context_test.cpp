@@ -366,7 +366,7 @@ void test_map_load_finishes_the_replay()
 
   std::string reason;
   std::optional<shared::replay_t> replay =
-      shared::try_read_replay_file(path, entities::SCHEMA_HASH, reason);
+      shared::try_read_replay_file(path, entities::SCHEMA_HASH, header.asset_table_hash, reason);
   assert(replay.has_value());
   assert(!replay->index_was_rebuilt);
   assert(replay->index.first_tick == 900);

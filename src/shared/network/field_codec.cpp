@@ -1,6 +1,6 @@
 #include "field_codec.hpp"
 
-#include "../assets/generated/assets_generated.hpp"
+#include "../asset_id.hpp"
 #include "../log.hpp"
 
 #include <cstring>
@@ -216,16 +216,15 @@ bool read_field(Bit_Reader& reader, uint8_t* base, const field_info_t& field, ui
     case FIELD_TYPE_ASSET:
     {
       // Same shape as the enum case: an asset id is an index into its class's
-      // manifest, and SCHEMA_HASH already refuses a peer whose manifest
-      // differs, so anything out of range here is corruption rather than skew.
-      const uint32_t                         value = read_var_uint(reader);
-      const Span<const assets::asset_info_t> manifest =
-          assets::asset_class_manifest(field.asset_class_id);
-      if (value >= manifest.size())
+      // table, and the connect handshake already refuses a peer whose table
+      // hash differs, so anything out of range here is corruption rather than skew.
+      const uint32_t                          value   = read_var_uint(reader);
+      const Span<const assets::asset_entry_t> entries = assets::asset_class_entries(field.asset_class_id);
+      if (value >= entries.size())
       {
         log_error("field wire: field {} carries asset id {}, but its class has {} entries. "
-                  "The sender disagrees with our manifest, or the packet is corrupt.",
-                  field.name, value, manifest.size());
+                  "The sender disagrees with our asset table, or the packet is corrupt.",
+                  field.name, value, entries.size());
         return false;
       }
       std::memcpy(bytes, &value, field.size_in_bytes);

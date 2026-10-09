@@ -38,7 +38,7 @@ void play_world_impact(client_context_t& context, const shared::Shot_Impact& dat
 void play_type_impact(client_context_t& context, const shared::Shot_Impact& data,
                       entities::entity_type type)
 {
-  const Span<const assets::sound_asset> variants = impact_sounds_for(type);
+  const Span<const assets::asset_name_t> variants = impact_sounds_for(type);
   if (variants.count == 0)
   {
     log_error("Shot_Impact landed on uid {} of entity type {}, which no shot can hit -- the "
@@ -50,7 +50,7 @@ void play_type_impact(client_context_t& context, const shared::Shot_Impact& data
   // Cycled rather than randomised: four identical thuds in a row is what makes
   // a sound read as canned, and a counter costs no RNG and no state to seed.
   static uint32_t next_variant = 0;
-  const assets::sound_asset sound = variants[next_variant % variants.count];
+  const assets::sound_asset sound = assets::sound_id(variants[next_variant % variants.count]);
   ++next_variant;
 
   // A headshot is louder, not different -- the distinct headshot sound belongs

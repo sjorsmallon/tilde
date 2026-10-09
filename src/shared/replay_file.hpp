@@ -12,6 +12,7 @@
 //                    magic:char[8]             REPLAY_MAGIC, no terminator
 //                    version:u32               REPLAY_VERSION
 //                    schema_hash:u32           entities::SCHEMA_HASH of the recording build
+//                    asset_table_hash:u32      assets::asset_table_hash() of the recording tree
 //                    tickrate_hz:u32
 //                    map_content_hash:u32
 //                    map_name:string
@@ -47,7 +48,7 @@ namespace shared
 {
 
 inline constexpr char     REPLAY_MAGIC[8]            = {'T', 'I', 'L', 'D', 'E', 'R', 'E', 'P'};
-inline constexpr uint32_t REPLAY_VERSION             = 1;
+inline constexpr uint32_t REPLAY_VERSION             = 2;
 inline constexpr uint32_t REPLAY_RECORD_HEADER_SIZE  = 9;
 
 enum class replay_record_kind_t : uint8_t
@@ -65,6 +66,7 @@ enum class replay_record_kind_t : uint8_t
 struct replay_header_t
 {
   uint32_t    schema_hash      = 0;
+  uint32_t    asset_table_hash = 0;
   uint32_t    tickrate_hz      = 0;
   uint32_t    map_content_hash = 0;
   std::string map_name;
@@ -134,15 +136,17 @@ struct replay_t
   uint64_t             first_tick_record_offset = 0;
 };
 
-// Refuses a wrong magic, version or schema hash, and any framing that runs past
-// the end, naming which in `out_reason`. A trailing record cut short by a crash
-// is dropped rather than refused.
+// Refuses a wrong magic, version, schema hash or asset table hash, and any
+// framing that runs past the end, naming which in `out_reason`. A trailing
+// record cut short by a crash is dropped rather than refused.
 [[nodiscard]] std::optional<replay_t> try_open_replay(std::vector<uint8_t> bytes,
                                                       uint32_t             expected_schema_hash,
+                                                      uint32_t             expected_asset_table_hash,
                                                       std::string&         out_reason);
 
 [[nodiscard]] std::optional<replay_t> try_read_replay_file(const std::string& path,
                                                            uint32_t           expected_schema_hash,
+                                                           uint32_t           expected_asset_table_hash,
                                                            std::string&       out_reason);
 
 // The record starting at `byte_offset`, or nothing past the last whole record.

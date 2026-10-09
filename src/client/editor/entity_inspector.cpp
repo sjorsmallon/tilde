@@ -216,13 +216,13 @@ bool render_field_widget(void* field_ptr, const field_info_t& field, const char*
 
     case FIELD_TYPE_ASSET:
     {
-      const Span<const assets::asset_info_t> manifest =
-          assets::asset_class_manifest(field.asset_class_id);
+      const Span<const assets::asset_entry_t> entries =
+          assets::asset_class_entries(field.asset_class_id);
 
       std::vector<const char *> names;
-      names.reserve(manifest.size());
-      for (const assets::asset_info_t &asset : manifest)
-        names.push_back(asset.name);
+      names.reserve(entries.size());
+      for (const assets::asset_entry_t &asset : entries)
+        names.push_back(asset.name.c_str());
 
       uint16_t stored = *static_cast<uint16_t *>(field_ptr);
       int current = (int)stored;

@@ -24,38 +24,6 @@
 namespace assets
 {
 
-// --- Ownership ---
-//
-// Asset_Pool and asset_state_t live in the header now; see the ownership note
-// there for why. This pointer is the ONE piece of static storage left in this
-// TU, and it is per-module by design: each module points its own copy at the
-// single launcher-owned state.
-static asset_state_t *g_asset_state = nullptr;
-
-void set_state(asset_state_t *state)
-{
-  if (!state)
-  {
-    log_error("assets: set_state(nullptr) — the launcher owns the one asset "
-              "state and it must outlive every module");
-    return;
-  }
-  g_asset_state = state;
-}
-
-// Every accessor goes through this, including the generated per-class loaders,
-// which is why it is not file-local. A null state is a broken build, not a
-// runtime condition: this module was never pointed at the launcher's state, so
-// every asset it resolves would come back empty forever.
-asset_state_t &state_for(const char *who)
-{
-  if (!g_asset_state)
-    fatal_error("assets: {} called before assets::set_state() — this module was "
-                "never pointed at the launcher's asset state",
-                who);
-  return *g_asset_state;
-}
-
 namespace
 {
 
@@ -1244,18 +1212,207 @@ shared::aabb_bounds_t compute_mesh_bounds(const mesh_asset_t *mesh)
   return bounds;
 }
 
-// --- The manifest ---
+// --- Per class: the cached loader and the id accessor ---
 //
-// register_all is GENERATED (assets/generated/assets_bindings_generated.cpp): one loop
-// per class, over the manifest asset_pack wrote, calling the decoders and
-// placeholders above by name. There is no switch here and no per-class line --
-// which is the same decision entity_system_def.md settled when make_entity_pool
-// was deleted, for the same reason: a hand-written registration list is that
-// switch reincarnated, and it is the one a new asset kind can be half-added to.
+// One pair per class, hand-written. The loader is cached by path and
+// dispatches on extension to a decoder; a path with an extension the class
+// does not decode is a caller bug and dies. The accessor is the hot path: an
+// array index, with an id outside the class resolving to Missing rather than
+// to a bounds check every caller would have to write, because ids come off
+// the wire and out of map files.
+
+namespace
+{
+
+template <typename T>
+asset_handle_t<T> handle_for_id(const std::vector<asset_handle_t<T>>& handles, uint32_t id,
+                                const char* who)
+{
+  const asset_state_t& state = state_for(who);
+  if (!state.registered)
+    fatal_error("assets: {} called before assets::init() -- registration is eager and must run "
+                "first, or every id resolves to nothing",
+                who);
+  if (id >= handles.size() || !handles[id].valid())
+    return handles[0];
+  return handles[id];
+}
+
+} // namespace
+
+asset_handle_t<mesh_asset_t> load_mesh(const char* path)
+{
+  asset_state_t&    state = state_for("load_mesh");
+  const std::string key   = asset_cache_key(path);
+
+  const asset_handle_t<mesh_asset_t> cached = state.mesh_asset_pool.find(key);
+  if (cached.valid())
+    return cached;
+
+  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());
+  if (path_has_extension(key.c_str(), ".obj"))
+    return state.mesh_asset_pool.add(key, decode_obj(bytes, key.c_str()));
+  if (path_has_extension(key.c_str(), ".mesh"))
+    return state.mesh_asset_pool.add(key, decode_mesh(bytes, key.c_str()));
+  if (path_has_extension(key.c_str(), ".glb"))
+    return state.mesh_asset_pool.add(key, decode_glb(bytes, key.c_str()));
+
+  fatal_error("assets: '{}' has no extension the mesh_asset class decodes", key);
+}
+
+asset_handle_t<texture_asset_t> load_texture(const char* path)
+{
+  asset_state_t&    state = state_for("load_texture");
+  const std::string key   = asset_cache_key(path);
+
+  const asset_handle_t<texture_asset_t> cached = state.texture_asset_pool.find(key);
+  if (cached.valid())
+    return cached;
+
+  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());
+  if (path_has_extension(key.c_str(), ".png"))
+    return state.texture_asset_pool.add(key, decode_png(bytes, key.c_str()));
+  if (path_has_extension(key.c_str(), ".tga"))
+    return state.texture_asset_pool.add(key, decode_tga(bytes, key.c_str()));
+
+  fatal_error("assets: '{}' has no extension the texture_asset class decodes", key);
+}
+
+asset_handle_t<sound_asset_t> load_sound(const char* path)
+{
+  asset_state_t&    state = state_for("load_sound");
+  const std::string key   = asset_cache_key(path);
+
+  const asset_handle_t<sound_asset_t> cached = state.sound_asset_pool.find(key);
+  if (cached.valid())
+    return cached;
+
+  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());
+  if (path_has_extension(key.c_str(), ".wav"))
+    return state.sound_asset_pool.add(key, decode_wav(bytes, key.c_str()));
+
+  fatal_error("assets: '{}' has no extension the sound_asset class decodes", key);
+}
+
+asset_handle_t<animation_asset_t> load_animation(const char* path)
+{
+  asset_state_t&    state = state_for("load_animation");
+  const std::string key   = asset_cache_key(path);
+
+  const asset_handle_t<animation_asset_t> cached = state.animation_asset_pool.find(key);
+  if (cached.valid())
+    return cached;
+
+  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());
+  if (path_has_extension(key.c_str(), ".animation"))
+    return state.animation_asset_pool.add(key, decode_animation(bytes, key.c_str()));
+
+  fatal_error("assets: '{}' has no extension the animation_asset class decodes", key);
+}
+
+asset_handle_t<hitbox_rig_t> load_hitbox_rig(const char* path)
+{
+  asset_state_t&    state = state_for("load_hitbox_rig");
+  const std::string key   = asset_cache_key(path);
+
+  const asset_handle_t<hitbox_rig_t> cached = state.hitbox_rig_pool.find(key);
+  if (cached.valid())
+    return cached;
+
+  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());
+  if (path_has_extension(key.c_str(), ".hitboxes"))
+    return state.hitbox_rig_pool.add(key, decode_hitboxes(bytes, key.c_str()));
+
+  fatal_error("assets: '{}' has no extension the hitbox_rig class decodes", key);
+}
+
+asset_handle_t<font_asset_t> load_font(const char* path)
+{
+  asset_state_t&    state = state_for("load_font");
+  const std::string key   = asset_cache_key(path);
+
+  const asset_handle_t<font_asset_t> cached = state.font_asset_pool.find(key);
+  if (cached.valid())
+    return cached;
+
+  const Span<const uint8_t> bytes = read_asset_bytes(key.c_str());
+  if (path_has_extension(key.c_str(), ".ttf"))
+    return state.font_asset_pool.add(key, decode_ttf(bytes, key.c_str()));
+
+  fatal_error("assets: '{}' has no extension the font_asset class decodes", key);
+}
+
+asset_handle_t<mesh_asset_t>         get_mesh(mesh_asset id)             { return handle_for_id(state_for("get_mesh").mesh_asset_handles, (uint32_t)id, "get_mesh"); }
+asset_handle_t<texture_asset_t>      get_texture(texture_asset id)       { return handle_for_id(state_for("get_texture").texture_asset_handles, (uint32_t)id, "get_texture"); }
+asset_handle_t<sound_asset_t>        get_sound(sound_asset id)           { return handle_for_id(state_for("get_sound").sound_asset_handles, (uint32_t)id, "get_sound"); }
+asset_handle_t<animation_asset_t>    get_animation(animation_asset id)   { return handle_for_id(state_for("get_animation").animation_asset_handles, (uint32_t)id, "get_animation"); }
+asset_handle_t<hitbox_rig_t>         get_hitbox_rig(hitbox_rig id)       { return handle_for_id(state_for("get_hitbox_rig").hitbox_rig_handles, (uint32_t)id, "get_hitbox_rig"); }
+asset_handle_t<font_asset_t>         get_font(font_asset id)             { return handle_for_id(state_for("get_font").font_asset_handles, (uint32_t)id, "get_font"); }
+asset_handle_t<pbr_material_asset_t> get_pbr_material(pbr_material id)   { return handle_for_id(state_for("get_pbr_material").pbr_material_handles, (uint32_t)id, "get_pbr_material"); }
+asset_handle_t<cubemap_asset_t>      get_cubemap(cubemap_asset id)       { return handle_for_id(state_for("get_cubemap").cubemap_asset_handles, (uint32_t)id, "get_cubemap"); }
+
+// --- Init: number the ids, then register every one of them ---
+//
+// Registration is eager and total: id 0 first, from a constant rather than a
+// file, so the fallback every other id falls back to exists before any of them
+// is tried; then every entry of every class, or the process dies naming it.
+
+namespace
+{
+
+template <typename T>
+void register_class(asset_state_t& state, asset_class_t asset_class, Asset_Pool<T>& pool,
+                    std::vector<asset_handle_t<T>>& handles, T (*make_missing)(),
+                    asset_handle_t<T> (*load)(const char*))
+{
+  const asset_class_table_t& table = state.tables[asset_class];
+  handles.assign(table.entries.size(), {});
+
+  std::string missing_key = "assets://";
+  missing_key += to_string(asset_class);
+  missing_key += "/Missing";
+  handles[0] = pool.add(missing_key, make_missing());
+
+  for (uint32_t id = 1; id < table.entries.size(); ++id)
+    handles[id] = load(table.entries[id].path.c_str());
+}
+
+std::vector<std::string> package_asset_paths(const asset_package_t& package)
+{
+  std::vector<std::string> paths;
+  paths.reserve(package.entry_count);
+  for (uint32_t which = 0; which < package.entry_count; ++which)
+    paths.emplace_back(asset_package_path_at(package, which));
+  return paths;
+}
+
+} // namespace
 
 void init()
 {
-  register_all(state_for("init"));
+  asset_state_t& state = state_for("init");
+  if (state.registered)
+    return;
+  if (!state.source.mounted)
+    fatal_error("assets: init() before mount_asset_source() -- nothing knows where the tree is");
+
+  if (state.source.package)
+  {
+    const std::vector<std::string> paths = package_asset_paths(*state.source.package);
+    build_asset_tables(state, classify_asset_paths(Span<const std::string>(paths)));
+  }
+  else
+    number_asset_ids_from_tree(state, "resources");
+
+  register_class(state, asset_class_t::mesh_asset, state.mesh_asset_pool, state.mesh_asset_handles, &make_missing_mesh, &load_mesh);
+  register_class(state, asset_class_t::texture_asset, state.texture_asset_pool, state.texture_asset_handles, &make_missing_texture, &load_texture);
+  register_class(state, asset_class_t::sound_asset, state.sound_asset_pool, state.sound_asset_handles, &make_missing_sound, &load_sound);
+  register_class(state, asset_class_t::animation_asset, state.animation_asset_pool, state.animation_asset_handles, &make_missing_animation, &load_animation);
+  register_class(state, asset_class_t::hitbox_rig, state.hitbox_rig_pool, state.hitbox_rig_handles, &make_missing_hitbox_rig, &load_hitbox_rig);
+  register_class(state, asset_class_t::font_asset, state.font_asset_pool, state.font_asset_handles, &make_missing_font, &load_font);
+  register_class(state, asset_class_t::pbr_material, state.pbr_material_pool, state.pbr_material_handles, &make_missing_pbr_material, &load_pbr_material);
+  register_class(state, asset_class_t::cubemap_asset, state.cubemap_asset_pool, state.cubemap_asset_handles, &make_missing_cubemap, &load_cubemap);
+  state.registered = true;
 }
 
 } // namespace assets

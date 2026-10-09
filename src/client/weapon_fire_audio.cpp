@@ -1,6 +1,6 @@
 #include "weapon_fire_audio.hpp"
 
-#include "../shared/assets/generated/assets_generated.hpp"
+#include "../shared/asset_id.hpp"
 #include "../shared/log.hpp"
 #include "../shared/weapons.hpp"
 
@@ -34,7 +34,7 @@ std::optional<assets::sound_asset> try_fire_sound_for(entities::Weapon weapon)
   const shared::weapon_sounds_t* row = try_find_weapon_sounds(weapon);
   if (row == nullptr)
     return std::nullopt;
-  return row->fire;
+  return assets::sound_id(row->fire);
 }
 
 std::optional<assets::sound_asset> try_world_impact_sound_for(entities::Weapon weapon)
@@ -42,7 +42,7 @@ std::optional<assets::sound_asset> try_world_impact_sound_for(entities::Weapon w
   const shared::weapon_sounds_t* row = try_find_weapon_sounds(weapon);
   if (row == nullptr)
     return std::nullopt;
-  return row->world_impact;
+  return assets::sound_id(row->world_impact);
 }
 
 } // namespace client

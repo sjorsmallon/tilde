@@ -36,9 +36,10 @@ constexpr float REPLAY_ICON_PADDING = 2.0f;
 // The icon, or its label when the upload failed -- register_texture has already
 // said why, and a panel that loses a control to a missing file is worse than an
 // ugly one.
-[[nodiscard]] bool icon_button(assets::texture_asset icon, const char* label, const char* tooltip)
+[[nodiscard]] bool icon_button(assets::asset_name_t icon, const char* label, const char* tooltip)
 {
-  ImTextureID texture = (ImTextureID)renderer::imgui_texture_id(assets::get_texture(icon));
+  ImTextureID texture =
+      (ImTextureID)renderer::imgui_texture_id(assets::get_texture(assets::texture_id(icon)));
   const bool  pressed =
       texture ? ImGui::ImageButton(label, texture, ImVec2(REPLAY_ICON_SIZE, REPLAY_ICON_SIZE))
               : ImGui::Button(label, ImVec2(REPLAY_ICON_SIZE + 8.0f, REPLAY_ICON_SIZE + 8.0f));
@@ -166,27 +167,27 @@ void draw_replay_panel(client_context_t& context)
     draw_keyframe_marks(playback, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(REPLAY_ICON_PADDING, REPLAY_ICON_PADDING));
-    if (icon_button(assets::texture_asset::replay_restart, "|<", "Back to the start"))
+    if (icon_button("replay_restart", "|<", "Back to the start"))
       request_replay_seek(playback, 0.0);
     ImGui::SameLine();
-    if (icon_button(assets::texture_asset::replay_go_back, "<<", "Back 5 seconds"))
+    if (icon_button("replay_go_back", "<<", "Back 5 seconds"))
       request_replay_seek(playback, std::clamp(position - 5.0, 0.0, total));
     ImGui::SameLine();
-    if (icon_button(playback.paused ? assets::texture_asset::replay_play
-                                    : assets::texture_asset::replay_pause,
+    if (icon_button(playback.paused ? assets::asset_name_t{"replay_play"}
+                                    : assets::asset_name_t{"replay_pause"},
                     playback.paused ? ">" : "||", playback.paused ? "Play" : "Pause"))
       playback.paused = !playback.paused;
     ImGui::SameLine();
-    if (icon_button(assets::texture_asset::replay_advance, ">>", "Forward 5 seconds"))
+    if (icon_button("replay_advance", ">>", "Forward 5 seconds"))
       request_replay_seek(playback, std::clamp(position + 5.0, 0.0, total));
 
     ImGui::SameLine();
     ImGui::Dummy(ImVec2(12.0f, 0.0f));
     ImGui::SameLine();
-    if (icon_button(assets::texture_asset::replay_speed_down, "-", "Slower"))
+    if (icon_button("replay_speed_down", "-", "Slower"))
       playback.speed = stepped_replay_speed(playback.speed, -1);
     ImGui::SameLine();
-    if (icon_button(assets::texture_asset::replay_speed_up, "+", "Faster"))
+    if (icon_button("replay_speed_up", "+", "Faster"))
       playback.speed = stepped_replay_speed(playback.speed, 1);
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();

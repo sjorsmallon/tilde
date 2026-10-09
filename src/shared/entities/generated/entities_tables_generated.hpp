@@ -106,7 +106,7 @@ inline bool entity_type_is_replicated(entity_type type) { return entity_info(typ
 inline bool entity_type_is_predicted(entity_type type) { return entity_info(type).predicted; }
 
 // Digest of every declaration in EVERY .def of the generator run --
-// entity layout, the resolved asset manifest, and the cvar/command
+// entity layout, the asset class declarations, and the cvar/command
 // tables. Exchanged at connect; a mismatch means the two sides
 // disagree about what the bytes mean. It lives in this namespace for
 // historical reasons and is the ONE such value -- cvars_generated.hpp

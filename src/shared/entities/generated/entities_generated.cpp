@@ -430,7 +430,7 @@ constexpr field_info_t Render_FIELDS[] = {
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
-   .asset_class_id = 0,
+   .asset_class_id = (int32_t)assets::asset_class_t::mesh_asset,
    .enum_info = NOT_AN_ENUM},
   {.name = "visible",
    .type = FIELD_TYPE_BOOL,
@@ -2608,7 +2608,7 @@ constexpr field_info_t Particle_Emitter_Entity_FIELDS[] = {
    .flags = 2u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
-   .asset_class_id = 1,
+   .asset_class_id = (int32_t)assets::asset_class_t::texture_asset,
    .enum_info = NOT_AN_ENUM},
   {.name = "emit_rate",
    .type = FIELD_TYPE_F32,
@@ -2827,7 +2827,7 @@ constexpr field_info_t Sound_Emitter_Entity_FIELDS[] = {
    .flags = 2u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
-   .asset_class_id = 2,
+   .asset_class_id = (int32_t)assets::asset_class_t::sound_asset,
    .enum_info = NOT_AN_ENUM},
   {.name = "volume",
    .type = FIELD_TYPE_F32,
@@ -5561,6 +5561,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xb262fa46u;
+const uint32_t SCHEMA_HASH = 0xb9d99d0fu;
 
 } // namespace entities

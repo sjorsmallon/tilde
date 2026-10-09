@@ -1,3 +1,4 @@
+#include "../shared/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "disabled_geometry.hpp"
 #include "entities/generated/entities_generated.hpp"
@@ -17,6 +18,10 @@ using namespace shared;
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   log_error("Starting Session Test");
 
   // 1. Create a dummy map_t

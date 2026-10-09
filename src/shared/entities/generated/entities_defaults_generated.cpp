@@ -46,7 +46,7 @@ Player_Entity::Player_Entity()
     velocity{},
     inventory{},
     movement{},
-    render({.mesh = assets::mesh_asset::Leet_Full}),
+    render({.mesh = assets::mesh_id("Leet_Full")}),
     team_allegiance(Team_Allegiance::Free_For_All)
 {
   type = entity_type::Player_Entity;
@@ -64,7 +64,7 @@ Weapon_Entity::Weapon_Entity()
     damage_type(Damage_Type::Normal),
     volume({.half_extents = {40.0f, 40.0f, 40.0f}}),
     bounce({.restitution = 0.2f}),
-    render({.mesh = assets::mesh_asset::Error})
+    render({.mesh = assets::mesh_id("Error")})
 {
   type = entity_type::Weapon_Entity;
 }
@@ -73,7 +73,7 @@ Rocket_Entity::Rocket_Entity()
   : projectile({.weapon_id = Weapon::Rocket_Launcher}),
     lifetime(5.0f),
     collision_radius(12.0f),
-    render({.mesh = assets::mesh_asset::rocket})
+    render({.mesh = assets::mesh_id("rocket")})
 {
   type = entity_type::Rocket_Entity;
 }
@@ -82,7 +82,7 @@ Hook_Entity::Hook_Entity()
   : projectile({.weapon_id = Weapon::Hook}),
     lifetime(4.0f),
     collision_radius(25.0f),
-    render({.mesh = assets::mesh_asset::hookshot, .scale = {0.03f, 0.03f, 0.03f}})
+    render({.mesh = assets::mesh_id("hookshot"), .scale = {0.03f, 0.03f, 0.03f}})
 {
   type = entity_type::Hook_Entity;
 }
@@ -91,7 +91,7 @@ Kooh_Entity::Kooh_Entity()
   : projectile({.weapon_id = Weapon::Kooh}),
     lifetime(4.0f),
     collision_radius(25.0f),
-    render({.mesh = assets::mesh_asset::hookshot, .scale = {0.03f, 0.03f, 0.03f}})
+    render({.mesh = assets::mesh_id("hookshot"), .scale = {0.03f, 0.03f, 0.03f}})
 {
   type = entity_type::Kooh_Entity;
 }
@@ -100,7 +100,7 @@ Ricochet_Entity::Ricochet_Entity()
   : projectile({.weapon_id = Weapon::Ricochet}),
     lifetime(3.0f),
     collision_radius(8.0f),
-    render({.mesh = assets::mesh_asset::Sphere, .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {1.0f, 0.45f, 0.15f}}})
+    render({.mesh = assets::mesh_id("Sphere"), .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {1.0f, 0.45f, 0.15f}}})
 {
   type = entity_type::Ricochet_Entity;
 }
@@ -112,7 +112,7 @@ Platform_Entity::Platform_Entity()
     solid_seconds(6.0f),
     half_extents({128.0f, 4.0f, 128.0f}),
     half_extents_at_launch({8.0f, 8.0f, 8.0f}),
-    render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.2039f, 0.9216f, 0.8353f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.2039f, 0.9216f, 0.8353f}}})
 {
   type = entity_type::Platform_Entity;
 }
@@ -125,7 +125,7 @@ Shrinking_Platform_Entity::Shrinking_Platform_Entity()
     half_extents({128.0f, 4.0f, 128.0f}),
     half_extents_at_launch({8.0f, 8.0f, 8.0f}),
     half_extents_when_vanishing({8.0f, 4.0f, 8.0f}),
-    render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.3f, 0.9f, 0.6f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.3f, 0.9f, 0.6f}}})
 {
   type = entity_type::Shrinking_Platform_Entity;
 }
@@ -140,7 +140,7 @@ Extending_Platform_Entity::Extending_Platform_Entity()
     half_width(32.0f),
     half_thickness(4.0f),
     passable_seconds(0.5f),
-    render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.95f, 0.55f, 0.85f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.95f, 0.55f, 0.85f}}})
 {
   type = entity_type::Extending_Platform_Entity;
 }
@@ -148,7 +148,7 @@ Extending_Platform_Entity::Extending_Platform_Entity()
 Guided_Rocket_Entity::Guided_Rocket_Entity()
   : pilot_uid{},
     weapon_id(Weapon::Guided_Rocket),
-    render({.mesh = assets::mesh_asset::rocket})
+    render({.mesh = assets::mesh_id("rocket")})
 {
   type = entity_type::Guided_Rocket_Entity;
 }
@@ -157,7 +157,7 @@ Canopy_Entity::Canopy_Entity()
   : carrier_uid{},
     position_at_previous_tick{},
     half_extents({48.0f, 4.0f, 48.0f}),
-    render({.mesh = assets::mesh_asset::Box, .material = {.color = {0.4f, 0.9f, 1.0f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.4f, 0.9f, 1.0f}}})
 {
   type = entity_type::Canopy_Entity;
 }
@@ -177,7 +177,7 @@ Bubble_Entity::Bubble_Entity()
     arm_seconds(0.2f),
     radius(32.0f),
     bounce_speed(700.0f),
-    render({.mesh = assets::mesh_asset::high_res_sphere, .scale = {2.0f, 2.0f, 2.0f}, .material = {.shader_type = Shader_Type::Ghost, .color = {0.55f, 0.85f, 1.0f}}})
+    render({.mesh = assets::mesh_id("high_res_sphere"), .scale = {2.0f, 2.0f, 2.0f}, .material = {.shader_type = Shader_Type::Ghost, .color = {0.55f, 0.85f, 1.0f}}})
 {
   type = entity_type::Bubble_Entity;
 }
@@ -202,7 +202,7 @@ Damageable_Entity::Damageable_Entity()
 }
 
 Particle_Emitter_Entity::Particle_Emitter_Entity()
-  : sprite(assets::texture_asset::Smoke),
+  : sprite(assets::texture_id("Smoke")),
     emit_rate(20.0f),
     max_particles(64),
     lifetime_min(0.5f),
@@ -276,7 +276,7 @@ Jump_Pad_Entity::Jump_Pad_Entity()
   : switch_state{},
     volume({.half_extents = {32.0f, 8.0f, 32.0f}}),
     launch_speed(900.0f),
-    render({.mesh = assets::mesh_asset::Duck})
+    render({.mesh = assets::mesh_id("Duck")})
 {
   type = entity_type::Jump_Pad_Entity;
 }
@@ -316,7 +316,7 @@ Ping_Marker_Entity::Ping_Marker_Entity()
   : lifetime(10.0f),
     pinged_by{},
     spawned_tick(0),
-    render({.mesh = assets::mesh_asset::arrow})
+    render({.mesh = assets::mesh_id("arrow")})
 {
   type = entity_type::Ping_Marker_Entity;
 }
@@ -355,7 +355,7 @@ Launcher_Entity::Launcher_Entity()
     fire_interval_seconds(0.0f),
     next_fire_tick{},
     shots_fired{},
-    render({.mesh = assets::mesh_asset::Box, .scale = {16.0f, 16.0f, 16.0f}})
+    render({.mesh = assets::mesh_id("Box"), .scale = {16.0f, 16.0f, 16.0f}})
 {
   type = entity_type::Launcher_Entity;
 }
@@ -375,7 +375,7 @@ Movement_Modifier_Entity::Movement_Modifier_Entity()
 Remnant_Entity::Remnant_Entity()
   : owner_uid{},
     hit_radius(48.0f),
-    render({.mesh = assets::mesh_asset::Duck})
+    render({.mesh = assets::mesh_id("Duck")})
 {
   type = entity_type::Remnant_Entity;
 }
@@ -384,7 +384,7 @@ Modifier_Shot_Entity::Modifier_Shot_Entity()
   : projectile({.weapon_id = Weapon::Modifier_Gun}),
     lifetime(4.0f),
     collision_radius(8.0f),
-    render({.mesh = assets::mesh_asset::Sphere, .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {0.5f, 1.0f, 0.5f}}})
+    render({.mesh = assets::mesh_id("Sphere"), .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {0.5f, 1.0f, 0.5f}}})
 {
   type = entity_type::Modifier_Shot_Entity;
 }
@@ -401,7 +401,7 @@ Timed_Movement_Modifier_Entity::Timed_Movement_Modifier_Entity()
     jump_speed_scale(1.0f),
     friction_scale(1.0f),
     control_scale(1.0f),
-    render({.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Ghost, .color = {0.5f, 1.0f, 0.5f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Ghost, .color = {0.5f, 1.0f, 0.5f}}})
 {
   type = entity_type::Timed_Movement_Modifier_Entity;
 }
@@ -409,7 +409,7 @@ Timed_Movement_Modifier_Entity::Timed_Movement_Modifier_Entity()
 Weapon_Emancipation_Grill_Entity::Weapon_Emancipation_Grill_Entity()
   : switch_state{},
     volume({.half_extents = {64.0f, 128.0f, 8.0f}}),
-    render({.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Ghost, .color = {1.0f, 0.25f, 0.2f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Ghost, .color = {1.0f, 0.25f, 0.2f}}})
 {
   type = entity_type::Weapon_Emancipation_Grill_Entity;
 }
@@ -427,7 +427,7 @@ Emancipated_Weapon_Entity::Emancipated_Weapon_Entity()
 Void_Entity::Void_Entity()
   : switch_state{},
     volume({.half_extents = {64.0f, 128.0f, 8.0f}}),
-    render({.mesh = assets::mesh_asset::Box, .material = {.shader_type = Shader_Type::Procedural_Blending, .color = {1.0f, 1.0f, 1.0f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Procedural_Blending, .color = {1.0f, 1.0f, 1.0f}}})
 {
   type = entity_type::Void_Entity;
 }

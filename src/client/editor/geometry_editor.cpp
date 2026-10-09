@@ -351,15 +351,16 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
 
   ImGui::PushID("surface");
 
-  const Span<const assets::asset_info_t> meshes = assets::mesh_asset_manifest();
+  const Span<const assets::asset_entry_t> meshes =
+      assets::asset_class_entries(assets::asset_class_t::mesh_asset);
 
   const char* preview = surface.mesh_path.empty() ? "(none)" : surface.mesh_path.c_str();
   bool mesh_is_in_build = surface.mesh_path.empty();
-  for (const assets::asset_info_t& mesh : meshes)
+  for (const assets::asset_entry_t& mesh : meshes)
   {
-    if (mesh.path != nullptr && surface.mesh_path == mesh.path)
+    if (!mesh.path.empty() && surface.mesh_path == mesh.path)
     {
-      preview = mesh.name;
+      preview = mesh.name.c_str();
       mesh_is_in_build = true;
     }
   }
@@ -372,13 +373,13 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
       changed = true;
     }
 
-    for (const assets::asset_info_t& mesh : meshes)
+    for (const assets::asset_entry_t& mesh : meshes)
     {
-      if (mesh.path == nullptr)
+      if (mesh.path.empty())
         continue;
 
       const bool selected = surface.mesh_path == mesh.path;
-      if (ImGui::Selectable(mesh.name, selected) && !selected)
+      if (ImGui::Selectable(mesh.name.c_str(), selected) && !selected)
       {
         surface.mesh_path = mesh.path;
         changed = true;

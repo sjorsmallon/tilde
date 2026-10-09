@@ -1578,9 +1578,10 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
     // of the tree the pipeline exists to walk once, and in a pkg or embed build
     // there is no directory to list at all.
     bool separator_drawn = false;
-    for (const assets::asset_info_t &available : assets::pbr_material_manifest())
+    for (const assets::asset_entry_t &available :
+         assets::asset_class_entries(assets::asset_class_t::pbr_material))
     {
-      if (available.path == nullptr || ctx.map->has_material(available.path))
+      if (available.path.empty() || ctx.map->has_material(available.path.c_str()))
         continue;
 
       if (!separator_drawn)
@@ -1590,9 +1591,9 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
       }
 
       // Picking one mints its table entry, exactly as typing the path does.
-      if (ImGui::Selectable(available.name))
+      if (ImGui::Selectable(available.name.c_str()))
       {
-        const uint16_t added = ctx.map->material_index_for(available.path);
+        const uint16_t added = ctx.map->material_index_for(available.path.c_str());
         edit_face_surface(ctx, target, [added, layer](shared::face_surface_t &face) {
           shared::set_face_layer_material(face, layer, added);
         });

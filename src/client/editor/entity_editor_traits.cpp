@@ -310,7 +310,7 @@ struct editor_data_per_entity_type_t
 {
   entities::entity_type                type;
   color_t                              color         = colors::white; // stand-in and diagram
-  std::optional<assets::texture_asset> icon;
+  assets::asset_name_t                 icon;
   stand_in_shape_t                     stand_in      = stand_in_shape_t::none;
   draw_function_t                      draw_stand_in = nullptr;
   draw_function_t                      draw_diagram  = nullptr;
@@ -346,7 +346,7 @@ void pyramid_marker_stand_in(const entities::Entity* e, pass_builder_t& draws,
                              const linalg::vec3& position, color_t color,
                              const entity_draw_settings_t&)
 {
-  push_mesh(draws, assets::get_mesh(assets::mesh_asset::Pyramid), position, e->orientation,
+  push_mesh(draws, assets::get_mesh(assets::mesh_id("Pyramid")), position, e->orientation,
             {1, 1, 1}, color, renderer::fill_mode_t::wireframe);
 }
 
@@ -503,23 +503,23 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .color         = colors::gold,
      .draw_stand_in = &particle_emitter_stand_in},
 
-    {.type = entity_type::Sound_Emitter_Entity, .icon = assets::texture_asset::audio},
+    {.type = entity_type::Sound_Emitter_Entity, .icon = "audio"},
 
     {.type         = entity_type::Point_Light_Entity,
      .color        = colors::yellow,
-     .icon         = assets::texture_asset::point_light,
+     .icon         = "point_light",
      .draw_diagram = &point_light_diagram,
      .draw_reach   = &point_light_reach},
 
     {.type         = entity_type::Spot_Light_Entity,
      .color        = colors::yellow,
-     .icon         = assets::texture_asset::spot_light,
+     .icon         = "spot_light",
      .draw_diagram = &spot_light_diagram,
      .draw_reach   = &spot_light_reach},
 
     {.type         = entity_type::Directional_Light_Entity,
      .color        = colors::yellow,
-     .icon         = assets::texture_asset::directional_light,
+     .icon         = "directional_light",
      .draw_diagram = &directional_light_diagram,
      .draw_reach   = &directional_light_reach},
 
@@ -532,13 +532,13 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type = entity_type::Reflection_Volume_Entity, .color = colors::cyan, .draw_diagram = &box_volume_diagram},
 
-    {.type = entity_type::Game_Rules_Entity, .icon = assets::texture_asset::game_rules},
-    {.type = entity_type::Logic_Counter_Entity, .icon = assets::texture_asset::counter},
-    {.type = entity_type::Geometry_Owner_Entity, .icon = assets::texture_asset::wall_hammer},
+    {.type = entity_type::Game_Rules_Entity, .icon = "game_rules"},
+    {.type = entity_type::Logic_Counter_Entity, .icon = "counter"},
+    {.type = entity_type::Geometry_Owner_Entity, .icon = "wall_hammer"},
     {.type = entity_type::Ping_Marker_Entity}, // runtime only; the render component draws it
-    {.type = entity_type::Logic_Timer_Entity, .icon = assets::texture_asset::icon_timer},
+    {.type = entity_type::Logic_Timer_Entity, .icon = "icon_timer"},
     {.type = entity_type::Path_Node_Entity, .color = colors::green, .draw_diagram = &aim_arrow_diagram},
-    {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = assets::texture_asset::move},
+    {.type = entity_type::Mover_Entity, .color = colors::magenta, .icon = "move"},
     {.type = entity_type::Launcher_Entity, .color = colors::orange, .draw_diagram = &aim_arrow_diagram},
     {.type = entity_type::Movement_Modifier_Entity, .color = colors::green, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Remnant_Entity}, // runtime only
@@ -550,7 +550,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type         = entity_type::Reveal_Light_Entity,
      .color        = colors::cyan,
-     .icon         = assets::texture_asset::spot_light,
+     .icon         = "spot_light",
      .draw_diagram = &reveal_light_diagram,
      .draw_reach   = &reveal_light_reach},
 
@@ -631,7 +631,7 @@ editor_shape_t editor_shape_at(const entities::Entity* e, const linalg::vec3& po
 
     case stand_in_shape_t::pyramid_marker:
     {
-      const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(assets::mesh_asset::Pyramid));
+      const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(assets::mesh_id("Pyramid")));
       if (mesh && !mesh->vertices.empty())
         return scaled_mesh_bounds(*mesh, {1, 1, 1}, position);
       break;
@@ -715,7 +715,9 @@ void draw_art(const entities::Entity* e, const editor_data_per_entity_type_t& ro
 entity_icon_t get_entity_icon(const entities::Entity* e)
 {
   const editor_data_per_entity_type_t& row = editor_data_for(e);
-  return {.texture = row.icon, .fallback_color = row.color};
+  if (row.icon.empty())
+    return {.texture = std::nullopt, .fallback_color = row.color};
+  return {.texture = assets::texture_id(row.icon), .fallback_color = row.color};
 }
 
 void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
@@ -736,7 +738,7 @@ void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws,
                            const entity_draw_settings_t& settings)
 {
   const editor_data_per_entity_type_t& row = editor_data_for(e);
-  const bool box_when_bare = !row.icon && !row.draw_diagram;
+  const bool box_when_bare = row.icon.empty() && !row.draw_diagram;
   draw_art(e, row, draws, e->position, row.color, renderer::fill_mode_t::solid, box_when_bare,
            settings);
   if (row.draw_diagram)

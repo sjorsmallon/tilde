@@ -197,7 +197,7 @@ static int test_manifest_registers_every_id()
   // Eager registration, and total: every declared id resolves to a loaded mesh.
   // A hole would otherwise show up as one entity drawing the question mark,
   // which reads as a modelling bug rather than a manifest one.
-  for (uint32_t index = 0; index < assets::mesh_asset_COUNT; ++index)
+  for (uint32_t index = 0; index < assets::asset_count(assets::asset_class_t::mesh_asset); ++index)
   {
     const assets::mesh_asset id     = (assets::mesh_asset)index;
     const auto               handle = assets::get_mesh(id);
@@ -217,19 +217,21 @@ static int test_manifest_registers_every_id()
 // hitbox) are decoded by code that nothing else in the suite runs.
 static int test_every_class_registers()
 {
-  for (uint32_t index = 0; index < assets::texture_asset_COUNT; ++index)
+  using assets::asset_class_t;
+  using assets::asset_count;
+  for (uint32_t index = 0; index < asset_count(asset_class_t::texture_asset); ++index)
     assert(assets::get_texture((assets::texture_asset)index).valid());
-  for (uint32_t index = 0; index < assets::sound_asset_COUNT; ++index)
+  for (uint32_t index = 0; index < asset_count(asset_class_t::sound_asset); ++index)
     assert(assets::get_sound((assets::sound_asset)index).valid());
-  for (uint32_t index = 0; index < assets::animation_asset_COUNT; ++index)
+  for (uint32_t index = 0; index < asset_count(asset_class_t::animation_asset); ++index)
     assert(assets::get_animation((assets::animation_asset)index).valid());
-  for (uint32_t index = 0; index < assets::hitbox_rig_COUNT; ++index)
+  for (uint32_t index = 0; index < asset_count(asset_class_t::hitbox_rig); ++index)
     assert(assets::get_hitbox_rig((assets::hitbox_rig)index).valid());
-  for (uint32_t index = 0; index < assets::font_asset_COUNT; ++index)
+  for (uint32_t index = 0; index < asset_count(asset_class_t::font_asset); ++index)
     assert(assets::get_font((assets::font_asset)index).valid());
-  for (uint32_t index = 0; index < assets::pbr_material_COUNT; ++index)
+  for (uint32_t index = 0; index < asset_count(asset_class_t::pbr_material); ++index)
     assert(assets::get_pbr_material((assets::pbr_material)index).valid());
-  for (uint32_t index = 0; index < assets::cubemap_asset_COUNT; ++index)
+  for (uint32_t index = 0; index < asset_count(asset_class_t::cubemap_asset); ++index)
     assert(assets::get_cubemap((assets::cubemap_asset)index).valid());
 
   // Id 0 is the compiled-in placeholder in every class -- no file behind it, so
@@ -264,34 +266,32 @@ static int test_a_material_is_a_directory_and_claims_its_maps()
 {
   // The folder is the entry, minted from the DIRECTORY name.
   const assets::pbr_material_asset_t *material =
-      assets::get(assets::get_pbr_material(assets::pbr_material::harsh_bricks));
+      assets::get(assets::get_pbr_material(assets::pbr_material_id("harsh_bricks")));
   assert(material != nullptr);
   assert(material->albedo.valid());
 
-  const Span<const assets::asset_info_t> materials = assets::pbr_material_manifest();
-  assert(materials.size() == assets::pbr_material_COUNT);
-  assert(materials[(uint32_t)assets::pbr_material::harsh_bricks].path != nullptr);
-  assert(std::string_view(materials[(uint32_t)assets::pbr_material::harsh_bricks].path) ==
-         "resources/textures/harsh_bricks");
+  const Span<const assets::asset_entry_t> materials =
+      assets::asset_class_entries(assets::asset_class_t::pbr_material);
+  const uint32_t harsh_bricks = (uint32_t)assets::pbr_material_id("harsh_bricks");
+  assert(harsh_bricks != 0 && harsh_bricks < materials.size());
+  assert(materials[harsh_bricks].path == "resources/textures/harsh_bricks");
 
   // Claimed: no map inside a material folder is its own texture id. Six of them
   // share the basename "albedo", so minting them would collide on the first two
   // materials -- the collision IS the reason the folder has to be the unit.
-  for (const assets::asset_info_t &texture : assets::texture_asset_manifest())
+  const Span<const assets::asset_entry_t> textures =
+      assets::asset_class_entries(assets::asset_class_t::texture_asset);
+  for (const assets::asset_entry_t &texture : textures)
   {
-    if (texture.path == nullptr)
-      continue;
-    const std::string_view path = texture.path;
-    assert(path.find("/harsh_bricks/") == std::string_view::npos);
-    assert(path.find("/sloppy_mortar_stone/") == std::string_view::npos);
+    assert(texture.path.find("/harsh_bricks/") == std::string::npos);
+    assert(texture.path.find("/sloppy_mortar_stone/") == std::string::npos);
   }
 
   // Unclaimed and nested: an id anyway. Under the depth rule this file was
   // packed and silently invisible to the id space.
   bool found_nested = false;
-  for (const assets::asset_info_t &texture : assets::texture_asset_manifest())
-    if (texture.path != nullptr &&
-        std::string_view(texture.path) == "resources/models/textures/leet_skin.png")
+  for (const assets::asset_entry_t &texture : textures)
+    if (texture.path == "resources/models/textures/leet_skin.png")
       found_nested = true;
   assert(found_nested);
 
@@ -309,7 +309,7 @@ static int test_a_material_is_a_directory_and_claims_its_maps()
 static int test_a_cubemap_is_a_directory_and_claims_its_faces()
 {
   const assets::cubemap_asset_t *sky =
-      assets::get(assets::get_cubemap(assets::cubemap_asset::night_sky));
+      assets::get(assets::get_cubemap(assets::cubemap_id("night_sky")));
   assert(sky != nullptr);
 
   // All six, and all one SQUARE size: the uploader makes them six layers of ONE
@@ -324,19 +324,16 @@ static int test_a_cubemap_is_a_directory_and_claims_its_faces()
     assert(pixels->width == first->width && pixels->height == first->height);
   }
 
-  const Span<const assets::asset_info_t> cubemaps = assets::cubemap_asset_manifest();
-  assert(cubemaps.size() == assets::cubemap_asset_COUNT);
-  assert(cubemaps[(uint32_t)assets::cubemap_asset::night_sky].path != nullptr);
-  assert(std::string_view(cubemaps[(uint32_t)assets::cubemap_asset::night_sky].path) ==
-         "resources/cubemaps/night_sky");
+  const Span<const assets::asset_entry_t> cubemaps =
+      assets::asset_class_entries(assets::asset_class_t::cubemap_asset);
+  const uint32_t night_sky = (uint32_t)assets::cubemap_id("night_sky");
+  assert(night_sky != 0 && night_sky < cubemaps.size());
+  assert(cubemaps[night_sky].path == "resources/cubemaps/night_sky");
 
   // Claimed: not one face is its own texture id.
-  for (const assets::asset_info_t &texture : assets::texture_asset_manifest())
-  {
-    if (texture.path == nullptr)
-      continue;
-    assert(std::string_view(texture.path).find("/cubemaps/") == std::string_view::npos);
-  }
+  for (const assets::asset_entry_t &texture :
+       assets::asset_class_entries(assets::asset_class_t::texture_asset))
+    assert(texture.path.find("/cubemaps/") == std::string::npos);
 
   // Six invalid handles, like make_missing_pbr_material: the renderer resolves
   // an invalid face to the magenta checker, so a map naming a sky this build
@@ -379,8 +376,8 @@ static int test_baked_primitives_are_unit_sized()
     (void)name;
   };
 
-  check_extent(assets::mesh_asset::Box, "Box");
-  check_extent(assets::mesh_asset::Sphere, "Sphere");
+  check_extent(assets::mesh_id("Box"), "Box");
+  check_extent(assets::mesh_id("Sphere"), "Sphere");
 
   printf("  PASS: test_baked_primitives_are_unit_sized\n");
   return 0;
@@ -390,7 +387,7 @@ static int test_manifest_ids_are_distinct()
 {
   // Two ids resolving to one handle means the manifest named the same file
   // twice, or a load fell back without saying so.
-  for (uint32_t index = 1; index < assets::mesh_asset_COUNT; ++index)
+  for (uint32_t index = 1; index < assets::asset_count(assets::asset_class_t::mesh_asset); ++index)
     assert(assets::get_mesh((assets::mesh_asset)index) !=
            assets::get_mesh(assets::mesh_asset::Missing));
 
@@ -405,7 +402,8 @@ static int test_out_of_range_id_resolves_to_missing()
 {
   const auto missing = assets::get_mesh(assets::mesh_asset::Missing);
   assert(missing.valid());
-  assert(assets::get_mesh((assets::mesh_asset)assets::mesh_asset_COUNT) == missing);
+  assert(assets::get_mesh((assets::mesh_asset)assets::asset_count(assets::asset_class_t::mesh_asset)) ==
+         missing);
   assert(assets::get_mesh((assets::mesh_asset)9999) == missing);
 
   printf("  PASS: test_out_of_range_id_resolves_to_missing\n");
@@ -529,8 +527,8 @@ static int test_baked_primitives_are_wound_outward()
     (void)name;
   };
 
-  check_winding(assets::mesh_asset::Box, "Box");
-  check_winding(assets::mesh_asset::Sphere, "Sphere");
+  check_winding(assets::mesh_id("Box"), "Box");
+  check_winding(assets::mesh_id("Sphere"), "Sphere");
 
   printf("  PASS: test_baked_primitives_are_wound_outward\n");
   return 0;
@@ -689,7 +687,7 @@ static int test_a_glb_material_named_after_a_folder_takes_its_maps()
       Span<const uint8_t>(glb.data(), (uint32_t)glb.size()), "named_material.glb");
 
   const assets::pbr_material_asset_t* folder =
-      assets::get(assets::get_pbr_material(assets::pbr_material::harsh_bricks));
+      assets::get(assets::get_pbr_material(assets::pbr_material_id("harsh_bricks")));
   assert(folder != nullptr);
   assert(mesh.materials.size() == 2);
 
@@ -711,7 +709,7 @@ static int test_a_glb_material_named_after_a_folder_takes_its_maps()
 // metres, and its accessor bounds say where every axis must land.
 static int test_the_duck_glb_arrives_through_the_manifest()
 {
-  const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(assets::mesh_asset::Duck));
+  const assets::mesh_asset_t* mesh = assets::get(assets::get_mesh(assets::mesh_id("Duck")));
   assert(mesh != nullptr);
   assert(mesh->indices.size() == 12636);
   assert(mesh->submeshes.size() == 1);

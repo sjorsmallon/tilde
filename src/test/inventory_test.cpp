@@ -5,6 +5,7 @@
 // interval from the outgoing weapon's shot, so firing a Scout (1.25s) delayed a
 // Knife swing, and swinging a Knife (0.5s) delayed a Scout that had been
 // holstered and idle for a minute. Both directions are checked below.
+#include "asset_state.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/extending_platform_entity_generated.hpp"
 #include "entities/generated/entities/guided_rocket_entity_generated.hpp"
@@ -163,6 +164,10 @@ static_assert(shared::try_find_held_fire_time(HELD_FIRE, 600, 700, 640, 704) == 
 
 int main()
 {
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
+
   shared::game_session_t session;
 
   const shared::entity_uid_t player_uid =
