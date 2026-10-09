@@ -47,7 +47,16 @@ struct reveal_cone_settings_t
 
 // A wider cone is not convex and no set of planes holds it, so the cone is never built wider.
 inline constexpr float    MAX_REVEAL_HALF_ANGLE_DEGREES = 89.f;
-inline constexpr uint32_t REVEAL_CONE_SIDE_COUNT        = 8;
+inline constexpr uint32_t REVEAL_CONE_SIDE_COUNT        = 12;
+
+// The one frame about a cone's axis every polygon of it is built in: a reveal cone's sides, the cut
+// of a shadow volume by a spot's beam, and the solid beam are the same planes because they share it.
+struct axis_frame_t
+{
+  linalg::vec3f right;
+  linalg::vec3f up;
+};
+[[nodiscard]] axis_frame_t frame_about_axis(const linalg::vec3f& axis);
 
 struct reveal_cone_t
 {

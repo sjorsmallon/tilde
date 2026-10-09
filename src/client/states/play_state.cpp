@@ -1176,7 +1176,8 @@ static void build_predicted_world_for_input(
       .state_tick = ctx.prediction.latest_server_tick,
       .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
       .gravity = ctx.cvars->g_gravity,
-      .reveal_cone = shared::reveal_cone_settings_from_cvars(*ctx.cvars)
+      .reveal_cone = shared::reveal_cone_settings_from_cvars(*ctx.cvars),
+      .beams_carved = shared::beam_carve_scope_t::Every_Beam
   };
 
   shared::build_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
@@ -1185,7 +1186,7 @@ static void build_predicted_world_for_input(
       shared::build_shadow_volumes(ctx.world.session, frame.predicted_world_storage);
   {
     FRAME_ZONE("build_solid_beams");
-    shared::build_solid_beams(ctx.world.session, frame.predicted_world_storage);
+    shared::build_solid_beams(ctx.world.session, settings.beams_carved, frame.predicted_world_storage);
   }
 
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
@@ -3365,13 +3366,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     // The counts and the (caster, light) pairs, printed when they change: the planes move every tick, so they stay out.
     const shared::shadow_volume_report_t& report = ctx.visuals.drawn_shadow_volume_report;
     std::string line = std::format(
-        "shadow volumes: lights {} receivers {} casters {} cast {} kept {}{} | refused: beside light {} too many "
-        "planes {} outside beam {} reaching nothing {} | occluders {}{} skipped {} | caster/light:",
+        "shadow volumes: lights {} receivers {} casters {} cast {} kept {}{} | refused: inside caster {} open "
+        "silhouette {} on silhouette {} too many planes {} outside beam {} reaching nothing {} | occluders {}{} "
+        "skipped {} | caster/light:",
         report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast, report.kept,
         report.kept > renderer::MAX_SCENE_SHADOW_VOLUMES
             ? std::format(" (ONLY {} DRAWN)", renderer::MAX_SCENE_SHADOW_VOLUMES)
             : std::string{},
-        report.refused_beside_light, report.refused_too_many_planes, report.refused_outside_beam,
+        report.refused_inside_caster, report.refused_open_silhouette, report.refused_on_silhouette,
+        report.refused_too_many_planes, report.refused_outside_beam,
         report.culled_reaching_nothing, ctx.visuals.drawn_shadow_occluders.size(),
         ctx.visuals.drawn_shadow_occluders.size() > renderer::MAX_SCENE_SHADOW_OCCLUDERS
             ? std::format(" (ONLY {} USED)", renderer::MAX_SCENE_SHADOW_OCCLUDERS)
@@ -3379,6 +3382,17 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         ctx.visuals.drawn_shadow_occluders_skipped);
     for (const shared::shadow_volume_t& volume : ctx.visuals.drawn_shadow_volumes)
       line += std::format(" {}/{}", volume.caster, volume.light);
+    for (const shared::refused_piece_t& refused : report.refused)
+    {
+      line += std::format(" | REFUSED piece {} at ({:.0f} {:.0f} {:.0f}) under light {}: {}", refused.piece,
+                          refused.center.x, refused.center.y, refused.center.z, refused.light,
+                          shared::describe_shadow_cast_refusal(refused.reason));
+      scene.debug.text(refused.center,
+                       std::format("REFUSED piece {} / light {}: {}", refused.piece, refused.light,
+                                   shared::describe_shadow_cast_refusal(refused.reason))
+                           .c_str(),
+                       colors::red);
+    }
     if (line != ctx.visuals.shadow_volume_debug_line)
     {
       console::get().print(line.c_str());
@@ -3397,23 +3411,14 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         seen = lights_seen.insert(lights_seen.end(), volume.light);
       const color_t color = LIGHT_COLORS[static_cast<uint32_t>(seen - lights_seen.begin()) % LIGHT_COLORS.size()];
 
-      linalg::vec3f near_center{0.f, 0.f, 0.f};
-      for (uint32_t side = 0; side < volume.side_count; ++side)
-      {
-        const uint32_t next = (side + 1) % volume.side_count;
-        scene.debug.line(volume.near_ring[side], volume.near_ring[next], color, 0.f, 0.f, true);
-        scene.debug.line(volume.far_ring[side], volume.far_ring[next], color, 0.f, 0.f, true);
-        scene.debug.line(volume.near_ring[side], volume.far_ring[side], color, 0.f, 0.f, true);
-        near_center = near_center + volume.near_ring[side];
-      }
-      if (volume.side_count > 0)
-      {
-        near_center = near_center * (1.f / static_cast<float>(volume.side_count));
-        const std::string label = volume_index < renderer::MAX_SCENE_SHADOW_VOLUMES
-                                      ? std::format("volume {}: caster {} / light {}", volume_index, volume.caster, volume.light)
-                                      : std::format("NOT DRAWN: caster {} / light {}", volume.caster, volume.light);
-        scene.debug.text(near_center, label.c_str(), color);
-      }
+      std::vector<shared::shadow_volume_edge_t> edges;
+      shared::collect_shadow_volume_edges(volume, shared::SHADOW_VOLUME_DRAWN_REACH, edges);
+      for (const shared::shadow_volume_edge_t& edge : edges)
+        scene.debug.line(edge.a, edge.b, color, 0.f, 0.f, true);
+      const std::string label = volume_index < renderer::MAX_SCENE_SHADOW_VOLUMES
+                                    ? std::format("volume {}: caster {} / light {}", volume_index, volume.caster, volume.light)
+                                    : std::format("NOT DRAWN: caster {} / light {}", volume.caster, volume.light);
+      scene.debug.text(get_aabb_center(volume.caster_bounds), label.c_str(), color);
     }
   }
   if (ctx.cvars->cl_solid_beam_debug)
@@ -3461,7 +3466,13 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (ctx.cvars->r_beam)
       if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity);
           spot != nullptr && spot->beam && shared::light_is_switched_on(entity))
-        draw_spot_beam(scene, build_spot_beam_for_spot_light(*spot, light_pose));
+      {
+        spot_beam_t beam = build_spot_beam_for_spot_light(*spot, light_pose);
+        if (const std::optional<shared::beam_carve_t> carve =
+                shared::try_find_beam_carve(ctx.world.session.solid_beam_cache, spot->entity_id))
+          beam.carve = *carve;
+        draw_spot_beam(scene, beam);
+      }
   }
 
   for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)

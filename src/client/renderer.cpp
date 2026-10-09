@@ -792,11 +792,13 @@ struct scene_uniform_t
   float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
   float       beam[4]                                       = {}; // x one of scene.glsl's BEAM_FILL_*, y the tint alpha, z the dot spacing in pixels, w the outline width in pixels
   float       beam_viewport[4]                              = {}; // this pass's viewport in pixels: xy where it starts, zw its size
-  float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z, w 1 when the surface bias applies only to chords ending on a surface
-  float       beams[MAX_SCENE_BEAMS][12]                    = {}; // apex xyz and range, forward xyz and cos(outer), colour rgb and the light's uid bits
+  float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z, w unused
+  float       beams[MAX_SCENE_BEAMS][16]                    = {}; // apex xyz and range, forward xyz and cos(outer), colour rgb and the light's uid bits, the first of its carved pieces and how many, two spare
   float       beam_boxes[MAX_SCENE_BEAMS][8]                = {}; // the box around beam b's cone, min xyz then max xyz; beam.vert draws it
+  float       beam_pieces[MAX_SCENE_BEAM_PIECES / 4][4]     = {}; // piece p's first plane | plane count << 16, as float bits, at [p / 4][p % 4]
+  float       beam_planes[MAX_SCENE_BEAM_PLANES][4]         = {}; // a carved piece's cut planes as the volumes' planes: outward normal xyz and dot(normal, point)
   float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
-  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | back plane count << 8 | cuts_geometry << 16, as float bits, at [v / 4][v % 4]
+  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | front plane count << 8 | cuts_geometry << 16, as float bits, at [v / 4][v % 4]
   float       shadow_volume_boxes[MAX_SCENE_SHADOW_VOLUMES][8]      = {}; // the box around drawn volume v's body, min xyz then max xyz; shadow_body.vert draws it
   float       reveal_settings[4]                           = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
@@ -813,7 +815,8 @@ struct scene_uniform_t
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + (48 + 32) * MAX_SCENE_BEAMS +
+                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + (64 + 32) * MAX_SCENE_BEAMS +
+                      4 * MAX_SCENE_BEAM_PIECES + 16 * MAX_SCENE_BEAM_PLANES +
                       8 * MAX_SCENE_SHADOW_VOLUMES + 32 * MAX_SCENE_SHADOW_VOLUMES +
                       32 * MAX_SCENE_REVEAL_CONES + 16 +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
@@ -7375,8 +7378,8 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     if (written_volume_count == MAX_SCENE_SHADOW_VOLUMES)
       break;
     float* out = scene.shadow_volumes[written_volume_count++];
-    // Side slots then back slots, as reveal.glsl's shadow_margin splits them; an unused slot is
-    // (0, 0, 0, +big), which a side reads as "far inside" and a back plane as "far from outside".
+    // Side slots then front slots, as reveal.glsl's shadow_margin splits them; an unused slot is
+    // (0, 0, 0, +big), which either reads as "far inside".
     for (uint32_t slot = 0; slot < shared::MAX_SHADOW_VOLUME_PLANES; ++slot)
     {
       float*       plane_out = out + 4 * slot;
@@ -7384,8 +7387,8 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
       const Plane* plane     = nullptr;
       if (side && slot < volume.side_plane_count)
         plane = &volume.side_planes[slot];
-      else if (!side && slot - shared::SHADOW_VOLUME_SIDE_SLOTS < volume.back_plane_count)
-        plane = &volume.back_planes[slot - shared::SHADOW_VOLUME_SIDE_SLOTS];
+      else if (!side && slot - shared::SHADOW_VOLUME_SIDE_SLOTS < volume.front_plane_count)
+        plane = &volume.front_planes[slot - shared::SHADOW_VOLUME_SIDE_SLOTS];
       if (plane == nullptr)
       {
         plane_out[0] = plane_out[1] = plane_out[2] = 0.0f;
@@ -7400,7 +7403,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     static_assert(sizeof(volume.light) == sizeof(float));
     memcpy(&scene.shadow_volume_lights[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume.light, sizeof(float));
-    const uint32_t volume_counts = volume.side_plane_count | (volume.back_plane_count << 8) |
+    const uint32_t volume_counts = volume.side_plane_count | (volume.front_plane_count << 8) |
                                    (volume.cuts_geometry ? SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT : 0u);
     memcpy(&scene.shadow_volume_counts[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume_counts, sizeof(float));
@@ -7470,10 +7473,45 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   scene.beam_settings[0]  = (float)beam_count;
   scene.beam_settings[1]  = (VIEW_FAR_PLANE - VIEW_NEAR_PLANE) / (VIEW_NEAR_PLANE * VIEW_FAR_PLANE);
   scene.beam_settings[2]  = 1.0f / VIEW_FAR_PLANE;
+  uint32_t written_pieces = 0;
+  uint32_t written_planes = 0;
   for (size_t index = 0; index < beam_count; ++index)
   {
     const beam_t& beam = pass.beams[(uint32_t)index];
     float*        out  = scene.beams[index];
+    const uint32_t piece_count  = beam.carve_piece_first.count > 0 ? beam.carve_piece_first.count - 1 : 0;
+    const uint32_t first_piece  = written_pieces;
+    uint32_t       drawn_pieces = 0;
+    for (uint32_t piece = 0; piece < piece_count; ++piece)
+    {
+      const uint32_t plane_first = beam.carve_piece_first[piece];
+      const uint32_t plane_count = beam.carve_piece_first[piece + 1] - plane_first;
+      if (written_pieces == MAX_SCENE_BEAM_PIECES || written_planes + plane_count > MAX_SCENE_BEAM_PLANES)
+      {
+        log_error("[renderer] the beam of light {} has {} pieces with {} cut planes; the pass holds {} pieces and "
+                  "{} planes, so {} of its pieces are not drawn and the beam is uncut there",
+                  beam.light, piece_count, beam.carve_cut_planes.count, MAX_SCENE_BEAM_PIECES,
+                  MAX_SCENE_BEAM_PLANES, piece_count - piece);
+        break;
+      }
+      for (uint32_t slot = 0; slot < plane_count; ++slot)
+      {
+        const Plane& plane     = beam.carve_cut_planes[plane_first + slot];
+        float*       plane_out = scene.beam_planes[written_planes + slot];
+        plane_out[0]           = plane.normal.x;
+        plane_out[1]           = plane.normal.y;
+        plane_out[2]           = plane.normal.z;
+        plane_out[3]           = linalg::dot(plane.normal, plane.point);
+      }
+      const uint32_t packed = written_planes | (plane_count << 16);
+      static_assert(sizeof(packed) == sizeof(float));
+      memcpy(&scene.beam_pieces[written_pieces / 4][written_pieces % 4], &packed, sizeof(float));
+      written_planes += plane_count;
+      ++written_pieces;
+      ++drawn_pieces;
+    }
+    out[12] = (float)first_piece;
+    out[13] = (float)drawn_pieces;
     out[0]  = beam.apex.x;
     out[1]  = beam.apex.y;
     out[2]  = beam.apex.z;
@@ -9771,7 +9809,6 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.beam[1]                  = std::clamp(look.beam_alpha, 0.0f, 1.0f);
     scene.beam[2]                  = std::max(look.beam_dot_spacing_pixels, 1.0f);
     scene.beam[3]                  = std::max(look.beam_edge_pixels, 0.0f);
-    scene.beam_settings[3]         = look.beam_surface_bias ? 1.0f : 0.0f;
     scene.shadow_volume_settings[1] = look.shadow_volume ? std::clamp(look.shadow_volume_alpha, 0.0f, 1.0f) : 0.0f;
     scene.shadow_volume_settings[2] = look.shadow_volume ? 1.0f : 0.0f;
     scene.fog_settings[1]     = FOG_GRID_NEAR;

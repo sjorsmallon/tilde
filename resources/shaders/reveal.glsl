@@ -17,6 +17,8 @@ const int LIGHT_CUT_SHADOW_HOLE  = 4;
 
 // A shadow volume's rim, in world units inside its nearest plane.
 const float SHADOW_RIM_UNITS = 12.0;
+// A fragment this close to a front plane is ON the face the shadow begins at, not in it.
+const float SHADOW_FRONT_SLACK_UNITS = 0.1;
 
 // The bright edge's width, as a cosine off the cone's side and as world units off its far end.
 const float REVEAL_RIM_COSINE = 0.012;
@@ -60,8 +62,10 @@ float erase_margin(vec3 world_position)
     return cone_margin(world_position, int(scene.reveal_settings.x), int(scene.reveal_settings.y));
 }
 
-// How deep in shadow, in rim widths: inside every side plane of a volume and past one of its back
-// planes (shared/shadow_volume.hpp). Negative is in no volume's shadow, never below -1. A volume thrown for
+// How deep in shadow, in rim widths inside the nearest side plane of a volume whose every front plane
+// the fragment is behind (shared/shadow_volume.hpp). The front planes gate and never grade: they are a
+// caster's own faces, and an erased caster's turned-away face lies exactly on the one its shadow begins at.
+// Negative is in no volume's shadow, never below -1. A volume thrown for
 // a beam alone is skipped, as collision skips it: the picture and the floor read the same volumes.
 float shadow_margin(vec3 world_position)
 {
@@ -77,12 +81,13 @@ float shadow_margin(vec3 world_position)
             const vec4 side = scene.shadow_volumes[first + slot];
             inside = min(inside, (side.w - dot(side.xyz, world_position)) / SHADOW_RIM_UNITS);
         }
-        float past_back = -1e9;
+        bool behind_front = true;
         for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot) {
-            const vec4 back = scene.shadow_volumes[first + slot];
-            past_back = max(past_back, (dot(back.xyz, world_position) - back.w) / SHADOW_RIM_UNITS);
+            const vec4 front = scene.shadow_volumes[first + slot];
+            behind_front = behind_front && front.w - dot(front.xyz, world_position) > SHADOW_FRONT_SLACK_UNITS;
         }
-        margin = max(margin, min(inside, past_back));
+        if (behind_front)
+            margin = max(margin, inside);
     }
     return max(margin, -1.0);
 }

@@ -23,6 +23,7 @@
 #include "shapes.hpp"
 #include "canopy.hpp"
 #include "statues.hpp"
+#include "reveal_light.hpp"
 #include "solid_beams.hpp"
 #include "spawned_platforms.hpp"
 
@@ -134,12 +135,13 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
                                     disabled);
 
   std::vector<shared::mover_t> movers;
+  shared::solid_beam_cache_t     solid_beam_cache;
   shared::collect_movers(system, {}, {}, 1, 60.0f, movers);
   shared::collect_canopies(system, 1, 0, 1.f / 60.f, movers);
   shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
                                     movers);
   shared::collect_statues(system, movers);
-  shared::collect_solid_beams(system, {}, {}, movers);
+  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -540,6 +542,7 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
   const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
 
   std::vector<shared::mover_t> movers;
+  shared::solid_beam_cache_t     solid_beam_cache;
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
   {
     movers.clear();
@@ -617,6 +620,7 @@ static void test_a_platform_grows_over_its_flight_and_lands_at_half_extents()
   check(std::fabs(landed.x - 128.f) < 1e-4f && std::fabs(landed.y - 4.f) < 1e-4f, "it lands at half_extents");
 
   std::vector<shared::mover_t> movers;
+  shared::solid_beam_cache_t     solid_beam_cache;
   shared::collect_spawned_platforms(system, 49, flight, movers);
   check(movers.empty(), "the cut has no box for it while it flies");
   shared::collect_spawned_platforms(system, 50, flight, movers);
@@ -643,6 +647,7 @@ static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
   const shared::common_platform_fields_t view = shared::get_common_platform_fields(*platform);
 
   std::vector<shared::mover_t> movers;
+  shared::solid_beam_cache_t     solid_beam_cache;
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
   {
     movers.clear();
@@ -673,6 +678,7 @@ static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_
   const float                               dt = flight.tick_interval_seconds;
 
   std::vector<shared::mover_t> movers;
+  shared::solid_beam_cache_t     solid_beam_cache;
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
   {
     movers.clear();
@@ -766,7 +772,8 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
   spot->solid_beam    = true;
 
   std::vector<shared::mover_t> movers;
-  shared::collect_solid_beams(system, {}, {}, movers);
+  shared::solid_beam_cache_t     solid_beam_cache;
+  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.size() == 1 && movers[0].uid == uid, "one switched-on solid beam is one mover");
   if (movers.size() != 1)
     return;
@@ -777,12 +784,16 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
   const linalg::vec3f   axis  = linalg::normalize(basis.forward);
   const linalg::vec3f   side  = linalg::normalize(basis.right);
 
-  check(piece.planes.size() == shared::SOLID_BEAM_SIDE_COUNT + 1 &&
+  check(piece.planes.size() > shared::REVEAL_CONE_SIDE_COUNT + 1 &&
             piece.face_polygons.size() == piece.planes.size(),
-        "a plane and a polygon for each side and the cap");
+        "a plane and a polygon for each side, the cap and the tangents that round the end");
   check(piece_contains_point(piece, apex + axis * 200.f), "the middle of the axis is inside");
   check(piece_contains_point(piece, apex + axis * 390.f), "just short of the range is inside");
   check(!piece_contains_point(piece, apex + axis * 410.f), "past the range is outside");
+  const linalg::vec3f near_rim = axis * std::cos(linalg::to_radians(29.f)) + side * std::sin(linalg::to_radians(29.f));
+  check(piece_contains_point(piece, apex + near_rim * 395.f), "just inside the range sphere by the rim is inside");
+  check(!piece_contains_point(piece, apex + near_rim * 440.f),
+        "past the range sphere by the rim is outside, where a flat cap would have reached");
   check(!piece_contains_point(piece, apex - axis * 10.f), "behind the fixture is outside");
   check(piece_contains_point(piece, apex + axis * 300.f + side * 100.f),
         "inside the half angle at that depth is inside");
@@ -794,13 +805,22 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
 
   spot->switch_state.value = false;
   movers.clear();
-  shared::collect_solid_beams(system, {}, {}, movers);
+  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.empty(), "switched off it is not there");
 
   spot->switch_state.value = true;
   spot->solid_beam         = false;
-  shared::collect_solid_beams(system, {}, {}, movers);
+  spot->beam               = true;
+  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.empty(), "a spot without solid_beam is not there");
+
+  shared::solid_beam_cache_t client_cache;
+  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Every_Beam, client_cache, movers);
+  check(movers.empty(), "under Every_Beam a beam of light is still no mover");
+  check(shared::try_find_beam_carve(client_cache, uid).has_value(), "but it is carved, for the picture");
+  shared::solid_beam_cache_t server_cache;
+  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, server_cache, movers);
+  check(!shared::try_find_beam_carve(server_cache, uid).has_value(), "under Solid a beam of light is not carved");
 }
 
 static bool any_piece_contains_point(const shared::mover_t& mover, const linalg::vec3f& point)
@@ -842,7 +862,8 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
   const shared::shadow_volume_t volumes[] = {cast.volume};
 
   std::vector<shared::mover_t> movers;
-  shared::collect_solid_beams(system, {}, volumes, movers);
+  shared::solid_beam_cache_t     solid_beam_cache;
+  shared::collect_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.size() == 1 && movers[0].uid == uid, "still one mover");
   if (movers.size() != 1)
     return;
@@ -861,6 +882,35 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
       ++pieces_holding_a_lit_point;
   check(pieces_holding_a_lit_point == 1, "the pieces are disjoint: a lit point is in exactly one");
 
+  const std::vector<shared::collision_piece_t> first_carve = beam.pieces;
+  movers.clear();
+  shared::collect_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  check(movers.size() == 1 && movers[0].pieces.size() == first_carve.size(), "the same inputs are the cached carve");
+  const std::optional<shared::beam_carve_t> draw = shared::try_find_beam_carve(solid_beam_cache, uid);
+  check(draw.has_value() && draw->piece_first.count == first_carve.size() + 1,
+        "the draw names one plane run per piece");
+  if (draw.has_value())
+  {
+    bool every_cut_plane_is_the_volumes = true;
+    for (const Plane& cut : draw->cut_planes)
+    {
+      bool found = false;
+      for (uint32_t side = 0; side < cast.volume.side_plane_count; ++side)
+        found = found || std::memcmp(&cut.normal, &cast.volume.side_planes[side].normal, sizeof(cut.normal)) == 0 ||
+                linalg::length(cut.normal + cast.volume.side_planes[side].normal) < 1e-5f;
+      for (uint32_t front = 0; front < cast.volume.front_plane_count; ++front)
+        found = found || std::memcmp(&cut.normal, &cast.volume.front_planes[front].normal, sizeof(cut.normal)) == 0 ||
+                linalg::length(cut.normal + cast.volume.front_planes[front].normal) < 1e-5f;
+      every_cut_plane_is_the_volumes = every_cut_plane_is_the_volumes && found;
+    }
+    check(every_cut_plane_is_the_volumes, "a piece's drawn planes are the volume's, never the pyramid's");
+  }
+
+  spot->position.y += 1.f;
+  movers.clear();
+  shared::collect_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  check(movers.size() == 1 && any_piece_contains_point(movers[0], apex + axis * 100.f + linalg::vec3f{0.f, 1.f, 0.f}),
+        "a moved light is carved again at its new pose");
 }
 
 int main()

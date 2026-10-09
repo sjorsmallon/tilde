@@ -59,13 +59,20 @@ reveal_cone_t compute_light_reveal_cone(const entities::Reveal_Light_Entity& lig
           .kind                 = light.kind};
 }
 
-reveal_cone_planes_t planes_of_reveal_cone(const reveal_cone_t& cone)
+axis_frame_t frame_about_axis(const linalg::vec3f& axis)
 {
-  const linalg::vec3f axis   = linalg::normalize(cone.axis);
   const linalg::vec3f helper = std::fabs(axis.y) < 0.9f ? linalg::vec3f{0.f, 1.f, 0.f}
                                                         : linalg::vec3f{1.f, 0.f, 0.f};
   const linalg::vec3f right  = linalg::normalize(linalg::cross(axis, helper));
-  const linalg::vec3f up     = linalg::cross(right, axis);
+  return {.right = right, .up = linalg::cross(right, axis)};
+}
+
+reveal_cone_planes_t planes_of_reveal_cone(const reveal_cone_t& cone)
+{
+  const linalg::vec3f axis  = linalg::normalize(cone.axis);
+  const axis_frame_t  frame = frame_about_axis(axis);
+  const linalg::vec3f right = frame.right;
+  const linalg::vec3f up    = frame.up;
 
   const float cosine = cone.cosine_of_half_angle;
   const float sine   = std::sqrt(std::max(0.f, 1.f - cosine * cosine));

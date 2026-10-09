@@ -59,9 +59,10 @@ shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_w
                                 session.mover_rests, out.shadow_volumes);
 }
 
-void build_solid_beams(game_session_t& session, predicted_world_storage_t& out)
+void build_solid_beams(game_session_t& session, beam_carve_scope_t scope, predicted_world_storage_t& out)
 {
-  collect_solid_beams(session.entity_system, session.mover_rests, out.shadow_volumes, out.movers);
+  collect_solid_beams(session.entity_system, session.mover_rests, out.shadow_volumes, scope,
+                      session.solid_beam_cache, out.movers);
 }
 
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
@@ -72,7 +73,7 @@ void build_predicted_world(game_session_t& session, const predicted_world_settin
   build_movers(session, settings, out);
   build_reveal_cones(session, settings, out);
   build_shadow_volumes(session, out);
-  build_solid_beams(session, out);
+  build_solid_beams(session, settings.beams_carved, out);
 }
 
 } // namespace shared

@@ -5,6 +5,7 @@
 #include "entity_system.hpp"
 #include "map.hpp"
 #include "movers.hpp"
+#include "solid_beams.hpp"
 #include "navmesh.hpp"
 #include <string>
 #include <unordered_map>
@@ -67,6 +68,10 @@ struct game_session_t
   // A mover's geometry is not in `bvh`: its rest frame, latched from the authored start node before
   // anything advances, and its pieces at that pose, keyed by mover, cut per tick by collect_movers.
   mover_rests_t mover_rests;
+
+  // Each solid beam's last carve with what it was carved from, so a tick that changes nothing in a beam
+  // reuses it (solid_beams.hpp).
+  solid_beam_cache_t solid_beam_cache;
 
   // The map's material table, copied for the same reason the geometry is: a
   // brush face holds an INDEX into it, so the two have to travel together or the

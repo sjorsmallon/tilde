@@ -26,16 +26,19 @@
 // renderer.hpp's MAX_SCENE_FOG_VOLUMES, kept one number by the same assert.
 #define MAX_FOG_VOLUMES 8
 // renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
-#define MAX_SHADOW_VOLUMES 16
-#define MAX_SHADOW_VOLUME_PLANES 37
+#define MAX_SHADOW_VOLUMES 24
+#define MAX_SHADOW_VOLUME_PLANES 41
 // renderer.hpp's MAX_SCENE_SHADOW_OCCLUDERS, kept one number by the same assert.
 #define MAX_SHADOW_OCCLUDERS 16
 // shadow_volume.hpp's SHADOW_OCCLUDER_RECEIVES_BIT.
 #define SHADOW_OCCLUDER_RECEIVES (1 << 31)
-// shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its back planes.
-#define SHADOW_VOLUME_SIDE_SLOTS 25
+// shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its front planes.
+#define SHADOW_VOLUME_SIDE_SLOTS 29
 // renderer.hpp's MAX_SCENE_BEAMS, kept one number by the same assert.
 #define MAX_BEAMS 8
+// renderer.hpp's MAX_SCENE_BEAM_PIECES and MAX_SCENE_BEAM_PLANES, kept one number by the same assert.
+#define MAX_BEAM_PIECES 128
+#define MAX_BEAM_PLANES 512
 
 // scene.cel_fill_pattern.x, from r_cel_fill -- renderer.cpp's cel_fill_pattern_of.
 #define CEL_FILL_NONE     0
@@ -107,6 +110,7 @@ struct Beam {
     vec4 apex_range;     // apex xyz, range
     vec4 forward_cosine; // forward xyz, cos(outer)
     vec4 color_light;    // rgb the light's colour, w its uid as int bits (floatBitsToInt)
+    vec4 pieces;         // x the first of the beam's carved pieces in beam_pieces, y how many; none draws the whole cone
 };
 
 layout(set = 3, binding = 1) uniform SceneUniform {
@@ -189,17 +193,20 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   beam;
     // This pass's viewport in pixels: xy where it starts, zw its size. beam.frag finds its line of sight by it.
     vec4   beam_viewport;
-    // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z;
-    // w = r_beam_surface_bias: 1 is a tolerance on a caster's lit faces at the chord's end, 0 the old lift.
+    // x = how many of `beams` are live; one over a pixel's view depth is (1 - its stored depth) * y + z.
     vec4   beam_settings;
     Beam   beams[MAX_BEAMS];
     // The box around beam b's cone cut to its range: min at [2b], max at [2b + 1]. beam.vert draws it, so the
     // beam's shader runs there alone.
     vec4   beam_boxes[MAX_BEAMS * 2];
+    // Carved piece p's cut planes are beam_planes[first, first + count) with
+    // first | count << 16 = floatBitsToInt(beam_pieces[p >> 2][p & 3]); planes as shadow_volumes'.
+    vec4   beam_pieces[MAX_BEAM_PIECES / 4];
+    vec4   beam_planes[MAX_BEAM_PLANES];
     // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
     vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
     // Volume v's live plane counts, floatBitsToInt(shadow_volume_counts[v >> 2][v & 3]): sides in the low byte,
-    // back planes in the next; the slots past them are planes at infinity and need no visit. Bit 16 is the
+    // front planes in the next; the slots past them are planes at infinity and need no visit. Bit 16 is the
     // light's cuts_geometry: only such a volume cuts a shadow_solid or shadow_hole draw, as only it cuts collision.
     vec4   shadow_volume_counts[MAX_SHADOW_VOLUMES / 4];
     // The box around drawn volume v's body, its caster's shadow pyramid cut to what it lands on: min at [2v],
@@ -213,8 +220,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // w = how many of `shadow_occluders` are live.
     vec4       shadow_volume_settings;
     // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).
-    // In shadow where inside every side plane and outside at least one back plane (reveal.glsl's shadow_margin);
-    // an unused slot is (0, 0, 0, 1e9), which neither test ever picks.
+    // In shadow where inside every side plane and every front plane (reveal.glsl's shadow_margin); an unused
+    // slot is (0, 0, 0, 1e9), inside for every point.
     vec4       shadow_volumes[MAX_SHADOW_VOLUMES * MAX_SHADOW_VOLUME_PLANES];
     // Drawn volume v touches occluder o where bit v of floatBitsToInt(shadow_occluder_bits[o >> 2][o & 3]) is set;
     // bit 31 (SHADOW_OCCLUDER_RECEIVES) says the piece receives, so the body is drawn down to it rather than only stopped.

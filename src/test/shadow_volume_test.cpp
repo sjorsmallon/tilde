@@ -43,16 +43,45 @@ int main()
     const std::optional<shared::shadow_volume_t> volume =
         try_cast(light, caster);
     check(volume.has_value(), "a box below a light casts");
-    check(volume->side_plane_count == 4 && volume->back_plane_count == 5,
-          "a box seen square-on has four sides, and five faces turned away");
+    check(volume->side_plane_count == 4 && volume->front_plane_count == 1,
+          "a box seen square-on has four sides, and one face turned toward the light");
     check(shared::shadow_volume_contains_point(*volume, {0.f, -100.f, 0.f}), "straight below is inside");
     check(shared::shadow_volume_contains_point(*volume, {40.f, -200.f, 0.f}), "the pyramid widens with depth");
     check(!shared::shadow_volume_contains_point(*volume, {45.f, -20.f, 0.f}), "just outside the widening edge is outside");
+    check(shared::shadow_volume_contains_point(*volume, {0.f, 0.f, 0.f}), "the caster's own body is in its shadow");
     check(!shared::shadow_volume_contains_point(*volume, {200.f, -100.f, 0.f}), "far beside is outside");
     check(!shared::shadow_volume_contains_point(*volume, {0.f, 100.f, 0.f}), "between the light and the box is outside");
     check(shared::shadow_volume_touches_box(*volume, box_about({40.f, -100.f, 0.f}, 16.f)), "a hull straddling the edge touches");
     check(!shared::shadow_volume_contains_box(*volume, box_about({40.f, -100.f, 0.f}, 16.f)), "and is not contained");
     check(shared::shadow_volume_contains_box(*volume, box_about({0.f, -100.f, 0.f}, 16.f)), "a hull wholly beneath is contained");
+  }
+
+  printf("[pin] an erased caster's shadow begins behind it: one volume per face turned away, none holding its body\n");
+  {
+    const shared::shadow_light_t         light = {.apex = {0.f, 200.f, 0.f}, .range = 0.f};
+    std::vector<shared::shadow_volume_t> behind;
+    const shared::shadow_cast_refusal_t  refusal =
+        shared::cast_shadow_volumes_behind_caster(light, caster.planes, caster.face_polygons, 7, behind);
+    check(refusal == shared::shadow_cast_refusal_t::None, "it casts");
+    check(behind.size() == 5, "the bottom and the four sides face away from a light straight above: five volumes");
+    const auto any_contains = [&](const linalg::vec3f& point)
+    {
+      for (const shared::shadow_volume_t& volume : behind)
+        if (shared::shadow_volume_contains_point(volume, point))
+          return true;
+      return false;
+    };
+    bool one_front_each = true;
+    for (const shared::shadow_volume_t& volume : behind)
+      one_front_each = one_front_each && volume.side_plane_count == 4 && volume.front_plane_count == 1;
+    check(one_front_each, "each is the pyramid beyond one face");
+    check(!any_contains({0.f, 0.f, 0.f}), "the caster's own body is in none of them");
+    check(!any_contains({0.f, -31.f, 0.f}), "nor just inside its far face");
+    check(!any_contains({0.f, 100.f, 0.f}), "nor between the light and the caster");
+    check(any_contains({0.f, -33.f, 0.f}), "just beyond its far face is shadow");
+    check(any_contains({0.f, -100.f, 0.f}), "straight below is shadow");
+    check(any_contains({35.f, 0.f, 0.f}), "the sliver beside it a ray leaves through a side face into is shadow");
+    check(!any_contains({50.f, -40.f, 0.f}), "outside the widening edge is not");
   }
 
   printf("[pin] a point light's range caps the volume\n");
@@ -96,8 +125,8 @@ int main()
     const shared::shadow_light_t light = {.apex = {200.f, 200.f, 200.f}};
     const std::optional<shared::shadow_volume_t> volume =
         try_cast(light, caster);
-    check(volume.has_value() && volume->side_plane_count == 6 && volume->back_plane_count == 3,
-          "six sides, and the three faces turned away");
+    check(volume.has_value() && volume->side_plane_count == 6 && volume->front_plane_count == 3,
+          "six sides, and the three faces turned toward the light");
     check(shared::shadow_volume_contains_point(*volume, {-100.f, -100.f, -100.f}), "the far corner's direction is inside");
   }
 
@@ -151,7 +180,7 @@ int main()
                                           .cosine_of_outer_angle = std::cos(linalg::to_radians(30.f))};
     const shared::shadow_cast_t cast = shared::cast_shadow_volume(light, long_slab.planes, long_slab.face_polygons, 7);
     printf("       refusal %d sides %u back %u\n", (int)cast.refusal, cast.volume.side_plane_count,
-           cast.volume.back_plane_count);
+           cast.volume.front_plane_count);
     check(cast.refusal == shared::shadow_cast_refusal_t::None, "a spot just above the near end of a tall slab casts");
     check(cast.refusal == shared::shadow_cast_refusal_t::None &&
               shared::shadow_volume_contains_point(cast.volume, {0.f, -250.f, -380.f}),

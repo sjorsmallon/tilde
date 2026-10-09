@@ -39,7 +39,9 @@ void draw_spot_beam(pass_builder_t& scene, const spot_beam_t& beam)
                                          .range                 = beam.range,
                                          .cosine_of_outer_angle = std::cos(linalg::to_radians(outer_degrees)),
                                          .color                 = beam.color,
-                                         .light                 = beam.light});
+                                         .light                 = beam.light,
+                                         .carve_cut_planes      = beam.carve.cut_planes,
+                                         .carve_piece_first     = beam.carve.piece_first});
 }
 
 } // namespace client

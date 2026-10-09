@@ -27,6 +27,7 @@
 #include "movement_volumes.hpp"
 #include "movers.hpp"
 #include "reveal_light.hpp"
+#include "solid_beams.hpp"
 #include "shadow_volume.hpp"
 #include "span.hpp"
 
@@ -116,6 +117,8 @@ struct predicted_world_settings_t
   float    tickrate_hz = 0.f;
   float    gravity     = 0.f;
   reveal_cone_settings_t reveal_cone = {};
+  // The server carves the solid beams it needs for collision; the client every beam, which it draws.
+  beam_carve_scope_t     beams_carved = beam_carve_scope_t::Solid;
 
   [[nodiscard]] float tick_interval_seconds() const { return 1.0f / tickrate_hz; }
 };
@@ -136,7 +139,7 @@ void build_reveal_cones(game_session_t& session, const predicted_world_settings_
 // After build_movers: a moving caster's pieces are the movers'. The report is for the two report commands.
 shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out);
 // After build_shadow_volumes: a solid beam is a mover carved by the volumes its own light threw (solid_beams.hpp).
-void build_solid_beams(game_session_t& session, predicted_world_storage_t& out);
+void build_solid_beams(game_session_t& session, beam_carve_scope_t scope, predicted_world_storage_t& out);
 void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
                          predicted_world_storage_t& out);
 

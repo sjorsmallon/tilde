@@ -34,7 +34,7 @@ void main()
     vec3  surface_point    = origin + surface_t * ray;
     vec2  lengths          = drawn_shadow_lengths(in_volume, origin, ray, surface_t);
     float in_shadow        = lengths.x;
-    float margin           = shadow_margin_at(in_volume, surface_point, 0.0);
+    float margin           = shadow_margin_at(in_volume, surface_point);
     float line_measure     = one_surface ? in_shadow : lengths.y;
     float line_pixels      = pixels_to_zero(line_measure);
     float rim_pixels       = pixels_to_zero(margin);

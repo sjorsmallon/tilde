@@ -502,7 +502,7 @@ Debugging :: cvars {
     // "which cores am I on" is not a thing worth making settable mid-session.
     pin_main_thread:        bool = true                 "Pin the main thread to the CPU's performance cores on a hybrid CPU"
 
-    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals, beam_terms: the beam pass as its terms, grey the lit share of the chord, red the outline, green a shaft line, blue a hole rim, magenta where the chord ends inside a shaft and nothing is drawn; beam_shadow: the beam pass by the shadow volume that takes the most out of each pixel's chord, one colour per scene volume index as cl_shadow_volume_debug labels them, brighter the more it takes, dark grey where no volume touches the chord)"
+    r_debug_channel:        Debug_Channel = .off @Client "Show a material channel instead of the shaded result (off, normals, uv, parallax_uv, shadow_visibility, shadow_cascades, direct_light, baked_light, probe_visibility, shadow_penumbra, reflection, reflection_capture, ink_normals, beam_terms: the beam pass as its terms, grey where the chord runs through a carved piece, purple where none of it does, red the cone's silhouette, blue the line where the lit length reaches zero; beam_shadow: the beam pass as the lit share of each pixel's chord, white all of it, dark grey none of it)"
 
     // The tonemap pass multiplies the HDR target by this before the curve
     // (lighting_def.md decision J). It is what decision H says
@@ -604,7 +604,6 @@ Debugging :: cvars {
     r_beam_fill:            Beam_Fill = .tint @Client  "What fills a beam: tint is a flat wash, dots a screentone of ink dots with nothing between them, at the same average tint as the wash"
     r_beam_dot_spacing:     f32 = 8.0       @Client    "Pixels between the dots of a screentone beam fill"
     r_beam_edge_pixels:     f32 = 2.0       @Client    "Width on screen of the line drawn where a beam ends on screen, its silhouette and where it lands, in the light's colour; 0 draws none"
-    r_beam_surface_bias:    bool = true     @Client    "Count a beam chord's end as lit when it is within a hair of a caster's own lit face, the chord measured whole; off is the old lift of every chord's end along the view ray, which left a false lit crescent at the rim of a shaft against the air and a soft lit band at the far edge of a shaft on a floor"
     r_shadow_volume:        bool = true     @Client    "Draw every shadow volume the collision reads as a dark body in the air, lines where it ends on screen and a rim where it lands, the whole volume and not only the part inside a beam"
     r_shadow_volume_alpha:  f32 = 0.25      @Client    "How much a drawn shadow volume darkens the air it fills, the same at every length and from every side"
 
@@ -643,7 +642,7 @@ Debugging :: cvars {
     // feeds. 0 disables the draw without turning off the server's send.
     cl_shot_debug_seconds:     f32 = 4.0 @Client     "Seconds a shot-debug overlay stays on screen (0 = off)"
     cl_shadow_volume_debug:    bool = false @Client    "Draw the shadow volumes the prediction cut this frame as pyramids, and print the cut's counts and caster/light pairs to the console whenever they change (shadow_volume_plan.md)"
-    cl_solid_beam_debug:       bool = false @Client    "Draw every solid beam the prediction cut this frame as its convex pieces, one colour per piece with its index, and the beam's piece count at the fixture; the picture to hold against r_debug_channel beam_shadow"
+    cl_solid_beam_debug:       bool = false @Client    "Draw every solid beam the prediction cut this frame as its convex pieces, one colour per piece with its index, and the beam's piece count at the fixture; the picture to hold against r_debug_channel beam_terms"
     debug_show_entity_counts:  bool = false @Client     "Per-type entity count overlay"
 
     net_snapshot_debug:     bool = false    @Client     "Log each received snapshot's baseline tick and payload size (every 120 ticks)"

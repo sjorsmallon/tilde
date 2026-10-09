@@ -337,11 +337,16 @@ prediction writes `ctx.prediction`.
   reads one; `render_frame` stays the hand-written ORDER. No pass list, no
   render graph.
 - A spot's `beam` is the light's own CONE, filled and outlined by the beam
-  pass (`beam.frag`) over the HDR target after the scene pass and cut by the
-  shadow volumes its own light throws, never by a shadow map; the fill is one
-  fixed faint alpha times the lit share of the chord, never scaled by depth.
-  A `beam` spot throws volumes; collision reads only those whose light
-  `cuts_geometry`.
+  pass (`beam.frag`) over the HDR target after the scene pass, cut to the
+  beam's CARVE: the cone less the shadow volumes its own light throws, as
+  disjoint convex pieces (`solid_beams.cpp`) whose cut planes ride the scene
+  block. The shader sums the cone chord through them and fills one fixed
+  faint alpha where the sum is above zero; it reads no shadow map and walks
+  no volume. The client carves every beam spot; the server only `solid_beam`
+  spots, whose pieces are also a mover, so what is drawn is what is stood on.
+  The carve is one flat arena, memoised per spot on pose and volumes; the
+  pyramid is built once per range and angle and placed per pose. A `beam`
+  spot throws volumes; collision reads only those whose light `cuts_geometry`.
 - The material table is passed at the call site, never held in the renderer.
   A material folder is `albedo.png`, `normal.png`, `orm.png`, `height.png`,
   `emissive.png`; an absent map is a default, never a branch, and an absent

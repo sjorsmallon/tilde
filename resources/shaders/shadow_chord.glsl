@@ -2,7 +2,7 @@
 #define SHADOW_CHORD_GLSL
 
 // The chords of a line of sight (spot_beam_plan.md ss3 to ss5, shadow_volume_plan.md ss5): how much of it a
-// beam's cone, a shadow volume or a drawn volume's body holds, and the line a chord's end draws on screen.
+// beam's cone or a drawn volume's body holds, and the line a chord's end draws on screen.
 // beam.frag draws the beams with these over the whole view; shadow_body.frag draws one volume's body over the
 // box around it. Both include scene.glsl ahead of this and declare the `scene_depth` sampler.
 
@@ -12,9 +12,9 @@ const float EMPTY_LEAVE      = -1e9;
 const float FLAT_QUADRATIC   = 1e-6;
 // A depth step larger than this share of the depth is a jump between two surfaces, not one surface's slope.
 const float DEPTH_JUMP_SHARE = 0.1;
-// A chord ending ON a caster's lit face ends on its own volume's back plane, where the depth's rounding would
-// flicker the face in and out of the shaft; a point this share of its depth in front of a back plane counts as
-// lit. shadow_body.frag instead stops its surface point this share short along the view ray.
+// A surface point ON a caster's face is on a plane some volume or piece ends on, where the depth's rounding
+// would flicker it in and out; shadow_body.frag stops its surface point and beam.frag its chord this share
+// of the depth short along the view ray.
 const float SURFACE_BIAS_SHARE = 0.002;
 
 // A pixel's view depth from what the scene pass stored.
@@ -135,34 +135,8 @@ void clip_to_cone(inout float enter, inout float leave, vec3 from_apex, vec3 ray
         enter = max(enter, roots.y);
 }
 
-// How much of [enter, leave] lies in shadow volume `volume`: inside every side plane and not still in
-// front of the caster, which is inside every back plane (reveal.glsl's shadow_margin, as lengths).
-float shadowed_length(int volume, vec3 origin, vec3 ray, float enter, float leave)
-{
-    int   first      = volume * MAX_SHADOW_VOLUME_PLANES;
-    ivec2 counts     = shadow_volume_plane_counts(volume);
-    float side_enter = enter;
-    float side_leave = leave;
-    for (int slot = 0; slot < counts.x; ++slot)
-    {
-        vec4 side = scene.shadow_volumes[first + slot];
-        clip_to_half_space(side_enter, side_leave, side.xyz, side.w, origin, ray);
-    }
-    if (side_leave <= side_enter)
-        return 0.0;
-
-    float front_enter = side_enter;
-    float front_leave = side_leave;
-    for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot)
-    {
-        vec4 back = scene.shadow_volumes[first + slot];
-        clip_to_half_space(front_enter, front_leave, back.xyz, back.w, origin, ray);
-    }
-    return (side_leave - side_enter) - max(front_leave - front_enter, 0.0);
-}
-
 // The line of sight's length inside drawn volume `volume` that lands on a receiver: in the volume's shadow
-// (inside its sides, not in front of its caster), on a ray from the light that hits some receiver the volume
+// (inside its sides and its front planes), on a ray from the light that hits some receiver the volume
 // touches (inside that occluder's pyramid) and behind no piece at all (inside an occluder's pyramid and lit
 // faces). Each of those is one interval of the line, and the answer is the length of their exact set algebra:
 // every segment between two consecutive interval ends is tested at its middle, so a floor seen past a
@@ -181,17 +155,15 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
         vec4 side = scene.shadow_volumes[first + slot];
         clip_to_half_space(side_enter, side_leave, side.xyz, side.w, origin, ray);
     }
-    if (side_leave <= side_enter)
-        return vec2(0.0);
-    float front_enter = side_enter;
-    float front_leave = side_leave;
     for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot)
     {
-        vec4 back = scene.shadow_volumes[first + slot];
-        clip_to_half_space(front_enter, front_leave, back.xyz, back.w, origin, ray);
+        vec4 front = scene.shadow_volumes[first + slot];
+        clip_to_half_space(side_enter, side_leave, front.xyz, front.w, origin, ray);
     }
+    if (side_leave <= side_enter)
+        return vec2(0.0);
 
-    // The ends: the side chord's, the caster-front chord's, then each landing's pyramid chord and behind chord.
+    // The ends: the shadow chord's, then each landing's pyramid chord and behind chord.
     float ends[2 * MAX_DRAWN_INTERVALS];
     float pyramid_enter[MAX_SHADOW_OCCLUDERS];
     float pyramid_leave[MAX_SHADOW_OCCLUDERS];
@@ -202,11 +174,6 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
     int   end_count     = 0;
     ends[end_count++]   = side_enter;
     ends[end_count++]   = side_leave;
-    if (front_leave > front_enter)
-    {
-        ends[end_count++] = front_enter;
-        ends[end_count++] = front_leave;
-    }
     int occluder_count = int(scene.shadow_volume_settings.w);
     for (int occluder = 0; occluder < occluder_count; ++occluder)
     {
@@ -261,8 +228,6 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
         float middle = 0.5 * (from + to);
         if (middle < side_enter || middle > side_leave)
             continue;
-        if (middle > front_enter && middle < front_leave)
-            continue;
         bool lands  = false;
         bool behind = false;
         for (int landing = 0; landing < landing_count; ++landing)
@@ -277,9 +242,8 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
 }
 
 // Signed distance of `point` to shadow volume `volume`'s boundary, negative inside: inside every side plane
-// and behind the caster, which is outside at least one back plane. A point within `lit_face_tolerance` in
-// front of a back plane is outside: the caster's own lit face, at the depth's rounding.
-float shadow_margin_at(int volume, vec3 point, float lit_face_tolerance)
+// and every front plane.
+float shadow_margin_at(int volume, vec3 point)
 {
     int   first         = volume * MAX_SHADOW_VOLUME_PLANES;
     ivec2 counts        = shadow_volume_plane_counts(volume);
@@ -289,13 +253,13 @@ float shadow_margin_at(int volume, vec3 point, float lit_face_tolerance)
         vec4 side     = scene.shadow_volumes[first + slot];
         outside_sides = max(outside_sides, dot(side.xyz, point) - side.w);
     }
-    float behind_caster = EMPTY_LEAVE;
+    float outside_fronts = EMPTY_LEAVE;
     for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot)
     {
-        vec4 back     = scene.shadow_volumes[first + slot];
-        behind_caster = max(behind_caster, dot(back.xyz, point) - back.w);
+        vec4 front     = scene.shadow_volumes[first + slot];
+        outside_fronts = max(outside_fronts, dot(front.xyz, point) - front.w);
     }
-    return max(outside_sides, lit_face_tolerance - behind_caster);
+    return max(outside_sides, outside_fronts);
 }
 
 // The line's coverage this many pixels inside an edge, r_beam_edge_pixels wide and feathered one pixel.

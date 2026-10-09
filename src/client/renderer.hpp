@@ -400,18 +400,27 @@ inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
 // scene.glsl's MAX_SHADOW_VOLUMES, kept one number by the same assert. A multiple of four: the
 // volumes' light uids ride the scene block four to a vec4.
-inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 16;
+inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 24;
 static_assert(MAX_SCENE_SHADOW_VOLUMES % 4 == 0);
+// An occluder names the volumes it touches by bit; bit 31 is its SHADOW_OCCLUDER_RECEIVES_BIT.
+static_assert(MAX_SCENE_SHADOW_VOLUMES < 31);
 // What the drawn volumes are drawn up to (shadow_volume_plan.md ss5); the tail past this is dropped and logged.
 inline constexpr uint32_t MAX_SCENE_SHADOW_OCCLUDERS = 16;
 static_assert(MAX_SCENE_SHADOW_OCCLUDERS % 4 == 0);
 
 // scene.glsl's MAX_BEAMS, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_BEAMS = 8;
+// scene.glsl's MAX_BEAM_PIECES and MAX_BEAM_PLANES, kept one number by the same assert: the carved pieces
+// of every beam this pass draws, and their cut planes, shared by the pass's beams. A piece's planes ride
+// one word as first | count << 16.
+inline constexpr uint32_t MAX_SCENE_BEAM_PIECES = 128;
+static_assert(MAX_SCENE_BEAM_PIECES % 4 == 0);
+inline constexpr uint32_t MAX_SCENE_BEAM_PLANES = 512;
+static_assert(MAX_SCENE_BEAM_PLANES < (1u << 16));
 
 // A spot light's beam (spot_beam_plan.md): the light's cone from `apex` along `forward`, reaching
 // `range`. The beam pass fills it over the drawn scene, clipped by the surface under each pixel and
-// cut by the shadow volumes `light` throws, and draws a line where it ends on screen.
+// cut to its carve, and draws a line where it ends on screen.
 struct beam_t
 {
   linalg::vec3f        apex;
@@ -420,6 +429,11 @@ struct beam_t
   float                cosine_of_outer_angle = 0.0f;
   linalg::vec3f        color                 = {1.0f, 1.0f, 1.0f};
   shared::entity_uid_t light                 = shared::null_entity_uid;
+  // The beam's carve (shared/solid_beams.hpp): the cone is drawn where its chord runs through the carved
+  // pieces, each the cone cut by these planes; piece p's are carve_cut_planes[carve_piece_first[p],
+  // carve_piece_first[p + 1]). Empty spans draw the whole cone.
+  Span<const Plane>    carve_cut_planes      = {};
+  Span<const uint32_t> carve_piece_first     = {};
 };
 
 // A world-space box of fog: the colour the air inside scatters, and how much of what is behind it one world unit of it hides.
@@ -829,7 +843,6 @@ struct look_settings_t
   cvars::Beam_Fill beam_fill      = cvars::Beam_Fill::tint; // r_beam_fill
   float   beam_dot_spacing_pixels = 8.0f;  // r_beam_dot_spacing
   float   beam_edge_pixels        = 2.0f;  // r_beam_edge_pixels
-  bool    beam_surface_bias       = true;  // r_beam_surface_bias
   bool    shadow_volume           = true;  // r_shadow_volume
   float   shadow_volume_alpha     = 0.25f; // r_shadow_volume_alpha
 };

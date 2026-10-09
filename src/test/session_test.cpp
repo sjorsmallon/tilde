@@ -824,7 +824,8 @@ int main()
     {
       return std::format("lights {} receivers {} casters {} cast {} beside {} planes {} beam {} reaching nothing {} kept {}",
                          report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast,
-                         report.refused_beside_light, report.refused_too_many_planes, report.refused_outside_beam,
+                         report.refused_inside_caster + report.refused_open_silhouette + report.refused_on_silhouette,
+                         report.refused_too_many_planes, report.refused_outside_beam,
                          report.culled_reaching_nothing, report.kept);
     };
     const auto shadow_scene = [&](const linalg::vec3f& caster_center, const linalg::vec3f& caster_half_extents,
@@ -874,7 +875,8 @@ int main()
     }
 
     // The kept list puts the volumes that cut geometry and reach a receiver first: a beam-only spot spawned
-    // before a cutting one still comes after it, so the renderer's cap never drops a hole for a beam.
+    // before a cutting one still comes after it, so the renderer's cap never drops a hole for a beam. The
+    // erased platform casts too, from behind itself, and reaches no receiver but itself, which does not count.
     {
       map_t ordered_map;
       (void)ordered_map.add_geometry(make_box_brush({0, 100, 0}, {16, 16, 16}));
@@ -898,9 +900,19 @@ int main()
       game_session_t            ordered_session = build_session(ordered_map);
       predicted_world_storage_t storage;
       const shadow_volume_report_t report = build_shadow_volumes(ordered_session, storage);
-      const bool ordered = report.kept == 2 && storage.shadow_volumes[0].light == cutting &&
-                           storage.shadow_volumes[0].cuts_geometry && storage.shadow_volumes[0].reaches_receiver &&
-                           storage.shadow_volumes[1].light == beam_only && !storage.shadow_volumes[1].cuts_geometry;
+      bool     ordered          = report.kept >= 2 && storage.shadow_volumes[0].light == cutting &&
+                     storage.shadow_volumes[0].cuts_geometry && storage.shadow_volumes[0].reaches_receiver;
+      uint32_t reaching_first   = 0;
+      bool     past_the_reaching = false;
+      for (const shadow_volume_t& volume : storage.shadow_volumes)
+      {
+        const bool reaching = volume.cuts_geometry && volume.reaches_receiver;
+        ordered             = ordered && !(reaching && past_the_reaching);
+        past_the_reaching   = past_the_reaching || !reaching;
+        reaching_first += reaching ? 1u : 0u;
+      }
+      ordered = ordered && reaching_first == 1 && storage.shadow_volumes[1].light == beam_only &&
+                !storage.shadow_volumes[1].cuts_geometry;
       if (!ordered)
       {
         log_error("the cutting spot's volume did not come before the beam-only spot's: {} (first light {}, second {})",

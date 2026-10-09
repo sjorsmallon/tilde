@@ -31,29 +31,37 @@ namespace shared
 
 struct Entity_System;
 
-// A silhouette with more edges (plus the spot beam's planes that cut it), or a piece with more back-facing
-// planes, than these casts nothing; the scene block carries exactly these slots per volume, side slots
+// A silhouette with more edges (plus the spot beam's planes that cut it), or a piece with more faces toward
+// the light, than these casts nothing; the scene block carries exactly these slots per volume, side slots
 // first (shadow_volume_plan.md ss2). The extra side slot is a point light's far cap.
-inline constexpr uint32_t MAX_SHADOW_VOLUME_SIDES       = 24;
+inline constexpr uint32_t MAX_SHADOW_VOLUME_SIDES       = 28;
 inline constexpr uint32_t SHADOW_VOLUME_SIDE_SLOTS      = MAX_SHADOW_VOLUME_SIDES + 1;
-inline constexpr uint32_t MAX_SHADOW_VOLUME_BACK_PLANES = 12;
-inline constexpr uint32_t MAX_SHADOW_VOLUME_PLANES      = SHADOW_VOLUME_SIDE_SLOTS + MAX_SHADOW_VOLUME_BACK_PLANES;
-// How far the drawn far ring of a volume with no far cap is from the caster (cl_shadow_volume_debug).
+inline constexpr uint32_t MAX_SHADOW_VOLUME_FRONT_PLANES = 12;
+inline constexpr uint32_t MAX_SHADOW_VOLUME_PLANES      = SHADOW_VOLUME_SIDE_SLOTS + MAX_SHADOW_VOLUME_FRONT_PLANES;
+// How far past the caster a volume with no far cap is drawn (cl_shadow_volume_debug).
 inline constexpr float    SHADOW_VOLUME_DRAWN_REACH = 2048.f;
 
+struct shadow_volume_edge_t
+{
+  linalg::vec3f a;
+  linalg::vec3f b;
+};
+
 // Normals point OUT. A point is in shadow where it is inside every side plane (the pyramid the
-// silhouette spans, and a point light's far cap) AND outside at least one back plane: the caster's
-// own planes that face away from the light, which is where a ray through the caster leaves it. A
-// point inside the pyramid but still in front of the caster's far surface is lit, which a near cap
-// at one depth got wrong for anything flat seen at a grazing angle.
-// The rings are the same volume as lines, for the debug draw only: side i runs near_ring[i], the
-// caster corner on the silhouette, to far_ring[i] down its ray. The spot beam's clip is not in them.
+// silhouette spans, and a point light's far cap) AND inside every front plane: the caster's own
+// planes that face the light, which is where a ray from the light enters it. From there on, through
+// the caster and behind it, is shadow, so the shadow is one convex region and nothing inside a caster
+// is lit. A near cap at one depth got the entry wrong for anything flat seen at a grazing angle; the
+// front planes are the entry exactly.
+// The rings are the silhouette's pyramid as lines: side i runs near_ring[i], the caster corner on the
+// silhouette, to far_ring[i] down its ray. The spot beam's clip is not in them; they bound the drawn body.
+// The debug draw asks collect_shadow_volume_edges for the volume as it is, from the planes.
 struct shadow_volume_t
 {
   Array<Plane, SHADOW_VOLUME_SIDE_SLOTS>        side_planes;
   uint32_t                                      side_plane_count = 0;
-  Array<Plane, MAX_SHADOW_VOLUME_BACK_PLANES>   back_planes;
-  uint32_t                                      back_plane_count = 0;
+  Array<Plane, MAX_SHADOW_VOLUME_FRONT_PLANES>   front_planes;
+  uint32_t                                      front_plane_count = 0;
   Array<linalg::vec3f, MAX_SHADOW_VOLUME_SIDES> near_ring;
   Array<linalg::vec3f, MAX_SHADOW_VOLUME_SIDES> far_ring;
   uint32_t                                      side_count = 0;
@@ -73,8 +81,8 @@ struct shadow_volume_t
   linalg::vec3f                                 light_apex        = {0.f, 0.f, 0.f};
   linalg::vec3f                                 light_direction   = {0.f, -1.f, 0.f};
   bool                                          light_directional = false;
-  // The side slots are the silhouette's planes [0, ring_plane_count), then a spot beam's cone planes that cut
-  // the pyramid, then the far cap when `has_far_cap`, in the last slot.
+  // The side slots are the silhouette's planes [0, ring_plane_count), then the far cap when `has_far_cap`,
+  // then a spot beam's cone planes that cut the pyramid, which the beam pass leaves out of its margins.
   uint32_t                                      ring_plane_count = 0;
   bool                                          has_far_cap      = false;
 };
@@ -89,7 +97,7 @@ struct shadow_occluder_t
 {
   Array<Plane, SHADOW_VOLUME_SIDE_SLOTS>      pyramid_planes;
   uint32_t                                    pyramid_plane_count = 0;
-  Array<Plane, MAX_SHADOW_VOLUME_BACK_PLANES> front_planes;
+  Array<Plane, MAX_SHADOW_VOLUME_FRONT_PLANES> front_planes;
   uint32_t                                    front_plane_count = 0;
   uint32_t                                    volume_bits       = 0;
   // A receiver: the shadow on it is a platform or a hole, so the body is drawn down to it. A plain piece
@@ -138,10 +146,26 @@ struct shadow_light_t
 enum class shadow_cast_refusal_t : uint8_t
 {
   None,
-  // The light is beside or inside the piece: no bounded pyramid leaves it.
-  Light_Beside_Caster,
+  // Every face of the piece faces away from the light, or none does: the light is inside it.
+  Light_Inside_Caster,
+  // The faces away share fewer than three edges with the faces toward: the piece's face polygons do
+  // not meet at their corners, so no silhouette closes.
+  Silhouette_Open,
+  // A silhouette corner is at the light, or its edge runs through the light: no side plane.
+  Light_On_Silhouette,
   Too_Many_Planes,
   Outside_Spot_Beam,
+};
+
+[[nodiscard]] const char* describe_shadow_cast_refusal(shadow_cast_refusal_t refusal);
+
+// One refusal, for the readout: which piece (its key in the collect's order), under which light, why.
+struct refused_piece_t
+{
+  uint32_t              piece  = 0;
+  entity_uid_t          light  = null_entity_uid;
+  linalg::vec3f         center = {0.f, 0.f, 0.f};
+  shadow_cast_refusal_t reason = shadow_cast_refusal_t::None;
 };
 
 struct shadow_cast_t
@@ -150,10 +174,21 @@ struct shadow_cast_t
   shadow_volume_t       volume;
 };
 
-// The volume one convex piece throws, from its planes and their polygons, or why it throws none.
+// The volume one convex piece throws, from its planes and their polygons, or why it throws none. The
+// shadow begins at the piece's lit faces, so the piece's own body is in it and a beam ends on its face.
 [[nodiscard]] shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> piece_planes,
                                                Span<const std::vector<linalg::vec3>> corner_polygons,
                                                entity_uid_t                           caster);
+
+// The shadow of a piece that is itself erased in shadow, APPENDED to `out`: its own volume must not erase
+// it, and where it is gone the light passes, so the shadow begins BEHIND it. Behind a convex piece is not
+// convex (a ray leaves through whichever face turned away it reaches), so it is one volume per face turned
+// away, the pyramid beyond that face, whose union is exactly the shadow and holds no point of the piece.
+[[nodiscard]] shadow_cast_refusal_t cast_shadow_volumes_behind_caster(const shadow_light_t& light,
+                                                                     Span<const Plane>     piece_planes,
+                                                                     Span<const std::vector<linalg::vec3>> corner_polygons,
+                                                                     entity_uid_t                  caster,
+                                                                     std::vector<shadow_volume_t>& out);
 
 // The occluder one convex piece is under `light`, with `volume_bits` set, or empty when the piece casts no
 // volume (the same refusals as cast_shadow_volume), its planes outrun the slots, or a spot's reach ends
@@ -183,7 +218,9 @@ struct shadow_cast_t
 [[nodiscard]] bool shadow_volume_contains_box(const shadow_volume_t& volume, const aabb_bounds_t& box);
 [[nodiscard]] bool any_shadow_volume_contains_box(Span<const shadow_volume_t> volumes, const aabb_bounds_t& box);
 
-// A receiver is geometry whose owner is solid_only_in_shadow or erased_in_shadow. A receiver never casts.
+// A receiver is geometry whose owner is solid_only_in_shadow or erased_in_shadow. A solid_only_in_shadow
+// receiver never casts: it is there only where no light is. An erased_in_shadow receiver casts from behind
+// itself (cast_shadow_volumes_behind_caster): where it is lit it is there and blocks the light.
 [[nodiscard]] bool geometry_owner_receives_shadow(const entities::Geometry_Owner_Entity& owner);
 
 // What one collect did, for shadow_volume_report / sv_shadow_volume_report: the collect runs every tick,
@@ -194,11 +231,15 @@ struct shadow_volume_report_t
   uint32_t receiver_pieces          = 0;
   uint32_t caster_pieces            = 0;
   uint32_t cast                     = 0;
-  uint32_t refused_beside_light     = 0;
+  uint32_t refused_inside_caster    = 0;
+  uint32_t refused_open_silhouette  = 0;
+  uint32_t refused_on_silhouette    = 0;
   uint32_t refused_too_many_planes  = 0;
   uint32_t refused_outside_beam     = 0;
   uint32_t culled_reaching_nothing  = 0;
   uint32_t kept                     = 0;
+  // Every refusal but the expected one (outside the spot's beam), by piece.
+  std::vector<refused_piece_t> refused;
 };
 
 // The counts, then one row per kept volume: which caster, which light, how many sides, where its near ring is.
@@ -212,6 +253,11 @@ struct shadow_volume_report_t
 // a beam the volume cuts: nothing else would read it, and the scene block holds few. The kept list is
 // ordered, stably, with the volumes that cut geometry and reach a receiver first: the renderer draws the
 // first MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a platform past that.
+// APPENDS the volume's side polytope as lines (its silhouette pyramid cut by the beam's cone and its far
+// cap, exactly the planes collision and the beam pass read), bounded `reach` past the caster where it is
+// open. The back planes are not drawn: they are the caster's own faces.
+void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std::vector<shadow_volume_edge_t>& out);
+
 shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               const mover_rests_t& rests, std::vector<shadow_volume_t>& out);

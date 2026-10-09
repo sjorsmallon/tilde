@@ -2,6 +2,7 @@
 
 #include "../shared/linalg.hpp"
 #include "../shared/mover_path.hpp"
+#include "../shared/solid_beams.hpp"
 #include "frame_builder.hpp"
 
 namespace entities
@@ -22,6 +23,10 @@ struct spot_beam_t
   float                outer_degrees = 0.f;
   vec3f                color         = {1.f, 1.f, 1.f};
   shared::entity_uid_t light         = shared::null_entity_uid;
+  // The beam's carve (solid_beams.hpp): beam.frag draws the cone where its chord runs through the pieces.
+  // Empty where nothing carved it (the editor), which draws the whole cone. Spans into the session's
+  // cache, which the frame outlives.
+  shared::beam_carve_t carve         = {};
 };
 
 [[nodiscard]] spot_beam_t build_spot_beam_for_spot_light(const entities::Spot_Light_Entity& spot,

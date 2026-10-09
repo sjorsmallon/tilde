@@ -3,26 +3,10 @@ entity
   "classname" "worldspawn"
   "name" "new_map.source"
 }
-materials
-{
-  "0" ""
-  "1" "resources/textures/bricks_mortar"
-}
 brush
 {
-  "_uid" "1"
-  "vertices" "-640 -128 -640, -640 -128 640, -640 0 -640, -640 0 640, 640 -128 -640, 640 -128 640, 640 0 -640, 640 0 640"
-  "mesh_path" ""
-  "shader_type" "lit"
-  "color" "1.000000 1.000000 1.000000"
-  "roughness" "0.500000"
-  "visible" "1"
-  "is_wireframe" "0"
-}
-brush
-{
-  "_uid" "4"
-  "vertices" "-128.000854 -5358.27148 704.345703, -128.000854 -5358.27148 7545.7168, -128.000854 128 704.345703, -128.000854 128 7545.7168, 2440.57666 -5358.27148 704.345703, 2440.57666 -5358.27148 7545.7168, 2440.57666 -2903.07861 704.345703, 2440.57666 -2903.07861 7545.7168"
+  "_uid" "5"
+  "vertices" "-128 0 -39.9790344, -128 0 255.999786, -128 81.2353745 -39.9790344, -128 81.2353745 255.999786, 0 0 -39.9790344, 0 0 255.999786, 0 81.2353745 -39.9790344, 0 81.2353745 255.999786"
   "mesh_path" ""
   "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
@@ -32,7 +16,7 @@ brush
   face
   {
     "normal" "-0 -0 -1"
-    "distance" "-704.345703"
+    "distance" "39.9790344"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -48,14 +32,14 @@ brush
   face
   {
     "normal" "0 -1 0"
-    "distance" "5358.27148"
+    "distance" "0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
-    "u_shift" "0"
-    "v_shift" "0"
+    "u_shift" "64"
+    "v_shift" "-192"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -64,13 +48,13 @@ brush
   face
   {
     "normal" "-1 -0 -0"
-    "distance" "128.000854"
+    "distance" "128"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "-832"
+    "u_shift" "-192"
     "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
@@ -80,14 +64,14 @@ brush
   face
   {
     "normal" "1 0 0"
-    "distance" "2440.57666"
+    "distance" "0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
+    "u_shift" "-192"
+    "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -95,15 +79,15 @@ brush
   }
   face
   {
-    "normal" "0.762912154 0.646502197 -0"
-    "distance" "-14.901082"
-    "material" "1"
+    "normal" "-0 1 -0"
+    "distance" "81.2353745"
+    "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
-    "u_shift" "0"
-    "v_shift" "0"
+    "u_shift" "64"
+    "v_shift" "-192"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -112,30 +96,19 @@ brush
   face
   {
     "normal" "0 0 1"
-    "distance" "7545.7168"
+    "distance" "255.999786"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
+    "u_shift" "64"
+    "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
     "smoothing_group" "0"
   }
-}
-brush
-{
-  "_uid" "6"
-  "vertices" "1280 -1344 9088, 1280 -1344 10368, 1280 -1216 9088, 1280 -1216 10368, 2560 -1344 9088, 2560 -1344 10368, 2560 -1216 9088, 2560 -1216 10368"
-  "mesh_path" ""
-  "shader_type" "lit"
-  "color" "1.000000 1.000000 1.000000"
-  "roughness" "0.500000"
-  "visible" "1"
-  "is_wireframe" "0"
 }
 entity
 {
@@ -149,12 +122,22 @@ entity
 }
 entity
 {
-  "classname" "trigger_volume_entity"
-  "_uid" "3"
-  "position" "-3.1166086 -192 0"
-  "orientation" "0 0 0 1"
+  "classname" "spot_light_entity"
+  "_uid" "4"
+  "position" "-256 16 192.62462"
+  "orientation" "0 0.08047858 0 0.9967563"
   "name" ""
   "switch_state.value" "true"
-  "volume.position" "0 0 0"
-  "volume.half_extents" "636.8833 640 640"
+  "light.color" "1 1 1"
+  "light.intensity" "1024"
+  "light.mode" "Baked"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "light.cuts_geometry" "false"
+  "rides.mover" "0"
+  "range" "512"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
+  "beam" "true"
+  "solid_beam" "true"
 }

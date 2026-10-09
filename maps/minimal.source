@@ -1,0 +1,293 @@
+entity
+{
+  "classname" "worldspawn"
+  "name" "minimal.source"
+}
+groups
+{
+  group
+  {
+    "_uid" "11"
+    "name" "geometry_owner_entity 10"
+    member
+    {
+      "uid" "10"
+    }
+    member
+    {
+      "uid" "5"
+    }
+  }
+}
+brush
+{
+  "_uid" "5"
+  "vertices" "127.999817 -189.363251 -209.003845, 127.999817 -189.363251 1313.04248, 127.999817 -128.243744 -209.003845, 127.999817 -128.243744 1313.04248, 1434.84302 -189.363251 -209.003845, 1434.84302 -189.363251 1313.04248, 1434.84302 -128.243744 -209.003845, 1434.84302 -128.243744 1313.04248"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  "owner" "10"
+  face
+  {
+    "normal" "-1 0 0"
+    "distance" "-127.999817"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-192"
+    "v_shift" "145.478882"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -1 -0"
+    "distance" "189.363251"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 -1"
+    "distance" "209.003845"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-192"
+    "v_shift" "145.478882"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 -0 1"
+    "distance" "1313.04248"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-192"
+    "v_shift" "145.478882"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 1 0"
+    "distance" "-128.243744"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-192"
+    "v_shift" "-192"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 -0 -0"
+    "distance" "1434.84302"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "209.478867"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
+brush
+{
+  "_uid" "12"
+  "vertices" "320 -64 64, 320 -64 192, 320 64 64, 320 64 192, 448 -64 64, 448 -64 192, 448 64 64, 448 64 192"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  face
+  {
+    "normal" "-0 -0 -1"
+    "distance" "-64"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-384"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 -1 0"
+    "distance" "64"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-384"
+    "v_shift" "-128"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-1 -0 -0"
+    "distance" "-320"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-128"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 0 0"
+    "distance" "448"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-128"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 1 -0"
+    "distance" "64"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-384"
+    "v_shift" "-128"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 1"
+    "distance" "192"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-384"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "2"
+  "position" "0 -64 0"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "spawn_type" "Human"
+  "team_allegiance" "Free_For_All"
+}
+entity
+{
+  "classname" "spot_light_entity"
+  "_uid" "4"
+  "position" "0 128 192.62462"
+  "orientation" "0.020829389 0.07773633 -0.2579795 0.96279263"
+  "name" ""
+  "switch_state.value" "true"
+  "light.color" "1 1 1"
+  "light.intensity" "1024"
+  "light.mode" "Dynamic"
+  "light.source_radius" "0"
+  "light.casts_shadows" "true"
+  "light.cuts_geometry" "true"
+  "rides.mover" "0"
+  "range" "829.9"
+  "inner_degrees" "20"
+  "outer_degrees" "35"
+  "beam" "true"
+  "solid_beam" "true"
+}
+entity
+{
+  "classname" "player_spawn_entity"
+  "_uid" "7"
+  "position" "-128 128 1152"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "spawn_type" "Human"
+  "team_allegiance" "Free_For_All"
+}
+entity
+{
+  "classname" "geometry_owner_entity"
+  "_uid" "10"
+  "position" "192 174.52115 636.53156"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "true"
+}
