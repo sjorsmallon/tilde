@@ -30,6 +30,7 @@ Player_Entity::Player_Entity()
     death_tick{},
     last_fire_tick{},
     last_fire_weapon(Weapon::Knife),
+    teleport_count{},
     reveal_light_on{},
     reveal_light_overhead{},
     reload_complete_time{},

@@ -15,6 +15,7 @@
 #include "peel.glsl"
 #include "reveal.glsl"
 #include "pattern.glsl"
+#include "paint.glsl"
 
 layout(location = 0) in vec3       fragWorldNormal;
 layout(location = 1) in vec3       fragColor;
@@ -91,6 +92,10 @@ void main() {
     vec3 V                = normalize(scene.camera_position.xyz - fragWorldPosition);
 
     Surface surface = read_surface(geometric_normal, V);
+    // The strokes shade but never ink: the crease below reads the untouched face normal.
+    vec3 stroke_lean         = paint_stroke_lean(geometric_normal, fragWorldPosition);
+    surface.normal           = normalize(surface.normal + stroke_lean);
+    surface.geometric_normal = normalize(surface.geometric_normal + stroke_lean);
     // The ink's crease is where two FACES meet; inking a normal map traces every bump in the texture.
     outSurfaceNormal = store_surface_normal(geometric_normal);
 

@@ -32,6 +32,9 @@ struct snapshot_pose_t
   float    yaw         = 0.f;
   float    pitch       = 0.f;
   float    body_yaw    = 0.f;
+  // Player_Entity::teleport_count: two poses that differ in it are not blended, the older is held until the cursor
+  // crosses the newer, so a teleport is drawn as a cut and never as a streak through the wall.
+  uint8_t  teleport_count = 0;
   uint32_t server_tick = 0;
 };
 
@@ -108,11 +111,12 @@ void advance_interpolation_cursor(interpolation_cursor_t& cursor, float dt,
 
 struct interpolated_pose_t
 {
-  vec3f position    = {0, 0, 0};
-  quatf orientation = quatf::identity();
-  float yaw         = 0.f;
-  float pitch       = 0.f;
-  float body_yaw    = 0.f;
+  vec3f   position    = {0, 0, 0};
+  quatf   orientation = quatf::identity();
+  float   yaw         = 0.f;
+  float   pitch       = 0.f;
+  float   body_yaw    = 0.f;
+  uint8_t teleport_count = 0;
 };
 
 enum class interpolation_status_t

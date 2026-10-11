@@ -205,6 +205,10 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4   pattern_preview_shape;
     // rgb = r_pattern_preview_red, _green, _blue, a = r_pattern_preview_strength.
     vec4   pattern_preview_ink;
+    // x = r_paint, y = r_paint_stroke in world units, z = r_paint_stretch, w = r_paint_warp.
+    vec4   paint;
+    // xyz = the unit direction strokes run, r_paint_angle around the up axis.
+    vec4   paint_direction;
     // x = r_beam_fill as one of BEAM_FILL_*, y = r_beam_alpha, z = r_beam_dot_spacing in pixels,
     // w = r_beam_edge_pixels, the width of the line beam.frag draws where a beam ends on screen.
     vec4   beam;

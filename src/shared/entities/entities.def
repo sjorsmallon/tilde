@@ -370,6 +370,11 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     last_fire_tick:    u32              @Networked
     last_fire_weapon:  Weapon = .Knife  @Networked
 
+    // Counts the body's cuts from one place to another (server::teleport_player: a remnant return, a ricochet landing,
+    // the Teleport action). A client holds the drawn pose across a cut instead of streaking it, leaves an afterimage
+    // where it stood, and wipes its own view when the cut is its eye's.
+    teleport_count:    u8               @Networked
+
     // The Flashlight's and the Eraser's toggle. The light is on only while this is set AND one of them is in hand (shared::reveal_light_is_on).
     reveal_light_on:   bool             @Networked
     // The Flashlight's other toggle: the cone hangs above the head and points straight down (shared::compute_player_reveal_cone).

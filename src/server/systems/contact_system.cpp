@@ -21,6 +21,7 @@
 #include "../shared/weapons.hpp"
 #include "damage.hpp"
 #include "entity_lifecycle.hpp"
+#include "player_teleport.hpp"
 #include "server_api.hpp"
 #include "server_context.hpp"
 #include "server_messages.hpp"
@@ -269,7 +270,7 @@ static void apply_teleport(server_context_t& context, const pending_contact_t& c
   if (shooter->health.current_health <= 0)
     return;
 
-  shooter->position = remnant->position;
+  teleport_player(*shooter, remnant->position);
   destroy_entity(context, contact.target_uid);
 }
 
@@ -532,7 +533,7 @@ static void apply_land(server_context_t& context, const shared::predicted_world_
     return;
   }
 
-  owner->position = *feet;
+  teleport_player(*owner, *feet);
 }
 
 // The zone at construction, centred on the contact; update_timed_movement_modifiers stamps it this same tick.

@@ -1752,6 +1752,21 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
     return fx.time_remaining <= 0.f;
   });
 
+  const float afterimage_seconds = ctx.cvars->cl_afterimage_seconds;
+  for (afterimage_t &afterimage : ctx.visuals.afterimages)
+    afterimage.age_seconds += world_dt;
+  std::erase_if(ctx.visuals.afterimages, [afterimage_seconds](const afterimage_t &afterimage) {
+    return afterimage.age_seconds >= afterimage_seconds;
+  });
+
+  // On the frame clock, not the world's: the wipe is the screen's, and a paused world still cuts.
+  if (ctx.visuals.cut_wipe_seconds >= 0.f)
+  {
+    ctx.visuals.cut_wipe_seconds += dt;
+    if (ctx.visuals.cut_wipe_seconds >= ctx.cvars->r_cut_wipe_seconds)
+      ctx.visuals.cut_wipe_seconds = -1.f;
+  }
+
   shared::age_wall_ripples(ctx.visuals.team_wall_ripples, world_dt);
   shared::age_beam_ripples(ctx.visuals.beam_ripples, world_dt);
 }
@@ -2907,6 +2922,59 @@ void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame
   update_drawn_carry_shift(ctx);
 }
 
+// Every player's body against what it was drawn as last frame: where its teleport_count moved, the body it left
+// behind becomes an afterimage, and our own cut starts the view's wipe. After the interpolation pass and the
+// camera for the same reason the camera is after it: what is remembered is what was drawn.
+void Play_State::leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &frame)
+{
+  if (!ctx.world.ready)
+    return;
+
+  const auto observe = [&](const entities::Player_Entity &player, const vec3f &feet, float yaw, float pitch,
+                           float body_yaw, bool is_my_eye)
+  {
+    auto [found, inserted] = ctx.visuals.drawn_bodies.try_emplace(player.entity_id);
+    drawn_body_t &body     = found->second;
+    if (!inserted && body.teleport_count != player.teleport_count)
+    {
+      if (ctx.cvars->cl_afterimage_seconds > 0.f)
+      {
+        afterimage_t afterimage;
+        afterimage.feet          = body.feet;
+        afterimage.body_yaw      = body.body_yaw;
+        afterimage.pitch         = body.pitch;
+        afterimage.yaw_deviation = linalg::wrap_degrees(body.yaw - body.body_yaw);
+        afterimage.render        = player.render;
+        afterimage.index         = ctx.visuals.next_afterimage_index++;
+        ctx.visuals.afterimages.push_back(afterimage);
+      }
+      if (is_my_eye && ctx.cvars->r_cut_wipe_seconds > 0.f)
+        ctx.visuals.cut_wipe_seconds = 0.f;
+    }
+    body = {feet, yaw, pitch, body_yaw, player.teleport_count};
+  };
+
+  if (const entities::Player_Entity *my_player = try_find_my_player(ctx))
+    observe(*my_player, drawn_local_feet(ctx), ctx.prediction.player_yaw, ctx.prediction.player_pitch,
+            my_player->body_yaw, !frame.noclip_active && ctx.cvars->cl_spectate_slot < 0);
+
+  for (const auto &[slot, remote_player] : ctx.replication.remote_players)
+  {
+    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot)
+      continue;
+    const entities::Player_Entity *player = try_find_player_in_slot(ctx, slot);
+    if (player == nullptr)
+      continue;
+    observe(*player, remote_player.render_position, remote_player.render_yaw, remote_player.render_pitch,
+            remote_player.body_yaw, false);
+  }
+
+  const shared::Entity_System &entity_system = ctx.world.session.entity_system;
+  std::erase_if(ctx.visuals.drawn_bodies, [&entity_system](const auto &entry) {
+    return entity_system.get<entities::Player_Entity>(entry.first) == nullptr;
+  });
+}
+
 // The ONE place `camera` is written, and the order of the arms IS the priority
 // rule -- most specific first, the predicted eye as the fallthrough. After the
 // interpolation pass on purpose: the eye-follow arm reads the same
@@ -3039,6 +3107,7 @@ void Play_State::update(float dt)
   ripple_team_walls(ctx, frame);
   ripple_solid_beams(ctx, frame);
   resolve_camera(ctx, frame);
+  leave_afterimages_at_cuts(ctx, frame);
   update_audio_listener(ctx, frame);
 }
 
@@ -3278,6 +3347,37 @@ explosion_parameters(uint64_t explosion_index, const vec3f& position, float time
   parameters.color_start        = {1.0f, 0.8f, 0.3f};
   parameters.color_end          = {0.4f, 0.4f, 0.4f};
   parameters.alpha_start        = 0.9f;
+  parameters.alpha_end          = 0.0f;
+  return parameters;
+}
+
+// The dust an afterimage dissolves into: puffed from the body's middle over the first third of its life, slow and
+// drifting up, grey to nothing. The index rides above the explosions' so the two never share an emitter.
+renderer::particle_emitter_parameters_t
+afterimage_dust_parameters(const afterimage_t& afterimage, float lifetime_seconds, float delta_seconds)
+{
+  const float life = lifetime_seconds > 0.f ? afterimage.age_seconds / lifetime_seconds : 1.f;
+
+  renderer::particle_emitter_parameters_t parameters{};
+  parameters.entity_id          = 0xC000000000000000ULL | afterimage.index;
+  parameters.position           = afterimage.feet + vec3f{0.f, shared::player_half_height, 0.f};
+  parameters.delta_time         = delta_seconds;
+  parameters.emit_rate          = life < 0.35f ? 160.0f : 0.0f;
+  parameters.max_particles      = 64;
+  parameters.lifetime_min       = 0.4f;
+  parameters.lifetime_max       = 0.9f;
+  parameters.velocity_min       = 10.0f;
+  parameters.velocity_max       = 35.0f;
+  parameters.spread             = 3.0f;
+  parameters.gravity            = {0, 12.0f, 0};
+  parameters.drag               = 2.5f;
+  parameters.size_start         = 4.0f;
+  parameters.size_end           = 10.0f;
+  parameters.rotation_speed_min = -1.0f;
+  parameters.rotation_speed_max = 1.0f;
+  parameters.color_start        = {0.75f, 0.72f, 0.68f};
+  parameters.color_end          = {0.5f, 0.5f, 0.5f};
+  parameters.alpha_start        = 0.6f;
   parameters.alpha_end          = 0.0f;
   return parameters;
 }
@@ -3864,6 +3964,43 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     scene.meshes.push_back(draw);
   }
 
+  // The bodies players were cut away from, in the aim pose each left in, dissolving. No shadow: a dissolving body's
+  // whole shadow would outlast its holes.
+  const float afterimage_seconds = ctx.cvars->cl_afterimage_seconds;
+  for (const afterimage_t &afterimage : ctx.visuals.afterimages)
+  {
+    if (afterimage_seconds <= 0.f || !afterimage.render.visible)
+      continue;
+    const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset = assets::get_mesh(afterimage.render.mesh);
+    const renderer::mesh_handle_t                      mesh       = get_render_mesh(mesh_asset);
+    if (!mesh.valid())
+      continue;
+
+    if (pose_count == pose_storage.size())
+      pose_storage.emplace_back();
+    assets::posed_skeleton_t &posed = pose_storage[pose_count++];
+    posed.clear();
+
+    const assets::mesh_asset_t *mesh_asset_data = assets::get(mesh_asset);
+    if (mesh_asset_data && mesh_asset_data->is_skinned())
+      if (const assets::skeleton_t *skeleton = assets::get(mesh_asset_data->skeleton))
+        compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, afterimage.pitch, afterimage.yaw_deviation,
+                                   aim_settings_from_cvars(*ctx.cvars), posed);
+
+    renderer::mesh_draw_t draw{};
+    draw.mesh      = mesh;
+    draw.transform = linalg::compose_transform(
+        afterimage.feet + afterimage.render.offset,
+        linalg::compose_model_rotation(linalg::from_view_angles(afterimage.body_yaw, 0.f), afterimage.render.rotation),
+        afterimage.render.scale);
+    draw.pose          = posed.skinning;
+    draw.dissolve      = std::clamp(afterimage.age_seconds / afterimage_seconds, 0.001f, 1.f);
+    draw.shadow_caster = renderer::shadow_caster_t::none;
+    if (ctx.cvars->cl_player_unlit)
+      draw.material_overrides = material_variant(mesh, {.shader = renderer::shader_t::unlit});
+    scene.meshes.push_back(draw);
+  }
+
   if (const std::optional<double> ghost_run_tick = try_ghost_run_tick(ctx))
   {
     static const entities::Render ghost_render = entities::Player_Entity{}.render;
@@ -4232,6 +4369,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (const auto &fx : ctx.visuals.explosion_effects)
     scene.particles.push_back(
         explosion_parameters(fx.explosion_index, fx.position, fx.time_remaining, world_delta_seconds));
+
+  for (const afterimage_t &afterimage : ctx.visuals.afterimages)
+    scene.particles.push_back(afterimage_dust_parameters(afterimage, ctx.cvars->cl_afterimage_seconds,
+                                                         world_delta_seconds));
 
   scene.sky = skybox.resolve(ctx.cvars->sv_skybox.c_str());
 

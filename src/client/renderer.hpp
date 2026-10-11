@@ -802,6 +802,13 @@ struct tonemap_settings_t
 {
   // Multiplies the HDR value before the curve. r_exposure.
   float exposure = 1.0f;
+  // The cut wipe (r_cut_wipe_*). While `keep_last_frame`, the tonemapped frame and its depth are copied aside
+  // after the tonemap pass. A `cut_wipe_fraction` from 0 to 1 draws that kept frame over this one wherever the
+  // kept surface is farther than the fraction's depth (`cut_wipe_distance` at one half, the horizon at one), so
+  // a cut in the eye's place peels the old view away from the feet outwards. Below 0 is no wipe.
+  bool  keep_last_frame   = false;
+  float cut_wipe_fraction = -1.0f;
+  float cut_wipe_distance = 128.0f;
 };
 struct look_settings_t
 {
@@ -850,6 +857,11 @@ struct look_settings_t
   float   pattern_preview_shape         = 0.0f;  // r_pattern_preview_shape
   float   pattern_preview_strength      = 0.5f;  // r_pattern_preview_strength
   linalg::vec3f pattern_preview_ink     = {0.0f, 0.0f, 0.0f}; // r_pattern_preview_red, _green, _blue
+  float   paint               = 0.0f;  // r_paint
+  float   paint_stroke_width  = 24.0f; // r_paint_stroke
+  float   paint_stretch       = 3.0f;  // r_paint_stretch
+  float   paint_angle_degrees = 0.0f;  // r_paint_angle
+  float   paint_warp          = 0.5f;  // r_paint_warp
   bool    ink              = false; // r_ink
   float   ink_threshold    = 4.0f;  // r_ink_threshold
   int     ink_width_pixels = 1;     // r_ink_width

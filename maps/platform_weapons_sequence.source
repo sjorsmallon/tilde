@@ -3938,6 +3938,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -3954,6 +3956,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4081,6 +4085,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4097,6 +4103,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4170,6 +4178,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4270,6 +4280,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "true"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4334,6 +4346,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4350,6 +4364,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4366,6 +4382,8 @@ entity
   "erased_by_light" "true"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -4452,6 +4470,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "true"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {

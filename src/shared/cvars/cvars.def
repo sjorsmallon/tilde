@@ -408,6 +408,7 @@ Client :: cvars {
     // screen, via the unlit skinned pipeline. Half a character sitting in 0.15
     // ambient is the wrong light to judge a pose by.
     cl_player_unlit:        bool = false     @Client    "Draw player models unlit -- easier to read a pose than under the sun"
+    cl_afterimage_seconds:  f32 = 0.6       @Client    "How long the body a player was cut away from (a teleport) stands where it was, in the pose it left in, before it has dissolved (0 = none)"
 
     cl_blob_shadow:            bool = true   @Client    "Draw a soft blob under every player where a straight-down ray hits the ground"
     cl_blob_shadow_radius:     f32 = 20.0    @Client    "Blob shadow radius at the feet, world units"
@@ -570,6 +571,11 @@ Debugging :: cvars {
     r_pattern_preview_red:            f32 = 0.0   @Client    "Red of the previewed pattern's ink"
     r_pattern_preview_green:          f32 = 0.0   @Client    "Green of the previewed pattern's ink"
     r_pattern_preview_blue:           f32 = 0.0   @Client    "Blue of the previewed pattern's ink"
+    r_paint:                f32 = 0.0       @Client    "Painterly strokes: how far every stroke's shading normal leans off the face, one fixed lean per stroke (0 = off, 0.3 ragged terminator, 1 wild)"
+    r_paint_stroke:         f32 = 24.0      @Client    "How wide a stroke is across, in world units"
+    r_paint_stretch:        f32 = 3.0       @Client    "How many times longer a stroke is along r_paint_angle than across"
+    r_paint_angle:          f32 = 0.0       @Client    "The direction strokes run, in degrees around the up axis"
+    r_paint_warp:           f32 = 0.5       @Client    "How far stroke borders bend, as a share of a stroke width (0 = pebbles, 1 = brushed)"
     r_ink:                  bool = true     @Client    "Draw ink lines where the scene depth jumps (outlines) and where the surface normal turns (creases)"
     r_ink_threshold:        f32 = 4.0       @Client    "How far the depth must jump before an outline is inked; lower draws more lines"
     r_ink_crease_degrees:   f32 = 30.0      @Client    "How far the face normal, normal map excluded, must turn between neighbouring pixels before a crease is inked, in degrees; lower draws more lines"
@@ -585,6 +591,8 @@ Debugging :: cvars {
     r_rim_width:            i32 = 3         @Client    "How many pixels in from the edge the rim light reaches; the ink covers the outermost r_ink_width of them"
     r_misprint:             f32 = 1.5       @Client    "Print misregistration: how many pixels the red and the blue of a far surface are drawn to either side of its green, the ink lines staying in place (0 = none)"
     r_misprint_distance:    f32 = 1024.0    @Client    "The distance, in world units, at which r_misprint is reached; a nearer surface is offset in proportion, so what is close stays in register"
+    r_cut_wipe_seconds:     f32 = 0.18      @Client    "How long a cut in the eye's place (a teleport) takes to peel the old view away, nearest first, behind an ink line (0 = the view just changes)"
+    r_cut_wipe_distance:    f32 = 128.0     @Client    "The distance, in world units, the peel of r_cut_wipe_seconds has reached half-way through; it reaches the horizon at the end"
 
     r_flashlight_intensity: f32 = 20.0      @Client    "Brightness of the light a held Flashlight casts down its cone (a placed Reveal_Light_Entity carries its own), as the irradiance it delivers one metre away; 0 casts none and the cone still reveals"
     r_flashlight_red:       f32 = 1.0       @Client    "Red of a Flashlight's light"

@@ -18,6 +18,19 @@ groups
       "uid" "5"
     }
   }
+  group
+  {
+    "_uid" "17"
+    "name" "geometry_owner_entity 16"
+    member
+    {
+      "uid" "16"
+    }
+    member
+    {
+      "uid" "14"
+    }
+  }
 }
 brush
 {
@@ -234,6 +247,114 @@ brush
     "smoothing_group" "0"
   }
 }
+brush
+{
+  "_uid" "14"
+  "vertices" "624.700806 0 1493.28662, 624.700806 0 1664, 624.700806 128 1493.28662, 624.700806 128 1664, 1151.99988 0 1493.28662, 1151.99988 0 1664, 1151.99988 128 1493.28662, 1151.99988 128 1664"
+  "mesh_path" ""
+  "shader_type" "lit"
+  "color" "1.000000 1.000000 1.000000"
+  "roughness" "0.500000"
+  "visible" "1"
+  "is_wireframe" "0"
+  "owner" "16"
+  face
+  {
+    "normal" "-0 -0 -1"
+    "distance" "-1493.28662"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-1088"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 -1 0"
+    "distance" "0"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-1088"
+    "v_shift" "-1600"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-1 -0 -0"
+    "distance" "-624.700806"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1600"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "1 0 0"
+    "distance" "1151.99988"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1600"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "-0 1 -0"
+    "distance" "128"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-1088"
+    "v_shift" "-1600"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "normal" "0 0 1"
+    "distance" "1664"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-1088"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+}
 entity
 {
   "classname" "player_spawn_entity"
@@ -290,6 +411,8 @@ entity
   "erased_by_light" "false"
   "solid_only_in_shadow" "false"
   "erased_in_shadow" "true"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -300,7 +423,7 @@ entity
   "name" ""
   "ammo" "-1"
   "reserve_ammo" "-1"
-  "weapon_id" "Merge"
+  "weapon_id" "Remnant"
   "magazine_size" "0"
   "max_alive" "0"
   "damage_type" "Normal"
@@ -314,4 +437,42 @@ entity
   "render.rotation" "0 0 0 1"
   "render.material.shader_type" "Lit"
   "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "lens_entity"
+  "_uid" "15"
+  "position" "1280 0 1024"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "64 64 4"
+  "filter" "Red"
+  "render.mesh" "Box"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
+  "render.material.shader_type" "Ghost"
+  "render.material.color" "1 1 1"
+}
+entity
+{
+  "classname" "geometry_owner_entity"
+  "_uid" "16"
+  "position" "888.35034 160 1578.6433"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "true"
+  "lens_filter" "Red"
 }

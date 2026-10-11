@@ -493,12 +493,42 @@ struct replication_t
   std::vector<bot_debug_entry_t> bot_debug_entries;
 };
 
+// What a player's body was last drawn as. Kept per uid so that when its teleport_count changes the frame after,
+// the afterimage stands exactly where the body was drawn and not where the snapshot says it was.
+struct drawn_body_t
+{
+  vec3f   feet           = {0, 0, 0};
+  float   yaw            = 0.f;
+  float   pitch          = 0.f;
+  float   body_yaw       = 0.f;
+  uint8_t teleport_count = 0;
+};
+
+// The body a player was cut away from: drawn where it stood, in the aim pose it left in, dissolving over
+// cl_afterimage_seconds under a puff of dust.
+struct afterimage_t
+{
+  vec3f            feet          = {0, 0, 0};
+  float            body_yaw      = 0.f;
+  float            pitch         = 0.f;
+  float            yaw_deviation = 0.f;
+  entities::Render render;
+  float            age_seconds   = 0.f;
+  uint32_t         index         = 0;
+};
+
 // Drawn, and read by nothing else. Dropping any of it costs at most a frame's
 // appearance, which is what makes it safe to clear on any transition.
 struct visual_effects_t
 {
   std::vector<explosion_effect_t> explosion_effects;
   uint32_t next_explosion_index = 0;
+
+  std::unordered_map<shared::entity_uid_t, drawn_body_t> drawn_bodies;
+  std::vector<afterimage_t>                              afterimages;
+  uint32_t                                               next_afterimage_index = 0;
+  // Seconds since the eye's own cut, while r_cut_wipe_seconds has the old view still peeling away; below 0 otherwise.
+  float cut_wipe_seconds = -1.f;
 
   // Client only, since the server cannot visualize. Filled by player_move
   // during prediction, drawn and cleared in build_frame.

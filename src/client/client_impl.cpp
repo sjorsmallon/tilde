@@ -254,8 +254,18 @@ bool Tick()
 
   {
     FRAME_ZONE("renderer::render_frame (submit + present)");
-    const cvars::cvar_state_t &cvars = *state_manager::get_client_context().cvars;
-    const renderer::tonemap_settings_t tonemap{cvars.r_exposure};
+    const client_context_t    &context = state_manager::get_client_context();
+    const cvars::cvar_state_t &cvars   = *context.cvars;
+
+    // While no cut is peeling, the frame is kept aside each frame so the next cut has the view it left; while
+    // one is, the kept frame stays the one before the cut.
+    const bool cut_wipe_on = cvars.r_cut_wipe_seconds > 0.0f;
+    const bool cut_wiping  = cut_wipe_on && context.visuals.cut_wipe_seconds >= 0.0f;
+    renderer::tonemap_settings_t tonemap;
+    tonemap.exposure          = cvars.r_exposure;
+    tonemap.keep_last_frame   = cut_wipe_on && !cut_wiping;
+    tonemap.cut_wipe_fraction = cut_wiping ? context.visuals.cut_wipe_seconds / cvars.r_cut_wipe_seconds : -1.0f;
+    tonemap.cut_wipe_distance = cvars.r_cut_wipe_distance;
     renderer::look_settings_t look;
     look.ambient_floor    = cvars.r_ambient_floor;
     look.cel              = cvars.r_stylized && cvars.r_cel;
@@ -305,6 +315,11 @@ bool Tick()
     look.pattern_preview_strength      = cvars.r_pattern_preview_strength;
     look.pattern_preview_ink           = {cvars.r_pattern_preview_red, cvars.r_pattern_preview_green,
                                           cvars.r_pattern_preview_blue};
+    look.paint               = cvars.r_stylized ? cvars.r_paint : 0.0f;
+    look.paint_stroke_width  = cvars.r_paint_stroke;
+    look.paint_stretch       = cvars.r_paint_stretch;
+    look.paint_angle_degrees = cvars.r_paint_angle;
+    look.paint_warp          = cvars.r_paint_warp;
     look.ink              = cvars.r_stylized && cvars.r_ink;
     look.ink_threshold    = cvars.r_ink_threshold;
     look.ink_width_pixels = cvars.r_ink_width;

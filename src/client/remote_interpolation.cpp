@@ -79,9 +79,10 @@ void feed_interpolation_rings(interpolated_entities_t& rings, shared::Entity_Sys
     pose.server_tick = server_tick;
     if (const entities::Player_Entity* player = entities::entity_as<entities::Player_Entity>(&entity))
     {
-      pose.yaw      = player->view_angle_yaw;
-      pose.pitch    = player->view_angle_pitch;
-      pose.body_yaw = player->body_yaw;
+      pose.yaw            = player->view_angle_yaw;
+      pose.pitch          = player->view_angle_pitch;
+      pose.body_yaw       = player->body_yaw;
+      pose.teleport_count = player->teleport_count;
     }
     push_snapshot_pose(rings[entity.entity_id], pose);
   }
@@ -95,9 +96,10 @@ static interpolated_pose_t drop_stamp(const snapshot_pose_t& pose)
   interpolated_pose_t dropped;
   dropped.position    = pose.position;
   dropped.orientation = pose.orientation;
-  dropped.yaw         = pose.yaw;
-  dropped.pitch       = pose.pitch;
-  dropped.body_yaw    = pose.body_yaw;
+  dropped.yaw            = pose.yaw;
+  dropped.pitch          = pose.pitch;
+  dropped.body_yaw       = pose.body_yaw;
+  dropped.teleport_count = pose.teleport_count;
   return dropped;
 }
 
@@ -127,6 +129,10 @@ interpolation_result_t sample_interpolated_pose(const interpolation_ring_t& ring
     const double span = static_cast<double>(newer.server_tick - older.server_tick);
     const float  t = static_cast<float>((cursor_tick - static_cast<double>(older.server_tick)) / span);
 
+    // A cut between the two: the older pose holds until the cursor reaches the newer, which then snaps in.
+    if (older.teleport_count != newer.teleport_count)
+      return {interpolation_status_t::interpolated, drop_stamp(older)};
+
     interpolated_pose_t pose;
     pose.position.x = shared::lerp_clamped(older.position.x, newer.position.x, t);
     pose.position.y = shared::lerp_clamped(older.position.y, newer.position.y, t);
@@ -136,9 +142,10 @@ interpolation_result_t sample_interpolated_pose(const interpolation_ring_t& ring
     // The SHORT way round, through the same function the server rewinds shots
     // with -- if the two disagreed, the silhouette drawn here would not be the
     // one hit-tested there.
-    pose.yaw      = linalg::lerp_degrees_clamped(older.yaw, newer.yaw, t);
-    pose.pitch    = shared::lerp_clamped(older.pitch, newer.pitch, t);
-    pose.body_yaw = linalg::lerp_degrees_clamped(older.body_yaw, newer.body_yaw, t);
+    pose.yaw            = linalg::lerp_degrees_clamped(older.yaw, newer.yaw, t);
+    pose.pitch          = shared::lerp_clamped(older.pitch, newer.pitch, t);
+    pose.body_yaw       = linalg::lerp_degrees_clamped(older.body_yaw, newer.body_yaw, t);
+    pose.teleport_count = newer.teleport_count;
     return {interpolation_status_t::interpolated, pose};
   }
 

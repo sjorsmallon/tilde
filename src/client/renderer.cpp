@@ -792,6 +792,8 @@ struct scene_uniform_t
   float       pattern_preview_cells[4]                      = {}; // x one of pattern.glsl's PATTERN_*, y spacing along, z spacing across, w angle in radians
   float       pattern_preview_shape[4]                      = {}; // x coverage, y the kind's own number, z scroll speed
   float       pattern_preview_ink[4]                        = {}; // rgb the ink, a its strength
+  float       paint[4]                                      = {}; // x r_paint, y stroke width in world units, z stretch, w warp
+  float       paint_direction[4]                            = {}; // xyz the unit direction strokes run
   float       beam[4]                                       = {}; // x one of scene.glsl's BEAM_FILL_*, y the tint alpha, z the dot spacing in pixels, w the outline width in pixels
   float       beam_viewport[4]                              = {}; // this pass's viewport in pixels: xy where it starts, zw its size
   float       beam_settings[4]                              = {}; // x how many of `beams` are live, y and z one over a pixel's view depth is (1 - stored depth) * y + z, w unused
@@ -821,7 +823,7 @@ struct scene_uniform_t
 
 static_assert(sizeof(scene_uniform_t) ==
                   144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
-                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + (64 + 32) * MAX_SCENE_BEAMS +
+                      32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + 32 + (64 + 32) * MAX_SCENE_BEAMS +
                       4 * MAX_SCENE_BEAM_PIECES + 16 * MAX_SCENE_BEAM_PLANES +
                       16 + 32 * MAX_SCENE_BEAM_RIPPLES +
                       8 * MAX_SCENE_SHADOW_VOLUMES + 32 * MAX_SCENE_SHADOW_VOLUMES +
@@ -950,6 +952,19 @@ static_assert(std::size(g_scene_data_images) == SCENE_DATA_IMAGE_COUNT,
 
 // Past the curve and the ink, in the swapchain's own format: what the antialiasing reads.
 static screen_target_t g_tonemapped_target{"tonemapped frame"};
+
+// The tonemapped frame before this one and its depth, kept while tonemap_settings_t::keep_last_frame, for the cut
+// wipe to draw over the new view. One of each, not per frame in flight: a frame's copy comes after its own tonemap
+// read of them and before the next frame's, on the one queue, so barriers order the three.
+struct last_frame_image_t
+{
+  const char*    name   = "";
+  VkImage        image  = VK_NULL_HANDLE;
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  VkImageView    view   = VK_NULL_HANDLE;
+};
+static last_frame_image_t g_last_frame_color{"last frame colour"};
+static last_frame_image_t g_last_frame_depth{"last frame depth"};
 static VkSampler       g_screen_nearest_sampler = VK_NULL_HANDLE;
 static VkSampler       g_screen_linear_sampler  = VK_NULL_HANDLE;
 
@@ -1673,7 +1688,8 @@ static void create_depth_resources()
   imageInfo.arrayLayers = 1;
   imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
   imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-  imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -1727,7 +1743,8 @@ constexpr VkImageUsageFlags SCREEN_ATTACHMENT_USAGE =
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
 static void create_screen_image(const char* name, VkFormat format, VkImageUsageFlags usage,
-                                VkImage& image, VkDeviceMemory& memory, VkImageView& view)
+                                VkImage& image, VkDeviceMemory& memory, VkImageView& view,
+                                VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
 {
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.imageType     = VK_IMAGE_TYPE_2D;
@@ -1760,7 +1777,7 @@ static void create_screen_image(const char* name, VkFormat format, VkImageUsageF
   view_info.image            = image;
   view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
   view_info.format           = format;
-  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  view_info.subresourceRange = {aspect, 0, 1, 0, 1};
   if (vkCreateImageView(g_device, &view_info, nullptr, &view) != VK_SUCCESS)
     fatal_error("[renderer] could not create the {} target view", name);
 }
@@ -1835,6 +1852,12 @@ static void create_screen_targets()
   create_screen_target(g_tonemapped_target, g_tonemapped_render_pass, VK_NULL_HANDLE, {});
   create_screen_target(g_outline_mask_target, g_outline_mask_render_pass, g_depth_view, {});
 
+  constexpr VkImageUsageFlags LAST_FRAME_USAGE = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  create_screen_image(g_last_frame_color.name, g_tonemapped_target.format, LAST_FRAME_USAGE,
+                      g_last_frame_color.image, g_last_frame_color.memory, g_last_frame_color.view);
+  create_screen_image(g_last_frame_depth.name, g_depth_format, LAST_FRAME_USAGE, g_last_frame_depth.image,
+                      g_last_frame_depth.memory, g_last_frame_depth.view, VK_IMAGE_ASPECT_DEPTH_BIT);
+
   for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
   {
     VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -1859,6 +1882,8 @@ static void destroy_screen_targets()
   destroy_screen_target(g_hdr_target, g_scene_data_images);
   destroy_screen_target(g_tonemapped_target, {});
   destroy_screen_target(g_outline_mask_target, {});
+  destroy_screen_image(g_last_frame_color.image, g_last_frame_color.memory, g_last_frame_color.view);
+  destroy_screen_image(g_last_frame_depth.image, g_last_frame_depth.memory, g_last_frame_depth.view);
   destroy_grabbed_frame_images();
 }
 
@@ -3089,7 +3114,7 @@ static VkShaderModule create_shader_module_or_die(const uint32_t* code, size_t s
 // fragment shader, the targets it samples (bindings 0..input_count-1 of set 0)
 // and a fragment push-constant block.
 
-constexpr uint32_t MAX_FULLSCREEN_DRAW_INPUTS = 4;
+constexpr uint32_t MAX_FULLSCREEN_DRAW_INPUTS = 6;
 
 struct fullscreen_draw_settings_t
 {
@@ -3755,6 +3780,8 @@ struct tonemap_push_constants_t
   float ink_on_black              = 0.0f;
   float misprint_pixels           = 0.0f;
   float misprint_distance         = 1.0f;
+  float cut_wipe_fraction         = -1.0f; // below 0 is no wipe
+  float cut_wipe_distance         = 1.0f;
 };
 
 static fullscreen_draw_t g_tonemap_draw;
@@ -3776,7 +3803,8 @@ static void create_tonemap_resources()
   settings.name               = "tonemap";
   settings.fragment_code      = tonemap_frag_spv;
   settings.render_pass        = g_tonemapped_render_pass;
-  settings.input_count        = 4; // 0 the HDR target, 1 the scene depth, 2 the scene normal, 3 the fog totals
+  settings.input_count        = 6; // 0 the HDR target, 1 the scene depth, 2 the scene normal, 3 the fog totals,
+                                   // 4 the last frame's colour, 5 its depth
   settings.push_constant_size = sizeof(tonemap_push_constants_t);
   g_tonemap_draw              = create_fullscreen_draw(settings);
 }
@@ -4019,7 +4047,9 @@ static void write_screen_target_inputs()
         {g_screen_nearest_sampler, g_depth_view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
         {g_screen_nearest_sampler, g_scene_data_images[SCENE_NORMAL_IMAGE].views[frame],
          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        {g_screen_linear_sampler, g_fog_totals.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        {g_screen_linear_sampler, g_fog_totals.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {g_screen_nearest_sampler, g_last_frame_color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {g_screen_nearest_sampler, g_last_frame_depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     write_fullscreen_draw_inputs(g_tonemap_draw, frame, tonemap_inputs);
 
     const VkDescriptorImageInfo beam_inputs[] = {
@@ -4550,7 +4580,8 @@ static void fill_grab_slot(grab_slot_t& slot)
 
 static VkImageMemoryBarrier image_layout_barrier(VkImage image, VkImageLayout old_layout,
                                                  VkImageLayout new_layout, VkAccessFlags src_access,
-                                                 VkAccessFlags dst_access)
+                                                 VkAccessFlags dst_access,
+                                                 VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
 {
   VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
   barrier.srcAccessMask       = src_access;
@@ -4560,7 +4591,7 @@ static VkImageMemoryBarrier image_layout_barrier(VkImage image, VkImageLayout ol
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.image               = image;
-  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  barrier.subresourceRange    = {aspect, 0, 1, 0, 1};
   return barrier;
 }
 
@@ -4607,6 +4638,63 @@ static void record_frame_grab(VkCommandBuffer cmd, uint32_t frame)
   g_grabbed_frames.push_back(grabbed_frame_t{serial, slot.handle});
   if (g_grabbed_frames.size() > MAX_GRABBED_FRAMES)
     g_grabbed_frames.erase(g_grabbed_frames.begin());
+}
+
+// After the tonemap pass: this frame's tonemapped colour and depth copied into the last-frame images, which the
+// tonemap pass had just finished reading. Both sources are handed back in the layouts their readers expect.
+static void record_last_frame_copy(VkCommandBuffer cmd, uint32_t frame)
+{
+  const VkImage color_source = g_tonemapped_target.images[frame];
+
+  const VkImageMemoryBarrier to_transfer[] = {
+      image_layout_barrier(color_source, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                           VK_ACCESS_TRANSFER_READ_BIT),
+      image_layout_barrier(g_depth_image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                           VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT),
+      image_layout_barrier(g_last_frame_color.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                           VK_ACCESS_TRANSFER_WRITE_BIT),
+      image_layout_barrier(g_last_frame_depth.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                           VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)};
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 4, to_transfer);
+
+  VkImageCopy color_copy{};
+  color_copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  color_copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  color_copy.extent         = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
+  vkCmdCopyImage(cmd, color_source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_last_frame_color.image,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &color_copy);
+
+  VkImageCopy depth_copy    = color_copy;
+  depth_copy.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+  depth_copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+  vkCmdCopyImage(cmd, g_depth_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_last_frame_depth.image,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &depth_copy);
+
+  const VkImageMemoryBarrier to_sampled[] = {
+      image_layout_barrier(color_source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_ACCESS_SHADER_READ_BIT),
+      image_layout_barrier(g_depth_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                           VK_IMAGE_ASPECT_DEPTH_BIT),
+      image_layout_barrier(g_last_frame_color.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT),
+      image_layout_barrier(g_last_frame_depth.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)};
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
+                       nullptr, 0, nullptr, 4, to_sampled);
 }
 
 void request_frame_grab()
@@ -9997,6 +10085,13 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.pattern_preview_ink[1]   = look.pattern_preview_ink.y;
     scene.pattern_preview_ink[2]   = look.pattern_preview_ink.z;
     scene.pattern_preview_ink[3]   = std::clamp(look.pattern_preview_strength, 0.0f, 1.0f);
+    scene.paint[0]                 = std::max(look.paint, 0.0f);
+    scene.paint[1]                 = std::max(look.paint_stroke_width, 0.01f);
+    scene.paint[2]                 = std::max(look.paint_stretch, 1.0f);
+    scene.paint[3]                 = std::max(look.paint_warp, 0.0f);
+    scene.paint_direction[0]       = std::cos(linalg::to_radians(look.paint_angle_degrees));
+    scene.paint_direction[1]       = 0.0f;
+    scene.paint_direction[2]       = std::sin(linalg::to_radians(look.paint_angle_degrees));
     scene.beam[0]                  = get_beam_fill_pattern_for_beam_fill(look.beam_fill);
     scene.beam[1]                  = std::clamp(look.beam_alpha, 0.0f, 1.0f);
     scene.beam[2]                  = std::max(look.beam_dot_spacing_pixels, 1.0f);
@@ -10239,9 +10334,16 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       1.0f / VIEW_FAR_PLANE,
       std::clamp(look.ink_on_black, 0.0f, 1.0f),
       std::max(look.misprint_pixels, 0.0f),
-      std::max(look.misprint_distance, 1.0f)};
+      std::max(look.misprint_distance, 1.0f),
+      tonemap.cut_wipe_fraction,
+      std::max(tonemap.cut_wipe_distance, 1.0f)};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
+
+  // 6a. The last-frame copy, for the cut wipe: skipped while a wipe is drawing, so the kept frame stays the
+  //     one the cut left.
+  if (tonemap.keep_last_frame)
+    record_last_frame_copy(cmd, frame);
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Tonemap);
 
   // 6b. The frame grab, if one was asked for: the tonemapped frame copied aside for a UI quad.

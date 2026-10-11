@@ -6,6 +6,7 @@
 #include "../../shared/log.hpp"
 #include "../../shared/player_move.hpp"
 #include "../entity_io_context.hpp"
+#include "../player_teleport.hpp"
 #include "../server_context.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 
@@ -24,7 +25,7 @@ void teleport(Player_Entity& player, const Teleport_Data& payload,
     return;
   }
 
-  player.position = destination->position;
+  server::teleport_player(player, destination->position);
   if (!payload.keep_velocity)
     shared::apply_impulse(shared::movement_settings_from_cvars(*context.server.cvars), player.velocity,
                           player.movement, {});

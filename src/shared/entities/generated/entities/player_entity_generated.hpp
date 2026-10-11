@@ -28,6 +28,7 @@ struct Player_Entity : Entity
   uint32_t death_tick;
   uint32_t last_fire_tick;
   Weapon last_fire_weapon;
+  uint8_t teleport_count;
   bool reveal_light_on;
   bool reveal_light_overhead;
   uint64_t reload_complete_time;

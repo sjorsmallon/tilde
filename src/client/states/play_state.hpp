@@ -70,6 +70,7 @@ private:
   void ripple_team_walls(client_context_t &ctx, play_frame_t &frame);
   void ripple_solid_beams(client_context_t &ctx, play_frame_t &frame);
   void resolve_camera(client_context_t &ctx, play_frame_t &frame);
+  void leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &frame);
   void update_audio_listener(client_context_t &ctx, play_frame_t &frame);
 
 
