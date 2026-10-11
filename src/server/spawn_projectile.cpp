@@ -3,7 +3,7 @@
 #include "spawn_projectile.hpp"
 
 #include "../shared/entity_system.hpp"
-#include "../shared/game_session.hpp"
+#include "../shared/map/game_session.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/log.hpp"
 #include "entity_lifecycle.hpp"

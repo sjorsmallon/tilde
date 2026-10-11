@@ -6,13 +6,13 @@
 #include <optional>
 
 #include "array.hpp"
-#include "asset_id.hpp"
+#include "assets/asset_id.hpp"
 #include "color_map.hpp"
 #include "contact.hpp"
 #include "entities/generated/entities_core_generated.hpp"
-#include "flight_path.hpp"
-#include "player_constants.hpp"
-#include "player_move.hpp"
+#include "collision/flight_path.hpp"
+#include "movement/player_constants.hpp"
+#include "movement/player_move.hpp"
 #include "subtick.hpp"
 
 namespace shared

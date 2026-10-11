@@ -105,12 +105,12 @@ endif()
 
 # 7. tiny-optional (vendored, NOT fetched)
 # Header-only and small (two headers, no build step), so it lives in the tree at
-# src/shared/tiny/ and is included as <tiny/optional.h> -- src/shared is already
-# a PUBLIC include dir on game_shared, so this needs no CMake at all. Same
-# treatment as stb_image.h / stb_truetype.h.
+# src/third_party/tiny/ beside xatlas and the stb headers, and is included by a
+# relative path like them, so this needs no CMake at all. No site includes it
+# yet (project_tiny_optional_vendored_unused).
 #
 # If it ever needs to become a real dependency (to track upstream, or because a
-# second consumer wants a version of its own), delete src/shared/tiny/ and
+# second consumer wants a version of its own), delete src/third_party/tiny/ and
 # uncomment this:
 #
 # FetchContent_Declare(
@@ -184,8 +184,9 @@ add_executable(def_gen src/tools/def_gen.cpp)
 # The package writer. It classifies the tree through the same asset_walk.cpp
 # the game numbers its ids from at startup, so the package holds exactly what
 # a loose build would have seen.
-add_executable(asset_pack src/tools/asset_pack.cpp src/shared/asset_package.cpp
-                          src/shared/asset_walk.cpp)
+add_executable(asset_pack src/tools/asset_pack.cpp src/shared/assets/asset_package.cpp
+                          src/shared/assets/asset_walk.cpp)
+target_include_directories(asset_pack PRIVATE src/shared)
 
 # Generated structs and tables. These land in the source tree rather than the
 # build dir, on purpose: they are meant to be readable, opened without building,
@@ -367,9 +368,9 @@ add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 # 1. Game Shared (Static Library)
 # Contains logging, cvars, protos, common math
 # Vendored verbatim, so its warnings are not ours to fix.
-set_source_files_properties(src/shared/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
-set_source_files_properties(src/shared/tinygltf/tiny_gltf_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
-set_source_files_properties(src/shared/miniz/miniz.c PROPERTIES
+set_source_files_properties(src/third_party/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
+set_source_files_properties(src/third_party/tinygltf/tiny_gltf_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
+set_source_files_properties(src/third_party/miniz/miniz.c PROPERTIES
     COMPILE_OPTIONS "-w;-Wno-error=switch;-O2"
     COMPILE_DEFINITIONS "MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_STDIO;MINIZ_NO_TIME;MINIZ_NO_ZLIB_COMPATIBLE_NAMES")
 
@@ -415,145 +416,150 @@ add_library(game_shared STATIC
     src/shared/network/entity_serialization.cpp
     src/shared/network/entity_snapshot.cpp
     src/shared/network/udp_socket.cpp
-    src/shared/collision_detection.cpp
-    src/shared/debug_collision.cpp
-    src/shared/map.cpp
+    src/shared/collision/collision_detection.cpp
+    src/shared/collision/debug_collision.cpp
+    src/shared/map/map.cpp
     # The .source block grammar, shared by map.cpp (which keywords mean what) and
     # map_geometry.cpp (the inside of a geometry block, face sub-blocks included).
-    src/shared/map_blocks.hpp
-    src/shared/map_blocks.cpp
-    src/shared/map_geometry.cpp
+    src/shared/map/map_blocks.hpp
+    src/shared/map/map_blocks.cpp
+    src/shared/map/map_geometry.cpp
     # The map's WIRING, and the load check that decides whether it can run.
     # Shared because the check has two callers with two policies: build_session
     # drops a bad row, the server's map load refuses the whole map.
-    src/shared/map_connection.hpp
-    src/shared/map_connection.cpp
+    src/shared/map/map_connection.hpp
+    src/shared/map/map_connection.cpp
     # Cutting a piece out of a map and stamping one back in -- the clipboard and
     # prefabs are the same two functions (prefab_def.md).
-    src/shared/map_piece.hpp
-    src/shared/map_piece.cpp
+    src/shared/map/map_piece.hpp
+    src/shared/map/map_piece.cpp
     # A map's completed runs, one appended line each (run_times.hpp).
-    src/shared/run_times.hpp
-    src/shared/run_times.cpp
+    src/shared/replay/run_times.hpp
+    src/shared/replay/run_times.cpp
     # A speedrun ghost: one player's pose per tick of a run (ghost.hpp).
-    src/shared/ghost.hpp
-    src/shared/ghost.cpp
-    src/shared/replay_file.hpp
-    src/shared/replay_file.cpp
-    src/shared/replay_recorder.hpp
-    src/shared/replay_recorder.cpp
-    src/shared/replay_seek.hpp
-    src/shared/replay_seek.cpp
-    src/shared/replay_player_view.hpp
-    src/shared/replay_player_view.cpp
-    src/shared/map_group.cpp
-    src/shared/brush.cpp
+    src/shared/replay/ghost.hpp
+    src/shared/replay/ghost.cpp
+    src/shared/replay/replay_file.hpp
+    src/shared/replay/replay_file.cpp
+    src/shared/replay/replay_recorder.hpp
+    src/shared/replay/replay_recorder.cpp
+    src/shared/replay/replay_seek.hpp
+    src/shared/replay/replay_seek.cpp
+    src/shared/replay/replay_player_view.hpp
+    src/shared/replay/replay_player_view.cpp
+    src/shared/map/map_group.cpp
+    src/shared/map/brush.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
-    src/shared/convex_decomposition.hpp
-    src/shared/convex_decomposition.cpp
-    src/shared/map_baker.cpp
-    src/shared/pathfinding.cpp
-    src/shared/lighting.hpp
-    src/shared/lightmap_bake.cpp
+    src/shared/map/convex_decomposition.hpp
+    src/shared/map/convex_decomposition.cpp
+    src/shared/lighting/map_baker.cpp
+    src/shared/movement/pathfinding.cpp
+    src/shared/lighting/lighting.hpp
+    src/shared/lighting/lightmap_bake.cpp
     # xatlas, verbatim (MIT): the static mesh unwrap. lightmap_unwrap_plan.md.
-    src/shared/xatlas.h
-    src/shared/xatlas.cpp
+    src/third_party/xatlas.h
+    src/third_party/xatlas.cpp
     # miniz 3.1.2, verbatim (MIT): DEFLATE for the streamed map package.
-    src/shared/miniz/miniz.h
-    src/shared/miniz/miniz.c
+    src/third_party/miniz/miniz.h
+    src/third_party/miniz/miniz.c
     src/shared/compression.hpp
     src/shared/compression.cpp
-    src/shared/lightmap_debug_image.cpp
-    src/shared/lightmap_lights.cpp
-    src/shared/lightmap_probes.cpp
-    src/shared/lightmap_reflections.cpp
-    src/shared/environment_brdf.cpp
+    src/shared/lighting/lightmap_debug_image.cpp
+    src/shared/lighting/lightmap_lights.cpp
+    src/shared/lighting/lightmap_probes.cpp
+    src/shared/lighting/lightmap_reflections.cpp
+    src/shared/lighting/environment_brdf.cpp
     src/shared/dither3d_pattern.cpp
-    src/shared/lightmap_trace.cpp
-    src/shared/lightmap_gpu.hpp
-    src/shared/lightmap_gpu.cpp
-    src/shared/lighting.hpp
-    src/shared/lighting.cpp
-    src/shared/lightmap_solve.cpp
-    src/shared/lightmap_sidecar.cpp
+    src/shared/lighting/lightmap_trace.cpp
+    src/shared/lighting/lightmap_gpu.hpp
+    src/shared/lighting/lightmap_gpu.cpp
+    src/shared/lighting/lighting.hpp
+    src/shared/lighting/lighting.cpp
+    src/shared/lighting/lightmap_solve.cpp
+    src/shared/lighting/lightmap_sidecar.cpp
     src/shared/entity_system.cpp
-    src/shared/game_session.cpp
-    src/shared/asset.hpp
-    src/shared/asset.cpp
+    src/shared/map/game_session.cpp
+    src/shared/assets/asset.hpp
+    src/shared/assets/asset.cpp
     # The id space, numbered at startup: the classes, the walk that classifies
     # the tree, the state and the name tables (asset_pipeline_def.md, "Runtime
     # minting"). asset_pack compiles asset_walk.cpp too, which is what keeps
     # the package and the ids the game numbers one classification.
-    src/shared/asset_id.hpp
-    src/shared/asset_state.hpp
-    src/shared/asset_walk.hpp
-    src/shared/asset_walk.cpp
-    src/shared/asset_tables.cpp
-    src/shared/asset_gltf.cpp
+    src/shared/assets/asset_id.hpp
+    src/shared/assets/asset_state.hpp
+    src/shared/assets/asset_walk.hpp
+    src/shared/assets/asset_walk.cpp
+    src/shared/assets/asset_tables.cpp
+    src/shared/assets/asset_gltf.cpp
     src/shared/world_units.hpp
     # tinygltf v2.9.6, verbatim (MIT): the .glb decoder's parser.
-    src/shared/tinygltf/tiny_gltf.h
-    src/shared/tinygltf/tiny_gltf_configured.hpp
-    src/shared/tinygltf/tiny_gltf_implementation.cpp
+    src/third_party/tinygltf/tiny_gltf.h
+    src/third_party/tinygltf/tiny_gltf_configured.hpp
+    src/third_party/tinygltf/tiny_gltf_implementation.cpp
     # The container pkg and embed both read, and the one place its layout is
     # spelled. asset_pack compiles the same TU, which is what keeps the writer
     # and the reader from being two descriptions of one format.
-    src/shared/asset_package.hpp
-    src/shared/asset_package.cpp
-    src/shared/skeleton.hpp
-    src/shared/model_format.hpp
-    src/shared/model_format.cpp
-    src/shared/skinning.hpp
-    src/shared/skinning.cpp
-    src/shared/animation.hpp
-    src/shared/animation.cpp
-    src/shared/hitbox_rig.hpp
-    src/shared/hitbox_rig.cpp
-    src/shared/player_animator.hpp
-    src/shared/player_animator.cpp
-    src/shared/player_rig.hpp
-    src/shared/player_rig.cpp
-    src/shared/player_move.cpp
+    src/shared/assets/asset_package.hpp
+    src/shared/assets/asset_package.cpp
+    src/shared/animation/skeleton.hpp
+    src/shared/assets/model_format.hpp
+    src/shared/assets/model_format.cpp
+    src/shared/animation/skinning.hpp
+    src/shared/animation/skinning.cpp
+    src/shared/animation/animation.hpp
+    src/shared/animation/animation.cpp
+    src/shared/animation/hitbox_rig.hpp
+    src/shared/animation/hitbox_rig.cpp
+    src/shared/animation/player_animator.hpp
+    src/shared/animation/player_animator.cpp
+    src/shared/animation/player_rig.hpp
+    src/shared/animation/player_rig.cpp
+    src/shared/movement/player_move.cpp
     # The step, cut into the kernel that collides, the models that decide, and
     # the settings both read. movement_def.md.
-    src/shared/movement_settings.cpp
-    src/shared/movement_kernel.cpp
-    src/shared/locomotion.cpp
-    src/shared/locomotion_quake.cpp
-    src/shared/locomotion_instant.cpp
-    src/shared/locomotion_instant_momentum.cpp
-    src/shared/locomotion_instant_redirect.cpp
+    src/shared/movement/movement_settings.cpp
+    src/shared/movement/movement_kernel.cpp
+    src/shared/movement/ground_contact.hpp
+    src/shared/map/surface_kind.hpp
+    src/shared/map/surface_kind.cpp
+    src/shared/map/surface_lookup.hpp
+    src/shared/map/surface_lookup.cpp
+    src/shared/movement/locomotion.cpp
+    src/shared/movement/locomotion_quake.cpp
+    src/shared/movement/locomotion_instant.cpp
+    src/shared/movement/locomotion_instant_momentum.cpp
+    src/shared/movement/locomotion_instant_redirect.cpp
     # What replaces a model for a duration and exits as an impulse.
-    src/shared/movement_override.cpp
-    src/shared/movement_modifiers.cpp
-    src/shared/movement_volumes.cpp
-    src/shared/disabled_geometry.cpp
+    src/shared/movement/movement_override.cpp
+    src/shared/movement/movement_modifiers.cpp
+    src/shared/movement/movement_volumes.cpp
+    src/shared/collision/disabled_geometry.cpp
     src/shared/team_wall_ripples.cpp
     src/shared/beam_ripples.cpp
     # The three cuts above as ONE value: what player_move reads that is state
     # rather than shape, built by the server tick and by both client prediction
     # loops through the same functions. tick_def.md step 2.
-    src/shared/predicted_world.hpp
-    src/shared/predicted_world.cpp
-    src/shared/mover_path.cpp
+    src/shared/collision/predicted_world.hpp
+    src/shared/collision/predicted_world.cpp
+    src/shared/collision/mover_path.cpp
     src/shared/tween.cpp
-    src/shared/movers.cpp
+    src/shared/collision/movers.cpp
     # The one sweep a flying thing asks, over the BVH and the predicted cut. collision_world_plan.md.
-    src/shared/projectile_sweep.hpp
-    src/shared/projectile_sweep.cpp
-    src/shared/bounce_body.hpp
-    src/shared/bounce_body.cpp
-    src/shared/spawned_platforms.cpp
+    src/shared/collision/projectile_sweep.hpp
+    src/shared/collision/projectile_sweep.cpp
+    src/shared/collision/bounce_body.hpp
+    src/shared/collision/bounce_body.cpp
+    src/shared/collision/spawned_platforms.cpp
     src/shared/color_map.hpp
-    src/shared/flight_path.hpp
-    src/shared/flight_path.cpp
-    src/shared/canopy.cpp
-    src/shared/reveal_light.cpp
-    src/shared/lens.cpp
-    src/shared/shadow_volume.cpp
-    src/shared/statues.cpp
-    src/shared/solid_beams.cpp
+    src/shared/collision/flight_path.hpp
+    src/shared/collision/flight_path.cpp
+    src/shared/collision/canopy.cpp
+    src/shared/lighting/reveal_light.cpp
+    src/shared/lighting/lens.cpp
+    src/shared/lighting/shadow_volume.cpp
+    src/shared/collision/statues.cpp
+    src/shared/lighting/solid_beams.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     src/shared/network/subtick_codec.hpp
@@ -815,6 +821,7 @@ add_library(game_client SHARED
     src/client/effects/jump_pad_launch.cpp
     src/client/effects/ping.cpp
     src/client/weapon_fire_audio.cpp
+    src/client/surface_audio.cpp
     src/client/entity_type_audio.cpp
     src/client/snapshot_edges.cpp
     src/client/shot_debug.cpp
@@ -977,16 +984,12 @@ add_library(game_server SHARED
     ${ENTITY_IO_HANDLERS}
     src/server/weapon_fire.cpp
     src/server/spawn_projectile.cpp
-    src/server/systems/rocket_system.cpp
     src/server/systems/bubble_system.cpp
     src/server/systems/platform_system.cpp
     src/server/systems/canopy_system.cpp
     src/server/systems/guided_rocket_system.cpp
     src/server/systems/fixed_arc_flight_launch.cpp
-    src/server/systems/hook_system.cpp
-    src/server/systems/kooh_system.cpp
-    src/server/systems/ricochet_system.cpp
-    src/server/systems/modifier_shot_system.cpp
+    src/server/systems/timed_movement_modifier_system.cpp
     src/server/systems/projectile_flight.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/player_input_system.cpp
@@ -999,7 +1002,6 @@ add_library(game_server SHARED
     src/server/systems/mover_system.cpp
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
-    src/server/systems/physics_body_system.cpp
     src/server/systems/bounce_body_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/respawn_system.cpp
@@ -1031,349 +1033,258 @@ add_executable(MyGame_Client src/launcher/main_client.cpp ${MEMORY_AUDIT_HOOK})
 target_include_directories(MyGame_Client PRIVATE src)
 target_link_libraries(MyGame_Client PRIVATE game_client game_shared SDL2::SDL2main)
 
+# --- The test suite ----------------------------------------------------------
+#
+# A test is one executable built from src/test/<name>.cpp and run by ctest from
+# the project root; map_migration_test loads `maps/test` by a path relative to
+# it, so WORKING_DIRECTORY is the load-bearing part. The call below is the one
+# registration: the target and the ctest entry come from the same name, so the
+# suite cannot forget a test, and nothing is globbed, so MyGame, def_gen,
+# asset_pack and map_convert cannot be swept in.
+#
+#   add_game_test(<name>
+#       [SOURCES <file>...]        compiled in beside src/test/<name>.cpp
+#       [INCLUDES <dir>...]        added to the default `src src/shared`
+#       [LINKS <target>...]        added to game_shared
+#       [DEFINITIONS <macro>...]
+#       [NO_GAME_SHARED])          links nothing but LINKS: header-only tests, and
+#                                  the few that compile their TUs in to avoid it
+enable_testing()
 
-# 6. Task System Test
-add_executable(task_system_test src/test/task_system_test.cpp)
-target_include_directories(task_system_test PRIVATE src)
-# Needs game_shared for the task system implementation
-target_link_libraries(task_system_test PRIVATE game_shared)
+function(add_game_test name)
+  cmake_parse_arguments(TEST "NO_GAME_SHARED" "" "SOURCES;INCLUDES;LINKS;DEFINITIONS" ${ARGN})
+  add_executable(${name} src/test/${name}.cpp ${TEST_SOURCES})
+  target_include_directories(${name} PRIVATE src src/shared ${TEST_INCLUDES})
+  if(NOT TEST_NO_GAME_SHARED)
+    target_link_libraries(${name} PRIVATE game_shared)
+  endif()
+  if(TEST_LINKS)
+    target_link_libraries(${name} PRIVATE ${TEST_LINKS})
+  endif()
+  if(TEST_DEFINITIONS)
+    target_compile_definitions(${name} PRIVATE ${TEST_DEFINITIONS})
+  endif()
+  add_test(NAME ${name} COMMAND ${name})
+  set_tests_properties(${name} PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endfunction()
 
-# 7. Log Test
-add_executable(log_test src/test/log_test.cpp)
-target_include_directories(log_test PRIVATE src)
-target_link_libraries(log_test PRIVATE game_shared)
+add_game_test(task_system_test)
+add_game_test(log_test)
+add_game_test(camera_test NO_GAME_SHARED)
+add_game_test(hitscan_test)
+add_game_test(linalg_test)
+add_game_test(file_watcher_test)
+add_game_test(network_serialization_test)
 
-# 9. Camera Test
-add_executable(camera_test src/test/camera_test.cpp)
-target_include_directories(camera_test PRIVATE src)
-# No link deps mostly, but game_client might be needed if camera.cpp exists later, 
-# for now camera.hpp is header only.
+# Paced bulk transfer + reassembly bucket expiry (the two halves of making a map
+# download converge over UDP).
+add_game_test(paced_transfer_test)
+add_game_test(udp_socket_test)
+add_game_test(server_loop_test)
+add_game_test(session_test)
+add_game_test(transaction_system_test INCLUDES src/client src/client/editor LINKS Vulkan::Vulkan)
 
-# 10. Linalg Test
-add_executable(hitscan_test src/test/hitscan_test.cpp)
-target_include_directories(hitscan_test PRIVATE src)
-target_link_libraries(hitscan_test PRIVATE game_shared)
-
-add_executable(linalg_test src/test/linalg_test.cpp)
-target_include_directories(linalg_test PRIVATE src)
- target_link_libraries(linalg_test PRIVATE game_shared)
-
-# 11. File Watcher Test
-add_executable(file_watcher_test src/test/file_watcher_test.cpp)
-target_include_directories(file_watcher_test PRIVATE src)
-target_link_libraries(file_watcher_test PRIVATE game_shared)
-
-# 12. Network Serialization Test
-add_executable(network_test src/test/test_network_serialization.cpp)
-target_include_directories(network_test PRIVATE src)
-target_link_libraries(network_test PRIVATE game_shared)
-
-# 12b. Paced bulk transfer + reassembly bucket expiry (the two halves of making
-# a map download converge over UDP).
-add_executable(paced_transfer_test src/test/paced_transfer_test.cpp)
-target_include_directories(paced_transfer_test PRIVATE src)
-target_link_libraries(paced_transfer_test PRIVATE game_shared)
-
-# 13. UDP Socket Test
-add_executable(udp_socket_test src/test/test_udp_socket.cpp)
-target_include_directories(udp_socket_test PRIVATE src)
-target_link_libraries(udp_socket_test PRIVATE game_shared)
-
-# 14. Server Loop Test
-add_executable(server_loop_test src/test/server_loop_test.cpp)
-target_include_directories(server_loop_test PRIVATE src)
-target_link_libraries(server_loop_test PRIVATE game_shared)
-
-# 15. Session Test
-add_executable(session_test src/test/session_test.cpp)
-target_include_directories(session_test PRIVATE src)
-target_link_libraries(session_test PRIVATE game_shared)
-
-# 16. Transaction System Test
-# 16. Transaction System Test
-add_executable(transaction_system_test src/test/test_transaction_system.cpp)
-target_include_directories(transaction_system_test PRIVATE src src/client src/client/editor)
-target_link_libraries(transaction_system_test PRIVATE game_shared Vulkan::Vulkan)
-
-
-
-# 16b. Debug draw list — the renderer's one piece of GPU-free logic. It links
-# the split translation unit rather than the client DLL, which is the point of
+# Debug draw list: the renderer's one piece of GPU-free logic. It compiles the
+# split translation unit rather than linking the client DLL, which is the point of
 # the split: retire()'s lifetimes and the polygon pool are testable without a
 # device, a swapchain or a window.
-add_executable(debug_draw_list_test
-    src/test/debug_draw_list_test.cpp
-    src/client/debug_draw_list.cpp)
-target_include_directories(debug_draw_list_test PRIVATE src src/client)
-target_link_libraries(debug_draw_list_test PRIVATE game_shared Vulkan::Vulkan SDL2::SDL2-static)
+add_game_test(debug_draw_list_test
+    SOURCES src/client/debug_draw_list.cpp
+    INCLUDES src/client
+    LINKS Vulkan::Vulkan SDL2::SDL2-static)
 
-# 16d. The UI layer's GPU-free halves: the font bake against the REAL
-# resources/fonts TTF, ui_draw_list_t's batching, the layout anchors, and the
-# whole retained-tree interaction model -- resolution, tweens and directional
-# navigation. Same trick as 16b: it compiles the split TUs rather than linking
+# The UI layer's GPU-free halves: the font bake against the REAL resources/fonts
+# TTF, ui_draw_list_t's batching, the layout anchors, and the whole retained-tree
+# interaction model: resolution, tweens and directional navigation. Same trick
+# as debug_draw_list_test: it compiles the split TUs rather than linking
 # game_client, so every glyph metric is checked with no device and no window.
 #
 # ui/ui_input.cpp is POINTEDLY absent. It is the only file in the layer that
-# reads SDL, and everything downstream takes a ui_input_t by value -- so leaving
+# reads SDL, and everything downstream takes a ui_input_t by value, so leaving
 # it out is what proves the interaction model needs no window to test.
-add_executable(ui_test
-    src/test/ui_test.cpp
-    src/client/ui_draw_list.cpp
-    src/client/hud/announcement.cpp
-    src/client/ui/font.cpp
-    src/client/ui/screen.cpp
-    src/client/ui/navigation.cpp
-    src/client/ui/list_menu.cpp)
-target_include_directories(ui_test PRIVATE src src/client)
-target_link_libraries(ui_test PRIVATE game_shared Vulkan::Vulkan SDL2::SDL2-static)
+add_game_test(ui_test
+    SOURCES src/client/ui_draw_list.cpp
+            src/client/hud/announcement.cpp
+            src/client/ui/font.cpp
+            src/client/ui/screen.cpp
+            src/client/ui/navigation.cpp
+            src/client/ui/list_menu.cpp
+    INCLUDES src/client
+    LINKS Vulkan::Vulkan SDL2::SDL2-static)
 
-# 16b. Key names -- what `bind` reads and binds.cfg writes. The table is pure, so
-# the module compiles in directly with no SDL.
-add_executable(key_names_test src/test/key_names_test.cpp src/client/key_names.cpp)
-target_include_directories(key_names_test PRIVATE src src/client)
-target_link_libraries(key_names_test PRIVATE game_shared)
+# Key names: what `bind` reads and binds.cfg writes. The table is pure, so the
+# module compiles in directly with no SDL.
+add_game_test(key_names_test SOURCES src/client/key_names.cpp INCLUDES src/client)
 
-# 16c. Editor tools must compile and LINK against pass_builder_t with no mock --
-# which is the whole argument for having deleted overlay_renderer_t rather than
-# reimplementing it. Built, but deliberately NOT in GAME_TESTS: see the file's
-# header comment for why running it would test the module layout instead.
+# Editor tools must compile and LINK against pass_builder_t with no mock, which
+# is the whole argument for having deleted overlay_renderer_t rather than
+# reimplementing it. Built, but deliberately NOT a test: see the file's header
+# comment for why running it would test the module layout instead.
 add_executable(editor_compile_test src/client/editor/test_editor_compile.cpp)
 target_include_directories(editor_compile_test PRIVATE src src/client src/client/editor)
 target_link_libraries(editor_compile_test PRIVATE game_client game_shared)
 
-# 17. Entity Delta Packing Test
-add_executable(test_entity_delta_packing src/test/test_entity_delta_packing.cpp)
-target_include_directories(test_entity_delta_packing PRIVATE src)
-target_link_libraries(test_entity_delta_packing PRIVATE game_shared)
+add_game_test(entity_delta_packing_test)
 
-# 17b. Snapshot Delta Test (acked-baseline rule + changed-field mask)
-add_executable(snapshot_delta_test src/test/test_snapshot_delta.cpp)
-target_include_directories(snapshot_delta_test PRIVATE src)
-target_link_libraries(snapshot_delta_test PRIVATE game_shared)
+# Snapshot delta: the acked-baseline rule and the changed-field mask.
+add_game_test(snapshot_delta_test)
+add_game_test(rng_test)
+add_game_test(asset_system_test)
 
-# 18. RNG Test
-add_executable(test_rng src/test/test_rng.cpp)
-target_include_directories(test_rng PRIVATE src)
-target_link_libraries(test_rng PRIVATE game_shared)
+# Lightmap bake: per-face charts (basis, projection, anchor, size).
+add_game_test(lightmap_bake_test)
 
-# 19. Asset System Test
-add_executable(asset_test src/test/test_asset_system.cpp)
-target_include_directories(asset_test PRIVATE src)
-target_link_libraries(asset_test PRIVATE game_shared)
+# Shadow: a spot light's shadow map covers exactly its cone and its range, and
+# the receiver's texel size is the cone's (gate 9).
+add_game_test(shadow_test)
 
-# 20a. Lightmap Bake Test (per-face charts: basis, projection, anchor, size)
-add_executable(lightmap_bake_test src/test/lightmap_bake_test.cpp)
-target_include_directories(lightmap_bake_test PRIVATE src)
-target_link_libraries(lightmap_bake_test PRIVATE game_shared)
+# Brush: convex hull, winding, tolerances, text round trip.
+add_game_test(brush_test)
 
-# 20a. Shadow Test (gate 9: a spot light's shadow map covers exactly its cone
-# and its range, and the receiver's texel size is the cone's)
-add_executable(shadow_test src/test/shadow_test.cpp)
-target_include_directories(shadow_test PRIVATE src)
-target_link_libraries(shadow_test PRIVATE game_shared)
+# Convex decomposition: every piece convex, union bounds match, a
+# non-decomposable brush fails loudly rather than half-colliding.
+add_game_test(convex_decomposition_test)
+add_game_test(surface_lookup_test)
 
-# 20b. Brush Test (convex hull, winding, tolerances, text round trip)
-add_executable(brush_test src/test/brush_test.cpp)
-target_include_directories(brush_test PRIVATE src)
-target_link_libraries(brush_test PRIVATE game_shared)
+# Prefab: extract a subset, stamp it back, remap every uid the wiring names,
+# including one inside an override payload.
+add_game_test(prefab_test)
 
-# 20c. Convex Decomposition Test (every piece convex, union bounds match, a
-# non-decomposable brush fails loudly rather than half-colliding)
-add_executable(convex_decomposition_test src/test/convex_decomposition_test.cpp)
-target_include_directories(convex_decomposition_test PRIVATE src)
-target_link_libraries(convex_decomposition_test PRIVATE game_shared)
+# Map group: exclusive membership, inert deleted members, the file block, the
+# load clean, and the three carriers.
+add_game_test(map_group_test)
+add_game_test(navmesh_test)
 
-# 20d. Prefab Test (extract a subset, stamp it back, remap every uid the
-# wiring names -- including one inside an override payload)
-add_executable(prefab_test src/test/prefab_test.cpp)
-target_include_directories(prefab_test PRIVATE src src/shared)
-target_link_libraries(prefab_test PRIVATE game_shared)
-
-# 20e. Map Group Test (exclusive membership, inert deleted members, the file
-# block, the load clean, and the three carriers)
-add_executable(map_group_test src/test/map_group_test.cpp)
-target_include_directories(map_group_test PRIVATE src src/shared)
-target_link_libraries(map_group_test PRIVATE game_shared)
-
-# 20. Navmesh Simplification Test
-add_executable(navmesh_test src/test/test_navmesh.cpp)
-target_include_directories(navmesh_test PRIVATE src)
-target_link_libraries(navmesh_test PRIVATE game_shared)
-
-# 21. Map migration / round-trip test (box_volume_t refactor + wedge-strip)
 # Guards the generated entity layout: trivial copyability (memcpy snapshots and
 # memcmp diffing) and derived-to-base conversion, which the inheritance layout
-# was chosen to preserve.
-# The asset tables ride along because an entity's constructor resolves its
-# asset defaults by name, and the text conversion reads the class tables; the
-# test numbers them from resources/ itself.
-add_executable(entity_layout_test src/test/entity_layout_test.cpp ${ENTITY_GEN_SOURCE}
-                                  ${ENTITY_GEN_DEFAULTS}
-                                  ${ENTITY_IO_GEN_SOURCE}
-                                  src/shared/asset_walk.cpp
-                                  src/shared/asset_tables.cpp
-                                  src/shared/entities/entity_reflection.cpp
-                                  src/shared/reflection.cpp)
-target_include_directories(entity_layout_test PRIVATE src/shared)
+# was chosen to preserve. The asset tables ride along because an entity's
+# constructor resolves its asset defaults by name, and the text conversion reads
+# the class tables; the test numbers them from resources/ itself.
+add_game_test(entity_layout_test NO_GAME_SHARED
+    SOURCES ${ENTITY_GEN_SOURCE}
+            ${ENTITY_GEN_DEFAULTS}
+            ${ENTITY_IO_GEN_SOURCE}
+            src/shared/assets/asset_walk.cpp
+            src/shared/assets/asset_tables.cpp
+            src/shared/entities/entity_reflection.cpp
+            src/shared/reflection.cpp)
 add_dependencies(entity_layout_test generate_definitions)
 
-
-add_executable(map_migration_test src/test/map_migration_test.cpp)
-target_include_directories(map_migration_test PRIVATE src src/shared)
-target_link_libraries(map_migration_test PRIVATE game_shared)
+# Map migration / round-trip (box_volume_t refactor + wedge-strip).
+add_game_test(map_migration_test)
 
 # A mover's pose as a pure function of its trajectory and the node chain: mover_def.md ss9 step 1.
-add_executable(mover_path_test src/test/mover_path_test.cpp)
-target_include_directories(mover_path_test PRIVATE src src/shared)
-target_link_libraries(mover_path_test PRIVATE game_shared)
+add_game_test(mover_path_test)
 
 # The @predicted flag against collect_movement_volumes' switch: prediction_def.md ss1.9 pin 2.
-add_executable(movement_volumes_test src/test/movement_volumes_test.cpp)
-target_include_directories(movement_volumes_test PRIVATE src src/shared)
-target_link_libraries(movement_volumes_test PRIVATE game_shared)
+add_game_test(movement_volumes_test)
 
 # A swept sphere stops where a hull would: the disabled set, the movers at their end pose.
-add_executable(projectile_sweep_test src/test/projectile_sweep_test.cpp)
-target_include_directories(projectile_sweep_test PRIVATE src src/shared)
-target_link_libraries(projectile_sweep_test PRIVATE game_shared)
+add_game_test(projectile_sweep_test)
 
 # A bounce body falls, returns, slides to rest, passes a switched-off brush, lands on a mover.
-add_executable(bounce_body_test src/test/bounce_body_test.cpp)
-target_include_directories(bounce_body_test PRIVATE src src/shared)
-target_link_libraries(bounce_body_test PRIVATE game_shared)
+add_game_test(bounce_body_test)
 
 # A team wall ripples once per entry, on the face entered, for the team that passes.
-add_executable(team_wall_ripples_test src/test/team_wall_ripples_test.cpp)
-target_include_directories(team_wall_ripples_test PRIVATE src src/shared)
-target_link_libraries(team_wall_ripples_test PRIVATE game_shared)
+add_game_test(team_wall_ripples_test)
 
 # A solid beam ripples once per landing, at the feet, on the beam landed on.
-add_executable(beam_ripples_test src/test/beam_ripples_test.cpp)
-target_include_directories(beam_ripples_test PRIVATE src src/shared)
-target_link_libraries(beam_ripples_test PRIVATE game_shared)
+add_game_test(beam_ripples_test)
 
 # A reveal cone's planes hold everything the shader draws; its range is a distance from the eye.
-add_executable(reveal_cone_test src/test/reveal_cone_test.cpp)
-target_include_directories(reveal_cone_test PRIVATE src src/shared)
-target_link_libraries(reveal_cone_test PRIVATE game_shared)
+add_game_test(reveal_cone_test)
 
 # A lens is seen through along the eye's line, and the filters of stacked lenses multiply.
-add_executable(lens_test src/test/lens_test.cpp)
-target_include_directories(lens_test PRIVATE src src/shared)
-target_link_libraries(lens_test PRIVATE game_shared)
+add_game_test(lens_test)
+add_game_test(shadow_volume_test)
 
-add_executable(shadow_volume_test src/test/shadow_volume_test.cpp)
-target_include_directories(shadow_volume_test PRIVATE src src/shared)
-target_link_libraries(shadow_volume_test PRIVATE game_shared)
-
-# 22. CVar / command test — tables, text conversion, console dispatch,
-# argument binders, and the @Mirrored wire path.
-#
-# It compiles BOTH generated binder TUs and defines its own commands::<name>
-# handlers, which is the only way to exercise the binders outside the DLLs that
-# own the real ones — and a standing check that a binder TU references nothing
-# but those handler symbols.
-add_executable(cvar_test src/test/cvar_test.cpp
-    ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS})
-target_include_directories(cvar_test PRIVATE src src/shared)
-target_link_libraries(cvar_test PRIVATE game_shared)
+# CVar / command: tables, text conversion, console dispatch, argument binders,
+# and the @Mirrored wire path. It compiles BOTH generated binder TUs and defines
+# its own commands::<name> handlers, which is the only way to exercise the
+# binders outside the DLLs that own the real ones, and a standing check that a
+# binder TU references nothing but those handler symbols.
+add_game_test(cvar_test SOURCES ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS})
 
 # The .times file beside a map: line grammar, sort, append-then-read.
-add_executable(run_times_test src/test/run_times_test.cpp)
-target_include_directories(run_times_test PRIVATE src src/shared)
-target_link_libraries(run_times_test PRIVATE game_shared)
+add_game_test(run_times_test)
 
-# The .ghost file, the always-on capture and the sampler (replay_def.md §6).
-add_executable(ghost_test src/test/ghost_test.cpp)
-target_include_directories(ghost_test PRIVATE src src/shared)
-target_link_libraries(ghost_test PRIVATE game_shared)
+# The .ghost file, the always-on capture and the sampler (replay_def.md section 6).
+add_game_test(ghost_test)
 
-# The .replay container, the recorder's previous-frame deltas and the seek (replay_def.md §8 steps 1, 2 and 5).
-add_executable(replay_test src/test/replay_test.cpp)
-target_include_directories(replay_test PRIVATE src src/shared)
-target_link_libraries(replay_test PRIVATE game_shared)
+# The .replay container, the recorder's previous-frame deltas and the seek (replay_def.md section 8 steps 1, 2 and 5).
+add_game_test(replay_test)
 
-# 23. Model format test — the .skeleton / .mesh readers against the REAL
-# exporter output in resources/models, plus malformed fixtures. This is where
-# blender_export.py's promises (parent-before-child, name hash, normalized
-# weights, engine-unit scale) and model_format.cpp's checks meet.
-add_executable(model_format_test src/test/test_model_format.cpp)
-target_include_directories(model_format_test PRIVATE src src/shared)
-target_link_libraries(model_format_test PRIVATE game_shared)
+# Model format: the .skeleton / .mesh readers against the REAL exporter output in
+# resources/models, plus malformed fixtures. This is where blender_export.py's
+# promises (parent-before-child, name hash, normalized weights, engine-unit
+# scale) and model_format.cpp's checks meet.
+add_game_test(model_format_test)
 
-# 24. Hitbox rig test — the `.hitboxes` reader/writer and the bone-span math,
-# against the authored resources/models/rig.hitboxes. Holds the two §4 numbers
-# that stopped being structural guarantees: hull excursion under the aim poses,
-# and skin coverage. `hitbox_rig_test --dump` prints the derived radii the
-# authored ones were seeded from.
-add_executable(hitbox_rig_test src/test/hitbox_rig_test.cpp)
-target_include_directories(hitbox_rig_test PRIVATE src src/shared)
-target_link_libraries(hitbox_rig_test PRIVATE game_shared)
+# Hitbox rig: the .hitboxes reader/writer and the bone-span math, against the
+# authored resources/models/rig.hitboxes. Holds the two section 4 numbers that
+# stopped being structural guarantees: hull excursion under the aim poses, and
+# skin coverage. `hitbox_rig_test --dump` prints the derived radii the authored
+# ones were seeded from.
+add_game_test(hitbox_rig_test)
 
-# 24b. Lag compensation — the rewind path (shared/lag_compensation.cpp).
-# Links game_shared alone: the bracket check is pure arithmetic and the posing
-# half takes values, so no server_context_t and no socket. Loads the
-# real rig from resources/models, so it wants the project root as its cwd.
-add_executable(lag_compensation_test src/test/lag_compensation_test.cpp)
-target_include_directories(lag_compensation_test PRIVATE src src/shared)
-target_link_libraries(lag_compensation_test PRIVATE game_shared)
+# Lag compensation: the rewind path (shared/lag_compensation.cpp). Links
+# game_shared alone: the bracket check is pure arithmetic and the posing half
+# takes values, so no server_context_t and no socket. Loads the real rig from
+# resources/models, so it wants the project root as its cwd.
+add_game_test(lag_compensation_test)
 
-# 25. Array test — Array<T, N> and Enum_Array<Enum_T, T> (src/shared/array.hpp).
-# Header-only, so it links nothing: almost every promise these types make is a
-# static_assert, and the executable exists to prove the header compiles and to
-# hold the handful of checks that need real indexing.
-add_executable(array_test src/test/array_test.cpp)
-target_include_directories(array_test PRIVATE src src/shared)
+# Array<T, N> and Enum_Array<Enum_T, T> (src/shared/array.hpp). Header-only, so
+# it links nothing: almost every promise these types make is a static_assert,
+# and the executable exists to prove the header compiles and to hold the handful
+# of checks that need real indexing.
+add_game_test(array_test NO_GAME_SHARED)
 
 # The allocation audit. Compiles memory_audit.cpp directly rather than linking
 # game_shared, the same way server_context_test does: the table logic is pure
-# struct manipulation and pulling in protobuf to reach it would be
-# noise. The hook goes in too, so that under -DTILDE_MEMORY_AUDIT=ON the test
-# also proves a real `new` reaches the audit -- which is the one thing the
-# table-level checks cannot show.
-add_executable(memory_audit_test src/test/memory_audit_test.cpp
-    src/shared/memory_audit.cpp
-    ${MEMORY_AUDIT_HOOK})
-target_include_directories(memory_audit_test PRIVATE src src/shared)
+# struct manipulation and pulling in protobuf to reach it would be noise. The
+# hook goes in too, so that under -DTILDE_MEMORY_AUDIT=ON the test also proves a
+# real `new` reaches the audit, which is the one thing the table-level checks
+# cannot show.
+add_game_test(memory_audit_test NO_GAME_SHARED
+    SOURCES src/shared/memory_audit.cpp ${MEMORY_AUDIT_HOOK})
 if(WIN32)
     target_link_libraries(memory_audit_test PRIVATE dbghelp)
 endif()
 
 # Frame time distribution and CPU topology. Compiled directly for the same
 # reason memory_audit_test is: both are self-contained and pulling in protobuf
-# to reach a histogram would be noise.
-add_executable(frame_timing_test src/test/frame_timing_test.cpp
-    src/shared/frame_timing.cpp
-    src/shared/cpu_topology.cpp
-    # frame_timing asks the audit to capture the worst frame's per-site deltas,
-    # so it needs the symbol even though this test installs no audit state.
-    src/shared/memory_audit.cpp)
-target_include_directories(frame_timing_test PRIVATE src src/shared)
+# to reach a histogram would be noise. frame_timing asks the audit to capture
+# the worst frame's per-site deltas, so memory_audit.cpp comes along for the
+# symbol even though this test installs no audit state.
+add_game_test(frame_timing_test NO_GAME_SHARED
+    SOURCES src/shared/frame_timing.cpp
+            src/shared/cpu_topology.cpp
+            src/shared/memory_audit.cpp)
 if(WIN32)
     target_link_libraries(frame_timing_test PRIVATE dbghelp psapi)
 endif()
 
-# 26. Server context test — the reset seams in src/server/server_context.cpp.
-# Asserts BOTH halves of each reset: what is cleared and what deliberately
-# survives. The half that survives is the one a future edit is likely to get
-# wrong.
+# Server context: the reset seams in src/server/server_context.cpp. Asserts
+# BOTH halves of each reset: what is cleared and what deliberately survives. The
+# half that survives is the one a future edit is likely to get wrong.
 #
-# Compiles the two TUs it needs rather than linking game_server, the same way
+# Compiles the TU it needs rather than linking game_server, the same way
 # cvar_test compiles the generated binders: game_server is a SHARED lib and only
 # its GAME_SERVER_API surface is exported, and the reset functions are internal
 # to the module by design. This also keeps the test from loading a DLL to check
 # what is really pure struct manipulation.
-add_executable(server_context_test src/test/server_context_test.cpp
-    src/server/server_context.cpp)
-target_include_directories(server_context_test PRIVATE src src/shared src/server)
-target_link_libraries(server_context_test PRIVATE game_shared)
+add_game_test(server_context_test SOURCES src/server/server_context.cpp INCLUDES src/server)
 
-# 26b. Per-weapon fire clocks -- the inventory and the gate that reads it.
-# 26b. Game rules — the match FSM, the mode table and the win conditions.
-# Compiles the server sources directly, like server_context_test, rather than
-# linking game_server: none of this is on the module's GAME_SERVER_API surface.
-# The rules FSM emits the match signals, so it links the queue and the generated
-# binder -- which references every handler, hence the whole handler list.
+# Game rules: the match FSM, the mode table and the win conditions. Compiles
+# the server sources directly, like server_context_test, rather than linking
+# game_server: none of this is on the module's GAME_SERVER_API surface. The
+# rules FSM emits the match signals, so it links the queue and the generated
+# binder, which references every handler, hence the whole handler list.
+#
+# damage.cpp reaches one symbol off the module's exported surface
+# (server::get_tick_number), which server_impl.cpp defines. The test stands in
+# for it rather than linking the whole module; GAME_SERVER_EXPORTS is what turns
+# the declaration from dllimport into something a local definition can satisfy.
 set(MATCH_SERVER_SOURCES
     src/server/entity_io_queue.cpp
     src/server/server_messages.cpp
@@ -1388,73 +1299,43 @@ set(MATCH_SERVER_SOURCES
     src/server/systems/launcher_system.cpp
     src/server/spawn_projectile.cpp
     src/server/entity_lifecycle.cpp)
-add_executable(game_rules_test src/test/game_rules_test.cpp ${MATCH_SERVER_SOURCES})
-target_include_directories(game_rules_test PRIVATE src src/shared src/server)
-target_link_libraries(game_rules_test PRIVATE game_shared)
-target_compile_definitions(game_rules_test PRIVATE GAME_SERVER_EXPORTS)
+add_game_test(game_rules_test
+    SOURCES ${MATCH_SERVER_SOURCES}
+    INCLUDES src/server
+    DEFINITIONS GAME_SERVER_EXPORTS)
 
-add_executable(match_announcement_test src/test/match_announcement_test.cpp
-    src/client/hud/match_announcement.cpp)
-target_include_directories(match_announcement_test PRIVATE src src/shared)
-target_link_libraries(match_announcement_test PRIVATE game_shared)
+add_game_test(match_announcement_test SOURCES src/client/hud/match_announcement.cpp)
 
-# 26c. Entity I/O — connections as map data, the load check, and the queue.
+# Entity I/O: connections as map data, the load check, and the queue.
 # entity_io_def.md ss11 step 3's pin. Compiles the server sources directly like
-# the two above it; the handler files come with it because the generated binder
+# game_rules_test; the handler files come with it because the generated binder
 # references every one of them, which is the seam being tested.
-add_executable(entity_io_test src/test/entity_io_test.cpp
-    src/server/entity_io_queue.cpp
-    src/server/server_messages.cpp
-    src/server/entity_io_console.cpp
-    src/server/systems/trigger_system.cpp
-    src/server/systems/timer_system.cpp
-    ${ENTITY_IO_GEN_BINDINGS}
-    ${ENTITY_IO_HANDLERS}
-    src/server/damage.cpp
-    src/server/server_context.cpp
-    src/server/systems/game_rules_system.cpp
-    src/server/systems/respawn_system.cpp
-    src/server/systems/inventory_system.cpp
-    src/server/systems/mover_system.cpp
-    src/server/systems/launcher_system.cpp
-    src/server/spawn_projectile.cpp
-    src/server/entity_lifecycle.cpp)
-target_include_directories(entity_io_test PRIVATE src src/shared src/server)
-target_link_libraries(entity_io_test PRIVATE game_shared)
-# damage.cpp reaches one symbol off the module's exported surface
-# (server::get_tick_number), which server_impl.cpp defines. The test stands in
-# for it rather than linking the whole module; EXPORTS is what turns the
-# declaration from dllimport into something a local definition can satisfy.
-target_compile_definitions(entity_io_test PRIVATE GAME_SERVER_EXPORTS)
+add_game_test(entity_io_test
+    SOURCES src/server/entity_io_console.cpp
+            src/server/systems/trigger_system.cpp
+            src/server/systems/timer_system.cpp
+            ${MATCH_SERVER_SOURCES}
+    INCLUDES src/server
+    DEFINITIONS GAME_SERVER_EXPORTS)
 
-add_executable(inventory_test src/test/inventory_test.cpp
-    src/server/systems/guided_rocket_system.cpp ${MATCH_SERVER_SOURCES})
-target_include_directories(inventory_test PRIVATE src src/shared src/server)
-target_link_libraries(inventory_test PRIVATE game_shared)
-target_compile_definitions(inventory_test PRIVATE GAME_SERVER_EXPORTS)
+add_game_test(inventory_test
+    SOURCES src/server/systems/guided_rocket_system.cpp ${MATCH_SERVER_SOURCES}
+    INCLUDES src/server
+    DEFINITIONS GAME_SERVER_EXPORTS)
 
-# 27. Player move step invariance — one tick of dt vs N sub-steps of dt/N.
-# Step 2 of subtick_plan.md, and the prerequisite for sub-tick rather than a
-# nicety: it is what classifies each divergence as fixable arithmetic or a
-# deliberate clamp, by elimination. Also the only coverage player_move has.
+# Player move step invariance: one tick of dt vs N sub-steps of dt/N. Step 2 of
+# subtick_plan.md, and the prerequisite for sub-tick rather than a nicety: it is
+# what classifies each divergence as fixable arithmetic or a deliberate clamp,
+# by elimination. Also the only coverage player_move has.
 #
 # Links game_shared alone and builds its own one-box bvh, so no map, no session
-# and no assets — player_move takes static geometry and a cvar_state_t and
+# and no assets: player_move takes static geometry and a cvar_state_t and
 # nothing else, which is exactly why it can be tested this cheaply.
-add_executable(player_move_step_invariance_test
-    src/test/player_move_step_invariance_test.cpp)
-target_include_directories(player_move_step_invariance_test PRIVATE src src/shared)
-target_link_libraries(player_move_step_invariance_test PRIVATE game_shared)
+add_game_test(player_move_step_invariance_test)
+add_game_test(projectile_step_test)
+add_game_test(flight_path_test)
 
-add_executable(projectile_step_test src/test/projectile_step_test.cpp)
-target_include_directories(projectile_step_test PRIVATE src src/shared)
-target_link_libraries(projectile_step_test PRIVATE game_shared)
-
-add_executable(flight_path_test src/test/flight_path_test.cpp)
-target_include_directories(flight_path_test PRIVATE src src/shared)
-target_link_libraries(flight_path_test PRIVATE game_shared)
-
-# 28b. Remote interpolation -- the render clock and the sample rings
+# Remote interpolation: the render clock and the sample rings
 # (src/client/remote_interpolation.{hpp,cpp}). Compiles the module directly
 # rather than linking game_client: nothing about lerping two poses needs a
 # device, a socket or a window. Same trick as ui_test.
@@ -1463,28 +1344,31 @@ target_link_libraries(flight_path_test PRIVATE game_shared)
 # move_budget_test simulates patterns: what is being guarded (rendered motion
 # stays continuous no matter WHEN packets land) is invisible inside any single
 # frame.
-add_executable(remote_interpolation_test
-    src/test/remote_interpolation_test.cpp
-    src/client/remote_interpolation.cpp)
-target_include_directories(remote_interpolation_test PRIVATE src src/shared)
-target_link_libraries(remote_interpolation_test PRIVATE game_shared)
+add_game_test(remote_interpolation_test SOURCES src/client/remote_interpolation.cpp)
 
-# 27b. Sub-tick input format and step driver (src/shared/subtick.{hpp,cpp}),
-# plus its wire codec (src/shared/network/subtick_codec.{hpp,cpp}).
-# Step 3 of subtick_plan.md. Splitting a tick at its input edges touches no
-# world, no socket and no cvar, which is why the format is its own file; the
-# round-trip cases reach through game_shared for the generated protobuf, since
-# what they guard is the client's write and the server's read agreeing.
-add_executable(subtick_test src/test/subtick_test.cpp)
-target_include_directories(subtick_test PRIVATE src src/shared)
-target_link_libraries(subtick_test PRIVATE game_shared)
+# Sub-tick input format and step driver (src/shared/subtick.{hpp,cpp}), plus its
+# wire codec (src/shared/network/subtick_codec.{hpp,cpp}). Step 3 of
+# subtick_plan.md. Splitting a tick at its input edges touches no world, no
+# socket and no cvar, which is why the format is its own file; the round-trip
+# cases reach through game_shared for the generated protobuf, since what they
+# guard is the client's write and the server's read agreeing.
+add_game_test(subtick_test)
 
-# 28. Move budget — the per-client movement rate bound (src/server/move_budget.hpp).
+# Move budget: the per-client movement rate bound (src/server/move_budget.hpp).
 # Header-only, so it links nothing. The cases are multi-tick SIMULATIONS rather
 # than unit checks because the property being guarded (neutrality to arrival
 # pattern) is invisible inside any single tick.
-add_executable(move_budget_test src/test/move_budget_test.cpp)
-target_include_directories(move_budget_test PRIVATE src src/shared)
+add_game_test(move_budget_test NO_GAME_SHARED)
+
+# Event family round trip: fire, encode, decode, compare for every declared
+# member of both channels, plus the byte-for-byte check against the hand-written
+# codec the generator replaced. cvar_test's counterpart.
+add_game_test(events_test)
+
+# Reliable stream: one block outstanding (order, duplicate suppression on the
+# lost-ack path, a record straddling two blocks, the datagram budget, reclaim on
+# drain, and overflow reporting rather than dropping).
+add_game_test(reliable_stream_test)
 
 # One-time map converter for the geometry exit (src/tools/map_convert.cpp).
 # Loading a map converts it in memory; this tool makes that deliberate and
@@ -1492,100 +1376,3 @@ target_include_directories(move_budget_test PRIVATE src src/shared)
 add_executable(map_convert src/tools/map_convert.cpp)
 target_include_directories(map_convert PRIVATE src src/shared)
 target_link_libraries(map_convert PRIVATE game_shared)
-
-# --- The test suite, as one command ------------------------------------------
-#
-# `ctest --test-dir cmake_build` runs everything below. The list is written out
-# rather than globbed on purpose: a glob over bin/ would also catch MyGame,
-# def_gen, asset_pack and map_convert, and the exclusion list needed to keep them
-# out rots faster than this does.
-#
-# WORKING_DIRECTORY is the load-bearing part. map_migration_test loads
-# `maps/test` by a path relative to the project root, so running it from
-# anywhere else failed — a standing footgun that this pins shut for every test
-# at once, rather than documenting it again.
-enable_testing()
-
-# 24. Event Family Round Trip
-#
-# fire -> encode -> decode -> compare for every declared member of both
-# channels, plus the byte-for-byte check against the hand-written codec the
-# generator replaced. cvar_test's counterpart for the event family.
-add_executable(events_test src/test/test_events.cpp)
-target_include_directories(events_test PRIVATE src)
-target_link_libraries(events_test PRIVATE game_shared)
-
-# 30. Reliable stream test (one block outstanding: order, duplicate suppression
-# on the lost-ack path, a record straddling two blocks, the datagram budget,
-# reclaim on drain, and overflow reporting rather than dropping).
-add_executable(reliable_stream_test src/test/reliable_stream_test.cpp)
-target_include_directories(reliable_stream_test PRIVATE src)
-target_link_libraries(reliable_stream_test PRIVATE game_shared)
-
-set(GAME_TESTS
-    task_system_test
-    log_test
-    camera_test
-    linalg_test
-    file_watcher_test
-    network_test
-    paced_transfer_test
-    udp_socket_test
-    server_loop_test
-    session_test
-    transaction_system_test
-    debug_draw_list_test
-    test_entity_delta_packing
-    snapshot_delta_test
-    test_rng
-    asset_test
-    entity_layout_test
-    map_migration_test
-    movement_volumes_test
-    projectile_sweep_test
-    bounce_body_test
-    team_wall_ripples_test
-    beam_ripples_test
-    reveal_cone_test
-    lens_test
-    shadow_volume_test
-    mover_path_test
-    prefab_test
-    map_group_test
-    navmesh_test
-    lightmap_bake_test
-    shadow_test
-    brush_test
-    convex_decomposition_test
-    cvar_test
-    hitscan_test
-    model_format_test
-    hitbox_rig_test
-    lag_compensation_test
-    array_test
-    memory_audit_test
-    frame_timing_test
-    server_context_test
-    game_rules_test
-    run_times_test
-    ghost_test
-    replay_test
-    match_announcement_test
-    entity_io_test
-    inventory_test
-    events_test
-    reliable_stream_test
-    ui_test
-    key_names_test
-    player_move_step_invariance_test
-    projectile_step_test
-    flight_path_test
-    subtick_test
-    move_budget_test
-    remote_interpolation_test)
-
-foreach(test_target IN LISTS GAME_TESTS)
-  add_test(NAME ${test_target} COMMAND ${test_target})
-  set_tests_properties(${test_target} PROPERTIES
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-endforeach()

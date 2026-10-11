@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../shared/entity_uid.hpp"
-#include "../../shared/game_session.hpp"
+#include "../../shared/map/game_session.hpp"
 #include "../../shared/subtick.hpp"
 #include "../server_context.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"

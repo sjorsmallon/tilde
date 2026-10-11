@@ -1,8 +1,8 @@
 #pragma once
 
 #include "entities/generated/entities/remnant_entity_generated.hpp"
-#include "hitbox_rig.hpp"
-#include "player_constants.hpp"
+#include "animation/hitbox_rig.hpp"
+#include "movement/player_constants.hpp"
 
 namespace shared
 {

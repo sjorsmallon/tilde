@@ -17,9 +17,9 @@
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "log.hpp"
-#include "map.hpp"
-#include "game_session.hpp"
-#include "map_connection.hpp"
+#include "map/map.hpp"
+#include "map/game_session.hpp"
+#include "map/map_connection.hpp"
 #include "network/map_transfer.hpp"
 #include <cstdio>
 #include <cstdlib>

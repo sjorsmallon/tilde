@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../shared/linalg.hpp"
-#include "../shared/mover_path.hpp"
-#include "../shared/solid_beams.hpp"
+#include "../shared/collision/mover_path.hpp"
+#include "../shared/lighting/solid_beams.hpp"
 #include "frame_builder.hpp"
 
 namespace entities

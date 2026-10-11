@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../shared/collision_detection.hpp"
+#include "../shared/collision/collision_detection.hpp"
 #include "../shared/span.hpp"
 #include "frame_builder.hpp"
 

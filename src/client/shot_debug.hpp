@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../shared/hitbox_rig.hpp"
+#include "../shared/animation/hitbox_rig.hpp"
 #include "../shared/lag_compensation.hpp" // interpolation_bracket_t
-#include "../shared/player_animator.hpp"  // aim_settings_t
-#include "../shared/player_rig.hpp"       // player_pose_t
+#include "../shared/animation/player_animator.hpp"  // aim_settings_t
+#include "../shared/animation/player_rig.hpp"       // player_pose_t
 #include "renderer.hpp"
 
 #include "game.pb.h"

@@ -12,7 +12,7 @@
 #include "network/network_types.hpp"
 #include "reflection.hpp"
 #include "span.hpp"
-#include "asset_id.hpp"
+#include "assets/asset_id.hpp"
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -665,6 +665,7 @@ struct Movement
   linalg::vec3f momentum = {};
   uint32_t pad_contact_uid = {};
   shared::entity_uid_t ground_mover_uid = {};
+  float ground_distance_since_step = {};
   Movement_Override active_override = Movement_Override::None;
   shared::entity_uid_t override_target_uid = {};
   linalg::vec3f override_target_position = {};

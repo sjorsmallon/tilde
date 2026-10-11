@@ -1,4 +1,4 @@
-#include "../shared/ghost.hpp"
+#include "../shared/replay/ghost.hpp"
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/ghost_transfer.hpp"
 #include "../shared/network/packet.hpp"

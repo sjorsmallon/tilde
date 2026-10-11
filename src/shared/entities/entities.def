@@ -186,6 +186,9 @@ Movement :: component {
     pad_contact_uid: u32                @Networked
     ground_mover_uid: entity            @Networked
 
+    // Ground walked since the last foot planted; wraps at pm_footstep_stride, zero in the air.
+    ground_distance_since_step: f32_exact     @Networked
+
     // An override replaces the MODEL while it is live and exits as an impulse.
     // The numbers are written AT ATTACH by whoever attaches, so player_move
     // reads no hook cvar and the client predicts a reel from state it holds.

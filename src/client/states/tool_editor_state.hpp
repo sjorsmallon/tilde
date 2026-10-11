@@ -11,9 +11,9 @@
 #include "../frame_builder.hpp"
 #include "../skybox_selection.hpp"
 #include "../game_state.hpp"
-#include "../shared/collision_detection.hpp"
-#include "../shared/editor_grid.hpp"
-#include "../shared/map.hpp" // For map_t ownership
+#include "collision/collision_detection.hpp"
+#include "map/editor_grid.hpp"
+#include "map/map.hpp" // For map_t ownership
 #include "../../shared/array.hpp"
 #include <cstdint>
 #include <memory>

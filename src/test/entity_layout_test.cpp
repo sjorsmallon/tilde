@@ -1,7 +1,7 @@
 // Verifies the properties the inheritance layout was chosen for, plus the
 // factory / placeable-type surface the generator emits on top of it.
-#include "asset_state.hpp"
-#include "asset_walk.hpp"
+#include "assets/asset_state.hpp"
+#include "assets/asset_walk.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"

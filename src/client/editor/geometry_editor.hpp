@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../../shared/brush.hpp"
+#include "../../shared/map/brush.hpp"
 #include "../../shared/entity_uid.hpp"
-#include "../../shared/map_geometry.hpp"
+#include "../../shared/map/map_geometry.hpp"
 #include "editor_types.hpp"
 
 namespace client

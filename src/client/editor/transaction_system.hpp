@@ -2,8 +2,8 @@
 
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/map.hpp"
-#include "../../shared/map_geometry.hpp"
+#include "../../shared/map/map.hpp"
+#include "../../shared/map/map_geometry.hpp"
 #include "../../shared/span.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include <cstdint>

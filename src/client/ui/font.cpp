@@ -5,7 +5,7 @@
 // The one translation unit that owns stb_truetype's implementation, exactly as
 // asset.cpp owns stb_image's.
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "../../shared/stb_truetype.h"
+#include "../../third_party/stb_truetype.h"
 
 #include <algorithm>
 #include <cmath>

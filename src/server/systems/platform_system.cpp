@@ -5,9 +5,9 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "platform_system.hpp"
 
-#include "../../shared/predicted_world.hpp"
-#include "../../shared/projectile_sweep.hpp"
-#include "../../shared/spawned_platforms.hpp"
+#include "../../shared/collision/predicted_world.hpp"
+#include "../../shared/collision/projectile_sweep.hpp"
+#include "../../shared/collision/spawned_platforms.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 #include "fixed_arc_flight_launch.hpp"

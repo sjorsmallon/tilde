@@ -1,16 +1,16 @@
 // The pin for collision_world_plan.md step 1: a swept sphere stops where a
 // player's hull would, through the same disabled set and the same mover list.
-#include "asset_state.hpp"
-#include "collision_detection.hpp"
-#include "disabled_geometry.hpp"
+#include "assets/asset_state.hpp"
+#include "collision/collision_detection.hpp"
+#include "collision/disabled_geometry.hpp"
 #include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_system.hpp"
-#include "player_constants.hpp"
-#include "map_geometry.hpp"
-#include "movers.hpp"
-#include "predicted_world.hpp"
-#include "projectile_sweep.hpp"
+#include "movement/player_constants.hpp"
+#include "map/map_geometry.hpp"
+#include "collision/movers.hpp"
+#include "collision/predicted_world.hpp"
+#include "collision/projectile_sweep.hpp"
 
 #include <cmath>
 #include <cstdio>

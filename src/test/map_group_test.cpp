@@ -17,9 +17,9 @@
 
 #include "entities/generated/entities_core_generated.hpp"
 #include "log.hpp"
-#include "map.hpp"
-#include "map_piece.hpp"
-#include "map_group.hpp"
+#include "map/map.hpp"
+#include "map/map_piece.hpp"
+#include "map/map_group.hpp"
 
 #include <algorithm>
 #include <cstdio>

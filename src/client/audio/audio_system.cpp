@@ -1,6 +1,6 @@
 #include "audio_system.hpp"
 
-#include "../../shared/asset.hpp"
+#include "../../shared/assets/asset.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/array.hpp"
 

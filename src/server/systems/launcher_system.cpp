@@ -4,7 +4,7 @@
 #include "systems/launcher_system.hpp"
 
 #include "../shared/entity_system.hpp"
-#include "../shared/game_session.hpp"
+#include "map/game_session.hpp"
 #include "../shared/hash.hpp"
 #include "../shared/log.hpp"
 #include "../shared/subtick.hpp"

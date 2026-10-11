@@ -1,17 +1,17 @@
 // replay_def.md §8 steps 1, 2 and 5: the .replay container, the recorder that
 // deltas against the last frame it wrote, and the seek that rebuilds a frame.
 
-#include "asset_state.hpp"
+#include "assets/asset_state.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/rocket_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "shared/network/cvar_mirror.hpp"
 #include "shared/network/entity_snapshot.hpp"
 #include "shared/network/snapshot_history.hpp"
-#include "shared/replay_file.hpp"
-#include "shared/replay_player_view.hpp"
-#include "shared/replay_recorder.hpp"
-#include "shared/replay_seek.hpp"
+#include "shared/replay/replay_file.hpp"
+#include "shared/replay/replay_player_view.hpp"
+#include "shared/replay/replay_recorder.hpp"
+#include "shared/replay/replay_seek.hpp"
 
 #include <cassert>
 #include <cstdio>

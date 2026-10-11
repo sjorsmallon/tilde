@@ -2,22 +2,22 @@
 // and the @Server command handlers the generated binder calls. The TICK is in
 // tick.cpp -- tick_def.md is the design of record for what runs in what order.
 
-#include "../shared/predicted_world.hpp"
+#include "../shared/collision/predicted_world.hpp"
 #include "entities/generated/entities/game_rules_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "server_impl.hpp"
 
-#include "../shared/collision_detection.hpp"
+#include "../shared/collision/collision_detection.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/frame_timing.hpp"
-#include "../shared/movement_settings.hpp"
+#include "../shared/movement/movement_settings.hpp"
 #include "../shared/memory_audit.hpp"
 #include "../shared/network/packet.hpp"
-#include "../shared/player_animator.hpp"
-#include "../shared/player_constants.hpp"
-#include "../shared/player_rig.hpp"
+#include "../shared/animation/player_animator.hpp"
+#include "../shared/movement/player_constants.hpp"
+#include "../shared/animation/player_rig.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "../shared/weapons.hpp"
 #include "damage.hpp"
@@ -31,7 +31,7 @@
 #include "systems/game_rules_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"
-#include "systems/physics_body_system.hpp"
+#include "systems/bounce_body_system.hpp"
 #include "systems/respawn_system.hpp"
 #include "weapon_fire.hpp"
 
@@ -46,9 +46,9 @@
 #include <string_view>
 
 #include "cvars/cvar_console.hpp"
-#include "game_session.hpp"
+#include "map/game_session.hpp"
 #include "log.hpp"
-#include "map.hpp"
+#include "map/map.hpp"
 #include "network/bitstream.hpp"
 #include "network/map_transfer.hpp"
 #include "network/server_transport_layer.hpp"

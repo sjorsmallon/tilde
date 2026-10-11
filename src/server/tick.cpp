@@ -6,10 +6,16 @@
 // a call, and anything that grows a body belongs in a system beside it.
 
 #include "../shared/frame_timing.hpp"
-#include "../shared/ghost.hpp"
-#include "../shared/player_animator.hpp"
-#include "../shared/predicted_world.hpp"
+#include "../shared/replay/ghost.hpp"
+#include "../shared/animation/player_animator.hpp"
+#include "../shared/collision/predicted_world.hpp"
+#include "entities/generated/entities/hook_entity_generated.hpp"
+#include "entities/generated/entities/kooh_entity_generated.hpp"
+#include "entities/generated/entities/modifier_shot_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/ricochet_entity_generated.hpp"
+#include "entities/generated/entities/rocket_entity_generated.hpp"
+#include "entities/generated/entities_tables_generated.hpp"
 #include "entity_io_queue.hpp"
 #include "log.hpp"
 #include "server_api.hpp"
@@ -25,17 +31,14 @@
 #include "systems/game_rules_system.hpp"
 #include "systems/guided_rocket_system.hpp"
 #include "systems/hit_test_world.hpp"
-#include "systems/hook_system.hpp"
-#include "systems/kooh_system.hpp"
-#include "systems/ricochet_system.hpp"
-#include "systems/modifier_shot_system.hpp"
+#include "systems/sweeping_projectile_system.hpp"
+#include "systems/timed_movement_modifier_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"
 #include "systems/bounce_body_system.hpp"
 #include "systems/ping_system.hpp"
 #include "systems/player_input_system.hpp"
 #include "systems/respawn_system.hpp"
-#include "systems/rocket_system.hpp"
 #include "systems/timer_system.hpp"
 #include "systems/launcher_system.hpp"
 #include "systems/trigger_system.hpp"
@@ -125,11 +128,16 @@ bool Tick()
   //    other in one tick both succeed.
   {
     FRAME_ZONE("server tick: contacts");
-    update_rockets(context, world, tick_dt);
-    update_hooks(context, world, tick_dt);
-    update_koohs(context, world, tick_dt);
-    update_ricochets(context, world, tick_dt);
-    update_modifier_shots(context, world, tick_dt);
+    update_sweeping_projectiles<entities::Rocket_Entity>(context, world, tick_dt,
+                                                   projectile_expiry_t::Arrives);
+    update_sweeping_projectiles<entities::Hook_Entity>(context, world, tick_dt,
+                                                   projectile_expiry_t::Vanishes);
+    update_sweeping_projectiles<entities::Kooh_Entity>(context, world, tick_dt,
+                                                   projectile_expiry_t::Vanishes);
+    update_sweeping_projectiles<entities::Ricochet_Entity>(context, world, tick_dt,
+                                                   projectile_expiry_t::Vanishes);
+    update_sweeping_projectiles<entities::Modifier_Shot_Entity>(context, world, tick_dt,
+                                                   projectile_expiry_t::Vanishes);
     update_contacts(context, world);
   }
 

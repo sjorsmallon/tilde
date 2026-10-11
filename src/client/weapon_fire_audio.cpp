@@ -1,6 +1,6 @@
 #include "weapon_fire_audio.hpp"
 
-#include "../shared/asset_id.hpp"
+#include "../shared/assets/asset_id.hpp"
 #include "../shared/log.hpp"
 #include "../shared/weapons.hpp"
 

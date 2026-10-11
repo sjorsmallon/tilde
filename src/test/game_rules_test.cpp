@@ -8,7 +8,7 @@
 // signal fired.
 //
 
-#include "asset_state.hpp"
+#include "assets/asset_state.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "server/entity_io_context.hpp"
 #include "server/entity_io_queue.hpp"
@@ -19,10 +19,10 @@
 
 #include "shared/entities/generated/entity_io_generated.hpp"
 #include "shared/events/generated/events_generated.hpp"
-#include "shared/ghost.hpp"
-#include "shared/player_constants.hpp"
+#include "shared/replay/ghost.hpp"
+#include "shared/movement/player_constants.hpp"
 #include "shared/round_phase_rules.hpp"
-#include "shared/run_times.hpp"
+#include "shared/replay/run_times.hpp"
 
 #include <cstdio>
 #include <filesystem>

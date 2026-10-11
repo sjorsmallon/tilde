@@ -16,7 +16,7 @@
 #include "entities/generated/entities_core_generated.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
-#include "map.hpp"
+#include "map/map.hpp"
 #include "span.hpp"
 
 #include <vector>

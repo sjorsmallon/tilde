@@ -20,7 +20,7 @@
 // ui_def.md is the design and the reasoning.
 
 #include "../../shared/array.hpp"
-#include "../../shared/asset.hpp"
+#include "../../shared/assets/asset.hpp"
 #include "../../shared/color.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/span.hpp"

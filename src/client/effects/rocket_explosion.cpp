@@ -1,8 +1,8 @@
 #include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/collision_detection.hpp"
-#include "../../shared/disabled_geometry.hpp"
+#include "../../shared/collision/collision_detection.hpp"
+#include "../../shared/collision/disabled_geometry.hpp"
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
 

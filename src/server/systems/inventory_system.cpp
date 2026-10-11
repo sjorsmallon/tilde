@@ -3,9 +3,9 @@
 
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/bounce_body.hpp"
-#include "../../shared/player_constants.hpp"
-#include "../../shared/player_move.hpp"
+#include "../../shared/collision/bounce_body.hpp"
+#include "../../shared/movement/player_constants.hpp"
+#include "../../shared/movement/player_move.hpp"
 #include "../../shared/shapes.hpp"
 #include "../../shared/weapon_instance.hpp"
 #include "../../shared/weapons.hpp"

@@ -5,9 +5,9 @@
 
 #include "../../../shared/entities/entity_reflection.hpp"
 #include "../../../shared/log.hpp"
-#include "../../../shared/map_connection.hpp"
-#include "../../../shared/map_geometry.hpp"
-#include "../../../shared/movers.hpp"
+#include "../../../shared/map/map_connection.hpp"
+#include "../../../shared/map/map_geometry.hpp"
+#include "../../../shared/collision/movers.hpp"
 #include "../../../shared/subtick.hpp"
 #include "../../geometry_renderer.hpp"
 #include "../../hud/announcement.hpp"

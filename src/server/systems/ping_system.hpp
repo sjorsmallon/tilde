@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared/disabled_geometry.hpp"
+#include "../../shared/collision/disabled_geometry.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/span.hpp"
 #include "../server_context.hpp"

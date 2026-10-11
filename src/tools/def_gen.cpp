@@ -4456,7 +4456,7 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
   fprintf(out, "#include \"reflection.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n");
   if (has_asset_class(program))
-    fprintf(out, "#include \"asset_id.hpp\"\n");
+    fprintf(out, "#include \"assets/asset_id.hpp\"\n");
   fprintf(out, "#include <cstdint>\n");
   fprintf(out, "#include <optional>\n");
   fprintf(out, "#include <string_view>\n");

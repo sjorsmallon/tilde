@@ -37,7 +37,7 @@ struct Light {
     // which is what lets everything below take one radius and no light-type
     // branch.
     vec4 direction;
-    vec4 radiance;          // rgb, already through shared/lighting.hpp's radiance_of
+    vec4 radiance;          // rgb, already through shared/lighting/lighting.hpp's radiance_of
     vec4 spot_params;       // x = cos(inner), y = cos(outer), z = range, w = type
 };
 

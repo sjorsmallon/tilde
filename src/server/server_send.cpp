@@ -5,7 +5,7 @@
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/reliable_stream.hpp"
 #include "../shared/network/server_transport_layer.hpp"
-#include "../shared/replay_recorder.hpp"
+#include "../shared/replay/replay_recorder.hpp"
 #include "log.hpp"
 #include "send_protobuf_message.hpp"
 #include "server_context.hpp"

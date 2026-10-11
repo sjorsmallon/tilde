@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../shared/entities/entity_reflection.hpp"
-#include "../../shared/map_connection.hpp"
+#include "../../shared/map/map_connection.hpp"
 #include "uid_pick.hpp"
 
 #include <optional>

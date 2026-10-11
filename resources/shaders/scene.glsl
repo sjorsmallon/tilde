@@ -15,7 +15,7 @@
 // scene block's size assert is what keeps the two one number. Sixteen because
 // a point light is SIX layers (gate 9 step 3) beside the sun's cascades.
 #define MAX_SHADOW_LAYERS 16
-// How many layers the sun's shadow may take -- shared/lighting.hpp's
+// How many layers the sun's shadow may take -- shared/lighting/lighting.hpp's
 // MAX_SHADOW_CASCADES; the receiver picks one by view depth (direct_light.glsl).
 #define MAX_SHADOW_CASCADES 4
 // Team wall ripples the ghost shader draws (ripple.glsl) -- renderer.cpp's
@@ -101,7 +101,7 @@ struct RevealCone {
     vec4 axis_cosine;
 };
 
-// One lens (reveal.glsl's lens_margin, shared/lens.hpp): an axis-aligned box, its centre (xyz) and the channel
+// One lens (reveal.glsl's lens_margin, shared/lighting/lens.hpp): an axis-aligned box, its centre (xyz) and the channel
 // bits it passes as a whole number (w: red 1, green 2, blue 4); its half extents (xyz).
 struct Lens {
     vec4 center_channels;

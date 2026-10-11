@@ -25,12 +25,12 @@
 // the successor item, and the live check in lag_compensation_def.md §5 is what
 // exercises it today.
 
-#include "../shared/asset.hpp"
+#include "../shared/assets/asset.hpp"
 #include "../shared/hitscan.hpp"
 #include "../shared/lag_compensation.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
-#include "../shared/player_rig.hpp"
+#include "../shared/animation/player_rig.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 
 #include <cmath>

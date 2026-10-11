@@ -1,11 +1,11 @@
 #pragma once
 
 #include "../editor_tool.hpp"
-#include "../../../shared/lightmap_bake.hpp"
-#include "../../../shared/lightmap_gpu.hpp"
-#include "../../../shared/lightmap_probes.hpp"
-#include "../../../shared/lightmap_sidecar.hpp"
-#include "../../../shared/lightmap_solve.hpp"
+#include "../../../shared/lighting/lightmap_bake.hpp"
+#include "../../../shared/lighting/lightmap_gpu.hpp"
+#include "../../../shared/lighting/lightmap_probes.hpp"
+#include "../../../shared/lighting/lightmap_sidecar.hpp"
+#include "../../../shared/lighting/lightmap_solve.hpp"
 
 #include <optional>
 #include <string>

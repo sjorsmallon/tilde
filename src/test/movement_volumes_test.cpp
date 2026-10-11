@@ -11,22 +11,22 @@
 // They are one pin rather than one file each because the question is WHICH of
 // them a type feeds, and a per-collect pin cannot ask that: it would pass on a
 // type that feeds two, or none.
-#include "asset_state.hpp"
-#include "collision_detection.hpp"
-#include "disabled_geometry.hpp"
-#include "movement_modifiers.hpp"
+#include "assets/asset_state.hpp"
+#include "collision/collision_detection.hpp"
+#include "collision/disabled_geometry.hpp"
+#include "movement/movement_modifiers.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "entity_system.hpp"
-#include "movement_volumes.hpp"
-#include "movers.hpp"
-#include "predicted_world.hpp"
+#include "movement/movement_volumes.hpp"
+#include "collision/movers.hpp"
+#include "collision/predicted_world.hpp"
 #include "shapes.hpp"
-#include "canopy.hpp"
-#include "statues.hpp"
-#include "reveal_light.hpp"
-#include "solid_beams.hpp"
-#include "spawned_platforms.hpp"
+#include "collision/canopy.hpp"
+#include "collision/statues.hpp"
+#include "lighting/reveal_light.hpp"
+#include "lighting/solid_beams.hpp"
+#include "collision/spawned_platforms.hpp"
 
 #include <cmath>
 #include <cstdio>

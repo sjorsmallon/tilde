@@ -1,9 +1,9 @@
 // Game_Rules_Entity's own handlers -- the verbs only this type can answer.
 #include "../../shared/entities/generated/entities/game_rules_entity_generated.hpp"
 #include "../../shared/events/generated/events_generated.hpp"
-#include "../../shared/ghost.hpp"
+#include "../../shared/replay/ghost.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/run_times.hpp"
+#include "../../shared/replay/run_times.hpp"
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"
 #include "../server_messages.hpp"

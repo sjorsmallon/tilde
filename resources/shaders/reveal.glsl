@@ -5,8 +5,8 @@
 #include "shading_cel.glsl"
 
 // renderer.hpp's light_cut_t. A revealed draw keeps only the fragments inside a cone that reveals;
-// an erased draw loses the fragments inside a cone that erases (shared/reveal_light.hpp). A shadow_solid
-// draw keeps only the fragments inside a shadow volume, a shadow_hole draw loses them (shared/shadow_volume.hpp).
+// an erased draw loses the fragments inside a cone that erases (shared/lighting/reveal_light.hpp). A shadow_solid
+// draw keeps only the fragments inside a shadow volume, a shadow_hole draw loses them (shared/lighting/shadow_volume.hpp).
 layout(constant_id = 3) const int LIGHT_CUT = 0;
 
 const int LIGHT_CUT_NONE         = 0;
@@ -14,7 +14,7 @@ const int LIGHT_CUT_REVEALED     = 1;
 const int LIGHT_CUT_ERASED       = 2;
 const int LIGHT_CUT_SHADOW_SOLID = 3;
 const int LIGHT_CUT_SHADOW_HOLE  = 4;
-// A lensed draw keeps only the fragments seen through a lens that passes its colour (shared/lens.hpp);
+// A lensed draw keeps only the fragments seen through a lens that passes its colour (shared/lighting/lens.hpp);
 // the three are one cut, the colour's channel bit being 1 << (LIGHT_CUT - LIGHT_CUT_LENS_RED).
 const int LIGHT_CUT_LENS_RED     = 5;
 const int LIGHT_CUT_LENS_GREEN   = 6;
@@ -71,7 +71,7 @@ float erase_margin(vec3 world_position)
 }
 
 // How deep in shadow, in rim widths inside the nearest side plane of a volume whose every front plane
-// the fragment is behind (shared/shadow_volume.hpp). The front planes gate and never grade: they are a
+// the fragment is behind (shared/lighting/shadow_volume.hpp). The front planes gate and never grade: they are a
 // caster's own faces, and an erased caster's turned-away face lies exactly on the one its shadow begins at.
 // Negative is in no volume's shadow, never below -1. A volume thrown for
 // a beam alone is skipped, as collision skips it: the picture and the floor read the same volumes.
@@ -100,7 +100,7 @@ float shadow_margin(vec3 world_position)
     return max(margin, -1.0);
 }
 
-// How far inside a lens's silhouette the fragment is seen, in rim widths (shared/lens.hpp's
+// How far inside a lens's silhouette the fragment is seen, in rim widths (shared/lighting/lens.hpp's
 // lens_lies_on_line_of_sight): the shorter of the chord the eye's line cuts through the lens and how far
 // behind the lens's far side the fragment lies. The channels of every lens on the line multiply, so a red
 // and a green stacked pass nothing. -1 when no lens on the line passes this draw's colour.

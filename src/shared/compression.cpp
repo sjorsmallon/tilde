@@ -3,7 +3,7 @@
 #include "log.hpp"
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
-#include "miniz/miniz.h"
+#include "../third_party/miniz/miniz.h"
 
 namespace shared
 {

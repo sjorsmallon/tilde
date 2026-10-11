@@ -1,12 +1,12 @@
-#include "../shared/asset_state.hpp"
+#include "../shared/assets/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
-#include "disabled_geometry.hpp"
+#include "collision/disabled_geometry.hpp"
 #include "entities/generated/entities_generated.hpp"
-#include "game_session.hpp"
+#include "map/game_session.hpp"
 #include "log.hpp"
-#include "map.hpp" // shared::create_entity_by_classname
-#include "predicted_world.hpp"
-#include "shadow_volume.hpp"
+#include "map/map.hpp" // shared::create_entity_by_classname
+#include "collision/predicted_world.hpp"
+#include "lighting/shadow_volume.hpp"
 #include <cassert>
 #include <format>
 #include <cmath>

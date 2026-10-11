@@ -1,6 +1,6 @@
 #include "../../shared/entities/generated/traits/path_following_generated.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/mover_path.hpp"
+#include "../../shared/collision/mover_path.hpp"
 #include "../entity_io_context.hpp"
 #include "../entity_io_queue.hpp"
 #include "../server_context.hpp"

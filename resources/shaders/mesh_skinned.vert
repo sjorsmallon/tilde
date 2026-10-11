@@ -6,7 +6,7 @@
 // moves. That is why albedo stays at set 0 and the bone matrices take set 1.
 //
 // Binding 1 is the parallel skin array (assets::vertex_skin_t, stride 20). Its
-// layout is asserted at the struct declaration in src/shared/skeleton.hpp --
+// layout is asserted at the struct declaration in src/shared/animation/skeleton.hpp --
 // the vertex fetch here reads raw bytes at fixed offsets, so a change there is
 // garbage weights rather than a compile error anywhere.
 

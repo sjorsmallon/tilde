@@ -1,6 +1,6 @@
 #include "blob_shadow.hpp"
 
-#include "../shared/asset_types.hpp"
+#include "../shared/assets/asset_types.hpp"
 #include "../shared/log.hpp"
 
 #include <algorithm>

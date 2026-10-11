@@ -1,7 +1,7 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "server_receive.hpp"
 
-#include "../shared/asset_id.hpp"
+#include "../shared/assets/asset_id.hpp"
 #include "../shared/cvars/cvar_console.hpp"
 #include "../shared/network/bitstream.hpp"
 #include "../shared/network/cvar_mirror.hpp"

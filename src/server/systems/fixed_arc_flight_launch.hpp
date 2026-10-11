@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../shared/fixed_arc_flight.hpp"
-#include "../../shared/predicted_world.hpp"
+#include "../../shared/collision/fixed_arc_flight.hpp"
+#include "../../shared/collision/predicted_world.hpp"
 #include "../server_context.hpp"
 
 #include <cstdint>

@@ -25,7 +25,7 @@
 #include "cvars/cvar_console.hpp"
 #include "cvars/generated/cvars_generated.hpp"
 #include "network/bitstream.hpp"
-#include "movement_settings.hpp"
+#include "movement/movement_settings.hpp"
 #include "network/cvar_mirror.hpp"
 
 #include <cstring>

@@ -15,8 +15,8 @@
 #include "hitscan.hpp"
 #include "network/entity_snapshot.hpp"
 #include "network/snapshot_history.hpp"
-#include "player_animator.hpp"
-#include "player_rig.hpp"
+#include "animation/player_animator.hpp"
+#include "animation/player_rig.hpp"
 
 #include <cstdint>
 #include <vector>

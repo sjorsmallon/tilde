@@ -1,6 +1,6 @@
 #include "brush_tool.hpp"
 
-#include "../../../shared/collision_detection.hpp"
+#include "../../../shared/collision/collision_detection.hpp"
 #include "../../../shared/log.hpp"
 #include "../../hud/announcement.hpp"
 #include "../../geometry_renderer.hpp"

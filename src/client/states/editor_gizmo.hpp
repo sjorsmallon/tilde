@@ -2,7 +2,7 @@
 
 #include "../frame_builder.hpp"
 #include "../shared/aabb.hpp"
-#include "../shared/editor_grid.hpp"
+#include "map/editor_grid.hpp"
 #include "linalg.hpp"
 
 #include <cstdint>

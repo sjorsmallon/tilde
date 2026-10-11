@@ -1,6 +1,6 @@
 #include "field_codec.hpp"
 
-#include "../asset_id.hpp"
+#include "assets/asset_id.hpp"
 #include "../log.hpp"
 
 #include <cstring>

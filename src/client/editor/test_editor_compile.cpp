@@ -26,7 +26,7 @@
 // test owns its own entry point; only the launchers want SDL's shim.
 #define SDL_MAIN_HANDLED
 
-#include "../../shared/editor_grid.hpp"
+#include "../../shared/map/editor_grid.hpp"
 #include "../frame_builder.hpp"
 #include "editor_tool.hpp"
 #include "editor_bvh.hpp"

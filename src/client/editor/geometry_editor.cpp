@@ -1,6 +1,6 @@
 #include "geometry_editor.hpp"
-#include "../../shared/asset.hpp"
-#include "../../shared/editor_grid.hpp"
+#include "../../shared/assets/asset.hpp"
+#include "../../shared/map/editor_grid.hpp"
 #include "../../shared/log.hpp"
 #include "../geometry_renderer.hpp"
 #include "../render_assets.hpp"

@@ -6,8 +6,8 @@
 #include "../shared/damageable.hpp"
 #include "../shared/entities/generated/entities_generated.hpp"
 #include "../shared/hitscan.hpp"
-#include "../shared/player_animator.hpp"
-#include "../shared/player_rig.hpp"
+#include "animation/player_animator.hpp"
+#include "animation/player_rig.hpp"
 #include "log.hpp"
 #include "server_context.hpp"
 

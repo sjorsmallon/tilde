@@ -10,11 +10,11 @@
 // constantly -- too tight shatters a face into slivers, too loose welds two
 // distinct faces into one -- so it gets a guard before anything leans on it.
 
-#include "shared/asset.hpp"
-#include "shared/brush.hpp"
-#include "shared/game_session.hpp"
-#include "shared/map.hpp"
-#include "shared/map_geometry.hpp"
+#include "shared/assets/asset.hpp"
+#include "shared/map/brush.hpp"
+#include "shared/map/game_session.hpp"
+#include "shared/map/map.hpp"
+#include "shared/map/map_geometry.hpp"
 
 #include <algorithm>
 #include <cassert>

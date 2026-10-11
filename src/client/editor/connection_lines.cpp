@@ -1,7 +1,7 @@
 #include "connection_lines.hpp"
 
-#include "../../shared/map.hpp"
-#include "../../shared/map_connection.hpp"
+#include "../../shared/map/map.hpp"
+#include "../../shared/map/map_connection.hpp"
 #include "connection_panel.hpp"
 
 #include <imgui.h>

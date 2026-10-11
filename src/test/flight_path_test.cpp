@@ -1,7 +1,7 @@
 // The pin for guided_rocket_plan.md step 2: which positions of a flight become vertices, and the boxes
 // the edges between them become.
 #include "color_map.hpp"
-#include "flight_path.hpp"
+#include "collision/flight_path.hpp"
 
 #include <cmath>
 #include <cstdio>

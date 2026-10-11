@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../shared/asset_id.hpp"
+#include "../shared/assets/asset_id.hpp"
 #include "../shared/span.hpp"
 #include "entities/generated/entities_core_generated.hpp"
 

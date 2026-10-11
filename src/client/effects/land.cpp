@@ -2,6 +2,7 @@
 #include "../../shared/linalg.hpp"
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
+#include "../surface_audio.hpp"
 
 namespace client::effects
 {
@@ -9,11 +10,9 @@ namespace client::effects
 void on_land(client_context_t &context, const shared::Land &data)
 {
   if (data.attached_entity == context.connection.my_entity_uid)
-    return; // our own landing — already played locally
-  // data.scale carries the landing impact speed (units/s). Map it to volume so
-  // a heavy drop is louder than a light hop. Reference ~600 ≈ a solid fall.
-  float volume = linalg::clamp(data.scale / 600.f, 0.3f, 1.0f);
-  context.audio.play_3d(assets::sound_id("player_land"), data.origin, volume);
+    return; // our own landing was played from the prediction
+  const shared::Surface_Kind kind = surface_kind_for_material(context, data.surface_material);
+  context.audio.play_3d(land_sound_for(kind), data.origin, land_volume_for(data.scale));
 }
 
 } // namespace client::effects

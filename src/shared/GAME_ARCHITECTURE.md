@@ -7,7 +7,7 @@ This document outlines the core architecture for Map Loading, Game Sessions, and
 We distinguish between the **static data representation** of a map and the **runtime session**.
 
 ### `map_t` (The Data)
-Defined in `src/shared/map.hpp`.
+Defined in `src/shared/map/map.hpp`.
 This is a standard C++ struct that acts as the serialization target for the `.map` file format (Valve Map Format style).
 *   **Purpose**: Pure data container. No game logic.
 *   **Contents**:
@@ -16,7 +16,7 @@ This is a standard C++ struct that acts as the serialization target for the `.ma
     *   `entities`: List of `entity_spawn_t` structs (type, position, properties).
 
 ### `game_session_t` (The Runtime)
-Defined in `src/shared/game_session.hpp`.
+Defined in `src/shared/map/game_session.hpp`.
 This represents a live game instance.
 *   **Purpose**: Holds the active state of the world.
 *   **Contents**:

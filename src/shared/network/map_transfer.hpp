@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../lightmap.hpp"
-#include "../navmesh.hpp"
+#include "lighting/lightmap.hpp"
+#include "movement/navmesh.hpp"
 #include "bitstream.hpp"
 #include <cstdint>
 #include <optional>

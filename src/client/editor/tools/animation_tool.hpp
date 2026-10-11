@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../../shared/animation.hpp"
-#include "../../../shared/asset.hpp"
-#include "../../../shared/hitbox_rig.hpp"
-#include "../../../shared/player_animator.hpp"
-#include "../../../shared/skinning.hpp"
+#include "../../../shared/animation/animation.hpp"
+#include "../../../shared/assets/asset.hpp"
+#include "../../../shared/animation/hitbox_rig.hpp"
+#include "../../../shared/animation/player_animator.hpp"
+#include "../../../shared/animation/skinning.hpp"
 #include "../editor_tool.hpp"
 
 #include <optional>

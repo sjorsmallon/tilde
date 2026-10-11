@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared/map.hpp"
+#include "../../shared/map/map.hpp"
 #include "entity_editor_traits.hpp"
 
 #include <utility>

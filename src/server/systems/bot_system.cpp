@@ -1,4 +1,5 @@
-#include "../../shared/player_constants.hpp"
+#include "../../shared/movement/player_constants.hpp"
+#include "../../shared/map/surface_lookup.hpp"
 #include "../../shared/entities/entity_reflection.hpp"
 #include "bot_system.hpp"
 #include "bubble_system.hpp"
@@ -10,8 +11,8 @@
 #include "respawn_system.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/pathfinding.hpp"
-#include "../../shared/player_move.hpp"
+#include "../../shared/movement/pathfinding.hpp"
+#include "../../shared/movement/player_move.hpp"
 #include "../../shared/weapons.hpp"
 
 #include <limits>
@@ -130,10 +131,21 @@ static void apply_bot_movement(server_context_t &context,
       move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
   {
     shared::Land fx{};
-    fx.origin          = moved.feet;
-    fx.scale           = move_events.land_impact_speed;
-    fx.attached_entity = bot_ent.entity_id;
+    fx.origin           = moved.feet;
+    fx.scale            = move_events.land_impact_speed;
+    fx.attached_entity  = bot_ent.entity_id;
+    fx.surface_material = shared::material_index_under(session, move_events.ground_contact);
     shared::fire_land(context.outgoing.effects, fx);
+  }
+  if (move_events.stepped)
+  {
+    shared::Footstep fx{};
+    fx.origin           = moved.feet;
+    fx.normal           = move_events.ground_contact.plane.normal;
+    fx.scale            = move_events.step_speed;
+    fx.attached_entity  = bot_ent.entity_id;
+    fx.surface_material = shared::material_index_under(session, move_events.ground_contact);
+    shared::fire_footstep(context.outgoing.effects, fx);
   }
   if (move_events.launched_by_pad)
   {

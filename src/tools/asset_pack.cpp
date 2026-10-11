@@ -27,8 +27,8 @@
 #include <string>
 #include <vector>
 
-#include "../shared/asset_package.hpp"
-#include "../shared/asset_walk.hpp"
+#include "../shared/assets/asset_package.hpp"
+#include "../shared/assets/asset_walk.hpp"
 
 namespace
 {

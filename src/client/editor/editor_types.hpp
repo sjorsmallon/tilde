@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../shared/collision_detection.hpp"
+#include "../../shared/collision/collision_detection.hpp"
 #include "../../shared/color.hpp"
-#include "../../shared/editor_grid.hpp"
+#include "../../shared/map/editor_grid.hpp"
 #include "../../shared/linalg.hpp"
-#include "../../shared/map.hpp" // For map_t
+#include "../../shared/map/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
 #include "../frame_builder.hpp"
 #include "../input.hpp"

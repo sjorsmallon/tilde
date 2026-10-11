@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared/map.hpp"
+#include "../../shared/map/map.hpp"
 #include "transaction_system.hpp"
 
 namespace client

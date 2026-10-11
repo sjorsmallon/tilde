@@ -6,12 +6,13 @@
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/merge.hpp"
 #include "../shared/network/subtick_codec.hpp"
-#include "../shared/player_constants.hpp"
-#include "../shared/player_move.hpp"
-#include "../shared/replay_recorder.hpp"
+#include "movement/player_constants.hpp"
+#include "movement/player_move.hpp"
+#include "replay/replay_recorder.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "systems/game_rules_system.hpp"
 #include "../shared/subtick.hpp"
+#include "map/surface_lookup.hpp"
 #include "../shared/weapon_instance.hpp"
 #include "../shared/weapons.hpp"
 #include "log.hpp"
@@ -223,20 +224,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
         if (!is_dead)
           refill_magazines_on_ground(context.world.session, *player);
 
-        // check what movement events happened so we can fire events and track some state.
-        move_events.jumped |= step_events.jumped;
-        if (step_events.landed &&
-            step_events.land_impact_speed > move_events.land_impact_speed)
-        {
-          move_events.landed            = true;
-          move_events.land_impact_speed = step_events.land_impact_speed;
-        }
-        if (step_events.launched_by_pad)
-        {
-          move_events.launched_by_pad = true;
-          move_events.pad_uid         = step_events.pad_uid;
-          move_events.pad_kind        = step_events.pad_kind;
-        }
+        shared::accumulate_move_events(move_events, step_events);
       }
 
       // if we tried to throw the weapon: repair the player weapon state.
@@ -325,7 +313,20 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       fx.origin = player->position;
       fx.scale = move_events.land_impact_speed; // for volume scaling
       fx.attached_entity = player->entity_id;
+      fx.surface_material =
+          shared::material_index_under(context.world.session, move_events.ground_contact);
       shared::fire_land(context.outgoing.effects, fx);
+    }
+    if (move_events.stepped)
+    {
+      shared::Footstep fx{};
+      fx.origin           = player->position;
+      fx.normal           = move_events.ground_contact.plane.normal;
+      fx.scale            = move_events.step_speed;
+      fx.attached_entity  = player->entity_id;
+      fx.surface_material =
+          shared::material_index_under(context.world.session, move_events.ground_contact);
+      shared::fire_footstep(context.outgoing.effects, fx);
     }
 
     // launch pad is predicted locally too so it feels good.

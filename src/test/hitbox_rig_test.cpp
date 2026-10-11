@@ -14,14 +14,14 @@
 //
 // Run from the project root (ctest pins WORKING_DIRECTORY for exactly this).
 
-#include "animation.hpp"
-#include "asset.hpp"
-#include "hitbox_rig.hpp"
+#include "animation/animation.hpp"
+#include "assets/asset.hpp"
+#include "animation/hitbox_rig.hpp"
 #include "hitscan.hpp"
-#include "model_format.hpp"
-#include "player_rig.hpp"
-#include "player_constants.hpp"
-#include "skinning.hpp"
+#include "assets/model_format.hpp"
+#include "animation/player_rig.hpp"
+#include "movement/player_constants.hpp"
+#include "animation/skinning.hpp"
 
 #include <algorithm>
 #include <cmath>

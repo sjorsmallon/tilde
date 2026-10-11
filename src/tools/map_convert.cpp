@@ -19,7 +19,7 @@
 // navmesh, which load_map read back unchanged).
 
 #include "log.hpp"
-#include "map.hpp"
+#include "map/map.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <string>

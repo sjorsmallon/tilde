@@ -2,7 +2,7 @@
 
 #include "../shared/entities/generated/traits/timer_generated.hpp"
 #include "../shared/entity_system.hpp"
-#include "../shared/game_session.hpp"
+#include "map/game_session.hpp"
 #include "../shared/subtick.hpp"
 #include "entity_io_context.hpp"
 #include "server_context.hpp"

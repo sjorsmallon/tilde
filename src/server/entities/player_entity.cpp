@@ -2,9 +2,9 @@
 // `requires` traits are written once in src/server/traits/ instead.
 #include "../../shared/entities/generated/entities/player_entity_generated.hpp"
 #include "../../shared/entity_system.hpp"
-#include "../../shared/game_session.hpp"
+#include "../../shared/map/game_session.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/player_move.hpp"
+#include "../../shared/movement/player_move.hpp"
 #include "../entity_io_context.hpp"
 #include "../player_teleport.hpp"
 #include "../server_context.hpp"

@@ -3,7 +3,7 @@
 
 #include "../../shared/entities/entity_reflection.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/map.hpp"
+#include "../../shared/map/map.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include <cfloat>

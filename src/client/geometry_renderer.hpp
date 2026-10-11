@@ -3,7 +3,7 @@
 #include <optional>
 
 #include "../shared/entity_uid.hpp"
-#include "../shared/map_geometry.hpp"
+#include "../shared/map/map_geometry.hpp"
 #include "frame_builder.hpp"
 
 #include <string>

@@ -6,7 +6,7 @@
 // ENTITY_TRAIT_MASKS and component_list_t, for entities_with_trait<Trait_T>().
 #include "entities/generated/entity_io_generated.hpp"
 #include "log.hpp"
-#include "map.hpp"
+#include "map/map.hpp"
 #include "span.hpp"
 #include <array>
 #include <cassert>

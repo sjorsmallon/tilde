@@ -1,8 +1,8 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "entity_outliner.hpp"
 
-#include "../../shared/map.hpp"
-#include "../../shared/map_group.hpp"
+#include "../../shared/map/map.hpp"
+#include "../../shared/map/map_group.hpp"
 
 #include <imgui.h>
 

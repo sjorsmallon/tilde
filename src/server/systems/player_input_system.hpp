@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared/predicted_world.hpp"
+#include "../../shared/collision/predicted_world.hpp"
 
 namespace server
 {

@@ -1,5 +1,5 @@
-#include "../../shared/asset_id.hpp"
-#include "../../shared/run_times.hpp"
+#include "../../shared/assets/asset_id.hpp"
+#include "../../shared/replay/run_times.hpp"
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
 #include "../event_handlers.hpp"

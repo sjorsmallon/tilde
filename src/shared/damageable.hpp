@@ -1,7 +1,7 @@
 #pragma once
 
 #include "entities/generated/entities/damageable_entity_generated.hpp"
-#include "hitbox_rig.hpp"
+#include "animation/hitbox_rig.hpp"
 
 namespace shared
 {

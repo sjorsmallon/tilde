@@ -15,27 +15,28 @@
 #include "../ghost_playback.hpp"
 #include "../replay_panel.hpp"
 #include "../weapon_fire_audio.hpp"
+#include "../surface_audio.hpp"
 #include "../held_snapshot.hpp"
 #include "../event_handlers.hpp"
 #include "../../shared/cvars/cvar_console.hpp"
-#include "../../shared/player_constants.hpp"
+#include "../../shared/movement/player_constants.hpp"
 #include "../../shared/round_phase_rules.hpp"
 #include "../../shared/hit_region.hpp"
 #include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
-#include "../../shared/disabled_geometry.hpp"
+#include "../../shared/collision/disabled_geometry.hpp"
 #include "../../shared/timer_fraction.hpp"
-#include "../../shared/fixed_arc_flight.hpp"
+#include "../../shared/collision/fixed_arc_flight.hpp"
 #include "../../shared/tween.hpp"
-#include "../../shared/canopy.hpp"
+#include "../../shared/collision/canopy.hpp"
 #include "../../shared/merge.hpp"
-#include "../../shared/spawned_platforms.hpp"
-#include "../../shared/movement_modifiers.hpp"
-#include "../../shared/movement_volumes.hpp"
+#include "../../shared/collision/spawned_platforms.hpp"
+#include "../../shared/movement/movement_modifiers.hpp"
+#include "../../shared/movement/movement_volumes.hpp"
 #include "../../shared/weapon_instance.hpp"
 #include "../../shared/weapons.hpp"
-#include "../../shared/asset.hpp"
-#include "../../shared/debug_collision.hpp"
+#include "../../shared/assets/asset.hpp"
+#include "../../shared/collision/debug_collision.hpp"
 #include "../../shared/timed_function.hpp"
 #include <algorithm>
 #include <cmath>
@@ -58,8 +59,8 @@
 #include "../spot_beam.hpp"
 #include "../fly_camera.hpp"
 #include "../input.hpp"
-#include "../../shared/player_animator.hpp"
-#include "../../shared/player_rig.hpp"
+#include "../../shared/animation/player_animator.hpp"
+#include "../../shared/animation/player_rig.hpp"
 #include "../renderer.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/math.hpp"
@@ -2717,40 +2718,14 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             shot_debug_history.record(std::move(stashed));
           }
 
-          tick_events.jumped |= step_events.jumped;
-          if (step_events.landed &&
-              step_events.land_impact_speed > tick_events.land_impact_speed)
-          {
-            tick_events.landed            = true;
-            tick_events.land_impact_speed = step_events.land_impact_speed;
-          }
-          if (step_events.launched_by_pad)
-          {
-            tick_events.launched_by_pad = true;
-            tick_events.pad_uid         = step_events.pad_uid;
-            tick_events.pad_kind        = step_events.pad_kind;
-          }
+          shared::accumulate_move_events(tick_events, step_events);
         }
 
         ctx.prediction.ridden_canopy =
             try_find_ridden_canopy(ctx, ctx.prediction.player_movement, ctx.prediction.input_number);
       }
 
-      // Coalesce across the (possibly multiple) ticks stepped this frame:
-      // jump is a one-shot, landing keeps the hardest impact.
-      frame.move_events.jumped |= tick_events.jumped;
-      if (tick_events.landed &&
-          tick_events.land_impact_speed > frame.move_events.land_impact_speed)
-      {
-        frame.move_events.landed = true;
-        frame.move_events.land_impact_speed = tick_events.land_impact_speed;
-      }
-      if (tick_events.launched_by_pad)
-      {
-        frame.move_events.launched_by_pad = true;
-        frame.move_events.pad_uid         = tick_events.pad_uid;
-        frame.move_events.pad_kind        = tick_events.pad_kind;
-      }
+      shared::accumulate_move_events(frame.move_events, tick_events);
 
       int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
       ctx.prediction.pending_inputs[idx] = {ctx.prediction.input_number, predicted_input,
@@ -2771,9 +2746,19 @@ void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t 
   // players' jumps/lands arrive as spatialized cosmetic effects from the server.
   if (frame.move_events.jumped)
     ctx.audio.play_2d(assets::sound_id("player_jump"));
+
+  // The ground under the step, resolved only when a sound needs it.
+  const auto own_surface = [&]() {
+    return surface_kind_for_material(
+        ctx, shared::material_index_under(ctx.world.session, frame.move_events.ground_contact));
+  };
   if (frame.move_events.landed &&
       frame.move_events.land_impact_speed > ctx.cvars->pm_minimum_land_impact_speed)
-    ctx.audio.play_2d(assets::sound_id("player_land_new"));
+    ctx.audio.play_2d(land_sound_for(own_surface()),
+                      land_volume_for(frame.move_events.land_impact_speed));
+  if (frame.move_events.stepped)
+    ctx.audio.play_2d(step_sound_for(own_surface(), ctx.visuals.own_footstep_count++),
+                      step_volume_for(frame.move_events.step_speed, ctx.cvars->pm_maxspeed));
 
   if (frame.move_events.launched_by_pad)
     ctx.audio.play_3d(frame.move_events.pad_kind == shared::movement_volume_kind_t::Bounce
@@ -3781,7 +3766,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
             ctx.connection.my_entity_uid)
       continue;
 
-    // The same sphere rocket_system sweeps the flight path with.
+    // The same sphere update_sweeping_projectiles sweeps the flight path with.
     if (entity.type == entities::entity_type::Rocket_Entity && ctx.cvars->debug_show_hitboxes)
       scene.debug.wire_sphere(entity.position,
                               static_cast<const entities::Rocket_Entity&>(entity).collision_radius,

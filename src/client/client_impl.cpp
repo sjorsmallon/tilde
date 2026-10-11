@@ -1,4 +1,4 @@
-#include "../shared/asset.hpp"
+#include "../shared/assets/asset.hpp"
 #include "../shared/frame_timing.hpp"
 #include "../shared/memory_audit.hpp"
 #include "../shared/entity_system.hpp"

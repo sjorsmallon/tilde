@@ -6,8 +6,8 @@
 
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/network/client_transport_layer.hpp"
-#include "../shared/replay_file.hpp"
-#include "../shared/replay_player_view.hpp"
+#include "../shared/replay/replay_file.hpp"
+#include "../shared/replay/replay_player_view.hpp"
 
 #include <cstdint>
 #include <optional>

@@ -2,7 +2,7 @@
 
 #include "../shared/color.hpp"
 #include "../shared/hit_region.hpp"
-#include "../shared/hitbox_rig.hpp"
+#include "../shared/animation/hitbox_rig.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/log.hpp"
 #include "../shared/span.hpp"

@@ -3,7 +3,7 @@
 // The beam pass (spot_beam_plan.md ss3 to ss5): one beam of the pass, over the HDR scene after it is drawn,
 // inside the box beam.vert draws around its cone. A pixel's line of sight is clipped to the beam's round
 // cone, its range sphere and the surface under the pixel, and that chord is measured through the beam's
-// CARVE (shared/solid_beams.hpp): the lit part of the cone as disjoint convex pieces, each the cone cut by
+// CARVE (shared/lighting/solid_beams.hpp): the lit part of the cone as disjoint convex pieces, each the cone cut by
 // the planes in scene.beam_planes, so the lengths add. The fill is the one fixed alpha where any of the
 // chord is lit, feathered one pixel. Lines in the light's colour, r_beam_edge_pixels wide, are drawn at the
 // cone's silhouette where the chord there is lit, and where the lit length reaches zero on one surface: a

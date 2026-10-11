@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../shared/map_geometry.hpp"
+#include "../../../shared/map/map_geometry.hpp"
 #include "../editor_tool.hpp"
 #include <optional>
 

@@ -18,12 +18,12 @@
 // Plus the round trip: the piece through serialize/parse is a no-op, since
 // the file the prefab lands in is the same file format a map lands in.
 
-#include "asset.hpp"
+#include "assets/asset.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "log.hpp"
-#include "map.hpp"
-#include "map_connection.hpp"
-#include "map_piece.hpp"
+#include "map/map.hpp"
+#include "map/map_connection.hpp"
+#include "map/map_piece.hpp"
 #include "weapon_instance.hpp"
 
 #include <cmath>

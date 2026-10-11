@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../shared/asset_id.hpp"
+#include "../../shared/assets/asset_id.hpp"
 #include "../../shared/linalg.hpp"
 
 namespace client

@@ -9,7 +9,7 @@
 // The package is found through --embed-dir rather than a relative path, so the
 // generated file's location is the build's business and not this file's.
 
-#include "../asset_package.hpp"
+#include "asset_package.hpp"
 
 #if !__has_embed(<assets.pkg>)
 #error "assets.pkg is not on the embed path -- the asset_package build target did not run"

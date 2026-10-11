@@ -6,7 +6,7 @@
 
 #include "../../shared/events/generated/events_generated.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/player_constants.hpp"
+#include "../../shared/movement/player_constants.hpp"
 #include "../../shared/weapons.hpp"
 
 #include <algorithm>

@@ -9,7 +9,7 @@
 //
 // SCALAR ONLY, and that is the whole reason this is a separate file from
 // pbr_lighting.glsl rather than a section of it. This is compiled as C++ too,
-// through src/shared/shader_math.hpp, which #defines nothing but `max` and
+// through src/shared/lighting/shader_math.hpp, which #defines nothing but `max` and
 // `clamp` -- the intersection of GLSL and C++ is narrow, and it comfortably
 // holds float maths with clamps and nothing else. Anything taking a vec3, a
 // sampler or a derivative belongs in pbr_lighting.glsl, which the C++ side does

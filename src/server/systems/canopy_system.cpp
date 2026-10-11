@@ -3,7 +3,7 @@
 #include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 
-#include "../../shared/canopy.hpp"
+#include "../../shared/collision/canopy.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"

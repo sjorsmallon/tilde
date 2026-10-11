@@ -1,4 +1,4 @@
-#include "../shared/environment_brdf.hpp"
+#include "../shared/lighting/environment_brdf.hpp"
 #include "../shared/dither3d_pattern.hpp"
 #include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
@@ -20,9 +20,9 @@
 #include "imgui_impl_vulkan.h"
 
 #include "log.hpp" // Utilizing existing log system
-#include "asset.hpp"
+#include "assets/asset.hpp"
 #include "input.hpp" // pointer_is_captured, for the ImGui cursor handoff below
-#include "skinning.hpp"
+#include "animation/skinning.hpp"
 #include "vertex.hpp"
 #include <algorithm>
 #include <bit>
@@ -187,7 +187,7 @@ const uint32_t skybox_frag_spv[] =
 #include "skybox.frag.spv.h"
     ;
 
-#include "stb_image.h"
+#include "../third_party/stb_image.h"
 
 namespace client
 {

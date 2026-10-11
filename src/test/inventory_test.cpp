@@ -5,7 +5,7 @@
 // interval from the outgoing weapon's shot, so firing a Scout (1.25s) delayed a
 // Knife swing, and swinging a Knife (0.5s) delayed a Scout that had been
 // holstered and idle for a minute. Both directions are checked below.
-#include "asset_state.hpp"
+#include "assets/asset_state.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/extending_platform_entity_generated.hpp"
 #include "entities/generated/entities/guided_rocket_entity_generated.hpp"
@@ -13,11 +13,11 @@
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "entity_lifecycle.hpp"
-#include "game_session.hpp"
+#include "map/game_session.hpp"
 #include "log.hpp"
-#include "player_constants.hpp"
-#include "player_move.hpp"
-#include "reveal_light.hpp"
+#include "movement/player_constants.hpp"
+#include "movement/player_move.hpp"
+#include "lighting/reveal_light.hpp"
 #include "server_context.hpp"
 #include "spawn_projectile.hpp"
 #include "subtick.hpp"

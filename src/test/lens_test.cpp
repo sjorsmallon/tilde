@@ -1,10 +1,10 @@
 // A lens is seen through along the eye's line: the line must enter the box and leave it before the point,
 // and the filters of every lens on the line multiply.
 
-#include "asset_state.hpp"
+#include "assets/asset_state.hpp"
 #include "entities/generated/entities/lens_entity_generated.hpp"
 #include "entity_system.hpp"
-#include "lens.hpp"
+#include "lighting/lens.hpp"
 
 #include <cstdio>
 #include <vector>

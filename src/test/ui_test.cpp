@@ -20,7 +20,7 @@
 #include "client/ui/list_menu.hpp"
 #include "client/ui/navigation.hpp"
 #include "client/ui/screen.hpp"
-#include "shared/asset.hpp"
+#include "shared/assets/asset.hpp"
 
 #include <cassert>
 #include <cmath>

@@ -25,7 +25,7 @@
 // Each one's pin is the Lightmap tool's comparison against cpu_batch_solver_t
 // over the same records.
 
-#include "../shared/lightmap_gpu.hpp"
+#include "../shared/lighting/lightmap_gpu.hpp"
 #include "renderer.hpp"
 
 #include <vector>

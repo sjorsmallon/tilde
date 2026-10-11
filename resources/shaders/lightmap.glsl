@@ -13,12 +13,12 @@
 #include "light_arrival.glsl"
 #include "direct_light.glsl"
 
-// shared/lightmap.hpp's LIGHTMAP_LIGHTS_PER_CHART, and the renderer static_asserts
+// shared/lighting/lightmap.hpp's LIGHTMAP_LIGHTS_PER_CHART, and the renderer static_asserts
 // the two agree. Four is what fits a UNORM8x4 texel, which is why the sample
 // below is one vec4 and the slots one ivec4.
 #define LIGHTMAP_LIGHTS_PER_CHART 4
 
-// shared/lightmap.hpp's VISIBILITY_LAYERS_PER_PAGE. One layer per COLOUR
+// shared/lighting/lightmap.hpp's VISIBILITY_LAYERS_PER_PAGE. One layer per COLOUR
 // CHANNEL, each holding the four slots: a shadow ray that came through stained
 // glass arrives coloured, and the four kept lights are shaded analytically here,
 // so their channel is the only place that colour can live.
@@ -39,7 +39,7 @@ layout(set = 3, binding = 2) uniform sampler2DArray lightmapVisibility;
 layout(set = 3, binding = 3) uniform sampler2DArray lightmapIndirectL0;
 layout(set = 3, binding = 4) uniform sampler2DArray lightmapIndirectL1;
 
-// shared/lightmap.hpp's SH_L1_* constants, and the renderer static_asserts that
+// shared/lighting/lightmap.hpp's SH_L1_* constants, and the renderer static_asserts that
 // these agree with them. They are pi * Y0 and (2pi/3) * Y1 -- the cosine lobe's
 // per-band convolution weights -- and sqrt(3) is Y1 / Y0, what |L1| / L0 maxes
 // at for light from a single direction, which is what the bake normalized by.

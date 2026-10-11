@@ -1,5 +1,5 @@
 #include "server/server_api.hpp"
-#include "shared/asset.hpp"
+#include "shared/assets/asset.hpp"
 #include "shared/crash_handler.hpp"
 #include "shared/cvars/generated/cvars_generated.hpp"
 #include "shared/detached_console.hpp"

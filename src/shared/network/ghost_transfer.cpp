@@ -1,6 +1,6 @@
 #include "ghost_transfer.hpp"
 
-#include "../ghost.hpp"
+#include "replay/ghost.hpp"
 #include "../log.hpp"
 #include "quantization.hpp"
 

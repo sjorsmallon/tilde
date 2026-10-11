@@ -1,5 +1,5 @@
 #include "geometry_renderer.hpp"
-#include "../shared/asset.hpp"
+#include "../shared/assets/asset.hpp"
 #include "../shared/color.hpp"
 #include "../shared/log.hpp"
 #include "render_assets.hpp"

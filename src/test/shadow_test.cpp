@@ -11,8 +11,8 @@
 // the same matrices back out of the scene block, so a matrix that passes this
 // is one the shader agrees with.
 
-#include "../shared/lighting.hpp"
-#include "../shared/shader_math.hpp"
+#include "../shared/lighting/lighting.hpp"
+#include "../shared/lighting/shader_math.hpp"
 
 #include <cmath>
 #include <cstdio>

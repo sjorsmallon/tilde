@@ -1,14 +1,14 @@
 // The pin for collision_world_plan.md step 5: a bounce body falls, returns by
 // its restitution, slides to rest by its friction, passes a switched-off brush,
 // lands on a mover, falls through an erased hole, and wakes when written to.
-#include "bounce_body.hpp"
-#include "collision_detection.hpp"
-#include "disabled_geometry.hpp"
-#include "map_geometry.hpp"
-#include "movers.hpp"
-#include "predicted_world.hpp"
-#include "projectile_sweep.hpp"
-#include "reveal_light.hpp"
+#include "collision/bounce_body.hpp"
+#include "collision/collision_detection.hpp"
+#include "collision/disabled_geometry.hpp"
+#include "map/map_geometry.hpp"
+#include "collision/movers.hpp"
+#include "collision/predicted_world.hpp"
+#include "collision/projectile_sweep.hpp"
+#include "lighting/reveal_light.hpp"
 
 #include <cmath>
 #include <cstdio>

@@ -3,7 +3,7 @@
 #include "entity_lifecycle.hpp"
 
 #include "../shared/log.hpp"
-#include "../shared/player_constants.hpp"
+#include "../shared/movement/player_constants.hpp"
 #include "systems/game_rules_system.hpp"
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"

@@ -1,7 +1,7 @@
 #include "editor_sidebar.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 
-#include "../../shared/map.hpp"
+#include "../../shared/map/map.hpp"
 #include "editor_tool.hpp"
 #include "editor_types.hpp"
 

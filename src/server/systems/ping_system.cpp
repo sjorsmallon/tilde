@@ -2,7 +2,7 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "ping_system.hpp"
 
-#include "../../shared/collision_detection.hpp"
+#include "../../shared/collision/collision_detection.hpp"
 #include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../entity_lifecycle.hpp"

@@ -21,7 +21,7 @@
 //      map's, and a target destroyed during the delay is dropped rather than
 //      fatal.
 
-#include "asset_state.hpp"
+#include "assets/asset_state.hpp"
 #include "entities/generated/entities_generated.hpp"
 #include "server/damage.hpp"
 #include "server/entity_io_console.hpp"
@@ -33,9 +33,9 @@
 #include "server/server_api.hpp"
 #include "server/server_context.hpp"
 
-#include "shared/game_session.hpp"
-#include "shared/lighting.hpp"
-#include "shared/map.hpp"
+#include "shared/map/game_session.hpp"
+#include "shared/lighting/lighting.hpp"
+#include "shared/map/map.hpp"
 #include "shared/weapons.hpp"
 
 #include <cstdio>

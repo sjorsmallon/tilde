@@ -15,7 +15,7 @@
 // lerping two poses needs a device, a socket or a window. Same trick ui_test
 // uses.
 #include "../client/remote_interpolation.hpp"
-#include "../shared/asset_state.hpp"
+#include "../shared/assets/asset_state.hpp"
 #include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"

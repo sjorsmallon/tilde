@@ -1,0 +1,260 @@
+#pragma once
+
+// The path tracer: what INDIRECT light arrives at a point. lighting_def.md gate 2.
+//
+// A chain, never a tree -- one direction per bounce, next-event estimation at
+// every hit, and it never reads the atlas. Reading a stored value at the hit is
+// the OTHER method (progressive gather), and mixing the two counts the hit
+// surface's light twice.
+//
+// What it hands back is the incoming radiance field projected onto SH L1 --
+// FOUR coefficients a colour channel, not an irradiance. The cosine has left the
+// bake: a texel stores what ARRIVES and the shader applies the cosine against
+// the shaded normal, which is what lets a normal map move the indirect term. The
+// chain returns a value and writes nowhere, so the projection is the only thing
+// that changed between the flat accumulator and this one.
+
+#include "assets/asset.hpp"
+#include "lightmap_lights.hpp"
+#include "map/map.hpp"
+#include "span.hpp"
+
+#include <utility>
+#include <vector>
+
+namespace shared
+{
+
+// What a face with no material reflects. A blockout level is every face, so this
+// is what most of a bounce reads today; 0.5 is the mid-grey the untextured grid
+// shader draws and is a preference to retune by looking at a bake.
+inline constexpr float UNTEXTURED_BOUNCE_ALBEDO = 0.5f;
+
+struct indirect_trace_settings_t
+{
+  // Chains fired per texel SAMPLE -- so a 2x2 supersampled texel costs four
+  // times this. Zero is the whole off switch, and is what every bake before
+  // gate 2 did.
+  int rays_per_sample = 0;
+
+  // How deep a chain runs before Russian roulette may end it. A fixed cap alone
+  // biases every long path dark; `max_bounces` is a guard against a chain that
+  // roulette keeps re-weighting, not the termination rule.
+  int bounces_before_roulette = 2;
+  int max_bounces = 16;
+
+  // Offsets a bounce ray off the surface it leaves, the job shadow_ray_bias does
+  // for a shadow ray. Same number by default because it is the same problem --
+  // a ray starting exactly on a face re-enters the solid it left.
+  float ray_bias = 0.25f;
+
+  float shadow_ray_bias = 0.25f;
+  int soft_shadow_samples = 8;
+  float directional_shadow_distance = 100000.f;
+
+  // The firefly rule, applied to every set of chains fired from one point before
+  // it is averaged: the chains are split into FIREFLY_GROUPS contiguous groups,
+  // the median of the group means is the reference, and a chain whose luminance
+  // exceeds firefly_clamp times the reference is scaled down to that cap, hue
+  // kept. A rare bright chain is what a single lucky hit under a lamp looks like
+  // and what one texel's neighbours never repeat; the cap trades a little bounce
+  // under that lamp for a page with no white texels. A reference of zero clamps
+  // nothing: a point whose median group saw no light cannot judge the ones that
+  // did. Zero is off. lightmap_indirect.comp applies the same rule.
+  float firefly_clamp = 16.f;
+};
+
+// How many chains one point may fire: the slider's ceiling, and the size of the
+// buffer the clamp above holds them in. lightmap_indirect.comp's MAX_CHAINS_PER_SAMPLE.
+inline constexpr int MAX_INDIRECT_RAYS_PER_SAMPLE = 512;
+inline constexpr int FIREFLY_GROUPS = 8;
+
+// Everything a bounce needs that is not the ray: what the surface it landed on
+// IS. Built ONCE, before the workers -- resolving a material loads a texture,
+// and a load mutates the asset pools.
+//
+// `bvh_intersect_ray` reports a Collision_Id naming an OBJECT, which for the
+// occluder BVH is a map uid; the rest of this is what turns that into an albedo.
+struct traced_scene_t
+{
+  const Bounding_Volume_Hierarchy *bvh = nullptr;
+
+  // The two sets the occluder BVH above deliberately does not hold, which
+  // compute_light_occlusion names: the FENCES and the GLASS. Null when the map has
+  // neither, which is every map authored before transparency -- and that null is
+  // what makes a shadow ray skip both extra traversals and answer the 1-or-0 it
+  // has always answered.
+  const Bounding_Volume_Hierarchy *alpha_tested_bvh = nullptr;
+  const Bounding_Volume_Hierarchy *transmissive_bvh = nullptr;
+
+  // Sorted by uid, so a hit resolves by binary search rather than by walking the
+  // map's geometry list once per bounce.
+  std::vector<std::pair<entity_uid_t, const brush_geometry_t *>> brushes;
+
+  // By map material index. A null albedo is a material that resolved to none,
+  // which reads as UNTEXTURED_BOUNCE_ALBEDO rather than as black; a null
+  // EMISSIVE is a material with no emissive.png, which emits nothing. The two
+  // polarities differ because the two absences mean opposite things.
+  //
+  // One struct rather than two parallel vectors: a bounce asks both questions
+  // about the same material at the same hit, and two vectors are two lengths
+  // that can disagree.
+  struct material_t
+  {
+    const assets::texture_asset_t *albedo = nullptr;
+    const assets::texture_asset_t *emissive = nullptr;
+
+    // What the albedo's alpha channel MEANS, derived at decode. A shadow ray
+    // reads it and nothing else does: a bounce lands on the surface either way.
+    assets::alpha_mode_t alpha_mode = assets::alpha_mode_t::opaque;
+    float alpha_cutoff = assets::DEFAULT_ALPHA_CUTOFF;
+  };
+  std::vector<material_t> materials;
+};
+
+// What a chain's next-event estimation casts against: the scene's own occluder
+// BVH, and the scene itself as the glass when it holds any. DERIVED rather than
+// held, so a chain cannot be tracing one world and shadowing against another.
+[[nodiscard]] shadow_casters_t get_shadow_casters(const traced_scene_t &scene);
+
+// The same thing for a caller holding the occluder BVH and a scene that may be
+// EMPTY -- a bake asked for no bounce, no probe, no solver and shading a map
+// with neither glass nor a fence builds no traced scene at all, and its shadow
+// rays must still be tested against something.
+[[nodiscard]] shadow_casters_t get_shadow_casters_with_occluders(const Bounding_Volume_Hierarchy &occluders,
+                                              const traced_scene_t &scene);
+
+[[nodiscard]] traced_scene_t build_traced_scene(const map_t &map,
+                                                const Bounding_Volume_Hierarchy &bvh,
+                                                const Bounding_Volume_Hierarchy *alpha_tested,
+                                                const Bounding_Volume_Hierarchy *transmissive);
+
+// sRGB-encoded bytes to a LINEAR reflectance. Albedo textures upload SRGB, so
+// their bytes are encoded and reflectance arithmetic is linear -- sampling them
+// raw makes every bounce systematically too bright, a 0.5 grey wall reflecting as
+// 0.73. Decision F arriving on the CPU side, where no attachment format catches
+// it for you.
+[[nodiscard]] float srgb_byte_to_linear(uint8_t encoded);
+
+// One texel of a texture, nearest and wrapped, decoded to linear; `fallback` for
+// a texture that cannot be read. The ONE fetch both solves make at a hit --
+// lightmap_indirect.comp does this arithmetic verbatim over the same bytes.
+[[nodiscard]] linalg::vec3 sample_texture(const assets::texture_asset_t &texture,
+                                          const linalg::vec2 &uv, const linalg::vec3 &fallback);
+
+// The same fetch, of the fourth channel, RAW -- alpha is a coverage and not a
+// colour, so it is the one channel of an albedo that is never sRGB-decoded. A
+// texture without one answers 1, which is opaque.
+[[nodiscard]] float sample_texture_alpha(const assets::texture_asset_t &texture,
+                                         const linalg::vec2 &uv);
+
+// What the surface under a hit REFLECTS and what it EMITS, both in linear RGB:
+// resolve the object, find the face by plane, read its material index, sample
+// albedo at the hit's UV.
+//
+// Emission is the material's emissive.png, sampled at the same UV, and its
+// PRESENCE is the whole of gate 4 -- a folder without one emits nothing. It is a
+// radiance, in the units compute_radiance(Light) hands back, which is what makes it
+// the same lighting model as everything else.
+//
+// The face's LAYER 0 only. A blended face bounces its base material, which is
+// the same simplification the runtime's own indirect term will make.
+struct traced_surface_t
+{
+  linalg::vec3 albedo{0.f, 0.f, 0.f};
+  linalg::vec3 emission{0.f, 0.f, 0.f};
+};
+
+[[nodiscard]] traced_surface_t surface_at(const traced_scene_t &scene,
+                                          const ray_hit_result_t &hit,
+                                          const linalg::vec3 &hit_position);
+
+// What survives a crossing of ONE transmissive surface: `albedo * (1 - alpha)`
+// at the hit, in linear RGB. The same brush-and-face walk surface_at makes, and
+// deliberately the same one -- a shadow ray tinted by a material the bounce does
+// not agree it hit is two answers about one face.
+//
+// A hit on a face that is not `blend` transmits nothing and answers ZERO: the
+// transmissive BVH holds whole brushes, so a brush that got in there for one
+// glass face still has its opaque faces in it.
+[[nodiscard]] linalg::vec3 transmittance_at(const traced_scene_t &scene,
+                                            const ray_hit_result_t &hit,
+                                            const linalg::vec3 &hit_position);
+
+// Is this hit on the SOLID part of an alpha-tested surface -- a grate's BAR
+// rather than the gap between two of them? The same walk again, asking the
+// albedo's fourth channel against the material's cutoff. A face that is not
+// `cutout` is solid, so a brush that got into the tested set for its other faces
+// still stops a ray through this one.
+//
+// TRUE means the ray is STOPPED. The name says what the texel is, not what the
+// ray does, because the other way round reads as "the ray passes" and is how
+// this got written backwards once already.
+[[nodiscard]] bool alpha_test_is_solid_at(const traced_scene_t &scene,
+                                        const ray_hit_result_t &hit,
+                                        const linalg::vec3 &hit_position);
+
+// The indirect light arriving at a surface point, projected onto SH L1: the
+// average over `rays_per_sample` chains, each of which collects the DIRECT light
+// at every vertex it visits and nothing at the first one. Direct light at
+// `position` itself is the solve's own business and is not in here.
+//
+// Coefficients ADD, so accumulation IS the projection -- the basis is
+// orthonormal, so a coefficient is an inner product, which is the integral the
+// chains already estimate. There is no fitting pass and no second walk.
+//
+// The direction a coefficient is weighted by is the chain's FIRST LEG and
+// nothing later: a chain box -> wall -> floor -> lamp delivers light to the box
+// along box -> wall, and nothing past the wall is a direction the box can see.
+[[nodiscard]] indirect_sh_l1_t trace_indirect_light(
+    const traced_scene_t &scene, Span<const baked_light_t> lights,
+    const linalg::vec3 &position, const linalg::vec3 &normal,
+    const indirect_trace_settings_t &settings, uint32_t hash);
+
+// What one probe stores: the light, and per visibility channel the fraction of
+// that channel's Mixed light the probe can see. A channel no light claimed
+// holds 1 -- an absent visibility is fully VISIBLE, the polarity the role has
+// everywhere else.
+struct probe_trace_t
+{
+  indirect_sh_l1_t light;
+  Array<float, PROBE_VISIBILITY_CHANNELS> visibility{{1.f, 1.f, 1.f, 1.f}};
+};
+
+// The light arriving at a point in SPACE, projected onto SH L1 -- gate 5's probe.
+// The same chains as trace_indirect_light fired over the FULL sphere (a crate
+// lit from above is dark underneath), plus what a texel deliberately leaves out:
+// the DIRECT light. A wall shades its direct light through its four slots; a
+// dynamic object has none, and a pure Baked light sits in the array's head
+// where the tail's loop never reads it. So each Baked light is added by
+// next-event estimation from the probe itself. A Mixed light is NOT -- the
+// runtime tail delivers it analytically to everything -- but its bounce is,
+// since a bounce is a bounce whatever mode the light that made it has.
+//
+// What a Mixed light gets instead (gate 9 step 4) is its VISIBILITY: the same
+// light_visibility the atlas stores for a texel, at the probe, into the channel
+// `visibility_slots` names for its slot. Penumbra from source_radius comes free.
+// A Mixed light out of range or outside its cone at the probe stores 1: the
+// runtime attenuation is zero there and the channel is never multiplied.
+//
+// The projection of a single direction's irradiance is E * Y(d): what the SH
+// fit of a clamped cosine reads back as 0.25 E + 0.5 E cos, the standard L1
+// smear, and the same approximation the atlas bounce already makes.
+[[nodiscard]] probe_trace_t trace_probe_light(const traced_scene_t &scene,
+                                             Span<const baked_light_t> lights,
+                                             const probe_visibility_slots_t &visibility_slots,
+                                             const linalg::vec3 &position,
+                                             const indirect_trace_settings_t &settings,
+                                             uint32_t hash);
+
+// Gate 6: the RADIANCE arriving at `position` along `direction` -- the mean
+// over rays_per_sample chains fired down that one fixed first leg, the chain's
+// PI divided back out. Zero chains is black.
+[[nodiscard]] linalg::vec3 trace_capture_direction(const traced_scene_t &scene,
+                                                   Span<const baked_light_t> lights,
+                                                   const linalg::vec3 &position,
+                                                   const linalg::vec3 &direction,
+                                                   const indirect_trace_settings_t &settings,
+                                                   uint32_t hash);
+
+} // namespace shared

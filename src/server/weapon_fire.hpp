@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../shared/entity_uid.hpp"
-#include "../shared/game_session.hpp"
-#include "../shared/predicted_world.hpp"
+#include "../shared/map/game_session.hpp"
+#include "../shared/collision/predicted_world.hpp"
 #include "../shared/subtick.hpp"
 #include "../shared/weapon_instance.hpp"
 #include "../shared/weapons.hpp"

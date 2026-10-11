@@ -4,7 +4,7 @@
 
 #include "../shared/damageable.hpp"
 #include "../shared/entities/entity_reflection.hpp"
-#include "../shared/hitbox_rig.hpp"
+#include "../shared/animation/hitbox_rig.hpp"
 #include "../shared/remnant.hpp"
 #include "hitbox_debug_draw.hpp"
 

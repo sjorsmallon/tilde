@@ -22,6 +22,7 @@ cvar_state_t::cvar_state_t()
     pm_speed_threshold(1.0f),
     pm_step_height(18.0f),
     pm_minimum_land_impact_speed(150.0f),
+    pm_footstep_stride(80.0f),
     pm_air_jump_count(0),
     pm_air_jump_speed(270.0f),
     pm_quake_friction(6.0f),
@@ -379,6 +380,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_F32,
      .offset = offsetof(cvar_state_t, pm_minimum_land_impact_speed),
      .size = sizeof(cvar_state_t::pm_minimum_land_impact_speed),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "pm_footstep_stride",
+     .description = "Ground distance walked between footsteps",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, pm_footstep_stride),
+     .size = sizeof(cvar_state_t::pm_footstep_stride),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
     {.name = "pm_air_jump_count",
@@ -2294,7 +2303,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[34] = {
+const cvar_id MIRRORED_CVAR_TABLE[35] = {
     cvar_id::pm_model,
     cvar_id::pm_maxspeed,
     cvar_id::pm_overbounce,
@@ -2303,6 +2312,7 @@ const cvar_id MIRRORED_CVAR_TABLE[34] = {
     cvar_id::pm_speed_threshold,
     cvar_id::pm_step_height,
     cvar_id::pm_minimum_land_impact_speed,
+    cvar_id::pm_footstep_stride,
     cvar_id::pm_air_jump_count,
     cvar_id::pm_air_jump_speed,
     cvar_id::pm_quake_friction,
@@ -2390,7 +2400,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 34};
+  return {MIRRORED_CVAR_TABLE, 35};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

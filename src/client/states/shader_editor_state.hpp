@@ -6,7 +6,7 @@
 #include "../../shared/file_watcher.hpp"
 #include "../../shared/linalg.hpp"
 #include "../camera.hpp"
-#include "../../shared/asset.hpp"
+#include "../../shared/assets/asset.hpp"
 #include <string>
 #include <array>
 #include <vector>

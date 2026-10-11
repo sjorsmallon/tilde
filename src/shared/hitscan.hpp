@@ -1,7 +1,7 @@
 #pragma once
 
 #include "entity_uid.hpp"
-#include "hitbox_rig.hpp"
+#include "animation/hitbox_rig.hpp"
 #include "linalg.hpp"
 #include "hit_region.hpp"
 #include "span.hpp"

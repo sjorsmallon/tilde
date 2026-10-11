@@ -3,8 +3,8 @@
 #include "placement_tool.hpp"
 #include <format>
 #include <vector>
-#include "../../../shared/editor_grid.hpp"
-#include "../../../shared/map.hpp"
+#include "../../../shared/map/editor_grid.hpp"
+#include "../../../shared/map/map.hpp"
 #include "../../../shared/shapes.hpp"
 #include "../../../shared/weapon_instance.hpp"
 #include "../../hud/announcement.hpp"
@@ -14,7 +14,7 @@
 
 #define ENTITIES_WANT_INCLUDES
 #undef ENTITIES_WANT_INCLUDES
-#include "../../../shared/map_piece.hpp"
+#include "../../../shared/map/map_piece.hpp"
 #include "imgui.h"
 #include "log.hpp"
 #include "renderer.hpp"

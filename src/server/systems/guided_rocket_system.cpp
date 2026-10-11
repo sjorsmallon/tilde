@@ -4,11 +4,11 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "guided_rocket_system.hpp"
 
-#include "../../shared/flight_path.hpp"
+#include "../../shared/collision/flight_path.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/player_constants.hpp"
-#include "../../shared/spawned_platforms.hpp"
+#include "../../shared/movement/player_constants.hpp"
+#include "../../shared/collision/spawned_platforms.hpp"
 #include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
 

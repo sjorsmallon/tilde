@@ -1,6 +1,6 @@
 #include "../../shared/entities/generated/entities/logic_counter_entity_generated.hpp"
 #include "../../shared/entity_system.hpp"
-#include "../../shared/game_session.hpp"
+#include "../../shared/map/game_session.hpp"
 #include "../../shared/log.hpp"
 #include "../entity_io_context.hpp"
 #include "../server_context.hpp"

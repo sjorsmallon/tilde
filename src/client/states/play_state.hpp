@@ -1,15 +1,15 @@
 #pragma once
 
-#include "../../shared/hitbox_rig.hpp" // posed_hitbox_t, for the overlay scratch below
+#include "../../shared/animation/hitbox_rig.hpp" // posed_hitbox_t, for the overlay scratch below
 #include "../../shared/array.hpp"
 #include "../shot_debug.hpp"
-#include "../../shared/player_constants.hpp"
-#include "../../shared/skinning.hpp"
+#include "../../shared/movement/player_constants.hpp"
+#include "../../shared/animation/skinning.hpp"
 #include "../camera.hpp"
 #include "../game_state.hpp"
 #include "../hud/scoreboard.hpp"
 #include "pause_menu.hpp"
-#include "../shared/game_session.hpp"
+#include "map/game_session.hpp"
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/network_types.hpp"
 #include "../frame_builder.hpp"

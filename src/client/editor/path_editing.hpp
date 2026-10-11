@@ -3,7 +3,7 @@
 // What every tool must honour about path chains, whichever tool is active. mover_def.md ss7 and ss15.
 
 #include "../../shared/entity_system.hpp"
-#include "../../shared/mover_path.hpp"
+#include "../../shared/collision/mover_path.hpp"
 #include "../frame_builder.hpp"
 #include "editor_types.hpp"
 #include "transaction_system.hpp"

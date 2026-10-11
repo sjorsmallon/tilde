@@ -2,7 +2,7 @@
 
 #include "../shared/log.hpp"
 #include "../shared/network/cvar_mirror.hpp"
-#include "../shared/replay_seek.hpp"
+#include "../shared/replay/replay_seek.hpp"
 
 #include "game.pb.h"
 

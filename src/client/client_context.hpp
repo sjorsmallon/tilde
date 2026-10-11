@@ -9,19 +9,19 @@
 #include "../shared/array.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entities/entity_reflection.hpp"
-#include "../shared/game_session.hpp"
-#include "../shared/ghost.hpp"
+#include "../shared/map/game_session.hpp"
+#include "../shared/replay/ghost.hpp"
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
-#include "../shared/map.hpp"
-#include "../shared/replay_recorder.hpp"
-#include "../shared/player_move.hpp"
+#include "../shared/map/map.hpp"
+#include "../shared/replay/replay_recorder.hpp"
+#include "../shared/movement/player_move.hpp"
 #include "../shared/round_phase_rules.hpp"
 #include "../shared/subtick.hpp"
 #include "../shared/beam_ripples.hpp"
 #include "../shared/team_wall_ripples.hpp"
-#include "../shared/shadow_volume.hpp"
+#include "../shared/lighting/shadow_volume.hpp"
 
 #include <memory>
 #include <optional>
@@ -523,6 +523,11 @@ struct visual_effects_t
 {
   std::vector<explosion_effect_t> explosion_effects;
   uint32_t next_explosion_index = 0;
+
+  // Running step counts, so the variants cycle per foot owner: ours from the
+  // prediction, everyone else's from the Footstep effect, keyed by uid.
+  uint32_t                                          own_footstep_count = 0;
+  std::unordered_map<shared::entity_uid_t, uint32_t> footstep_counts;
 
   std::unordered_map<shared::entity_uid_t, drawn_body_t> drawn_bodies;
   std::vector<afterimage_t>                              afterimages;

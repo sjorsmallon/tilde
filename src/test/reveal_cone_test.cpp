@@ -1,16 +1,16 @@
 // The reveal cone as collision reads it: eight planes around the round cone the
 // shader draws, and a range that is a distance from the eye.
 
-#include "collision_detection.hpp"
+#include "collision/collision_detection.hpp"
 #include "entities/generated/entities/mover_entity_generated.hpp"
 #include "entities/generated/entities/path_node_entity_generated.hpp"
 #include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "entity_system.hpp"
-#include "map_geometry.hpp"
-#include "movement_kernel.hpp"
-#include "player_constants.hpp"
-#include "predicted_world.hpp"
-#include "reveal_light.hpp"
+#include "map/map_geometry.hpp"
+#include "movement/movement_kernel.hpp"
+#include "movement/player_constants.hpp"
+#include "collision/predicted_world.hpp"
+#include "lighting/reveal_light.hpp"
 
 #include <cmath>
 #include <cstdio>

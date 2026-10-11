@@ -2,8 +2,8 @@
 // inside, the space beside it and the space between it and the light are not.
 
 #include "aabb.hpp"
-#include "map_geometry.hpp"
-#include "shadow_volume.hpp"
+#include "map/map_geometry.hpp"
+#include "lighting/shadow_volume.hpp"
 
 #include <cmath>
 #include <cstdio>

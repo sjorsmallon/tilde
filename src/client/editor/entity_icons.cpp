@@ -1,8 +1,8 @@
 #include "entity_icons.hpp"
 
 #include "../../shared/entities/entity_reflection.hpp"
-#include "../../shared/lighting.hpp"
-#include "../../shared/map.hpp"
+#include "../../shared/lighting/lighting.hpp"
+#include "../../shared/map/map.hpp"
 #include "../renderer.hpp"
 #include "entity_editor_traits.hpp"
 

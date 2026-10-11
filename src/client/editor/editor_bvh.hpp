@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../shared/collision_detection.hpp"
-#include "../../shared/map.hpp"
+#include "../../shared/collision/collision_detection.hpp"
+#include "../../shared/map/map.hpp"
 #include "../../shared/shapes.hpp"
 #include "entity_editor_traits.hpp"
 

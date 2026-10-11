@@ -3,9 +3,9 @@
 #include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "path_editing.hpp"
 
-#include "../../shared/map_connection.hpp"
-#include "../../shared/map_geometry.hpp"
-#include "../../shared/movers.hpp"
+#include "../../shared/map/map_connection.hpp"
+#include "../../shared/map/map_geometry.hpp"
+#include "../../shared/collision/movers.hpp"
 
 #include <algorithm>
 #include <unordered_map>

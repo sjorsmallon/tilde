@@ -1,7 +1,7 @@
 #include "render_assets.hpp"
 
 #include "../shared/log.hpp"
-#include "../shared/map_geometry.hpp"
+#include "../shared/map/map_geometry.hpp"
 
 #include <unordered_map>
 #include <vector>

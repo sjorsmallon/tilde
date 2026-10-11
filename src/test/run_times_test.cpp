@@ -1,7 +1,7 @@
 // shared/run_times -- the .times file beside a map: one appended line per
 // completed run, sorted by whoever reads it.
 
-#include "shared/run_times.hpp"
+#include "shared/replay/run_times.hpp"
 
 #include <cassert>
 #include <cstdio>

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../editor_tool.hpp"
-#include "../../../shared/box_face.hpp"
-#include "../../../shared/map.hpp"
+#include "../../../shared/map/box_face.hpp"
+#include "../../../shared/map/map.hpp"
 #include "../transaction_system.hpp"
 #include <optional>
 

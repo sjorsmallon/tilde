@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../shared/entity_uid.hpp"
-#include "../../shared/map_connection.hpp"
+#include "../../shared/map/map_connection.hpp"
 #include "../../shared/span.hpp"
 #include "editor_types.hpp"
 

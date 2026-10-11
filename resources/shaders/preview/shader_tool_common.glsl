@@ -14,7 +14,7 @@
 // VERTEX shader too, and pbr_lighting's TBN needs dFdx.
 //
 // RADIANCE, not colour and intensity, for the reason scene.glsl carries the same
-// field: shared/lighting.hpp's radiance_of is the ONE conversion from a Light
+// field: shared/lighting/lighting.hpp's radiance_of is the ONE conversion from a Light
 // component, the reference distance lives inside it and is not separately
 // spellable, and a preview that multiplied colour by intensity itself is exactly
 // the second lighting model lighting_def.md ss11 is about. It is what made this

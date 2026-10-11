@@ -3,7 +3,7 @@
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 
-#include "../../shared/fixed_arc_flight.hpp"
+#include "../../shared/collision/fixed_arc_flight.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 #include "fixed_arc_flight_launch.hpp"

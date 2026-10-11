@@ -2,7 +2,7 @@
 
 #include "../compression.hpp"
 #include "../log.hpp"
-#include "../map.hpp"
+#include "map/map.hpp"
 #include "quantization.hpp"
 
 #include <limits>

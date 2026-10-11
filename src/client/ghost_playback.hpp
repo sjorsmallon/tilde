@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../shared/ghost.hpp"
+#include "../shared/replay/ghost.hpp"
 
 #include <optional>
 

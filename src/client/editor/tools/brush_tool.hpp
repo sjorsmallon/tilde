@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../../../shared/brush.hpp"
-#include "../../../shared/map.hpp"
-#include "../../../shared/map_geometry.hpp"
+#include "../../../shared/map/brush.hpp"
+#include "../../../shared/map/map.hpp"
+#include "../../../shared/map/map_geometry.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
 

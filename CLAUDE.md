@@ -22,11 +22,11 @@ ctest --test-dir cmake_build -j32                                   # whole suit
 ctest --test-dir cmake_build -R session_test --output-on-failure   # one test or a regex
 ```
 
-Tests are plain executables with simple assertions, registered in `GAME_TESTS`
-at the bottom of `CMakeLists.txt`. Adding a test means adding the target AND
-its name to that list (it is written out, not globbed). `ctest` pins the
-working directory to the project root; running a test binary directly must
-also happen from the root.
+Tests are plain executables with simple assertions, one `add_game_test(<name>)`
+line each in `CMakeLists.txt` building `src/test/<name>.cpp`; the call is the
+ctest registration (written out, not globbed). `ctest` pins the working
+directory to the project root; running a test binary directly must also happen
+from the root.
 
 Three executables: `MyGame` (in-process client + server), `MyGame_Server`
 (dedicated), `MyGame_Client` (networked client only, exercises the full
@@ -50,13 +50,20 @@ Other tools:
 
 ```
 src/
-├── shared/           game_shared (static lib): entities, map, movement, collision, lightmaps, networking
+├── shared/           game_shared (static lib); the flat files are the primitives everything shares
 │   ├── entities/     entities.def (the DSL), entity_reflection, generated/
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
 │   ├── effects/      effects.def (cosmetic channel), generated/
 │   ├── events/       events.def (gameplay channel), generated/
-│   ├── assets/       embedded_package.cpp only; the id space is asset_id.hpp, the walk asset_walk.cpp
+│   ├── assets/       the id space (asset_id.hpp), the walk (asset_walk.cpp), decoders, the package
+│   ├── map/          map_t, geometry, brushes, map_piece, connections, groups, game_session
+│   ├── collision/    predicted_world, the sweeps, movers, canopies, platforms, bounce bodies
+│   ├── movement/     player_move, the kernel, locomotion models, overrides, modifiers, volumes
+│   ├── lighting/     lighting model, lightmap bake and sidecar, shadow volumes, beams, reveal, lens
+│   ├── animation/    skeleton, skinning, clips, the player rig and animator, the hitbox rig
+│   ├── replay/       replay file, recorder, seek, player view, ghosts, run times
 │   └── network/      wire serialization, bitstream, UDP, reliable stream, transfers
+├── third_party/      vendored verbatim: xatlas, stb, miniz, tinygltf, tiny-optional
 ├── client/           game_client (shared lib): Vulkan, SDL2, ImGui, states/, editor/, hud/, ui/
 ├── server/           game_server (shared lib): tick.cpp, systems/, traits/, entities/
 ├── tools/            def_gen (the schema compiler), asset_pack (the asset walker)
@@ -186,7 +193,7 @@ prediction writes `ctx.prediction`.
   material strings, a third geometry kind.
 - A prefab IS a map (`prefabs/<name>.prefab`, same reader and writer), the
   clipboard IS a `map_t`, and a placed prefab is a stamp with no link back.
-  `src/shared/map_piece.{hpp,cpp}` is the whole of copy/paste/save/place.
+  `src/shared/map/map_piece.{hpp,cpp}` is the whole of copy/paste/save/place.
 - Legacy file keywords (`box`, `displacement`, three-component
   `orientation`) are read-only and converted once; the writer never emits them.
 - `map_t::attached_cvars` run through `execute_console_line` on load and are

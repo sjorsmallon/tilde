@@ -1,7 +1,7 @@
 #include "pathfinding_test_tool.hpp"
-#include "../../../shared/collision_detection.hpp"
-#include "../../../shared/navmesh.hpp"
-#include "../../../shared/pathfinding.hpp"
+#include "../../../shared/collision/collision_detection.hpp"
+#include "../../../shared/movement/navmesh.hpp"
+#include "../../../shared/movement/pathfinding.hpp"
 #include "../../renderer.hpp"
 #include "imgui.h"
 #include <cmath>

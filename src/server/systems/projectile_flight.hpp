@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../shared/predicted_world.hpp"
-#include "../../shared/projectile_sweep.hpp"
+#include "../../shared/collision/predicted_world.hpp"
+#include "../../shared/collision/projectile_sweep.hpp"
 #include "../../shared/span.hpp"
 #include "../server_context.hpp"
 #include "entities/generated/entities_core_generated.hpp"

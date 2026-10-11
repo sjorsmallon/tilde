@@ -12,7 +12,7 @@ namespace server
 {
 
 
-// Called from a death site (rocket_system today; future: trigger volumes,
+// Called from a death site (contact_system today; future: trigger volumes,
 // melee, void-out) immediately after firing PLAYER_DIED. Records the death
 // tick for `player_uid` in the side table. No-op if the player is already
 // recorded — we keep the original death tick rather than refreshing it,

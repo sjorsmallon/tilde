@@ -4,7 +4,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
-#include "../shared/asset.hpp"
+#include "../shared/assets/asset.hpp"
 #include "renderer.hpp"
 
 namespace client

@@ -3,7 +3,7 @@
 #include "client_context.hpp"
 
 #include "../shared/log.hpp"
-#include "../shared/map.hpp"
+#include "../shared/map/map.hpp"
 #include "../shared/network/ghost_transfer.hpp"
 
 #include <algorithm>

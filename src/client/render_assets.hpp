@@ -11,8 +11,8 @@
 // runs at map load and registers everything the map can show. The lazy path
 // below is the safety net for anything a map could not name in advance.
 
-#include "../shared/asset.hpp"
-#include "../shared/map.hpp"
+#include "../shared/assets/asset.hpp"
+#include "../shared/map/map.hpp"
 #include "renderer.hpp"
 
 namespace client

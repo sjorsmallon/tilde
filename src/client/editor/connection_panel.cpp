@@ -3,7 +3,7 @@
 
 #include "../../shared/entities/generated/entity_io_generated.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/map_connection.hpp"
+#include "../../shared/map/map_connection.hpp"
 #include "entity_inspector.hpp"
 #include "imgui.h"
 #include "transaction_system.hpp"
