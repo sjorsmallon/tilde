@@ -11,7 +11,7 @@
 #include "respawn_system.hpp"
 #include "../../shared/linalg.hpp"
 #include "../../shared/log.hpp"
-#include "../../shared/movement/pathfinding.hpp"
+#include "../../shared/movement/navmesh.hpp"
 #include "../../shared/movement/player_move.hpp"
 #include "../../shared/weapons.hpp"
 
@@ -317,7 +317,7 @@ void update_bots(server_context_t &context,
         // Refresh navmesh path periodically.
         if (bot.path_refresh <= 0.f || bot.path.empty())
         {
-          bot.path         = find_path(session.navmesh, bot_ent->position, target->position);
+          bot.path         = shared::find_path(session.navmesh, bot_ent->position, target->position);
           bot.path_index   = 0;
           bot.path_refresh = bot.personality.path_refresh_rate;
         }
@@ -388,7 +388,7 @@ void update_bots(server_context_t &context,
                           bot_ent->position.y,
                           bot_ent->position.z + away.z};
           }
-          bot.path         = find_path(session.navmesh, bot_ent->position, flee_point);
+          bot.path         = shared::find_path(session.navmesh, bot_ent->position, flee_point);
           bot.path_index   = 0;
           bot.path_refresh = bot.personality.path_refresh_rate;
         }

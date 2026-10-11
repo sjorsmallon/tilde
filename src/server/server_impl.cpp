@@ -24,7 +24,6 @@
 #include "entity_io_console.hpp"
 #include "entity_io_queue.hpp"
 #include "entity_lifecycle.hpp"
-#include "send_protobuf_message.hpp"
 #include "server_api.hpp"
 #include "server_messages.hpp"
 #include "systems/bot_system.hpp"

@@ -23,7 +23,7 @@ public:
   void on_draw_ui(editor_context_t& ctx) override;
 
 private:
-  shared::entity_uid_t selected_emitter_uid = shared::invalid_entity_uid;
+  shared::entity_uid_t selected_emitter_uid = shared::null_entity_uid;
   viewport_state_t viewport;
 };
 

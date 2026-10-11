@@ -23,18 +23,6 @@ struct bot_personality_t
   float path_refresh_rate = 0.5f;  // seconds between path recalculations
 };
 
-inline bot_personality_t aggressive_personality()
-{
-  return {.engage_range = 400.f, .retreat_health = 0.f,
-          .fire_rate = 1.5f, .move_speed = 20.f, .path_refresh_rate = 1.0f};
-}
-
-inline bot_personality_t defensive_personality()
-{
-  return {.engage_range = 200.f, .retreat_health = 40.f,
-          .fire_rate = 2.5f, .move_speed = 14.f, .path_refresh_rate = 2.0f};
-}
-
 struct Bot_State
 {
   shared::entity_uid_t entity_uid = shared::null_entity_uid;

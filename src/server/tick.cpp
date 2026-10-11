@@ -7,7 +7,6 @@
 
 #include "../shared/frame_timing.hpp"
 #include "../shared/replay/ghost.hpp"
-#include "../shared/animation/player_animator.hpp"
 #include "../shared/collision/predicted_world.hpp"
 #include "entities/generated/entities/hook_entity_generated.hpp"
 #include "entities/generated/entities/kooh_entity_generated.hpp"
@@ -128,16 +127,11 @@ bool Tick()
   //    other in one tick both succeed.
   {
     FRAME_ZONE("server tick: contacts");
-    update_sweeping_projectiles<entities::Rocket_Entity>(context, world, tick_dt,
-                                                   projectile_expiry_t::Arrives);
-    update_sweeping_projectiles<entities::Hook_Entity>(context, world, tick_dt,
-                                                   projectile_expiry_t::Vanishes);
-    update_sweeping_projectiles<entities::Kooh_Entity>(context, world, tick_dt,
-                                                   projectile_expiry_t::Vanishes);
-    update_sweeping_projectiles<entities::Ricochet_Entity>(context, world, tick_dt,
-                                                   projectile_expiry_t::Vanishes);
-    update_sweeping_projectiles<entities::Modifier_Shot_Entity>(context, world, tick_dt,
-                                                   projectile_expiry_t::Vanishes);
+    update_sweeping_projectiles<entities::Rocket_Entity>(context, world, tick_dt);
+    update_sweeping_projectiles<entities::Hook_Entity>(context, world, tick_dt);
+    update_sweeping_projectiles<entities::Kooh_Entity>(context, world, tick_dt);
+    update_sweeping_projectiles<entities::Ricochet_Entity>(context, world, tick_dt);
+    update_sweeping_projectiles<entities::Modifier_Shot_Entity>(context, world, tick_dt);
     update_contacts(context, world);
   }
 
@@ -145,16 +139,7 @@ bool Tick()
   {
     FRAME_ZONE("server tick: the rest of the world");
 
-    //@NOTE(SJM): why does this happen? repoint the orientation?
-    {
-      const aim_settings_t settings = aim_settings_from_cvars(*context.cvars);
-      for (entities::Player_Entity& player :
-           context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
-      {
-        if (player.health.current_health <= 0) continue;
-        advance_body_yaw(player.body_yaw, player.view_angle_yaw, tick_dt, settings);
-      }
-    }
+    update_body_yaws(context, tick_dt);
 
     // First here so a zone a contact just left is stamped this same tick.
     update_timed_movement_modifiers(context);

@@ -1,7 +1,6 @@
 #include "pathfinding_test_tool.hpp"
 #include "../../../shared/collision/collision_detection.hpp"
 #include "../../../shared/movement/navmesh.hpp"
-#include "../../../shared/movement/pathfinding.hpp"
 #include "../../renderer.hpp"
 #include "imgui.h"
 #include <cmath>
@@ -10,7 +9,7 @@
 namespace client
 {
 
-bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &navmesh,
+bool Pathfinding_Test_Tool::pick_navmesh_point(const shared::navmesh_t &navmesh,
                                               linalg::vec3 &out_hit) const
 {
   const linalg::vec3& origin = viewport.mouse_ray.origin;
@@ -40,10 +39,10 @@ bool Pathfinding_Test_Tool::pick_navmesh_point(const navmesh_t &navmesh,
   return hit;
 }
 
-void Pathfinding_Test_Tool::recompute_path(const navmesh_t &navmesh)
+void Pathfinding_Test_Tool::recompute_path(const shared::navmesh_t &navmesh)
 {
   if (start && end)
-    path = find_path(navmesh, *start, *end);
+    path = shared::find_path(navmesh, *start, *end);
   else
     path.clear();
 }
@@ -110,7 +109,7 @@ void Pathfinding_Test_Tool::on_key_down(editor_context_t& ctx,
 void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t& ctx,
                                            pass_builder_t& draw_passes)
 {
-  const navmesh_t& navmesh = ctx.map->navmesh;
+  const shared::navmesh_t& navmesh = ctx.map->navmesh;
   if (!navmesh.valid()) return;
 
   constexpr float navmesh_y_offset_above_regular_geometry = 2.f;

@@ -236,7 +236,7 @@ void Brush_Tool::on_enable(editor_context_t& ctx)
   assert(ctx.map);
 
   mode = Mode::Face;
-  select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
+  select_brush_face(ctx, shared::null_entity_uid, std::nullopt);
   hover = {};
   cancel_pending_extrusion();
   end_drag();
@@ -257,7 +257,7 @@ void Brush_Tool::on_disable(editor_context_t& ctx)
 
 shared::brush_geometry_t* Brush_Tool::try_get_selected_brush(editor_context_t& ctx)
 {
-  if (selection.uid == shared::invalid_entity_uid || !ctx.map)
+  if (selection.uid == shared::null_entity_uid || !ctx.map)
     return nullptr;
 
   shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selection.uid);
@@ -330,9 +330,9 @@ void Brush_Tool::resolve_band_press_as_click(editor_context_t& ctx)
 
   // Empty space: the click clears the whole selection, which is what the old
   // press-time reselect did when it hovered nothing.
-  if (band.press_uid == shared::invalid_entity_uid)
+  if (band.press_uid == shared::null_entity_uid)
   {
-    select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
+    select_brush_face(ctx, shared::null_entity_uid, std::nullopt);
     return;
   }
 
@@ -359,7 +359,7 @@ void Brush_Tool::select_brush_face(editor_context_t& ctx,
   // sites used to disagree about this: a click kept points from the face it
   // just left, which then extruded along the NEW face's normal.
   const bool same_face =
-      uid != shared::invalid_entity_uid && uid == selection.uid &&
+      uid != shared::null_entity_uid && uid == selection.uid &&
       face_normal && selection.face_normal &&
       linalg::dot(*face_normal, *selection.face_normal) > FACE_NORMAL_MATCH;
 
@@ -591,7 +591,7 @@ void Brush_Tool::delete_selected_brush(editor_context_t& ctx)
   // Everything below is keyed to the brush that no longer exists.
   end_drag();
   cancel_pending_extrusion();
-  select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
+  select_brush_face(ctx, shared::null_entity_uid, std::nullopt);
   hover = {};
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -641,7 +641,7 @@ void Brush_Tool::commit_pending_extrusion(editor_context_t& ctx)
     surface = source->surface;
 
   transaction_t transaction;
-  shared::entity_uid_t last_created = shared::invalid_entity_uid;
+  shared::entity_uid_t last_created = shared::null_entity_uid;
   size_t created_count = 0;
 
   for (const std::vector<linalg::vec3> &points : pending.point_sets)
@@ -702,7 +702,7 @@ void Brush_Tool::on_update(editor_context_t& ctx, const viewport_state_t &view,
   // A live drag owns the cursor, so hover stops tracking under it.
   if (!drag_is_live())
   {
-    hover.uid = shared::invalid_entity_uid;
+    hover.uid = shared::null_entity_uid;
     hover.face_normal.reset();
 
     //raycast to find hovered brush / face.
@@ -770,7 +770,7 @@ void Brush_Tool::on_mouse_down(editor_context_t& ctx,
     // A press on a DIFFERENT brush picks it and does not stroke: the cursor is
     // resolved against the selected brush, so working on one you have not
     // selected yet would write at a point measured on something else.
-    if (hover.uid != shared::invalid_entity_uid && hover.uid != selection.uid)
+    if (hover.uid != shared::null_entity_uid && hover.uid != selection.uid)
     {
       select_brush_face(ctx, hover.uid, hover.face_normal);
       return;
@@ -904,9 +904,9 @@ void Brush_Tool::on_mouse_down(editor_context_t& ctx,
 
   // nothing meaningful to select -> this is actually awful style. we should just clear the selection and fuck off instead of relying on select brush face
   // to filter out our nonsense. early return is fine but whatever.,
-  if (hover.uid == shared::invalid_entity_uid)
+  if (hover.uid == shared::null_entity_uid)
   {
-    select_brush_face(ctx, shared::invalid_entity_uid, std::nullopt);
+    select_brush_face(ctx, shared::null_entity_uid, std::nullopt);
     return;
   }
 
@@ -1253,7 +1253,7 @@ void Brush_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 // assignment doubles the input for no decision.
 Brush_Tool::face_target_t Brush_Tool::resolve_face_target_under_cursor(editor_context_t& ctx)
 {
-  if (hover.uid != shared::invalid_entity_uid)
+  if (hover.uid != shared::null_entity_uid)
     return resolve_face_target(ctx, hover.uid, hover.face_normal);
 
   return resolve_face_target(ctx, selection.uid, selection.face_normal);
@@ -1271,7 +1271,7 @@ Brush_Tool::resolve_face_target(editor_context_t& ctx, shared::entity_uid_t uid,
                                 const std::optional<linalg::vec3> &face_normal)
 {
   face_target_t target;
-  if (uid == shared::invalid_entity_uid || !face_normal || !ctx.map)
+  if (uid == shared::null_entity_uid || !face_normal || !ctx.map)
     return target;
 
   shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid);
@@ -1820,7 +1820,7 @@ void Brush_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws)
   }
 
   // hovering over a valid thing.
-  if (hover.uid != shared::invalid_entity_uid && hover.uid != selection.uid)
+  if (hover.uid != shared::null_entity_uid && hover.uid != selection.uid)
   {
     // it's a geometrical thing.
     if (const shared::map_geometry_t* entry =
@@ -2107,7 +2107,7 @@ void Brush_Tool::on_draw_ui(editor_context_t& ctx)
 
   ImGui::Separator();
 
-  if (selection.uid == shared::invalid_entity_uid)
+  if (selection.uid == shared::null_entity_uid)
     ImGui::TextDisabled("no brush selected");
   else if (!selection_geometry.hull)
     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "brush %u does not hull",

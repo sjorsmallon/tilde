@@ -2,6 +2,7 @@
 
 #include "../../shared/collision/predicted_world.hpp"
 #include "../../shared/collision/projectile_sweep.hpp"
+#include "../../shared/weapons.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_context.hpp"
 #include "projectile_flight.hpp"
@@ -13,20 +14,11 @@
 namespace server
 {
 
-// What a flight that ran out of lifetime without touching anything does: an airburst is a
-// contact with no surface, and the row acts from wherever the shot was.
-enum class projectile_expiry_t : uint8_t
-{
-  Vanishes,
-  Arrives
-};
-
 // Fly, push, destroy: one tick for every Projectile_Entity, sweeping the owner's team view.
 // A hit becomes one pending contact; what it DOES is the button's row, read by update_contacts.
 template <typename Projectile_Entity>
 void update_sweeping_projectiles(server_context_t& context,
-                                 const shared::predicted_world_storage_t& world, float dt,
-                                 projectile_expiry_t expiry)
+                                 const shared::predicted_world_storage_t& world, float dt)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
@@ -40,7 +32,8 @@ void update_sweeping_projectiles(server_context_t& context,
     shot.lifetime -= dt;
     if (shot.lifetime <= 0.f)
     {
-      if (expiry == projectile_expiry_t::Arrives)
+      if (shared::get_projectile_parameters(shot.projectile).expiry ==
+          shared::projectile_expiry_t::Arrives)
         context.outgoing.pending_contacts.push_back(
             contact_of_projectile_expiry(shot, shot.projectile));
       spent.push_back(shot.entity_id);

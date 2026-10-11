@@ -2,6 +2,7 @@
 #include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "systems/player_input_system.hpp"
 
+#include "../shared/animation/player_animator.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/merge.hpp"
@@ -349,6 +350,18 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
           break;
       }
     }
+  }
+}
+
+void update_body_yaws(server_context_t& context, float tick_dt)
+{
+  const aim_settings_t settings = aim_settings_from_cvars(*context.cvars);
+  for (entities::Player_Entity& player :
+       context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
+  {
+    if (player.health.current_health <= 0)
+      continue;
+    advance_body_yaw(player.body_yaw, player.view_angle_yaw, tick_dt, settings);
   }
 }
 

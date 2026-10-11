@@ -13,7 +13,7 @@ void Particle_Editor_Tool::on_enable(editor_context_t& ctx)
   assert(ctx.bvh);
   assert(ctx.map);
 
-  selected_emitter_uid = shared::invalid_entity_uid;
+  selected_emitter_uid = shared::null_entity_uid;
 
   // autoselect the first one.
   for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
@@ -39,7 +39,7 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t& ctx,
 
   // Just find the closest particle emitter to the ray
   float closest_distance_so_far = 1e18f;
-  shared::entity_uid_t best_uid = shared::invalid_entity_uid;
+  shared::entity_uid_t best_uid = shared::null_entity_uid;
 
   for (auto [uid, emitter]: ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())
   {
@@ -61,7 +61,7 @@ void Particle_Editor_Tool::on_mouse_down(editor_context_t& ctx,
     }
   }
 
-  if (best_uid != shared::invalid_entity_uid)
+  if (best_uid != shared::null_entity_uid)
     selected_emitter_uid = best_uid;
 }
 
@@ -253,7 +253,7 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
     const shared::entity_uid_t removed[] = {selected_emitter_uid};
     (void)shared::remove_connections_naming(ctx.map->connections, removed);
 
-    selected_emitter_uid = shared::invalid_entity_uid;
+    selected_emitter_uid = shared::null_entity_uid;
     
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;

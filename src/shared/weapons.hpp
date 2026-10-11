@@ -37,6 +37,14 @@ struct hitscan_t
   bool  leaves_bullet_impact;
 };
 
+// What a flight that runs out of lifetime touching nothing does: an airburst is a contact with
+// no surface, and the row acts from wherever the shot was.
+enum class projectile_expiry_t : uint8_t
+{
+  Vanishes,
+  Arrives
+};
+
 struct projectile_t
 {
   float speed;
@@ -44,6 +52,7 @@ struct projectile_t
   float gravity_scale;
   // The entity type a shot becomes; it must carry the Projectile component.
   entities::entity_type spawns;
+  projectile_expiry_t   expiry;
 };
 
 struct projectile_step_t
@@ -260,7 +269,8 @@ inline constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINI
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 600.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Rocket_Entity},
+                                                .spawns = entities::entity_type::Rocket_Entity,
+                                                .expiry = projectile_expiry_t::Arrives},
                                  .contact    = {.effect  = contact_effect_t::Explode,
                                                 .explode = {.radius = 120.f, .knockback = 600.f}}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
@@ -734,7 +744,8 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   const self_impulse_t& impulse    = fire.self_impulse;
   const bool hitscan_is_zero    = hitscan.range == 0.f && !hitscan.leaves_bullet_impact;
   const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
-                                  projectile.spawns == entities::entity_type::Invalid;
+                                  projectile.spawns == entities::entity_type::Invalid &&
+                                  projectile.expiry == projectile_expiry_t::Vanishes;
   const bool impulse_is_zero    = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
   const bool place_is_zero      = place.spawns == entities::entity_type::Invalid;
   const bool pilot_is_zero      = fire.pilot.speed == 0.f && fire.pilot.radius == 0.f &&
@@ -761,6 +772,7 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
            place_is_zero && impulse_is_zero && pilot_is_zero;
   case entities::Fire_Resolution::Projectile:
     return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
+           (projectile.expiry == projectile_expiry_t::Vanishes || !contact_is_none) &&
            contact_matches && hitscan_is_zero && place_is_zero && impulse_is_zero && pilot_is_zero;
   case entities::Fire_Resolution::Place:
     return place.spawns != entities::entity_type::Invalid && hitscan_is_zero &&
@@ -822,7 +834,7 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "each fire of a WEAPON_DEFINITIONS row fills the parameter struct of its own "
               "Fire_Resolution (hitscan: positive range; projectile: positive speed and a spawned "
-              "entity type; place: a spawned entity type; pilot: positive speed, radius and "
+              "entity type, and an Arrives expiry only beside a contact effect; place: a spawned entity type; pilot: positive speed, radius and "
               "seconds, and path numbers only when it leaves a Path) and leaves the others zero, and the "
               "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
               "so a value in another is a number nothing reads. A Hitscan carries a contact "

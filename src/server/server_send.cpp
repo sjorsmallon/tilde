@@ -7,7 +7,6 @@
 #include "../shared/network/server_transport_layer.hpp"
 #include "../shared/replay/replay_recorder.hpp"
 #include "log.hpp"
-#include "send_protobuf_message.hpp"
 #include "server_context.hpp"
 #include "server_messages.hpp"
 
@@ -42,7 +41,7 @@ static void send_bot_debug(server_context_t &context)
 
   for (connected_client_t row : connected_clients(context))
   {
-    ::send_protobuf_message(context, row.transport.address, bot_debug_message);
+    network::send_protobuf_message(context.transport_layer, context.socket, row.slot, bot_debug_message);
   }
 }
 
@@ -129,7 +128,7 @@ void send_to_clients(server_context_t &context)
     network::set_snapshot_baseline(package, baseline);
 
     package.set_entity_data(writer.buffer.data(), writer.buffer.size());
-    ::send_protobuf_message(context, row.transport.address, package);
+    network::send_protobuf_message(context.transport_layer, context.socket, slot, package);
   }
 
   // send the effects in a batch.
@@ -147,7 +146,7 @@ void send_to_clients(server_context_t &context)
     for (connected_client_t row : connected_clients(context))
     {
       if (!row.client.map_ready) continue;
-      ::send_protobuf_message(context, row.transport.address, batch);
+      network::send_protobuf_message(context.transport_layer, context.socket, row.slot, batch);
     }
 
     effect_batch_bytes.resize(batch.ByteSizeLong());

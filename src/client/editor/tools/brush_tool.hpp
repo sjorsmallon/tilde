@@ -55,7 +55,7 @@ private:
 
   struct selection_t
   {
-    shared::entity_uid_t uid = shared::invalid_entity_uid;
+    shared::entity_uid_t uid = shared::null_entity_uid;
     std::optional<linalg::vec3> face_normal{};
     std::vector<linalg::vec3> points{};
   };
@@ -75,7 +75,7 @@ private:
 
   struct hover_t
   {
-    shared::entity_uid_t uid = shared::invalid_entity_uid;
+    shared::entity_uid_t uid = shared::null_entity_uid;
     std::optional<linalg::vec3> face_normal;
   };
 
@@ -104,7 +104,7 @@ private:
     linalg::vec2 start{0, 0};
     linalg::vec2 end{0, 0};
     bool adds_to_point_selection = false; // ctrl at arm time; releasing it mid-drag still adds
-    shared::entity_uid_t        press_uid = shared::invalid_entity_uid;
+    shared::entity_uid_t        press_uid = shared::null_entity_uid;
     std::optional<linalg::vec3> press_face_normal{};
   };
 
@@ -222,7 +222,7 @@ private:
 
   struct face_target_t
   {
-    shared::entity_uid_t uid = shared::invalid_entity_uid;
+    shared::entity_uid_t uid = shared::null_entity_uid;
     shared::brush_geometry_t* brush = nullptr;
     Plane plane = {};
   };

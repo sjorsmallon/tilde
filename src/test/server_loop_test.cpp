@@ -270,17 +270,12 @@ void test_reliable_stream_round_trip_c2s()
   // server sends next, and it has not sent anything.
   assert(client_state.reliable_stream.block_length != 0);
 
-  // An ORDINARY S2C datagram -- not a reliable one. This is the property the
-  // Loading client depends on, since the only S2C traffic it gets is the map
-  // package's fragments.
-  Packet snapshot = {};
-  snapshot.header.message_type =
-      static_cast<uint8>(Message_Type::S2C_EntityPackage);
-  snapshot.header.message_id     = 77;
-  snapshot.header.fragment_count = 1;
-  snapshot.header.fragment_index = 0;
-  snapshot.header.payload_size   = 0;
-  send_packet_to_client(server_state, server_socket, 0, snapshot);
+  // An ORDINARY S2C datagram -- not a reliable one -- sent the way the server
+  // sends every snapshot. This is the property the Loading client depends on,
+  // since the only S2C traffic it gets is the map package's fragments.
+  game::S2C_EntityPackage snapshot;
+  snapshot.set_server_tick(77);
+  send_protobuf_message(server_state, server_socket, 0, snapshot);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 

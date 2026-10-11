@@ -8,7 +8,7 @@
 
 // ---------------------------------------------------------------------------
 // Helper: check the symmetric-neighbor invariant. Aborts on violation.
-static void check_symmetry(const navmesh_t &nav, const char *label)
+static void check_symmetry(const shared::navmesh_t &nav, const char *label)
 {
   const int np = (int)nav.polygons.size();
   for (int a = 0; a < np; ++a)
@@ -27,7 +27,7 @@ static void check_symmetry(const navmesh_t &nav, const char *label)
 }
 
 // Check all vertex indices in range and all neighbor indices valid.
-static void check_indices(const navmesh_t &nav, const char *label)
+static void check_indices(const shared::navmesh_t &nav, const char *label)
 {
   const int np = (int)nav.polygons.size();
   const int nv = (int)nav.vertices.size();
@@ -68,7 +68,7 @@ static void check_indices(const navmesh_t &nav, const char *label)
 //   1 polygon, 4 vertices, all neighbors == -1.
 static void test_single_span()
 {
-  navmesh_t nav;
+  shared::navmesh_t nav;
   nav.vertices = {
     {{-8.f, 0.f, -8.f}},  // 0 SW
     {{ 8.f, 0.f, -8.f}},  // 1 SE
@@ -120,7 +120,7 @@ static void test_single_span()
 //   - merge into 1 polygon, collinear midpoints removed → 4 vertices
 static void test_two_span_strip()
 {
-  navmesh_t nav;
+  shared::navmesh_t nav;
   nav.vertices = {
     {{-8.f, 0.f, -8.f}},  // 0 SW of span0
     {{ 8.f, 0.f, -8.f}},  // 1 SE of span0
@@ -197,7 +197,7 @@ static void test_two_span_strip()
 //   - 6 unique vertices (V4==V1 and V7==V2 collapsed)
 static void test_vertex_dedup()
 {
-  navmesh_t nav;
+  shared::navmesh_t nav;
   nav.vertices = {
     {{-8.f, 0.f, -8.f}},  // 0
     {{ 8.f, 0.f, -8.f}},  // 1
@@ -261,7 +261,7 @@ static void test_vertex_dedup()
 // After simplify: expect 1 polygon with 4 corner vertices.
 static void test_2x2_grid()
 {
-  navmesh_t nav;
+  shared::navmesh_t nav;
   nav.vertices = {
     {{-8.f, 0.f, -8.f}},  //  0 SW s0
     {{ 8.f, 0.f, -8.f}},  //  1 SE s0
@@ -359,7 +359,7 @@ static void test_2x2_grid()
 // After simplify: 1 polygon, 4 vertices: (-8,0,-8),(40,0,-8),(40,0,8),(-8,0,8)
 static void test_3x1_strip()
 {
-  navmesh_t nav;
+  shared::navmesh_t nav;
   nav.vertices = {
     {{-8.f, 0.f, -8.f}},  // 0 SW s0
     {{ 8.f, 0.f, -8.f}},  // 1 SE s0
@@ -443,11 +443,11 @@ static shared::map_t map_with_one_brush(std::vector<linalg::vec3> vertices)
 
 // Highest navmesh vertex sitting over (x, z), or -1e9 if the mesh covers nothing
 // within half a cell of that column.
-static float navmesh_height_at(const navmesh_t &nav, float x, float z, float cell_size)
+static float navmesh_height_at(const shared::navmesh_t &nav, float x, float z, float cell_size)
 {
   const float reach = cell_size * 0.5f + 0.01f;
   float best = -1e9f;
-  for (const nav_polygon_t &poly : nav.polygons)
+  for (const shared::nav_polygon_t &poly : nav.polygons)
     for (int32_t vi : poly.vertices)
     {
       const linalg::vec3f& position = nav.vertices[vi].position;
@@ -476,7 +476,7 @@ static void test_bake_respects_extruded_footprint()
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
-  const navmesh_t &nav = map.navmesh;
+  const shared::navmesh_t &nav = map.navmesh;
 
   assert(nav.valid() && "extruded prism produced no navmesh at all");
 
@@ -513,7 +513,7 @@ static void test_bake_follows_ramp_surface()
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
-  const navmesh_t &nav = map.navmesh;
+  const shared::navmesh_t &nav = map.navmesh;
 
   assert(nav.valid() && "ramp produced no navmesh");
 
@@ -561,13 +561,13 @@ static void test_bake_box_brush_is_one_span_per_column()
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
-  const navmesh_t &nav = map.navmesh;
+  const shared::navmesh_t &nav = map.navmesh;
 
   // 256 wide / 16 = a 16x16 grid, every column standing on the lid.
   assert(nav.polygons.size() == 16u * 16u &&
          "a solid box must bake to exactly one span per column");
 
-  for (const nav_polygon_t &poly : nav.polygons)
+  for (const shared::nav_polygon_t &poly : nav.polygons)
     for (int32_t vi : poly.vertices)
       assert(std::abs(nav.vertices[vi].position.y - 64.f) < 0.01f &&
              "box span is not on the lid");
@@ -598,7 +598,7 @@ static void test_bake_finds_stacked_floors()
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
-  const navmesh_t &nav = map.navmesh;
+  const shared::navmesh_t &nav = map.navmesh;
 
   // 16x16 columns of ground, plus 8x8 of platform stacked on top of them.
   assert(nav.polygons.size() == 16u * 16u + 8u * 8u &&
@@ -607,7 +607,7 @@ static void test_bake_finds_stacked_floors()
   // Under the platform, both heights must be present.
   bool found_ground = false;
   bool found_platform = false;
-  for (const nav_polygon_t &poly : nav.polygons)
+  for (const shared::nav_polygon_t &poly : nav.polygons)
     for (int32_t vi : poly.vertices)
     {
       const linalg::vec3f& position = nav.vertices[vi].position;

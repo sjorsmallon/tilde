@@ -199,6 +199,34 @@ inline bool send_packet_to_client(Server_Transport_Layer &state,
   return socket.send(packet, state.clients[slot].address);
 }
 
+// A protobuf message to one slot, unreliably, every fragment through the choke point above.
+template <typename Message_T>
+inline void send_protobuf_message(Server_Transport_Layer &state, Udp_Socket &socket, int32_t slot,
+                                  const Message_T &message)
+{
+  std::vector<uint8> buffer(message.ByteSizeLong());
+  message.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+  for (const Packet &packet :
+       convert_to_packets(buffer, static_cast<uint8>(Packet_Traits<Message_T>::type), state.next_message_id))
+    send_packet_to_client(state, socket, slot, packet);
+}
+
+// The one recipient with no slot is a rejected connect: it has no stream to ack, so the reject and
+// the text telling it why go out unstamped, once, and say so if the socket refuses them.
+template <typename Message_T>
+inline void send_protobuf_message_to_unslotted_peer(Server_Transport_Layer &state, Udp_Socket &socket,
+                                                    const Address &address, const Message_T &message)
+{
+  std::vector<uint8> buffer(message.ByteSizeLong());
+  message.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
+  for (const Packet &packet :
+       convert_to_packets(buffer, static_cast<uint8>(Packet_Traits<Message_T>::type), state.next_message_id))
+    if (!socket.send(packet, address))
+      log_error("message type {} to unslotted peer {} failed to send ({} bytes)",
+                static_cast<int>(Packet_Traits<Message_T>::type), address.to_string(),
+                packet.header.payload_size);
+}
+
 // Fragments `payload` and queues it for paced delivery to one peer, REPLACING
 // whatever that slot was already sending.
 //

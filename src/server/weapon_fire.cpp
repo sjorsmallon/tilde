@@ -13,7 +13,6 @@
 #include "../shared/collision/projectile_sweep.hpp"
 #include "../shared/remnant.hpp"
 #include "entities/remnant_entity.hpp"
-#include "send_protobuf_message.hpp"
 #include "server_api.hpp"
 #include "server_messages.hpp"
 #include "systems/canopy_system.hpp"
@@ -205,10 +204,7 @@ static void send_shot_debug(
     message.set_nearest_miss_distance(
         distance_to_nearest_target(eye, direction, targets, shooter_uid));
   
-  const network::Address &client_address =
-      context.transport_layer.clients[client_slot].address;
-
-  ::send_protobuf_message(context, client_address, message);
+  network::send_protobuf_message(context.transport_layer, context.socket, client_slot, message);
 }
 
 [[nodiscard]] static bool try_begin_shot(server_context_t &context, int32_t client_slot,

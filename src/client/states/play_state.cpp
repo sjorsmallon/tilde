@@ -4227,7 +4227,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // Debug: navmesh as triangle wireframes, colored by island ID
   if (ctx.cvars->debug_show_navmesh)
   {
-    const navmesh_t &nav = ctx.world.session.navmesh;
+    const shared::navmesh_t &nav = ctx.world.session.navmesh;
     constexpr float y_lift = 2.f;
 
     static constexpr color_t island_colors[] = {

@@ -1592,7 +1592,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   if (state_manager::get_client_context().cvars->debug_show_navmesh &&
       map.navmesh.valid() && active_tool != editor_tool_t::pathfinding)
   {
-    const navmesh_t &nav = map.navmesh;
+    const shared::navmesh_t &nav = map.navmesh;
     constexpr float y_lift = 2.f;
 
     static constexpr color_t island_colors[] = {

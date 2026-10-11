@@ -195,7 +195,7 @@ private:
   // Step-by-step simplification debugging.
   // m_raw_navmesh holds the baked triangle soup before any simplification.
   // m_simplify_steps is the number of merges applied when stepping manually.
-  navmesh_t m_raw_navmesh;
+  shared::navmesh_t m_raw_navmesh;
   int m_simplify_steps = 0;
 };
 

@@ -1,45 +1,58 @@
 #pragma once
 
-// What a hit COSTS, which is not the same question as what a hit volume IS.
-//
-// Ten volumes map onto three regions (`resources/models/rig.hitboxes` decides
-// which), so a forearm can be a separate capsule and still cost Torso damage.
-// Keeping the two counts apart is what lets the rig gain volumes without
-// touching balance.
-//
-// Was `player_hitboxes.hpp`, which also held a table of three axis-aligned
-// boxes at fixed offsets from the feet. That table is gone: it was the whole
-// hitbox system before the volumes followed the pose, and leaving it lying
-// around invites hit-testing a column that no longer matches anything drawn.
+#include "array.hpp"
 
 #include <cstdint>
-#include <cstring>
 #include <optional>
+#include <string_view>
 
 namespace shared
 {
 
-enum class hit_region_t : uint16_t { Head = 0, Torso = 1, Legs = 2 };
-
-inline const char* to_string(hit_region_t region)
+enum class hit_region_t : uint16_t
 {
-    switch (region)
-    {
-        case hit_region_t::Head:  return "Head";
-        case hit_region_t::Torso: return "Torso";
-        case hit_region_t::Legs:  return "Legs";
-        default:                  return "Unknown";
-    }
+  Head,
+  Torso,
+  Legs,
+};
+
+constexpr uint32_t HIT_REGION_COUNT = 3;
+
+struct hit_region_name_t
+{
+  hit_region_t region;
+  const char*  name;
+};
+
+} // namespace shared
+
+template <> struct enum_traits<shared::hit_region_t>
+{
+  static constexpr uint32_t count = shared::HIT_REGION_COUNT;
+};
+
+namespace shared
+{
+
+constexpr Enum_Array<hit_region_t, hit_region_name_t> HIT_REGION_NAMES = {{
+    {hit_region_t::Head, "Head"},
+    {hit_region_t::Torso, "Torso"},
+    {hit_region_t::Legs, "Legs"},
+}};
+static_assert(rows_in_enum_order<&hit_region_name_t::region>(HIT_REGION_NAMES),
+              "HIT_REGION_NAMES must list every hit_region_t in declaration order");
+
+[[nodiscard]] constexpr const char* to_string(hit_region_t region)
+{
+  return HIT_REGION_NAMES[region].name;
 }
 
-// The inverse, for the `.hitboxes` reader. Names are what the file spells, so
-// this and to_string above must stay each other's inverse.
-[[nodiscard]] inline std::optional<hit_region_t> try_hit_region_from_string(const char* text)
+[[nodiscard]] constexpr std::optional<hit_region_t> try_parse_hit_region(std::string_view text)
 {
-    for (hit_region_t region : {hit_region_t::Head, hit_region_t::Torso, hit_region_t::Legs})
-        if (std::strcmp(to_string(region), text) == 0)
-            return region;
-    return std::nullopt;
+  for (const hit_region_name_t& row : HIT_REGION_NAMES)
+    if (text == row.name)
+      return row.region;
+  return std::nullopt;
 }
 
 } // namespace shared

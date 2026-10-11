@@ -794,7 +794,7 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig(Span<const uint8_t
       return std::nullopt;
 
     const std::optional<shared::hit_region_t> region =
-        shared::try_hit_region_from_string(region_token.c_str());
+        shared::try_parse_hit_region(region_token);
     if (!region)
     {
       log_error("{}:{}: '{}' is not a damage region; expected Head, Torso or Legs", debug_name,

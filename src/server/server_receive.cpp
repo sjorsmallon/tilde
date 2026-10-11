@@ -12,7 +12,6 @@
 #include "game_mode.hpp"
 #include "log.hpp"
 #include "move_budget.hpp"
-#include "send_protobuf_message.hpp"
 #include "server_context.hpp"
 #include "server_messages.hpp"
 #include "systems/game_rules_system.hpp"
@@ -40,7 +39,7 @@ static void send_message_to_reject_incoming_connection(
   reject->set_server_schema_hash(server_schema_hash);
   reject->set_server_asset_table_hash(server_asset_table_hash);
 
-  ::send_protobuf_message(context, sender, reply);
+  network::send_protobuf_message_to_unslotted_peer(context.transport_layer, context.socket, sender, reply);
 }
 
 static void drop_timed_out_clients(server_context_t &context)
@@ -171,7 +170,7 @@ static void handle_connection_messages(server_context_t &context)
           accept->set_map_path(current_map_wire_id(context));
           accept->set_content_hash(context.world.map_content_hash);
 
-          ::send_protobuf_message(context, sender, reply);
+          network::send_protobuf_message(context.transport_layer, context.socket, slot, reply);
         }
 
         send_cvar_values(context, slot,

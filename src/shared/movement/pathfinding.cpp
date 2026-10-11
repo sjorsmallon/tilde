@@ -1,9 +1,12 @@
-#include "pathfinding.hpp"
-#include <vector>
 #include "navmesh.hpp"
 #include "log.hpp"
 #include "timed_function.hpp"
+
 #include <queue>
+#include <vector>
+
+namespace shared
+{
 
 namespace
 {
@@ -39,14 +42,15 @@ namespace
         //@FIXME(SMIA): we need to add the navmesh to the bvh for fast polygon queries, 
         // then we can do A* on the polygon graph to find a corridor of polygons from start to end.
         // which polygon contains the start and end points?
-        int start_poly_idx = nav.maybe_find_polygon_idx_that_contains_this_position(start.x, start.z);
-        int end_poly_idx = nav.maybe_find_polygon_idx_that_contains_this_position(end.x, end.z);
-        if (start_poly_idx == -1 || end_poly_idx == -1)
+        const std::optional<int32_t> start_polygon = nav.try_find_polygon_index_containing(start.x, start.z);
+        const std::optional<int32_t> end_polygon   = nav.try_find_polygon_index_containing(end.x, end.z);
+        if (!start_polygon || !end_polygon)
         {
-            // no path if start or end is outside the navmesh
             log_warning("[pathfinding] start or end point is outside the navmesh.");
             return corridor;
         }
+        const int start_poly_idx = *start_polygon;
+        const int end_poly_idx   = *end_polygon;
 
         // Helper to compute the centroid of a polygon (XZ plane)
         auto poly_centroid = [&](int poly_idx) -> linalg::vec3f
@@ -251,3 +255,5 @@ std::vector<linalg::vec3> find_path(const navmesh_t &nav, const linalg::vec3 &st
     path.push_back(end);
     return path;
 }
+
+} // namespace shared

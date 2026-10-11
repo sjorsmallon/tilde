@@ -42,17 +42,7 @@ void send_text_message_to_a_specific_client(server_context_t &context,
     // the socket refuses it.
     game::S2C_ServerMessage msg;
     msg.set_message(std::string(text));
-    std::vector<network::uint8> buffer(msg.ByteSizeLong());
-    msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-    const auto packets = network::convert_to_packets(
-        buffer, static_cast<network::uint8>(network::Message_Type::S2C_ServerMessage),
-        context.transport_layer.next_message_id);
-    for (const auto &packet : packets)
-    {
-      if (!context.socket.send(packet, ip))
-        log_error("S2C_ServerMessage to {} failed to send ({} bytes): {}",
-                  ip.to_string(), packet.header.payload_size, text);
-    }
+    network::send_protobuf_message_to_unslotted_peer(context.transport_layer, context.socket, ip, msg);
     return;
   }
 

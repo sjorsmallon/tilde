@@ -30,9 +30,9 @@ private:
   
   viewport_state_t viewport; 
 
-  bool pick_navmesh_point(const navmesh_t &nav, linalg::vec3 &out_hit) const;
+  bool pick_navmesh_point(const shared::navmesh_t &nav, linalg::vec3 &out_hit) const;
 
-  void recompute_path(const navmesh_t &nav);
+  void recompute_path(const shared::navmesh_t &nav);
 };
 
 } // namespace client

@@ -17,7 +17,7 @@ void Sculpting_Tool::on_enable(editor_context_t& ctx)
 {
   assert(ctx.map);
   dragging = false;
-  hovered_uid =  shared::invalid_entity_uid;
+  hovered_uid =  shared::null_entity_uid;
 }
 
 void Sculpting_Tool::on_disable(editor_context_t& ctx)
@@ -38,7 +38,7 @@ void Sculpting_Tool::commit_sculpt(editor_context_t& ctx)
   sculpt_start_entity.reset();
   sculpt_start_geometry.reset();
 
-  if (!dragging || dragging_uid == shared::invalid_entity_uid)
+  if (!dragging || dragging_uid == shared::null_entity_uid)
     return;
 
   transaction_t transaction;
@@ -83,7 +83,7 @@ void Sculpting_Tool::on_update(editor_context_t& ctx,
 
   if (dragging) return;
 
-  hovered_uid = shared::invalid_entity_uid;
+  hovered_uid = shared::null_entity_uid;
   hovered_face = shared::box_face_t::Invalid;
 
   if (ctx.bvh)
@@ -314,7 +314,7 @@ void Sculpting_Tool::apply_size_clipboard(editor_context_t& ctx,
 
 void Sculpting_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 {
-  if (dragging || !ctx.map || hovered_uid == shared::invalid_entity_uid)
+  if (dragging || !ctx.map || hovered_uid == shared::null_entity_uid)
     return;
 
   switch (e.key)

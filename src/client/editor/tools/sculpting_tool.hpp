@@ -25,11 +25,11 @@ public:
                        pass_builder_t &draws) override;
 
 private:
-  shared::entity_uid_t hovered_uid = shared::invalid_entity_uid;
+  shared::entity_uid_t hovered_uid = shared::null_entity_uid;
   shared::box_face_t hovered_face = shared::box_face_t::Invalid;
 
   bool dragging = false;
-  shared::entity_uid_t dragging_uid = shared::invalid_entity_uid;
+  shared::entity_uid_t dragging_uid = shared::null_entity_uid;
   shared::box_face_t dragging_face = shared::box_face_t::Invalid;
   
   viewport_state_t last_view;

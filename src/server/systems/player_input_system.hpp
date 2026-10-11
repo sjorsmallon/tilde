@@ -14,4 +14,7 @@ struct server_context_t;
 // pending_hit_t that step 4 pays.
 void update_player_inputs(server_context_t& context, const shared::predicted_world_storage_t& world_storage);
 
+// Every living body turns toward the view its inputs wrote this tick; the hit-test world poses from it.
+void update_body_yaws(server_context_t& context, float tick_dt);
+
 } // namespace server
