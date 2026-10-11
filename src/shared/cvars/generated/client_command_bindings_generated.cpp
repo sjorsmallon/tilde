@@ -102,6 +102,34 @@ bool invoke_bind(Span<std::string_view> args, const command_context_t& context,
   return true;
 }
 
+// grab_frame
+bool invoke_grab_frame(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::grab_frame, args.size());
+    return false;
+  }
+
+  commands::grab_frame(context);
+  return true;
+}
+
+// grab_clear
+bool invoke_grab_clear(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::grab_clear, args.size());
+    return false;
+  }
+
+  commands::grab_clear(context);
+  return true;
+}
+
 // connect <address>
 bool invoke_connect(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -442,6 +470,8 @@ void bind_client_commands(command_table_t& table)
 {
   table.binders[(uint32_t)command_id::shadow_volume_report] = &invoke_shadow_volume_report;
   table.binders[(uint32_t)command_id::bind] = &invoke_bind;
+  table.binders[(uint32_t)command_id::grab_frame] = &invoke_grab_frame;
+  table.binders[(uint32_t)command_id::grab_clear] = &invoke_grab_clear;
   table.binders[(uint32_t)command_id::connect] = &invoke_connect;
   table.binders[(uint32_t)command_id::announce] = &invoke_announce;
   table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;

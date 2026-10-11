@@ -155,6 +155,12 @@ constexpr const char* Reveal_Cone_Kind_VALUE_NAMES[] = {
   "Erases",
 };
 
+constexpr const char* Lens_Filter_VALUE_NAMES[] = {
+  "Red",
+  "Green",
+  "Blue",
+};
+
 constexpr const char* Movement_Override_VALUE_NAMES[] = {
   "None",
   "Reel",
@@ -182,6 +188,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Match_Request", {Match_Request_VALUE_NAMES, 5}},
   {"Easing", {Easing_VALUE_NAMES, 5}},
   {"Reveal_Cone_Kind", {Reveal_Cone_Kind_VALUE_NAMES, 2}},
+  {"Lens_Filter", {Lens_Filter_VALUE_NAMES, 3}},
   {"Movement_Override", {Movement_Override_VALUE_NAMES, 6}},
 };
 
@@ -635,7 +642,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[18]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -3495,6 +3502,24 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "revealed_by_lens",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, revealed_by_lens),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::revealed_by_lens),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "lens_filter",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, lens_filter),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::lens_filter),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[17]},
 };
 
 constexpr field_info_t Ping_Marker_Entity_FIELDS[] = {
@@ -4691,6 +4716,81 @@ constexpr field_info_t Fog_Volume_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Lens_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Lens_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Lens_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Lens_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Lens_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Lens_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "volume",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Lens_Entity, volume),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::volume),
+   .flags = 0u,
+   .component_id = 0,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "filter",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Lens_Entity, filter),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::filter),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[17]},
+  {.name = "render",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Lens_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Lens_Entity::render),
+   .flags = 0u,
+   .component_id = 9,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -4752,6 +4852,7 @@ Entity* construct_Emancipated_Weapon_Entity(void* memory) { return new (memory) 
 Entity* construct_Void_Entity(void* memory) { return new (memory) Void_Entity(); }
 Entity* construct_Reveal_Light_Entity(void* memory) { return new (memory) Reveal_Light_Entity(); }
 Entity* construct_Fog_Volume_Entity(void* memory) { return new (memory) Fog_Volume_Entity(); }
+Entity* construct_Lens_Entity(void* memory) { return new (memory) Lens_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -4794,6 +4895,7 @@ Entity* as_base_Emancipated_Weapon_Entity(void* memory) { return static_cast<Ent
 Entity* as_base_Void_Entity(void* memory) { return static_cast<Entity*>((Void_Entity*)memory); }
 Entity* as_base_Reveal_Light_Entity(void* memory) { return static_cast<Entity*>((Reveal_Light_Entity*)memory); }
 Entity* as_base_Fog_Volume_Entity(void* memory) { return static_cast<Entity*>((Fog_Volume_Entity*)memory); }
+Entity* as_base_Lens_Entity(void* memory) { return static_cast<Entity*>((Lens_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -4823,7 +4925,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 5}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 16384u, false, true, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 128u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
-  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 12}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
+  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 14}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
   {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 8}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 512u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 8192u, false, true, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
   {"path_node_entity", "Path Node", {Path_Node_Entity_FIELDS, 8}, (uint32_t)sizeof(Path_Node_Entity), (uint32_t)alignof(Path_Node_Entity), 0u, false, false, false, construct_Path_Node_Entity, as_base_Path_Node_Entity},
@@ -4838,6 +4940,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"void_entity", "Void", {Void_Entity_FIELDS, 7}, (uint32_t)sizeof(Void_Entity), (uint32_t)alignof(Void_Entity), 515u, false, true, false, construct_Void_Entity, as_base_Void_Entity},
   {"reveal_light_entity", "Reveal Light", {Reveal_Light_Entity_FIELDS, 11}, (uint32_t)sizeof(Reveal_Light_Entity), (uint32_t)alignof(Reveal_Light_Entity), 65538u, false, true, false, construct_Reveal_Light_Entity, as_base_Reveal_Light_Entity},
   {"fog_volume_entity", "Fog Volume", {Fog_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Fog_Volume_Entity), (uint32_t)alignof(Fog_Volume_Entity), 3u, false, true, false, construct_Fog_Volume_Entity, as_base_Fog_Volume_Entity},
+  {"lens_entity", "Lens", {Lens_Entity_FIELDS, 8}, (uint32_t)sizeof(Lens_Entity), (uint32_t)alignof(Lens_Entity), 515u, false, true, false, construct_Lens_Entity, as_base_Lens_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][17] = {
@@ -4883,9 +4986,10 @@ constexpr int32_t COMPONENT_OFFSETS[][17] = {
   {(int32_t)offsetof(Void_Entity, volume), (int32_t)offsetof(Void_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Void_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Void_Entity
   {-1, (int32_t)offsetof(Reveal_Light_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Reveal_Light_Entity, rides)}, // Reveal_Light_Entity
   {(int32_t)offsetof(Fog_Volume_Entity, volume), (int32_t)offsetof(Fog_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Fog_Volume_Entity
+  {(int32_t)offsetof(Lens_Entity, volume), (int32_t)offsetof(Lens_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Lens_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Lens_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 25;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 26;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -4912,9 +5016,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Void_Entity,
   entity_type::Reveal_Light_Entity,
   entity_type::Fog_Volume_Entity,
+  entity_type::Lens_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 35;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 36;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4951,6 +5056,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Void_Entity,
   entity_type::Reveal_Light_Entity,
   entity_type::Fog_Volume_Entity,
+  entity_type::Lens_Entity,
 };
 
 } // namespace
@@ -5373,6 +5479,26 @@ template <> std::optional<Reveal_Cone_Kind> try_from_string<Reveal_Cone_Kind>(st
   return std::nullopt;
 }
 
+const char* to_string(Lens_Filter value)
+{
+  switch (value)
+  {
+    case Lens_Filter::Red: return "Red";
+    case Lens_Filter::Green: return "Green";
+    case Lens_Filter::Blue: return "Blue";
+  }
+  assert(false && "invalid Lens_Filter");
+  return "";
+}
+
+template <> std::optional<Lens_Filter> try_from_string<Lens_Filter>(std::string_view text)
+{
+  if (text == "Red") return Lens_Filter::Red;
+  if (text == "Green") return Lens_Filter::Green;
+  if (text == "Blue") return Lens_Filter::Blue;
+  return std::nullopt;
+}
+
 const char* to_string(Movement_Override value)
 {
   switch (value)
@@ -5485,6 +5611,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Void_Entity: return new Void_Entity();
     case entity_type::Reveal_Light_Entity: return new Reveal_Light_Entity();
     case entity_type::Fog_Volume_Entity: return new Fog_Volume_Entity();
+    case entity_type::Lens_Entity: return new Lens_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -5547,6 +5674,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Void_Entity: delete static_cast<Void_Entity*>(entity); return;
     case entity_type::Reveal_Light_Entity: delete static_cast<Reveal_Light_Entity*>(entity); return;
     case entity_type::Fog_Volume_Entity: delete static_cast<Fog_Volume_Entity*>(entity); return;
+    case entity_type::Lens_Entity: delete static_cast<Lens_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -5561,6 +5689,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xb9d99d0fu;
+const uint32_t SCHEMA_HASH = 0x2bb16ad2u;
 
 } // namespace entities

@@ -59,6 +59,7 @@ struct pass_builder_t
   std::vector<shared::shadow_volume_t>                 shadow_volumes;
   std::vector<shared::shadow_occluder_t>               shadow_occluders;
   std::vector<renderer::fog_volume_t>                  fog_volumes;
+  std::vector<shared::lens_t>                          lenses;
   std::vector<renderer::beam_t>                        beams;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
@@ -125,6 +126,7 @@ struct pass_builder_t
     shadow_volumes.clear();
     shadow_occluders.clear();
     fog_volumes.clear();
+    lenses.clear();
     beams.clear();
     custom.clear();
     debug.retire(delta_seconds);
@@ -145,6 +147,7 @@ struct pass_builder_t
     pass.shadow_volumes    = shadow_volumes;
     pass.shadow_occluders  = shadow_occluders;
     pass.fog_volumes       = fog_volumes;
+    pass.lenses            = lenses;
     pass.beams             = beams;
     pass.seconds          = seconds;
     pass.debug_channel = debug_channel;

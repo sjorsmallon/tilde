@@ -68,6 +68,8 @@ Easing :: enum { Linear, Smooth, In_Cubic, Out_Cubic, In_Out_Cubic }
 
 // What a reveal cone does to the geometry that answers to it (shared/reveal_light.hpp): a Flashlight's Reveals, an Eraser's Erases.
 Reveal_Cone_Kind :: enum { Reveals, Erases }
+// The colour a lens passes and the colour a lensed owner is drawn in (shared/lens.hpp): red is bit 0, green bit 1, blue bit 2.
+Lens_Filter :: enum { Red, Green, Blue }
 
 // What is authoring a player's move instead of the model, while it lasts.
 // movement_def.md "Overrides": one override, one member. A second kind reuses
@@ -702,6 +704,10 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     solid_only_in_shadow: bool = false @Networked @Editable
     // Its geometry is neither drawn nor solid inside a shadow volume: the shadow is a hole.
     erased_in_shadow: bool = false @Networked @Editable
+    // Its geometry is drawn only where the line of sight to it passes through a lens that passes `lens_filter`
+    // (shared/lens.hpp); solid everywhere, and the editor always draws it.
+    revealed_by_lens: bool = false @Networked @Editable
+    lens_filter: Lens_Filter = .Red @Networked @Editable
 }
 
 // middle-mouse button ping.
@@ -850,4 +856,15 @@ Fog_Volume_Entity :: entity is Switchable {
     color:        v3 = {1, 1, 1}                    @Editable
     // How far in from each face the fog takes to thicken from nothing to `density`; 0 is a hard edge.
     edge_softness: f32 = 32.0                       @Editable
+}
+
+// A window the world is seen through (shared/lens.hpp): while switched on, geometry whose owner is `revealed_by_lens`
+// is drawn only where the line from the eye to it crosses this box and the box passes the owner's colour. The filters
+// of every lens on one line multiply, so a red and a green stacked pass nothing. Axis aligned whatever its orientation.
+Lens_Entity :: entity is Switchable {
+    switch_state: Enabled
+    volume:       Box_Volume = { half_extents = {64, 64, 4} }
+    filter:       Lens_Filter = .Red                @Editable
+    // Drawn at the volume and in the filter's colour, never at render.scale or material.color.
+    render:       Render = { mesh = .Box, material = { shader_type = .Ghost } }
 }

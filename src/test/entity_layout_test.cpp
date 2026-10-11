@@ -266,6 +266,8 @@ int main()
         entity_type::Reveal_Light_Entity,
         // Through Enabled.
         entity_type::Fog_Volume_Entity,
+        // Through Enabled and Render.
+        entity_type::Lens_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

@@ -641,6 +641,7 @@ Debugging :: cvars {
     // debug_draw_list_t entries carry their own lifetime, which is what this
     // feeds. 0 disables the draw without turning off the server's send.
     cl_shot_debug_seconds:     f32 = 4.0 @Client     "Seconds a shot-debug overlay stays on screen (0 = off)"
+    cl_grab_distance:          f32 = 2.0 @Client     "How far ahead of the eye a grabbed frame's quad is placed; it is sized to fill the view from there (the near plane is 1)"
     cl_shadow_volume_debug:    bool = false @Client    "Draw the shadow volumes the prediction cut this frame as pyramids, and print the cut's counts and caster/light pairs to the console whenever they change (shadow_volume_plan.md)"
     cl_solid_beam_debug:       bool = false @Client    "Draw every solid beam the prediction cut this frame as its convex pieces, one colour per piece with its index, and the beam's piece count at the fixture; the picture to hold against r_debug_channel beam_terms"
     debug_show_entity_counts:  bool = false @Client     "Per-type entity count overlay"
@@ -783,6 +784,8 @@ Server_Commands :: commands {
 Client_Commands :: commands {
     shadow_volume_report()                 @Client  "Print how the shadow volumes cut for the newest snapshot: lights, casters, receivers and every refusal"
     bind(key: string, command: string...)  @Client  "Bind a key (a-z, 0-9, f1-f12, space, arrows, kp_0-kp_9) to a command line"
+    grab_frame()                           @Client  "Copy the next frame into a texture and draw it on a screen quad"
+    grab_clear()                           @Client  "Drop the grabbed frame"
 
     // @Client even though it is about the server: it picks WHICH server, so it
     // must run on the side that isn't connected to one yet. Forwarding it would

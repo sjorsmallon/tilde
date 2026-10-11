@@ -815,6 +815,8 @@ struct scene_uniform_t
   float       view_right[4]                                 = {}; // the camera's right, as long as half the view is wide one unit of view depth away
   float       view_up[4]                                    = {}; // the camera's up, as long as half the view is tall
   float       fog_volumes[MAX_SCENE_FOG_VOLUMES][12]        = {}; // lowest corner xyz and density, highest corner xyz and edge softness, then the scattered colour rgb
+  float       lens_settings[4]                              = {}; // x how many of `lenses` are live
+  float       lenses[MAX_SCENE_LENSES][8]                   = {}; // centre xyz and the channel bits it passes as a whole number, then half extents xyz and one spare
 };
 
 static_assert(sizeof(scene_uniform_t) ==
@@ -827,7 +829,7 @@ static_assert(sizeof(scene_uniform_t) ==
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
                       8 * MAX_SCENE_SHADOW_OCCLUDERS +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_OCCLUDERS + 48 +
-                      48 * MAX_SCENE_FOG_VOLUMES,
+                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 32 * MAX_SCENE_LENSES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -1381,6 +1383,7 @@ static QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
 static void create_depth_resources();
 static void create_screen_targets();
 static void destroy_screen_targets();
+static void destroy_grabbed_frame_images();
 static void write_screen_target_inputs();
 
 static void cleanup_swapchain()
@@ -1720,8 +1723,11 @@ static void create_depth_resources()
   }
 }
 
-static void create_screen_image(const char* name, VkFormat format, VkImage& image,
-                                VkDeviceMemory& memory, VkImageView& view)
+constexpr VkImageUsageFlags SCREEN_ATTACHMENT_USAGE =
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+
+static void create_screen_image(const char* name, VkFormat format, VkImageUsageFlags usage,
+                                VkImage& image, VkDeviceMemory& memory, VkImageView& view)
 {
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.imageType     = VK_IMAGE_TYPE_2D;
@@ -1731,7 +1737,7 @@ static void create_screen_image(const char* name, VkFormat format, VkImage& imag
   image_info.arrayLayers   = 1;
   image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
   image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
-  image_info.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.usage         = usage;
   image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -1781,8 +1787,9 @@ static void create_screen_target(screen_target_t& target, VkRenderPass render_pa
 
   for (int frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
   {
-    create_screen_image(target.name, target.format, target.images[frame], target.memories[frame],
-                        target.views[frame]);
+    create_screen_image(target.name, target.format,
+                        SCREEN_ATTACHMENT_USAGE | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                        target.images[frame], target.memories[frame], target.views[frame]);
 
     VkImageView attachments[2 + SCENE_DATA_IMAGE_COUNT];
     uint32_t    attachment_count   = 0;
@@ -1791,8 +1798,8 @@ static void create_screen_target(screen_target_t& target, VkRenderPass render_pa
       attachments[attachment_count++] = depth_view;
     for (screen_image_t& image : data_images)
     {
-      create_screen_image(image.name, image.format, image.images[frame], image.memories[frame],
-                          image.views[frame]);
+      create_screen_image(image.name, image.format, SCREEN_ATTACHMENT_USAGE, image.images[frame],
+                          image.memories[frame], image.views[frame]);
       attachments[attachment_count++] = image.views[frame];
     }
 
@@ -1852,6 +1859,7 @@ static void destroy_screen_targets()
   destroy_screen_target(g_hdr_target, g_scene_data_images);
   destroy_screen_target(g_tonemapped_target, {});
   destroy_screen_target(g_outline_mask_target, {});
+  destroy_grabbed_frame_images();
 }
 
 // The scene pass's blend states: the pipeline's own for the HDR colour, then every data image, written whole or left alone.
@@ -4441,6 +4449,8 @@ void destroy_texture(gpu_texture_t &tex)
 // the 64-set cap a meaningful budget rather than a per-material one.
 static std::unordered_map<uint32_t, texture_handle_t> g_texture_by_asset;
 
+static void write_ui_texture_set(VkDescriptorSet set, const gpu_texture_t& texture);
+
 static VkDescriptorSet allocate_ui_texture_set(const gpu_texture_t &texture)
 {
   if (g_ui_texture_pool == VK_NULL_HANDLE)
@@ -4460,6 +4470,12 @@ static VkDescriptorSet allocate_ui_texture_set(const gpu_texture_t &texture)
     return VK_NULL_HANDLE;
   }
 
+  write_ui_texture_set(set, texture);
+  return set;
+}
+
+static void write_ui_texture_set(VkDescriptorSet set, const gpu_texture_t& texture)
+{
   VkDescriptorImageInfo image{};
   image.sampler     = texture.sampler;
   image.imageView   = texture.view;
@@ -4472,8 +4488,141 @@ static VkDescriptorSet allocate_ui_texture_set(const gpu_texture_t &texture)
   write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   write.pImageInfo      = &image;
   vkUpdateDescriptorSets(g_device, 1, &write, 0, nullptr);
+}
 
-  return set;
+// --- The frame grab ---
+// A slot is one swapchain-sized image in the tonemapped target's format, registered in
+// the texture table so a material can bind it; grab N lands in slot N mod the cap, so
+// the texture a quad holds is overwritten exactly when its frame leaves the live list.
+// A slot's image is made on its first grab and the registry entry shares its handles;
+// a resize destroys the images and forgets the entries, which is what keeps every
+// material set that was built over an old view out of reach of a later draw.
+struct grab_slot_t
+{
+  gpu_texture_t    texture;
+  texture_handle_t handle;
+};
+static grab_slot_t                  g_grab_slots[MAX_GRABBED_FRAMES];
+static std::vector<grabbed_frame_t> g_grabbed_frames;
+static uint32_t                     g_next_grab_serial     = 1;
+static bool                         g_frame_grab_requested = false;
+
+static void destroy_grabbed_frame_images()
+{
+  for (grab_slot_t& slot : g_grab_slots)
+  {
+    if (slot.handle.valid() && slot.handle.index < g_textures.size())
+    {
+      gpu_texture_entry_t& entry = g_textures[slot.handle.index];
+      entry.texture.image        = VK_NULL_HANDLE;
+      entry.texture.memory       = VK_NULL_HANDLE;
+      entry.texture.view         = VK_NULL_HANDLE;
+    }
+    if (slot.texture.image != VK_NULL_HANDLE)
+      destroy_screen_image(slot.texture.image, slot.texture.memory, slot.texture.view);
+    slot = {};
+  }
+  g_grabbed_frames.clear();
+}
+
+static void fill_grab_slot(grab_slot_t& slot)
+{
+  create_screen_image("grabbed frame", g_tonemapped_target.format,
+                      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                      slot.texture.image, slot.texture.memory, slot.texture.view);
+
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = VK_FILTER_LINEAR;
+  sampler_info.minFilter    = VK_FILTER_LINEAR;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  VkSampler sampler = VK_NULL_HANDLE;
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &sampler) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the grabbed frame sampler");
+
+  gpu_texture_entry_t entry{};
+  entry.texture         = slot.texture;
+  entry.texture.sampler = sampler;
+  slot.handle           = texture_handle_t{(uint32_t)g_textures.size()};
+  g_textures.push_back(entry);
+}
+
+static VkImageMemoryBarrier image_layout_barrier(VkImage image, VkImageLayout old_layout,
+                                                 VkImageLayout new_layout, VkAccessFlags src_access,
+                                                 VkAccessFlags dst_access)
+{
+  VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  barrier.srcAccessMask       = src_access;
+  barrier.dstAccessMask       = dst_access;
+  barrier.oldLayout           = old_layout;
+  barrier.newLayout           = new_layout;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image               = image;
+  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  return barrier;
+}
+
+// Between the tonemapped pass and the present pass: the tonemapped image is in
+// SHADER_READ_ONLY for the antialiasing draw, and is handed back in that layout.
+static void record_frame_grab(VkCommandBuffer cmd, uint32_t frame)
+{
+  const uint32_t serial = g_next_grab_serial++;
+  grab_slot_t&   slot   = g_grab_slots[serial % MAX_GRABBED_FRAMES];
+  if (!slot.handle.valid())
+    fill_grab_slot(slot);
+
+  const VkImage source = g_tonemapped_target.images[frame];
+
+  const VkImageMemoryBarrier to_transfer[] = {
+      image_layout_barrier(source, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+      image_layout_barrier(slot.texture.image, VK_IMAGE_LAYOUT_UNDEFINED,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                           VK_ACCESS_TRANSFER_WRITE_BIT)};
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, to_transfer);
+
+  VkImageCopy copy{};
+  copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  copy.extent         = {g_swapchain_extent.width, g_swapchain_extent.height, 1};
+  vkCmdCopyImage(cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.texture.image,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+  const VkImageMemoryBarrier to_sampled[] = {
+      image_layout_barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_ACCESS_SHADER_READ_BIT),
+      image_layout_barrier(slot.texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT)};
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       0, 0, nullptr, 0, nullptr, 2, to_sampled);
+
+  g_grabbed_frames.push_back(grabbed_frame_t{serial, slot.handle});
+  if (g_grabbed_frames.size() > MAX_GRABBED_FRAMES)
+    g_grabbed_frames.erase(g_grabbed_frames.begin());
+}
+
+void request_frame_grab()
+{
+  g_frame_grab_requested = true;
+}
+
+void clear_grabbed_frames()
+{
+  g_frame_grab_requested = false;
+  g_grabbed_frames.clear();
+}
+
+Span<const grabbed_frame_t> grabbed_frames()
+{
+  return Span<const grabbed_frame_t>(g_grabbed_frames.data(), (uint32_t)g_grabbed_frames.size());
 }
 
 texture_handle_t register_texture(const assets::texture_asset_t &texture, bool srgb)
@@ -7386,6 +7535,28 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
         (float)(written_cone_count - first_of_kind);
   }
 
+  static size_t most_lenses_warned_about = MAX_SCENE_LENSES;
+  if (pass.lenses.size() > most_lenses_warned_about)
+  {
+    most_lenses_warned_about = pass.lenses.size();
+    log_warning("[renderer] this view pass carries {} lenses; only the first {} are looked through",
+                pass.lenses.size(), MAX_SCENE_LENSES);
+  }
+  const size_t lens_count = std::min<size_t>(pass.lenses.size(), MAX_SCENE_LENSES);
+  scene.lens_settings[0]  = (float)lens_count;
+  for (size_t index = 0; index < lens_count; ++index)
+  {
+    const shared::lens_t& lens = pass.lenses[(uint32_t)index];
+    float*                out  = scene.lenses[index];
+    out[0] = lens.center.x;
+    out[1] = lens.center.y;
+    out[2] = lens.center.z;
+    out[3] = (float)shared::get_channel_bits_for_lens_filter(lens.filter);
+    out[4] = lens.half_extents.x;
+    out[5] = lens.half_extents.y;
+    out[6] = lens.half_extents.z;
+  }
+
   static size_t most_shadow_volumes_warned_about = MAX_SCENE_SHADOW_VOLUMES;
   if (pass.shadow_volumes.size() > most_shadow_volumes_warned_about)
   {
@@ -10072,6 +10243,13 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Tonemap);
+
+  // 6b. The frame grab, if one was asked for: the tonemapped frame copied aside for a UI quad.
+  if (g_frame_grab_requested)
+  {
+    record_frame_grab(cmd, frame);
+    g_frame_grab_requested = false;
+  }
 
   // 7. The PRESENT pass. The antialiasing draw is first and covers every pixel,
   //    for the same reason; switched off it copies the frame through.

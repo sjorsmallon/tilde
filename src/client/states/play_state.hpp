@@ -85,6 +85,25 @@ private:
 
   pass_builder_t scene;
 
+  // A grabbed frame placed in the world: a quad ahead of where the camera stood when the
+  // grab landed, facing it, with the frame as its albedo. One material per texture slot,
+  // reused as the slot is; the quad leaves when its frame leaves the renderer's list.
+  struct placed_grab_t
+  {
+    uint32_t                   serial = 0;
+    renderer::material_handle_t material;
+    linalg::mat4f              transform;
+  };
+  struct grab_material_t
+  {
+    renderer::texture_handle_t  texture;
+    renderer::material_handle_t material;
+  };
+  std::vector<placed_grab_t>   placed_grabs;
+  std::vector<grab_material_t> grab_materials;
+  renderer::mesh_handle_t      grab_quad_mesh;
+  void place_grabbed_frames();
+
   // Resolves sv_skybox's text once per change. The value arrives over the cvar
   // mirror, so it can land AFTER the map did -- which is why this is asked
   // every frame rather than once at load.

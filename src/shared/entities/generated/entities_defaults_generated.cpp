@@ -307,7 +307,9 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     solid_only_when_revealed(false),
     erased_by_light(false),
     solid_only_in_shadow(false),
-    erased_in_shadow(false)
+    erased_in_shadow(false),
+    revealed_by_lens(false),
+    lens_filter(Lens_Filter::Red)
 {
   type = entity_type::Geometry_Owner_Entity;
 }
@@ -452,6 +454,15 @@ Fog_Volume_Entity::Fog_Volume_Entity()
     edge_softness(32.0f)
 {
   type = entity_type::Fog_Volume_Entity;
+}
+
+Lens_Entity::Lens_Entity()
+  : switch_state{},
+    volume({.half_extents = {64.0f, 64.0f, 4.0f}}),
+    filter(Lens_Filter::Red),
+    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Ghost}})
+{
+  type = entity_type::Lens_Entity;
 }
 
 } // namespace entities

@@ -205,6 +205,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Void_Entity
   trait_bit(entity_trait::Switchable),   // Reveal_Light_Entity
   trait_bit(entity_trait::Switchable),   // Fog_Volume_Entity
+  trait_bit(entity_trait::Switchable),   // Lens_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -275,6 +276,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Void_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Reveal_Light_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Fog_Volume_Entity
+  action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Lens_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -337,6 +339,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Void_Entity
   0u,   // Reveal_Light_Entity
   0u,   // Fog_Volume_Entity
+  0u,   // Lens_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)

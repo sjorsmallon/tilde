@@ -14,6 +14,14 @@ const int LIGHT_CUT_REVEALED     = 1;
 const int LIGHT_CUT_ERASED       = 2;
 const int LIGHT_CUT_SHADOW_SOLID = 3;
 const int LIGHT_CUT_SHADOW_HOLE  = 4;
+// A lensed draw keeps only the fragments seen through a lens that passes its colour (shared/lens.hpp);
+// the three are one cut, the colour's channel bit being 1 << (LIGHT_CUT - LIGHT_CUT_LENS_RED).
+const int LIGHT_CUT_LENS_RED     = 5;
+const int LIGHT_CUT_LENS_GREEN   = 6;
+const int LIGHT_CUT_LENS_BLUE    = 7;
+
+// A lens's rim, in world units inside its silhouette.
+const float LENS_RIM_UNITS = 12.0;
 
 // A shadow volume's rim, in world units inside its nearest plane.
 const float SHADOW_RIM_UNITS = 12.0;
@@ -92,6 +100,42 @@ float shadow_margin(vec3 world_position)
     return max(margin, -1.0);
 }
 
+// How far inside a lens's silhouette the fragment is seen, in rim widths (shared/lens.hpp's
+// lens_lies_on_line_of_sight): the shorter of the chord the eye's line cuts through the lens and how far
+// behind the lens's far side the fragment lies. The channels of every lens on the line multiply, so a red
+// and a green stacked pass nothing. -1 when no lens on the line passes this draw's colour.
+float lens_margin(vec3 world_position)
+{
+    const int   channel = 1 << (LIGHT_CUT - LIGHT_CUT_LENS_RED);
+    const vec3  eye     = scene.camera_position.xyz;
+    const vec3  line    = world_position - eye;
+    const float reach   = length(line);
+    const vec3  inverse_line = 1.0 / mix(line, vec3(1e-5), lessThan(abs(line), vec3(1e-5)));
+
+    int   passed = 7;
+    bool  seen   = false;
+    float margin = 1e9;
+    const int lens_count = int(scene.lens_settings.x);
+    for (int index = 0; index < lens_count; ++index) {
+        const vec3 center       = scene.lenses[index].center_channels.xyz;
+        const vec3 half_extents = scene.lenses[index].half_extents.xyz;
+        const vec3 low          = (center - half_extents - eye) * inverse_line;
+        const vec3 high         = (center + half_extents - eye) * inverse_line;
+        const vec3 entering     = min(low, high);
+        const vec3 leaving      = max(low, high);
+        const float enter       = max(max(entering.x, entering.y), max(entering.z, 0.0));
+        const float exit        = min(min(leaving.x, leaving.y), leaving.z);
+        if (enter >= exit || exit >= 1.0)
+            continue;
+        passed = passed & int(scene.lenses[index].center_channels.w + 0.5);
+        seen   = true;
+        margin = min(margin, min(exit - enter, 1.0 - exit) * reach / LENS_RIM_UNITS);
+    }
+    if (!seen || (passed & channel) == 0)
+        return -1.0;
+    return margin;
+}
+
 // Positive inside whatever this draw is kept by, negative outside it; the cut's one rule, which the discard and the rim share.
 float cut_margin(vec3 world_position)
 {
@@ -103,6 +147,8 @@ float cut_margin(vec3 world_position)
         return shadow_margin(world_position);
     if (LIGHT_CUT == LIGHT_CUT_SHADOW_HOLE)
         return -shadow_margin(world_position);
+    if (LIGHT_CUT >= LIGHT_CUT_LENS_RED)
+        return lens_margin(world_position);
     return 1.0;
 }
 
@@ -115,6 +161,8 @@ void discard_outside_reveal(vec3 world_position)
     if (LIGHT_CUT == LIGHT_CUT_SHADOW_SOLID && shadow_margin(world_position) < 0.0)
         discard;
     if (LIGHT_CUT == LIGHT_CUT_SHADOW_HOLE && shadow_margin(world_position) >= 0.0)
+        discard;
+    if (LIGHT_CUT >= LIGHT_CUT_LENS_RED && lens_margin(world_position) < 0.0)
         discard;
 }
 

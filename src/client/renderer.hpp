@@ -37,6 +37,7 @@
 #include "../shared/lighting.hpp"
 #include "../shared/lightmap.hpp"
 #include "../shared/linalg.hpp"
+#include "../shared/lens.hpp"
 #include "../shared/reveal_light.hpp"
 #include "../shared/shadow_volume.hpp"
 #include "../shared/span.hpp"
@@ -396,6 +397,8 @@ struct peel_t
 // scene.glsl's MAX_REVEAL_CONES, kept one number by renderer.cpp's size assert on the scene uniform.
 inline constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 
+// scene.glsl's MAX_LENSES, kept one number by the same assert.
+inline constexpr uint32_t MAX_SCENE_LENSES = 16;
 // scene.glsl's MAX_FOG_VOLUMES, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
@@ -448,7 +451,7 @@ struct fog_volume_t
   float         edge_softness = 0.0f;
 };
 
-// What the pass's reveal_cones do to a draw (resources/shaders/reveal.glsl's LIGHT_CUT_*).
+// What the pass's reveal_cones, shadow_volumes and lenses do to a draw (resources/shaders/reveal.glsl's LIGHT_CUT_*).
 enum class light_cut_t : uint8_t
 {
   none,
@@ -456,8 +459,28 @@ enum class light_cut_t : uint8_t
   erased,
   // Kept only inside a shadow volume (the shadow is the platform), or only outside every one (the shadow is a hole).
   shadow_solid,
-  shadow_hole
+  shadow_hole,
+  // Kept only where seen through a lens that passes the draw's colour (shared/lens.hpp); the colour is the cut.
+  lens_red,
+  lens_green,
+  lens_blue
 };
+
+[[nodiscard]] inline bool light_cut_is_a_lens(light_cut_t cut)
+{
+  return cut == light_cut_t::lens_red || cut == light_cut_t::lens_green || cut == light_cut_t::lens_blue;
+}
+
+[[nodiscard]] inline light_cut_t get_light_cut_for_lens_filter(entities::Lens_Filter filter)
+{
+  switch (filter)
+  {
+  case entities::Lens_Filter::Red: return light_cut_t::lens_red;
+  case entities::Lens_Filter::Green: return light_cut_t::lens_green;
+  case entities::Lens_Filter::Blue: return light_cut_t::lens_blue;
+  }
+  return light_cut_t::none;
+}
 
 struct mesh_draw_t
 {
@@ -763,6 +786,8 @@ struct view_pass_t
   Span<const shared::shadow_occluder_t>     shadow_occluders = {};
   // Drawn for the FIRST perspective pass of the frame that carries any: there is one fog grid.
   Span<const fog_volume_t>                  fog_volumes = {};
+  // Where a lens_* draw exists (shared/lens.hpp). Past MAX_SCENE_LENSES the tail is dropped.
+  Span<const shared::lens_t>                lenses = {};
   // Filled by the beam pass after the scene pass, for a perspective pass only. Past MAX_SCENE_BEAMS the tail is dropped.
   Span<const beam_t>                        beams = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
@@ -921,6 +946,22 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 // The swapchain extent in pixels, which is the coordinate space ui_draw_list_t
 // works in. Exposed so layout code has it without reaching into ImGui's io.
 [[nodiscard]] linalg::vec2 screen_size();
+
+// The frame grab: the next tonemapped frame, before antialiasing and the UI, copied
+// into a swapchain-sized texture a material can bind. Up to MAX_GRABBED_FRAMES are
+// held, oldest first; the next grab past that reuses the oldest's texture, and a
+// resize drops them all. The serial is how a caller tells a reused texture from the
+// frame it held before.
+struct grabbed_frame_t
+{
+  uint32_t         serial = 0;
+  texture_handle_t texture;
+};
+constexpr uint32_t MAX_GRABBED_FRAMES = 16;
+
+void                                      request_frame_grab();
+void                                      clear_grabbed_frames();
+[[nodiscard]] Span<const grabbed_frame_t> grabbed_frames();
 
 // Pixels per logical UI unit on the display the window is currently on: 1.0 at
 // 96 DPI, 1.5 at Windows' 150%. The ONE owner of that factor -- the process is

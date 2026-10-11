@@ -550,6 +550,7 @@ add_library(game_shared STATIC
     src/shared/flight_path.cpp
     src/shared/canopy.cpp
     src/shared/reveal_light.cpp
+    src/shared/lens.cpp
     src/shared/shadow_volume.cpp
     src/shared/statues.cpp
     src/shared/solid_beams.cpp
@@ -1256,6 +1257,11 @@ add_executable(reveal_cone_test src/test/reveal_cone_test.cpp)
 target_include_directories(reveal_cone_test PRIVATE src src/shared)
 target_link_libraries(reveal_cone_test PRIVATE game_shared)
 
+# A lens is seen through along the eye's line, and the filters of stacked lenses multiply.
+add_executable(lens_test src/test/lens_test.cpp)
+target_include_directories(lens_test PRIVATE src src/shared)
+target_link_libraries(lens_test PRIVATE game_shared)
+
 add_executable(shadow_volume_test src/test/shadow_volume_test.cpp)
 target_include_directories(shadow_volume_test PRIVATE src src/shared)
 target_link_libraries(shadow_volume_test PRIVATE game_shared)
@@ -1541,6 +1547,7 @@ set(GAME_TESTS
     team_wall_ripples_test
     beam_ripples_test
     reveal_cone_test
+    lens_test
     shadow_volume_test
     mover_path_test
     prefab_test

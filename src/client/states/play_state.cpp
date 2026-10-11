@@ -3345,6 +3345,82 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
 
 } // namespace
 
+// The quad is authored facing -X so from_view_angles(yaw, pitch) turns it to face the camera
+// that grabbed it; local +Z is the camera's right and +Y its up, so uv (0,0) is the frame's
+// top-left seen from where it was taken. Sized from the field of view to cover the view
+// exactly at cl_grab_distance, so at the moment it lands nothing visibly changes.
+void Play_State::place_grabbed_frames()
+{
+  const client_context_t& ctx = state_manager::get_client_context();
+  const float distance_ahead  = std::max(ctx.cvars->cl_grab_distance, 1.0f);
+
+  const Span<const renderer::grabbed_frame_t> live = renderer::grabbed_frames();
+
+  std::erase_if(placed_grabs,
+                [&](const placed_grab_t& placed)
+                {
+                  for (const renderer::grabbed_frame_t& frame : live)
+                    if (frame.serial == placed.serial)
+                      return false;
+                  return true;
+                });
+
+  for (const renderer::grabbed_frame_t& frame : live)
+  {
+    bool placed_already = false;
+    for (const placed_grab_t& placed : placed_grabs)
+      placed_already = placed_already || placed.serial == frame.serial;
+    if (placed_already)
+      continue;
+
+    if (!grab_quad_mesh.valid())
+    {
+      assets::mesh_asset_t quad;
+      const linalg::vec3f normal = {-1.0f, 0.0f, 0.0f};
+      quad.vertices = {{{0.0f, 0.5f, -0.5f}, normal, {0.0f, 0.0f}},
+                       {{0.0f, 0.5f, 0.5f}, normal, {1.0f, 0.0f}},
+                       {{0.0f, -0.5f, 0.5f}, normal, {1.0f, 1.0f}},
+                       {{0.0f, -0.5f, -0.5f}, normal, {0.0f, 1.0f}}};
+      quad.indices  = {0, 3, 2, 0, 2, 1};
+      grab_quad_mesh = renderer::register_mesh(quad);
+    }
+
+    renderer::material_handle_t material;
+    for (const grab_material_t& known : grab_materials)
+      if (known.texture == frame.texture)
+        material = known.material;
+    if (!material.valid())
+    {
+      renderer::material_t description;
+      description.pipeline_state.shader    = renderer::shader_t::unlit;
+      description.pipeline_state.cull_mode = renderer::cull_mode_t::none;
+      description.parameters.maps.albedo   = frame.texture;
+      material                             = renderer::register_material(description);
+      grab_materials.push_back(grab_material_t{frame.texture, material});
+    }
+
+    const camera_basis_t basis  = get_orientation_vectors(camera);
+    const linalg::vec2   screen = renderer::screen_size();
+    const float          height =
+        2.0f * distance_ahead * std::tan(linalg::to_radians(camera.fov_degrees) * 0.5f);
+    const float          width    = height * screen.x / std::max(screen.y, 1.0f);
+    const linalg::vec3f  position = camera.position + basis.forward * distance_ahead;
+    const linalg::mat4f  transform =
+        linalg::compose_transform(position, linalg::from_view_angles(camera.yaw, camera.pitch),
+                                  {1.0f, height, width});
+    placed_grabs.push_back(placed_grab_t{frame.serial, material, transform});
+  }
+
+  for (const placed_grab_t& placed : placed_grabs)
+  {
+    renderer::mesh_draw_t draw;
+    draw.mesh               = grab_quad_mesh;
+    draw.transform          = placed.transform;
+    draw.material_overrides = Span<const renderer::material_handle_t>(&placed.material, 1);
+    scene.meshes.push_back(draw);
+  }
+}
+
 void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                              renderer::ui_draw_list_t &ui)
 {
@@ -3455,6 +3531,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         light_cut = renderer::light_cut_t::shadow_hole;
       else if (owner != nullptr && owner->solid_only_in_shadow)
         light_cut = renderer::light_cut_t::shadow_solid;
+      else if (owner != nullptr && owner->revealed_by_lens)
+        light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter);
 
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
@@ -3562,6 +3640,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
 
   for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of_type<entities::Fog_Volume_Entity>())
     add_fog_volume(scene, fog);
+  shared::collect_lenses(entity_system, scene.lenses);
 
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
@@ -3724,6 +3803,16 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     {
       drawn_position = drawn_position + zone->volume.position;
       drawn_scale    = zone->volume.half_extents * 2.0f;
+    }
+
+    // A switched-off lens is not there; a switched-on one is its box, tinted the colour it passes.
+    if (const entities::Lens_Entity* lens = entities::entity_as<entities::Lens_Entity>(&entity))
+    {
+      if (!lens->switch_state.value)
+        continue;
+      drawn_position       = drawn_position + lens->volume.position;
+      drawn_scale          = lens->volume.half_extents * 2.0f;
+      drawn_material.color = shared::get_color_for_lens_filter(lens->filter);
     }
 
     // Dissolves on the server's clock, read at the drawn tick so every client sees the same fizzle.
@@ -4145,6 +4234,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         explosion_parameters(fx.explosion_index, fx.position, fx.time_remaining, world_delta_seconds));
 
   scene.sky = skybox.resolve(ctx.cvars->sv_skybox.c_str());
+
+  place_grabbed_frames();
 
   passes.push_back(scene.to_pass());
 

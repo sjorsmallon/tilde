@@ -555,6 +555,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .draw_reach   = &reveal_light_reach},
 
     {.type = entity_type::Fog_Volume_Entity, .color = colors::white, .draw_diagram = &box_volume_diagram},
+    {.type = entity_type::Lens_Entity, .color = colors::yellow, .draw_diagram = &box_volume_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

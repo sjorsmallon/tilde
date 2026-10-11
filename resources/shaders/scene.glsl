@@ -25,6 +25,8 @@
 #define MAX_REVEAL_CONES 8
 // renderer.hpp's MAX_SCENE_FOG_VOLUMES, kept one number by the same assert.
 #define MAX_FOG_VOLUMES 8
+// renderer.hpp's MAX_SCENE_LENSES, kept one number by the same assert.
+#define MAX_LENSES 16
 // renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
 #define MAX_SHADOW_VOLUMES 24
 #define MAX_SHADOW_VOLUME_PLANES 41
@@ -97,6 +99,13 @@ struct Ripple {
 struct RevealCone {
     vec4 apex_range;
     vec4 axis_cosine;
+};
+
+// One lens (reveal.glsl's lens_margin, shared/lens.hpp): an axis-aligned box, its centre (xyz) and the channel
+// bits it passes as a whole number (w: red 1, green 2, blue 4); its half extents (xyz).
+struct Lens {
+    vec4 center_channels;
+    vec4 half_extents;
 };
 
 // One box of fog (fog_cells.comp): its lowest corner (xyz) and its density per world unit (w); its highest corner (xyz) and
@@ -250,6 +259,9 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4       view_right;
     vec4       view_up;
     FogVolume  fog_volumes[MAX_FOG_VOLUMES];
+    // x = how many of `lenses` are live.
+    vec4       lens_settings;
+    Lens       lenses[MAX_LENSES];
 } scene;
 
 // The line of sight through `position` (0..1 across the pass's view, y down), one unit of view depth long.

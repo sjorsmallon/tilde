@@ -358,6 +358,7 @@ struct cvar_state_t
   bool debug_show_box_volumes;
   bool debug_hide_geometry;
   float cl_shot_debug_seconds;
+  float cl_grab_distance;
   bool cl_shadow_volume_debug;
   bool cl_solid_beam_debug;
   bool debug_show_entity_counts;
@@ -588,22 +589,23 @@ enum class cvar_id : uint16_t
   debug_show_box_volumes = 204,
   debug_hide_geometry = 205,
   cl_shot_debug_seconds = 206,
-  cl_shadow_volume_debug = 207,
-  cl_solid_beam_debug = 208,
-  debug_show_entity_counts = 209,
-  net_snapshot_debug = 210,
-  sv_event_debug = 211,
-  cl_event_debug = 212,
-  sv_reliable_debug = 213,
-  sv_io_debug = 214,
-  replay_keyframe_seconds = 215,
-  sv_replay_auto = 216,
-  sv_ghost_record = 217,
+  cl_grab_distance = 207,
+  cl_shadow_volume_debug = 208,
+  cl_solid_beam_debug = 209,
+  debug_show_entity_counts = 210,
+  net_snapshot_debug = 211,
+  sv_event_debug = 212,
+  cl_event_debug = 213,
+  sv_reliable_debug = 214,
+  sv_io_debug = 215,
+  replay_keyframe_seconds = 216,
+  sv_replay_auto = 217,
+  sv_ghost_record = 218,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 218;
+constexpr uint32_t CVAR_COUNT = 219;
 
 enum class command_id : uint16_t
 {
@@ -626,27 +628,29 @@ enum class command_id : uint16_t
   sv_replay_stop = 16,
   shadow_volume_report = 17,
   bind = 18,
-  connect = 19,
-  announce = 20,
-  noclip = 21,
-  mem_report = 22,
-  mem_frame = 23,
-  mem_stacks = 24,
-  frame_report = 25,
-  frame_reset = 26,
-  gpu_report = 27,
-  gpu_reset = 28,
-  hitch_report = 29,
-  replay_record = 30,
-  replay_play = 31,
-  replay_stop = 32,
-  replay_pause = 33,
-  replay_speed = 34,
-  replay_seek = 35,
-  replay_skip = 36,
+  grab_frame = 19,
+  grab_clear = 20,
+  connect = 21,
+  announce = 22,
+  noclip = 23,
+  mem_report = 24,
+  mem_frame = 25,
+  mem_stacks = 26,
+  frame_report = 27,
+  frame_reset = 28,
+  gpu_report = 29,
+  gpu_reset = 30,
+  hitch_report = 31,
+  replay_record = 32,
+  replay_play = 33,
+  replay_stop = 34,
+  replay_pause = 35,
+  replay_speed = 36,
+  replay_seek = 37,
+  replay_skip = 38,
 };
 
-constexpr uint32_t COMMAND_COUNT = 37;
+constexpr uint32_t COMMAND_COUNT = 39;
 
 enum cvar_type : uint8_t
 {
@@ -786,6 +790,12 @@ void shadow_volume_report(const command_context_t& context);
 // @Client  Bind a key (a-z, 0-9, f1-f12, space, arrows, kp_0-kp_9) to a command line
 // usage: bind <key> <command...>
 void bind(std::string_view key, std::string_view command, const command_context_t& context);
+// @Client  Copy the next frame into a texture and draw it on a screen quad
+// usage: grab_frame
+void grab_frame(const command_context_t& context);
+// @Client  Drop the grabbed frame
+// usage: grab_clear
+void grab_clear(const command_context_t& context);
 // @Client  Connect to a server (ip or ip:port) and enter play
 // usage: connect <address>
 void connect(std::string_view address, const command_context_t& context);

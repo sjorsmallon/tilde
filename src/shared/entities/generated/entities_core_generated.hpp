@@ -276,6 +276,18 @@ constexpr uint32_t Reveal_Cone_Kind_COUNT = 2;
 const char* to_string(Reveal_Cone_Kind value);
 template <> std::optional<Reveal_Cone_Kind> try_from_string<Reveal_Cone_Kind>(std::string_view text);
 
+enum class Lens_Filter : uint8_t
+{
+  Red = 0,
+  Green = 1,
+  Blue = 2,
+};
+
+constexpr uint32_t Lens_Filter_COUNT = 3;
+
+const char* to_string(Lens_Filter value);
+template <> std::optional<Lens_Filter> try_from_string<Lens_Filter>(std::string_view text);
+
 enum class Movement_Override : uint8_t
 {
   None = 0,
@@ -310,10 +322,11 @@ enum class enum_type : uint16_t
   Match_Request = 14,
   Easing = 15,
   Reveal_Cone_Kind = 16,
-  Movement_Override = 17,
+  Lens_Filter = 17,
+  Movement_Override = 18,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 18;
+constexpr uint32_t ENUM_TYPE_COUNT = 19;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -364,11 +377,12 @@ enum class entity_type : uint16_t
   Void_Entity = 39,
   Reveal_Light_Entity = 40,
   Fog_Volume_Entity = 41,
+  Lens_Entity = 42,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 42;
+constexpr uint32_t ENTITY_TYPE_COUNT = 43;
 
 enum class component_type : uint16_t
 {
@@ -504,6 +518,12 @@ template <> struct enum_traits<entities::Reveal_Cone_Kind>
 {
   static constexpr uint32_t count = entities::Reveal_Cone_Kind_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Reveal_Cone_Kind;
+};
+
+template <> struct enum_traits<entities::Lens_Filter>
+{
+  static constexpr uint32_t count = entities::Lens_Filter_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Lens_Filter;
 };
 
 template <> struct enum_traits<entities::Movement_Override>

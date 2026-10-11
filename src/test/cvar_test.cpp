@@ -193,6 +193,8 @@ void announce(std::string_view text, const command_context_t& context)
 void mem_report(int32_t, const command_context_t&) {}
 void mem_frame(const command_context_t&) {}
 void noclip(const command_context_t&) {}
+void grab_frame(const command_context_t&) {}
+void grab_clear(const command_context_t&) {}
 void setpos(float, float, float, const command_context_t&) {}
 void sv_mem_report(int32_t, const command_context_t&) {}
 void frame_report(const command_context_t&) {}

@@ -468,6 +468,16 @@ void noclip(const command_context_t &)
   client::hud::set_announcement(cvars.cl_noclip ? "Noclip ON" : "Noclip OFF");
 }
 
+void grab_frame(const command_context_t &)
+{
+  client::renderer::request_frame_grab();
+}
+
+void grab_clear(const command_context_t &)
+{
+  client::renderer::clear_grabbed_frames();
+}
+
 void mem_report(int32_t top, const command_context_t &)
 {
   memory_audit::report(top <= 0 ? 20u : static_cast<uint32_t>(top));
