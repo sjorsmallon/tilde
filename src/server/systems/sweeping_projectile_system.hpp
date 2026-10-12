@@ -33,7 +33,7 @@ void update_sweeping_projectiles(server_context_t& context,
     if (shot.lifetime <= 0.f)
     {
       if (shared::get_projectile_parameters(shot.projectile).expiry ==
-          shared::projectile_expiry_t::Arrives)
+          shared::projectile_expiration_t::Arrives)
         context.outgoing.pending_contacts.push_back(
             contact_of_projectile_expiry(shot, shot.projectile));
       spent.push_back(shot.entity_id);

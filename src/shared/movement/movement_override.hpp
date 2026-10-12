@@ -30,6 +30,9 @@ struct override_step_t
   // apply_impulse with `end_velocity`; the caller only reports it.
   entities::Movement_Override ended        = entities::Movement_Override::None;
   vec3                        end_velocity = {};
+  // Where the rocket met a surface when that is what ended it; a zero normal is the clock.
+  vec3                        end_surface_point  = {};
+  vec3                        end_surface_normal = {};
 };
 
 // Step 2's override half: the exhaustive switch over what is live. Clears the

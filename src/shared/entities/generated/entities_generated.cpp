@@ -91,11 +91,6 @@ constexpr const char* Shader_Type_VALUE_NAMES[] = {
   "Procedural_Blending",
 };
 
-constexpr const char* Shape_Kind_VALUE_NAMES[] = {
-  "Sphere",
-  "Box",
-};
-
 constexpr const char* Light_Mode_VALUE_NAMES[] = {
   "Baked",
   "Mixed",
@@ -179,7 +174,6 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
   {"Shader_Type", {Shader_Type_VALUE_NAMES, 4}},
-  {"Shape_Kind", {Shape_Kind_VALUE_NAMES, 2}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
   {"Round_Phase", {Round_Phase_VALUE_NAMES, 6}},
@@ -522,7 +516,7 @@ constexpr field_info_t Light_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[9]},
+   .enum_info = &ENUM_INFOS[8]},
   {.name = "source_radius",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Light, source_radius),
@@ -651,7 +645,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[18]},
+   .enum_info = &ENUM_INFOS[17]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -822,7 +816,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[12]},
+   .enum_info = &ENUM_INFOS[11]},
   {.name = "phase",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, phase),
@@ -831,7 +825,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[11]},
+   .enum_info = &ENUM_INFOS[10]},
   {.name = "phase_start_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Match, phase_start_tick),
@@ -867,7 +861,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[13]},
+   .enum_info = &ENUM_INFOS[12]},
   {.name = "winning_team",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, winning_team),
@@ -903,7 +897,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[14]},
+   .enum_info = &ENUM_INFOS[13]},
 };
 
 constexpr field_info_t Path_Follow_FIELDS[] = {
@@ -2430,90 +2424,6 @@ constexpr field_info_t Bubble_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
-constexpr field_info_t Physics_Body_Entity_FIELDS[] = {
-  {.name = "entity_id",
-   .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::entity_id),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "position",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::position),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "orientation",
-   .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::orientation),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "name",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::name),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 32,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "shape",
-   .type = FIELD_TYPE_ENUM,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, shape),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::shape),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[8]},
-  {.name = "size",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, size),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::size),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "bounce",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, bounce),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::bounce),
-   .flags = 0u,
-   .component_id = 5,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "mass",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, mass),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::mass),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "render",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Physics_Body_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Physics_Body_Entity::render),
-   .flags = 0u,
-   .component_id = 9,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-};
-
 constexpr field_info_t Damageable_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
@@ -3537,7 +3447,7 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[16]},
 };
 
 constexpr field_info_t Ping_Marker_Entity_FIELDS[] = {
@@ -3735,7 +3645,7 @@ constexpr field_info_t Path_Node_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[14]},
 };
 
 constexpr field_info_t Mover_Entity_FIELDS[] = {
@@ -4611,7 +4521,7 @@ constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[15]},
   {.name = "range",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Reveal_Light_Entity, range),
@@ -4797,7 +4707,7 @@ constexpr field_info_t Lens_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[16]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Lens_Entity, render),
@@ -4843,7 +4753,6 @@ Entity* construct_Extending_Platform_Entity(void* memory) { return new (memory) 
 Entity* construct_Guided_Rocket_Entity(void* memory) { return new (memory) Guided_Rocket_Entity(); }
 Entity* construct_Canopy_Entity(void* memory) { return new (memory) Canopy_Entity(); }
 Entity* construct_Bubble_Entity(void* memory) { return new (memory) Bubble_Entity(); }
-Entity* construct_Physics_Body_Entity(void* memory) { return new (memory) Physics_Body_Entity(); }
 Entity* construct_Damageable_Entity(void* memory) { return new (memory) Damageable_Entity(); }
 Entity* construct_Particle_Emitter_Entity(void* memory) { return new (memory) Particle_Emitter_Entity(); }
 Entity* construct_Sound_Emitter_Entity(void* memory) { return new (memory) Sound_Emitter_Entity(); }
@@ -4886,7 +4795,6 @@ Entity* as_base_Extending_Platform_Entity(void* memory) { return static_cast<Ent
 Entity* as_base_Guided_Rocket_Entity(void* memory) { return static_cast<Entity*>((Guided_Rocket_Entity*)memory); }
 Entity* as_base_Canopy_Entity(void* memory) { return static_cast<Entity*>((Canopy_Entity*)memory); }
 Entity* as_base_Bubble_Entity(void* memory) { return static_cast<Entity*>((Bubble_Entity*)memory); }
-Entity* as_base_Physics_Body_Entity(void* memory) { return static_cast<Entity*>((Physics_Body_Entity*)memory); }
 Entity* as_base_Damageable_Entity(void* memory) { return static_cast<Entity*>((Damageable_Entity*)memory); }
 Entity* as_base_Particle_Emitter_Entity(void* memory) { return static_cast<Entity*>((Particle_Emitter_Entity*)memory); }
 Entity* as_base_Sound_Emitter_Entity(void* memory) { return static_cast<Entity*>((Sound_Emitter_Entity*)memory); }
@@ -4931,7 +4839,6 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"guided_rocket_entity", "Guided Rocket", {Guided_Rocket_Entity_FIELDS, 7}, (uint32_t)sizeof(Guided_Rocket_Entity), (uint32_t)alignof(Guided_Rocket_Entity), 512u, true, true, false, construct_Guided_Rocket_Entity, as_base_Guided_Rocket_Entity},
   {"canopy_entity", "Canopy", {Canopy_Entity_FIELDS, 8}, (uint32_t)sizeof(Canopy_Entity), (uint32_t)alignof(Canopy_Entity), 512u, true, true, true, construct_Canopy_Entity, as_base_Canopy_Entity},
   {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 19}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 536u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
-  {"physics_body_entity", "Physics Body", {Physics_Body_Entity_FIELDS, 9}, (uint32_t)sizeof(Physics_Body_Entity), (uint32_t)alignof(Physics_Body_Entity), 544u, false, true, false, construct_Physics_Body_Entity, as_base_Physics_Body_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 577u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 22}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, false, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
   {"sound_emitter_entity", "Sound Emitter", {Sound_Emitter_Entity_FIELDS, 11}, (uint32_t)sizeof(Sound_Emitter_Entity), (uint32_t)alignof(Sound_Emitter_Entity), 6u, false, true, false, construct_Sound_Emitter_Entity, as_base_Sound_Emitter_Entity},
@@ -4977,7 +4884,6 @@ constexpr int32_t COMPONENT_OFFSETS[][17] = {
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Guided_Rocket_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Guided_Rocket_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Canopy_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Canopy_Entity
   {-1, -1, -1, (int32_t)offsetof(Bubble_Entity, projectile), (int32_t)offsetof(Bubble_Entity, flight), -1, -1, -1, -1, (int32_t)offsetof(Bubble_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Bubble_Entity
-  {-1, -1, -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, bounce), -1, -1, -1, (int32_t)offsetof(Physics_Body_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Physics_Body_Entity
   {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, -1, -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Damageable_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Particle_Emitter_Entity
   {-1, (int32_t)offsetof(Sound_Emitter_Entity, switch_state), (int32_t)offsetof(Sound_Emitter_Entity, playback), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Sound_Emitter_Entity
@@ -5007,12 +4913,11 @@ constexpr int32_t COMPONENT_OFFSETS[][17] = {
   {(int32_t)offsetof(Lens_Entity, volume), (int32_t)offsetof(Lens_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Lens_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Lens_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 26;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 25;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
   entity_type::Weapon_Entity,
-  entity_type::Physics_Body_Entity,
   entity_type::Damageable_Entity,
   entity_type::Particle_Emitter_Entity,
   entity_type::Sound_Emitter_Entity,
@@ -5037,7 +4942,7 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Lens_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 36;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 35;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -5051,7 +4956,6 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Guided_Rocket_Entity,
   entity_type::Canopy_Entity,
   entity_type::Bubble_Entity,
-  entity_type::Physics_Body_Entity,
   entity_type::Damageable_Entity,
   entity_type::Sound_Emitter_Entity,
   entity_type::Point_Light_Entity,
@@ -5294,24 +5198,6 @@ template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_
   if (text == "Unlit") return Shader_Type::Unlit;
   if (text == "Ghost") return Shader_Type::Ghost;
   if (text == "Procedural_Blending") return Shader_Type::Procedural_Blending;
-  return std::nullopt;
-}
-
-const char* to_string(Shape_Kind value)
-{
-  switch (value)
-  {
-    case Shape_Kind::Sphere: return "Sphere";
-    case Shape_Kind::Box: return "Box";
-  }
-  assert(false && "invalid Shape_Kind");
-  return "";
-}
-
-template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text)
-{
-  if (text == "Sphere") return Shape_Kind::Sphere;
-  if (text == "Box") return Shape_Kind::Box;
   return std::nullopt;
 }
 
@@ -5602,7 +5488,6 @@ Entity* create_entity(entity_type type)
     case entity_type::Guided_Rocket_Entity: return new Guided_Rocket_Entity();
     case entity_type::Canopy_Entity: return new Canopy_Entity();
     case entity_type::Bubble_Entity: return new Bubble_Entity();
-    case entity_type::Physics_Body_Entity: return new Physics_Body_Entity();
     case entity_type::Damageable_Entity: return new Damageable_Entity();
     case entity_type::Particle_Emitter_Entity: return new Particle_Emitter_Entity();
     case entity_type::Sound_Emitter_Entity: return new Sound_Emitter_Entity();
@@ -5665,7 +5550,6 @@ void destroy_entity(Entity* entity)
     case entity_type::Guided_Rocket_Entity: delete static_cast<Guided_Rocket_Entity*>(entity); return;
     case entity_type::Canopy_Entity: delete static_cast<Canopy_Entity*>(entity); return;
     case entity_type::Bubble_Entity: delete static_cast<Bubble_Entity*>(entity); return;
-    case entity_type::Physics_Body_Entity: delete static_cast<Physics_Body_Entity*>(entity); return;
     case entity_type::Damageable_Entity: delete static_cast<Damageable_Entity*>(entity); return;
     case entity_type::Particle_Emitter_Entity: delete static_cast<Particle_Emitter_Entity*>(entity); return;
     case entity_type::Sound_Emitter_Entity: delete static_cast<Sound_Emitter_Entity*>(entity); return;
@@ -5707,6 +5591,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xb2751e75u;
+const uint32_t SCHEMA_HASH = 0xaf4dc4d5u;
 
 } // namespace entities

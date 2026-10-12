@@ -53,7 +53,6 @@ Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 Damage_Type :: enum { Normal, Orange, Teal }
 
 Shader_Type :: enum { Lit, Unlit, Ghost, Procedural_Blending }
-Shape_Kind :: enum { Sphere, Box }
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
@@ -299,7 +298,7 @@ Counting :: trait requires Counter {
 
 Touchable :: trait requires Box_Volume, Enabled {
     emits Touched(), Left()
-    by    Player_Entity, Physics_Body_Entity
+    by    Player_Entity
 }
 
 Mortal :: trait requires Health {
@@ -512,6 +511,7 @@ Extending_Platform_Entity :: entity @runtime_only @predicted {
     length:         f32_exact  @Networked
     max_length:     f32 = 1024.0
     extend_speed:   f32 = 1200.0
+    // The Extending Platform's own; a guided rocket's path writes its row's.
     solid_seconds:  f32 = 6.0
     // The Extending Platform's own; a guided rocket's path writes its row's.
     half_width:     f32_exact = 32.0 @Networked
@@ -567,17 +567,6 @@ Bubble_Entity :: entity @runtime_only @predicted {
 
     //mesh = .Sphere, scale = {1, 64, 64}
     render:          Render = { mesh = .high_res_sphere, scale = {2,2,2}, material = { shader_type = .Ghost, color = {0.55, 0.85, 1} } }
-}
-
-Physics_Body_Entity :: entity {
-    // The mesh and the editor's size box; the body sweeps as a sphere of the
-    // largest half extent. The visual size rides in render.scale, which the
-    // spawn path sets from the same extents.
-    shape:    Shape_Kind = .Box         @Editable
-    size:     v3                        @Editable
-    bounce:   Bounce
-    mass:     f32 = 10.0                @Editable
-    render:   Render
 }
 
 // volume is the hitbox.
@@ -868,7 +857,7 @@ Fog_Volume_Entity :: entity is Switchable {
 
 // A window the world is seen through (shared/lens.hpp): while switched on, geometry whose owner is `revealed_by_lens`
 // is drawn only where the line from the eye to it crosses this box and the box passes the owner's colour. The filters
-// of every lens on one line multiply, so a red and a green stacked pass nothing. Axis aligned whatever its orientation.
+// of every lens on one line multiply, so a red and a green stacked pass nothing. The box is turned by the orientation.
 Lens_Entity :: entity is Switchable {
     switch_state: Enabled
     volume:       Box_Volume = { half_extents = {64, 64, 4} }

@@ -572,6 +572,7 @@ add_library(game_shared STATIC
     src/shared/event_stream.hpp
     src/shared/event_stream.cpp
     src/shared/weapons.hpp
+    src/shared/weapons.cpp
     src/shared/hit_region.hpp
     src/shared/hitscan.hpp
     src/shared/hitscan.cpp
@@ -820,6 +821,7 @@ add_library(game_client SHARED
     src/client/effects/shot_impact.cpp
     src/client/effects/jump_pad_launch.cpp
     src/client/effects/ping.cpp
+    src/client/effects/pilot_impact.cpp
     src/client/weapon_fire_audio.cpp
     src/client/surface_audio.cpp
     src/client/entity_type_audio.cpp

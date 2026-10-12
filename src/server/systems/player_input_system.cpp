@@ -350,6 +350,16 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
           break;
       }
     }
+
+    if (move_events.override_ended.kind == entities::Movement_Override::Pilot &&
+        linalg::length_squared(move_events.override_ended.surface_normal) > 0.f)
+    {
+      shared::Pilot_Impact fx{};
+      fx.origin          = move_events.override_ended.surface_point;
+      fx.normal          = move_events.override_ended.surface_normal;
+      fx.attached_entity = player->entity_id;
+      shared::fire_pilot_impact(context.outgoing.effects, fx);
+    }
   }
 }
 

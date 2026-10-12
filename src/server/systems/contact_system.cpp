@@ -1,5 +1,4 @@
 #include "entities/generated/entities/damageable_entity_generated.hpp"
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/remnant_entity_generated.hpp"
 #include "entities/generated/entities/timed_movement_modifier_entity_generated.hpp"
@@ -57,7 +56,6 @@ static bool is_body(shared::Entity_System& entity_system, shared::entity_uid_t u
   return entity_system.get<entities::Player_Entity>(uid) != nullptr ||
          entity_system.get<entities::Damageable_Entity>(uid) != nullptr ||
          entity_system.get<entities::Remnant_Entity>(uid) != nullptr ||
-         entity_system.get<entities::Physics_Body_Entity>(uid) != nullptr ||
          entity_system.get<entities::Weapon_Entity>(uid) != nullptr;
 }
 
@@ -183,11 +181,10 @@ static void apply_damage_contact(server_context_t& context, const pending_contac
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
   const bool acts = entity_system.get<entities::Player_Entity>(contact.target_uid) != nullptr ||
-                    entity_system.get<entities::Damageable_Entity>(contact.target_uid) != nullptr ||
-                    entity_system.get<entities::Physics_Body_Entity>(contact.target_uid) != nullptr;
+                    entity_system.get<entities::Damageable_Entity>(contact.target_uid) != nullptr;
   if (!acts)
   {
-    impact_or_refuse(context, contact, "a player, a damageable or a physics body");
+    impact_or_refuse(context, contact, "a player or a damageable");
     return;
   }
 
@@ -478,9 +475,6 @@ static void apply_explode(server_context_t& context, const pending_contact_t& co
                             {.horizontal = shared::impulse_mode_t::Add,
                              .vertical   = shared::impulse_mode_t::Add,
                              .velocity   = push});
-    else if (entities::Physics_Body_Entity* body =
-                 entity_system.get<entities::Physics_Body_Entity>(target.uid))
-      shared::wake_bounce_body(body->bounce, push);
     else if (entities::Weapon_Entity* weapon = entity_system.get<entities::Weapon_Entity>(target.uid))
       shared::wake_bounce_body(weapon->bounce, push);
   }

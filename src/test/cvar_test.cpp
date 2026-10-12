@@ -76,8 +76,6 @@ struct call_record_t
 };
 
 call_record_t g_spawn_bot;
-call_record_t g_spawn_cube;
-call_record_t g_spawn_sphere;
 call_record_t g_map;
 call_record_t g_mem_stacks;
 call_record_t g_join_game;
@@ -88,7 +86,7 @@ call_record_t g_announce;
 
 void reset_records()
 {
-  g_spawn_bot = g_spawn_cube = g_spawn_sphere = {};
+  g_spawn_bot = {};
   g_map = g_mem_stacks = g_join_game = g_spectate = g_bind = g_connect = g_announce = {};
 }
 
@@ -123,18 +121,6 @@ void spawn_bot(Bot_Mode mode, const command_context_t& context)
   ++g_spawn_bot.count;
   g_spawn_bot.bot_mode    = mode;
   g_spawn_bot.caller_slot = context.caller_slot;
-}
-
-void spawn_cube(const command_context_t& context)
-{
-  ++g_spawn_cube.count;
-  g_spawn_cube.caller_slot = context.caller_slot;
-}
-
-void spawn_sphere(const command_context_t& context)
-{
-  ++g_spawn_sphere.count;
-  g_spawn_sphere.caller_slot = context.caller_slot;
 }
 
 void join_game(const command_context_t& context)
@@ -645,13 +631,13 @@ void test_command_binders()
 
   // A no-argument command rejects arguments rather than ignoring them.
   reset_records();
-  check(run(state, table, "spawn_cube", &reply) == cvars::console_result_t::ok,
-        "spawn_cube succeeds");
-  check(g_spawn_cube.count == 1, "spawn_cube ran once");
-  check(run(state, table, "spawn_sphere here", &reply) ==
+  check(run(state, table, "join_game", &reply) == cvars::console_result_t::ok,
+        "join_game succeeds");
+  check(g_join_game.count == 1, "join_game ran once");
+  check(run(state, table, "spectate here", &reply) ==
             cvars::console_result_t::bad_arguments,
         "a no-argument command rejects an argument");
-  check(g_spawn_sphere.count == 0, "the rejected call ran nothing");
+  check(g_spectate.count == 0, "the rejected call ran nothing");
 
   // A required parameter is required.
   reset_records();

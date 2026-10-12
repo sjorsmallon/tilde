@@ -7,7 +7,6 @@
 #include "../client_context.hpp"
 #include "../entity_type_audio.hpp"
 #include "../weapon_fire_audio.hpp"
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 
 #include <optional>
@@ -93,13 +92,6 @@ void on_shot_impact(client_context_t& context, const shared::Shot_Impact& data)
   if (is_replicated_player(context, data.attached_entity))
   {
     play_type_impact(context, data, entities::entity_type::Player_Entity);
-    return;
-  }
-
-  if (context.world.session.entity_system.get<entities::Physics_Body_Entity>(data.attached_entity) !=
-      nullptr)
-  {
-    play_type_impact(context, data, entities::entity_type::Physics_Body_Entity);
     return;
   }
 

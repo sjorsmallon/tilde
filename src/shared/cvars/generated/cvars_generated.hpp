@@ -628,47 +628,45 @@ constexpr uint32_t CVAR_COUNT = 228;
 enum class command_id : uint16_t
 {
   spawn_bot = 0,
-  spawn_cube = 1,
-  spawn_sphere = 2,
-  map = 3,
-  setpos = 4,
-  join_game = 5,
-  spectate = 6,
-  sv_mem_report = 7,
-  sv_frame_report = 8,
-  sv_shadow_volume_report = 9,
-  sv_hitch_report = 10,
-  ent_fire = 11,
-  restart_round = 12,
-  end_match = 13,
-  ready = 14,
-  sv_replay_record = 15,
-  sv_replay_stop = 16,
-  shadow_volume_report = 17,
-  bind = 18,
-  grab_frame = 19,
-  grab_clear = 20,
-  connect = 21,
-  announce = 22,
-  noclip = 23,
-  mem_report = 24,
-  mem_frame = 25,
-  mem_stacks = 26,
-  frame_report = 27,
-  frame_reset = 28,
-  gpu_report = 29,
-  gpu_reset = 30,
-  hitch_report = 31,
-  replay_record = 32,
-  replay_play = 33,
-  replay_stop = 34,
-  replay_pause = 35,
-  replay_speed = 36,
-  replay_seek = 37,
-  replay_skip = 38,
+  map = 1,
+  setpos = 2,
+  join_game = 3,
+  spectate = 4,
+  sv_mem_report = 5,
+  sv_frame_report = 6,
+  sv_shadow_volume_report = 7,
+  sv_hitch_report = 8,
+  ent_fire = 9,
+  restart_round = 10,
+  end_match = 11,
+  ready = 12,
+  sv_replay_record = 13,
+  sv_replay_stop = 14,
+  shadow_volume_report = 15,
+  bind = 16,
+  grab_frame = 17,
+  grab_clear = 18,
+  connect = 19,
+  announce = 20,
+  noclip = 21,
+  mem_report = 22,
+  mem_frame = 23,
+  mem_stacks = 24,
+  frame_report = 25,
+  frame_reset = 26,
+  gpu_report = 27,
+  gpu_reset = 28,
+  hitch_report = 29,
+  replay_record = 30,
+  replay_play = 31,
+  replay_stop = 32,
+  replay_pause = 33,
+  replay_speed = 34,
+  replay_seek = 35,
+  replay_skip = 36,
 };
 
-constexpr uint32_t COMMAND_COUNT = 39;
+constexpr uint32_t COMMAND_COUNT = 37;
 
 enum cvar_type : uint8_t
 {
@@ -754,12 +752,6 @@ namespace commands
 // @Server  Spawn a bot
 // usage: spawn_bot [mode: idle|chase|regular]
 void spawn_bot(Bot_Mode mode, const command_context_t& context);
-// @Server  Spawn a physics cube in front of the calling player
-// usage: spawn_cube
-void spawn_cube(const command_context_t& context);
-// @Server  Spawn a physics sphere in front of the calling player
-// usage: spawn_sphere
-void spawn_sphere(const command_context_t& context);
 // @Server  Switch the server to a new map
 // usage: map <path>
 void map(std::string_view path, const command_context_t& context);

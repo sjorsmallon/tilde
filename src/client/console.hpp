@@ -37,7 +37,6 @@ public:
   // Bind a key, by its key_names.hpp name, to a command line. The bound command
   // is executed via execute_command when the key transitions to pressed.
   bool bind_key(std::string_view key, std::string command_line);
-  void clear_bindings();
 
   // Binds persist as console lines in binds.cfg beside last_map.txt: written
   // whenever one changes, replayed through execute_command once at init.

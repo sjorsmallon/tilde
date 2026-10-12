@@ -93,6 +93,7 @@ void solidify_flight_path(server_context_t& context, const ended_flight_t& fligh
     platform->length                = segment.length;
     platform->half_width            = segment.half_width;
     platform->passable_seconds      = 0.f;
+    platform->solid_seconds         = pilot->path.solid_seconds;
     platform->render.material.color = segment.color;
     platform->spawned_tick          = spawned_tick;
     platform->projectile.owner_uid  = flight.pilot_uid;

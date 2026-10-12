@@ -201,9 +201,8 @@ float extending_platform_solid_fraction_elapsed(const entities::Extending_Platfo
   return std::clamp(elapsed / static_cast<float>(solid_ticks), 0.f, 1.f);
 }
 
-extending_platform_box_t extending_platform_box_at(const entities::Extending_Platform_Entity& platform,
-                                                   uint32_t tick, float tick_fraction,
-                                                   float tick_interval_seconds)
+oriented_box_t extending_platform_box_at(const entities::Extending_Platform_Entity& platform, uint32_t tick,
+                                         float tick_fraction, float tick_interval_seconds)
 {
   const float half_length =
       0.5f * extending_platform_length_at(platform, tick, tick_fraction, tick_interval_seconds);
@@ -221,9 +220,8 @@ void append_extending_platform(const entities::Extending_Platform_Entity& platfo
   if (!extending_platform_is_solid_at_tick(platform, tick, tick_interval_seconds))
     return;
 
-  const extending_platform_box_t box =
-      extending_platform_box_at(platform, tick, 0.f, tick_interval_seconds);
-  collision_piece_t piece = piece_from_oriented_box(box.center, box.half_extents, box.orientation);
+  const oriented_box_t box   = extending_platform_box_at(platform, tick, 0.f, tick_interval_seconds);
+  collision_piece_t    piece = piece_from_oriented_box(box);
 
   mover_t cut;
   cut.uid                = platform.entity_id;

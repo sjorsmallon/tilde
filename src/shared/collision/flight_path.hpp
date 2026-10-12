@@ -25,6 +25,8 @@ struct flight_path_settings_t
   float drop;
   // Half of how wide each segment is, across its edge.
   float half_width;
+  // How long each segment stays once it has grown.
+  float solid_seconds;
   // The colour map (color_map.hpp) the path runs through, from its first segment to its last.
   Span<const linalg::vec3f> colors;
 };

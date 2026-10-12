@@ -3,7 +3,7 @@
 #include "assets/asset_state.hpp"
 #include "collision/collision_detection.hpp"
 #include "collision/disabled_geometry.hpp"
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
+#include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_system.hpp"
 #include "movement/player_constants.hpp"
@@ -259,14 +259,14 @@ int main()
   printf("a crate in front of a wall is what the rocket stops at\n");
   {
     shared::Entity_System        system;
-    const shared::entity_uid_t   crate_uid = system.spawn<entities::Physics_Body_Entity>();
-    entities::Physics_Body_Entity* crate   = system.get<entities::Physics_Body_Entity>(crate_uid);
-    crate->position = {100.f, 8.f, 0.f};
-    crate->size     = {16.f, 16.f, 16.f};
+    const shared::entity_uid_t   crate_uid = system.spawn<entities::Damageable_Entity>();
+    entities::Damageable_Entity* crate     = system.get<entities::Damageable_Entity>(crate_uid);
+    crate->position            = {100.f, 8.f, 0.f};
+    crate->volume.half_extents = {8.f, 8.f, 8.f};
 
     std::vector<shared::projectile_target_t> targets;
     shared::collect_projectile_targets(system, targets);
-    check(targets.size() == 1, "a physics body is a target by its size");
+    check(targets.size() == 1, "a damageable is a target by its volume");
 
     const Bounding_Volume_Hierarchy wall = build_world_from_boxes({
         shared::make_box_brush({200.f, 64.f, 0.f}, {8.f, 64.f, 64.f}),

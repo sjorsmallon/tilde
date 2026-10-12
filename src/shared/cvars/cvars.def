@@ -726,8 +726,6 @@ Bot_Mode :: enum { idle, chase, regular }
 
 Server_Commands :: commands {
     spawn_bot(mode: Bot_Mode = .idle)  @Server  "Spawn a bot"
-    spawn_cube()                       @Server  "Spawn a physics cube in front of the calling player"
-    spawn_sphere()                     @Server  "Spawn a physics sphere in front of the calling player"
 
     // WAS A CVAR: CVar<std::string> map("map", "dm_aabb", ...) with an
     // on-change callback that loaded the level -- a verb wearing a variable

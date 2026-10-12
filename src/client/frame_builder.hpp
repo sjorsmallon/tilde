@@ -50,7 +50,7 @@ struct pass_builder_t
   // Two regions, filled together by shared::begin_frame_lights /
   // add_frame_light: the bake's slots first, the analytic tail after.
   shared::frame_lights_t                               lights;
-  // Team wall impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
+  // Wall impacts, team wall crossings and pilot rocket impacts, copied from ctx.visuals each frame (team_wall_ripples.hpp).
   std::vector<shared::wall_ripple_t>                   ripples;
   std::vector<shared::beam_ripple_t>                   beam_ripples;
   std::vector<shared::reveal_cone_t>                   reveal_cones;

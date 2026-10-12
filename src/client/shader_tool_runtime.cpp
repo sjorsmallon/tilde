@@ -640,9 +640,4 @@ void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
   log_terminal("[shader_tool] PBR textures bound to descriptor sets");
 }
 
-VkPhysicalDevice get_physical_device()
-{
-  return renderer::get_VkPhysicalDevice();
-}
-
 } // namespace client

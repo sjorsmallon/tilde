@@ -1110,45 +1110,6 @@ void test_a_disabled_trigger_releases_whoever_is_inside()
         "disabling a volume somebody stands in emits their Left");
 }
 
-// The activator is resolved at EMIT time, and for a trigger that is whoever
-// walked in -- which is what makes every converted Trigger_Action row work.
-// The other half of some-accept: the check let the row through because a PLAYER
-// accepts Kill, and a crate is what actually rolled in. That has to be a logged
-// miss rather than the fatal_error a Uid target's null dispatch cell earns --
-// under all-accept this row could not exist, so nothing ever reached here.
-void test_an_activator_that_does_not_accept_is_a_logged_miss()
-{
-  std::printf("connections: an activator that does not accept the action is dropped, not fatal\n");
-
-  wired_map_t wired = make_wired_map();
-  shared::connection_t row = touched_enables_the_light(wired);
-  row.target_kind          = shared::connection_target_t::Activator;
-  row.data.tag             = entities::entity_action::Kill;
-  row.has_override         = true;
-  wired.map.connections.push_back(row);
-
-  cvars::cvar_state_t cvar_state;
-  server_context_t    context;
-  install(context, cvar_state, wired.map);
-
-  const shared::entity_uid_t crate =
-      context.world.session.entity_system.spawn<entities::Physics_Body_Entity>();
-  context.world.session.entity_system.get<entities::Physics_Body_Entity>(crate)->position = {
-      0.f, 0.f, 0.f};
-
-  update_triggers(context);
-  check(context.world.pending_actions.size() == 1 &&
-            context.world.pending_actions[0].target == crate,
-        "a physics body touching a volume emits, and the record names the crate");
-  check(context.world.pending_actions[0].target_resolved_from_activator,
-        "the record remembers it came from an Activator row");
-
-  // Reaching this without a fatal_error IS the assertion.
-  deliver_pending_entity_actions(context);
-  check(context.world.pending_actions.empty(),
-        "the drain consumed it and did not die on a crate that cannot be killed");
-}
-
 void test_the_toucher_is_the_activator()
 {
   std::printf("connections: the toucher is the activator\n");
@@ -1444,7 +1405,6 @@ int main()
   test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions();
   test_a_launcher_with_an_interval_fires_on_its_own_clock();
   test_the_toucher_is_the_activator();
-  test_an_activator_that_does_not_accept_is_a_logged_miss();
   test_a_damageable_emits_died_and_health_changed();
   test_a_switched_light_leaves_the_frame();
   test_the_console_parses_a_parameter_tail();

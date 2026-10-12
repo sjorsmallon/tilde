@@ -63,8 +63,6 @@ void switch_to(game_state kind)
 
 // set_state removed.
 
-Game_State *get_current_state() { return g_active_state; }
-
 bool update(float dt)
 {
   if (g_should_exit)
@@ -95,11 +93,6 @@ void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes
   {
     g_active_state->build_frame(delta_seconds, passes, ui);
   }
-}
-
-shared::Entity_System &get_entity_system()
-{
-  return g_client_context.world.session.entity_system;
 }
 
 client_context_t &get_client_context() { return g_client_context; }

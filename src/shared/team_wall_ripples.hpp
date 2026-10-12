@@ -8,6 +8,8 @@
 // already ask (geometry_owner_blocks): a hull centre inside a wall the crosser
 // passes, and not inside it last frame, is an impact. Nothing is networked --
 // every client holds every player's position and derives the same ripples.
+// A pilot's rocket ending on a surface pushes one onto the same list, from
+// the Pilot_Impact effect (client/effects/pilot_impact.cpp).
 //
 // A ripple is a property of a POINT in the world, not of a draw, which is why it
 // reaches the shader through the pass's scene block (the atlas's reason) and

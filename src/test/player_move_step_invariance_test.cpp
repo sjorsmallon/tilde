@@ -163,6 +163,7 @@ struct hook_probe_t
   entities::Movement_Override released_kind    = entities::Movement_Override::None;
   vec3                        release_position = {};
   vec3                        release_velocity = {};
+  vec3                        release_surface_normal = {};
 };
 
 // Run `total_dt` as `sub_steps` equal steps, feeding each step's output into
@@ -218,6 +219,7 @@ static move_result_t run_split(const cvar_state_t& cvars,
       out_hook->released_kind    = events.override_ended.kind;
       out_hook->release_position = events.override_ended.position;
       out_hook->release_velocity = events.override_ended.velocity;
+      out_hook->release_surface_normal = events.override_ended.surface_normal;
     }
   }
   return {position, velocity};
@@ -1857,7 +1859,8 @@ static void test_a_pilot_holds_while_its_rocket_flies(const cvar_state_t& cvars)
                "the rocket has flown its speed along the aim, whatever the step count");
     check(probe.releases == 0, "it has not let go yet");
 
-    for (int tick = 30; tick < 200; ++tick)
+    const int ticks_past_the_lifetime = static_cast<int>(std::ceil(pilot.seconds / tick_dt)) + 30;
+    for (int tick = 30; tick < ticks_past_the_lifetime; ++tick)
       result = run_split(cvars, empty, Move_Input{}, result.position, result.velocity, tick_dt,
                          sub_steps, &movement, {}, nullptr, {}, {}, &probe);
 
@@ -1866,6 +1869,7 @@ static void test_a_pilot_holds_while_its_rocket_flies(const cvar_state_t& cvars)
     check(same_vec3(probe.release_velocity, entry_velocity), "the hull gets its momentum back");
     check_near(movement.override_target_position.x, start.x + pilot.speed * pilot.seconds, 0.5f,
                "the whole flight is the speed times the lifetime");
+    check(same_vec3(probe.release_surface_normal, vec3{}), "the clock ends it on no surface");
     check(result.position.x > start.x, "and the hull's own flight carries on from the hold");
   }
 
@@ -1888,6 +1892,18 @@ static void test_a_pilot_holds_while_its_rocket_flies(const cvar_state_t& cvars)
                "the rocket stops a radius short of the wall");
     check(probe.releases == 1 && movement.active_override == entities::Movement_Override::None,
           "and the wall ends the flight");
+    check(same_vec3(probe.release_surface_normal, vec3{-1.f, 0.f, 0.f}),
+          "and says which way the wall faces");
+
+    Move_Events tick_events{};
+    Move_Events step_events{};
+    step_events.override_ended = {.kind           = entities::Movement_Override::Pilot,
+                                  .surface_normal = vec3{-1.f, 0.f, 0.f}};
+    shared::accumulate_move_events(tick_events, step_events);
+    shared::accumulate_move_events(tick_events, Move_Events{});
+    check(tick_events.override_ended.kind == entities::Movement_Override::Pilot &&
+              same_vec3(tick_events.override_ended.surface_normal, vec3{-1.f, 0.f, 0.f}),
+          "the tick keeps the step that let go through the steps after it");
   }
 
   {

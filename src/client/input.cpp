@@ -833,11 +833,6 @@ uint64_t arrival_clock_frequency()
   return g_arrival_clock_frequency;
 }
 
-bool raw_input_is_active()
-{
-  return g_raw_input_active;
-}
-
 bool imgui_wants_mouse()
 {
   return ImGui::GetIO().WantCaptureMouse;

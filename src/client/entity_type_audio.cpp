@@ -29,7 +29,6 @@ struct entity_type_sounds_t
 
 constexpr entity_type_sounds_t ENTITY_TYPE_SOUNDS[] = {
     {entities::entity_type::Player_Entity, FLESH_IMPACT_SOUNDS, assets::NO_ASSET_NAME},
-    {entities::entity_type::Physics_Body_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::NO_ASSET_NAME},
     {entities::entity_type::Damageable_Entity, TARGET_BREAK_SOUNDS, "target_break"},
     {entities::entity_type::Jump_Pad_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::NO_ASSET_NAME},
     {entities::entity_type::Logic_Counter_Entity, NO_IMPACT_SOUND_ON_DISK_YET, assets::NO_ASSET_NAME},

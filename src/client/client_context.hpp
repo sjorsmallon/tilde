@@ -542,7 +542,7 @@ struct visual_effects_t
   // Where players came through a team wall lately, and who is inside one now.
   // Derived per frame from positions every client already holds, so nothing is
   // networked; aged in retire_per_frame_visuals, drawn by the ghost shader.
-  shared::wall_ripple_state_t team_wall_ripples;
+  shared::wall_ripple_state_t wall_ripples;
   // Where players landed on a solid beam lately, and who stands on one now; derived per frame as the above.
   shared::beam_ripple_state_t beam_ripples;
 

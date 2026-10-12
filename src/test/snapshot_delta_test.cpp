@@ -629,10 +629,10 @@ int main()
     player.health.current_health           = 100;
     put(server_frame, player);
 
-    entities::Physics_Body_Entity body;
-    body.entity_id                 = 20;
-    body.position                  = {5.f, 6.f, 7.f};
-    put(server_frame, body);
+    entities::Damageable_Entity damageable;
+    damageable.entity_id = 20;
+    damageable.position  = {5.f, 6.f, 7.f};
+    put(server_frame, damageable);
 
     put(server_frame, make_rocket(30, 42.f));
 
@@ -641,7 +641,7 @@ int main()
 
     assert(held<entities::Player_Entity>(client_frame, 1).health.current_health == 100);
     assert(held<entities::Player_Entity>(client_frame, 1).client_slot_index == 0);
-    assert(held<entities::Physics_Body_Entity>(client_frame, 20).position.y == 6.f);
+    assert(held<entities::Damageable_Entity>(client_frame, 20).position.y == 6.f);
     assert(held<entities::Rocket_Entity>(client_frame, 30).position.x == 42.f);
 
     // The player leaves; the other two types must be untouched by that.
@@ -654,7 +654,7 @@ int main()
 
     assert(record_count == 1);
     assert(count_entities_of_type<entities::Player_Entity>(next_client_frame) == 0);
-    assert(count_entities_of_type<entities::Physics_Body_Entity>(next_client_frame) == 1);
+    assert(count_entities_of_type<entities::Damageable_Entity>(next_client_frame) == 1);
     assert(count_entities_of_type<entities::Rocket_Entity>(next_client_frame) == 1);
 
     std::cout << "    -> Success!" << std::endl;

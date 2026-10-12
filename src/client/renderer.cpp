@@ -818,7 +818,7 @@ struct scene_uniform_t
   float       view_up[4]                                    = {}; // the camera's up, as long as half the view is tall
   float       fog_volumes[MAX_SCENE_FOG_VOLUMES][12]        = {}; // lowest corner xyz and density, highest corner xyz and edge softness, then the scattered colour rgb
   float       lens_settings[4]                              = {}; // x how many of `lenses` are live
-  float       lenses[MAX_SCENE_LENSES][8]                   = {}; // centre xyz and the channel bits it passes as a whole number, then half extents xyz and one spare
+  float       lenses[MAX_SCENE_LENSES][12]                  = {}; // centre xyz and the channel bits it passes as a whole number, half extents xyz and one spare, then its orientation as a quaternion xyzw
 };
 
 static_assert(sizeof(scene_uniform_t) ==
@@ -831,7 +831,7 @@ static_assert(sizeof(scene_uniform_t) ==
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
                       8 * MAX_SCENE_SHADOW_OCCLUDERS +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_OCCLUDERS + 48 +
-                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 32 * MAX_SCENE_LENSES,
+                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -7636,13 +7636,17 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   {
     const shared::lens_t& lens = pass.lenses[(uint32_t)index];
     float*                out  = scene.lenses[index];
-    out[0] = lens.center.x;
-    out[1] = lens.center.y;
-    out[2] = lens.center.z;
-    out[3] = (float)shared::get_channel_bits_for_lens_filter(lens.filter);
-    out[4] = lens.half_extents.x;
-    out[5] = lens.half_extents.y;
-    out[6] = lens.half_extents.z;
+    out[0]  = lens.box.center.x;
+    out[1]  = lens.box.center.y;
+    out[2]  = lens.box.center.z;
+    out[3]  = (float)shared::get_channel_bits_for_lens_filter(lens.filter);
+    out[4]  = lens.box.half_extents.x;
+    out[5]  = lens.box.half_extents.y;
+    out[6]  = lens.box.half_extents.z;
+    out[8]  = lens.box.orientation.x;
+    out[9]  = lens.box.orientation.y;
+    out[10] = lens.box.orientation.z;
+    out[11] = lens.box.orientation.w;
   }
 
   static size_t most_shadow_volumes_warned_about = MAX_SCENE_SHADOW_VOLUMES;

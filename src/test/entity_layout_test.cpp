@@ -5,7 +5,6 @@
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/rocket_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
@@ -122,10 +121,10 @@ int main()
   check(entity_type_from_classname("no_such_entity") == entity_type::Invalid,
         "an unknown classname resolves to Invalid rather than a wrong type");
 
-  check(strcmp(to_string(Shape_Kind::Sphere), "Sphere") == 0, "enum to_string");
-  check(try_from_string<Shape_Kind>("Sphere") == Shape_Kind::Sphere,
+  check(strcmp(to_string(Damage_Type::Orange), "Orange") == 0, "enum to_string");
+  check(try_from_string<Damage_Type>("Orange") == Damage_Type::Orange,
         "enum try_from_string round trip");
-  check(!try_from_string<Shape_Kind>("Dodecahedron"),
+  check(!try_from_string<Damage_Type>("Dodecahedron"),
         "enum try_from_string rejects an unknown name");
 
   // --- construction ---
@@ -194,10 +193,10 @@ int main()
           "create_entity returns an instance carrying its own tag");
     destroy_entity(created);
 
-    Entity* by_name = entity_from_classname("physics_body_entity");
-    check(by_name != nullptr && by_name->type == entity_type::Physics_Body_Entity,
+    Entity* by_name = entity_from_classname("damageable_entity");
+    check(by_name != nullptr && by_name->type == entity_type::Damageable_Entity,
           "entity_from_classname resolves a classname off disk to an instance");
-    check(static_cast<Physics_Body_Entity*>(by_name)->shape == Shape_Kind::Box,
+    check(static_cast<Damageable_Entity*>(by_name)->weakness == Damage_Type::Orange,
           "the instance carries its declared defaults");
     destroy_entity(by_name);
 
@@ -231,7 +230,6 @@ int main()
         // Through its carrier and its pose pair, which the client's mover cut reads.
         entity_type::Canopy_Entity,
         entity_type::Bubble_Entity,
-        entity_type::Physics_Body_Entity,
         entity_type::Damageable_Entity,
         entity_type::Sound_Emitter_Entity,
         entity_type::Point_Light_Entity,

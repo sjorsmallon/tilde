@@ -158,17 +158,6 @@ constexpr uint32_t Shader_Type_COUNT = 4;
 const char* to_string(Shader_Type value);
 template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_view text);
 
-enum class Shape_Kind : uint8_t
-{
-  Sphere = 0,
-  Box = 1,
-};
-
-constexpr uint32_t Shape_Kind_COUNT = 2;
-
-const char* to_string(Shape_Kind value);
-template <> std::optional<Shape_Kind> try_from_string<Shape_Kind>(std::string_view text);
-
 enum class Light_Mode : uint8_t
 {
   Baked = 0,
@@ -313,20 +302,19 @@ enum class enum_type : uint16_t
   Inventory_Slot = 5,
   Damage_Type = 6,
   Shader_Type = 7,
-  Shape_Kind = 8,
-  Light_Mode = 9,
-  Aim_Pose = 10,
-  Round_Phase = 11,
-  Game_Mode = 12,
-  Round_End_Reason = 13,
-  Match_Request = 14,
-  Easing = 15,
-  Reveal_Cone_Kind = 16,
-  Lens_Filter = 17,
-  Movement_Override = 18,
+  Light_Mode = 8,
+  Aim_Pose = 9,
+  Round_Phase = 10,
+  Game_Mode = 11,
+  Round_End_Reason = 12,
+  Match_Request = 13,
+  Easing = 14,
+  Reveal_Cone_Kind = 15,
+  Lens_Filter = 16,
+  Movement_Override = 17,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 19;
+constexpr uint32_t ENUM_TYPE_COUNT = 18;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -350,39 +338,38 @@ enum class entity_type : uint16_t
   Guided_Rocket_Entity = 12,
   Canopy_Entity = 13,
   Bubble_Entity = 14,
-  Physics_Body_Entity = 15,
-  Damageable_Entity = 16,
-  Particle_Emitter_Entity = 17,
-  Sound_Emitter_Entity = 18,
-  Point_Light_Entity = 19,
-  Spot_Light_Entity = 20,
-  Directional_Light_Entity = 21,
-  Trigger_Volume_Entity = 22,
-  Jump_Pad_Entity = 23,
-  Reflection_Volume_Entity = 24,
-  Game_Rules_Entity = 25,
-  Logic_Counter_Entity = 26,
-  Geometry_Owner_Entity = 27,
-  Ping_Marker_Entity = 28,
-  Logic_Timer_Entity = 29,
-  Path_Node_Entity = 30,
-  Mover_Entity = 31,
-  Launcher_Entity = 32,
-  Movement_Modifier_Entity = 33,
-  Remnant_Entity = 34,
-  Modifier_Shot_Entity = 35,
-  Timed_Movement_Modifier_Entity = 36,
-  Weapon_Emancipation_Grill_Entity = 37,
-  Emancipated_Weapon_Entity = 38,
-  Void_Entity = 39,
-  Reveal_Light_Entity = 40,
-  Fog_Volume_Entity = 41,
-  Lens_Entity = 42,
+  Damageable_Entity = 15,
+  Particle_Emitter_Entity = 16,
+  Sound_Emitter_Entity = 17,
+  Point_Light_Entity = 18,
+  Spot_Light_Entity = 19,
+  Directional_Light_Entity = 20,
+  Trigger_Volume_Entity = 21,
+  Jump_Pad_Entity = 22,
+  Reflection_Volume_Entity = 23,
+  Game_Rules_Entity = 24,
+  Logic_Counter_Entity = 25,
+  Geometry_Owner_Entity = 26,
+  Ping_Marker_Entity = 27,
+  Logic_Timer_Entity = 28,
+  Path_Node_Entity = 29,
+  Mover_Entity = 30,
+  Launcher_Entity = 31,
+  Movement_Modifier_Entity = 32,
+  Remnant_Entity = 33,
+  Modifier_Shot_Entity = 34,
+  Timed_Movement_Modifier_Entity = 35,
+  Weapon_Emancipation_Grill_Entity = 36,
+  Emancipated_Weapon_Entity = 37,
+  Void_Entity = 38,
+  Reveal_Light_Entity = 39,
+  Fog_Volume_Entity = 40,
+  Lens_Entity = 41,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 43;
+constexpr uint32_t ENTITY_TYPE_COUNT = 42;
 
 enum class component_type : uint16_t
 {
@@ -464,12 +451,6 @@ template <> struct enum_traits<entities::Shader_Type>
 {
   static constexpr uint32_t count = entities::Shader_Type_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Shader_Type;
-};
-
-template <> struct enum_traits<entities::Shape_Kind>
-{
-  static constexpr uint32_t count = entities::Shape_Kind_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Shape_Kind;
 };
 
 template <> struct enum_traits<entities::Light_Mode>

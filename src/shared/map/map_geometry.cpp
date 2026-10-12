@@ -352,37 +352,21 @@ collision_piece_t piece_from_aabb(const aabb_t &aabb)
   return piece;
 }
 
-linalg::vec3 oriented_box_reach(const linalg::vec3 &half_extents, const linalg::quatf &orientation)
+collision_piece_t piece_from_oriented_box(const oriented_box_t &box)
 {
-  linalg::vec3 reach{0.f, 0.f, 0.f};
-  const linalg::vec3 axes[3] = {{half_extents.x, 0.f, 0.f},
-                                {0.f, half_extents.y, 0.f},
-                                {0.f, 0.f, half_extents.z}};
-  for (const linalg::vec3 &axis : axes)
-  {
-    const linalg::vec3 turned = linalg::rotate(orientation, axis);
-    reach = reach + linalg::vec3{std::abs(turned.x), std::abs(turned.y), std::abs(turned.z)};
-  }
-  return reach;
-}
-
-collision_piece_t piece_from_oriented_box(const linalg::vec3 &center, const linalg::vec3 &half_extents,
-                                          const linalg::quatf &orientation)
-{
-  collision_piece_t piece = piece_from_aabb(to_world_aabb({0.f, 0.f, 0.f}, half_extents));
+  collision_piece_t piece = piece_from_aabb(to_world_aabb({0.f, 0.f, 0.f}, box.half_extents));
 
   for (Plane &plane : piece.planes)
   {
-    plane.point  = center + linalg::rotate(orientation, plane.point);
-    plane.normal = linalg::rotate(orientation, plane.normal);
+    plane.point  = box.center + linalg::rotate(box.orientation, plane.point);
+    plane.normal = linalg::rotate(box.orientation, plane.normal);
   }
 
   for (std::vector<linalg::vec3> &polygon : piece.face_polygons)
     for (linalg::vec3 &corner : polygon)
-      corner = center + linalg::rotate(orientation, corner);
+      corner = box.center + linalg::rotate(box.orientation, corner);
 
-  const linalg::vec3 reach = oriented_box_reach(half_extents, orientation);
-  piece.bounds = {center - reach, center + reach};
+  piece.bounds = get_bounds(box);
   return piece;
 }
 
@@ -692,7 +676,8 @@ try_build_boundary_pyramids(const brush_polyhedron_t &displaced,
 collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh)
 {
   const static_mesh_box_t box = compute_static_mesh_box(static_mesh);
-  return piece_from_oriented_box(box.center, box.half_extents, static_mesh.orientation);
+  return piece_from_oriented_box(
+      {.center = box.center, .half_extents = box.half_extents, .orientation = static_mesh.orientation});
 }
 
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,

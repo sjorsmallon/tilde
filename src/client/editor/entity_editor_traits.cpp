@@ -2,6 +2,7 @@
 #include "../../shared/entities/entity_reflection.hpp"
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/jump_pad_entity_generated.hpp"
+#include "entities/generated/entities/lens_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
 #include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
@@ -9,6 +10,7 @@
 #include "entity_editor_traits.hpp"
 #include "../../shared/assets/asset.hpp"
 #include "../../shared/map/editor_grid.hpp"
+#include "../../shared/lighting/lens.hpp"
 #include "../../shared/map/map.hpp"
 #include "../../shared/shapes.hpp"
 #include "render_assets.hpp"
@@ -368,6 +370,14 @@ void box_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
   draws.debug.box(position + volume->position, volume->half_extents, color);
 }
 
+void lens_diagram(const entities::Entity* e, pass_builder_t& draws, const linalg::vec3& position,
+                  color_t color, const entity_draw_settings_t&)
+{
+  shared::lens_t lens = shared::compute_lens_box(*static_cast<const entities::Lens_Entity*>(e));
+  lens.box.center     = position + lens.box.center - e->position;
+  draws.debug.oriented_box(lens.box, color);
+}
+
 void jump_pad_diagram(const entities::Entity* e, pass_builder_t& draws,
                       const linalg::vec3& position, color_t color,
                       const entity_draw_settings_t&)
@@ -495,7 +505,6 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Guided_Rocket_Entity}, // runtime only
     {.type = entity_type::Canopy_Entity}, // runtime only
     {.type = entity_type::Bubble_Entity}, // runtime only
-    {.type = entity_type::Physics_Body_Entity},
 
     {.type = entity_type::Damageable_Entity, .draw_diagram = &box_volume_diagram},
 
@@ -555,7 +564,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .draw_reach   = &reveal_light_reach},
 
     {.type = entity_type::Fog_Volume_Entity, .color = colors::white, .draw_diagram = &box_volume_diagram},
-    {.type = entity_type::Lens_Entity, .color = colors::yellow, .draw_diagram = &box_volume_diagram},
+    {.type = entity_type::Lens_Entity, .color = colors::yellow, .draw_diagram = &lens_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),
@@ -610,6 +619,13 @@ shared::aabb_bounds_t bounds_of_shape(const editor_shape_t& shape)
 
 editor_shape_t editor_shape_at(const entities::Entity* e, const linalg::vec3& position)
 {
+  if (const entities::Lens_Entity* lens = entities::entity_as<entities::Lens_Entity>(e))
+  {
+    shared::lens_t placed = shared::compute_lens_box(*lens);
+    placed.box.center     = position + placed.box.center - e->position;
+    return shared::get_bounds(placed.box);
+  }
+
   if (const entities::Box_Volume* volume = entities::get_box_volume(e))
     return shared::get_bounds(*volume, position);
 

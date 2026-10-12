@@ -3,6 +3,7 @@
 
 #include "scene.glsl"
 #include "shading_cel.glsl"
+#include "ripple.glsl"
 
 // renderer.hpp's light_cut_t. A revealed draw keeps only the fragments inside a cone that reveals;
 // an erased draw loses the fragments inside a cone that erases (shared/lighting/reveal_light.hpp). A shadow_solid
@@ -37,6 +38,10 @@ const vec3  REVEAL_RIM_COLOR  = vec3(1.2, 2.6, 3.0);
 // and dots that thicken towards it across the width the bright edge has.
 const float REVEAL_LINE_PIXELS = 2.0;
 const vec3  REVEAL_INK_COLOR   = vec3(0.0);
+
+// A cut draw keeps a fragment a ripple crest (ripple.glsl) is at least this high on, and reveal_rim
+// draws it as the cut's edge: a rocket's ring on a wall you cannot see shows where the wall is.
+const float RIPPLE_SHOWS_THROUGH_HEIGHT = 0.3;
 
 // How far inside the nearest boundary of cones [first, first + count), in rim widths; negative is outside every one, and never below -1.
 float cone_margin(vec3 world_position, int first, int count)
@@ -100,17 +105,23 @@ float shadow_margin(vec3 world_position)
     return max(margin, -1.0);
 }
 
+// `v` turned by the unit quaternion `q`, linalg.hpp's rotate.
+vec3 rotate_by_quaternion(vec4 q, vec3 v)
+{
+    return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
+
 // How far inside a lens's silhouette the fragment is seen, in rim widths (shared/lighting/lens.hpp's
 // lens_lies_on_line_of_sight): the shorter of the chord the eye's line cuts through the lens and how far
-// behind the lens's far side the fragment lies. The channels of every lens on the line multiply, so a red
-// and a green stacked pass nothing. -1 when no lens on the line passes this draw's colour.
+// behind the lens's far side the fragment lies, the eye's line taken into each lens's own frame. The channels
+// of every lens on the line multiply, so a red and a green stacked pass nothing. -1 when no lens on the line
+// passes this draw's colour.
 float lens_margin(vec3 world_position)
 {
     const int   channel = 1 << (LIGHT_CUT - LIGHT_CUT_LENS_RED);
     const vec3  eye     = scene.camera_position.xyz;
     const vec3  line    = world_position - eye;
     const float reach   = length(line);
-    const vec3  inverse_line = 1.0 / mix(line, vec3(1e-5), lessThan(abs(line), vec3(1e-5)));
 
     int   passed = 7;
     bool  seen   = false;
@@ -119,8 +130,12 @@ float lens_margin(vec3 world_position)
     for (int index = 0; index < lens_count; ++index) {
         const vec3 center       = scene.lenses[index].center_channels.xyz;
         const vec3 half_extents = scene.lenses[index].half_extents.xyz;
-        const vec3 low          = (center - half_extents - eye) * inverse_line;
-        const vec3 high         = (center + half_extents - eye) * inverse_line;
+        const vec4 into_box     = scene.lenses[index].orientation * vec4(-1.0, -1.0, -1.0, 1.0);
+        const vec3 origin       = rotate_by_quaternion(into_box, eye - center);
+        const vec3 line_in_box  = rotate_by_quaternion(into_box, line);
+        const vec3 inverse_line = 1.0 / mix(line_in_box, vec3(1e-5), lessThan(abs(line_in_box), vec3(1e-5)));
+        const vec3 low          = (-half_extents - origin) * inverse_line;
+        const vec3 high         = (half_extents - origin) * inverse_line;
         const vec3 entering     = min(low, high);
         const vec3 leaving      = max(low, high);
         const float enter       = max(max(entering.x, entering.y), max(entering.z, 0.0));
@@ -154,6 +169,10 @@ float cut_margin(vec3 world_position)
 
 void discard_outside_reveal(vec3 world_position)
 {
+    if (LIGHT_CUT == LIGHT_CUT_NONE)
+        return;
+    if (sample_ripples(world_position).height > RIPPLE_SHOWS_THROUGH_HEIGHT)
+        return;
     if (LIGHT_CUT == LIGHT_CUT_REVEALED && reveal_margin(world_position) < 0.0)
         discard;
     if (LIGHT_CUT == LIGHT_CUT_ERASED && erase_margin(world_position) >= 0.0)

@@ -163,6 +163,9 @@ struct Move_Events
     entities::Movement_Override kind     = entities::Movement_Override::None;
     vec3                        position = {};
     vec3                        velocity = {};
+    // The surface the rocket met when that ended it; a zero normal is the clock.
+    vec3                        surface_point  = {};
+    vec3                        surface_normal = {};
   };
   override_end_t override_ended = {};
 };
@@ -249,7 +252,7 @@ inline void apply_impulse(const movement_settings_t& settings, vec3& velocity,
 // the world that differs between two ticks.
 //
 // So the day a dynamic collider becomes a movement input (player-vs-player,
-// moving platforms, standing on a Physics_Body_Entity), prediction silently
+// moving platforms, standing on a dropped weapon), prediction silently
 // starts depending on time and drifts with no error to say so. That is a design
 // decision, not a parameter to add -- see lag_compensation_def.md, "Why movement
 // needs no rewind".

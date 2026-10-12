@@ -420,7 +420,6 @@ constexpr legacy_classname_t LEGACY_CLASSNAMES[] = {
     {"weapon_basic", "weapon_entity"},
     {"particle_emitter", "particle_emitter_entity"},
     {"trigger_volume", "trigger_volume_entity"},
-    {"physics_body", "physics_body_entity"},
 };
 
 // DELIBERATELY NOT ALIASED: "light_entity", which was one type carrying a

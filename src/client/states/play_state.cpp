@@ -1768,7 +1768,7 @@ void Play_State::retire_per_frame_visuals(client_context_t &ctx, play_frame_t &f
       ctx.visuals.cut_wipe_seconds = -1.f;
   }
 
-  shared::age_wall_ripples(ctx.visuals.team_wall_ripples, world_dt);
+  shared::age_wall_ripples(ctx.visuals.wall_ripples, world_dt);
   shared::age_beam_ripples(ctx.visuals.beam_ripples, world_dt);
 }
 
@@ -2803,7 +2803,7 @@ void Play_State::ripple_team_walls(client_context_t &ctx, play_frame_t &frame)
 
   shared::detect_team_wall_crossings(ctx.world.session.entity_system, ctx.world.session.geometry,
                                      ctx.world.session.owner_of, crossers,
-                                     ctx.visuals.team_wall_ripples);
+                                     ctx.visuals.wall_ripples);
 }
 
 // RENDER: who came to stand on a solid beam this frame, by the same positions ripple_team_walls reads.
@@ -3626,7 +3626,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
   }
 
-  scene.ripples = ctx.visuals.team_wall_ripples.ripples;
+  scene.ripples = ctx.visuals.wall_ripples.ripples;
   scene.beam_ripples = ctx.visuals.beam_ripples.ripples;
   scene.shadow_volumes   = ctx.visuals.drawn_shadow_volumes;
   scene.shadow_occluders = ctx.visuals.drawn_shadow_occluders;
@@ -3843,7 +3843,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       if (!shared::extending_platform_exists_at_tick(*platform, tick, tick_interval_seconds))
         continue;
 
-      const shared::extending_platform_box_t box =
+      const shared::oriented_box_t box =
           shared::extending_platform_box_at(*platform, tick, fraction, tick_interval_seconds);
       drawn_position    = box.center;
       drawn_orientation = box.orientation;

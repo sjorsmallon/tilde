@@ -5,6 +5,7 @@
 // (resources/shaders/reveal.glsl's lens_margin); the filters of every lens on one line multiply, so a red
 // and a green stacked pass nothing. The geometry is solid whether or not it is seen.
 
+#include "aabb.hpp"
 #include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
 #include "span.hpp"
@@ -24,9 +25,8 @@ struct Entity_System;
 
 struct lens_t
 {
-  linalg::vec3f         center       = {0.f, 0.f, 0.f};
-  linalg::vec3f         half_extents = {0.f, 0.f, 0.f};
-  entities::Lens_Filter filter       = entities::Lens_Filter::Red;
+  oriented_box_t        box;
+  entities::Lens_Filter filter = entities::Lens_Filter::Red;
 };
 
 inline constexpr uint32_t LENS_CHANNEL_RED   = 1u << 0;
@@ -37,6 +37,7 @@ inline constexpr uint32_t LENS_CHANNEL_ALL   = LENS_CHANNEL_RED | LENS_CHANNEL_G
 [[nodiscard]] uint32_t      get_channel_bits_for_lens_filter(entities::Lens_Filter filter);
 [[nodiscard]] linalg::vec3f get_color_for_lens_filter(entities::Lens_Filter filter);
 
+// Its volume about the entity plus the volume's offset, turned by the entity's orientation.
 [[nodiscard]] lens_t compute_lens_box(const entities::Lens_Entity& lens);
 
 // The segment from `eye` to `point` enters the lens and leaves it before reaching `point`: an eye inside

@@ -36,11 +36,12 @@ enum class effect_type : uint16_t
   Shot_Impact = 4, // a shot landed; attached_entity is what it hit, 0 for the world
   Jump_Pad_Launch = 5, // a pad threw somebody; normal is the launch direction, attached_entity who
   Ping = 6, // a player pinged a spot; attached_entity is who pinged, normal the surface
+  Pilot_Impact = 7, // a piloted rocket ended on a surface; origin the contact, normal the surface, attached_entity the pilot
 };
 
 // Not a member of the enum above, so `switch` over a effect_type
 // still warns on an unhandled case.
-constexpr uint32_t EFFECT_TYPE_COUNT = 7;
+constexpr uint32_t EFFECT_TYPE_COUNT = 8;
 
 const char* to_string(effect_type value);
 
@@ -116,6 +117,13 @@ static_assert(std::is_trivially_copyable_v<Ping>,
               "Ping must stay trivially copyable: the codec addresses its fields "
               "through byte offsets");
 
+struct Pilot_Impact : Effect
+{
+};
+static_assert(std::is_trivially_copyable_v<Pilot_Impact>,
+              "Pilot_Impact must stay trivially copyable: the codec addresses its fields "
+              "through byte offsets");
+
 // Fire helpers. Each writes the kind, then the channel's fields, then its
 // own -- straight into the stream. Nothing is queued, so no value survives
 // the call and a kind can never disagree with its payload.
@@ -126,6 +134,7 @@ void fire_land(event_stream_t& stream, const Land& payload);
 void fire_shot_impact(event_stream_t& stream, const Shot_Impact& payload);
 void fire_jump_pad_launch(event_stream_t& stream, const Jump_Pad_Launch& payload);
 void fire_ping(event_stream_t& stream, const Ping& payload);
+void fire_pilot_impact(event_stream_t& stream, const Pilot_Impact& payload);
 
 // The read half, one per member. Empty when a field's value is outside
 // this build's tables -- an enum id no declared value holds. That leaves
@@ -141,6 +150,7 @@ void fire_ping(event_stream_t& stream, const Ping& payload);
 [[nodiscard]] std::optional<Shot_Impact> try_read_shot_impact(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Jump_Pad_Launch> try_read_jump_pad_launch(network::Bit_Reader& reader);
 [[nodiscard]] std::optional<Ping> try_read_ping(network::Bit_Reader& reader);
+[[nodiscard]] std::optional<Pilot_Impact> try_read_pilot_impact(network::Bit_Reader& reader);
 
 // The ONE place a payload becomes characters. One overload per member, so
 // a caller holding a payload has a formatter for it.
@@ -151,6 +161,7 @@ std::string to_text(const Land& value);
 std::string to_text(const Shot_Impact& value);
 std::string to_text(const Jump_Pad_Launch& value);
 std::string to_text(const Ping& value);
+std::string to_text(const Pilot_Impact& value);
 
 // Every event PENDING in the stream, decoded back out of the bytes that
 // will actually be sent. A debugger view of a queue shows what someone

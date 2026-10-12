@@ -196,11 +196,15 @@ message CmdConnect {
   int32 protocol_version = 1;
   string player_name = 2;
   uint32 schema_hash = 3; // entities::SCHEMA_HASH -- digest of every
-  // declaration in entities.def plus the resolved
-  // asset manifest. The server refuses a client
+  // declaration in the .def files. The server refuses a client
   // whose hash differs: the two builds disagree
   // about entity layout, so every snapshot after
   // the handshake would be misparsed.
+  uint32 asset_table_hash = 4; // assets::asset_table_hash() -- the ids
+  // numbered from the client's resource tree at
+  // startup. Refused on mismatch for the same
+  // reason: an asset id on the wire would name a
+  // different file on each side.
 }
 
 message CmdAccept {
@@ -221,6 +225,7 @@ message CmdReject {
   uint32 server_schema_hash = 2; // Only set when the rejection IS a schema
   // mismatch, so the client can log both
   // sides. 0 for every other reason.
+  uint32 server_asset_table_hash = 3; // The same, for an asset table mismatch.
 }
 
 message CmdDisconnect {

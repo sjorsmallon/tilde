@@ -66,6 +66,5 @@ void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
                        const assets::pbr_material_asset_t &material);
 
 // Get the VkPhysicalDevice from the renderer.
-VkPhysicalDevice get_physical_device();
 
 } // namespace client

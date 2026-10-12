@@ -1,5 +1,4 @@
 #include "entities/generated/entities/damageable_entity_generated.hpp"
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "projectile_sweep.hpp"
@@ -140,13 +139,6 @@ void collect_projectile_targets(const Entity_System& system, std::vector<project
     if (damageable.health.current_health <= 0)
       continue;
     out.push_back({damageable.entity_id, get_bounds(damageable.volume, damageable.position)});
-  }
-
-  for (const entities::Physics_Body_Entity& body :
-       system.entities_of_type<entities::Physics_Body_Entity>())
-  {
-    const linalg::vec3f half_extents = body.size * 0.5f;
-    out.push_back({body.entity_id, {body.position - half_extents, body.position + half_extents}});
   }
 
   for (const entities::Weapon_Entity& weapon : system.entities_of_type<entities::Weapon_Entity>())

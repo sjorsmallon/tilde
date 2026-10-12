@@ -349,9 +349,9 @@ static int test_a_cubemap_is_a_directory_and_claims_its_faces()
 }
 
 // Box and Sphere are BAKED .mesh files now, dumped once from the generators
-// that used to run at init. spawn_physics_body scales both through
+// that used to run at init. Anything drawing one scales it through
 // `render.scale` on the assumption that a primitive is UNIT-SIZED, and nothing
-// else asserts that -- the failure mode is a physics body 100x too large, and
+// else asserts that -- the failure mode is a primitive 100x too large, and
 // it would not be obvious which of the two regimes drifted. A .mesh is in
 // engine units and skips load_obj's 100-unit normalization, which is exactly
 // why the bake went to .mesh rather than to .obj.

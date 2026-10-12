@@ -183,16 +183,6 @@ Bubble_Entity::Bubble_Entity()
   type = entity_type::Bubble_Entity;
 }
 
-Physics_Body_Entity::Physics_Body_Entity()
-  : shape(Shape_Kind::Box),
-    size{},
-    bounce{},
-    mass(10.0f),
-    render{}
-{
-  type = entity_type::Physics_Body_Entity;
-}
-
 Damageable_Entity::Damageable_Entity()
   : health{},
     volume({.half_extents = {16.0f, 32.0f, 16.0f}}),

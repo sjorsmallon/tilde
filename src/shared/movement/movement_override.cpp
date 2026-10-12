@@ -152,6 +152,11 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   movement.override_target_position = hit ? hit->position : to;
 
   movement.override_seconds_remaining -= dt;
+  if (hit)
+  {
+    result.end_surface_point  = hit->position - hit->normal * movement.override_radius;
+    result.end_surface_normal = hit->normal;
+  }
   if (hit || movement.override_seconds_remaining <= 0.f)
     end_override(settings, state, state.velocity, result);
 

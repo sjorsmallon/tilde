@@ -15,7 +15,6 @@
 // Linear scan O(volumes x touchers), unchanged. The canonical replacement is
 // Jolt sensor bodies in the broadphase; see "Spatial query strategy" in
 // src/client/editor/readme.md for the migration trigger.
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "trigger_system.hpp"
 
@@ -56,8 +55,7 @@ void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& o
 {
   static_assert(
       entities::SIGNAL_ACTIVATOR_MASKS[(uint16_t)entities::entity_signal::Touched] ==
-          (entities::entity_type_bit(entities::entity_type::Player_Entity) |
-           entities::entity_type_bit(entities::entity_type::Physics_Body_Entity)),
+          entities::entity_type_bit(entities::entity_type::Player_Entity),
       "Touched's `by` list moved: add or remove the matching pool walk below");
 
   out.clear();
@@ -65,10 +63,6 @@ void collect_touchers(shared::game_session_t& session, std::vector<toucher_t>& o
   for (entities::Player_Entity& player :
        session.entity_system.entities_of_type<entities::Player_Entity>())
     out.push_back({&player, shared::player_hull_bounds(player.position)});
-
-  for (entities::Physics_Body_Entity& body :
-       session.entity_system.entities_of_type<entities::Physics_Body_Entity>())
-    out.push_back({&body, {body.position - body.size, body.position + body.size}});
 }
 
 // One pass over every Touchable there is, whatever pool it lives in. Keyed on

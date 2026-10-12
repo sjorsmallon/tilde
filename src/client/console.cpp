@@ -76,12 +76,6 @@ bool console::bind_key(std::string_view key, std::string command_line)
   return true;
 }
 
-void console::clear_bindings()
-{
-  bindings_.clear();
-  save_bindings_to_file();
-}
-
 // The whole file is rewritten from the map, sorted by key, so a diff of
 // binds.cfg is stable and a removed bind cannot linger.
 void console::save_bindings_to_file() const

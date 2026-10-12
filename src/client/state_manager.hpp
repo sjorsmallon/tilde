@@ -26,7 +26,6 @@ void init();
 void switch_to(game_state kind);
 
 // Get the current state (unsafe, can be null)
-Game_State *get_current_state();
 
 // Update the current state. Returns false if the game should exit.
 bool update(float dt);
@@ -43,7 +42,6 @@ void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes
 
 // Get access to the shared entity system
 // Get access to the shared entity system (convenience wrapper around context)
-struct shared::Entity_System &get_entity_system();
 
 // Get access to the full client context
 client_context_t &get_client_context();

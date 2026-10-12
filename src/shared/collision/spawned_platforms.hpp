@@ -73,13 +73,6 @@ constexpr float PLATFORM_DISSOLVE_OVER_LAST_FRACTION = 0.2f;
 // along its forward at extend_speed until it is `length` long, solid once passable_seconds have passed, gone
 // solid_seconds after it is grown. Every clock is a function of the tick and replicated state alone. It
 // grows THROUGH a hull in its path: its cut never crushes.
-struct extending_platform_box_t
-{
-  linalg::vec3f center;
-  linalg::vec3f half_extents;
-  linalg::quatf orientation;
-};
-
 // Whole ticks from spawned_tick until it is grown, at least one.
 [[nodiscard]] uint32_t extending_platform_extend_ticks(const entities::Extending_Platform_Entity& platform,
                                                        float tick_interval_seconds);
@@ -106,7 +99,7 @@ struct extending_platform_box_t
     float tick_interval_seconds);
 
 // The box it is at `tick`, from its set-down point along its forward; the cut reads it at fraction 0.
-[[nodiscard]] extending_platform_box_t extending_platform_box_at(
+[[nodiscard]] oriented_box_t extending_platform_box_at(
     const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_fraction,
     float tick_interval_seconds);
 

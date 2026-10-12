@@ -25,7 +25,6 @@
 #include "entities/guided_rocket_entity_generated.hpp"
 #include "entities/canopy_entity_generated.hpp"
 #include "entities/bubble_entity_generated.hpp"
-#include "entities/physics_body_entity_generated.hpp"
 #include "entities/damageable_entity_generated.hpp"
 #include "entities/particle_emitter_entity_generated.hpp"
 #include "entities/sound_emitter_entity_generated.hpp"

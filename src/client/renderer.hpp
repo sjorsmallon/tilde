@@ -30,6 +30,7 @@
 #include <vector>
 #include <vulkan/vulkan.h> // escape-hatch section only
 
+#include "../shared/aabb.hpp"
 #include "../shared/array.hpp"
 #include "../shared/assets/asset.hpp"
 #include "../shared/color.hpp"
@@ -616,6 +617,9 @@ struct debug_draw_list_t
   void box(const linalg::vec3f& center, const linalg::vec3f& half_extents, color_t color,
            fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
            float seconds = 0.0f, bool draw_when_occluded = false);
+  // The same box turned; its twelve edges, never filled.
+  void oriented_box(const shared::oriented_box_t& box, color_t color, float depth_bias = 0.0f,
+                    float seconds = 0.0f, bool draw_when_occluded = false);
   // Triangle-fan decomposed, and alpha-blended when the colour says so. There is
   // no once-per-frame reset to remember -- the list IS the frame scope.
   void filled_polygon(Span<const linalg::vec3f> vertices, color_t color, float seconds = 0.0f,

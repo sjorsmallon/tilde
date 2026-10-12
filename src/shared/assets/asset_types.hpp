@@ -233,8 +233,8 @@ struct cubemap_asset_t
 // exe, every get_mesh caller lives in game_client.dll, and the copy that got
 // filled was never the copy that got read -- a mesh id resolved to an INVALID
 // handle (not even the Missing placeholder, which is downstream of the
-// initialized guard), so the symptom was nothing drawn. `spawn_cube` producing
-// an invisible cube was this, not a spawn bug.
+// initialized guard), so the symptom was nothing drawn: an invisible primitive,
+// not a spawn bug.
 //
 // The fix is the shape the cvar system already uses: the LAUNCHER owns exactly
 // one asset_state_t and hands a pointer to each module, which points its own

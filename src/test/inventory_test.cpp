@@ -54,32 +54,34 @@ static constexpr Array<entities::Weapon, 5> TEST_LOADOUT = {{
     entities::Weapon::Swapper,
 }};
 
-constexpr const shared::weapon_definition_t& SCOUT = shared::get_weapon_definition(entities::Weapon::Scout);
-constexpr const shared::weapon_definition_t& KNIFE = shared::get_weapon_definition(entities::Weapon::Knife);
+const shared::weapon_definition_t& SCOUT = shared::get_weapon_definition(entities::Weapon::Scout);
+const shared::weapon_definition_t& KNIFE = shared::get_weapon_definition(entities::Weapon::Knife);
 
-constexpr const shared::weapon_definition_t& PLATFORM =
+const shared::weapon_definition_t& PLATFORM =
     shared::get_weapon_definition(entities::Weapon::Platform);
 
-static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).ammo == 10);
-static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).reserve_ammo == -1);
-static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).ammo == 7);
-static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).reserve_ammo == 0);
-static_assert(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 30}).reserve_ammo == 23);
-static_assert(shared::reloaded_magazine(SCOUT, {.size = 5, .ammo = 3, .reserve_ammo = -1}).ammo == 5);
-static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 0}));
-static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = -1, .reserve_ammo = -1}));
-static_assert(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 10, .reserve_ammo = 30}));
-static_assert(!shared::reload_may_start(KNIFE, {.size = 0, .ammo = 0, .reserve_ammo = 30}));
-static_assert(!shared::reload_may_start(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}));
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = 0, .reserve_ammo = -1}, 0) == 5);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = -1, .reserve_ammo = -1}, 0) == -1);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 4, .reserve_ammo = -1}, 0) == 4);
-static_assert(shared::ammo_after_ground_refill(SCOUT, {.size = 10, .ammo = 0, .reserve_ammo = -1}, 0) == 0);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 2) == 0);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 1) == 1);
-static_assert(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 1, .reserve_ammo = -1}, 3) == 1);
-static_assert(PLATFORM.limit.max_alive == 0 &&
-              PLATFORM.secondary_fire.resolution == entities::Fire_Resolution::Recall);
+static void check_magazine_rules_on_table_rows()
+{
+  check(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).ammo == 10, "shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).ammo == 10");
+  check(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).reserve_ammo == -1, "shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = -1}).reserve_ammo == -1");
+  check(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).ammo == 7, "shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).ammo == 7");
+  check(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).reserve_ammo == 0, "shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 4}).reserve_ammo == 0");
+  check(shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 30}).reserve_ammo == 23, "shared::reloaded_magazine(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 30}).reserve_ammo == 23");
+  check(shared::reloaded_magazine(SCOUT, {.size = 5, .ammo = 3, .reserve_ammo = -1}).ammo == 5, "shared::reloaded_magazine(SCOUT, {.size = 5, .ammo = 3, .reserve_ammo = -1}).ammo == 5");
+  check(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 0}), "!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 3, .reserve_ammo = 0})");
+  check(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = -1, .reserve_ammo = -1}), "!shared::reload_may_start(SCOUT, {.size = 10, .ammo = -1, .reserve_ammo = -1})");
+  check(!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 10, .reserve_ammo = 30}), "!shared::reload_may_start(SCOUT, {.size = 10, .ammo = 10, .reserve_ammo = 30})");
+  check(!shared::reload_may_start(KNIFE, {.size = 0, .ammo = 0, .reserve_ammo = 30}), "!shared::reload_may_start(KNIFE, {.size = 0, .ammo = 0, .reserve_ammo = 30})");
+  check(!shared::reload_may_start(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}), "!shared::reload_may_start(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1})");
+  check(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = 0, .reserve_ammo = -1}, 0) == 5, "shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = 0, .reserve_ammo = -1}, 0) == 5");
+  check(shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = -1, .reserve_ammo = -1}, 0) == -1, "shared::ammo_after_ground_refill(PLATFORM, {.size = 5, .ammo = -1, .reserve_ammo = -1}, 0) == -1");
+  check(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 4, .reserve_ammo = -1}, 0) == 4, "shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 4, .reserve_ammo = -1}, 0) == 4");
+  check(shared::ammo_after_ground_refill(SCOUT, {.size = 10, .ammo = 0, .reserve_ammo = -1}, 0) == 0, "shared::ammo_after_ground_refill(SCOUT, {.size = 10, .ammo = 0, .reserve_ammo = -1}, 0) == 0");
+  check(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 2) == 0, "shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 2) == 0");
+  check(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 1) == 1, "shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 0, .reserve_ammo = -1}, 1) == 1");
+  check(shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 1, .reserve_ammo = -1}, 3) == 1, "shared::ammo_after_ground_refill(PLATFORM, {.size = 2, .ammo = 1, .reserve_ammo = -1}, 3) == 1");
+  check(PLATFORM.limit.max_alive == 0 && PLATFORM.secondary_fire.resolution == entities::Fire_Resolution::Recall, "PLATFORM.limit.max_alive == 0 && PLATFORM.secondary_fire.resolution == entities::Fire_Resolution::Recall");
+}
 static_assert(shared::ammo_allows_a_shot(-1) && shared::ammo_allows_a_shot(1) &&
               !shared::ammo_allows_a_shot(0));
 
@@ -167,6 +169,8 @@ int main()
   static assets::asset_state_t asset_state;
   assets::set_state(&asset_state);
   assets::number_asset_ids_from_tree(asset_state, "resources");
+
+  check_magazine_rules_on_table_rows();
 
   shared::game_session_t session;
 

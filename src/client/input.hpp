@@ -233,7 +233,6 @@ uint64_t arrival_clock_now();
 // Whether edges are coming from the raw-input thread. False means the SDL
 // fallback, whose stamps are frame-granular -- the sub-tick fold is still
 // correct, just no finer than it was before raw input existed.
-bool raw_input_is_active();
 
 // --- ImGui capture -----------------------------------------------------------
 

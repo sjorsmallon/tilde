@@ -122,6 +122,17 @@ void debug_draw_list_t::box(const linalg::vec3f& center, const linalg::vec3f& ha
   aabb(center - half_extents, center + half_extents, color, fill, depth_bias, seconds, draw_when_occluded);
 }
 
+void debug_draw_list_t::oriented_box(const shared::oriented_box_t& box, color_t color, float depth_bias,
+                                     float seconds, bool draw_when_occluded)
+{
+  linalg::vec3f corners[8];
+  shared::oriented_box_corners(box, corners);
+  static constexpr int EDGES[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                                       {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+  for (const int *edge : EDGES)
+    line(corners[edge[0]], corners[edge[1]], color, depth_bias, seconds, draw_when_occluded);
+}
+
 void debug_draw_list_t::filled_polygon(Span<const linalg::vec3f> vertices, color_t color,
                                        float seconds, debug_face_style_t style)
 {

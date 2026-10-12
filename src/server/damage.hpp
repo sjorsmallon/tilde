@@ -15,7 +15,7 @@ namespace server
 
 // Apply damage to whatever entity `info.victim_uid` resolves to. Owns:
 //   - pre-checks (victim exists? still alive? — corpses stop taking damage)
-//   - HP subtract (Player_Entity) or impulse application (Physics_Body_Entity)
+//   - HP subtract (Player_Entity, Damageable_Entity)
 //   - the >0 → <=0 crossing detection + PLAYER_DIED + schedule_respawn
 //   - knockback velocity write
 //

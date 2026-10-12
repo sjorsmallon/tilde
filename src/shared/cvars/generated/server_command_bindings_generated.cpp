@@ -78,34 +78,6 @@ bool invoke_spawn_bot(Span<std::string_view> args, const command_context_t& cont
   return true;
 }
 
-// spawn_cube
-bool invoke_spawn_cube(Span<std::string_view> args, const command_context_t& context,
-     std::string* out_reply)
-{
-  if (args.size() != 0u)
-  {
-    usage_error(out_reply, command_id::spawn_cube, args.size());
-    return false;
-  }
-
-  commands::spawn_cube(context);
-  return true;
-}
-
-// spawn_sphere
-bool invoke_spawn_sphere(Span<std::string_view> args, const command_context_t& context,
-     std::string* out_reply)
-{
-  if (args.size() != 0u)
-  {
-    usage_error(out_reply, command_id::spawn_sphere, args.size());
-    return false;
-  }
-
-  commands::spawn_sphere(context);
-  return true;
-}
-
 // map <path>
 bool invoke_map(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -387,8 +359,6 @@ bool invoke_sv_replay_stop(Span<std::string_view> args, const command_context_t&
 void bind_server_commands(command_table_t& table)
 {
   table.binders[(uint32_t)command_id::spawn_bot] = &invoke_spawn_bot;
-  table.binders[(uint32_t)command_id::spawn_cube] = &invoke_spawn_cube;
-  table.binders[(uint32_t)command_id::spawn_sphere] = &invoke_spawn_sphere;
   table.binders[(uint32_t)command_id::map] = &invoke_map;
   table.binders[(uint32_t)command_id::setpos] = &invoke_setpos;
   table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;

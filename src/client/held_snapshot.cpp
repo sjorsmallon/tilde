@@ -1,4 +1,3 @@
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "held_snapshot.hpp"
@@ -91,11 +90,10 @@ try_decode_snapshot(const client_context_t& context, const game::S2C_EntityPacka
 
   if (context.cvars->net_snapshot_debug && server_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
   {
-    log_terminal("[net] snapshot {}: {}, {} players // {} bodies, {} bytes", server_tick,
+    log_terminal("[net] snapshot {}: {}, {} players, {} bytes", server_tick,
                  baseline_tick.has_value() ? std::format("delta from {}", *baseline_tick)
                                            : std::string("full update"),
                  decoded.frame.entities.entities_of_type<entities::Player_Entity>().size(),
-                 decoded.frame.entities.entities_of_type<entities::Physics_Body_Entity>().size(),
                  data_size);
   }
 

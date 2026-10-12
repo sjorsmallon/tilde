@@ -35,23 +35,26 @@ linalg::vec3f get_color_for_lens_filter(entities::Lens_Filter filter)
 
 lens_t compute_lens_box(const entities::Lens_Entity& lens)
 {
-  return {.center       = lens.position + lens.volume.position,
-          .half_extents = lens.volume.half_extents,
-          .filter       = lens.filter};
+  return {.box    = {.center       = lens.position + lens.volume.position,
+                     .half_extents = lens.volume.half_extents,
+                     .orientation  = lens.orientation},
+          .filter = lens.filter};
 }
 
 bool lens_lies_on_line_of_sight(const lens_t& lens, const linalg::vec3f& eye, const linalg::vec3f& point)
 {
   constexpr float PARALLEL_EPSILON = 1e-6f;
 
-  const linalg::vec3f line  = point - eye;
-  float               enter = 0.f;
-  float               exit  = std::numeric_limits<float>::infinity();
+  const linalg::quatf into_box   = linalg::conjugate(lens.box.orientation);
+  const linalg::vec3f origin_box = linalg::rotate(into_box, eye - lens.box.center);
+  const linalg::vec3f line       = linalg::rotate(into_box, point - eye);
+  float               enter      = 0.f;
+  float               exit       = std::numeric_limits<float>::infinity();
   for (int axis = 0; axis < 3; ++axis)
   {
-    const float origin    = eye[axis] - lens.center[axis];
+    const float origin    = origin_box[axis];
     const float direction = line[axis];
-    const float half      = lens.half_extents[axis];
+    const float half      = lens.box.half_extents[axis];
     if (std::fabs(direction) < PARALLEL_EPSILON)
     {
       if (std::fabs(origin) > half)

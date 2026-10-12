@@ -90,6 +90,7 @@ void fire_every_effect(event_stream_t& stream)
   Shot_Impact      shot_impact;      fill_shot_impact(shot_impact, 4);
   Jump_Pad_Launch  jump_pad_launch;  fill_effect(jump_pad_launch, 5);
   Ping             ping;             fill_effect(ping, 6);
+  Pilot_Impact     pilot_impact;     fill_effect(pilot_impact, 7);
 
   fire_rocket_explosion(stream, rocket_explosion);
   fire_footstep(stream, footstep);
@@ -98,6 +99,7 @@ void fire_every_effect(event_stream_t& stream)
   fire_shot_impact(stream, shot_impact);
   fire_jump_pad_launch(stream, jump_pad_launch);
   fire_ping(stream, ping);
+  fire_pilot_impact(stream, pilot_impact);
 }
 
 // Reads back what fire_every_effect wrote, asserting kind and payload per
@@ -155,6 +157,12 @@ void expect_every_effect(network::Bit_Reader& reader)
       case effect_type::Ping:
       {
         const std::optional<Ping> value = try_read_ping(reader);
+        assert(value && effects_match(*value, expected));
+        break;
+      }
+      case effect_type::Pilot_Impact:
+      {
+        const std::optional<Pilot_Impact> value = try_read_pilot_impact(reader);
         assert(value && effects_match(*value, expected));
         break;
       }

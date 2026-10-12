@@ -446,6 +446,63 @@ constexpr field_info_t PING_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t PILOT_IMPACT_FIELDS[] = {
+  {.name = "origin",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Pilot_Impact, origin),
+   .size_in_bytes = (uint32_t)sizeof(Pilot_Impact::origin),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "normal",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Pilot_Impact, normal),
+   .size_in_bytes = (uint32_t)sizeof(Pilot_Impact::normal),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "color",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Pilot_Impact, color),
+   .size_in_bytes = (uint32_t)sizeof(Pilot_Impact::color),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "scale",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Pilot_Impact, scale),
+   .size_in_bytes = (uint32_t)sizeof(Pilot_Impact::scale),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "attached_entity",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Pilot_Impact, attached_entity),
+   .size_in_bytes = (uint32_t)sizeof(Pilot_Impact::attached_entity),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "surface_material",
+   .type = FIELD_TYPE_U16,
+   .offset = (uint32_t)offsetof(Pilot_Impact, surface_material),
+   .size_in_bytes = (uint32_t)sizeof(Pilot_Impact::surface_material),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 } // namespace
 
 const char* to_string(effect_type value)
@@ -459,6 +516,7 @@ const char* to_string(effect_type value)
     case effect_type::Shot_Impact: return "Shot_Impact";
     case effect_type::Jump_Pad_Launch: return "Jump_Pad_Launch";
     case effect_type::Ping: return "Ping";
+    case effect_type::Pilot_Impact: return "Pilot_Impact";
   }
   assert(false && "invalid effect_type");
   return "";
@@ -639,6 +697,31 @@ std::string to_text(const Ping& value)
   return std::string("Ping") + fields_to_text({PING_FIELDS, 6}, &value);
 }
 
+void fire_pilot_impact(event_stream_t& stream, const Pilot_Impact& payload)
+{
+  stream.writer.write_bits((uint32_t)effect_type::Pilot_Impact, 16);
+  for (const field_info_t& field : Span<const field_info_t>{PILOT_IMPACT_FIELDS, 6})
+    network::write_field(stream.writer, reinterpret_cast<const uint8_t*>(&payload), field, field.offset);
+  ++stream.count;
+
+  if (stream.log_fired)
+    log_terminal("[event fired] {}", to_text(payload));
+}
+
+std::optional<Pilot_Impact> try_read_pilot_impact(network::Bit_Reader& reader)
+{
+  Pilot_Impact payload;
+  for (const field_info_t& field : Span<const field_info_t>{PILOT_IMPACT_FIELDS, 6})
+    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), field, field.offset))
+      return std::nullopt;
+  return payload;
+}
+
+std::string to_text(const Pilot_Impact& value)
+{
+  return std::string("Pilot_Impact") + fields_to_text({PILOT_IMPACT_FIELDS, 6}, &value);
+}
+
 std::string effect_stream_to_text(const event_stream_t& stream)
 {
   if (stream.empty())
@@ -732,6 +815,17 @@ std::string effect_stream_to_text(const event_stream_t& stream)
       case effect_type::Ping:
       {
         const std::optional<Ping> payload = try_read_ping(reader);
+        if (!payload)
+        {
+          text += "<undecodable payload; the rest is unreadable>";
+          return text;
+        }
+        text += to_text(*payload);
+        break;
+      }
+      case effect_type::Pilot_Impact:
+      {
+        const std::optional<Pilot_Impact> payload = try_read_pilot_impact(reader);
         if (!payload)
         {
           text += "<undecodable payload; the rest is unreadable>";

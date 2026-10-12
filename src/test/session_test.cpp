@@ -355,7 +355,7 @@ int main()
     game_session_t component_session = build_session(test_map);
     Entity_System &entity_system     = component_session.entity_system;
 
-    // A deliberate mix: four types carrying Render (and one of them spawned
+    // A deliberate mix: three types carrying Render (and one of them spawned
     // more than once, so the inner slot walk has somewhere to go), one carrying
     // Box_Volume alone, one carrying BOTH, and two carrying neither — the pools
     // that must be skipped.
@@ -363,7 +363,6 @@ int main()
     entity_system.spawn<entities::Rocket_Entity>();
     entity_system.spawn<entities::Rocket_Entity>();
     entity_system.spawn<entities::Hook_Entity>();
-    entity_system.spawn<entities::Physics_Body_Entity>();
     entity_system.spawn<entities::Trigger_Volume_Entity>();
     entity_system.spawn<entities::Spot_Light_Entity>();
     entity_system.spawn<entities::Player_Spectate_Entity>();
@@ -382,9 +381,9 @@ int main()
       }
     }
 
-    if (expected_render.size() != 6)
+    if (expected_render.size() != 5)
     {
-      log_error("the brute-force walk found {} renderable entities; 6 were spawned",
+      log_error("the brute-force walk found {} renderable entities; 5 were spawned",
                 expected_render.size());
       return 1;
     }
@@ -493,7 +492,6 @@ int main()
     entity_system.spawn<entities::Jump_Pad_Entity>();
     entity_system.spawn<entities::Game_Rules_Entity>();
     entity_system.spawn<entities::Rocket_Entity>();
-    entity_system.spawn<entities::Physics_Body_Entity>();
 
     // What `for (pool) for (slot) if (is<Mortal>(entity))` produces.
     std::vector<std::pair<entity_uid_t, const void *>> expected_mortal;

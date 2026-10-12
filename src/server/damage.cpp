@@ -2,7 +2,6 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "damage.hpp"
 #include "entities/generated/entities/damageable_entity_generated.hpp"
-#include "entities/generated/entities/physics_body_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 
 #include "../shared/entities/generated/entities/damageable_entity_generated.hpp"
@@ -154,22 +153,6 @@ static void apply_damage_to_player(server_context_t &context,
       knockback_velocity_for(info, player_knockback_center(player)), info);
 }
 
-// Physics_Body_Entity path: a body takes a velocity delta, not HP --
-// knockback_force is a velocity, never scaled by mass.
-static void apply_damage_to_physics_body(server_context_t &context,
-                                         const damage_info_t &info,
-                                         entities::Physics_Body_Entity &body)
-{
-  if (info.knockback_force == 0.f) return;
-
-  vec3f to_body = body.position - info.source_position;
-  const float distance = linalg::length(to_body);
-  const vec3f direction = (distance > 1e-4f)
-                              ? to_body * (1.f / distance)
-                              : vec3f{0.f, 1.f, 0.f};
-  shared::wake_bounce_body(body.bounce, direction * info.knockback_force);
-}
-
 static float damage_scale_against(const entities::Damageable_Entity &damageable,
                                   entities::Damage_Type type)
 {
@@ -255,11 +238,6 @@ void inflict_damage(server_context_t &context, const damage_info_t &info)
     apply_damage_to_player(context, info, *player);
     return;
   }
-  if (auto *body = session.entity_system.get<entities::Physics_Body_Entity>(info.victim_uid))
-  {
-    apply_damage_to_physics_body(context, info, *body);
-    return;
-  }
   if (auto *damageable = session.entity_system.get<entities::Damageable_Entity>(info.victim_uid))
   {
     apply_damage_to_damageable(context, info, *damageable);
@@ -267,7 +245,7 @@ void inflict_damage(server_context_t &context, const damage_info_t &info)
   }
 
   log_error("inflict_damage: no damageable entity matches victim_uid {} "
-            "(none of Player_Entity, Physics_Body_Entity, Damageable_Entity)",
+            "(neither Player_Entity nor Damageable_Entity)",
             static_cast<uint64_t>(info.victim_uid));
 }
 

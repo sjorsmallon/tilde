@@ -58,29 +58,6 @@ namespace server
 {
 
 server_context_t g_server_context;
-// little helper function to get a good location to spawn physics objects.
-static std::optional<vec3f>
-get_position_in_front_of(server_context_t &context, int32_t caller_slot)
-{
-  if (!is_valid_client_slot(caller_slot)) return std::nullopt;
-
-  const entities::Player_Entity* player =
-      context.world.session.entity_system.get<entities::Player_Entity>(
-          context.clients[caller_slot].player_uid);
-
-  if (!player) return std::nullopt;
-
-  float yaw_rad   = linalg::to_radians(player->view_angle_yaw);
-  float pitch_rad = linalg::to_radians(player->view_angle_pitch);
-  vec3f forward = {std::cos(yaw_rad) * std::cos(pitch_rad),
-                   std::sin(pitch_rad),
-                   std::sin(yaw_rad) * std::cos(pitch_rad)};
-
-  constexpr float forward_offset = 80.f;
-  constexpr float eye_height = 40.f;
-  return player->position + vec3f{0, eye_height, 0} + forward * forward_offset;
-}
-
 
 static void return_client_to_spectate(server_context_t &context, int32_t slot)
 {
@@ -562,31 +539,6 @@ void spectate(const command_context_t &command_context)
   log_terminal("spectate: slot {} left the match", slot);
 }
 
-void spawn_cube(const command_context_t &command_context)
-{
-  using namespace server;
-
-  server_context_t &server_context = g_server_context;
-
-  auto drop_position =
-      get_position_in_front_of(server_context, command_context.caller_slot);
-  if (!drop_position)
-  {
-    log_error("spawn_cube: no Player_Entity for caller_slot {}",
-              command_context.caller_slot);
-    return;
-  }
-
-  vec3f full_extents = {16.f, 16.f, 16.f};
-  const shared::entity_uid_t body_uid =
-      spawn_physics_body(server_context, entities::Shape_Kind::Box,
-                         full_extents, *drop_position);
-  if (body_uid != shared::null_entity_uid)
-    log_terminal("spawn_cube: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
-                 body_uid, drop_position->x, drop_position->y,
-                 drop_position->z);
-}
-
 void setpos(float x, float y, float z, const command_context_t &command_context)
 {
   using namespace server;
@@ -604,31 +556,6 @@ void setpos(float x, float y, float z, const command_context_t &command_context)
 
   player->position = {x, y, z};
   player->velocity = {};
-}
-
-void spawn_sphere(const command_context_t &command_context)
-{
-  using namespace server;
-
-  server_context_t &server_context = g_server_context;
-
-  auto drop_position =
-      get_position_in_front_of(server_context, command_context.caller_slot);
-  if (!drop_position)
-  {
-    log_error("spawn_sphere: no Player_Entity for caller_slot {}",
-              command_context.caller_slot);
-    return;
-  }
-
-  vec3f full_extents = {16.f, 16.f, 16.f}; // x = diameter
-  const shared::entity_uid_t body_uid =
-      spawn_physics_body(server_context, entities::Shape_Kind::Sphere,
-                         full_extents, *drop_position);
-  if (body_uid != shared::null_entity_uid)
-    log_terminal("spawn_sphere: spawned entity_id {} at ({:.1f}, {:.1f}, {:.1f})",
-                 body_uid, drop_position->x, drop_position->y,
-                 drop_position->z);
 }
 
 void map(std::string_view requested_name, const command_context_t &)

@@ -3,6 +3,7 @@
 #include "linalg.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 // The two AABB representations, and the one home for both.
 //
@@ -37,6 +38,46 @@ struct aabb_bounds_t
   linalg::vec3 min;
   linalg::vec3 max;
 };
+
+// An aabb_t turned about its centre: what a lens, a growing platform and a static mesh collide and
+// draw as. get_bounds is the world-axis box it fits in, the only AABB question it answers.
+struct oriented_box_t
+{
+  linalg::vec3  center       = {0, 0, 0};
+  linalg::vec3  half_extents = {1.f, 1.f, 1.f};
+  linalg::quatf orientation  = linalg::quatf::identity();
+};
+
+// The world-axis half-extents of a box of `half_extents` once turned by `orientation`.
+inline linalg::vec3 oriented_box_reach(const linalg::vec3 &half_extents, const linalg::quatf &orientation)
+{
+  linalg::vec3       reach{0.f, 0.f, 0.f};
+  const linalg::vec3 axes[3] = {{half_extents.x, 0.f, 0.f},
+                                {0.f, half_extents.y, 0.f},
+                                {0.f, 0.f, half_extents.z}};
+  for (const linalg::vec3 &axis : axes)
+  {
+    const linalg::vec3 turned = linalg::rotate(orientation, axis);
+    reach = reach + linalg::vec3{std::abs(turned.x), std::abs(turned.y), std::abs(turned.z)};
+  }
+  return reach;
+}
+
+inline aabb_bounds_t get_bounds(const oriented_box_t &box)
+{
+  const linalg::vec3 reach = oriented_box_reach(box.half_extents, box.orientation);
+  return {box.center - reach, box.center + reach};
+}
+
+// The eight corners: the ring at -z then the ring at +z, each counter-clockwise from (-x, -y).
+inline void oriented_box_corners(const oriented_box_t &box, linalg::vec3 (&corners)[8])
+{
+  const linalg::vec3 &h        = box.half_extents;
+  const linalg::vec3  local[8] = {{-h.x, -h.y, -h.z}, {h.x, -h.y, -h.z}, {h.x, h.y, -h.z}, {-h.x, h.y, -h.z},
+                                  {-h.x, -h.y, h.z},  {h.x, -h.y, h.z},  {h.x, h.y, h.z},  {-h.x, h.y, h.z}};
+  for (int index = 0; index < 8; ++index)
+    corners[index] = box.center + linalg::rotate(box.orientation, local[index]);
+}
 
 // The two conversions, named for the direction they already had elsewhere in
 // the codebase: get_bounds goes to min/max, to_aabb comes back.

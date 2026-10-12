@@ -506,7 +506,6 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   {},   // Guided_Rocket_Entity
   {},   // Canopy_Entity
   {},   // Bubble_Entity
-  {},   // Physics_Body_Entity
   {   // Damageable_Entity
     nullptr,   // Enable
     nullptr,   // Disable

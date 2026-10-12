@@ -129,8 +129,7 @@ struct client_slot_t
   uint32_t last_move_throttle_warning_tick = 0;
 };
 
-// One overlap the trigger system is tracking across ticks. Touchers are no
-// longer players only -- Touchable's `by` list names Physics_Body_Entity too.
+// One overlap the trigger system is tracking across ticks; the toucher is whatever Touchable's `by` list names.
 struct trigger_overlap_t
 {
   shared::entity_uid_t trigger = shared::null_entity_uid;

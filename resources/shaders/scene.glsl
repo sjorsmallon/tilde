@@ -101,11 +101,12 @@ struct RevealCone {
     vec4 axis_cosine;
 };
 
-// One lens (reveal.glsl's lens_margin, shared/lighting/lens.hpp): an axis-aligned box, its centre (xyz) and the channel
-// bits it passes as a whole number (w: red 1, green 2, blue 4); its half extents (xyz).
+// One lens (reveal.glsl's lens_margin, shared/lighting/lens.hpp): a box, its centre (xyz) and the channel bits it
+// passes as a whole number (w: red 1, green 2, blue 4); its half extents (xyz); and the quaternion (xyzw) it is turned by.
 struct Lens {
     vec4 center_channels;
     vec4 half_extents;
+    vec4 orientation;
 };
 
 // One box of fog (fog_cells.comp): its lowest corner (xyz) and its density per world unit (w); its highest corner (xyz) and

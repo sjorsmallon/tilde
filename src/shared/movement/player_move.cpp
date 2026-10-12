@@ -281,7 +281,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
     // one that ran out during it let go where the step ended.
     out_events->override_ended = {.kind     = over.ended,
                                   .position = over.moves ? settled.hull_center : hull_center,
-                                  .velocity = over.end_velocity};
+                                  .velocity = over.end_velocity,
+                                  .surface_point  = over.end_surface_point,
+                                  .surface_normal = over.end_surface_normal};
   }
 
   return state;
@@ -306,6 +308,8 @@ void shared::accumulate_move_events(Move_Events& into, const Move_Events& step)
     into.stepped    = true;
     into.step_speed = step.step_speed;
   }
+  if (step.override_ended.kind != entities::Movement_Override::None)
+    into.override_ended = step.override_ended;
   into.ground_contact = step.ground_contact;
 }
 
