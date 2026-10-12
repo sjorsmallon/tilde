@@ -15,6 +15,7 @@
 #include "animation/skeleton.hpp"
 #include "span.hpp"
 #include "map/surface_kind.hpp"
+#include "material_file.hpp"
 #include "vertex.hpp"
 
 #include <cstdint>
@@ -91,6 +92,9 @@ struct material_maps_t
 
   // A .glb's declaration: drawn unculled, the back lit along the flipped normal.
   bool double_sided = false;
+
+  // The folder's material.txt (material_def.md ss4); a .glb's and Missing's is Lit. Read on layer 0 only.
+  material_shader_t shader = material_shader_t::Lit;
 };
 
 struct material_t
@@ -185,22 +189,13 @@ struct font_asset_t
 // READ-ONLY concern of `src/tools/orm_pack.py`, which converted the folders on
 // disk once; nothing in the engine reads them, so there is no legacy arm here
 // to rot. Packing the normal map's Z away is the next halving and is not done.
-struct pbr_material_asset_t
+//
+// A material FOLDER as loaded (material_def.md): the maps it carries, with the
+// shader its material.txt names, and the surface line of that file. An absent
+// map is an answer, never a failure; an absent emissive.png is "does not glow".
+struct material_asset_t
 {
-  asset_handle_t<texture_asset_t> albedo;
-  asset_handle_t<texture_asset_t> normal;
-  asset_handle_t<texture_asset_t> occlusion_roughness_metallic;
-  asset_handle_t<texture_asset_t> height;
-
-  alpha_mode_t alpha_mode = alpha_mode_t::opaque;
-  float alpha_cutoff = DEFAULT_ALPHA_CUTOFF;
-
-  // emissive.png, and its PRESENCE is the fact (lighting_def.md gate 4). A
-  // folder with no emissive map does not glow; there is nothing else to author
-  // and nothing else to read.
-  asset_handle_t<texture_asset_t> emissive;
-
-  // surface.txt, one word (surface_kind.hpp). Absent is Default, the one fallback.
+  material_maps_t      maps;
   shared::Surface_Kind surface = shared::Surface_Kind::Default;
 };
 
@@ -209,7 +204,7 @@ struct pbr_material_asset_t
 constexpr int CUBEMAP_FACE_COUNT = 6;
 
 // A sky, as a FOLDER of six faces (resources/cubemaps/<name>/). The second
-// directory-unit class beside pbr_material, and the marker is up.png.
+// directory-unit class beside material_asset, and the marker is up.png.
 //
 // Where a material's absent map IS an answer, all six faces here are mandatory:
 // a cube with five faces is not a cube, so load_cubemap dies naming whichever

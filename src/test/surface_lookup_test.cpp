@@ -1,8 +1,10 @@
-// The surface kind parse (surface.txt is one word) and the one resolver from a
-// ground contact to a material index: a brush face answers with its own
-// material, a face matching nothing answers with the brush default, and
-// anything that is not static geometry answers 0 (material_sound_plan.md step 3).
+// The surface kind parse, the material.txt parse it rides in (material_def.md
+// ss3) and the one resolver from a ground contact to a material index: a brush
+// face answers with its own material, a face matching nothing answers with the
+// brush default, and anything that is not static geometry answers 0
+// (material_sound_plan.md step 3).
 
+#include "../shared/assets/material_file.hpp"
 #include "../shared/map/game_session.hpp"
 #include "../shared/map/map.hpp"
 #include "../shared/map/map_geometry.hpp"
@@ -25,6 +27,27 @@ void test_parse_is_one_trimmed_word()
   assert(!shared::try_parse_surface_kind("stone metal"));
   for (const shared::surface_kind_name_t& row : shared::SURFACE_KIND_NAMES)
     assert(shared::try_parse_surface_kind(shared::to_string(row.kind)) == row.kind);
+}
+
+void test_material_file_lines_are_key_and_value()
+{
+  const assets::material_file_t empty = assets::parse_material_file("", "empty");
+  assert(empty.shader == assets::material_shader_t::Lit);
+  assert(empty.surface == shared::Surface_Kind::Default);
+
+  const assets::material_file_t brick = assets::parse_material_file("surface stone\n", "brick");
+  assert(brick.shader == assets::material_shader_t::Lit);
+  assert(brick.surface == shared::Surface_Kind::Stone);
+
+  const assets::material_file_t ghost =
+      assets::parse_material_file("\r\n  shader\tghost \r\n\nsurface glass", "ghost");
+  assert(ghost.shader == assets::material_shader_t::Ghost);
+  assert(ghost.surface == shared::Surface_Kind::Glass);
+
+  for (const assets::material_shader_name_t& row : assets::MATERIAL_SHADER_NAMES)
+    assert(assets::try_parse_material_shader(assets::to_string(row.shader)) == row.shader);
+  assert(!assets::try_parse_material_shader("Lit"));
+  assert(!assets::try_parse_material_shader(""));
 }
 
 void test_a_face_answers_with_its_material()
@@ -75,6 +98,7 @@ void test_a_face_answers_with_its_material()
 int main()
 {
   test_parse_is_one_trimmed_word();
+  test_material_file_lines_are_key_and_value();
   test_a_face_answers_with_its_material();
   std::cout << "surface_lookup_test: all tests passed\n";
   return 0;

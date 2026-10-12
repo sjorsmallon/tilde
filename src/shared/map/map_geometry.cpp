@@ -800,7 +800,7 @@ bool vec3_equal(const linalg::vec3 &lhs, const linalg::vec3 &rhs)
 
 bool surfaces_equal(const geometry_surface_t &lhs, const geometry_surface_t &rhs)
 {
-  return lhs.mesh_path == rhs.mesh_path && lhs.shader_type == rhs.shader_type &&
+  return lhs.mesh_path == rhs.mesh_path &&
          vec3_equal(lhs.color, rhs.color) && lhs.roughness == rhs.roughness &&
          lhs.visible == rhs.visible && lhs.is_wireframe == rhs.is_wireframe;
 }
@@ -969,34 +969,10 @@ assets::material_maps_t resolve_material_maps(const std::string &material_path)
   if (material_path.empty())
     return {};
 
-  // A material is normally a FOLDER of PBR maps -- that is why it is a
-  // path-referenced pool with no id space and no manifest class. A single
-  // texture file is accepted too, because a blockout material genuinely is one
-  // file and making an author build a folder for it buys nothing; that spelling
-  // carries an albedo and nothing else, which is exactly what it is.
-  if (assets::asset_exists(material_path.c_str()))
-  {
-    assets::material_maps_t maps;
-    maps.albedo = assets::load_texture(material_path.c_str());
-    if (const assets::texture_asset_t *albedo = assets::get(maps.albedo))
-      maps.alpha_mode = albedo->alpha;
-    return maps;
-  }
-
-  const assets::pbr_material_asset_t *resolved =
-      assets::get(assets::load_pbr_material(material_path.c_str()));
-  if (resolved && resolved->albedo.valid())
-    return {resolved->albedo,   resolved->normal,     resolved->occlusion_roughness_metallic,
-            resolved->height,   resolved->emissive,   resolved->alpha_mode,
-            resolved->alpha_cutoff};
-
-  // Named but not there. The renderer draws the magenta checkerboard for a
-  // material whose texture_path is set and whose albedo handle is not, so this
-  // is visible rather than silently flat.
-  log_error("geometry material \"{}\" resolves to neither a texture file nor a "
-            "folder with an albedo.png",
-            material_path);
-  return {};
+  // A material is a FOLDER (material_def.md ss3). One that is not there loads
+  // as an empty record, logged by the loader, and the renderer draws the
+  // magenta checkerboard for a texture_path that is set with no albedo behind it.
+  return assets::get(assets::load_material_asset(material_path.c_str()))->maps;
 }
 
 linalg::vec2 face_uv_at(const face_uv_channel_t &uv, const linalg::vec3 &position,
@@ -2600,7 +2576,6 @@ void write_surface(const geometry_surface_t &surface,
                    std::vector<std::pair<std::string, std::string>> &out)
 {
   out.emplace_back("mesh_path", surface.mesh_path);
-  out.emplace_back("shader_type", surface.shader_type);
   out.emplace_back("color", format_vec3(surface.color));
   out.emplace_back("roughness", format_float(surface.roughness));
   out.emplace_back("visible", format_bool(surface.visible));
@@ -2640,7 +2615,6 @@ void read_surface(const std::map<std::string, std::string> &properties,
                   geometry_surface_t &surface)
 {
   read_string(properties, "mesh_path", surface.mesh_path);
-  read_string(properties, "shader_type", surface.shader_type);
   read_vec3(properties, "color", surface.color);
   read_float(properties, "roughness", surface.roughness);
   read_bool(properties, "visible", surface.visible);

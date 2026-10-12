@@ -124,8 +124,8 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
 
 // Split a legacy component blob into its key/value pairs. Splits on '|', then at
 // the FIRST ':' of each part. Nested components were flattened into the same
-// list, so "material:shader_type:lit|color:1 1 1" yields
-// {"material": "shader_type:lit", "color": "1 1 1"} — the nested value keeps its
+// list, so "material:roughness:0.5|color:1 1 1" yields
+// {"material": "roughness:0.5", "color": "1 1 1"} — the nested value keeps its
 // own "key:value" text, which convert_legacy_render_component() below unpicks.
 std::map<std::string, std::string> parse_legacy_component_blob(const std::string &blob)
 {
@@ -189,15 +189,6 @@ void convert_legacy_render_component(const std::string &render_blob,
       log_error("map conversion: legacy render roughness \"{}\" is not a float",
                 *roughness);
     }
-  }
-
-  // material's own fields were flattened in, so its first one arrives as the
-  // value of the "material" key: "shader_type:lit".
-  if (const std::string *material = field("material"))
-  {
-    const size_t colon = material->find(':');
-    if (colon != std::string::npos && material->substr(0, colon) == "shader_type")
-      surface.shader_type = material->substr(colon + 1);
   }
 }
 

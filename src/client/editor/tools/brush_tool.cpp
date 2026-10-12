@@ -1579,7 +1579,7 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
     // there is no directory to list at all.
     bool separator_drawn = false;
     for (const assets::asset_entry_t &available :
-         assets::asset_class_entries(assets::asset_class_t::pbr_material))
+         assets::asset_class_entries(assets::asset_class_t::material_asset))
     {
       if (available.path.empty() || ctx.map->has_material(available.path.c_str()))
         continue;

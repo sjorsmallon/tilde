@@ -60,7 +60,7 @@ void init();
 [[nodiscard]] animation_asset_t    make_missing_animation();
 [[nodiscard]] hitbox_rig_t         make_missing_hitbox_rig();
 [[nodiscard]] font_asset_t         make_missing_font();
-[[nodiscard]] pbr_material_asset_t make_missing_pbr_material();
+[[nodiscard]] material_asset_t make_missing_material_asset();
 [[nodiscard]] cubemap_asset_t      make_missing_cubemap();
 
 // --- Per class: the cached loader and the id accessor ---
@@ -81,7 +81,7 @@ void init();
 [[nodiscard]] asset_handle_t<font_asset_t>         load_font(const char* path);
 // A material and a cubemap are DIRECTORIES, so these two dispatch on nothing
 // and read their fixed filenames.
-[[nodiscard]] asset_handle_t<pbr_material_asset_t> load_pbr_material(const char* path);
+[[nodiscard]] asset_handle_t<material_asset_t> load_material_asset(const char* path);
 [[nodiscard]] asset_handle_t<cubemap_asset_t>      load_cubemap(const char* path);
 
 [[nodiscard]] asset_handle_t<mesh_asset_t>         get_mesh(mesh_asset id);
@@ -90,7 +90,7 @@ void init();
 [[nodiscard]] asset_handle_t<animation_asset_t>    get_animation(animation_asset id);
 [[nodiscard]] asset_handle_t<hitbox_rig_t>         get_hitbox_rig(hitbox_rig id);
 [[nodiscard]] asset_handle_t<font_asset_t>         get_font(font_asset id);
-[[nodiscard]] asset_handle_t<pbr_material_asset_t> get_pbr_material(pbr_material id);
+[[nodiscard]] asset_handle_t<material_asset_t> get_material_asset(material_asset id);
 [[nodiscard]] asset_handle_t<cubemap_asset_t>      get_cubemap(cubemap_asset id);
 
 // --- The path-referenced pool ---
@@ -104,7 +104,7 @@ void init();
 
 [[nodiscard]] const mesh_asset_t*         get(asset_handle_t<mesh_asset_t> handle);
 [[nodiscard]] const texture_asset_t*      get(asset_handle_t<texture_asset_t> handle);
-[[nodiscard]] const pbr_material_asset_t* get(asset_handle_t<pbr_material_asset_t> handle);
+[[nodiscard]] const material_asset_t* get(asset_handle_t<material_asset_t> handle);
 [[nodiscard]] const cubemap_asset_t*      get(asset_handle_t<cubemap_asset_t> handle);
 [[nodiscard]] const skeleton_t*           get(asset_handle_t<skeleton_t> handle);
 [[nodiscard]] const animation_asset_t*    get(asset_handle_t<animation_asset_t> handle);

@@ -87,6 +87,7 @@ file only states them.
 | Brushes, faces, subdivision, collision decomposition | `geometry_def.md` |
 | Rotation representation | `rotation_def.md` |
 | Assets, manifest, packaging | `asset_pipeline_def.md` |
+| Materials: the shader lives on the material, the tint on the instance | `material_def.md` |
 | Lighting model, renderer, descriptor sets | `lighting_def.md`, `renderer_def.md` |
 | Procedural surface patterns | `pattern_plan.md` |
 | Lightmap sidecar, bake, GPU bake, unwrap, transparency | `lightmap_def.md`, `lightmap_gpu_plan.md`, `lightmap_unwrap_plan.md`, `transparency_plan.md` |
@@ -356,7 +357,7 @@ prediction writes `ctx.prediction`.
   pyramid is built once per range and angle and placed per pose. A `beam`
   spot throws volumes; collision reads only those whose light `cuts_geometry`.
 - The material table is passed at the call site, never held in the renderer.
-  A material folder is `albedo.png`, `normal.png`, `orm.png`, `height.png`,
+  A material folder is a `material.txt` naming its shader (absent is lit) beside `albedo.png`, `normal.png`, `orm.png`, `height.png`,
   `emissive.png`; an absent map is a default, never a branch, and an absent
   emissive is the one black default.
 - Lightmap sidecar and map package versions are bumped, never migrated; an

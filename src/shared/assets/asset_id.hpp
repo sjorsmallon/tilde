@@ -30,7 +30,7 @@ enum class asset_class_t : uint8_t
   animation_asset,
   hitbox_rig,
   font_asset,
-  pbr_material,
+  material_asset,
   cubemap_asset,
 };
 
@@ -44,7 +44,7 @@ enum class sound_asset : uint16_t { Missing = 0 };
 enum class animation_asset : uint16_t { Missing = 0 };
 enum class hitbox_rig : uint16_t { Missing = 0 };
 enum class font_asset : uint16_t { Missing = 0 };
-enum class pbr_material : uint16_t { Missing = 0 };
+enum class material_asset : uint16_t { Missing = 0 };
 enum class cubemap_asset : uint16_t { Missing = 0 };
 
 // FNV-1a, 64 bits. The one hash both spellings of a name go through, so a
@@ -111,7 +111,7 @@ struct asset_entry_t
 [[nodiscard]] animation_asset animation_id(asset_name_t name);
 [[nodiscard]] hitbox_rig      hitbox_rig_id(asset_name_t name);
 [[nodiscard]] font_asset      font_id(asset_name_t name);
-[[nodiscard]] pbr_material    pbr_material_id(asset_name_t name);
+[[nodiscard]] material_asset    material_asset_id(asset_name_t name);
 [[nodiscard]] cubemap_asset   cubemap_id(asset_name_t name);
 
 template <typename T> [[nodiscard]] std::optional<T> try_from_string(std::string_view text);
@@ -122,7 +122,7 @@ template <> std::optional<sound_asset>     try_from_string<sound_asset>(std::str
 template <> std::optional<animation_asset> try_from_string<animation_asset>(std::string_view text);
 template <> std::optional<hitbox_rig>      try_from_string<hitbox_rig>(std::string_view text);
 template <> std::optional<font_asset>      try_from_string<font_asset>(std::string_view text);
-template <> std::optional<pbr_material>    try_from_string<pbr_material>(std::string_view text);
+template <> std::optional<material_asset>    try_from_string<material_asset>(std::string_view text);
 template <> std::optional<cubemap_asset>   try_from_string<cubemap_asset>(std::string_view text);
 
 // The name behind an id, for logs and the editor. An id outside the class
@@ -133,7 +133,7 @@ template <> std::optional<cubemap_asset>   try_from_string<cubemap_asset>(std::s
 [[nodiscard]] const char* to_string(animation_asset id);
 [[nodiscard]] const char* to_string(hitbox_rig id);
 [[nodiscard]] const char* to_string(font_asset id);
-[[nodiscard]] const char* to_string(pbr_material id);
+[[nodiscard]] const char* to_string(material_asset id);
 [[nodiscard]] const char* to_string(cubemap_asset id);
 
 } // namespace assets

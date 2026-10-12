@@ -21,7 +21,7 @@ namespace shared
 namespace
 {
 
-constexpr float PI           = 3.14159265359f;
+constexpr float PI = 3.14159265359f;
 constexpr int   BUCKET_COUNT = 256;
 
 struct bayer_point_t

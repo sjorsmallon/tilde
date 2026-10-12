@@ -58,8 +58,6 @@ struct geometry_surface_t
   // of it; nothing ever wrote one into a geometry surface.
   std::string mesh_path;
 
-  // "lit" (default) or "unlit" — selects the rendering pipeline.
-  std::string shader_type = "lit";
   linalg::vec3 color{1.f, 1.f, 1.f};
   float roughness = 0.5f;
 

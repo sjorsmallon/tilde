@@ -1055,10 +1055,10 @@ const skeleton_t *get(asset_handle_t<skeleton_t> handle)
   return state.path_referenced.skeletons.get(handle);
 }
 
-const pbr_material_asset_t *get(asset_handle_t<pbr_material_asset_t> handle)
+const material_asset_t *get(asset_handle_t<material_asset_t> handle)
 {
-  asset_state_t &state = state_for("get(pbr_material)");
-  return state.pbr_material_pool.get(handle);
+  asset_state_t &state = state_for("get(material_asset)");
+  return state.material_asset_pool.get(handle);
 }
 
 const cubemap_asset_t *get(asset_handle_t<cubemap_asset_t> handle)
@@ -1085,19 +1085,32 @@ const hitbox_rig_t *get(asset_handle_t<hitbox_rig_t> handle)
   return state.hitbox_rig_pool.get(handle);
 }
 
-// The hand-written half of a DIRECTORY class. def_gen emits pbr_material's enum,
-// table, pool and get_pbr_material, and stops at the loader: a folder has no
-// bytes and no extension, so there is nothing for the generated body to dispatch
-// on. Same seam as every decode_* -- the generator declares it, and a missing
-// definition is a link error naming the symbol.
-asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
+// The hand-written half of a DIRECTORY class: a folder has no bytes and no
+// extension, so there is nothing for a decode_* to dispatch on. A folder with
+// no material.txt was never an asset to the walk; a map that names one gets an
+// empty record, logged here and drawn as the checkerboard, never a crash.
+asset_handle_t<material_asset_t> load_material_asset(const char *folder_path)
 {
-  asset_state_t &state = state_for("load_pbr_material");
+  asset_state_t &state = state_for("load_material_asset");
   const std::string folder = asset_cache_key(folder_path);
 
-  asset_handle_t<pbr_material_asset_t> existing = state.pbr_material_pool.find(folder.c_str());
+  asset_handle_t<material_asset_t> existing = state.material_asset_pool.find(folder.c_str());
   if (existing.valid())
     return existing;
+
+  material_asset_t mat;
+
+  const std::string declaration_path = folder + "/material.txt";
+  if (!asset_exists(declaration_path.c_str()))
+  {
+    log_error("[assets] material '{}' has no material.txt, so it is no material; drawn as missing", folder);
+    return state.material_asset_pool.add(folder.c_str(), std::move(mat));
+  }
+  const Span<const uint8_t> bytes = read_asset_bytes(declaration_path.c_str());
+  const material_file_t     file =
+      parse_material_file(std::string_view(reinterpret_cast<const char *>(bytes.data), bytes.count), folder);
+  mat.maps.shader = file.shader;
+  mat.surface     = file.surface;
 
   // The one place a probe is the right shape: a folder legitimately carries
   // only some of the maps, so ABSENCE is an answer here rather than a failure.
@@ -1108,44 +1121,30 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
     std::string full_path = folder + "/" + filename;
     if (!asset_exists(full_path.c_str()))
     {
-      printf("[assets] pbr_material: no '%s'\n", full_path.c_str());
+      printf("[assets] material_asset: no '%s'\n", full_path.c_str());
       return {};
     }
     return load_texture(full_path.c_str());
   };
 
-  pbr_material_asset_t mat;
-  mat.albedo                       = load_optional_map("albedo.png");
-  mat.normal                       = load_optional_map("normal.png");
-  mat.occlusion_roughness_metallic = load_optional_map("orm.png");
-  mat.height                       = load_optional_map("height.png");
+  mat.maps.albedo = load_optional_map("albedo.png");
+  mat.maps.normal = load_optional_map("normal.png");
+  mat.maps.orm    = load_optional_map("orm.png");
+  mat.maps.height = load_optional_map("height.png");
 
   // Absent on almost every material, and that absence IS the answer: a folder
   // with no emissive.png does not glow. Nothing else says so.
-  mat.emissive                     = load_optional_map("emissive.png");
+  mat.maps.emissive = load_optional_map("emissive.png");
 
-  const std::string surface_path = folder + "/surface.txt";
-  if (asset_exists(surface_path.c_str()))
-  {
-    const Span<const uint8_t> bytes = read_asset_bytes(surface_path.c_str());
-    const std::string_view    text(reinterpret_cast<const char *>(bytes.data), bytes.count);
-    const std::optional<shared::Surface_Kind> kind = shared::try_parse_surface_kind(text);
-    if (!kind)
-      fatal_error("pbr_material '{}': surface.txt says '{}', which names no Surface_Kind "
-                  "(surface_kind.hpp lists them)",
-                  folder, text);
-    mat.surface = *kind;
-  }
-  else
-  {
-    printf("[assets] pbr_material: no '%s', surface is default\n", surface_path.c_str());
-  }
+  // The alpha class is the albedo's; a ghost has none and blends by what it is,
+  // which is what the bake reads to call its faces transmissive.
+  if (const texture_asset_t *albedo = get(mat.maps.albedo))
+    mat.maps.alpha_mode = albedo->alpha;
+  if (mat.maps.shader == material_shader_t::Ghost)
+    mat.maps.alpha_mode = alpha_mode_t::blend;
 
-  if (const texture_asset_t *albedo = get(mat.albedo))
-    mat.alpha_mode = albedo->alpha;
-
-  printf("[assets] loaded pbr_material from folder: %s\n", folder.c_str());
-  return state.pbr_material_pool.add(folder.c_str(), std::move(mat));
+  printf("[assets] loaded material_asset from folder: %s (%s)\n", folder.c_str(), to_string(mat.maps.shader));
+  return state.material_asset_pool.add(folder.c_str(), std::move(mat));
 }
 
 // Four invalid handles. Unlike the mesh and texture placeholders there is
@@ -1153,12 +1152,12 @@ asset_handle_t<pbr_material_asset_t> load_pbr_material(const char *folder_path)
 // already turns an albedo that resolved to nothing into the magenta checker by
 // handing the renderer texture_asset::Missing. The placeholder only has to be
 // VALID.
-pbr_material_asset_t make_missing_pbr_material()
+material_asset_t make_missing_material_asset()
 {
   return {};
 }
 
-// The other hand-written DIRECTORY class. Same seam as load_pbr_material: a
+// The other hand-written DIRECTORY class. Same seam as load_material_asset: a
 // folder has no bytes and no extension, so def_gen declares this and stops.
 //
 // What differs is the failure rule. A material's absent map is an answer, so
@@ -1200,7 +1199,7 @@ asset_handle_t<cubemap_asset_t> load_cubemap(const char *folder_path)
   return state.cubemap_asset_pool.add(folder.c_str(), std::move(cubemap));
 }
 
-// Six invalid handles, for make_missing_pbr_material's reason: the renderer
+// Six invalid handles, for make_missing_material_asset's reason: the renderer
 // resolves an invalid face to texture_asset::Missing, so a map naming a sky
 // this build does not have draws a magenta checker on all six sides. Visibly
 // wrong is the point -- a black sky would pass for night.
@@ -1365,7 +1364,7 @@ asset_handle_t<sound_asset_t>        get_sound(sound_asset id)           { retur
 asset_handle_t<animation_asset_t>    get_animation(animation_asset id)   { return handle_for_id(state_for("get_animation").animation_asset_handles, (uint32_t)id, "get_animation"); }
 asset_handle_t<hitbox_rig_t>         get_hitbox_rig(hitbox_rig id)       { return handle_for_id(state_for("get_hitbox_rig").hitbox_rig_handles, (uint32_t)id, "get_hitbox_rig"); }
 asset_handle_t<font_asset_t>         get_font(font_asset id)             { return handle_for_id(state_for("get_font").font_asset_handles, (uint32_t)id, "get_font"); }
-asset_handle_t<pbr_material_asset_t> get_pbr_material(pbr_material id)   { return handle_for_id(state_for("get_pbr_material").pbr_material_handles, (uint32_t)id, "get_pbr_material"); }
+asset_handle_t<material_asset_t> get_material_asset(material_asset id)   { return handle_for_id(state_for("get_material_asset").material_asset_handles, (uint32_t)id, "get_material_asset"); }
 asset_handle_t<cubemap_asset_t>      get_cubemap(cubemap_asset id)       { return handle_for_id(state_for("get_cubemap").cubemap_asset_handles, (uint32_t)id, "get_cubemap"); }
 
 // --- Init: number the ids, then register every one of them ---
@@ -1427,7 +1426,7 @@ void init()
   register_class(state, asset_class_t::animation_asset, state.animation_asset_pool, state.animation_asset_handles, &make_missing_animation, &load_animation);
   register_class(state, asset_class_t::hitbox_rig, state.hitbox_rig_pool, state.hitbox_rig_handles, &make_missing_hitbox_rig, &load_hitbox_rig);
   register_class(state, asset_class_t::font_asset, state.font_asset_pool, state.font_asset_handles, &make_missing_font, &load_font);
-  register_class(state, asset_class_t::pbr_material, state.pbr_material_pool, state.pbr_material_handles, &make_missing_pbr_material, &load_pbr_material);
+  register_class(state, asset_class_t::material_asset, state.material_asset_pool, state.material_asset_handles, &make_missing_material_asset, &load_material_asset);
   register_class(state, asset_class_t::cubemap_asset, state.cubemap_asset_pool, state.cubemap_asset_handles, &make_missing_cubemap, &load_cubemap);
   state.registered = true;
 }

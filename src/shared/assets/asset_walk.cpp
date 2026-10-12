@@ -18,7 +18,7 @@ const char* to_string(asset_class_t asset_class)
     case asset_class_t::animation_asset: return "animation_asset";
     case asset_class_t::hitbox_rig:      return "hitbox_rig";
     case asset_class_t::font_asset:      return "font_asset";
-    case asset_class_t::pbr_material:    return "pbr_material";
+    case asset_class_t::material_asset:    return "material_asset";
     case asset_class_t::cubemap_asset:   return "cubemap_asset";
   }
   return "?";
@@ -48,8 +48,8 @@ constexpr class_row_t CLASS_TABLE[] = {
 };
 
 // The classes whose unit is a FOLDER. The marker is the one file the loader
-// cannot do without: albedo, because a material with no albedo resolves to
-// nothing; up.png, because a cube with five faces is not a cube.
+// cannot do without: material.txt, because a material IS its declaration
+// (material_def.md ss3); up.png, because a cube with five faces is not a cube.
 struct directory_class_row_t
 {
   const char*   marker;
@@ -57,7 +57,7 @@ struct directory_class_row_t
 };
 
 constexpr directory_class_row_t DIRECTORY_CLASS_TABLE[] = {
-    {"albedo.png", asset_class_t::pbr_material},
+    {"material.txt", asset_class_t::material_asset},
     {"up.png", asset_class_t::cubemap_asset},
 };
 

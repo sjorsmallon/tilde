@@ -95,7 +95,6 @@ static_mesh
   "rotation" "0.701057374 0.701057315 -0.0922959447 -0.0922959819"
   "scale" "6.000000 6.000000 6.000000"
   "mesh_path" "resources/glb/stopwatch.glb"
-  "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"

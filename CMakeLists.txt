@@ -491,6 +491,8 @@ add_library(game_shared STATIC
     src/shared/assets/asset_walk.hpp
     src/shared/assets/asset_walk.cpp
     src/shared/assets/asset_tables.cpp
+    src/shared/assets/material_file.hpp
+    src/shared/assets/material_file.cpp
     src/shared/assets/asset_gltf.cpp
     src/shared/world_units.hpp
     # tinygltf v2.9.6, verbatim (MIT): the .glb decoder's parser.

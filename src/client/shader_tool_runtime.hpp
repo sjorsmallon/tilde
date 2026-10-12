@@ -60,10 +60,10 @@ void destroy_preview_pipeline(VkDevice device, preview_pipeline_t &pipeline);
 void destroy_preview_resources(VkDevice device, preview_pipeline_t &pipeline);
 
 // Upload PBR textures and write them into descriptor set bindings 1–6.
-// Call after create_preview_resources() succeeds and after loading the pbr_material.
+// Call after create_preview_resources() succeeds and after loading the material_asset.
 // Slots for invalid texture handles fall back to a 1x1 white texture.
 void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
-                       const assets::pbr_material_asset_t &material);
+                       const assets::material_asset_t &material);
 
 // Get the VkPhysicalDevice from the renderer.
 

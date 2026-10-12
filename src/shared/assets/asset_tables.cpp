@@ -206,7 +206,7 @@ sound_asset     sound_id(asset_name_t name)        { return (sound_asset)id_for_
 animation_asset animation_id(asset_name_t name)    { return (animation_asset)id_for_name(asset_class_t::animation_asset, name, "animation_id"); }
 hitbox_rig      hitbox_rig_id(asset_name_t name)   { return (hitbox_rig)id_for_name(asset_class_t::hitbox_rig, name, "hitbox_rig_id"); }
 font_asset      font_id(asset_name_t name)         { return (font_asset)id_for_name(asset_class_t::font_asset, name, "font_id"); }
-pbr_material    pbr_material_id(asset_name_t name) { return (pbr_material)id_for_name(asset_class_t::pbr_material, name, "pbr_material_id"); }
+material_asset    material_asset_id(asset_name_t name) { return (material_asset)id_for_name(asset_class_t::material_asset, name, "material_asset_id"); }
 cubemap_asset   cubemap_id(asset_name_t name)      { return (cubemap_asset)id_for_name(asset_class_t::cubemap_asset, name, "cubemap_id"); }
 
 template <> std::optional<mesh_asset>      try_from_string<mesh_asset>(std::string_view text)      { return id_for_text<mesh_asset>(asset_class_t::mesh_asset, text); }
@@ -215,7 +215,7 @@ template <> std::optional<sound_asset>     try_from_string<sound_asset>(std::str
 template <> std::optional<animation_asset> try_from_string<animation_asset>(std::string_view text) { return id_for_text<animation_asset>(asset_class_t::animation_asset, text); }
 template <> std::optional<hitbox_rig>      try_from_string<hitbox_rig>(std::string_view text)      { return id_for_text<hitbox_rig>(asset_class_t::hitbox_rig, text); }
 template <> std::optional<font_asset>      try_from_string<font_asset>(std::string_view text)      { return id_for_text<font_asset>(asset_class_t::font_asset, text); }
-template <> std::optional<pbr_material>    try_from_string<pbr_material>(std::string_view text)    { return id_for_text<pbr_material>(asset_class_t::pbr_material, text); }
+template <> std::optional<material_asset>    try_from_string<material_asset>(std::string_view text)    { return id_for_text<material_asset>(asset_class_t::material_asset, text); }
 template <> std::optional<cubemap_asset>   try_from_string<cubemap_asset>(std::string_view text)   { return id_for_text<cubemap_asset>(asset_class_t::cubemap_asset, text); }
 
 const char* to_string(mesh_asset id)      { return name_for_id(asset_class_t::mesh_asset, id); }
@@ -224,7 +224,7 @@ const char* to_string(sound_asset id)     { return name_for_id(asset_class_t::so
 const char* to_string(animation_asset id) { return name_for_id(asset_class_t::animation_asset, id); }
 const char* to_string(hitbox_rig id)      { return name_for_id(asset_class_t::hitbox_rig, id); }
 const char* to_string(font_asset id)      { return name_for_id(asset_class_t::font_asset, id); }
-const char* to_string(pbr_material id)    { return name_for_id(asset_class_t::pbr_material, id); }
+const char* to_string(material_asset id)    { return name_for_id(asset_class_t::material_asset, id); }
 const char* to_string(cubemap_asset id)   { return name_for_id(asset_class_t::cubemap_asset, id); }
 
 } // namespace assets

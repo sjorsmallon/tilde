@@ -8,6 +8,7 @@
 #include "../shared/lighting/lightmap_sidecar.hpp"
 #include "../shared/lighting/lightmap_solve.hpp"
 #include "../shared/lighting/lightmap_trace.hpp"
+#include "../third_party/stb_image_write.h"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
 #include "entities/generated/entities/reflection_volume_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
@@ -3661,17 +3662,22 @@ void a_static_mesh_with_shadows_off_is_in_no_occluder_set()
 
 #if !defined(TILDE_ASSET_SOURCE_PKG) && !defined(TILDE_ASSET_SOURCE_EMBED)
 
-const char *GLASS_TGA_PATH = "cmake_build/lightmap_test_fixtures/glass.tga";
-
-void write_glass_tga()
+// A fixture material folder: the material.txt that names it to the loader beside the albedo it is given.
+void write_material_fixture(const char *folder, const char *albedo_path, int width, int height,
+                            const uint8_t *pixels)
 {
-  uint8_t header[18] = {};
-  header[2]  = 2;
-  header[12] = 2;
-  header[14] = 2;
-  header[16] = 32;
-  header[17] = 8;
+  std::filesystem::create_directories(folder);
+  std::ofstream declaration(std::string(folder) + "/material.txt");
+  declaration << "shader lit\n";
+  assert(declaration);
+  assert(stbi_write_png(albedo_path, width, height, 4, pixels, width * 4) != 0);
+}
 
+const char *GLASS_MATERIAL_PATH = "cmake_build/lightmap_test_fixtures/glass";
+const char *GLASS_ALBEDO_PATH   = "cmake_build/lightmap_test_fixtures/glass/albedo.png";
+
+void write_glass_material()
+{
   uint8_t pixels[16] = {};
   for (int texel = 0; texel < 4; ++texel)
   {
@@ -3681,22 +3687,18 @@ void write_glass_tga()
     pixels[texel * 4 + 3] = 128;
   }
 
-  std::filesystem::create_directories("cmake_build/lightmap_test_fixtures");
-  std::ofstream file(GLASS_TGA_PATH, std::ios::binary);
-  file.write(reinterpret_cast<char *>(header), sizeof(header));
-  file.write(reinterpret_cast<char *>(pixels), sizeof(pixels));
-  assert(file);
+  write_material_fixture(GLASS_MATERIAL_PATH, GLASS_ALBEDO_PATH, 2, 2, pixels);
 }
 
 // transparency_plan.md step 6.
 void a_blend_faced_brush_does_not_occlude_the_bake()
 {
-  write_glass_tga();
-  assert(assets::get(assets::load_texture(GLASS_TGA_PATH))->alpha ==
+  write_glass_material();
+  assert(assets::get(assets::load_texture(GLASS_ALBEDO_PATH))->alpha ==
          assets::alpha_mode_t::blend);
 
   shared::map_t map;
-  map.materials = {"", GLASS_TGA_PATH};
+  map.materials = {"", GLASS_MATERIAL_PATH};
   map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
 
   shared::brush_geometry_t &pane =
@@ -3726,27 +3728,17 @@ void a_blend_faced_brush_does_not_occlude_the_bake()
   assert(opaque.first_transmissive_triangle == 12 && opaque.triangles.size() == 12);
 }
 
-const char *FENCE_TGA_PATH = "cmake_build/lightmap_test_fixtures/fence.tga";
+const char *FENCE_MATERIAL_PATH = "cmake_build/lightmap_test_fixtures/fence";
+const char *FENCE_ALBEDO_PATH   = "cmake_build/lightmap_test_fixtures/fence/albedo.png";
 
 // Two texels across: the left one cut away, the right one solid. A 1x2 image so
 // the u coordinate alone decides, which is what lets the test aim a ray at a
 // hole and another at a bar.
-void write_fence_tga()
+void write_fence_material()
 {
-  uint8_t header[18] = {};
-  header[2]  = 2;
-  header[12] = 2;
-  header[14] = 1;
-  header[16] = 32;
-  header[17] = 8;
-
   const uint8_t pixels[8] = {255, 255, 255, 0, 255, 255, 255, 255};
 
-  std::filesystem::create_directories("cmake_build/lightmap_test_fixtures");
-  std::ofstream file(FENCE_TGA_PATH, std::ios::binary);
-  file.write(reinterpret_cast<char *>(header), sizeof(header));
-  file.write(reinterpret_cast<const char *>(pixels), sizeof(pixels));
-  assert(file);
+  write_material_fixture(FENCE_MATERIAL_PATH, FENCE_ALBEDO_PATH, 2, 1, pixels);
 }
 
 // transparency_plan.md step 7: a fence stops the ray where its texel is solid
@@ -3754,12 +3746,12 @@ void write_fence_tga()
 // between a holey shadow and the solid one step 6 left it casting.
 void a_cutout_brush_casts_a_holey_shadow()
 {
-  write_fence_tga();
-  assert(assets::get(assets::load_texture(FENCE_TGA_PATH))->alpha ==
+  write_fence_material();
+  assert(assets::get(assets::load_texture(FENCE_ALBEDO_PATH))->alpha ==
          assets::alpha_mode_t::cutout);
 
   shared::map_t map;
-  map.materials = {"", FENCE_TGA_PATH};
+  map.materials = {"", FENCE_MATERIAL_PATH};
   map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
 
   shared::brush_geometry_t &fence = std::get<shared::brush_geometry_t>(map.geometry[0].value);
@@ -3820,10 +3812,10 @@ void a_cutout_brush_casts_a_holey_shadow()
 // transparency_plan.md step 7: the pane the ray got through TINTS it.
 void a_blend_faced_brush_tints_the_light_that_passes_through_it()
 {
-  write_glass_tga();
+  write_glass_material();
 
   shared::map_t map;
-  map.materials = {"", GLASS_TGA_PATH};
+  map.materials = {"", GLASS_MATERIAL_PATH};
   map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
 
   shared::brush_geometry_t &pane = std::get<shared::brush_geometry_t>(map.geometry[0].value);
@@ -3842,9 +3834,9 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
 
   // What the fixture's glass filters by: its albedo, sRGB-decoded, times what it
   // did not stop. Read off the LOADED texture rather than off the bytes written,
-  // because a .tga stores them blue first and this test is about the arithmetic.
+  // because this test is about the arithmetic and not the encoding.
   const assets::texture_asset_t &texture =
-      *assets::get(assets::load_texture(GLASS_TGA_PATH));
+      *assets::get(assets::load_texture(GLASS_ALBEDO_PATH));
   const float alpha = (float)texture.pixels[3] * (1.f / 255.f);
   const linalg::vec3 expected{shared::srgb_byte_to_linear(texture.pixels[0]) * (1.f - alpha),
                               shared::srgb_byte_to_linear(texture.pixels[1]) * (1.f - alpha),

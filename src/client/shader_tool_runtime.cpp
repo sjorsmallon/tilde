@@ -586,13 +586,13 @@ void destroy_preview_resources(VkDevice device, preview_pipeline_t &pipeline)
 // ---------------------------------------------------------------------------
 
 void bind_pbr_textures(VkDevice device, preview_pipeline_t &pipeline,
-                       const assets::pbr_material_asset_t &material)
+                       const assets::material_asset_t &material)
 {
   const assets::asset_handle_t<assets::texture_asset_t> slots[PBR_TEXTURE_SLOT_COUNT] = {
-      material.albedo,
-      material.normal,
-      material.occlusion_roughness_metallic,
-      material.height,
+      material.maps.albedo,
+      material.maps.normal,
+      material.maps.orm,
+      material.maps.height,
   };
 
   // ALBEDO IS THE ONLY COLOUR HERE and the other three are data, so only it is

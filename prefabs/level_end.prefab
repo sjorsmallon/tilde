@@ -45,7 +45,6 @@ static_mesh
   "rotation" "0 0 0 1"
   "scale" "3.000000 3.000000 3.000000"
   "mesh_path" "resources/glb/Duck.glb"
-  "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"

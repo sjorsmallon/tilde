@@ -118,14 +118,6 @@ assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geom
   return {};
 }
 
-renderer::pipeline_state_t state_for(const shared::geometry_surface_t &surface)
-{
-  renderer::pipeline_state_t state;
-  state.shader = (surface.shader_type == "unlit") ? renderer::shader_t::unlit
-                                                  : renderer::shader_t::lit;
-  return state;
-}
-
 // An UNTEXTURED brush face is BLOCKOUT geometry, and a tiling dev texture is the
 // wrong thing to read it by: it describes surface where what matters is SHAPE
 // and SIZE. Flat light grey under shader_t::grid, which rules the world grid
@@ -152,134 +144,75 @@ renderer::material_handle_t blockout_material()
 
 namespace
 {
-struct material_maps_key_t
+struct face_material_key_t
 {
-  uint32_t handles[renderer::MATERIAL_MAP_COUNT] = {};
-  uint32_t alpha = 0;
+  uint32_t handles[renderer::MATERIAL_MAP_COUNT * BLEND_LAYER_COUNT] = {};
+  uint32_t state = 0;
 
-  bool operator==(const material_maps_key_t &) const = default;
+  bool operator==(const face_material_key_t &) const = default;
 };
 
-uint32_t alpha_key(renderer::blend_mode_t mode, uint8_t cutoff)
+struct face_material_key_hash_t
 {
-  return (uint32_t)mode | ((uint32_t)cutoff << 8);
-}
-
-material_maps_key_t material_maps_key(const renderer::material_maps_t &maps)
-{
-  return {{maps.albedo.index, maps.normal.index, maps.orm.index, maps.height.index,
-           maps.emissive.index},
-          0};
-}
-
-struct material_maps_key_hash_t
-{
-  size_t operator()(const material_maps_key_t &key) const
+  size_t operator()(const face_material_key_t &key) const
   {
     size_t hash = 1469598103934665603ull;
     for (uint32_t handle : key.handles)
       hash = (hash ^ handle) * 1099511628211ull;
-    return (hash ^ key.alpha) * 1099511628211ull;
+    return (hash ^ key.state) * 1099511628211ull;
   }
 };
-} // namespace
 
-// One material per distinct SET OF MAPS, not per submesh and not per rebuild: a
-// brush mesh is re-registered on every edit, and registering a fresh material
-// each time would grow the renderer's table for the length of an editing
-// session.
-renderer::material_handle_t textured_face_material(const renderer::material_maps_t &maps,
-                                                  renderer::blend_mode_t alpha_mode,
-                                                  uint8_t                alpha_cutoff)
+void write_layer_key(face_material_key_t &key, int layer, const renderer::material_maps_t &maps)
 {
-  static std::unordered_map<material_maps_key_t, renderer::material_handle_t,
-                            material_maps_key_hash_t>
-      by_maps;
-
-  material_maps_key_t key = material_maps_key(maps);
-  key.alpha               = alpha_key(alpha_mode, alpha_cutoff);
-  const auto cached       = by_maps.find(key);
-  if (cached != by_maps.end())
-    return cached->second;
-
-  renderer::material_t built{};
-  built.parameters.maps             = maps;
-  built.pipeline_state.blend_mode   = alpha_mode;
-  built.pipeline_state.alpha_cutoff = alpha_cutoff;
-  if (alpha_mode == renderer::blend_mode_t::alpha)
-    built.pipeline_state.depth_write = false;
-
-  // A material that resolved to a PBR FOLDER; a single texture file has no maps for it to read.
-  if (maps.normal.valid() || maps.orm.valid() || maps.height.valid())
-    built.pipeline_state.shader = renderer::shader_t::pbr;
-
-  const renderer::material_handle_t handle = renderer::register_material(built);
-  by_maps.emplace(key, handle);
-  return handle;
+  const uint32_t handles[renderer::MATERIAL_MAP_COUNT] = {maps.albedo.index, maps.normal.index, maps.orm.index,
+                                                           maps.height.index, maps.emissive.index};
+  memcpy(&key.handles[layer * renderer::MATERIAL_MAP_COUNT], handles, sizeof(handles));
 }
 
-// A face painted between two materials. Keyed by the pair, for
-// textured_face_material's reason: the mesh is re-registered on every edit and
-// a fresh material per rebuild would grow the renderer's table for the length
-// of an editing session.
-renderer::material_handle_t blended_face_material(const renderer::material_parameters_t &parameters,
-                                                 renderer::blend_mode_t alpha_mode,
-                                                 uint8_t                alpha_cutoff)
+uint32_t pipeline_state_key(const renderer::pipeline_state_t &state)
 {
-  struct key_t
-  {
-    uint32_t handles[renderer::MATERIAL_MAP_COUNT * BLEND_LAYER_COUNT] = {};
-    uint32_t alpha = 0;
+  return (uint32_t)state.shader | ((uint32_t)state.blend_mode << 4) | ((uint32_t)state.cull_mode << 6) |
+         ((uint32_t)state.depth_test << 7) | ((uint32_t)state.depth_write << 8) |
+         ((uint32_t)state.alpha_cutoff << 9);
+}
+} // namespace
 
-    bool operator==(const key_t &) const = default;
-  };
-  struct key_hash_t
-  {
-    size_t operator()(const key_t &key) const
-    {
-      size_t hash = 1469598103934665603ull;
-      for (uint32_t handle : key.handles)
-        hash = (hash ^ handle) * 1099511628211ull;
-      return (hash ^ key.alpha) * 1099511628211ull;
-    }
-  };
+// One material per distinct (maps, state), not per submesh and not per rebuild:
+// a brush mesh is re-registered on every edit, and registering a fresh material
+// each time would grow the renderer's table for the length of an editing
+// session. The state is the registered slot's own, so the shader the face's
+// material named is the shader the face is drawn by.
+renderer::material_handle_t face_material(const renderer::material_parameters_t &parameters,
+                                          const renderer::pipeline_state_t      &state)
+{
+  static std::unordered_map<face_material_key_t, renderer::material_handle_t, face_material_key_hash_t> by_key;
 
-  static std::unordered_map<key_t, renderer::material_handle_t, key_hash_t> by_maps;
-
-  key_t key{};
-  const auto write_layer = [&key](int layer, const renderer::material_maps_t &maps) {
-    const material_maps_key_t handles = material_maps_key(maps);
-    memcpy(&key.handles[layer * renderer::MATERIAL_MAP_COUNT], handles.handles, sizeof(handles.handles));
-  };
-  write_layer(0, parameters.maps);
+  face_material_key_t key{};
+  write_layer_key(key, 0, parameters.maps);
   for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
-    write_layer(layer, parameters.blend_maps.data[layer - 1]);
-  key.alpha = alpha_key(alpha_mode, alpha_cutoff);
+    write_layer_key(key, layer, parameters.blend_maps.data[layer - 1]);
+  key.state = pipeline_state_key(state);
 
-  const auto cached = by_maps.find(key);
-  if (cached != by_maps.end())
+  const auto cached = by_key.find(key);
+  if (cached != by_key.end())
     return cached->second;
 
   renderer::material_t built{};
-  built.pipeline_state.shader       = renderer::shader_t::blend;
-  built.pipeline_state.blend_mode   = alpha_mode;
-  built.pipeline_state.alpha_cutoff = alpha_cutoff;
-  if (alpha_mode == renderer::blend_mode_t::alpha)
-    built.pipeline_state.depth_write = false;
-  built.parameters.maps             = parameters.maps;
-  built.parameters.blend_maps       = parameters.blend_maps;
+  built.pipeline_state = state;
+  built.parameters     = parameters;
 
   const renderer::material_handle_t handle = renderer::register_material(built);
-  by_maps.emplace(key, handle);
+  by_key.emplace(key, handle);
   return handle;
 }
 
 // The override table for a generated brush mesh: one entry per submesh slot,
-// grid-shaded where the face's material resolved to no texture and lit where it
-// did. Built from the mesh's OWN materials, which generate_brush_mesh already
-// filled with the resolved texture for each slot -- so a slot naming a texture
-// that failed to load carries the renderer's magenta checkerboard and is visible
-// rather than silently flat.
+// grid-shaded where a Lit face's material resolved to no texture and the slot's
+// own state everywhere else. Built from the mesh's OWN materials, which
+// generate_brush_mesh already filled with the resolved texture for each slot --
+// so a slot naming a texture that failed to load carries the renderer's magenta
+// checkerboard and is visible rather than silently flat.
 //
 // Stored beside the source record so it is rebuilt exactly when the mesh is, and
 // the two cannot describe different brushes.
@@ -290,17 +223,10 @@ build_brush_material_overrides(renderer::mesh_handle_t mesh)
   for (renderer::material_handle_t slot : renderer::mesh_default_materials(mesh))
   {
     const renderer::material_parameters_t parameters = renderer::material_parameters(slot);
+    const renderer::pipeline_state_t      state      = renderer::material_pipeline_state(slot);
 
-    const renderer::pipeline_state_t registered = renderer::material_pipeline_state(slot);
-    const renderer::blend_mode_t     alpha_mode = registered.blend_mode;
-    const uint8_t                    cutoff     = registered.alpha_cutoff;
-
-    if (parameters.blend_maps.data[0].albedo.valid())
-      table.push_back(blended_face_material(parameters, alpha_mode, cutoff));
-    else
-      table.push_back(parameters.maps.albedo.valid()
-                          ? textured_face_material(parameters.maps, alpha_mode, cutoff)
-                          : blockout_material());
+    const bool blockout = state.shader == renderer::shader_t::lit && !parameters.maps.albedo.valid();
+    table.push_back(blockout ? blockout_material() : face_material(parameters, state));
   }
   return table;
 }
@@ -374,7 +300,6 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
   else
   {
     draw.tint               = color_from_vec3(surface.color);
-    draw.material_overrides = material_variant(mesh, state_for(surface));
     if (team_wall)
       team_wall_draw(draw, *team_wall);
   }

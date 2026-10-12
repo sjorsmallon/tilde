@@ -52,8 +52,8 @@ struct asset_state_t
   std::vector<asset_handle_t<hitbox_rig_t>>    hitbox_rig_handles;
   Asset_Pool<font_asset_t>                     font_asset_pool;
   std::vector<asset_handle_t<font_asset_t>>    font_asset_handles;
-  Asset_Pool<pbr_material_asset_t>                  pbr_material_pool;
-  std::vector<asset_handle_t<pbr_material_asset_t>> pbr_material_handles;
+  Asset_Pool<material_asset_t>                  material_asset_pool;
+  std::vector<asset_handle_t<material_asset_t>> material_asset_handles;
   Asset_Pool<cubemap_asset_t>                  cubemap_asset_pool;
   std::vector<asset_handle_t<cubemap_asset_t>> cubemap_asset_handles;
 

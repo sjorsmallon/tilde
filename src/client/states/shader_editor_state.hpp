@@ -80,8 +80,8 @@ private:
 
   // sloppy_mortar_stone
   // PBR material
-  std::string pbr_material_folder = "resources/textures/harsh_bricks";
-  assets::asset_handle_t<assets::pbr_material_asset_t> pbr_material_handle;
+  std::string material_asset_folder = "resources/textures/harsh_bricks";
+  assets::asset_handle_t<assets::material_asset_t> material_asset_handle;
   char pbr_folder_buffer[256] = {};
 
   // Configurable shader paths (default to preview shaders)

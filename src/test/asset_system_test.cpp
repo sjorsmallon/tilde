@@ -229,8 +229,8 @@ static int test_every_class_registers()
     assert(assets::get_hitbox_rig((assets::hitbox_rig)index).valid());
   for (uint32_t index = 0; index < asset_count(asset_class_t::font_asset); ++index)
     assert(assets::get_font((assets::font_asset)index).valid());
-  for (uint32_t index = 0; index < asset_count(asset_class_t::pbr_material); ++index)
-    assert(assets::get_pbr_material((assets::pbr_material)index).valid());
+  for (uint32_t index = 0; index < asset_count(asset_class_t::material_asset); ++index)
+    assert(assets::get_material_asset((assets::material_asset)index).valid());
   for (uint32_t index = 0; index < asset_count(asset_class_t::cubemap_asset); ++index)
     assert(assets::get_cubemap((assets::cubemap_asset)index).valid());
 
@@ -265,14 +265,14 @@ static int test_every_class_registers()
 static int test_a_material_is_a_directory_and_claims_its_maps()
 {
   // The folder is the entry, minted from the DIRECTORY name.
-  const assets::pbr_material_asset_t *material =
-      assets::get(assets::get_pbr_material(assets::pbr_material_id("harsh_bricks")));
+  const assets::material_asset_t *material =
+      assets::get(assets::get_material_asset(assets::material_asset_id("harsh_bricks")));
   assert(material != nullptr);
-  assert(material->albedo.valid());
+  assert(material->maps.albedo.valid());
 
   const Span<const assets::asset_entry_t> materials =
-      assets::asset_class_entries(assets::asset_class_t::pbr_material);
-  const uint32_t harsh_bricks = (uint32_t)assets::pbr_material_id("harsh_bricks");
+      assets::asset_class_entries(assets::asset_class_t::material_asset);
+  const uint32_t harsh_bricks = (uint32_t)assets::material_asset_id("harsh_bricks");
   assert(harsh_bricks != 0 && harsh_bricks < materials.size());
   assert(materials[harsh_bricks].path == "resources/textures/harsh_bricks");
 
@@ -335,7 +335,7 @@ static int test_a_cubemap_is_a_directory_and_claims_its_faces()
        assets::asset_class_entries(assets::asset_class_t::texture_asset))
     assert(texture.path.find("/cubemaps/") == std::string::npos);
 
-  // Six invalid handles, like make_missing_pbr_material: the renderer resolves
+  // Six invalid handles, like make_missing_material_asset: the renderer resolves
   // an invalid face to the magenta checker, so a map naming a sky this build
   // does not have draws something visibly wrong rather than a black night.
   const assets::cubemap_asset_t *missing =
@@ -686,15 +686,15 @@ static int test_a_glb_material_named_after_a_folder_takes_its_maps()
   const assets::mesh_asset_t mesh = assets::decode_glb(
       Span<const uint8_t>(glb.data(), (uint32_t)glb.size()), "named_material.glb");
 
-  const assets::pbr_material_asset_t* folder =
-      assets::get(assets::get_pbr_material(assets::pbr_material_id("harsh_bricks")));
+  const assets::material_asset_t* folder =
+      assets::get(assets::get_material_asset(assets::material_asset_id("harsh_bricks")));
   assert(folder != nullptr);
   assert(mesh.materials.size() == 2);
 
   const assets::material_t& named = mesh.materials[0];
-  assert(named.maps.albedo.index == folder->albedo.index);
-  assert(named.maps.normal.index == folder->normal.index);
-  assert(named.maps.orm.index == folder->occlusion_roughness_metallic.index);
+  assert(named.maps.albedo.index == folder->maps.albedo.index);
+  assert(named.maps.normal.index == folder->maps.normal.index);
+  assert(named.maps.orm.index == folder->maps.orm.index);
   assert(named.diffuse_color.x == 1.0f && named.diffuse_color.y == 1.0f && named.diffuse_color.z == 1.0f);
 
   const assets::material_t& unnamed = mesh.materials[1];

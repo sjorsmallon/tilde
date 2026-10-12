@@ -393,14 +393,6 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
   if (!mesh_is_in_build)
     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "mesh not in this build");
 
-  const char *shader_names[] = {"lit", "unlit"};
-  int shader_index = (surface.shader_type == "unlit") ? 1 : 0;
-  if (ImGui::Combo("shader", &shader_index, shader_names, 2))
-  {
-    surface.shader_type = shader_names[shader_index];
-    changed = true;
-  }
-
   changed |= ImGui::ColorEdit3("color", &surface.color.x);
   changed |= ImGui::DragFloat("roughness", &surface.roughness, 0.01f, 0.f, 1.f);
   changed |= ImGui::Checkbox("visible", &surface.visible);

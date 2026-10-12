@@ -109,7 +109,7 @@ void Shader_Editor_State::on_enter()
   strncpy(frag_path_buffer, frag_shader_path.c_str(), sizeof(frag_path_buffer) - 1);
 
   // PBR material folder
-  strncpy(pbr_folder_buffer, pbr_material_folder.c_str(), sizeof(pbr_folder_buffer) - 1);
+  strncpy(pbr_folder_buffer, material_asset_folder.c_str(), sizeof(pbr_folder_buffer) - 1);
 
   // Load mesh
   load_preview_mesh();
@@ -125,10 +125,10 @@ void Shader_Editor_State::on_enter()
   }
 
   // Auto-load PBR material and bind textures
-  pbr_material_handle = assets::load_pbr_material(pbr_material_folder.c_str());
-  if (pbr_material_handle.valid())
+  material_asset_handle = assets::load_material_asset(material_asset_folder.c_str());
+  if (material_asset_handle.valid())
   {
-    const assets::pbr_material_asset_t *mat = assets::get(pbr_material_handle);
+    const assets::material_asset_t *mat = assets::get(material_asset_handle);
     if (mat)
       bind_pbr_textures(device, preview_pipeline, *mat);
   }
@@ -727,11 +727,11 @@ void Shader_Editor_State::draw_imgui_panels()
       ImGui::SameLine();
       if (ImGui::Button("Load##mat"))
       {
-        pbr_material_folder = pbr_folder_buffer;
-        pbr_material_handle = assets::load_pbr_material(pbr_material_folder.c_str());
-        if (pbr_material_handle.valid())
+        material_asset_folder = pbr_folder_buffer;
+        material_asset_handle = assets::load_material_asset(material_asset_folder.c_str());
+        if (material_asset_handle.valid())
         {
-          const assets::pbr_material_asset_t *mat = assets::get(pbr_material_handle);
+          const assets::material_asset_t *mat = assets::get(material_asset_handle);
           if (mat)
           {
             vkDeviceWaitIdle(renderer::get_VkDevice());
@@ -739,7 +739,7 @@ void Shader_Editor_State::draw_imgui_panels()
           }
         }
       }
-      if (pbr_material_handle.valid())
+      if (material_asset_handle.valid())
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Material loaded");
       else
         ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No material loaded");

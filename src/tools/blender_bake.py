@@ -18,7 +18,7 @@
 # silhouette stays the mesh's. Metallic is not baked; the result is a dielectric.
 #
 # --textures keeps the three PNGs for inspection. Never point it inside
-# resources/: albedo.png beside normal.png is a material folder to asset_pack.
+# resources/: a material.txt marks a material folder to asset_pack.
 
 import bmesh
 import bpy

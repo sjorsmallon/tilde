@@ -48,7 +48,7 @@ shared::Surface_Kind surface_kind_for_material(const client_context_t& context,
   const std::string& path = materials[material_index];
   if (path.empty())
     return shared::Surface_Kind::Default;
-  return assets::get(assets::load_pbr_material(path.c_str()))->surface;
+  return assets::get(assets::load_material_asset(path.c_str()))->surface;
 }
 
 assets::sound_asset step_sound_for(shared::Surface_Kind kind, uint32_t step_index)

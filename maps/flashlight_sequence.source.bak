@@ -109,7 +109,6 @@ brush
   "_uid" "1"
   "vertices" "-639.998047 -185.620728 -640, -639.998047 -185.620728 640, -639.998047 -73.3130493 -640, -639.998047 -73.3130493 640, 646.231934 -185.620728 -640, 646.231934 -185.620728 640, 646.231934 -73.3130493 -640, 646.231934 -73.3130493 640"
   "mesh_path" ""
-  "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -218,7 +217,6 @@ static_mesh
   "rotation" "0 0 0 1"
   "scale" "3.000000 3.000000 3.000000"
   "mesh_path" "resources/glb/Duck.glb"
-  "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -229,7 +227,6 @@ brush
   "_uid" "14"
   "vertices" "1152.00037 -800.239624 -529.091919, 1152.00037 -800.239624 777.305176, 1152.00037 -681.109619 -529.091919, 1152.00037 -681.109619 777.305176, 3298.69312 -800.239624 -529.091919, 3298.69312 -800.239624 777.305176, 3298.69312 -681.109619 -529.091919, 3298.69312 -681.109619 777.305176"
   "mesh_path" ""
-  "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -339,7 +336,6 @@ static_mesh
   "rotation" "0 0 0.0290951189 0.999576688"
   "scale" "1.000000 1.000000 1.000000"
   "mesh_path" "resources/glb/button.glb"
-  "shader_type" "lit"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -409,9 +405,13 @@ entity
   "light.mode" "Dynamic"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
+  "light.cuts_geometry" "false"
+  "rides.mover" "0"
   "range" "591.2"
   "inner_degrees" "20"
   "outer_degrees" "35"
+  "beam" "false"
+  "solid_beam" "false"
 }
 entity
 {
@@ -436,9 +436,13 @@ entity
   "light.mode" "Baked"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
+  "light.cuts_geometry" "false"
+  "rides.mover" "0"
   "range" "4096"
   "inner_degrees" "20"
   "outer_degrees" "35"
+  "beam" "false"
+  "solid_beam" "false"
 }
 entity
 {
@@ -448,7 +452,7 @@ entity
   "orientation" "0 0 -0.7070515 0.70716214"
   "name" ""
   "switch_state.value" "false"
-  "follows" "0"
+  "rides.mover" "0"
   "kind" "Reveals"
   "range" "1110.5"
   "half_angle_degrees" "20.3"
@@ -468,6 +472,10 @@ entity
   "revealed_by_light" "true"
   "solid_only_when_revealed" "false"
   "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
 }
 entity
 {
@@ -482,9 +490,13 @@ entity
   "light.mode" "Dynamic"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
+  "light.cuts_geometry" "false"
+  "rides.mover" "0"
   "range" "2229.3"
   "inner_degrees" "20"
   "outer_degrees" "34.9"
+  "beam" "false"
+  "solid_beam" "false"
 }
 entity
 {

@@ -5814,7 +5814,7 @@ static material_maps_t register_material_maps(const assets::material_maps_t &sou
 
   if (source.albedo.valid())
     maps.albedo = register_texture_asset(source.albedo, /*srgb*/ true);
-  else if (!albedo_path.empty())
+  else if (!albedo_path.empty() && assets::material_shader_reads_maps(source.shader))
     maps.albedo = g_missing_texture; // named but never loaded
 
   if (source.normal.valid())
@@ -6136,6 +6136,26 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
 // slot a submesh names. mesh_draw_t::material_overrides swaps that table per
 // instance, which is what buys team skins and damage states without touching
 // the mesh.
+// The one fold from the shader an author names to the program that draws it
+// (material_def.md ss4). A Lit material is drawn by the variant its maps and
+// its blend layers call for; every other word names its program outright.
+static shader_t shader_for_material(const assets::material_t &source, const material_maps_t &maps)
+{
+  switch (source.maps.shader)
+  {
+  case assets::material_shader_t::Lit:
+    if (source.blends())
+      return shader_t::blend;
+    if (maps.normal.valid() || maps.orm.valid() || maps.height.valid())
+      return shader_t::pbr;
+    return shader_t::lit;
+  case assets::material_shader_t::Unlit: return shader_t::unlit;
+  case assets::material_shader_t::Ghost: return shader_t::ghost;
+  case assets::material_shader_t::Procedural_Blending: return shader_t::procedural_blending;
+  }
+  fatal_error("shader_for_material: material_shader_t {} names no program", (int)source.maps.shader);
+}
+
 static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t &mesh)
 {
   gpu_mesh.default_materials.clear();
@@ -6146,21 +6166,13 @@ static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_
                                       source.diffuse_color.z, source.opacity};
     material.parameters.maps = register_material_maps(source.maps, source.texture_path);
 
-    // The same rule geometry_renderer.cpp applies to a brush face.
-    if (material.parameters.maps.normal.valid() || material.parameters.maps.orm.valid() ||
-        material.parameters.maps.height.valid())
-      material.pipeline_state.shader = shader_t::pbr;
-
-    // The layers above the base, through the same ladder, and the shader that
-    // reads them. A generated brush mesh is the only thing that fills these
-    // today -- blending is authored per FACE.
+    // The layers above the base, through the same ladder. A generated brush
+    // mesh is the only thing that fills these today -- blending is authored per FACE.
     for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
       material.parameters.blend_maps.data[layer - 1] = register_material_maps(
           source.blend_maps.data[layer - 1], source.blend_texture_path.data[layer - 1]);
 
-    if (source.blends())
-      material.pipeline_state.shader = shader_t::blend;
-
+    material.pipeline_state.shader = shader_for_material(source, material.parameters.maps);
     apply_alpha_mode(material.pipeline_state, source.maps.alpha_mode, source.maps.alpha_cutoff);
     if (source.maps.double_sided)
       material.pipeline_state.cull_mode = cull_mode_t::none;
