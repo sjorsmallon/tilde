@@ -103,6 +103,14 @@ const uint32_t mesh_procedural_blending_frag_spv[] =
 #include "mesh_procedural_blending.frag.spv.h"
     ;
 
+const uint32_t mesh_locked_wall_frag_spv[] =
+#include "mesh_locked_wall.frag.spv.h"
+    ;
+
+const uint32_t mesh_locked_wall_lightmapped_frag_spv[] =
+#include "mesh_locked_wall_lightmapped.frag.spv.h"
+    ;
+
 const uint32_t beam_vert_spv[] =
 #include "beam.vert.spv.h"
     ;
@@ -125,6 +133,10 @@ const uint32_t mesh_grid_frag_spv[] =
 
 const uint32_t shadow_cutout_frag_spv[] =
 #include "shadow_cutout.frag.spv.h"
+    ;
+
+const uint32_t shadow_keyhole_frag_spv[] =
+#include "shadow_keyhole.frag.spv.h"
     ;
 
 const uint32_t particle_comp_spv[] =
@@ -1030,7 +1042,16 @@ static VkDescriptorSetLayout g_shadow_pass_ds_layout  = VK_NULL_HANDLE;
 static VkDescriptorPool      g_shadow_pass_pool       = VK_NULL_HANDLE;
 static VkDescriptorSet       g_shadow_pass_set        = VK_NULL_HANDLE;
 static VkPipelineLayout      g_shadow_pipeline_layout = VK_NULL_HANDLE;
-static VkPipeline            g_shadow_pipelines[2][2][2] = {}; // [skinned][cull none][cutout]
+// The shadow pass' fragment stage: none for a solid, the cutout for a fence, the keyhole for a
+// locked wall. Indexes g_shadow_pipelines' last axis.
+enum class shadow_fragment_t : uint8_t
+{
+  none,
+  cutout,
+  keyhole
+};
+constexpr int SHADOW_FRAGMENT_COUNT = 3;
+static VkPipeline g_shadow_pipelines[2][2][SHADOW_FRAGMENT_COUNT] = {}; // [skinned][cull none][fragment]
 // Where shadow_cutout.frag reads its threshold: past the model matrix, which is
 // all the shadow pass ever pushes.
 static constexpr uint32_t    SHADOW_CUTOFF_PUSH_OFFSET      = 64;
@@ -2399,6 +2420,11 @@ static VkPipeline create_mesh_pipeline(const pipeline_key_t &key)
   case shader_t::procedural_blending:
     frag_spv  = mesh_procedural_blending_frag_spv;
     frag_size = sizeof(mesh_procedural_blending_frag_spv);
+    break;
+  case shader_t::locked_wall:
+    frag_spv  = lightmapped ? mesh_locked_wall_lightmapped_frag_spv : mesh_locked_wall_frag_spv;
+    frag_size = lightmapped ? sizeof(mesh_locked_wall_lightmapped_frag_spv)
+                            : sizeof(mesh_locked_wall_frag_spv);
     break;
   case shader_t::grid:
     frag_spv  = lightmapped ? mesh_grid_lightmapped_frag_spv : mesh_grid_frag_spv;
@@ -6152,33 +6178,37 @@ static shader_t shader_for_material(const assets::material_t &source, const mate
   case assets::material_shader_t::Unlit: return shader_t::unlit;
   case assets::material_shader_t::Ghost: return shader_t::ghost;
   case assets::material_shader_t::Procedural_Blending: return shader_t::procedural_blending;
+  case assets::material_shader_t::Locked_Wall: return shader_t::locked_wall;
   }
   fatal_error("shader_for_material: material_shader_t {} names no program", (int)source.maps.shader);
+}
+
+material_handle_t register_asset_material(const assets::material_t &source)
+{
+  material_t material{};
+  material.parameters.base_color = {source.diffuse_color.x, source.diffuse_color.y,
+                                    source.diffuse_color.z, source.opacity};
+  material.parameters.maps = register_material_maps(source.maps, source.texture_path);
+
+  // The layers above the base, through the same ladder. A generated brush
+  // mesh is the only thing that fills these today -- blending is authored per FACE.
+  for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
+    material.parameters.blend_maps.data[layer - 1] = register_material_maps(
+        source.blend_maps.data[layer - 1], source.blend_texture_path.data[layer - 1]);
+
+  material.pipeline_state.shader = shader_for_material(source, material.parameters.maps);
+  apply_alpha_mode(material.pipeline_state, source.maps.alpha_mode, source.maps.alpha_cutoff);
+  if (source.maps.double_sided)
+    material.pipeline_state.cull_mode = cull_mode_t::none;
+
+  return register_material(material);
 }
 
 static void build_mesh_materials(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t &mesh)
 {
   gpu_mesh.default_materials.clear();
   for (const assets::material_t &source : mesh.materials)
-  {
-    material_t material{};
-    material.parameters.base_color = {source.diffuse_color.x, source.diffuse_color.y,
-                                      source.diffuse_color.z, source.opacity};
-    material.parameters.maps = register_material_maps(source.maps, source.texture_path);
-
-    // The layers above the base, through the same ladder. A generated brush
-    // mesh is the only thing that fills these today -- blending is authored per FACE.
-    for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
-      material.parameters.blend_maps.data[layer - 1] = register_material_maps(
-          source.blend_maps.data[layer - 1], source.blend_texture_path.data[layer - 1]);
-
-    material.pipeline_state.shader = shader_for_material(source, material.parameters.maps);
-    apply_alpha_mode(material.pipeline_state, source.maps.alpha_mode, source.maps.alpha_cutoff);
-    if (source.maps.double_sided)
-      material.pipeline_state.cull_mode = cull_mode_t::none;
-
-    gpu_mesh.default_materials.push_back(register_material(material));
-  }
+    gpu_mesh.default_materials.push_back(register_asset_material(source));
 
   if (gpu_mesh.default_materials.empty())
     gpu_mesh.default_materials.push_back(g_default_material);
@@ -6461,7 +6491,7 @@ static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
 // The mesh family's vertex shader with no fragment stage, except for a cutout
 // material, whose clear texels have to be dropped here too. Depth bias is
 // dynamic so the cvars tune it without a rebuild.
-static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none, bool cutout)
+static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none, shadow_fragment_t fragment)
 {
   VkShaderModuleCreateInfo vert_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   vert_info.codeSize = skinned ? sizeof(mesh_skinned_vert_spv) : sizeof(mesh_vert_spv);
@@ -6475,14 +6505,16 @@ static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none, bool cuto
   }
 
   VkShaderModule frag_module = VK_NULL_HANDLE;
-  if (cutout)
+  if (fragment != shadow_fragment_t::none)
   {
+    const bool               cutout = fragment == shadow_fragment_t::cutout;
     VkShaderModuleCreateInfo frag_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    frag_info.codeSize = sizeof(shadow_cutout_frag_spv);
-    frag_info.pCode    = shadow_cutout_frag_spv;
+    frag_info.codeSize = cutout ? sizeof(shadow_cutout_frag_spv) : sizeof(shadow_keyhole_frag_spv);
+    frag_info.pCode    = cutout ? shadow_cutout_frag_spv : shadow_keyhole_frag_spv;
     if (vkCreateShaderModule(g_device, &frag_info, nullptr, &frag_module) != VK_SUCCESS)
     {
-      log_error("[renderer] failed to create the shadow cutout fragment shader module");
+      log_error("[renderer] failed to create the shadow {} fragment shader module",
+                cutout ? "cutout" : "keyhole");
       vkDestroyShaderModule(g_device, vert_module, nullptr);
       return VK_NULL_HANDLE;
     }
@@ -6564,7 +6596,7 @@ static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none, bool cuto
   dynamic_state.pDynamicStates    = dynamic_states;
 
   VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-  pipeline_info.stageCount          = cutout ? 2 : 1;
+  pipeline_info.stageCount          = fragment != shadow_fragment_t::none ? 2 : 1;
   pipeline_info.pStages             = stages;
   pipeline_info.pVertexInputState   = &vertex_input;
   pipeline_info.pInputAssemblyState = &input_assembly;
@@ -6719,9 +6751,9 @@ static void create_shadow_resources()
 
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int cull_none = 0; cull_none < 2; ++cull_none)
-      for (int cutout = 0; cutout < 2; ++cutout)
-        g_shadow_pipelines[skinned][cull_none][cutout] =
-            create_shadow_pipeline(skinned == 1, cull_none == 1, cutout == 1);
+      for (int fragment = 0; fragment < SHADOW_FRAGMENT_COUNT; ++fragment)
+        g_shadow_pipelines[skinned][cull_none][fragment] =
+            create_shadow_pipeline(skinned == 1, cull_none == 1, (shadow_fragment_t)fragment);
 
   const shadow_settings_t defaults{};
   g_shadow_requested_size        = defaults.map_size;
@@ -6735,9 +6767,9 @@ static void destroy_shadow_resources()
   destroy_shadow_pool();
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int cull_none = 0; cull_none < 2; ++cull_none)
-      for (int cutout = 0; cutout < 2; ++cutout)
-        if (g_shadow_pipelines[skinned][cull_none][cutout] != VK_NULL_HANDLE)
-          vkDestroyPipeline(g_device, g_shadow_pipelines[skinned][cull_none][cutout], nullptr);
+      for (int fragment = 0; fragment < SHADOW_FRAGMENT_COUNT; ++fragment)
+        if (g_shadow_pipelines[skinned][cull_none][fragment] != VK_NULL_HANDLE)
+          vkDestroyPipeline(g_device, g_shadow_pipelines[skinned][cull_none][fragment], nullptr);
   if (g_shadow_pipeline_layout != VK_NULL_HANDLE)
     vkDestroyPipelineLayout(g_device, g_shadow_pipeline_layout, nullptr);
   if (g_shadow_pass_pool != VK_NULL_HANDLE)
@@ -8384,8 +8416,12 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
                               &skinning[draw_index].dynamic_offset);
     }
     vkCmdBindIndexBuffer(cmd, mesh.index_buffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdPushConstants(cmd, g_shadow_pipeline_layout, SHADOW_PUSH_STAGES, 0,
-                       sizeof(draw.transform), &draw.transform);
+    // The model matrix and the clock-wipe frame the keyhole arm reads; the cutoff below lands in
+    // the colour's bytes, which no shadow stage reads.
+    mesh_push_constants_t push{};
+    memcpy(push.model, &draw.transform, sizeof(push.model));
+    pack_clock_wipe(draw.clock_wipe, push);
+    vkCmdPushConstants(cmd, g_shadow_pipeline_layout, SHADOW_PUSH_STAGES, 0, sizeof(push), &push);
 
     for (const gpu_submesh_t &submesh : mesh.submeshes)
     {
@@ -8402,10 +8438,14 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
       if (state.blend_mode == blend_mode_t::alpha || !state.depth_write)
         continue;
 
-      const bool       cutout   = state.blend_mode == blend_mode_t::cutout;
+      const bool              cutout   = state.blend_mode == blend_mode_t::cutout;
+      const shadow_fragment_t fragment = cutout ? shadow_fragment_t::cutout
+                                         : state.shader == shader_t::locked_wall
+                                             ? shadow_fragment_t::keyhole
+                                             : shadow_fragment_t::none;
       const VkPipeline pipeline =
           g_shadow_pipelines[skinned ? 1 : 0][state.cull_mode == cull_mode_t::none ? 1 : 0]
-                            [cutout ? 1 : 0];
+                            [(int)fragment];
       if (pipeline == VK_NULL_HANDLE)
         continue; // already logged at creation
       if (pipeline != bound_pipeline)

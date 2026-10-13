@@ -64,7 +64,8 @@ static Bounding_Volume_Hierarchy build_geometry_bvh(const map_t &map,
 
   for (const map_geometry_t &entry : map.geometry)
   {
-    if (compute_light_occlusion(entry.value, map.materials) != wanted)
+    if (!map.geometry_is_baked_occluder(entry) ||
+        compute_light_occlusion(entry.value, map.materials) != wanted)
       continue;
 
     // A static mesh COLLIDES as its bound and must not SHADOW as it: a texel on

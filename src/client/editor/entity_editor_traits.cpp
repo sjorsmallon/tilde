@@ -268,7 +268,7 @@ void draw_directional_light_reach(pass_builder_t& draws,
 bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
                const linalg::vec3f& position, const linalg::quatf& rotation,
                const linalg::vec3f& scale, color_t tint, renderer::fill_mode_t fill,
-               const entities::Material* material = nullptr)
+               assets::material_asset material = assets::material_asset::Missing)
 {
   if (fill == renderer::fill_mode_t::wireframe && !renderer::wireframe_supported())
     return false;
@@ -282,8 +282,8 @@ bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_
   draw.transform = linalg::compose_transform(position, rotation, scale);
   draw.tint      = tint;
   draw.fill      = fill;
-  if (material && fill == renderer::fill_mode_t::solid)
-    draw.material_overrides = material_variant(mesh, state_for(*material));
+  if (fill == renderer::fill_mode_t::solid)
+    draw.material_overrides = material_override(mesh, material);
   draws.meshes.push_back(draw);
   return true;
 }
@@ -695,11 +695,10 @@ bool try_draw_render_component(const entities::Entity* e, pass_builder_t& draws,
   if (fill == renderer::fill_mode_t::solid && rc->is_wireframe)
     fill = renderer::fill_mode_t::wireframe;
 
-  const color_t tint = fill == renderer::fill_mode_t::solid ? color_from_vec3(rc->material.color)
-                                                            : color;
+  const color_t tint = fill == renderer::fill_mode_t::solid ? color_from_vec3(rc->color) : color;
   return push_mesh(draws, assets::get_mesh(rc->mesh), position,
                    linalg::compose_model_rotation(e->orientation, rc->rotation), rc->scale, tint,
-                   fill, &rc->material);
+                   fill, rc->material);
 }
 
 // The shape as a wire box: the same bounds the pick uses, so what is drawn for

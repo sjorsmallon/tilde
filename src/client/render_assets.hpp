@@ -22,12 +22,21 @@ namespace client
 // out -- the caller's draw is skipped and logged by the renderer.
 renderer::mesh_handle_t get_render_mesh(assets::asset_handle_t<assets::mesh_asset_t> asset);
 
-// A Render component's material as a pipeline_state. Only the shader varies
-// today; blend, cull and depth are the material system's growth room. Shared
-// rather than local because the editor preview has to resolve a material the
-// same way the game does -- two spellings would be two ways for a model to look
-// different in the editor than it does in play.
-renderer::pipeline_state_t state_for(const entities::Material &material);
+// A material folder as the renderer's material, registered on first request and
+// cached by id. Dies on an id that resolves to nothing: a Render's material is
+// resolved from a name at construction, so there is no such id to draw.
+renderer::material_handle_t get_render_material(assets::material_asset id);
+
+// What a Render's material means for a draw: Missing is the mesh's own table
+// (an empty span), a named material replaces every slot. Cached per (mesh,
+// material). Shared rather than local because the editor preview has to resolve
+// a material the same way the game does.
+Span<const renderer::material_handle_t> material_override(renderer::mesh_handle_t mesh,
+                                                          assets::material_asset  material);
+
+// The one state-driven override (material_def.md ss5): the mesh's own textures
+// drawn translucent. A passable team wall, a platform not yet solid, a ghost run.
+Span<const renderer::material_handle_t> ghost_variant(renderer::mesh_handle_t mesh);
 
 // The mesh's own materials re-registered under a different pipeline_state:
 // the same textures and base colours, drawn unlit, or translucent, or with the

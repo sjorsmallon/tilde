@@ -145,19 +145,6 @@ constexpr uint32_t Damage_Type_COUNT = 3;
 const char* to_string(Damage_Type value);
 template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_view text);
 
-enum class Shader_Type : uint8_t
-{
-  Lit = 0,
-  Unlit = 1,
-  Ghost = 2,
-  Procedural_Blending = 3,
-};
-
-constexpr uint32_t Shader_Type_COUNT = 4;
-
-const char* to_string(Shader_Type value);
-template <> std::optional<Shader_Type> try_from_string<Shader_Type>(std::string_view text);
-
 enum class Light_Mode : uint8_t
 {
   Baked = 0,
@@ -301,20 +288,19 @@ enum class enum_type : uint16_t
   Fire_Trigger = 4,
   Inventory_Slot = 5,
   Damage_Type = 6,
-  Shader_Type = 7,
-  Light_Mode = 8,
-  Aim_Pose = 9,
-  Round_Phase = 10,
-  Game_Mode = 11,
-  Round_End_Reason = 12,
-  Match_Request = 13,
-  Easing = 14,
-  Reveal_Cone_Kind = 15,
-  Lens_Filter = 16,
-  Movement_Override = 17,
+  Light_Mode = 7,
+  Aim_Pose = 8,
+  Round_Phase = 9,
+  Game_Mode = 10,
+  Round_End_Reason = 11,
+  Match_Request = 12,
+  Easing = 13,
+  Reveal_Cone_Kind = 14,
+  Lens_Filter = 15,
+  Movement_Override = 16,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 18;
+constexpr uint32_t ENUM_TYPE_COUNT = 17;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -381,18 +367,17 @@ enum class component_type : uint16_t
   Bounce = 5,
   Health = 6,
   Counter = 7,
-  Material = 8,
-  Render = 9,
-  Light = 10,
-  Movement = 11,
-  Inventory = 12,
-  Timer_State = 13,
-  Match = 14,
-  Path_Follow = 15,
-  Rides = 16,
+  Render = 8,
+  Light = 9,
+  Movement = 10,
+  Inventory = 11,
+  Timer_State = 12,
+  Match = 13,
+  Path_Follow = 14,
+  Rides = 15,
 };
 
-constexpr uint32_t COMPONENT_TYPE_COUNT = 17;
+constexpr uint32_t COMPONENT_TYPE_COUNT = 16;
 
 } // namespace entities
 
@@ -445,12 +430,6 @@ template <> struct enum_traits<entities::Damage_Type>
 {
   static constexpr uint32_t count = entities::Damage_Type_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Damage_Type;
-};
-
-template <> struct enum_traits<entities::Shader_Type>
-{
-  static constexpr uint32_t count = entities::Shader_Type_COUNT;
-  static constexpr entities::enum_type type = entities::enum_type::Shader_Type;
 };
 
 template <> struct enum_traits<entities::Light_Mode>
@@ -600,25 +579,18 @@ struct Counter
   int32_t limit = 0;
 };
 
-struct Material
-{
-  static constexpr component_type static_component = component_type::Material;
-
-  Shader_Type shader_type = Shader_Type::Lit;
-  linalg::vec3f color = {1.0f, 1.0f, 1.0f};
-};
-
 struct Render
 {
   static constexpr component_type static_component = component_type::Render;
 
   assets::mesh_asset mesh = assets::mesh_asset::Missing;
+  assets::material_asset material = assets::material_asset::Missing;
+  linalg::vec3f color = {1.0f, 1.0f, 1.0f};
   bool visible = true;
   bool is_wireframe = false;
   linalg::vec3f offset = {0.0f, 0.0f, 0.0f};
   linalg::vec3f scale = {1.0f, 1.0f, 1.0f};
   linalg::quatf rotation = {0.0f, 0.0f, 0.0f, 1.0f};
-  Material material = {};
 };
 
 struct Light

@@ -41,12 +41,20 @@ struct team_wall_tint_t
   bool    passable = false;
 };
 
+// The frame a timed shape over a piece of geometry is drawn in: its bounds centre, the owner's
+// right and forward. Unarmed and unwiped; a caller with a timer sets those. A locked_wall face
+// reads the frame for its keyhole whether or not a timer is wired, which is why it is built here
+// and not only where the timer is.
+renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geometry,
+                                           const linalg::quatf& orientation);
+
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by = nullptr,
                    const renderer::clock_wipe_t& clock_wipe = {},
                    std::optional<team_wall_tint_t> team_wall = {},
-                   renderer::light_cut_t light_cut = renderer::light_cut_t::none);
+                   renderer::light_cut_t light_cut = renderer::light_cut_t::none,
+                   bool casts_dynamic_shadow = false);
 
 // Rebuild the cached mesh for an object whose GENERATED form just changed -- a
 // brush point set or one of its face grids -- and re-upload it. Registers the

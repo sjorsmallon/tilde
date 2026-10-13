@@ -153,7 +153,8 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
 
     for (const map_geometry_t &entry : map.geometry)
     {
-      if (compute_light_occlusion(entry.value, map.materials) != pass)
+      if (!map.geometry_is_baked_occluder(entry) ||
+          compute_light_occlusion(entry.value, map.materials) != pass)
         continue;
 
       if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))

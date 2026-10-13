@@ -10,7 +10,7 @@
 //     Rocket's damage numbers and a Light's whole configuration are no longer
 //     on it.
 //   * The mask is per LEAF, not per top-level field. A component used to be one
-//     opaque blob in the mask, so touching render.material.color resent the
+//     opaque blob in the mask, so touching render.color resent the
 //     whole Render. Now each leaf has its own bit.
 //
 // Both sides build the leaf list from the same generated table via

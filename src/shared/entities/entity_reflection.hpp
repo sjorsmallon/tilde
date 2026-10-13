@@ -42,7 +42,7 @@ namespace entities
 
 struct leaf_field_t
 {
-  // Dotted path from the entity: "position", "render.material.color".
+  // Dotted path from the entity: "position", "render.color".
   std::string name;
 
   // The LEAF's own record. Type, capacity, enum/asset class and -- critically

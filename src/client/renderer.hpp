@@ -147,7 +147,10 @@ enum class shader_t : uint8_t
   // Unlit tint with a fresnel-rim alpha; pair with blend_mode_t::alpha.
   ghost,
   // Unlit tint over an animated noise pattern that reads no texture; runs on view_pass_t::seconds.
-  procedural_blending
+  procedural_blending,
+  // Lambert-lit with a keyhole cut through it, in the draw's clock-wipe frame; the hole opens on the
+  // wipe fraction. Composes with a lightmap like lit.
+  locked_wall
 };
 
 // The renderer's copy of assets::alpha_mode_t; fixed per material at
@@ -302,6 +305,12 @@ texture_handle_t register_texture(const assets::texture_asset_t &texture, bool s
 [[nodiscard]] void *imgui_texture_id(assets::asset_handle_t<assets::texture_asset_t> texture);
 
 material_handle_t register_material(const material_t &material);
+
+// An asset-side material as the renderer's: the one fold from the shader an
+// author named to the program that draws it, the maps uploaded, the alpha class
+// applied. A mesh's own table is built through it; a Render naming a folder
+// material goes through it once and overrides every slot with the result.
+material_handle_t register_asset_material(const assets::material_t &source);
 
 // Parameters only. A pipeline_state change is a new material -- register again.
 void update_material(material_handle_t handle, const material_parameters_t &parameters);

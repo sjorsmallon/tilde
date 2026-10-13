@@ -1,4 +1,5 @@
 #include "entities/generated/entities/game_rules_entity_generated.hpp"
+#include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "map.hpp"
 #include "assets/asset.hpp"
@@ -16,6 +17,16 @@
 
 namespace shared
 {
+
+bool map_t::geometry_is_baked_occluder(const map_geometry_t& entry) const
+{
+  const map_entity_t* owner = find_by_uid(get_owner_uid(entry.value));
+  if (owner == nullptr)
+    return true;
+  const entities::Geometry_Owner_Entity* geometry_owner =
+      entities::entity_as<entities::Geometry_Owner_Entity>(owner->entity.get());
+  return geometry_owner == nullptr || !geometry_owner->casts_dynamic_shadow;
+}
 
 namespace
 {

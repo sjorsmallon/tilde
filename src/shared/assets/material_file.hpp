@@ -31,9 +31,10 @@ enum class material_shader_t : uint8_t
   Unlit,
   Ghost,
   Procedural_Blending,
+  Locked_Wall,
 };
 
-constexpr uint32_t MATERIAL_SHADER_COUNT = 4;
+constexpr uint32_t MATERIAL_SHADER_COUNT = 5;
 
 struct material_shader_name_t
 {
@@ -56,6 +57,7 @@ constexpr Enum_Array<material_shader_t, material_shader_name_t> MATERIAL_SHADER_
     {material_shader_t::Unlit, "unlit"},
     {material_shader_t::Ghost, "ghost"},
     {material_shader_t::Procedural_Blending, "procedural_blending"},
+    {material_shader_t::Locked_Wall, "locked_wall"},
 }};
 static_assert(rows_in_enum_order<&material_shader_name_t::shader>(MATERIAL_SHADER_NAMES),
               "MATERIAL_SHADER_NAMES must list every material_shader_t in declaration order");
@@ -75,6 +77,7 @@ static_assert(rows_in_enum_order<&material_shader_name_t::shader>(MATERIAL_SHADE
   {
   case material_shader_t::Lit:
   case material_shader_t::Unlit:
+  case material_shader_t::Locked_Wall:
     return true;
   case material_shader_t::Ghost:
   case material_shader_t::Procedural_Blending:

@@ -101,7 +101,7 @@ Ricochet_Entity::Ricochet_Entity()
   : projectile({.weapon_id = Weapon::Ricochet}),
     lifetime(3.0f),
     collision_radius(8.0f),
-    render({.mesh = assets::mesh_id("Sphere"), .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {1.0f, 0.45f, 0.15f}}})
+    render({.mesh = assets::mesh_id("Sphere"), .color = {1.0f, 0.45f, 0.15f}, .scale = {16.0f, 16.0f, 16.0f}})
 {
   type = entity_type::Ricochet_Entity;
 }
@@ -113,7 +113,7 @@ Platform_Entity::Platform_Entity()
     solid_seconds(6.0f),
     half_extents({128.0f, 4.0f, 128.0f}),
     half_extents_at_launch({8.0f, 8.0f, 8.0f}),
-    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.2039f, 0.9216f, 0.8353f}}})
+    render({.mesh = assets::mesh_id("Box"), .color = {0.2039f, 0.9216f, 0.8353f}})
 {
   type = entity_type::Platform_Entity;
 }
@@ -126,7 +126,7 @@ Shrinking_Platform_Entity::Shrinking_Platform_Entity()
     half_extents({128.0f, 4.0f, 128.0f}),
     half_extents_at_launch({8.0f, 8.0f, 8.0f}),
     half_extents_when_vanishing({8.0f, 4.0f, 8.0f}),
-    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.3f, 0.9f, 0.6f}}})
+    render({.mesh = assets::mesh_id("Box"), .color = {0.3f, 0.9f, 0.6f}})
 {
   type = entity_type::Shrinking_Platform_Entity;
 }
@@ -141,7 +141,7 @@ Extending_Platform_Entity::Extending_Platform_Entity()
     half_width(32.0f),
     half_thickness(4.0f),
     passable_seconds(0.5f),
-    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.95f, 0.55f, 0.85f}}})
+    render({.mesh = assets::mesh_id("Box"), .color = {0.95f, 0.55f, 0.85f}})
 {
   type = entity_type::Extending_Platform_Entity;
 }
@@ -158,7 +158,7 @@ Canopy_Entity::Canopy_Entity()
   : carrier_uid{},
     position_at_previous_tick{},
     half_extents({48.0f, 4.0f, 48.0f}),
-    render({.mesh = assets::mesh_id("Box"), .material = {.color = {0.4f, 0.9f, 1.0f}}})
+    render({.mesh = assets::mesh_id("Box"), .color = {0.4f, 0.9f, 1.0f}})
 {
   type = entity_type::Canopy_Entity;
 }
@@ -178,7 +178,7 @@ Bubble_Entity::Bubble_Entity()
     arm_seconds(0.2f),
     radius(32.0f),
     bounce_speed(700.0f),
-    render({.mesh = assets::mesh_id("high_res_sphere"), .scale = {2.0f, 2.0f, 2.0f}, .material = {.shader_type = Shader_Type::Ghost, .color = {0.55f, 0.85f, 1.0f}}})
+    render({.mesh = assets::mesh_id("high_res_sphere"), .material = assets::material_id("ghost"), .color = {0.55f, 0.85f, 1.0f}, .scale = {2.0f, 2.0f, 2.0f}})
 {
   type = entity_type::Bubble_Entity;
 }
@@ -300,7 +300,8 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     solid_only_in_shadow(false),
     erased_in_shadow(false),
     revealed_by_lens(false),
-    lens_filter(Lens_Filter::Red)
+    lens_filter(Lens_Filter::Red),
+    casts_dynamic_shadow(false)
 {
   type = entity_type::Geometry_Owner_Entity;
 }
@@ -377,7 +378,7 @@ Modifier_Shot_Entity::Modifier_Shot_Entity()
   : projectile({.weapon_id = Weapon::Modifier_Gun}),
     lifetime(4.0f),
     collision_radius(8.0f),
-    render({.mesh = assets::mesh_id("Sphere"), .scale = {16.0f, 16.0f, 16.0f}, .material = {.color = {0.5f, 1.0f, 0.5f}}})
+    render({.mesh = assets::mesh_id("Sphere"), .color = {0.5f, 1.0f, 0.5f}, .scale = {16.0f, 16.0f, 16.0f}})
 {
   type = entity_type::Modifier_Shot_Entity;
 }
@@ -394,7 +395,7 @@ Timed_Movement_Modifier_Entity::Timed_Movement_Modifier_Entity()
     jump_speed_scale(1.0f),
     friction_scale(1.0f),
     control_scale(1.0f),
-    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Ghost, .color = {0.5f, 1.0f, 0.5f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = assets::material_id("ghost"), .color = {0.5f, 1.0f, 0.5f}})
 {
   type = entity_type::Timed_Movement_Modifier_Entity;
 }
@@ -402,7 +403,7 @@ Timed_Movement_Modifier_Entity::Timed_Movement_Modifier_Entity()
 Weapon_Emancipation_Grill_Entity::Weapon_Emancipation_Grill_Entity()
   : switch_state{},
     volume({.half_extents = {64.0f, 128.0f, 8.0f}}),
-    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Ghost, .color = {1.0f, 0.25f, 0.2f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = assets::material_id("ghost"), .color = {1.0f, 0.25f, 0.2f}})
 {
   type = entity_type::Weapon_Emancipation_Grill_Entity;
 }
@@ -420,7 +421,7 @@ Emancipated_Weapon_Entity::Emancipated_Weapon_Entity()
 Void_Entity::Void_Entity()
   : switch_state{},
     volume({.half_extents = {64.0f, 128.0f, 8.0f}}),
-    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Procedural_Blending, .color = {1.0f, 1.0f, 1.0f}}})
+    render({.mesh = assets::mesh_id("Box"), .material = assets::material_id("void")})
 {
   type = entity_type::Void_Entity;
 }
@@ -451,7 +452,7 @@ Lens_Entity::Lens_Entity()
   : switch_state{},
     volume({.half_extents = {64.0f, 64.0f, 4.0f}}),
     filter(Lens_Filter::Red),
-    render({.mesh = assets::mesh_id("Box"), .material = {.shader_type = Shader_Type::Ghost}})
+    render({.mesh = assets::mesh_id("Box"), .material = assets::material_id("ghost")})
 {
   type = entity_type::Lens_Entity;
 }

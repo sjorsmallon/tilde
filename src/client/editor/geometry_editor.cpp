@@ -170,7 +170,8 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
     if (solid)
-      draw_geometry(draws, geometry, uid, materials, lightmap);
+      draw_geometry(draws, geometry, uid, materials, lightmap, nullptr,
+                    geometry_wipe_frame(geometry, linalg::quatf{0.0f, 0.0f, 0.0f, 1.0f}));
 
     draw_brush_wireframe(draws, brush,
                          collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR,

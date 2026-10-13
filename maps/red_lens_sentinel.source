@@ -17,6 +17,7 @@ materials
   "3" "resources/textures/glass_blue"
   "4" "resources/textures/yoga_mat"
   "5" "resources/textures/glass_white"
+  "6" "resources/textures/locked_wall"
 }
 connections
 {
@@ -25,8 +26,8 @@ connections
     "sender" "30"
     "signal" "Touched"
     "target_kind" "Uid"
-    "target" "34"
-    "action" "Disable"
+    "target" "36"
+    "action" "Play"
     "fire_once" "1"
   }
   connection
@@ -34,9 +35,16 @@ connections
     "sender" "30"
     "signal" "Touched"
     "target_kind" "Uid"
-    "target" "36"
-    "action" "Play"
-    "fire_once" "1"
+    "target" "38"
+    "action" "Start"
+  }
+  connection
+  {
+    "sender" "38"
+    "signal" "Elapsed"
+    "target_kind" "Uid"
+    "target" "34"
+    "action" "Disable"
   }
 }
 groups
@@ -87,7 +95,7 @@ groups
 brush
 {
   "_uid" "1"
-  "vertices" "-640 -128 -640, -640 -128 640, -640 0 -640, -640 0 640, 640 -128 -640, 640 -128 640, 640 0 -640, 640 0 640"
+  "vertices" "-640 -192.000015 -640, -640 -192.000015 640, -640 -59.8105316 -640, -640 -59.8105316 640, 640 -192.000015 -640, 640 -192.000015 640, 640 -59.8105316 -640, 640 -59.8105316 640"
   "mesh_path" ""
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
@@ -103,7 +111,7 @@ brush
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
     "u_shift" "0"
-    "v_shift" "0"
+    "v_shift" "64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -112,7 +120,7 @@ brush
   face
   {
     "normal" "-0 -1 -0"
-    "distance" "128"
+    "distance" "192.000015"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -135,7 +143,7 @@ brush
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "0"
-    "v_shift" "0"
+    "v_shift" "64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -151,7 +159,7 @@ brush
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "0"
-    "v_shift" "0"
+    "v_shift" "64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -160,7 +168,7 @@ brush
   face
   {
     "normal" "0 1 0"
-    "distance" "0"
+    "distance" "-59.8105316"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -183,7 +191,7 @@ brush
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
     "u_shift" "0"
-    "v_shift" "0"
+    "v_shift" "64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -1281,12 +1289,12 @@ brush
   {
     "normal" "-1 0 0"
     "distance" "640"
-    "material" "1"
+    "material" "6"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "-1309.14502"
+    "u_shift" "0"
     "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
@@ -1297,13 +1305,13 @@ brush
   {
     "normal" "-0 -0.99999994 -0"
     "distance" "63.9998436"
-    "material" "1"
+    "material" "6"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
     "u_shift" "0"
-    "v_shift" "-1309.14502"
+    "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -1313,7 +1321,7 @@ brush
   {
     "normal" "0 0 -1"
     "distance" "-629.627075"
-    "material" "1"
+    "material" "6"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -1329,7 +1337,7 @@ brush
   {
     "normal" "-0 -0 1"
     "distance" "703.061768"
-    "material" "1"
+    "material" "6"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
@@ -1345,13 +1353,13 @@ brush
   {
     "normal" "0 0.99999994 0"
     "distance" "309.881897"
-    "material" "1"
+    "material" "6"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
     "u_shift" "0"
-    "v_shift" "-1309.14502"
+    "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
     "lightmap_scale" "1"
@@ -1361,12 +1369,12 @@ brush
   {
     "normal" "1 -0 -0"
     "distance" "640"
-    "material" "1"
+    "material" "6"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
-    "u_shift" "-1309.14502"
+    "u_shift" "0"
     "v_shift" "-64"
     "u_scale" "128"
     "v_scale" "128"
@@ -1590,7 +1598,7 @@ entity
 {
   "classname" "player_spawn_entity"
   "_uid" "2"
-  "position" "0 -64 0"
+  "position" "384 -64 -512"
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
@@ -1611,21 +1619,21 @@ entity
 {
   "classname" "lens_entity"
   "_uid" "6"
-  "position" "642.2025 96 10.893828"
+  "position" "642.2025 97.82646 256"
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
   "volume.position" "0 0 0"
-  "volume.half_extents" "6.598816 160 616.3076"
+  "volume.half_extents" "6.598816 158.17354 366.7069"
   "filter" "Red"
   "render.mesh" "Box"
+  "render.material" "ghost"
+  "render.color" "1 1 1"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Ghost"
-  "render.material.color" "1 1 1"
 }
 entity
 {
@@ -1644,6 +1652,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "true"
   "lens_filter" "Red"
+  "casts_dynamic_shadow" "false"
 }
 entity
 {
@@ -1671,13 +1680,13 @@ entity
   "volume.position" "0 0 0"
   "volume.half_extents" "40 40 40"
   "render.mesh" "Error"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
 }
 entity
 {
@@ -1713,7 +1722,7 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
-  "wipe_timer" "0"
+  "wipe_timer" "38"
   "passable_by" "Free_For_All"
   "revealed_by_light" "false"
   "solid_only_when_revealed" "false"
@@ -1722,6 +1731,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "false"
   "lens_filter" "Red"
+  "casts_dynamic_shadow" "true"
 }
 entity
 {
@@ -1736,4 +1746,14 @@ entity
   "loop" "false"
   "spatial" "true"
   "range" "1024"
+}
+entity
+{
+  "classname" "logic_timer_entity"
+  "_uid" "38"
+  "position" "128 384 512"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "timer.duration_seconds" "1.5"
+  "timer.repeat" "false"
 }

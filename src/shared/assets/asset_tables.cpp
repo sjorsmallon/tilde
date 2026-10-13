@@ -206,7 +206,7 @@ sound_asset     sound_id(asset_name_t name)        { return (sound_asset)id_for_
 animation_asset animation_id(asset_name_t name)    { return (animation_asset)id_for_name(asset_class_t::animation_asset, name, "animation_id"); }
 hitbox_rig      hitbox_rig_id(asset_name_t name)   { return (hitbox_rig)id_for_name(asset_class_t::hitbox_rig, name, "hitbox_rig_id"); }
 font_asset      font_id(asset_name_t name)         { return (font_asset)id_for_name(asset_class_t::font_asset, name, "font_id"); }
-material_asset    material_asset_id(asset_name_t name) { return (material_asset)id_for_name(asset_class_t::material_asset, name, "material_asset_id"); }
+material_asset    material_id(asset_name_t name) { return (material_asset)id_for_name(asset_class_t::material_asset, name, "material_id"); }
 cubemap_asset   cubemap_id(asset_name_t name)      { return (cubemap_asset)id_for_name(asset_class_t::cubemap_asset, name, "cubemap_id"); }
 
 template <> std::optional<mesh_asset>      try_from_string<mesh_asset>(std::string_view text)      { return id_for_text<mesh_asset>(asset_class_t::mesh_asset, text); }

@@ -225,6 +225,11 @@ struct map_t
     return find_by_uid(uid) != nullptr || find_geometry_by_uid(uid) != nullptr;
   }
 
+  // Whether the bake traces this geometry as an occluder. Geometry under an owner that
+  // casts_dynamic_shadow is absent from every occluder set: its shadow is the shadow maps'
+  // alone, so it can follow the switch. Both solvers ask this, nothing else does.
+  [[nodiscard]] bool geometry_is_baked_occluder(const map_geometry_t& entry) const;
+
   // Remove whichever list holds `uid`. False if no object has it.
   bool remove_object(entity_uid_t uid)
   {

@@ -670,8 +670,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -690,8 +690,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -721,8 +721,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "5.334299e-12 0.008726534 -6.112502e-10 0.9999619"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "0 0.5 1"
+  "render.material" "Missing"
+  "render.color" "0 0.5 1"
 }
 entity
 {
@@ -742,8 +742,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 0.4 0"
+  "render.material" "Missing"
+  "render.color" "1 0.4 0"
 }
 entity
 {
@@ -763,8 +763,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "5.334299e-12 0.008726534 -6.112502e-10 0.9999619"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "0 0.5 1"
+  "render.material" "Missing"
+  "render.color" "0 0.5 1"
 }
 entity
 {
@@ -784,8 +784,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 0.4 0"
+  "render.material" "Missing"
+  "render.color" "1 0.4 0"
 }
 entity
 {
@@ -802,8 +802,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -820,6 +820,6 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }

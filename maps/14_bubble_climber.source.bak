@@ -537,8 +537,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -579,8 +579,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -600,8 +600,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -621,8 +621,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -642,8 +642,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -663,8 +663,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -684,8 +684,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -705,8 +705,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -726,8 +726,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -747,8 +747,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -768,8 +768,8 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }
 entity
 {
@@ -789,6 +789,6 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "16 16 16"
   "render.rotation" "0 0 0 1"
-  "render.material.shader_type" "Lit"
-  "render.material.color" "1 1 1"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
 }

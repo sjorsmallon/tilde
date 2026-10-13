@@ -111,7 +111,7 @@ struct asset_entry_t
 [[nodiscard]] animation_asset animation_id(asset_name_t name);
 [[nodiscard]] hitbox_rig      hitbox_rig_id(asset_name_t name);
 [[nodiscard]] font_asset      font_id(asset_name_t name);
-[[nodiscard]] material_asset    material_asset_id(asset_name_t name);
+[[nodiscard]] material_asset    material_id(asset_name_t name);
 [[nodiscard]] cubemap_asset   cubemap_id(asset_name_t name);
 
 template <typename T> [[nodiscard]] std::optional<T> try_from_string(std::string_view text);

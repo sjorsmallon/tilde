@@ -531,25 +531,23 @@ static renderer::clock_wipe_t compute_drawn_clock_wipe_for_geometry(const client
 {
   const shared::Entity_System &system = ctx.world.session.entity_system;
   const entities::Geometry_Owner_Entity *owner = system.get<entities::Geometry_Owner_Entity>(owner_uid);
-  if (owner == nullptr || owner->wipe_timer == shared::null_entity_uid)
+  if (owner == nullptr)
     return {};
+
+  renderer::clock_wipe_t frame = geometry_wipe_frame(geometry, owner->orientation);
+  if (owner->wipe_timer == shared::null_entity_uid)
+    return frame;
 
   const entities::Entity* timer = system.try_find(owner->wipe_timer);
   const entities::Timer_State* timer_state =
       timer != nullptr ? entities::get_component<entities::Timer_State>(timer) : nullptr;
   if (timer_state == nullptr)
-    return {};
+    return frame;
 
   const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
-
-  const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-  return renderer::clock_wipe_t{
-    .center = (bounds.min + bounds.max) * 0.5f,
-    .axis_x = linalg::rotate(owner->orientation, vec3f{1.0f, 0.0f, 0.0f}),
-    .axis_y = linalg::rotate(owner->orientation, vec3f{0.0f, 0.0f, 1.0f}),
-    .wiped  = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate),
-    .armed  = true
-  };
+  frame.wiped = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate);
+  frame.armed = true;
+  return frame;
 }
 
 
@@ -3622,7 +3620,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
-                    compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut);
+                    compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut,
+                    owner != nullptr && owner->casts_dynamic_shadow);
     }
   }
 
@@ -3789,7 +3788,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     vec3f              drawn_position    = drawn_pose.position;
     quatf              drawn_orientation = drawn_pose.orientation;
     vec3f              drawn_scale    = render.scale;
-    entities::Material drawn_material = render.material;
+    vec3f              drawn_color    = render.color;
+    bool               drawn_as_ghost = false;
     renderer::clock_wipe_t clock_wipe = {};
     float                  dissolve   = 0.0f;
     renderer::peel_t       peel       = {};
@@ -3815,7 +3815,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       if (drawn.is_solid)
         clock_wipe = {.center = drawn.position, .wiped = drawn.solid_fraction_elapsed, .armed = true};
       else
-        drawn_material.shader_type = entities::Shader_Type::Ghost;
+        drawn_as_ghost = true;
     }
 
     // Shrinks on the cut's clock and dissolves over its last fifth; no clock wipe.
@@ -3831,7 +3831,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       if (drawn.is_solid)
         dissolve = shared::platform_dissolve_fraction(drawn.solid_fraction_elapsed);
       else
-        drawn_material.shader_type = entities::Shader_Type::Ghost;
+        drawn_as_ghost = true;
     }
 
     // Grows along its aim on the cut's clock, at the box the cut sweeps; dissolves over its last fifth.
@@ -3852,7 +3852,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         dissolve = shared::platform_dissolve_fraction(shared::extending_platform_solid_fraction_elapsed(
             *platform, tick, fraction, tick_interval_seconds));
       else
-        drawn_material.shader_type = entities::Shader_Type::Ghost;
+        drawn_as_ghost = true;
     }
 
     if (const entities::Canopy_Entity* canopy = entities::entity_as<entities::Canopy_Entity>(&entity))
@@ -3897,7 +3897,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         continue;
       drawn_position       = drawn_position + lens->volume.position;
       drawn_scale          = lens->volume.half_extents * 2.0f;
-      drawn_material.color = shared::get_color_for_lens_filter(lens->filter);
+      drawn_color = shared::get_color_for_lens_filter(lens->filter);
     }
 
     // Dissolves on the server's clock, read at the drawn tick so every client sees the same fizzle.
@@ -3943,8 +3943,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
     else
     {
-      draw.tint               = color_from_vec3(drawn_material.color);
-      draw.material_overrides = material_variant(mesh, state_for(drawn_material));
+      draw.tint               = color_from_vec3(drawn_color);
+      draw.material_overrides = drawn_as_ghost ? ghost_variant(mesh) : material_override(mesh, render.material);
     }
     scene.meshes.push_back(draw);
   }
@@ -4018,8 +4018,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
           ghost_render.scale);
       draw.pose               = posed.skinning;
       draw.tint               = color_from_vec3(GHOST_TINTS[track.team].tint);
-      draw.material_overrides = material_variant(mesh, {.shader     = renderer::shader_t::ghost,
-                                                        .blend_mode = renderer::blend_mode_t::alpha});
+      draw.material_overrides = ghost_variant(mesh);
       draw.shadow_caster      = renderer::shadow_caster_t::none;
       scene.meshes.push_back(draw);
     }

@@ -2,9 +2,10 @@ Fully_Serializable :: [@Networked, @Editable]
 
 // The asset classes a field may be typed by. Their members are the files under
 // resources/, numbered at startup; asset_id.hpp defines the C++ side.
-mesh_asset    :: asset
-texture_asset :: asset
-sound_asset   :: asset
+mesh_asset     :: asset
+texture_asset  :: asset
+sound_asset    :: asset
+material_asset :: asset
 
 Entity :: base {
     entity_id:   entity                 @Networked
@@ -52,7 +53,6 @@ Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 //@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
 Damage_Type :: enum { Normal, Orange, Teal }
 
-Shader_Type :: enum { Lit, Unlit, Ghost, Procedural_Blending }
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
@@ -139,19 +139,17 @@ Counter :: component {
     limit: i32 = 0                  @Editable
 }
 
-Material :: component {
-    shader_type: Shader_Type = .Lit     @Fully_Serializable
-    color:       v3 = {1, 1, 1}         @Fully_Serializable
-}
-
+// Missing on `material` means the mesh's own material table draws; a named
+// material replaces every slot. `color` is the instance tint (material_def.md).
 Render :: component {
-    mesh:         mesh_asset = .Missing @Fully_Serializable
-    visible:      bool = true           @Fully_Serializable
-    is_wireframe: bool = false          @Fully_Serializable
-    offset:       v3 = {0, 0, 0}        @Fully_Serializable
-    scale:        v3 = {1, 1, 1}        @Fully_Serializable
-    rotation:     quat = {0, 0, 0, 1}   @Fully_Serializable
-    material:     Material
+    mesh:         mesh_asset = .Missing     @Fully_Serializable
+    material:     material_asset = .Missing @Fully_Serializable
+    color:        v3 = {1, 1, 1}            @Fully_Serializable
+    visible:      bool = true               @Fully_Serializable
+    is_wireframe: bool = false              @Fully_Serializable
+    offset:       v3 = {0, 0, 0}            @Fully_Serializable
+    scale:        v3 = {1, 1, 1}            @Fully_Serializable
+    rotation:     quat = {0, 0, 0, 1}       @Fully_Serializable
 }
 
 Light :: component {
@@ -468,7 +466,7 @@ Ricochet_Entity :: entity @runtime_only {
     projectile:       Projectile = { weapon_id = .Ricochet }
     lifetime:         f32 = 3.0
     collision_radius: f32 = 8.0
-    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, material = { color = {1, 0.45, 0.15} } }
+    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, color = {1, 0.45, 0.15} }
 }
 
 // A ghost while it flies, growing from half_extents_at_launch to half_extents over the flight with an ease out;
@@ -481,7 +479,7 @@ Platform_Entity :: entity @runtime_only @predicted {
     half_extents:            v3 = {128, 4, 128}
     half_extents_at_launch:  v3 = {8, 8, 8}
     // Drawn at half_extents, never at render.scale.
-    render:         Render = { mesh = .Box, material = { color = {0.2039, 0.9216, 0.8353} } }
+    render:         Render = { mesh = .Box, color = {0.2039, 0.9216, 0.8353} }
 }
 
 // The platform that SHRINKS: grows over the flight like Platform_Entity, lands at half_extents, shrinks toward
@@ -496,7 +494,7 @@ Shrinking_Platform_Entity :: entity @runtime_only @predicted {
     half_extents_at_launch:      v3 = {8, 8, 8}
     half_extents_when_vanishing: v3 = {8, 4, 8}
     // Drawn at the shrunk half_extents, never at render.scale.
-    render:                      Render = { mesh = .Box, material = { color = {0.3, 0.9, 0.6} } }
+    render:                      Render = { mesh = .Box, color = {0.3, 0.9, 0.6} }
 }
 
 // The platform that EXTENDS: set down at the shooter's waist facing their aim, it grows along its forward at
@@ -519,7 +517,7 @@ Extending_Platform_Entity :: entity @runtime_only @predicted {
     // Not solid for this long after it is set down, so whoever it was set down in can get on top of it.
     // The Extending Platform's own; a guided rocket's path writes 0.
     passable_seconds: f32_exact = 0.5 @Networked
-    render:         Render = { mesh = .Box, material = { color = {0.95, 0.55, 0.85} } }
+    render:         Render = { mesh = .Box, color = {0.95, 0.55, 0.85} }
 }
 
 // What everyone but the pilot sees of a Pilot override; it follows the pilot's Movement and flies nothing itself.
@@ -538,7 +536,7 @@ Canopy_Entity :: entity @runtime_only @predicted {
     position_at_previous_tick: v3              @Networked
     half_extents:              v3 = {48, 4, 48}
     // Drawn at half_extents, never at render.scale.
-    render:                    Render = { mesh = .Box, material = { color = {0.4, 0.9, 1} } }
+    render:                    Render = { mesh = .Box, color = {0.4, 0.9, 1} }
 }
 
 Bubble_Entity :: entity @runtime_only @predicted {
@@ -566,7 +564,7 @@ Bubble_Entity :: entity @runtime_only @predicted {
     bounce_speed:    f32 = 700.0
 
     //mesh = .Sphere, scale = {1, 64, 64}
-    render:          Render = { mesh = .high_res_sphere, scale = {2,2,2}, material = { shader_type = .Ghost, color = {0.55, 0.85, 1} } }
+    render:          Render = { mesh = .high_res_sphere, scale = {2,2,2}, material = .ghost, color = {0.55, 0.85, 1} }
 }
 
 // volume is the hitbox.
@@ -705,6 +703,10 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     // (shared/lens.hpp); solid everywhere, and the editor always draws it.
     revealed_by_lens: bool = false @Networked @Editable
     lens_filter: Lens_Filter = .Red @Networked @Editable
+    // Its geometry is absent from the bake and drawn into every shadow map each frame, so its shadow is
+    // what the geometry is NOW: gone when switched off, a keyhole when it wears one. Needs a Mixed or
+    // Dynamic light to cast at all.
+    casts_dynamic_shadow: bool = false @Networked @Editable
 }
 
 // middle-mouse button ping.
@@ -779,7 +781,7 @@ Modifier_Shot_Entity :: entity @runtime_only {
     projectile:       Projectile = { weapon_id = .Modifier_Gun }
     lifetime:         f32 = 4.0
     collision_radius: f32 = 8.0
-    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, material = { color = {0.5, 1, 0.5} } }
+    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, color = {0.5, 1, 0.5} }
 }
 
 // A Movement_Modifier_Entity a shot left behind, or the Modifier_Gun's RMB fired directly: live from the tick
@@ -799,7 +801,7 @@ Timed_Movement_Modifier_Entity :: entity @runtime_only @predicted {
     jump_speed_scale: f32_exact = 1.0           @Networked
     friction_scale:   f32_exact = 1.0           @Networked
     control_scale:    f32_exact = 1.0           @Networked
-    render:           Render = { mesh = .Box, material = { shader_type = .Ghost, color = {0.5, 1, 0.5} } }
+    render:           Render = { mesh = .Box, material = .ghost, color = {0.5, 1, 0.5} }
 }
 
 // The material emancipation grill, for weapons. A player inside loses every weapon carried and a weapon
@@ -809,7 +811,7 @@ Timed_Movement_Modifier_Entity :: entity @runtime_only @predicted {
 Weapon_Emancipation_Grill_Entity :: entity is Switchable, Touchable {
     switch_state: Enabled
     volume:       Box_Volume = { half_extents = {64, 128, 8} }
-    render:       Render = { mesh = .Box, material = { shader_type = .Ghost, color = {1, 0.25, 0.2} } }
+    render:       Render = { mesh = .Box, material = .ghost, color = {1, 0.25, 0.2} }
 }
 
 
@@ -828,7 +830,7 @@ Emancipated_Weapon_Entity :: entity @runtime_only {
 Void_Entity :: entity is Switchable, Touchable {
     switch_state: Enabled
     volume : Box_Volume = { half_extents = {64, 128, 8} }
-    render:  Render = { mesh = .Box, material = { shader_type = .Procedural_Blending, color = {1, 1, 1} } }
+    render:  Render = { mesh = .Box, material = .void }
 }
 
 // A Flashlight or an Eraser standing in the map: while switched on, a cone from its position down its orientation (shared/reveal_light.hpp).
@@ -863,5 +865,5 @@ Lens_Entity :: entity is Switchable {
     volume:       Box_Volume = { half_extents = {64, 64, 4} }
     filter:       Lens_Filter = .Red                @Editable
     // Drawn at the volume and in the filter's colour, never at render.scale or material.color.
-    render:       Render = { mesh = .Box, material = { shader_type = .Ghost } }
+    render:       Render = { mesh = .Box, material = .ghost }
 }

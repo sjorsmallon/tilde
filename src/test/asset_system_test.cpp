@@ -266,13 +266,13 @@ static int test_a_material_is_a_directory_and_claims_its_maps()
 {
   // The folder is the entry, minted from the DIRECTORY name.
   const assets::material_asset_t *material =
-      assets::get(assets::get_material_asset(assets::material_asset_id("harsh_bricks")));
+      assets::get(assets::get_material_asset(assets::material_id("harsh_bricks")));
   assert(material != nullptr);
   assert(material->maps.albedo.valid());
 
   const Span<const assets::asset_entry_t> materials =
       assets::asset_class_entries(assets::asset_class_t::material_asset);
-  const uint32_t harsh_bricks = (uint32_t)assets::material_asset_id("harsh_bricks");
+  const uint32_t harsh_bricks = (uint32_t)assets::material_id("harsh_bricks");
   assert(harsh_bricks != 0 && harsh_bricks < materials.size());
   assert(materials[harsh_bricks].path == "resources/textures/harsh_bricks");
 
@@ -687,7 +687,7 @@ static int test_a_glb_material_named_after_a_folder_takes_its_maps()
       Span<const uint8_t>(glb.data(), (uint32_t)glb.size()), "named_material.glb");
 
   const assets::material_asset_t* folder =
-      assets::get(assets::get_material_asset(assets::material_asset_id("harsh_bricks")));
+      assets::get(assets::get_material_asset(assets::material_id("harsh_bricks")));
   assert(folder != nullptr);
   assert(mesh.materials.size() == 2);
 

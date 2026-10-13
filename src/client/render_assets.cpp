@@ -23,6 +23,11 @@ std::unordered_map<uint32_t, renderer::mesh_handle_t>    g_mesh_by_asset;
 // mesh index takes the rest.
 std::unordered_map<uint64_t, std::vector<renderer::material_handle_t>> g_material_variants;
 
+// A folder material registered once per asset id, and the per-(mesh, material)
+// table that names it for every slot.
+std::unordered_map<uint32_t, renderer::material_handle_t>              g_material_by_asset;
+std::unordered_map<uint64_t, std::vector<renderer::material_handle_t>> g_material_overrides;
+
 uint64_t variant_key(renderer::mesh_handle_t mesh, const renderer::pipeline_state_t &state)
 {
   const uint64_t packed_state = (uint64_t)state.shader | ((uint64_t)state.blend_mode << 3) |
@@ -57,26 +62,43 @@ renderer::mesh_handle_t get_render_mesh(assets::asset_handle_t<assets::mesh_asse
   return handle;
 }
 
-renderer::pipeline_state_t state_for(const entities::Material &material)
+renderer::material_handle_t get_render_material(assets::material_asset id)
 {
-  renderer::pipeline_state_t state;
-  switch (material.shader_type)
-  {
-  case entities::Shader_Type::Lit:
-    state.shader = renderer::shader_t::lit;
-    break;
-  case entities::Shader_Type::Unlit:
-    state.shader = renderer::shader_t::unlit;
-    break;
-  case entities::Shader_Type::Ghost:
-    state.shader     = renderer::shader_t::ghost;
-    state.blend_mode = renderer::blend_mode_t::alpha;
-    break;
-  case entities::Shader_Type::Procedural_Blending:
-    state.shader = renderer::shader_t::procedural_blending;
-    break;
-  }
-  return state;
+  const auto cached = g_material_by_asset.find((uint32_t)id);
+  if (cached != g_material_by_asset.end())
+    return cached->second;
+
+  const assets::material_asset_t *folder = assets::get(assets::get_material_asset(id));
+  if (!folder)
+    fatal_error("get_render_material: material '{}' resolves to nothing", assets::to_string(id));
+
+  assets::material_t source{};
+  source.maps = folder->maps;
+
+  const renderer::material_handle_t handle = renderer::register_asset_material(source);
+  g_material_by_asset[(uint32_t)id]        = handle;
+  return handle;
+}
+
+Span<const renderer::material_handle_t> material_override(renderer::mesh_handle_t mesh,
+                                                          assets::material_asset  material)
+{
+  if (material == assets::material_asset::Missing)
+    return {};
+
+  const uint64_t key    = ((uint64_t)mesh.index << 32) | (uint32_t)material;
+  const auto     cached = g_material_overrides.find(key);
+  if (cached != g_material_overrides.end())
+    return cached->second;
+
+  const renderer::material_handle_t handle = get_render_material(material);
+  std::vector<renderer::material_handle_t> table(renderer::mesh_default_materials(mesh).size(), handle);
+  return g_material_overrides.emplace(key, std::move(table)).first->second;
+}
+
+Span<const renderer::material_handle_t> ghost_variant(renderer::mesh_handle_t mesh)
+{
+  return material_variant(mesh, {.shader = renderer::shader_t::ghost, .blend_mode = renderer::blend_mode_t::alpha});
 }
 
 Span<const renderer::material_handle_t>
@@ -118,6 +140,8 @@ void forget_material_variants(renderer::mesh_handle_t mesh)
 {
   std::erase_if(g_material_variants,
                 [mesh](const auto& entry) { return (entry.first >> 16) == mesh.index; });
+  std::erase_if(g_material_overrides,
+                [mesh](const auto& entry) { return (entry.first >> 32) == mesh.index; });
 }
 
 void preload_map_render_assets(const shared::map_t &map)
@@ -128,8 +152,11 @@ void preload_map_render_assets(const shared::map_t &map)
   for (const shared::map_entity_t &entry : map.entities)
   {
     const entities::Render *render = entities::get_render(entry.entity.get());
-    if (render)
-      get_render_mesh(assets::get_mesh(render->mesh));
+    if (!render)
+      continue;
+    get_render_mesh(assets::get_mesh(render->mesh));
+    if (render->material != assets::material_asset::Missing)
+      get_render_material(render->material);
   }
 
   for (const shared::map_geometry_t &geometry : map.geometry)

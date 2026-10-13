@@ -28,6 +28,7 @@ struct Geometry_Owner_Entity : Entity
   bool erased_in_shadow;
   bool revealed_by_lens;
   Lens_Filter lens_filter;
+  bool casts_dynamic_shadow;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no
