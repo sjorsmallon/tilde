@@ -736,6 +736,36 @@ static bool local_reveal_light_is_on(const client_context_t &ctx, const entities
   return local_reveal_light_is_on_entering(ctx, my_player, std::numeric_limits<int>::max());
 }
 
+// The server flips Player_Entity::held_lens_on at a Red Lens press, behind the same gates; held_snapshot.cpp
+// forgets it once answered.
+static void predict_local_held_lens_toggle(client_context_t &ctx)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr || !local_movement_is_allowed(ctx) ||
+      ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot ||
+      local_player_drives_a_merged_body(ctx))
+    return;
+
+  if (!shared::try_get_held_lens_filter(ctx.world.session.entity_system, *my_player).has_value())
+    return;
+
+  ctx.prediction.unanswered_held_lens_toggles.push_back(ctx.prediction.input_number);
+}
+
+static uint32_t local_held_lens_channels_entering(const client_context_t &ctx,
+                                                  const entities::Player_Entity &my_player, int input_number)
+{
+  return shared::compute_held_lens_channels(
+      ctx.world.session.entity_system, my_player,
+      flag_after_unanswered_presses(my_player.held_lens_on, ctx.prediction.unanswered_held_lens_toggles,
+                                    input_number));
+}
+
+static uint32_t local_held_lens_channels(const client_context_t &ctx, const entities::Player_Entity &my_player)
+{
+  return local_held_lens_channels_entering(ctx, my_player, std::numeric_limits<int>::max());
+}
+
 static bool local_reveal_light_is_overhead_entering(const client_context_t &ctx,
                                                     const entities::Player_Entity &my_player,
                                                     int input_number)
@@ -793,6 +823,7 @@ static void play_predicted_local_gunshot(
   {
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
+    case entities::Fire_Resolution::Lens_View:
     case entities::Fire_Resolution::Canopy:
     case entities::Fire_Resolution::Reveal_Light:
     case entities::Fire_Resolution::Reveal_Light_Overhead:
@@ -1079,7 +1110,7 @@ void Play_State::on_enter()
   reset_for_new_connection(ctx);
 
   // read once and cleared, so a later entry into the play state does not inherit them.
-  pending_join_on_connect = ctx.requested_join_on_connect;
+  pending_join_on_connect = ctx.requested_join_on_connect || ctx.cvars->cl_auto_join;
   pending_spawn_view = ctx.requested_spawn_view;
   ctx.requested_join_on_connect = false;
   ctx.requested_spawn_view.reset();
@@ -1259,6 +1290,18 @@ static void build_predicted_world_for_input(
                                local_reveal_light_is_overhead_entering(ctx, *my_player, input_number),
                                *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(ctx.world.session.entity_system, *my_player),
                                settings.reveal_cone)));
+  }
+
+  shared::collect_lenses(ctx.world.session.entity_system, frame.predicted_world_storage.lenses);
+  shared::collect_lens_watchers(ctx.world.session.entity_system,
+                                my_player != nullptr ? my_player->entity_id : shared::null_entity_uid,
+                                frame.predicted_world_storage.lens_watchers);
+  if (my_player != nullptr && shared::player_watches_lenses(*my_player))
+  {
+    const shared::subtick_view_t view = local_view_entering(ctx, *my_player, input_number);
+    frame.predicted_world_storage.lens_watchers.push_back(shared::compute_lens_watcher(
+        own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw, view.pitch,
+        local_held_lens_channels_entering(ctx, *my_player, input_number)));
   }
 
   frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
@@ -1970,6 +2013,26 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   const float fov_degrees = shared::lerp_clamped(
       ctx.cvars->r_fov, ctx.cvars->r_zoom_fov, connection_ui.zoom_fraction);
 
+  // The lens view is the Red Lens's held_lens_on as the prediction holds it; the tonemap's page fades
+  // after it over r_lens_view_seconds, in the colour of the lens that was held.
+  const entities::Player_Entity* lens_holder  = try_find_my_player(ctx);
+  const bool                     lens_view_on = lens_holder != nullptr &&
+                                                local_held_lens_channels(ctx, *lens_holder) != 0;
+  if (lens_view_on)
+    ctx.visuals.lens_view_filter =
+        *shared::try_get_held_lens_filter(ctx.world.session.entity_system, *lens_holder);
+  const float lens_view_target = lens_view_on ? 1.0f : 0.0f;
+  if (ctx.cvars->r_lens_view_seconds <= 0.0f)
+  {
+    ctx.visuals.lens_view_fraction = lens_view_target;
+  }
+  else
+  {
+    const float lens_step = dt / ctx.cvars->r_lens_view_seconds;
+    ctx.visuals.lens_view_fraction += shared::clamp(
+        lens_view_target - ctx.visuals.lens_view_fraction, -lens_step, lens_step);
+  }
+
   const bool mouse_look_allowed = connection_ui.mouse_captured && body_input_allowed;
 
   // Scale by tan(fov/2) so a given hand movement sweeps the same distance
@@ -2514,6 +2577,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
         {
           play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, false);
           predict_local_reveal_light_toggle(ctx, entities::Fire_Trigger::Primary);
+          predict_local_held_lens_toggle(ctx);
         }
         else if ((buttons_down_across_tick & Button::Fire) != 0)
           play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, true);
@@ -3070,6 +3134,7 @@ void Play_State::update(float dt)
   place_input_edges_on_the_tick_timeline(ctx, frame);
   run_predicted_ticks(ctx, frame);
   ctx.visuals.drawn_shadow_volumes = frame.predicted_world_storage.shadow_volumes;
+  ctx.visuals.drawn_lens_watchers  = frame.predicted_world_storage.lens_watchers;
   ctx.visuals.drawn_solid_beams.clear();
   if (ctx.cvars->cl_solid_beam_debug)
     for (const shared::mover_t& mover : frame.predicted_world_storage.movers)
@@ -3615,7 +3680,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       else if (owner != nullptr && owner->solid_only_in_shadow)
         light_cut = renderer::light_cut_t::shadow_solid;
       else if (owner != nullptr && owner->revealed_by_lens)
-        light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter);
+        light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter, owner->solid_only_when_lensed);
 
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
                     ctx.world.session.lightmap,
@@ -3725,6 +3790,11 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of_type<entities::Fog_Volume_Entity>())
     add_fog_volume(scene, fog);
   shared::collect_lenses(entity_system, scene.lenses);
+  const entities::Player_Entity* lens_holder = try_find_my_player(ctx);
+  scene.held_lens_channels = camera_is_my_eye && lens_holder != nullptr
+                                 ? local_held_lens_channels(ctx, *lens_holder)
+                                 : 0;
+  scene.lens_watchers = ctx.visuals.drawn_lens_watchers;
 
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())

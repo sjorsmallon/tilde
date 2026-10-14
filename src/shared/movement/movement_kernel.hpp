@@ -131,6 +131,15 @@ struct settled_move_t
                                                 vec3 velocity,
                                                 debug_collision::Face_Bucket* debug_faces);
 
+// A step that opened on the ground and ended over nothing looks for the ground within
+// step_height below: a decline dropping away under a walking hull is walked down, not flown off.
+[[nodiscard]] settled_move_t snap_to_ground_below(const movement_settings_t& settings,
+                                                  steep_face_rule_t steep_faces,
+                                                  const Bounding_Volume_Hierarchy& bvh,
+                                                  const predicted_world_t& world,
+                                                  const settled_move_t& settled,
+                                                  debug_collision::Face_Bucket* debug_faces);
+
 struct stair_step_t
 {
   bool taken       = false;

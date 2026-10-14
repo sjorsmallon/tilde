@@ -1,7 +1,7 @@
 #version 450
 
-// A locked wall: lambert-lit, with a keyhole cut through it in the draw's clock-wipe frame
-// (geometry_wipe_frame). The hole opens on the wipe fraction, so a wall whose owner has a
+// A locked wall: lambert-lit in the instance tint, its surface an outline lattice of small keyholes,
+// with a keyhole cut through it in the draw's clock-wipe frame (geometry_wipe_frame). The hole opens on the wipe fraction, so a wall whose owner has a
 // wipe_timer grows its keyhole until the timer's Elapsed disables the owner and the wall is
 // gone. The clock wipe's own radial discard is replaced, not composed: the keyhole IS this
 // wall's timed shape.
@@ -28,7 +28,9 @@ layout(set = 0, binding = 4) uniform sampler2D emissiveMap;
 
 const int LOOK = LOOK_LAMBERT;
 
-const float KEYHOLE_RIM_DARKNESS = 0.15;
+const float KEYHOLE_RIM_DARKNESS     = 0.15;
+const float KEYHOLE_LATTICE_LINE     = 1.0;
+const float KEYHOLE_LATTICE_DARKNESS = 0.35;
 
 Surface read_surface(vec3 geometric_normal)
 {
@@ -39,13 +41,16 @@ Surface read_surface(vec3 geometric_normal)
     surface.occlusion = 1.0;
     surface.roughness = 0.0;
     surface.metallic  = 0.0;
-    surface.albedo    = texture(albedo, surface.uv).rgb * fragColor;
+    surface.albedo    = fragColor;
     surface.emissive  = texture(emissiveMap, surface.uv).rgb;
     return surface;
 }
 
 void main() {
-    float hole = keyhole_at(fragWorldPosition);
+    vec2  plane   = keyhole_plane_position(fragWorldPosition);
+    float lattice = keyhole_lattice_distance(plane);
+    float pixel   = max(fwidth(lattice), 1e-6);
+    float hole    = keyhole_distance(plane, keyhole_size(pc.clock_wipe_center.w));
     if (hole < 0.0)
         discard;
     discard_outside_reveal(fragWorldPosition);
@@ -65,6 +70,9 @@ void main() {
     float solid_ink;
     vec3  lit        = light_surface(LOOK, surface, fragWorldPosition, V, solid_ink);
     outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
+
+    float line = 1.0 - smoothstep(KEYHOLE_LATTICE_LINE - pixel, KEYHOLE_LATTICE_LINE + pixel, lattice);
+    lit        = mix(lit, lit * KEYHOLE_LATTICE_DARKNESS, line);
 
     float rim = 1.0 - smoothstep(0.0, KEYHOLE_RIM, hole);
     lit       = mix(lit, lit * KEYHOLE_RIM_DARKNESS, rim);

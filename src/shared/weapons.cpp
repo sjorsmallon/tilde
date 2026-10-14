@@ -377,6 +377,18 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
                                                 .merge  = {.seconds = 10.0f}}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
                                  .world_impact = assets::NO_ASSET_NAME}},
+    // A red acetate over the owner's own screen: the scene colour is dropped and the ink lines stay. Never leaves the client.
+    {.weapon                  = entities::Weapon::Red_Lens,
+     .display_name            = "Red Lens",
+     .slot                    = entities::Inventory_Slot::Utility_1,
+     .fire_interval_seconds   = 0.f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Lens_View,
+                                 .lens_view  = {.filter = entities::Lens_Filter::Red}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -532,7 +544,7 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
 
   switch (fire.resolution)
   {
-  // Canopy, Recall and the two Reveal_Lights read nothing either: a press toggles the canopy, the light or where its cone hangs, or takes the row's shots back, and carries no numbers.
+  // Canopy, Recall, the two Reveal_Lights and Lens_View read nothing either: a press toggles the canopy, the light or where its cone hangs, or takes the row's shots back, and carries no numbers.
   case entities::Fire_Resolution::None:
   case entities::Fire_Resolution::Zoom:
   case entities::Fire_Resolution::Canopy:
@@ -540,6 +552,7 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   case entities::Fire_Resolution::Reveal_Light:
   case entities::Fire_Resolution::Reveal_Light_Overhead:
   case entities::Fire_Resolution::Erase_Light:
+  case entities::Fire_Resolution::Lens_View:
     return hitscan_is_zero && projectile_is_zero && place_is_zero && impulse_is_zero &&
            pilot_is_zero && contact_is_none && contact_matches && !fire.fires_while_held;
   case entities::Fire_Resolution::Hitscan:

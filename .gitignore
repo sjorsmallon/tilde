@@ -24,6 +24,18 @@ imgui.ini
 # Baked lightmap sidecars: tens of megabytes per bake, rebuilt in the editor
 *.lightmap
 
+# Debug PNGs the editor's lightmap tool writes on every bake
+lightmap_debug/
+
+# Baked from resources/blender/mvmt.blend by scripts/bake_static_mesh.cmd
+resources/glb/mvmt.glb
+
+# 131 MB (Clay Doh packs its 4k textures), over GitHub's 100 MB file limit
+resources/blender/mvmt.blend
+
+# Blender's save backups
+*.blend1
+
 /*.md
 !todo.md
 

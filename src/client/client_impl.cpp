@@ -30,6 +30,49 @@ namespace client
 {
 
 static SDL_Window* g_window = nullptr;
+
+namespace
+{
+struct window_placement_t
+{
+  int  x;
+  int  y;
+  int  width;
+  int  height;
+  bool maximized;
+};
+
+int resolve_window_measure(float value, int desktop_extent)
+{
+  return value <= 1.0f ? static_cast<int>(value * static_cast<float>(desktop_extent))
+                       : static_cast<int>(value);
+}
+
+int resolve_window_size(float value, int desktop_extent)
+{
+  return value > 0.0f ? resolve_window_measure(value, desktop_extent) : desktop_extent;
+}
+
+window_placement_t compute_window_placement(const cvars::cvar_state_t& cvars)
+{
+  SDL_Rect desktop{};
+  if (SDL_GetDisplayUsableBounds(0, &desktop) != 0)
+    fatal_error("SDL_GetDisplayUsableBounds: {}", SDL_GetError());
+
+  window_placement_t placement{SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, true};
+  if (cvars.r_window_width > 0.0f || cvars.r_window_height > 0.0f)
+  {
+    placement.width     = resolve_window_size(cvars.r_window_width, desktop.w);
+    placement.height    = resolve_window_size(cvars.r_window_height, desktop.h);
+    placement.maximized = false;
+  }
+  if (cvars.r_window_x >= 0.0f)
+    placement.x = desktop.x + resolve_window_measure(cvars.r_window_x, desktop.w);
+  if (cvars.r_window_y >= 0.0f)
+    placement.y = desktop.y + resolve_window_measure(cvars.r_window_y, desktop.h);
+  return placement;
+}
+} // namespace
 static std::chrono::high_resolution_clock::time_point g_last_tick_time;
 static bool g_tick_time_initialized = false;
 
@@ -99,16 +142,18 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // fatal -- see input::init.
   input::init();
 
-  // MAXIMIZED, not borderless-fullscreen: the title bar and the taskbar stay,
-  // which is what you want while a console and an editor are open beside the
-  // game. 1280x720 is therefore the RESTORE size -- what un-maximizing gives
-  // back -- rather than the size it opens at. The swapchain never reads these
-  // numbers: renderer::init asks SDL_Vulkan_GetDrawableSize for the real extent.
+  // MAXIMIZED by default, not borderless-fullscreen: the title bar and the
+  // taskbar stay, which is what you want while a console and an editor are open
+  // beside the game. 1280x720 is then the RESTORE size. The r_window_* cvars
+  // (the launch line's -w -h -x -y) override both. The swapchain never reads
+  // these numbers: renderer::init asks SDL_Vulkan_GetDrawableSize for the extent.
+  const window_placement_t placement = compute_window_placement(*cvar_state);
   g_window =
-      SDL_CreateWindow("MyGame Client", SDL_WINDOWPOS_CENTERED,
-                       SDL_WINDOWPOS_CENTERED, 1280, 720,
-                       SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN | SDL_WINDOW_MAXIMIZED |
-                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+      SDL_CreateWindow("MyGame Client", placement.x, placement.y, placement.width,
+                       placement.height,
+                       SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
+                           SDL_WINDOW_ALLOW_HIGHDPI |
+                           (placement.maximized ? SDL_WINDOW_MAXIMIZED : 0));
 
   if (!g_window)
   {
@@ -266,6 +311,8 @@ bool Tick()
     tonemap.keep_last_frame   = cut_wipe_on && !cut_wiping;
     tonemap.cut_wipe_fraction = cut_wiping ? context.visuals.cut_wipe_seconds / cvars.r_cut_wipe_seconds : -1.0f;
     tonemap.cut_wipe_distance = cvars.r_cut_wipe_distance;
+    tonemap.lens_view_fraction = context.visuals.lens_view_fraction;
+    tonemap.lens_view_color    = shared::get_color_for_lens_filter(context.visuals.lens_view_filter);
     renderer::look_settings_t look;
     look.ambient_floor    = cvars.r_ambient_floor;
     look.cel              = cvars.r_stylized && cvars.r_cel;

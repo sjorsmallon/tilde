@@ -68,7 +68,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
                                          .movement_volumes   = world_as_cut.movement_volumes,
                                          .movement_modifiers = world_as_cut.movement_modifiers,
                                          .reveal_cones       = world_as_cut.reveal_cones,
-                                         .shadow_volumes     = world_as_cut.shadow_volumes}
+                                         .shadow_volumes     = world_as_cut.shadow_volumes,
+                                         .lenses             = world_as_cut.lenses,
+                                         .lens_watchers      = world_as_cut.lens_watchers}
              : world_as_cut;
 
   // The hull is tested where the step OPENS, so every number below is one value for the whole step.
@@ -170,6 +172,12 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
 
     settled = shared::resolve_after_move(settings, steep_faces, bvh, world, new_center,
                                          new_velocity, recording_bucket);
+
+    // A walking step keeps its feet: only a jump or an override leaves the ground on purpose.
+    const bool walked_off = grounded && !over.moves && !jump.from_ground && !jump.in_air;
+    if (walked_off)
+      settled = shared::snap_to_ground_below(settings, steep_faces, bvh, world, settled,
+                                             recording_bucket);
     shared::clip_model_memory(settings, state, settled.wall_planes);
   }
 

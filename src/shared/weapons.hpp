@@ -96,6 +96,13 @@ enum class pilot_leaves_t : uint8_t
   Path,
 };
 
+// Fire_Resolution::Lens_View's parameters: the lens the owner holds to the eye while the view is on, a lens on
+// every line of sight (shared/lighting/lens.hpp). The tonemap keeps only the ink lines, on a page of its colour.
+struct lens_view_t
+{
+  entities::Lens_Filter filter;
+};
+
 // Fire_Resolution::Pilot's parameters: the rocket the shooter rides, written into Movement at the press.
 struct pilot_t
 {
@@ -165,6 +172,7 @@ struct weapon_fire_t
   place_t                   place;
   self_impulse_t            self_impulse;
   pilot_t                   pilot;
+  lens_view_t               lens_view;
   // What a Hitscan or a sweeping Projectile does on contact (update_contacts).
   // None on a button whose shot never arrives anywhere: a fixed-arc projectile,
   // a place, an impulse.

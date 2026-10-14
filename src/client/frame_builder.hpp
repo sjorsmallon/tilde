@@ -60,6 +60,9 @@ struct pass_builder_t
   std::vector<shared::shadow_occluder_t>               shadow_occluders;
   std::vector<renderer::fog_volume_t>                  fog_volumes;
   std::vector<shared::lens_t>                          lenses;
+  // The channel bits of the lens the camera's own eye holds (the Red Lens view); 0 when none is held.
+  uint32_t                                             held_lens_channels = 0;
+  std::vector<shared::lens_watcher_t>                  lens_watchers;
   std::vector<renderer::beam_t>                        beams;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
@@ -127,6 +130,8 @@ struct pass_builder_t
     shadow_occluders.clear();
     fog_volumes.clear();
     lenses.clear();
+    held_lens_channels = 0;
+    lens_watchers.clear();
     beams.clear();
     custom.clear();
     debug.retire(delta_seconds);
@@ -148,6 +153,8 @@ struct pass_builder_t
     pass.shadow_occluders  = shadow_occluders;
     pass.fog_volumes       = fog_volumes;
     pass.lenses            = lenses;
+    pass.held_lens_channels = held_lens_channels;
+    pass.lens_watchers     = lens_watchers;
     pass.beams             = beams;
     pass.seconds          = seconds;
     pass.debug_channel = debug_channel;

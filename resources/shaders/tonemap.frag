@@ -48,6 +48,11 @@ layout(push_constant) uniform Tonemap
     float cut_wipe_fraction;
     // The view depth the peel has reached half-way through.
     float cut_wipe_distance;
+    // How far the scene colour has given way to a page of lens_view_* under the ink, 0 to 1.
+    float lens_view_fraction;
+    float lens_view_red;
+    float lens_view_green;
+    float lens_view_blue;
 } tonemap;
 
 layout(location = 0) in vec2 in_uv;
@@ -55,6 +60,8 @@ layout(location = 0) out vec4 fragment_color;
 
 const vec3 RIM_COLOR          = vec3(1.0);
 const vec3 INK_ON_BLACK_COLOR = vec3(1.0);
+// The page the lens view draws its lines on, before the lens colour multiplies it.
+const vec3 LENS_PAGE_COLOR    = vec3(1.0);
 
 // The way the red plate slips; the blue slips the other way.
 const vec2 MISPRINT_DIRECTION = vec2(0.8, 0.6);
@@ -287,7 +294,7 @@ void main()
 
     vec4 fog     = fog_in_front();
     vec3 hdr     = (scene_light() * fog.a + fog.rgb) * tonemap.exposure;
-    vec3 surface = pbr_neutral_tonemap(hdr);
+    vec3 surface = mix(pbr_neutral_tonemap(hdr), LENS_PAGE_COLOR, tonemap.lens_view_fraction);
     vec3 color   = surface;
 
     ivec2 pixel  = wobbled_pixel();
@@ -319,6 +326,9 @@ void main()
         }
         color = mix(color, ink, coverage * tonemap.ink_strength);
     }
+
+    vec3 lens = vec3(tonemap.lens_view_red, tonemap.lens_view_green, tonemap.lens_view_blue);
+    color *= mix(vec3(1.0), lens, tonemap.lens_view_fraction);
 
     if (tonemap.cut_wipe_fraction >= 0.0)
         color = cut_wipe(color);

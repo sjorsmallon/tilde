@@ -170,7 +170,8 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
                          context.prediction.latest_input_number_processed_by_server;
                 });
   for (std::vector<int>* unanswered : {&context.prediction.unanswered_reveal_light_toggles,
-                                       &context.prediction.unanswered_reveal_light_overhead_toggles})
+                                       &context.prediction.unanswered_reveal_light_overhead_toggles,
+                                       &context.prediction.unanswered_held_lens_toggles})
     std::erase_if(*unanswered,
                   [&](int input_number)
                   {

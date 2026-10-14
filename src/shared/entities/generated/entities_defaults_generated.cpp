@@ -33,6 +33,7 @@ Player_Entity::Player_Entity()
     teleport_count{},
     reveal_light_on{},
     reveal_light_overhead{},
+    held_lens_on{},
     reload_complete_time{},
     last_empty_fire_warning_tick{},
     checkpoint_uid{},
@@ -301,6 +302,7 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     erased_in_shadow(false),
     revealed_by_lens(false),
     lens_filter(Lens_Filter::Red),
+    solid_only_when_lensed(false),
     casts_dynamic_shadow(false)
 {
   type = entity_type::Geometry_Owner_Entity;

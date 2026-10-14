@@ -831,6 +831,8 @@ struct scene_uniform_t
   float       fog_volumes[MAX_SCENE_FOG_VOLUMES][12]        = {}; // lowest corner xyz and density, highest corner xyz and edge softness, then the scattered colour rgb
   float       lens_settings[4]                              = {}; // x how many of `lenses` are live
   float       lenses[MAX_SCENE_LENSES][12]                  = {}; // centre xyz and the channel bits it passes as a whole number, half extents xyz and one spare, then its orientation as a quaternion xyzw
+  float       lens_watcher_settings[4]                      = {}; // x how many of `lens_watchers` are live
+  float       lens_watchers[MAX_SCENE_LENS_WATCHERS][8]     = {}; // eye xyz and the channel bits of the lens it holds, then forward xyz and the cosine of the watch half-angle
 };
 
 static_assert(sizeof(scene_uniform_t) ==
@@ -843,7 +845,7 @@ static_assert(sizeof(scene_uniform_t) ==
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
                       8 * MAX_SCENE_SHADOW_OCCLUDERS +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_OCCLUDERS + 48 +
-                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES,
+                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES + 16 + 32 * MAX_SCENE_LENS_WATCHERS,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -3808,6 +3810,10 @@ struct tonemap_push_constants_t
   float misprint_distance         = 1.0f;
   float cut_wipe_fraction         = -1.0f; // below 0 is no wipe
   float cut_wipe_distance         = 1.0f;
+  float lens_view_fraction        = 0.0f;
+  float lens_view_red             = 1.0f;
+  float lens_view_green           = 1.0f;
+  float lens_view_blue            = 1.0f;
 };
 
 static fullscreen_draw_t g_tonemap_draw;
@@ -7676,6 +7682,7 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   }
   const size_t lens_count = std::min<size_t>(pass.lenses.size(), MAX_SCENE_LENSES);
   scene.lens_settings[0]  = (float)lens_count;
+  scene.lens_settings[1]  = (float)pass.held_lens_channels;
   for (size_t index = 0; index < lens_count; ++index)
   {
     const shared::lens_t& lens = pass.lenses[(uint32_t)index];
@@ -7691,6 +7698,30 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     out[9]  = lens.box.orientation.y;
     out[10] = lens.box.orientation.z;
     out[11] = lens.box.orientation.w;
+  }
+
+  static size_t most_lens_watchers_warned_about = MAX_SCENE_LENS_WATCHERS;
+  if (pass.lens_watchers.size() > most_lens_watchers_warned_about)
+  {
+    most_lens_watchers_warned_about = pass.lens_watchers.size();
+    log_warning("[renderer] this view pass carries {} lens watchers; only the first {} hold anything drawn",
+                pass.lens_watchers.size(), MAX_SCENE_LENS_WATCHERS);
+  }
+  const size_t lens_watcher_count = std::min<size_t>(pass.lens_watchers.size(), MAX_SCENE_LENS_WATCHERS);
+  scene.lens_watcher_settings[0]  = (float)lens_watcher_count;
+  const float watch_cosine = std::cos(linalg::to_radians(shared::LENS_WATCH_HALF_ANGLE_DEGREES));
+  for (size_t index = 0; index < lens_watcher_count; ++index)
+  {
+    const shared::lens_watcher_t& watcher = pass.lens_watchers[(uint32_t)index];
+    float*                        out     = scene.lens_watchers[index];
+    out[0] = watcher.eye.x;
+    out[1] = watcher.eye.y;
+    out[2] = watcher.eye.z;
+    out[3] = (float)watcher.held_channels;
+    out[4] = watcher.forward.x;
+    out[5] = watcher.forward.y;
+    out[6] = watcher.forward.z;
+    out[7] = watch_cosine;
   }
 
   static size_t most_shadow_volumes_warned_about = MAX_SCENE_SHADOW_VOLUMES;
@@ -10392,7 +10423,11 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       std::max(look.misprint_pixels, 0.0f),
       std::max(look.misprint_distance, 1.0f),
       tonemap.cut_wipe_fraction,
-      std::max(tonemap.cut_wipe_distance, 1.0f)};
+      std::max(tonemap.cut_wipe_distance, 1.0f),
+      std::clamp(tonemap.lens_view_fraction, 0.0f, 1.0f),
+      tonemap.lens_view_color.x,
+      tonemap.lens_view_color.y,
+      tonemap.lens_view_color.z};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
 

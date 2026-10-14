@@ -9,6 +9,7 @@
 #include "shared/frame_timing.hpp"
 #include "shared/memory_audit.hpp"
 #include "shared/timed_function.hpp"
+#include "launcher/launch_arguments.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -90,6 +91,9 @@ int main(int argc, char *argv[])
   // console::SpawnNew();
   timed_function();
 
+  const launch_arguments::launch_arguments_t launch =
+      launch_arguments::parse_launch_arguments(argc, argv, g_cvar_state);
+
   log_terminal("=== Starting MyGame (Integrated) ===");
 
 #if TILDE_MEMORY_AUDIT
@@ -136,6 +140,8 @@ int main(int argc, char *argv[])
   // them rendez-vous through the launcher.
   client::set_server_map_reload_hook(
       [](const char *path) -> bool { return server::change_map_to(path); });
+
+  launch_arguments::execute_launch_console_lines(launch, g_cvar_state, g_client_command_table);
 
   log_terminal("=== Initialization Complete, Entering Loop ===");
 

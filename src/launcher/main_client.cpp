@@ -8,6 +8,7 @@
 #include "shared/frame_timing.hpp"
 #include "shared/memory_audit.hpp"
 #include "shared/timed_function.hpp"
+#include "launcher/launch_arguments.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -68,6 +69,9 @@ int main(int argc, char *argv[])
   crash_handler::install();
   timed_function();
 
+  const launch_arguments::launch_arguments_t launch =
+      launch_arguments::parse_launch_arguments(argc, argv, g_cvar_state);
+
   log_terminal("=== Starting MyGame (Networked Client) ===");
 
 #if TILDE_MEMORY_AUDIT
@@ -92,6 +96,8 @@ int main(int argc, char *argv[])
   // No in-process server: leave the integrated session pointer null (the
   // default) so the renderer reads remote state from snapshots, and skip the
   // editor→server reload hook (the editor will skip the server-side reload step).
+
+  launch_arguments::execute_launch_console_lines(launch, g_cvar_state, g_command_table);
 
   log_terminal("=== Initialization Complete, Entering Loop ===");
 

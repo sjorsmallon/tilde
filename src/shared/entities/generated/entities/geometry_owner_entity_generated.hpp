@@ -28,6 +28,7 @@ struct Geometry_Owner_Entity : Entity
   bool erased_in_shadow;
   bool revealed_by_lens;
   Lens_Filter lens_filter;
+  bool solid_only_when_lensed;
   bool casts_dynamic_shadow;
 };
 

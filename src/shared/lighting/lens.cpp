@@ -1,7 +1,10 @@
 #include "lens.hpp"
 
 #include "entities/generated/entities/lens_entity_generated.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_system.hpp"
+#include "movement/player_constants.hpp"
+#include "weapon_instance.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -72,10 +75,10 @@ bool lens_lies_on_line_of_sight(const lens_t& lens, const linalg::vec3f& eye, co
 }
 
 uint32_t compute_channels_seen_through_lenses(Span<const lens_t> lenses, const linalg::vec3f& eye,
-                                              const linalg::vec3f& point)
+                                              const linalg::vec3f& point, uint32_t held_channels)
 {
-  uint32_t channels = LENS_CHANNEL_ALL;
-  bool     seen     = false;
+  uint32_t channels = held_channels != 0 ? held_channels : LENS_CHANNEL_ALL;
+  bool     seen     = held_channels != 0;
   for (const lens_t& lens : lenses)
   {
     if (!lens_lies_on_line_of_sight(lens, eye, point))
@@ -92,6 +95,75 @@ void collect_lenses(const Entity_System& system, std::vector<lens_t>& out)
   for (const entities::Lens_Entity& lens : system.entities_of_type<entities::Lens_Entity>())
     if (lens.switch_state.value)
       out.push_back(compute_lens_box(lens));
+}
+
+std::optional<entities::Lens_Filter> try_get_held_lens_filter(const Entity_System&           system,
+                                                              const entities::Player_Entity& player)
+{
+  const weapon_definition_t* held = try_find_held_weapon_definition(system, player);
+  if (held == nullptr || held->primary_fire.resolution != entities::Fire_Resolution::Lens_View)
+    return std::nullopt;
+  return held->primary_fire.lens_view.filter;
+}
+
+uint32_t compute_held_lens_channels(const Entity_System& system, const entities::Player_Entity& player,
+                                    bool held_lens_on)
+{
+  if (!held_lens_on || !player_watches_lenses(player))
+    return 0;
+  const std::optional<entities::Lens_Filter> filter = try_get_held_lens_filter(system, player);
+  return filter.has_value() ? get_channel_bits_for_lens_filter(*filter) : 0;
+}
+
+lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
+                                    uint32_t held_channels)
+{
+  return {.eye           = eye,
+          .forward       = linalg::direction_from_angles(yaw_degrees, pitch_degrees),
+          .held_channels = held_channels};
+}
+
+bool lens_watcher_faces_point(const lens_watcher_t& watcher, const linalg::vec3f& point)
+{
+  const linalg::vec3f to_point = point - watcher.eye;
+  const float         reach    = linalg::length(to_point);
+  if (reach <= 0.f)
+    return true;
+  return linalg::dot(to_point, watcher.forward) >=
+         std::cos(linalg::to_radians(LENS_WATCH_HALF_ANGLE_DEGREES)) * reach;
+}
+
+bool any_lens_watcher_sees_point(Span<const lens_watcher_t> watchers, Span<const lens_t> lenses,
+                                 entities::Lens_Filter filter, const linalg::vec3f& point)
+{
+  const uint32_t wanted = get_channel_bits_for_lens_filter(filter);
+  for (const lens_watcher_t& watcher : watchers)
+  {
+    if (!lens_watcher_faces_point(watcher, point))
+      continue;
+    if ((compute_channels_seen_through_lenses(lenses, watcher.eye, point, watcher.held_channels) & wanted) != 0)
+      return true;
+  }
+  return false;
+}
+
+bool player_watches_lenses(const entities::Player_Entity& player)
+{
+  return player.health.current_health > 0;
+}
+
+void collect_lens_watchers(const Entity_System& system, entity_uid_t predicted_by_caller,
+                           std::vector<lens_watcher_t>& out)
+{
+  out.clear();
+  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
+  {
+    if (player.entity_id == predicted_by_caller || !player_watches_lenses(player))
+      continue;
+    out.push_back(compute_lens_watcher(player.position + linalg::vec3f{0.f, player_eye_height, 0.f},
+                                       player.view_angle_yaw, player.view_angle_pitch,
+                                       compute_held_lens_channels(system, player, player.held_lens_on)));
+  }
 }
 
 } // namespace shared

@@ -267,6 +267,14 @@ Client :: cvars {
     // a C2S message of its own for a prototype that has no rename UI.
     name:                   string<32> = "Player"  @Client  "Name shown to other players"
 
+    // Read once, at window creation. 0..1 is a fraction of the usable desktop,
+    // above 1 is pixels; a zero size opens maximized and -1 centers.
+    r_window_width:         f32 = 0.0       @Client  "Window width at launch (0 = maximized)"
+    r_window_height:        f32 = 0.0       @Client  "Window height at launch (0 = maximized)"
+    r_window_x:             f32 = -1.0      @Client  "Window left edge at launch (-1 = centered)"
+    r_window_y:             f32 = -1.0      @Client  "Window top edge at launch (-1 = centered)"
+    cl_auto_join:           bool = false    @Client  "Run join_game as soon as a connection completes"
+
     // Every move the client has not seen acked rides in every move datagram, so
     // one lost packet is not one lost tick of input. This bounds how far that
     // tail may grow: past it the oldest moves are dropped, because a move older
@@ -283,6 +291,7 @@ Client :: cvars {
     // never needs the angle.
     r_zoom_fov:             f32 = 30.0      @Client    "Field of view in degrees while zoomed"
     r_zoom_easing_time_between_fovs:            f32 = 0.00      @Client    "Seconds to ease between normal and zoomed FOV (0 = instant)"
+    r_lens_view_seconds:    f32 = 0.12      @Client    "Seconds the Red Lens view takes to fade in and out (0 = instant)"
 
     // Shadow maps, lighting_def.md gate 9. The pool is FIXED: a frame with more
     // shadow-casting lights than layers ranks them by intensity over distance

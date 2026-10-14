@@ -1,4 +1,5 @@
 #include "movement_kernel.hpp"
+#include "lighting/lens.hpp"
 #include "locomotion.hpp"
 #include "player_constants.hpp"
 #include <algorithm>
@@ -125,6 +126,13 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
       if (shared::any_shadow_volume_contains_box(world.shadow_volumes, contact))
         continue;
     }
+    else if (const std::optional<entities::Lens_Filter> filter = try_get_lens_filter_for_geometry_state(state))
+    {
+      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
+      if (!shared::any_lens_watcher_sees_point(world.lens_watchers, world.lenses, *filter,
+                                               shared::get_aabb_center(contact)))
+        continue;
+    }
     else if (state != GEOMETRY_SOLID)
     {
       continue;
@@ -199,6 +207,7 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
     // penetrates past it. If the player is fully outside any face, it's
     // not inside the hull. Otherwise, push out along the least-penetrated face.
     float min_penetration = -1e30f;
+    float best_biased_penetration = -1e30f;
     int min_plane_idx = -1;
     vec3 push_normal = {0, 0, 0};
     bool outside = false;
@@ -229,9 +238,10 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
       if (is_ground_normal)
         biased_penetration += 8.f; // make ground faces win when close
 
-      if (biased_penetration > min_penetration)
+      if (biased_penetration > best_biased_penetration)
       {
-        min_penetration = penetration; // store actual penetration for push amount
+        best_biased_penetration = biased_penetration;
+        min_penetration         = penetration;
         push_normal = plane.normal;
         min_plane_idx = pi;
       }
@@ -483,6 +493,34 @@ settled_move_t resolve_after_move(const movement_settings_t& settings,
           .ground_contact    = post.ground_contact,
           .land_impact_speed = land_impact_speed,
           .wall_planes       = std::move(post.wall_planes)};
+}
+
+settled_move_t snap_to_ground_below(const movement_settings_t& settings,
+                                    steep_face_rule_t steep_faces,
+                                    const Bounding_Volume_Hierarchy& bvh,
+                                    const predicted_world_t& world, const settled_move_t& settled,
+                                    debug_collision::Face_Bucket* debug_faces)
+{
+  if (settled.grounded || settled.velocity.y > 0.f)
+    return settled;
+
+  vec3 lowered = settled.hull_center - vec3{0.f, settings.shared.step_height, 0.f};
+  const contacts_t below =
+      resolve_collisions(settings, steep_faces, bvh, world, lowered, debug_faces);
+
+  // No floor within reach, or the floor found pushed the hull above where it was: a ledge, not a slope.
+  if (!below.has_ground() || lowered.y > settled.hull_center.y)
+    return settled;
+
+  settled_move_t snapped    = settled;
+  snapped.hull_center       = lowered;
+  snapped.velocity.y        = 0.f;
+  snapped.grounded          = true;
+  snapped.ground_mover_uid  = below.ground_mover_uid;
+  snapped.ground_contact    = below.ground_contact;
+  snapped.land_impact_speed = 0.f;
+  snapped.wall_planes       = below.wall_planes;
+  return snapped;
 }
 
 // Stair-step glide: if grounded and pressing into a wall, try raising the

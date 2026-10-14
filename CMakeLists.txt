@@ -370,6 +370,7 @@ add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 # Vendored verbatim, so its warnings are not ours to fix.
 set_source_files_properties(src/third_party/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
 set_source_files_properties(src/third_party/tinygltf/tiny_gltf_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
+set_source_files_properties(src/third_party/stb_image_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch;-O2")
 set_source_files_properties(src/third_party/miniz/miniz.c PROPERTIES
     COMPILE_OPTIONS "-w;-Wno-error=switch;-O2"
     COMPILE_DEFINITIONS "MINIZ_NO_ARCHIVE_APIS;MINIZ_NO_STDIO;MINIZ_NO_TIME;MINIZ_NO_ZLIB_COMPATIBLE_NAMES")
@@ -460,6 +461,10 @@ add_library(game_shared STATIC
     # xatlas, verbatim (MIT): the static mesh unwrap. lightmap_unwrap_plan.md.
     src/third_party/xatlas.h
     src/third_party/xatlas.cpp
+    # stb_image, verbatim (public domain): PNG and TGA decode, kept at -O2 so a
+    # Debug build does not inflate a gigabyte of texture at -O0.
+    src/third_party/stb_image.h
+    src/third_party/stb_image_implementation.cpp
     # miniz 3.1.2, verbatim (MIT): DEFLATE for the streamed map package.
     src/third_party/miniz/miniz.h
     src/third_party/miniz/miniz.c
@@ -561,6 +566,7 @@ add_library(game_shared STATIC
     src/shared/lighting/lens.cpp
     src/shared/lighting/shadow_volume.cpp
     src/shared/collision/statues.cpp
+    src/shared/collision/lens_panes.cpp
     src/shared/lighting/solid_beams.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
@@ -1340,6 +1346,7 @@ add_game_test(inventory_test
 # and no assets: player_move takes static geometry and a cvar_state_t and
 # nothing else, which is exactly why it can be tested this cheaply.
 add_game_test(player_move_step_invariance_test)
+add_game_test(slope_seam_test)
 add_game_test(projectile_step_test)
 add_game_test(flight_path_test)
 

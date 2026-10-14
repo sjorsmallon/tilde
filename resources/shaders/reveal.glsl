@@ -20,6 +20,21 @@ const int LIGHT_CUT_SHADOW_HOLE  = 4;
 const int LIGHT_CUT_LENS_RED     = 5;
 const int LIGHT_CUT_LENS_GREEN   = 6;
 const int LIGHT_CUT_LENS_BLUE    = 7;
+// A lens-watched draw keeps the fragments ANY watcher sees through such a lens (lens.hpp's any_lens_watcher_sees_point):
+// what is drawn is what is solid, on every screen. The colour is the same bit, 1 << (LIGHT_CUT - LIGHT_CUT_LENS_WATCHED_RED).
+const int LIGHT_CUT_LENS_WATCHED_RED   = 8;
+const int LIGHT_CUT_LENS_WATCHED_GREEN = 9;
+const int LIGHT_CUT_LENS_WATCHED_BLUE  = 10;
+
+bool light_cut_is_own_lens()
+{
+    return LIGHT_CUT >= LIGHT_CUT_LENS_RED && LIGHT_CUT <= LIGHT_CUT_LENS_BLUE;
+}
+
+bool light_cut_is_watched_lens()
+{
+    return LIGHT_CUT >= LIGHT_CUT_LENS_WATCHED_RED;
+}
 
 // A lens's rim, in world units inside its silhouette.
 const float LENS_RIM_UNITS = 12.0;
@@ -111,20 +126,18 @@ vec3 rotate_by_quaternion(vec4 q, vec3 v)
     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 }
 
-// How far inside a lens's silhouette the fragment is seen, in rim widths (shared/lighting/lens.hpp's
+// How far inside a lens's silhouette the fragment is seen from `eye`, in rim widths (shared/lighting/lens.hpp's
 // lens_lies_on_line_of_sight): the shorter of the chord the eye's line cuts through the lens and how far
 // behind the lens's far side the fragment lies, the eye's line taken into each lens's own frame. The channels
 // of every lens on the line multiply, so a red and a green stacked pass nothing. -1 when no lens on the line
-// passes this draw's colour.
-float lens_margin(vec3 world_position)
+// passes `channel`. `held` is the channel bits of a lens held to the eye, on every line and with no rim.
+float lens_margin_from_eye(vec3 eye, vec3 world_position, int channel, int held)
 {
-    const int   channel = 1 << (LIGHT_CUT - LIGHT_CUT_LENS_RED);
-    const vec3  eye     = scene.camera_position.xyz;
     const vec3  line    = world_position - eye;
     const float reach   = length(line);
 
-    int   passed = 7;
-    bool  seen   = false;
+    int   passed = held == 0 ? 7 : held;
+    bool  seen   = held != 0;
     float margin = 1e9;
     const int lens_count = int(scene.lens_settings.x);
     for (int index = 0; index < lens_count; ++index) {
@@ -151,6 +164,32 @@ float lens_margin(vec3 world_position)
     return margin;
 }
 
+// The own-eye cut: seen through a lens from the camera.
+float lens_margin(vec3 world_position)
+{
+    return lens_margin_from_eye(scene.camera_position.xyz, world_position, 1 << (LIGHT_CUT - LIGHT_CUT_LENS_RED),
+                                int(scene.lens_settings.y + 0.5));
+}
+
+// The watched cut: the deepest any watcher facing the fragment sees it (lens.hpp's any_lens_watcher_sees_point).
+float lens_watched_margin(vec3 world_position)
+{
+    const int channel = 1 << (LIGHT_CUT - LIGHT_CUT_LENS_WATCHED_RED);
+    float     margin  = -1.0;
+    const int watcher_count = int(scene.lens_watcher_settings.x);
+    for (int index = 0; index < watcher_count; ++index) {
+        const vec3  eye     = scene.lens_watchers[index].eye.xyz;
+        const vec3  forward = scene.lens_watchers[index].forward_cosine.xyz;
+        const float cosine  = scene.lens_watchers[index].forward_cosine.w;
+        const vec3  to_fragment = world_position - eye;
+        if (dot(to_fragment, forward) < cosine * length(to_fragment))
+            continue;
+        margin = max(margin, lens_margin_from_eye(eye, world_position, channel,
+                                                  int(scene.lens_watchers[index].eye.w + 0.5)));
+    }
+    return margin;
+}
+
 // Positive inside whatever this draw is kept by, negative outside it; the cut's one rule, which the discard and the rim share.
 float cut_margin(vec3 world_position)
 {
@@ -162,8 +201,10 @@ float cut_margin(vec3 world_position)
         return shadow_margin(world_position);
     if (LIGHT_CUT == LIGHT_CUT_SHADOW_HOLE)
         return -shadow_margin(world_position);
-    if (LIGHT_CUT >= LIGHT_CUT_LENS_RED)
+    if (light_cut_is_own_lens())
         return lens_margin(world_position);
+    if (light_cut_is_watched_lens())
+        return lens_watched_margin(world_position);
     return 1.0;
 }
 
@@ -181,7 +222,9 @@ void discard_outside_reveal(vec3 world_position)
         discard;
     if (LIGHT_CUT == LIGHT_CUT_SHADOW_HOLE && shadow_margin(world_position) >= 0.0)
         discard;
-    if (LIGHT_CUT >= LIGHT_CUT_LENS_RED && lens_margin(world_position) < 0.0)
+    if (light_cut_is_own_lens() && lens_margin(world_position) < 0.0)
+        discard;
+    if (light_cut_is_watched_lens() && lens_watched_margin(world_position) < 0.0)
         discard;
 }
 

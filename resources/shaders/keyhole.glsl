@@ -54,4 +54,35 @@ float keyhole_at(vec3 world_position)
     return keyhole_distance(keyhole_plane_position(world_position), keyhole_size(pc.clock_wipe_center.w));
 }
 
+// The wall's surface: bands of small keyholes, heads down, every other band flipped and shifted half
+// a pitch. Across, 0.72 of the tile is the one pitch at which the gap between two slots is a slot's
+// mirror image, since the flare is linear. Up, 1.03 of the tile puts the flat ends of neighbouring
+// bands on one shared line with their heads just touching. Returns the unsigned distance to the
+// nearest outline, so every tile's edge draws; a cell asks its own tile and its eight neighbours,
+// since a head reaches past its cell.
+const float KEYHOLE_LATTICE_TILE    = 32.0;
+const float KEYHOLE_LATTICE_PITCH_X = 0.72 * KEYHOLE_LATTICE_TILE;
+const float KEYHOLE_LATTICE_PITCH_Y = 1.03 * KEYHOLE_LATTICE_TILE;
+
+float keyhole_lattice_distance(vec2 p)
+{
+    float nearest = 1e9;
+    float row     = floor(p.y / KEYHOLE_LATTICE_PITCH_Y);
+    for (int row_step = -1; row_step <= 1; ++row_step)
+    {
+        float tile_row = row + float(row_step);
+        float flip     = mod(tile_row, 2.0) < 1.0 ? -1.0 : 1.0;
+        float shift    = flip > 0.0 ? 0.5 * KEYHOLE_LATTICE_PITCH_X : 0.0;
+        float column   = floor((p.x + shift) / KEYHOLE_LATTICE_PITCH_X);
+        for (int column_step = -1; column_step <= 1; ++column_step)
+        {
+            vec2 centre = vec2((column + float(column_step) + 0.5) * KEYHOLE_LATTICE_PITCH_X - shift,
+                               (tile_row + 0.5) * KEYHOLE_LATTICE_PITCH_Y);
+            vec2 local  = p - centre;
+            nearest     = min(nearest, abs(keyhole_distance(vec2(local.x, local.y * flip), KEYHOLE_LATTICE_TILE)));
+        }
+    }
+    return nearest;
+}
+
 #endif

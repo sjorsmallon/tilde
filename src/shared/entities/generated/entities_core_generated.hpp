@@ -80,9 +80,10 @@ enum class Weapon : uint8_t
   Flashlight = 19,
   Eraser = 20,
   Merge = 21,
+  Red_Lens = 22,
 };
 
-constexpr uint32_t Weapon_COUNT = 22;
+constexpr uint32_t Weapon_COUNT = 23;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -101,9 +102,10 @@ enum class Fire_Resolution : uint8_t
   Reveal_Light = 9,
   Reveal_Light_Overhead = 10,
   Erase_Light = 11,
+  Lens_View = 12,
 };
 
-constexpr uint32_t Fire_Resolution_COUNT = 12;
+constexpr uint32_t Fire_Resolution_COUNT = 13;
 
 const char* to_string(Fire_Resolution value);
 template <> std::optional<Fire_Resolution> try_from_string<Fire_Resolution>(std::string_view text);

@@ -21,6 +21,7 @@
 #include "../shared/subtick.hpp"
 #include "../shared/beam_ripples.hpp"
 #include "../shared/team_wall_ripples.hpp"
+#include "../shared/lighting/lens.hpp"
 #include "../shared/lighting/shadow_volume.hpp"
 
 #include <memory>
@@ -262,6 +263,8 @@ struct prediction_t
   std::vector<int> unanswered_reveal_light_toggles;
   // The same for its secondary press and Player_Entity::reveal_light_overhead.
   std::vector<int> unanswered_reveal_light_overhead_toggles;
+  // The same for a Red Lens press and Player_Entity::held_lens_on.
+  std::vector<int> unanswered_held_lens_toggles;
 
   // Real seconds since our own last predicted gunshot, PER WEAPON, for
   // re-running the server's fire-rate gate locally (weapons.hpp is shared, so
@@ -534,6 +537,11 @@ struct visual_effects_t
   uint32_t                                               next_afterimage_index = 0;
   // Seconds since the eye's own cut, while r_cut_wipe_seconds has the old view still peeling away; below 0 otherwise.
   float cut_wipe_seconds = -1.f;
+  // The tonemap's page for the Red Lens view: how far it has faded in over r_lens_view_seconds, and the filter
+  // it last faded in with, so a lens put away fades out in its own colour. The view itself is the prediction's
+  // held_lens_on, never this.
+  float                 lens_view_fraction = 0.f;
+  entities::Lens_Filter lens_view_filter   = entities::Lens_Filter::Red;
 
   // Client only, since the server cannot visualize. Filled by player_move
   // during prediction, drawn and cleared in build_frame.
@@ -549,6 +557,9 @@ struct visual_effects_t
   // The shadow volumes the newest predicted tick was cut with, copied each update so the draw
   // cuts the same volumes the floor did (shadow_volume_plan.md ss5).
   std::vector<shared::shadow_volume_t> drawn_shadow_volumes;
+  // The lens watchers that tick was held by, own eye from the prediction, copied for the same reason:
+  // a lens_watched draw keeps what those eyes hold solid.
+  std::vector<shared::lens_watcher_t>  drawn_lens_watchers;
   // What those volumes are drawn up to, for the first renderer::MAX_SCENE_SHADOW_VOLUMES of them, and how
   // many pieces outran the plane slots (shadow_volume_plan.md ss5).
   std::vector<shared::shadow_occluder_t> drawn_shadow_occluders;

@@ -1,5 +1,6 @@
 #pragma once
 #include "aabb.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "network/network_types.hpp"
 #include "plane.hpp"
 #include "span.hpp"
@@ -143,12 +144,28 @@ bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& o
 // passes it only where an erase cone holds everything it touches.
 // The same pair again with a shadow volume for the cone (shadow_volume.hpp): GEOMETRY_SOLID_IN_SHADOW
 // collides where a volume touches, GEOMETRY_SOLID_UNLESS_SHADOWED is passed where one holds the contact.
+// GEOMETRY_SOLID_WHERE_LENSED and the values after it, one per Lens_Filter, collide where a watcher sees
+// the contact through a lens of that colour (lighting/lens.hpp); a ray or a sweep passes them like the lit one.
 inline constexpr uint8_t GEOMETRY_SOLID                 = 0;
 inline constexpr uint8_t GEOMETRY_NOT_THERE             = 1;
 inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LIT       = 2;
 inline constexpr uint8_t GEOMETRY_SOLID_UNLESS_ERASED   = 3;
 inline constexpr uint8_t GEOMETRY_SOLID_IN_SHADOW       = 4;
 inline constexpr uint8_t GEOMETRY_SOLID_UNLESS_SHADOWED = 5;
+inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LENSED    = 6;
+static_assert(GEOMETRY_SOLID_WHERE_LENSED + entities::Lens_Filter_COUNT <= 256);
+
+[[nodiscard]] inline uint8_t get_geometry_state_solid_where_lensed(entities::Lens_Filter filter)
+{
+  return static_cast<uint8_t>(GEOMETRY_SOLID_WHERE_LENSED + static_cast<uint8_t>(filter));
+}
+
+[[nodiscard]] inline std::optional<entities::Lens_Filter> try_get_lens_filter_for_geometry_state(uint8_t state)
+{
+  if (state < GEOMETRY_SOLID_WHERE_LENSED || state >= GEOMETRY_SOLID_WHERE_LENSED + entities::Lens_Filter_COUNT)
+    return std::nullopt;
+  return static_cast<entities::Lens_Filter>(state - GEOMETRY_SOLID_WHERE_LENSED);
+}
 
 [[nodiscard]] inline uint8_t
 get_geometry_state_by_collision_id(Span<const uint8_t> disabled_geometry, Collision_Id id)

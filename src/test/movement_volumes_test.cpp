@@ -23,6 +23,7 @@
 #include "collision/predicted_world.hpp"
 #include "shapes.hpp"
 #include "collision/canopy.hpp"
+#include "collision/lens_panes.hpp"
 #include "collision/statues.hpp"
 #include "lighting/reveal_light.hpp"
 #include "lighting/solid_beams.hpp"
@@ -112,6 +113,10 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     spot.solid_beam         = true;
   }
 
+  // A lens answers while switched on: its pane is a mover.
+  for (entities::Lens_Entity& lens : system.entities_of_type<entities::Lens_Entity>())
+    lens.switch_state.value = true;
+
   // A player answers only while frozen.
   for (entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
     player.movement.active_override = entities::Movement_Override::Stasis;
@@ -142,6 +147,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
                                     movers);
   shared::collect_statues(system, movers);
+  shared::collect_lens_panes(system, movers);
   shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
@@ -208,6 +214,8 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a frozen player is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Spot_Light_Entity) > 0,
         "a solid beam spot is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Lens_Entity) > 0,
+        "a switched-on lens's pane is a mover");
 
   // Not vacuous: if nothing is @predicted the loop above passes by saying
   // nothing, which is the one way this pin could quietly stop measuring.
@@ -459,6 +467,15 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
         "an erasable owner's geometry is solid unless erased for a mover it blocks");
   shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
   check(disabled[1] == GEOMETRY_NOT_THERE, "and not there for the team that passes it");
+
+  system.get<entities::Geometry_Owner_Entity>(owner)->erased_by_light        = false;
+  system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_lensed = true;
+  system.get<entities::Geometry_Owner_Entity>(owner)->lens_filter            = entities::Lens_Filter::Blue;
+  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  check(disabled[1] == get_geometry_state_solid_where_lensed(entities::Lens_Filter::Blue),
+        "a lensed-only owner's geometry is solid where lensed, in its colour, for a mover it blocks");
+  shared::collect_hidden_geometry(system, owner_of, disabled);
+  check(disabled[1] == GEOMETRY_SOLID, "the draw's set does not know about the watcher");
 }
 
 static void test_a_drawn_mover_carries_its_rider_by_the_same_fraction()

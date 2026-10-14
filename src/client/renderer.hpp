@@ -409,6 +409,8 @@ inline constexpr uint32_t MAX_SCENE_REVEAL_CONES = 8;
 
 // scene.glsl's MAX_LENSES, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_LENSES = 16;
+// scene.glsl's MAX_LENS_WATCHERS, kept one number by the same assert.
+inline constexpr uint32_t MAX_SCENE_LENS_WATCHERS = 16;
 // scene.glsl's MAX_FOG_VOLUMES, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
@@ -473,21 +475,25 @@ enum class light_cut_t : uint8_t
   // Kept only where seen through a lens that passes the draw's colour (shared/lens.hpp); the colour is the cut.
   lens_red,
   lens_green,
-  lens_blue
+  lens_blue,
+  // Kept where ANY of the pass's lens_watchers sees it through such a lens: what is drawn is what is solid.
+  lens_watched_red,
+  lens_watched_green,
+  lens_watched_blue
 };
 
 [[nodiscard]] inline bool light_cut_is_a_lens(light_cut_t cut)
 {
-  return cut == light_cut_t::lens_red || cut == light_cut_t::lens_green || cut == light_cut_t::lens_blue;
+  return cut >= light_cut_t::lens_red;
 }
 
-[[nodiscard]] inline light_cut_t get_light_cut_for_lens_filter(entities::Lens_Filter filter)
+[[nodiscard]] inline light_cut_t get_light_cut_for_lens_filter(entities::Lens_Filter filter, bool watched)
 {
   switch (filter)
   {
-  case entities::Lens_Filter::Red: return light_cut_t::lens_red;
-  case entities::Lens_Filter::Green: return light_cut_t::lens_green;
-  case entities::Lens_Filter::Blue: return light_cut_t::lens_blue;
+  case entities::Lens_Filter::Red: return watched ? light_cut_t::lens_watched_red : light_cut_t::lens_red;
+  case entities::Lens_Filter::Green: return watched ? light_cut_t::lens_watched_green : light_cut_t::lens_green;
+  case entities::Lens_Filter::Blue: return watched ? light_cut_t::lens_watched_blue : light_cut_t::lens_blue;
   }
   return light_cut_t::none;
 }
@@ -801,6 +807,10 @@ struct view_pass_t
   Span<const fog_volume_t>                  fog_volumes = {};
   // Where a lens_* draw exists (shared/lens.hpp). Past MAX_SCENE_LENSES the tail is dropped.
   Span<const shared::lens_t>                lenses = {};
+  // The channel bits of a lens held to the pass's own eye, a lens on every line of sight; 0 when none is held.
+  uint32_t                                  held_lens_channels = 0;
+  // Where a lens_watched_* draw exists: the eyes the collision cut was held by. Past MAX_SCENE_LENS_WATCHERS the tail is dropped.
+  Span<const shared::lens_watcher_t>        lens_watchers = {};
   // Filled by the beam pass after the scene pass, for a perspective pass only. Past MAX_SCENE_BEAMS the tail is dropped.
   Span<const beam_t>                        beams = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
@@ -822,6 +832,9 @@ struct tonemap_settings_t
   bool  keep_last_frame   = false;
   float cut_wipe_fraction = -1.0f;
   float cut_wipe_distance = 128.0f;
+  // The lens view, 0 to 1: how far the scene colour has given way to a page of `lens_view_color` under the ink.
+  float lens_view_fraction = 0.0f;
+  vec3f lens_view_color    = {1.0f, 1.0f, 1.0f};
 };
 struct look_settings_t
 {

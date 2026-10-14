@@ -43,10 +43,11 @@ Weapon :: enum {
     Guided_Rocket,
     Flashlight,
     Eraser,
-    Merge
+    Merge,
+    Red_Lens
 }
 
-Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead, Erase_Light }
+Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead, Erase_Light, Lens_View }
 Fire_Trigger :: enum { Primary, Secondary }
 Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 
@@ -379,6 +380,8 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     reveal_light_on:   bool             @Networked
     // The Flashlight's other toggle: the cone hangs above the head and points straight down (shared::compute_player_reveal_cone).
     reveal_light_overhead: bool         @Networked
+    // The Red Lens's toggle (Fire_Resolution::Lens_View). The lens is held to the eye only while this is set AND one is in hand (shared::compute_held_lens_channels).
+    held_lens_on:      bool             @Networked
 
     // WHEN the in-flight reload finishes, in sub-tick time; 0 means not
     // reloading. A DEADLINE rather than a start stamp, because the duration is
@@ -703,6 +706,9 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     // (shared/lens.hpp); solid everywhere, and the editor always draws it.
     revealed_by_lens: bool = false @Networked @Editable
     lens_filter: Lens_Filter = .Red @Networked @Editable
+    // Its geometry is solid only where some player's eye sees it through a lens that passes `lens_filter`:
+    // what is watched holds, for everyone. Unset, it is solid wherever the switch says so.
+    solid_only_when_lensed: bool = false @Networked @Editable
     // Its geometry is absent from the bake and drawn into every shadow map each frame, so its shadow is
     // what the geometry is NOW: gone when switched off, a keyhole when it wears one. Needs a Mixed or
     // Dynamic light to cast at all.
@@ -860,7 +866,9 @@ Fog_Volume_Entity :: entity is Switchable {
 // A window the world is seen through (shared/lens.hpp): while switched on, geometry whose owner is `revealed_by_lens`
 // is drawn only where the line from the eye to it crosses this box and the box passes the owner's colour. The filters
 // of every lens on one line multiply, so a red and a green stacked pass nothing. The box is turned by the orientation.
-Lens_Entity :: entity is Switchable {
+// @predicted because a switched-on lens is a mover (shared/collision/lens_panes.hpp): glass is glass, the pane
+// is stood on and shot at.
+Lens_Entity :: entity @predicted is Switchable {
     switch_state: Enabled
     volume:       Box_Volume = { half_extents = {64, 64, 4} }
     filter:       Lens_Filter = .Red                @Editable

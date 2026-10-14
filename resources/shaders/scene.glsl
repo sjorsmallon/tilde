@@ -27,6 +27,8 @@
 #define MAX_FOG_VOLUMES 8
 // renderer.hpp's MAX_SCENE_LENSES, kept one number by the same assert.
 #define MAX_LENSES 16
+// renderer.hpp's MAX_SCENE_LENS_WATCHERS, kept one number by the same assert.
+#define MAX_LENS_WATCHERS 16
 // renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
 #define MAX_SHADOW_VOLUMES 24
 #define MAX_SHADOW_VOLUME_PLANES 41
@@ -107,6 +109,14 @@ struct Lens {
     vec4 center_channels;
     vec4 half_extents;
     vec4 orientation;
+};
+
+// One lens watcher (reveal.glsl's lens_watched_margin, shared/lighting/lens.hpp's lens_watcher_t): an eye (xyz),
+// the unit direction it faces (xyz) and the cosine of how far off that facing a point may lie and still be looked at (w).
+// Its eye (xyz) and the channel bits of the lens it holds (w), then where it faces (xyz) and the cosine of its watch half-angle (w).
+struct LensWatcher {
+    vec4 eye;
+    vec4 forward_cosine;
 };
 
 // One box of fog (fog_cells.comp): its lowest corner (xyz) and its density per world unit (w); its highest corner (xyz) and
@@ -264,9 +274,12 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4       view_right;
     vec4       view_up;
     FogVolume  fog_volumes[MAX_FOG_VOLUMES];
-    // x = how many of `lenses` are live.
+    // x = how many of `lenses` are live, y = the channel bits of the lens held to the camera's eye (0 = none).
     vec4       lens_settings;
     Lens       lenses[MAX_LENSES];
+    // x = how many of `lens_watchers` are live.
+    vec4        lens_watcher_settings;
+    LensWatcher lens_watchers[MAX_LENS_WATCHERS];
 } scene;
 
 // The line of sight through `position` (0..1 across the pass's view, y down), one unit of view depth long.

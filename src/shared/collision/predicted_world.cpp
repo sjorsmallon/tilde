@@ -4,6 +4,7 @@
 #include "map/game_session.hpp"
 #include "lighting/solid_beams.hpp"
 #include "spawned_platforms.hpp"
+#include "lens_panes.hpp"
 #include "statues.hpp"
 
 namespace shared
@@ -43,6 +44,7 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
   collect_canopies(session.entity_system, settings.tick, settings.state_tick,
                    settings.tick_interval_seconds(), out.movers);
   collect_statues(session.entity_system, out.movers);
+  collect_lens_panes(session.entity_system, out.movers);
 }
 
 void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
@@ -51,6 +53,12 @@ void build_reveal_cones(game_session_t& session, const predicted_world_settings_
   collect_reveal_cones(session.entity_system, session.path_links, session.mover_rests,
                        settings.reveal_cone, settings.tick, settings.tickrate_hz, null_entity_uid,
                        out.reveal_cones);
+}
+
+void build_lens_watchers(game_session_t& session, predicted_world_storage_t& out)
+{
+  collect_lenses(session.entity_system, out.lenses);
+  collect_lens_watchers(session.entity_system, null_entity_uid, out.lens_watchers);
 }
 
 shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out)
@@ -72,6 +80,7 @@ void build_predicted_world(game_session_t& session, const predicted_world_settin
   build_movement_volumes(session, settings, out);
   build_movers(session, settings, out);
   build_reveal_cones(session, settings, out);
+  build_lens_watchers(session, out);
   build_shadow_volumes(session, out);
   build_solid_beams(session, settings.beams_carved, out);
 }

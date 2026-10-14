@@ -1,10 +1,26 @@
 #pragma once
 
+#include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
+#include "entity_system.hpp"
+#include "entity_uid.hpp"
 #include "weapons.hpp"
 
 namespace shared
 {
+
+// The row of the weapon in the player's active slot; null when the slot is empty or names no live weapon.
+[[nodiscard]] inline const weapon_definition_t* try_find_held_weapon_definition(const Entity_System&           system,
+                                                                              const entities::Player_Entity& player)
+{
+  const uint32_t* weapon_uid = player.inventory.weapons.try_get(player.inventory.active_slot);
+  if (weapon_uid == nullptr || *weapon_uid == null_entity_uid)
+    return nullptr;
+  const entities::Weapon_Entity* held = system.get<entities::Weapon_Entity>(*weapon_uid);
+  if (held == nullptr || static_cast<uint32_t>(held->weapon_id) >= WEAPON_DEFINITIONS.size())
+    return nullptr;
+  return &get_weapon_definition(held->weapon_id);
+}
 
 // The ONE reader of the row's counts: a grant, a placement and a changed weapon_id all come through here.
 inline void write_weapon_kind_counts(entities::Weapon_Entity& weapon)

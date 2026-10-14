@@ -369,6 +369,10 @@ void resolve_player_shot(
     case entities::Fire_Resolution::Zoom:
       return;
 
+    case entities::Fire_Resolution::Lens_View:
+      player->held_lens_on = !player->held_lens_on;
+      return;
+
     case entities::Fire_Resolution::Canopy:
       toggle_canopy(context, *player);
       return;

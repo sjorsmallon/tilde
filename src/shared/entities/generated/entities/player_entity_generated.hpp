@@ -31,6 +31,7 @@ struct Player_Entity : Entity
   uint8_t teleport_count;
   bool reveal_light_on;
   bool reveal_light_overhead;
+  bool held_lens_on;
   uint64_t reload_complete_time;
   uint32_t last_empty_fire_warning_tick;
   shared::entity_uid_t checkpoint_uid;

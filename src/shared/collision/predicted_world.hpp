@@ -26,6 +26,7 @@
 #include "movement/movement_modifiers.hpp"
 #include "movement/movement_volumes.hpp"
 #include "movers.hpp"
+#include "lighting/lens.hpp"
 #include "lighting/reveal_light.hpp"
 #include "lighting/solid_beams.hpp"
 #include "lighting/shadow_volume.hpp"
@@ -58,7 +59,8 @@ struct predicted_world_t
   // carry is NOT in player_move -- see push_player_by_movers. A landed
   // Platform_Entity and Shrinking_Platform_Entity are in here too, as movers whose two poses are equal,
   // and so is a growing Extending_Platform_Entity, an oriented box whose length is a clock, and a
-  // spot's solid beam, carved by the shadow volumes below and so appended after them.
+  // spot's solid beam, carved by the shadow volumes below and so appended after them. A switched-on
+  // lens's pane is one as well (lens_panes.hpp): glass is glass.
   Span<const mover_t> movers;
 
   // Where a GEOMETRY_SOLID_WHERE_LIT byte of the disabled set is solid (reveal_light.hpp).
@@ -66,6 +68,10 @@ struct predicted_world_t
 
   // Where a GEOMETRY_SOLID_IN_SHADOW byte is solid and a GEOMETRY_SOLID_UNLESS_SHADOWED one is not (shadow_volume.hpp).
   Span<const shadow_volume_t> shadow_volumes;
+
+  // Where a GEOMETRY_SOLID_WHERE_LENSED byte is solid: seen by a watcher through a lens (lens.hpp).
+  Span<const lens_t>         lenses;
+  Span<const lens_watcher_t> lens_watchers;
 };
 
 // The STORAGE the three views are over, held by the caller across ticks so a
@@ -85,6 +91,8 @@ struct predicted_world_storage_t
   std::vector<mover_t>                                       movers;
   std::vector<reveal_cone_planes_t>                          reveal_cones;
   std::vector<shadow_volume_t>                               shadow_volumes;
+  std::vector<lens_t>                                        lenses;
+  std::vector<lens_watcher_t>                                lens_watchers;
 };
 
 [[nodiscard]] inline predicted_world_t get_predicted_world_for_team(const predicted_world_storage_t& storage,
@@ -100,7 +108,9 @@ struct predicted_world_storage_t
           .movement_modifiers = storage.movement_modifiers,
           .movers             = storage.movers,
           .reveal_cones       = storage.reveal_cones,
-          .shadow_volumes     = storage.shadow_volumes};
+          .shadow_volumes     = storage.shadow_volumes,
+          .lenses             = storage.lenses,
+          .lens_watchers      = storage.lens_watchers};
 }
 
 // The tick a build is FOR. `tick_interval_seconds` is DERIVED from the tickrate
@@ -136,6 +146,8 @@ void build_movers(game_session_t& session, const predicted_world_settings_t& set
                 predicted_world_storage_t& out);
 void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
                         predicted_world_storage_t& out);
+// Every switched-on lens and every alive player's eye (lens.hpp); a client adds its own eye from its prediction.
+void build_lens_watchers(game_session_t& session, predicted_world_storage_t& out);
 // After build_movers: a moving caster's pieces are the movers'. The report is for the two report commands.
 shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out);
 // After build_shadow_volumes: a solid beam is a mover carved by the volumes its own light threw (solid_beams.hpp).

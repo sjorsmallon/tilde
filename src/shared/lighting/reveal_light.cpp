@@ -6,6 +6,7 @@
 
 #include "entity_system.hpp"
 #include "movement/player_constants.hpp"
+#include "weapon_instance.hpp"
 #include "weapons.hpp"
 
 namespace shared
@@ -24,15 +25,11 @@ std::optional<entities::Reveal_Cone_Kind> try_checking_whether_player_is_wieldin
   if (player.health.current_health <= 0)
     return std::nullopt;
 
-  const uint32_t* weapon_uid = player.inventory.weapons.try_get(player.inventory.active_slot);
-  if (weapon_uid == nullptr || *weapon_uid == null_entity_uid)
+  const weapon_definition_t* held = try_find_held_weapon_definition(system, player);
+  if (held == nullptr)
     return std::nullopt;
 
-  const entities::Weapon_Entity* held = system.get<entities::Weapon_Entity>(*weapon_uid);
-  if (held == nullptr || static_cast<uint32_t>(held->weapon_id) >= WEAPON_DEFINITIONS.size())
-    return std::nullopt;
-
-  const entities::Fire_Resolution primary = get_weapon_definition(held->weapon_id).primary_fire.resolution;
+  const entities::Fire_Resolution primary = held->primary_fire.resolution;
   if (primary == entities::Fire_Resolution::Reveal_Light)
     return entities::Reveal_Cone_Kind::Reveals;
   if (primary == entities::Fire_Resolution::Erase_Light)
