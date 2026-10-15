@@ -832,7 +832,7 @@ struct scene_uniform_t
   float       lens_settings[4]                              = {}; // x how many of `lenses` are live
   float       lenses[MAX_SCENE_LENSES][12]                  = {}; // centre xyz and the channel bits it passes as a whole number, half extents xyz and one spare, then its orientation as a quaternion xyzw
   float       lens_watcher_settings[4]                      = {}; // x how many of `lens_watchers` are live
-  float       lens_watchers[MAX_SCENE_LENS_WATCHERS][8]     = {}; // eye xyz and the channel bits of the lens it holds, then forward xyz and the cosine of the watch half-angle
+  float       lens_watchers[MAX_SCENE_LENS_WATCHERS][20]    = {}; // eye xyz and the channel bits of the lens it holds, then its four outward sides as normal xyz and the normal's dot with the eye
 };
 
 static_assert(sizeof(scene_uniform_t) ==
@@ -845,7 +845,7 @@ static_assert(sizeof(scene_uniform_t) ==
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
                       8 * MAX_SCENE_SHADOW_OCCLUDERS +
                       16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_OCCLUDERS + 48 +
-                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES + 16 + 32 * MAX_SCENE_LENS_WATCHERS,
+                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES + 16 + 80 * MAX_SCENE_LENS_WATCHERS,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -7709,7 +7709,6 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
   }
   const size_t lens_watcher_count = std::min<size_t>(pass.lens_watchers.size(), MAX_SCENE_LENS_WATCHERS);
   scene.lens_watcher_settings[0]  = (float)lens_watcher_count;
-  const float watch_cosine = std::cos(linalg::to_radians(shared::LENS_WATCH_HALF_ANGLE_DEGREES));
   for (size_t index = 0; index < lens_watcher_count; ++index)
   {
     const shared::lens_watcher_t& watcher = pass.lens_watchers[(uint32_t)index];
@@ -7718,10 +7717,14 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     out[1] = watcher.eye.y;
     out[2] = watcher.eye.z;
     out[3] = (float)watcher.held_channels;
-    out[4] = watcher.forward.x;
-    out[5] = watcher.forward.y;
-    out[6] = watcher.forward.z;
-    out[7] = watch_cosine;
+    for (uint32_t side = 0; side < shared::LENS_WATCH_SIDE_COUNT; ++side)
+    {
+      const Plane& plane = watcher.sides[side];
+      out[4 + side * 4 + 0] = plane.normal.x;
+      out[4 + side * 4 + 1] = plane.normal.y;
+      out[4 + side * 4 + 2] = plane.normal.z;
+      out[4 + side * 4 + 3] = linalg::dot(plane.normal, plane.point);
+    }
   }
 
   static size_t most_shadow_volumes_warned_about = MAX_SCENE_SHADOW_VOLUMES;

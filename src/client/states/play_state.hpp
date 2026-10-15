@@ -63,6 +63,7 @@ private:
   void retire_per_frame_visuals(client_context_t &ctx, play_frame_t &frame);
   void reconcile_with_server(client_context_t &ctx, play_frame_t &frame);
   void resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &frame);
+  [[nodiscard]] shared::lens_watch_screen_t local_watch_screen(const client_context_t &ctx) const;
   void place_input_edges_on_the_tick_timeline(client_context_t &ctx, play_frame_t &frame);
   void run_predicted_ticks(client_context_t &ctx, play_frame_t &frame);
   void play_local_movement_sounds(client_context_t &ctx, play_frame_t &frame);

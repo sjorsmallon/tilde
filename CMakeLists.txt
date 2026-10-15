@@ -919,6 +919,21 @@ add_library(game_client SHARED
     src/client/hitbox_debug_draw.hpp
     src/client/entity_hitbox_overlay.cpp
     src/client/renderer.cpp
+    src/client/renderer/device.cpp
+    src/client/renderer/textures.cpp
+    src/client/renderer/meshes.cpp
+    src/client/renderer/materials.cpp
+    src/client/renderer/pipelines.cpp
+    src/client/renderer/pass_set.cpp
+    src/client/renderer/lightmap.cpp
+    src/client/renderer/shadows.cpp
+    src/client/renderer/fog.cpp
+    src/client/renderer/particles.cpp
+    src/client/renderer/skybox.cpp
+    src/client/renderer/screen_passes.cpp
+    src/client/renderer/debug_draw.cpp
+    src/client/renderer/ui.cpp
+    src/client/renderer/frame.cpp
     src/client/shader_tool_runtime.cpp
     ${SHADER_HEADERS}
 )

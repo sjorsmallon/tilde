@@ -115,22 +115,43 @@ uint32_t compute_held_lens_channels(const Entity_System& system, const entities:
   return filter.has_value() ? get_channel_bits_for_lens_filter(*filter) : 0;
 }
 
-lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
-                                    uint32_t held_channels)
+lens_watch_screen_t clamp_lens_watch_screen(const lens_watch_screen_t& view)
 {
-  return {.eye           = eye,
-          .forward       = linalg::direction_from_angles(yaw_degrees, pitch_degrees),
-          .held_channels = held_channels};
+  return {.fov_degrees = std::clamp(view.fov_degrees, LENS_WATCH_SCREEN_FOV_DEGREES_MIN, LENS_WATCH_SCREEN_FOV_DEGREES_MAX),
+          .aspect      = std::clamp(view.aspect, LENS_WATCH_SCREEN_ASPECT_MIN, LENS_WATCH_SCREEN_ASPECT_MAX)};
+}
+
+lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
+                                    const lens_watch_screen_t& view, uint32_t held_channels)
+{
+  constexpr linalg::vec3f WORLD_UP = {0.f, 1.f, 0.f};
+  constexpr float         LEVEL    = 1e-3f;
+
+  const linalg::vec3f forward = linalg::direction_from_angles(yaw_degrees, pitch_degrees);
+  linalg::vec3f       right   = linalg::cross(forward, WORLD_UP);
+  right = linalg::length(right) < LEVEL ? linalg::vec3f{1.f, 0.f, 0.f} : linalg::normalize(right);
+  const linalg::vec3f up = linalg::cross(right, forward);
+
+  const lens_watch_screen_t bounded    = clamp_lens_watch_screen(view);
+  const float       vertical   = linalg::to_radians(bounded.fov_degrees) * 0.5f;
+  const float       horizontal = std::atan(std::tan(vertical) * bounded.aspect);
+  const float sine_h = std::sin(horizontal), cosine_h = std::cos(horizontal);
+  const float sine_v = std::sin(vertical), cosine_v = std::cos(vertical);
+
+  lens_watcher_t watcher = {.eye = eye, .held_channels = held_channels};
+  watcher.sides[0]       = {.point = eye, .normal = right * -cosine_h - forward * sine_h};
+  watcher.sides[1]       = {.point = eye, .normal = right * cosine_h - forward * sine_h};
+  watcher.sides[2]       = {.point = eye, .normal = up * -cosine_v - forward * sine_v};
+  watcher.sides[3]       = {.point = eye, .normal = up * cosine_v - forward * sine_v};
+  return watcher;
 }
 
 bool lens_watcher_faces_point(const lens_watcher_t& watcher, const linalg::vec3f& point)
 {
-  const linalg::vec3f to_point = point - watcher.eye;
-  const float         reach    = linalg::length(to_point);
-  if (reach <= 0.f)
-    return true;
-  return linalg::dot(to_point, watcher.forward) >=
-         std::cos(linalg::to_radians(LENS_WATCH_HALF_ANGLE_DEGREES)) * reach;
+  for (const Plane& side : watcher.sides)
+    if (linalg::dot(side.normal, point - side.point) > 0.f)
+      return false;
+  return true;
 }
 
 bool any_lens_watcher_sees_point(Span<const lens_watcher_t> watchers, Span<const lens_t> lenses,
@@ -162,6 +183,7 @@ void collect_lens_watchers(const Entity_System& system, entity_uid_t predicted_b
       continue;
     out.push_back(compute_lens_watcher(player.position + linalg::vec3f{0.f, player_eye_height, 0.f},
                                        player.view_angle_yaw, player.view_angle_pitch,
+                                       {.fov_degrees = player.view_fov_degrees, .aspect = player.view_aspect},
                                        compute_held_lens_channels(system, player, player.held_lens_on)));
   }
 }

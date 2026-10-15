@@ -9,9 +9,11 @@
 // alike (collision/lens_panes.hpp).
 
 #include "aabb.hpp"
+#include "array.hpp"
 #include "entities/generated/entities_core_generated.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
+#include "plane.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -68,21 +70,36 @@ inline constexpr uint32_t LENS_CHANNEL_ALL   = LENS_CHANNEL_RED | LENS_CHANNEL_G
 // Every switched-on Lens_Entity's box.
 void collect_lenses(const Entity_System& system, std::vector<lens_t>& out);
 
-// A watcher: an eye and where it faces. Geometry whose owner is `solid_only_when_lensed` is solid, for
+// A watcher: an eye and the frustum it sees. Geometry whose owner is `solid_only_when_lensed` is solid, for
 // everyone, where some watcher sees it through a lens that passes its colour
-// (collision_detection.hpp's GEOMETRY_SOLID_WHERE_LENSED): what is watched holds.
-struct lens_watcher_t
+// (collision_detection.hpp's GEOMETRY_SOLID_WHERE_LENSED): what is watched holds. The frustum is the
+// player's own screen (Player_Entity::view_fov_degrees and view_aspect, restated on every input), clamped
+// on arrival: the server cannot verify what a client claims to see, only bound it.
+inline constexpr uint32_t LENS_WATCH_SIDE_COUNT = 4;
+
+struct lens_watch_screen_t
 {
-  linalg::vec3f eye           = {0.f, 0.f, 0.f};
-  linalg::vec3f forward       = {0.f, 0.f, -1.f};
-  uint32_t      held_channels = 0;
+  float fov_degrees = 90.f;
+  float aspect      = 16.f / 9.f;
 };
 
-// How far off the watcher's facing a point may lie and still count as looked at.
-inline constexpr float LENS_WATCH_HALF_ANGLE_DEGREES = 45.f;
+inline constexpr float LENS_WATCH_SCREEN_FOV_DEGREES_MIN = 20.f;
+inline constexpr float LENS_WATCH_SCREEN_FOV_DEGREES_MAX = 120.f;
+inline constexpr float LENS_WATCH_SCREEN_ASPECT_MIN      = 0.5f;
+inline constexpr float LENS_WATCH_SCREEN_ASPECT_MAX      = 3.6f;
 
+[[nodiscard]] lens_watch_screen_t clamp_lens_watch_screen(const lens_watch_screen_t& view);
+
+struct lens_watcher_t
+{
+  linalg::vec3f                       eye = {0.f, 0.f, 0.f};
+  Array<Plane, LENS_WATCH_SIDE_COUNT> sides;
+  uint32_t                            held_channels = 0;
+};
+
+// The sides face outward, through the eye: left, right, bottom, top. `fov_degrees` is the view's height.
 [[nodiscard]] lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
-                                                  uint32_t held_channels);
+                                                  const lens_watch_screen_t& view, uint32_t held_channels);
 
 [[nodiscard]] bool lens_watcher_faces_point(const lens_watcher_t& watcher, const linalg::vec3f& point);
 

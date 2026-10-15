@@ -144,17 +144,32 @@ int main()
           "which alone passes green");
   }
 
-  printf("[pin] a watcher faces a point within the watch half-angle of its forward\n");
-  const shared::lens_watcher_t ahead = {.eye = {0.f, 64.f, -300.f}, .forward = {0.f, 0.f, 1.f}};
+  printf("[pin] a watcher faces a point inside the default view's frustum\n");
+  const shared::lens_watch_screen_t    default_screen;
+  const shared::lens_watcher_t ahead = shared::compute_lens_watcher({0.f, 64.f, -300.f}, 90.f, 0.f, default_screen, 0);
   check(shared::lens_watcher_faces_point(ahead, {0.f, 64.f, 0.f}), "a point straight ahead is faced");
   check(shared::lens_watcher_faces_point(ahead, {0.f, 0.f, 0.f}), "so is one a little below the line");
   check(!shared::lens_watcher_faces_point(ahead, {0.f, 64.f, -600.f}), "one behind the watcher is not");
   check(!shared::lens_watcher_faces_point(ahead, {400.f, 64.f, -300.f}), "nor one beside it");
-  const shared::lens_watcher_t built = shared::compute_lens_watcher({1.f, 2.f, 3.f}, 30.f, -10.f, LENS_CHANNEL_BLUE);
+  check(shared::lens_watcher_faces_point(ahead, {0.f, 64.f + 99.f, -200.f}), "one just inside the top edge is");
+  check(!shared::lens_watcher_faces_point(ahead, {0.f, 64.f + 101.f, -200.f}), "one just past it is not");
+  check(shared::lens_watcher_faces_point(ahead, {176.f, 64.f, -200.f}), "the view is wider than it is tall");
+  check(!shared::lens_watcher_faces_point(ahead, {179.f, 64.f, -200.f}), "and ends at the aspect's width");
+  check(shared::lens_watcher_faces_point(ahead, {176.f, 64.f + 99.f, -200.f}), "its corner is in view");
+  const shared::lens_watcher_t built = shared::compute_lens_watcher({1.f, 2.f, 3.f}, 30.f, -10.f, default_screen, LENS_CHANNEL_BLUE);
+  const linalg::vec3f          built_forward = linalg::direction_from_angles(30.f, -10.f);
   check(built.eye.x == 1.f && built.eye.y == 2.f && built.eye.z == 3.f &&
-            linalg::length(built.forward - linalg::direction_from_angles(30.f, -10.f)) < 1e-6f &&
+            shared::lens_watcher_faces_point(built, built.eye + built_forward * 100.f) &&
+            !shared::lens_watcher_faces_point(built, built.eye - built_forward * 100.f) &&
             built.held_channels == LENS_CHANNEL_BLUE,
         "a watcher is built at the eye, facing its yaw and pitch, holding its lens");
+  const shared::lens_watcher_t narrow = shared::compute_lens_watcher({0.f, 64.f, -300.f}, 90.f, 0.f,
+                                                                     {.fov_degrees = 60.f, .aspect = 1.f}, 0);
+  check(!shared::lens_watcher_faces_point(narrow, {0.f, 64.f + 99.f, -200.f}), "a narrower view faces less");
+  check(shared::lens_watcher_faces_point(narrow, {0.f, 64.f + 50.f, -200.f}), "but still what is inside it");
+  const shared::lens_watch_screen_t clamped = shared::clamp_lens_watch_screen({.fov_degrees = 179.f, .aspect = 40.f});
+  check(clamped.fov_degrees == shared::LENS_WATCH_SCREEN_FOV_DEGREES_MAX && clamped.aspect == shared::LENS_WATCH_SCREEN_ASPECT_MAX,
+        "a claimed view is bounded");
 
   printf("[pin] a watcher sees a point through a pane of the point's colour\n");
   {
@@ -162,7 +177,7 @@ int main()
                                                    .filter = entities::Lens_Filter::Red};
     const shared::lens_t          red_aside     = {.box    = {.center = {300.f, 32.f, -150.f}, .half_extents = {64.f, 64.f, 4.f}},
                                                    .filter = entities::Lens_Filter::Red};
-    const shared::lens_watcher_t  facing_away   = {.eye = ahead.eye, .forward = {0.f, 0.f, -1.f}};
+    const shared::lens_watcher_t  facing_away   = shared::compute_lens_watcher(ahead.eye, -90.f, 0.f, default_screen, 0);
     const shared::lens_watcher_t  watchers[]    = {ahead};
     const shared::lens_watcher_t  turned_away[] = {facing_away};
     const shared::lens_t          between[]     = {red_between};
@@ -180,7 +195,7 @@ int main()
           "nor anything by a watcher facing away");
     check(!shared::any_lens_watcher_sees_point({}, between, entities::Lens_Filter::Red, spot),
           "nor anything with nobody watching");
-    const shared::lens_watcher_t holding_red   = {.eye = ahead.eye, .forward = ahead.forward, .held_channels = LENS_CHANNEL_RED};
+    const shared::lens_watcher_t holding_red   = shared::compute_lens_watcher(ahead.eye, 90.f, 0.f, default_screen, LENS_CHANNEL_RED);
     const shared::lens_watcher_t red_holders[] = {holding_red};
     check(shared::any_lens_watcher_sees_point(red_holders, {}, entities::Lens_Filter::Red, spot),
           "a watcher holding a red lens sees a red spot with no pane");
@@ -198,6 +213,8 @@ int main()
     alive->position                          = {10.f, 0.f, 20.f};
     alive->view_angle_yaw                    = 30.f;
     alive->view_angle_pitch                  = -10.f;
+    alive->view_fov_degrees                  = 60.f;
+    alive->view_aspect                       = 1.f;
     system.get<entities::Player_Entity>(dead_uid)->health.current_health = 0;
 
     std::vector<shared::lens_watcher_t> watchers;
@@ -207,8 +224,13 @@ int main()
               watchers[0].eye.z == 20.f,
           "from its eye");
     check(watchers.size() == 1 &&
-              linalg::length(watchers[0].forward - linalg::direction_from_angles(30.f, -10.f)) < 1e-6f,
+              shared::lens_watcher_faces_point(watchers[0], watchers[0].eye + linalg::direction_from_angles(30.f, -10.f) * 100.f) &&
+              !shared::lens_watcher_faces_point(watchers[0], watchers[0].eye - linalg::direction_from_angles(30.f, -10.f) * 100.f),
           "facing its view angles");
+    check(watchers.size() == 1 &&
+              !shared::lens_watcher_faces_point(watchers[0], watchers[0].eye + linalg::direction_from_angles(30.f, 25.f) * 100.f) &&
+              shared::lens_watcher_faces_point(watchers[0], watchers[0].eye + linalg::direction_from_angles(30.f, 15.f) * 100.f),
+          "through the screen it reports");
     shared::collect_lens_watchers(system, shared::null_entity_uid, watchers);
     check(watchers.size() == 2, "the server leaves nobody out");
     check(watchers.size() == 2 && watchers[0].held_channels == 0 && watchers[1].held_channels == 0,

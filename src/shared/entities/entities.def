@@ -364,6 +364,10 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
     body_yaw:          f32              @Networked
+    // The screen this player looks through, restated on every input and clamped on arrival (shared::clamp_lens_view);
+    // what it watches through a lens holds (shared::collect_lens_watchers). Exact: the client cuts its own from the same numbers.
+    view_fov_degrees:  f32_exact = 90.0 @Networked
+    view_aspect:       f32_exact = 1.7777778 @Networked
 
     health:            Health = {current_health = 100, max_health = 100}
 

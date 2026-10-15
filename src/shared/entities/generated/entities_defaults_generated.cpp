@@ -26,6 +26,8 @@ Player_Entity::Player_Entity()
   : view_angle_yaw{},
     view_angle_pitch{},
     body_yaw{},
+    view_fov_degrees(90.0f),
+    view_aspect(1.7777778f),
     health({.current_health = 100, .max_health = 100}),
     death_tick{},
     last_fire_tick{},

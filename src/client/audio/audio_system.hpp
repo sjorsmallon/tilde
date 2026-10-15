@@ -8,7 +8,7 @@ namespace client
 
 struct sound_attenuation_t
 {
-  float reference_distance  = 150.0f; // reference distance for 1.0 volume.
+  float reference_distance = 150.0f; // reference distance for 1.0 volume.
   float max_distance_cutoff = 4000.0f;
   float rolloff_factor = 1.0f;
 };
@@ -18,8 +18,6 @@ struct voice_handle_t
   uint32_t slot = 0;
   uint32_t generation = 0;
 };
-
-// constructor because it's calling minaudio stuff.
 
 struct Audio_System
 {

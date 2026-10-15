@@ -1254,7 +1254,8 @@ static void build_predicted_world_for_input(
   client_context_t& ctx,
   play_frame_t& frame,
   int32_t input_number,
-  const vec3f& own_feet)
+  const vec3f& own_feet,
+  const shared::lens_watch_screen_t& own_screen)
 {
   const shared::predicted_world_settings_t settings{
       .tick = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number),
@@ -1300,7 +1301,7 @@ static void build_predicted_world_for_input(
   {
     const shared::subtick_view_t view = local_view_entering(ctx, *my_player, input_number);
     frame.predicted_world_storage.lens_watchers.push_back(shared::compute_lens_watcher(
-        own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw, view.pitch,
+        own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw, view.pitch, own_screen,
         local_held_lens_channels_entering(ctx, *my_player, input_number)));
   }
 
@@ -1854,7 +1855,7 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
-      build_predicted_world_for_input(ctx, frame, replayed, reconciled_position);
+      build_predicted_world_for_input(ctx, frame, replayed, reconciled_position, local_watch_screen(ctx));
 
       reconciled_position = predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
 
@@ -1963,6 +1964,15 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 // to, the sensitivity that FOV scales, the button poll, and every clock counted
 // in seconds rather than ticks. Nothing here is per-tick; the tick loop reads
 // what it leaves on `frame`.
+shared::lens_watch_screen_t Play_State::local_watch_screen(const client_context_t &ctx) const
+{
+  const linalg::vec2        screen = renderer::screen_size();
+  const shared::lens_watch_screen_t defaults;
+  return shared::clamp_lens_watch_screen(
+      {.fov_degrees = shared::lerp_clamped(ctx.cvars->r_fov, ctx.cvars->r_zoom_fov, connection_ui.zoom_fraction),
+       .aspect      = screen.y > 0.f ? screen.x / screen.y : defaults.aspect});
+}
+
 void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &frame)
 {
   const float dt                 = frame.dt;
@@ -2010,8 +2020,7 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
     connection_ui.zoom_fraction += shared::clamp(zoom_target - connection_ui.zoom_fraction, -step, step);
   }
 
-  const float fov_degrees = shared::lerp_clamped(
-      ctx.cvars->r_fov, ctx.cvars->r_zoom_fov, connection_ui.zoom_fraction);
+  const float fov_degrees = local_watch_screen(ctx).fov_degrees;
 
   // The lens view is the Red Lens's held_lens_on as the prediction holds it; the tonemap's page fades
   // after it over r_lens_view_seconds, in the colour of the lens that was held.
@@ -2021,16 +2030,16 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   if (lens_view_on)
     ctx.visuals.lens_view_filter =
         *shared::try_get_held_lens_filter(ctx.world.session.entity_system, *lens_holder);
-  const float lens_view_target = lens_view_on ? 1.0f : 0.0f;
+  const float lens_watch_screen_target = lens_view_on ? 1.0f : 0.0f;
   if (ctx.cvars->r_lens_view_seconds <= 0.0f)
   {
-    ctx.visuals.lens_view_fraction = lens_view_target;
+    ctx.visuals.lens_view_fraction = lens_watch_screen_target;
   }
   else
   {
     const float lens_step = dt / ctx.cvars->r_lens_view_seconds;
     ctx.visuals.lens_view_fraction += shared::clamp(
-        lens_view_target - ctx.visuals.lens_view_fraction, -lens_step, lens_step);
+        lens_watch_screen_target - ctx.visuals.lens_view_fraction, -lens_step, lens_step);
   }
 
   const bool mouse_look_allowed = connection_ui.mouse_captured && body_input_allowed;
@@ -2471,6 +2480,13 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
       // needs no ack, no retransmit and no timer in either direction.
       input_message.set_map_content_hash(ctx.world.map_content_hash);
 
+      // The same kind of rider: the screen this input was aimed through, which is what the server cuts
+      // this player's lens-watched geometry to. Clamped here as the server clamps it, so the cut this
+      // client predicts for its own eye is the cut the server holds.
+      const shared::lens_watch_screen_t sent_screen = local_watch_screen(ctx);
+      input_message.set_view_fov_degrees(sent_screen.fov_degrees);
+      input_message.set_view_aspect(sent_screen.aspect);
+
       // The blend this move was aimed THROUGH, which is a different question
       // from what we hold: remote players are drawn interpolated BETWEEN two
       // snapshots, so the world the crosshair was on is at no whole tick. See
@@ -2611,7 +2627,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
         uint64_t buttons_entering_step = buttons_before_tick;
 
         build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number,
-                                        ctx.prediction.player_position);
+                                        ctx.prediction.player_position, local_watch_screen(ctx));
         ctx.prediction.player_position =
             predict_mover_push(ctx, frame.predicted_world, ctx.prediction.player_movement,
                                ctx.prediction.player_position);
@@ -3127,7 +3143,7 @@ void Play_State::update(float dt)
   // ----------------------------------------------------------------- SIMULATE
   collect_disabled_geometry_for_frame(ctx, frame);
   build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number,
-                                  ctx.prediction.player_position);
+                                  ctx.prediction.player_position, local_watch_screen(ctx));
 
   reconcile_with_server(ctx, frame);
   resolve_aim_and_buttons(ctx, frame);

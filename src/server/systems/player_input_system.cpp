@@ -5,6 +5,7 @@
 #include "../shared/animation/player_animator.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/effects/generated/effects_generated.hpp"
+#include "../shared/lighting/lens.hpp"
 #include "../shared/merge.hpp"
 #include "../shared/network/subtick_codec.hpp"
 #include "movement/player_constants.hpp"
@@ -119,6 +120,14 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
     client.latest_buttons_bitmap = subtick_input.buttons_at_end();
+
+    if (input.has_view_fov_degrees() && input.has_view_aspect())
+    {
+      const shared::lens_watch_screen_t view =
+          shared::clamp_lens_watch_screen({.fov_degrees = input.view_fov_degrees(), .aspect = input.view_aspect()});
+      player->view_fov_degrees = view.fov_degrees;
+      player->view_aspect      = view.aspect;
+    }
 
     // allowed to move is the moire logical one because we can pile more conditions on here.
     bool allowed_to_move = !is_dead;

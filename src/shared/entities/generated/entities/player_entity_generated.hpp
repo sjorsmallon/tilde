@@ -24,6 +24,8 @@ struct Player_Entity : Entity
   float view_angle_yaw;
   float view_angle_pitch;
   float body_yaw;
+  float view_fov_degrees;
+  float view_aspect;
   Health health;
   uint32_t death_tick;
   uint32_t last_fire_tick;
