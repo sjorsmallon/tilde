@@ -1,7 +1,10 @@
 #include "geometry_renderer.hpp"
+#include "../shared/aabb.hpp"
 #include "../shared/assets/asset.hpp"
 #include "../shared/color.hpp"
 #include "../shared/log.hpp"
+#include "../shared/map/brush/brush_smoothing.hpp"
+#include "../shared/map/brush/face_neighbour.hpp"
 #include "render_assets.hpp"
 #include <string>
 #include <unordered_map>
@@ -100,13 +103,14 @@ bool generated_mesh_is_current(shared::entity_uid_t uid,
 assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geometry,
                                             shared::entity_uid_t uid,
                                             Span<const std::string> materials,
-                                            const shared::lightmap_t &lightmap)
+                                            const shared::lightmap_t &lightmap,
+                                            Span<const shared::map_geometry_t> map_geometry)
 {
   switch (shared::get_kind(geometry))
   {
   case shared::geometry_kind_t::Brush:
     return shared::generate_brush_mesh(std::get<shared::brush_geometry_t>(geometry),
-                                       materials, {&lightmap, uid});
+                                       materials, {map_geometry, uid}, {&lightmap, uid});
 
   case shared::geometry_kind_t::Static_Mesh:
     return shared::generate_lightmapped_static_mesh(
@@ -324,7 +328,8 @@ renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geome
 
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
-                   const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by,
+                   const shared::lightmap_t &lightmap,
+                   Span<const shared::map_geometry_t> map_geometry, const linalg::mat4f* moved_by,
                    const renderer::clock_wipe_t& clock_wipe,
                    std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut,
                    bool casts_dynamic_shadow)
@@ -346,7 +351,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!lightmap.empty())
     {
       if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
-        refresh_generated_geometry_mesh(geometry, uid, materials, lightmap);
+        refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
       char                   cache_key_buffer[48];
       const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
@@ -372,6 +377,11 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
 
+    // A hole is drawn by its wall's mesh and has none of its own; the editor
+    // draws its authored volume tinted beside this.
+    if (brush.subtracts_from_uid != shared::null_entity_uid)
+      return;
+
     if (!surface.mesh_path.empty() &&
         draw_surface_mesh(draws, surface,
                           get_render_mesh(shared::resolve_surface_mesh(surface)),
@@ -384,7 +394,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
       return;
 
     if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
-      refresh_generated_geometry_mesh(geometry, uid, materials, lightmap);
+      refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
     char                   cache_key_buffer[48];
     const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
@@ -425,10 +435,14 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
   log_error("draw_geometry: unhandled geometry kind {}", (int)shared::get_kind(geometry));
 }
 
-void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
+namespace
+{
+
+void rebuild_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      shared::entity_uid_t uid,
                                      Span<const std::string> materials,
-                                     const shared::lightmap_t &lightmap)
+                                     const shared::lightmap_t &lightmap,
+                                     Span<const shared::map_geometry_t> map_geometry)
 {
   const bool is_brush = shared::get_kind(geometry) == shared::geometry_kind_t::Brush;
 
@@ -449,9 +463,8 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
 
   if (!mesh_asset.valid())
   {
-    mesh_asset =
-        assets::register_dynamic_mesh(cache_key,
-                                      generate_geometry_mesh(geometry, uid, materials, lightmap));
+    mesh_asset = assets::register_dynamic_mesh(
+        cache_key, generate_geometry_mesh(geometry, uid, materials, lightmap, map_geometry));
   }
   else
   {
@@ -462,7 +475,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
       return;
     }
 
-    *mesh = generate_geometry_mesh(geometry, uid, materials, lightmap);
+    *mesh = generate_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
     // Eager re-upload, right here where the edit happened, rather than a flag
     // the next draw would have to notice.
@@ -476,6 +489,33 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   if (is_brush)
     g_generated_mesh_sources[uid].overrides =
         build_brush_material_overrides(get_render_mesh(mesh_asset));
+}
+
+} // namespace
+
+void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
+                                     shared::entity_uid_t uid,
+                                     Span<const std::string> materials,
+                                     const shared::lightmap_t &lightmap,
+                                     Span<const shared::map_geometry_t> map_geometry)
+{
+  rebuild_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
+
+  if (shared::get_kind(geometry) != shared::geometry_kind_t::Brush)
+    return;
+
+  const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
+  for (const shared::map_geometry_t &entry : map_geometry)
+  {
+    const shared::brush_geometry_t *other = std::get_if<shared::brush_geometry_t>(&entry.value);
+    if (entry.uid == uid || !other ||
+        !(shared::brush_has_subdivided_face(*other) || shared::brush_has_smoothed_face(*other)) ||
+        !shared::aabbs_intersect_with_tolerance(shared::get_bounds(entry.value), bounds,
+                                                shared::BRUSH_WELD_EPSILON))
+      continue;
+
+    rebuild_generated_geometry_mesh(entry.value, entry.uid, materials, lightmap, map_geometry);
+  }
 }
 
 } // namespace client

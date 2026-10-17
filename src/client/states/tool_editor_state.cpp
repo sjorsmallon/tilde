@@ -29,6 +29,8 @@
 #include "../editor/tools/pathfinding_test_tool.hpp"
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
+#include "../editor/tools/clip_tool.hpp"
+#include "../editor/tools/stamp_tool.hpp"
 #include "../editor/tools/particle_editor_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
 #include "../console.hpp"
@@ -78,6 +80,8 @@ constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
     {editor_tool_t::brush,       "Brush"},
     {editor_tool_t::lightmap,    "Lightmap"},
     {editor_tool_t::path,        "Path"},
+    {editor_tool_t::clip,        "Clip"},
+    {editor_tool_t::stamp,       "Stamp"},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
@@ -335,6 +339,8 @@ void Tool_Editor_State::on_enter()
     tools[editor_tool_t::brush]       = std::make_unique<Brush_Tool>();
     tools[editor_tool_t::lightmap]    = std::make_unique<Lightmap_Tool>();
     tools[editor_tool_t::path]        = std::make_unique<Path_Tool>();
+    tools[editor_tool_t::clip]        = std::make_unique<Clip_Tool>();
+    tools[editor_tool_t::stamp]       = std::make_unique<Stamp_Tool>();
   }
 
   // Enable first tool
@@ -807,6 +813,8 @@ void Tool_Editor_State::update(float dt)
     update_bvh();
     geometry_updated_flag = false;
   }
+
+  hole_links = refresh_walls_of_changed_holes(map, hole_links);
 
   if (lightmap_updated_flag || map.lightmap.geometry_id != uploaded_lightmap_geometry_id)
   {
@@ -1533,7 +1541,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     {
       const size_t first_mesh = scene.meshes.size();
       draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid,
-                              map.materials, map.lightmap,
+                              map.materials, map.lightmap, map.geometry,
                               context.object_collides(entry.uid));
       scene.record_object_meshes(entry.uid, first_mesh);
     }

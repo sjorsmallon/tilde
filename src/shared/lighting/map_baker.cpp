@@ -491,7 +491,8 @@ void bake_map(map_t &map, float cell_size)
   {
     const map_geometry_t &entry = map.geometry[index];
 
-    for (const collision_piece_t &piece : get_collision_pieces(entry.value, entry.uid))
+    for (const collision_piece_t &piece :
+         get_collision_pieces(entry.value, entry.uid, map.geometry))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;

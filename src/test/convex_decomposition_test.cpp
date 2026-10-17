@@ -246,7 +246,7 @@ void test_one_brush_becomes_n_bvh_leaves_under_one_id()
   assert(entry != nullptr);
 
   const std::vector<shared::collision_piece_t> pieces =
-      shared::get_collision_pieces(entry->value, entry->uid);
+      shared::get_collision_pieces(entry->value, entry->uid, {});
   assert(pieces.size() == 1);
   assert(pieces[0].planes.size() == 6);
 

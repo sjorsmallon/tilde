@@ -52,7 +52,23 @@ void draw_brush_hull_wireframe(pass_builder_t &draws,
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid, Span<const std::string> materials,
-                             const shared::lightmap_t &lightmap, bool collides);
+                             const shared::lightmap_t &lightmap,
+                             Span<const shared::map_geometry_t> map_geometry, bool collides);
+
+// A hole as the editor last drew its wall from it. A wall's mesh is built from
+// its holes, whose edits leave the wall's own value untouched, so the wall is
+// rebuilt here when a hole moves, is re-pointed, appears or disappears.
+struct hole_link_t
+{
+  shared::entity_uid_t      hole = shared::null_entity_uid;
+  shared::entity_uid_t      wall = shared::null_entity_uid;
+  shared::brush_geometry_t  value;
+};
+
+// Rebuild the mesh of every wall whose holes differ from `previous`, and answer
+// the links as they stand now. Called once per editor frame.
+std::vector<hole_link_t> refresh_walls_of_changed_holes(const shared::map_t &map,
+                                                        Span<const hole_link_t> previous);
 
 // Pulsating selection highlight, in lockstep with the entity one.
 // `grid_step` drives the grid lines drawn on a box's faces; when the outline already

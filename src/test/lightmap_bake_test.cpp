@@ -46,6 +46,48 @@ void a_box_gets_one_chart_per_face()
   }
 }
 
+// A wall with a hole charts its SOLID: one chart per plane, the ring on a wall
+// face several polygons under one chart with triangle coverage, the hole's
+// sides charted under the wall's uid, and the hole brush itself charting
+// nothing. geometry_def.md Track H.
+void a_wall_with_a_hole_gets_one_chart_per_plane_of_its_solid()
+{
+  shared::map_t map;
+  const shared::entity_uid_t wall =
+      map.add_geometry(shared::make_box_brush({0, 0, 0}, {128, 8, 128}));
+  const shared::entity_uid_t hole =
+      map.add_geometry(shared::make_box_brush({0, 0, 0}, {16, 32, 16}));
+  std::get<shared::brush_geometry_t>(map.find_geometry_by_uid(hole)->value).subtracts_from_uid =
+      wall;
+
+  const std::vector<shared::lightmap_chart_t> charts = shared::build_lightmap_charts(map, {});
+  assert(charts.size() == 10);
+
+  int ring_charts = 0;
+  int side_charts = 0;
+  for (const shared::lightmap_chart_t &chart : charts)
+  {
+    assert(chart.object_uid == wall);
+    if (std::abs(chart.plane.normal.y) > 0.99f)
+    {
+      ++ring_charts;
+      assert(chart.polygon.empty());
+      assert(chart.triangles.size() >= 3 * 8);
+      assert(chart.twins.size() * 3 == chart.triangles.size());
+      assert(chart.atlas_rect.width == 68 && chart.atlas_rect.height == 68);
+    }
+    else if (std::abs(chart.plane.point.x) < 16.01f && std::abs(chart.plane.point.z) < 16.01f)
+    {
+      ++side_charts;
+      assert(chart.twins.size() == 2);
+      assert((chart.atlas_rect.width == 12 && chart.atlas_rect.height == 8) ||
+             (chart.atlas_rect.width == 8 && chart.atlas_rect.height == 12));
+    }
+  }
+  assert(ring_charts == 2);
+  assert(side_charts == 4);
+}
+
 // The flattening is an isometry, so a face's texel count follows its WORLD
 // extent on each axis and nothing else -- that is what "u and v are unit
 // length" buys, and a projection onto a dominant axis would not.
@@ -516,11 +558,11 @@ void a_lit_face_writes_uvs_and_a_strange_brush_writes_none()
   const std::vector<std::string> materials{""};
 
   // No bake at all: the array stays empty and the mesh uploads what it always did.
-  const assets::mesh_asset_t unlit = shared::generate_brush_mesh(brush, materials);
+  const assets::mesh_asset_t unlit = shared::generate_brush_mesh(brush, materials, {});
   assert(!unlit.is_lightmapped());
 
   const assets::mesh_asset_t lit =
-      shared::generate_brush_mesh(brush, materials, {&lightmap, uid});
+      shared::generate_brush_mesh(brush, materials, {}, {&lightmap, uid});
   assert(lit.is_lightmapped());
   assert(lit.lightmap.size() == lit.vertices.size());
 
@@ -547,7 +589,7 @@ void a_lit_face_writes_uvs_and_a_strange_brush_writes_none()
   const shared::brush_geometry_t &stranger_brush =
       std::get<shared::brush_geometry_t>(stranger_value);
   const assets::mesh_asset_t stranger =
-      shared::generate_brush_mesh(stranger_brush, materials, {&lightmap, 9999});
+      shared::generate_brush_mesh(stranger_brush, materials, {}, {&lightmap, 9999});
   assert(!stranger.is_lightmapped());
 }
 
@@ -4733,6 +4775,7 @@ int main()
   a_texture_reaches_the_gpu_scene_at_its_own_size();
 
   a_box_gets_one_chart_per_face();
+  a_wall_with_a_hole_gets_one_chart_per_plane_of_its_solid();
   chart_size_follows_the_face_extent();
   a_chart_origin_lies_on_its_face_plane();
   a_chart_origin_is_snapped_to_the_texel_grid();

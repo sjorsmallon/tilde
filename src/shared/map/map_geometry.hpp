@@ -293,6 +293,10 @@ struct brush_geometry_t
   // walk in the editor -- because both stored is two answers that can disagree.
   // prediction_def.md ss4.2.
   entity_uid_t owner_uid = null_entity_uid;
+
+  // The wall this brush is a hole in (a geometry uid), stored on the HOLE in the
+  // direction owner_uid runs; the solid is derived at bake. geometry_def.md Track H.
+  entity_uid_t subtracts_from_uid = null_entity_uid;
 };
 
 // An axis-aligned box, as the brush it now is. `box_geometry_t` was a spelling
@@ -390,8 +394,13 @@ struct collision_piece_t
 // `uid` is only ever what a failure names. A brush that cannot be decomposed
 // gets a loud error and NO pieces, never its hull as a fallback — a hull is
 // bigger than the brush it came from, which is a wall the player cannot see.
+//
+// `map_geometry` is the list the brush sits in, for the seam rule; empty for
+// anything that sits in no map, a spawned platform or a test.
+struct map_geometry_t;
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
-                                                    entity_uid_t uid);
+                                                    entity_uid_t uid,
+                                                    Span<const map_geometry_t> map_geometry);
 
 collision_piece_t piece_from_aabb(const aabb_t &aabb);
 
@@ -521,6 +530,17 @@ void sync_face_surfaces(brush_geometry_t &brush);
 // hull edge whatever offset was written for it: a sculpted face next to a flat
 // one keeps its outline, and two different levels pin rather than leave a
 // T-junction. geometry_def.md Track F.
+//
+// The face across an edge is the brush's own neighbour face; when that one is
+// FLAT, a coplanar face of another brush with the same edge stands in for it,
+// so two floor tiles subdivided alike weld their seam. That is the only thing
+// the neighbourhood is asked.
+struct brush_neighbourhood_t
+{
+  Span<const map_geometry_t> geometry;
+  entity_uid_t self = null_entity_uid;
+};
+
 struct brush_face_grids_t
 {
   std::vector<std::vector<linalg::vec3>> grid_vertices;
@@ -531,11 +551,16 @@ struct brush_face_grids_t
   // Parallel to grid_vertices, entry for entry.
   std::vector<std::vector<vertex_blend_t>> grid_weights;
 
+  // Which of the same vertices are pinned to the hull edge. A writer skips
+  // them, so a stored offset is always one the read shows. Parallel, entry for entry.
+  std::vector<std::vector<bool>> grid_pinned;
+
   bool any = false;
 };
 
 brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
-                                          const brush_polyhedron_t &hull);
+                                          const brush_polyhedron_t &hull,
+                                          brush_neighbourhood_t neighbourhood);
 
 // One face's grid as the triangles and smooth normals it DRAWS with, appended to `mesh`; the lightmap bake samples the same ones.
 void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> &grid,
@@ -549,9 +574,9 @@ void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> 
 // what makes the weld a no-op and the drag exact.
 //
 // Matched by position within BRUSH_WELD_EPSILON, the same way the brush-vertex
-// drag matches its own points.
+// drag matches its own points. A pinned vertex is never written.
 size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec3> points,
-                                 const linalg::vec3 &delta);
+                                 const linalg::vec3 &delta, brush_neighbourhood_t neighbourhood);
 
 // Paint `layer` into every grid vertex within `radius` of `center`, by `amount`
 // at the centre falling smoothly to nothing at the rim, and answer how many
@@ -559,7 +584,8 @@ size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec
 // boundary vertex belongs to every face that shares it, so writing one face's
 // weights and letting the weld average would paint a FRACTION of the stroke.
 size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &center,
-                              float radius, float amount, int layer);
+                              float radius, float amount, int layer,
+                              brush_neighbourhood_t neighbourhood);
 
 // Push every grid vertex within `radius` of `center` by `delta`, full at the
 // centre falling to nothing at the rim, and answer how many moved. The RADIAL
@@ -568,13 +594,14 @@ size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &cente
 //
 // The weld comes out a no-op rather than a half-move for paint's reason: every
 // face sharing a boundary vertex reads the same welded position, so every copy
-// takes the same falloff and the same delta.
+// takes the same falloff and the same delta. A pinned vertex is never written.
 //
 // `delta` is a world vector rather than a scalar because the DIRECTION is the
 // caller's: a stroke pushes along the face it landed on, never along the hill
 // it is standing on, or a crater curls in over its own rim.
 size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &center,
-                                  float radius, const linalg::vec3 &delta);
+                                  float radius, const linalg::vec3 &delta,
+                                  brush_neighbourhood_t neighbourhood);
 
 // Where a ray meets the brush's DISPLACED surface, and which hull face it hit.
 // The paint cursor needs the sculpted surface rather than the face plane: on a
@@ -592,7 +619,7 @@ struct brush_grid_hit_t
 
 [[nodiscard]] std::optional<brush_grid_hit_t>
 try_pick_brush_grid(const brush_geometry_t &brush, const linalg::vec3 &ray_origin,
-                    const linalg::vec3 &ray_direction);
+                    const linalg::vec3 &ray_direction, brush_neighbourhood_t neighbourhood);
 
 // The brush's REAL surface: its hull, with every subdivided face replaced by the
 // triangles of its displaced grid. A brush with no subdivided face comes back as
@@ -604,7 +631,7 @@ try_pick_brush_grid(const brush_geometry_t &brush, const linalg::vec3 &ray_origi
 // through. Two triangles per grid cell rather than one quad, because an offset
 // grid is a bilinear patch and a bilinear patch has no plane.
 [[nodiscard]] std::optional<brush_polyhedron_t>
-try_build_displaced_polyhedron(const brush_geometry_t &brush);
+try_build_displaced_polyhedron(const brush_geometry_t &brush, brush_neighbourhood_t neighbourhood);
 
 // Hull the brush's points, then triangulate the faces -- with every subdivided
 // face emitted as its displaced grid instead, two triangles per cell and one
@@ -626,6 +653,7 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush);
 // the mesh uploads byte for byte what it always did.
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
+                                         brush_neighbourhood_t neighbourhood,
                                          const object_lightmap_ref_t &lighting = {});
 
 // --- A static mesh, in the world ---------------------------------------------

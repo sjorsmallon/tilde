@@ -1,6 +1,7 @@
 #include "lightmap_bake.hpp"
 
 #include "map/brush/brush.hpp"
+#include "map/brush/brush_holes.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
 #include "span.hpp"
@@ -220,10 +221,79 @@ void fill_grid_coverage(lightmap_chart_t &chart, const std::vector<linalg::vec3>
   build_triangle_cells(chart);
 }
 
+// One chart per PLANE of the solid's boundary, covering every boundary face on
+// it: the ring a hole leaves in a wall face is several convex polygons on one
+// plane and stays one chart. Coverage is the triangle form, one fan per polygon,
+// with the plane's normal at every corner.
+void build_solid_boundary_charts(entity_uid_t object_uid, const brush_solid_t &solid,
+                                 const lightmap_bake_settings_t &settings,
+                                 int max_covered_in_texels, std::vector<lightmap_chart_t> &charts)
+{
+  const std::vector<brush_face_t> &faces = solid.boundary.faces;
+  std::vector<bool>                taken(faces.size(), false);
+  std::vector<linalg::vec3>        points;
+  std::vector<size_t>              group;
+
+  for (size_t first = 0; first < faces.size(); ++first)
+  {
+    if (taken[first])
+      continue;
+
+    const Plane          &plane   = faces[first].plane;
+    const face_surface_t *surface = solid.boundary_surfaces[first];
+
+    group.clear();
+    points.clear();
+    for (size_t other = first; other < faces.size(); ++other)
+    {
+      if (taken[other] || !planes_coincide(faces[other].plane, plane))
+        continue;
+      taken[other] = true;
+      group.push_back(other);
+      for (uint32_t index : faces[other].vertex_indices)
+        points.push_back(solid.boundary.vertices[index]);
+    }
+
+    if (surface && !surface->emits_geometry)
+      continue;
+
+    std::optional<lightmap_chart_t> chart =
+        try_build_chart(object_uid, plane, points, surface ? surface->lightmap_scale : 1.f,
+                        settings, max_covered_in_texels);
+    if (!chart)
+      continue;
+
+    for (size_t face_index : group)
+    {
+      const brush_face_t &face = faces[face_index];
+      for (size_t offset = 1; offset + 1 < face.vertex_indices.size(); ++offset)
+      {
+        const uint32_t corners[3] = {face.vertex_indices[0], face.vertex_indices[offset],
+                                     face.vertex_indices[offset + 1]};
+        chart_triangle_twin_t twin;
+        for (uint32_t corner = 0; corner < 3; ++corner)
+        {
+          const linalg::vec3 &position = solid.boundary.vertices[corners[corner]];
+          chart->triangles.push_back(to_chart_space(*chart, position));
+          twin.corners[corner] = position;
+          twin.normals[corner] = plane.normal;
+        }
+        chart->twins.push_back(twin);
+      }
+    }
+    build_triangle_cells(*chart);
+    charts.push_back(std::move(*chart));
+  }
+}
+
 void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
+                        brush_neighbourhood_t neighbourhood,
                         const lightmap_bake_settings_t &settings, int max_covered_in_texels,
                         std::vector<lightmap_chart_t> &charts)
 {
+  if (brush.subtracts_from_uid != null_entity_uid)
+    return;
+
   const std::optional<brush_polyhedron_t> polyhedron =
       try_build_brush_polyhedron(brush.hull_points);
   if (!polyhedron)
@@ -232,7 +302,22 @@ void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
     return;
   }
 
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron);
+  const std::vector<const brush_geometry_t *> holes =
+      collect_hole_brushes(neighbourhood.geometry, object_uid);
+  if (!holes.empty() && !brush_refuses_holes(brush))
+  {
+    const std::optional<brush_solid_t> solid = try_build_brush_solid(brush, holes);
+    if (!solid)
+    {
+      log_error("[lightmap] brush {} could not be cut by its {} holes; it gets no charts.",
+                object_uid, holes.size());
+      return;
+    }
+    build_solid_boundary_charts(object_uid, *solid, settings, max_covered_in_texels, charts);
+    return;
+  }
+
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron, neighbourhood);
 
   std::vector<linalg::vec3> points;
   for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
@@ -380,8 +465,8 @@ build_lightmap_charts(const map_t &map, const lightmap_bake_settings_t &settings
     switch (get_kind(object.value))
     {
     case geometry_kind_t::Brush:
-      build_brush_charts(object.uid, std::get<brush_geometry_t>(object.value), settings,
-                         max_covered_in_texels, charts);
+      build_brush_charts(object.uid, std::get<brush_geometry_t>(object.value),
+                         {map.geometry, object.uid}, settings, max_covered_in_texels, charts);
       break;
 
     case geometry_kind_t::Static_Mesh:

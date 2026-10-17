@@ -61,7 +61,7 @@ void append_triangle(gpu_bake_scene_t &scene, entity_uid_t uid, const linalg::ve
 void append_brush(gpu_bake_scene_t &scene, const map_t &map, entity_uid_t uid,
                   const brush_geometry_t &brush)
 {
-  const assets::mesh_asset_t mesh = generate_brush_mesh(brush, map.materials);
+  const assets::mesh_asset_t mesh = generate_brush_mesh(brush, map.materials, {map.geometry, uid});
 
   // Keyed by PLANE, the face's identity, through the same find_face_surface the
   // tracer's surface_at asks at a hit -- so the material a triangle carries is

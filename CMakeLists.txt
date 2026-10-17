@@ -451,6 +451,20 @@ add_library(game_shared STATIC
     src/shared/map/brush/brush.cpp
     src/shared/map/brush/face_neighbour.hpp
     src/shared/map/brush/face_neighbour.cpp
+    src/shared/map/brush/brush_split.hpp
+    src/shared/map/brush/brush_split.cpp
+    # A hole is a convex brush naming its wall; the solid is derived at bake as
+    # one convex piece per hole face. geometry_def.md Track H.
+    src/shared/map/brush/brush_holes.hpp
+    src/shared/map/brush/brush_holes.cpp
+    # A stamp is point sets dropped to plain brushes with no link back: a
+    # prism, an arch. geometry_def.md Track I.
+    src/shared/map/brush/brush_stamps.hpp
+    src/shared/map/brush/brush_stamps.cpp
+    # The consumer of smoothing_group: a corner's draw normal is its group's
+    # area-weighted average at that position. geometry_def.md Track J.
+    src/shared/map/brush/brush_smoothing.hpp
+    src/shared/map/brush/brush_smoothing.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
     src/shared/map/brush/convex_decomposition.hpp
@@ -887,6 +901,9 @@ add_library(game_client SHARED
     src/client/editor/tools/particle_editor_tool.cpp
     src/client/editor/tools/animation_tool.cpp
     src/client/editor/tools/brush_tool.cpp
+    src/client/editor/tools/brush_stroke.cpp
+    src/client/editor/tools/clip_tool.cpp
+    src/client/editor/tools/stamp_tool.cpp
     src/client/editor/tools/lightmap_tool.cpp
     src/client/editor/tools/path_tool.cpp
     src/client/editor/path_editing.cpp
@@ -1162,6 +1179,25 @@ add_game_test(brush_test)
 # A subdivided face keeps its boundary: weld only with a same-level neighbour,
 # pin everything else. geometry_def.md Track F.
 add_game_test(brush_boundary_test)
+
+# A brush cut by a plane: two halves whose volumes sum, surfaces reattached by
+# plane, a cut through a subdivided face refused. geometry_def.md Track G.
+add_game_test(brush_split_test)
+
+# A convex hole out of a convex wall: one convex piece per hole face, none
+# holding the hole's centre, volumes summing, two holes composing.
+# geometry_def.md Track H.
+add_game_test(brush_holes_test)
+
+# Stamps: a prism is one convex brush of sides + 2 faces, an arch is N convex
+# wedges sharing their rib points and summing to the half ring.
+# geometry_def.md Track I.
+add_game_test(brush_stamps_test)
+
+# Smoothing groups: group zero stays flat, a prism's side corners take the
+# radial normal, an arch smooths across its wedges, a hole is never a source.
+# geometry_def.md Track J.
+add_game_test(brush_smoothing_test)
 
 # Convex decomposition: every piece convex, union bounds match, a
 # non-decomposable brush fails loudly rather than half-colliding.

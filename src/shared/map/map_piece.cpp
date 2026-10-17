@@ -354,6 +354,35 @@ paste_result_t paste_map_piece(map_t& destination, const map_t& source, const li
     result.uids.push_back(pasted);
   }
 
+  // A hole names its WALL, which is geometry and may be placed after the hole,
+  // so the link is rewritten once every brush of the piece has its copy.
+  for (const map_geometry_t& entry : source.geometry)
+  {
+    const brush_geometry_t* source_brush = std::get_if<brush_geometry_t>(&entry.value);
+    if (source_brush == nullptr || source_brush->subtracts_from_uid == null_entity_uid)
+      continue;
+
+    const auto copied = result.remap.find(entry.uid);
+    if (copied == result.remap.end())
+      continue;
+
+    brush_geometry_t& hole =
+        std::get<brush_geometry_t>(destination.find_geometry_by_uid(copied->second)->value);
+    const auto wall = result.remap.find(source_brush->subtracts_from_uid);
+    if (wall == result.remap.end())
+    {
+      log_warning("paste_map_piece: brush {} subtracts from uid {}, which is not in the piece "
+                  "-- it is a solid brush now",
+                  entry.uid, source_brush->subtracts_from_uid);
+      ++result.cleared_reference_count;
+      hole.subtracts_from_uid = null_entity_uid;
+    }
+    else
+    {
+      hole.subtracts_from_uid = wall->second;
+    }
+  }
+
   // The copies' own references, through the same table the rows go through. A
   // second pass because a copy can name a member placed after it, and a
   // geometry uid is a legal value for an entity field (one uid space). A

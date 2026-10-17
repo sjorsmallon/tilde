@@ -578,7 +578,8 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
     const linalg::mat4f moved_by = shared::mover_model_matrix(rest_frame, pose);
     for (shared::entity_uid_t uid : owned)
       if (const shared::map_geometry_t* geometry = ctx.map->find_geometry_by_uid(uid))
-        draw_geometry(draws, geometry->value, uid, ctx.map->materials, ctx.map->lightmap, &moved_by);
+        draw_geometry(draws, geometry->value, uid, ctx.map->materials, ctx.map->lightmap,
+                      ctx.map->geometry, &moved_by);
     if (rest)
       draw_posed_box(draws, rest_frame, pose, *rest, colors::magenta);
 

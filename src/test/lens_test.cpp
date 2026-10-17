@@ -253,7 +253,7 @@ int main()
   {
     std::vector<BVH_Input> inputs;
     for (const shared::collision_piece_t& piece :
-         shared::get_collision_pieces(shared::make_box_brush({0.f, -8.f, 0.f}, {128.f, 8.f, 128.f}), 1))
+         shared::get_collision_pieces(shared::make_box_brush({0.f, -8.f, 0.f}, {128.f, 8.f, 128.f}), 1, {}))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;

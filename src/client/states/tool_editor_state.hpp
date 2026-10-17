@@ -2,6 +2,7 @@
 
 #include "../camera.hpp"
 #include "../editor/editor_bvh.hpp"
+#include "../editor/geometry_editor.hpp"
 #include "../editor/connection_lines.hpp"
 #include "../editor/editor_sidebar.hpp"
 #include "../editor/entity_outliner.hpp"
@@ -40,10 +41,12 @@ enum class editor_tool_t : uint8_t
   animation,
   brush,
   lightmap,
-  path
+  path,
+  clip,
+  stamp
 };
 
-inline constexpr uint32_t EDITOR_TOOL_COUNT = 9;
+inline constexpr uint32_t EDITOR_TOOL_COUNT = 11;
 
 } // namespace client
 
@@ -116,6 +119,7 @@ private:
 
   editor_bvh_t editor_bvh;
   bool geometry_updated_flag = false;
+  std::vector<hole_link_t> hole_links;
 
   // The bake's counterpart. Two writers, one flag: the Lightmap tool sets it on
   // Apply, and update() sets it when the map's charts change under a load --

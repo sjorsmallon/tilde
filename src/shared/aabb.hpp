@@ -25,7 +25,7 @@ struct aabb_bounds_t
 // draw as. get_bounds is the world-axis box it fits in, the only AABB question it answers.
 struct oriented_box_t
 {
-  linalg::vec3  center       = {0, 0, 0};
+  linalg::vec3  center = {0, 0, 0};
   linalg::vec3  half_extents = {1.f, 1.f, 1.f};
   linalg::quatf orientation  = linalg::quatf::identity();
 };
@@ -140,6 +140,15 @@ inline bool aabbs_intersect_with_tolerance(const aabb_bounds_t &lhs,
   return (lhs.min.x <= rhs.max.x + tolerance && lhs.max.x >= rhs.min.x - tolerance) &&
          (lhs.min.y <= rhs.max.y + tolerance && lhs.max.y >= rhs.min.y - tolerance) &&
          (lhs.min.z <= rhs.max.z + tolerance && lhs.max.z >= rhs.min.z - tolerance);
+}
+
+inline bool aabb_intersects_sphere(const aabb_bounds_t &bounds, const linalg::vec3 &center,
+                                   float radius)
+{
+  const linalg::vec3 closest{linalg::clamp(center.x, bounds.min.x, bounds.max.x),
+                             linalg::clamp(center.y, bounds.min.y, bounds.max.y),
+                             linalg::clamp(center.z, bounds.min.z, bounds.max.z)};
+  return linalg::length(closest - center) <= radius;
 }
 
 } // namespace shared

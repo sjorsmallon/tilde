@@ -143,7 +143,7 @@ int main()
                     "for its grid");
     }
 
-    if (!try_build_displaced_polyhedron(*brush))
+    if (!try_build_displaced_polyhedron(*brush, {}))
       return fail("conversion: a converted brush does not build a displaced "
                   "polyhedron");
   }
@@ -277,7 +277,7 @@ int main()
     static_mesh_geometry_t mesh;
     mesh.orientation = linalg::from_axis_angle({0.f, 1.f, 0.f}, 45.f);
 
-    const std::vector<collision_piece_t> pieces = get_collision_pieces(geometry_value_t{mesh}, 1);
+    const std::vector<collision_piece_t> pieces = get_collision_pieces(geometry_value_t{mesh}, 1, {});
     if (pieces.size() != 1 || pieces[0].planes.size() != 6)
       return fail("mesh collision: a static mesh is not one six-plane piece");
 
@@ -310,7 +310,7 @@ int main()
       return fail("mesh collision: a colliding mesh writes a key it does not need");
 
     mesh.collides = false;
-    if (!get_collision_pieces(geometry_value_t{mesh}, 1).empty())
+    if (!get_collision_pieces(geometry_value_t{mesh}, 1, {}).empty())
       return fail("mesh collision: a mesh with collision off still collides");
     if (static_mesh_collision_box(mesh).planes.size() != 6)
       return fail("mesh collision: the editor's box went away with the flag");
@@ -1065,6 +1065,45 @@ int main()
     if (broken_session.owner_of.size() != 1 ||
         broken_session.owner_of[0] != null_entity_uid)
       return fail("tie: an owner uid the map does not hold was not refused");
+  }
+
+  // --- the hole (geometry_def.md Track H) -------------------------------------
+  //
+  // `subtracts_from` on the HOLE, written only when set, so a solid brush saves
+  // byte-for-byte as before.
+  {
+    map_t hole_map;
+    const entity_uid_t wall = hole_map.add_geometry(make_box_brush({0, 0, 0}, {64, 8, 64}));
+    const entity_uid_t hole = hole_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
+    std::get<brush_geometry_t>(hole_map.find_geometry_by_uid(hole)->value).subtracts_from_uid =
+        wall;
+
+    const std::string text     = serialize_map_to_string(hole_map);
+    const map_t       reloaded = parse_map_from_string(text);
+
+    if (text.find("\"subtracts_from\"") == std::string::npos)
+      return fail("hole: the subtracts_from key was not written");
+    if (reloaded.geometry.size() != 2)
+      return fail("hole: the geometry did not survive the round trip");
+    if (std::get<brush_geometry_t>(reloaded.geometry[0].value).subtracts_from_uid !=
+        null_entity_uid)
+      return fail("hole: the wall came back subtracting from something");
+    if (std::get<brush_geometry_t>(reloaded.geometry[1].value).subtracts_from_uid != wall)
+      return fail("hole: the wall uid did not survive the round trip");
+    if (!geometry_values_equal(reloaded.geometry[1].value, hole_map.geometry[1].value))
+      return fail("hole: a reloaded hole compares unequal to itself");
+    if (serialize_map_to_string(reloaded) != text)
+      return fail("hole: re-serialized text is not stable");
+
+    map_t solid_map;
+    solid_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
+    if (serialize_map_to_string(solid_map).find("\"subtracts_from\"") != std::string::npos)
+      return fail("hole: a solid brush wrote a subtracts_from key");
+
+    geometry_value_t solid = hole_map.geometry[1].value;
+    std::get<brush_geometry_t>(solid).subtracts_from_uid = null_entity_uid;
+    if (geometry_values_equal(solid, hole_map.geometry[1].value))
+      return fail("hole: clearing subtracts_from did not change the value");
   }
 
   printf("map_migration_test: OK (%zu brushes, %zu subdivided faces converted from "

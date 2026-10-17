@@ -128,7 +128,7 @@ static Bounding_Volume_Hierarchy floor_world()
       shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
 
   std::vector<BVH_Input> inputs;
-  for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, 1))
+  for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, 1, {}))
   {
     BVH_Input input;
     input.aabb = piece.bounds;
@@ -885,7 +885,7 @@ static Bounding_Volume_Hierarchy floor_and_wall_world()
   uint32_t               index = 0;
   for (const shared::geometry_value_t &geometry : {floor, wall})
   {
-    for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, index + 1))
+    for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, index + 1, {}))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -1274,11 +1274,11 @@ static shared::mover_t platform_at(uint32_t tick)
   mover.pose_at_tick_start.position = platform_center_at(tick - 1);
   mover.pose_at_tick_end.position   = platform_center_at(tick);
   mover.pieces = shared::get_collision_pieces(
-      shared::make_box_brush(platform_center_at(tick), platform_half_extents), platform_uid);
+      shared::make_box_brush(platform_center_at(tick), platform_half_extents), platform_uid, {});
   mover.swept_bounds = mover.pieces.front().bounds;
   for (const shared::collision_piece_t& piece : shared::get_collision_pieces(
            shared::make_box_brush(platform_center_at(tick - 1), platform_half_extents),
-           platform_uid))
+           platform_uid, {}))
     mover.swept_bounds = shared::union_aabb(mover.swept_bounds, piece.bounds);
   return mover;
 }
@@ -1354,7 +1354,7 @@ static void test_a_mover_crushes_against_a_ceiling(const cvar_state_t& cvars)
   const shared::geometry_value_t ceiling = shared::make_box_brush(
       {0.f, ceiling_bottom + 64.f, 0.f}, {4096.f, 64.f, 4096.f});
   std::vector<BVH_Input> inputs;
-  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(ceiling, 1))
+  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(ceiling, 1, {}))
   {
     BVH_Input input;
     input.aabb             = piece.bounds;
@@ -2565,7 +2565,7 @@ static Bounding_Volume_Hierarchy ramp_and_wall_world()
   uint32_t               index = 0;
   for (const shared::geometry_value_t& geometry : {shared::geometry_value_t{ramp}, wall})
   {
-    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1))
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1, {}))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -2696,7 +2696,7 @@ static Bounding_Volume_Hierarchy floor_and_wedge_world(float degrees)
   uint32_t               index = 0;
   for (const shared::geometry_value_t& geometry : {shared::geometry_value_t{wedge}, floor})
   {
-    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1))
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1, {}))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;

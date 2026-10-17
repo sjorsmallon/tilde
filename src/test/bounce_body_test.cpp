@@ -40,7 +40,7 @@ static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared
   for (uint32_t index = 0; index < boxes.size(); ++index)
   {
     for (const shared::collision_piece_t& piece :
-         shared::get_collision_pieces(boxes[index], index + 1))
+         shared::get_collision_pieces(boxes[index], index + 1, {}))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -196,7 +196,7 @@ int main()
     platform.pose_at_tick_start.position = {0.f, 50.f, 0.f};
     platform.pose_at_tick_end.position   = {0.f, 50.f, 0.f};
     platform.pieces = shared::get_collision_pieces(
-        shared::make_box_brush({0.f, 50.f, 0.f}, {32.f, 8.f, 32.f}), platform.uid);
+        shared::make_box_brush({0.f, 50.f, 0.f}, {32.f, 8.f, 32.f}), platform.uid, {});
     platform.swept_bounds = platform.pieces.front().bounds;
     std::vector<shared::mover_t> movers = {platform};
     shared::predicted_world_t    world{};

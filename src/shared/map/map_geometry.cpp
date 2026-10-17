@@ -4,6 +4,8 @@
 
 #include "array.hpp"
 #include "collision/collision_detection.hpp"
+#include "brush/brush_holes.hpp"
+#include "brush/brush_smoothing.hpp"
 #include "brush/convex_decomposition.hpp"
 #include "brush/face_neighbour.hpp"
 #include "log.hpp"
@@ -683,7 +685,8 @@ collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static
 }
 
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
-                                                    entity_uid_t uid)
+                                                    entity_uid_t uid,
+                                                    Span<const map_geometry_t> map_geometry)
 {
   switch (get_kind(geometry))
   {
@@ -703,6 +706,10 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
     // gone rather than moved.
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
 
+    // A hole is not a solid: what it takes out of its wall is the wall's answer.
+    if (brush.subtracts_from_uid != null_entity_uid)
+      return {};
+
     const std::optional<brush_polyhedron_t> hull =
         try_build_brush_polyhedron(brush.hull_points);
     if (!hull)
@@ -713,10 +720,43 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
       return {};
     }
 
+    const std::vector<const brush_geometry_t *> holes = collect_hole_brushes(map_geometry, uid);
+    if (!holes.empty())
+    {
+      if (brush_refuses_holes(brush))
+      {
+        log_error("get_collision_pieces: brush {} is subdivided or painted and refuses its {} "
+                  "holes — it collides solid",
+                  uid, holes.size());
+      }
+      else
+      {
+        const std::optional<brush_solid_t> solid = try_build_brush_solid(brush, holes);
+        if (!solid)
+        {
+          log_error("get_collision_pieces: brush {} could not be cut by its {} holes — it "
+                    "will not collide",
+                    uid, holes.size());
+          return {};
+        }
+        if (solid->pieces.empty())
+          log_error("get_collision_pieces: brush {} is swallowed by its holes — nothing is left "
+                    "to collide with",
+                    uid);
+
+        std::vector<collision_piece_t> collision_pieces;
+        collision_pieces.reserve(solid->pieces.size());
+        for (const brush_polyhedron_t &piece : solid->pieces)
+          collision_pieces.push_back(piece_from_polyhedron(piece));
+        return collision_pieces;
+      }
+    }
+
     // A brush's stored form is a point set, so its BASE solid is always convex --
     // subdivision is the only thing that can make one concave. Every brush that
     // predates Track D is therefore ONE piece and the shape it always had.
-    const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+    const brush_neighbourhood_t neighbourhood{map_geometry, uid};
+    const brush_face_grids_t grids = build_brush_face_grids(brush, *hull, neighbourhood);
     if (!grids.any)
       return {piece_from_polyhedron(*hull)};
 
@@ -728,7 +768,7 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
       return std::move(*columns);
 
     const std::optional<brush_polyhedron_t> displaced =
-        try_build_displaced_polyhedron(brush);
+        try_build_displaced_polyhedron(brush, neighbourhood);
     if (!displaced)
     {
       // Unreachable while the hull above succeeded -- this hulls the same point
@@ -894,7 +934,8 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
     const brush_geometry_t &a = std::get<brush_geometry_t>(lhs);
     const brush_geometry_t &b = std::get<brush_geometry_t>(rhs);
     if (a.hull_points.size() != b.hull_points.size() || !surfaces_equal(a.surface, b.surface) ||
-        !face_surfaces_equal(a.face_surfaces, b.face_surfaces) || a.owner_uid != b.owner_uid)
+        !face_surfaces_equal(a.face_surfaces, b.face_surfaces) || a.owner_uid != b.owner_uid ||
+        a.subtracts_from_uid != b.subtracts_from_uid)
       return false;
 
     // ORDER CARRIES NO MEANING. A brush is the hull of a SET, so two lists with
@@ -1479,25 +1520,36 @@ namespace
 {
 
 // Which of a grid's four edges weld with the face across them: only a neighbour
-// subdivided to the SAME level; any other edge is pinned to the hull. Edges in
-// corner order: 0 c00-c10 (j == 0), 1 c10-c11 (i == size - 1), 2 c01-c11
+// subdivided to the SAME level; any other edge is pinned to the hull. The
+// neighbour is the brush's own face across the edge, or, when that one is flat,
+// a coplanar face of another brush holding the same edge. Edges in corner
+// order: 0 c00-c10 (j == 0), 1 c10-c11 (i == size - 1), 2 c01-c11
 // (j == size - 1), 3 c00-c01 (i == 0).
 Array<bool, 4> face_grid_edges_that_weld(const brush_geometry_t &brush,
                                          const brush_polyhedron_t &hull, size_t face_index,
-                                         const face_grid_t &grid, int level)
+                                         const face_grid_t &grid, int level,
+                                         Span<const seam_candidate_t> seam_candidates)
 {
   constexpr size_t EDGE_CORNERS[4][2] = {{0, 1}, {1, 2}, {3, 2}, {0, 3}};
   Array<bool, 4> welds;
   for (size_t edge = 0; edge < 4; ++edge)
   {
-    const std::optional<size_t> neighbour =
-        try_find_face_across_edge(hull, face_index, grid.corners[EDGE_CORNERS[edge][0]],
-                                  grid.corners[EDGE_CORNERS[edge][1]]);
+    const linalg::vec3 &a = grid.corners[EDGE_CORNERS[edge][0]];
+    const linalg::vec3 &b = grid.corners[EDGE_CORNERS[edge][1]];
+    const std::optional<size_t> neighbour = try_find_face_across_edge(hull, face_index, a, b);
     if (!neighbour)
       continue;
+
     const face_surface_t *surface = find_face_surface(brush, hull.faces[*neighbour].plane);
-    welds.data[edge] = surface && face_is_subdivided(*surface) &&
-                       surface->subdivision_level == level;
+    if (surface && face_is_subdivided(*surface))
+    {
+      welds.data[edge] = surface->subdivision_level == level;
+      continue;
+    }
+
+    const std::optional<int> level_across_seam = try_find_subdivision_level_across_seam(
+        seam_candidates, hull.faces[face_index].plane, a, b);
+    welds.data[edge] = level_across_seam && *level_across_seam == level;
   }
   return welds;
 }
@@ -1505,11 +1557,15 @@ Array<bool, 4> face_grid_edges_that_weld(const brush_geometry_t &brush,
 } // namespace
 
 brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
-                                          const brush_polyhedron_t &hull)
+                                          const brush_polyhedron_t &hull,
+                                          brush_neighbourhood_t neighbourhood)
 {
   brush_face_grids_t grids;
   grids.grid_vertices.resize(hull.faces.size());
   grids.grid_weights.resize(hull.faces.size());
+  grids.grid_pinned.resize(hull.faces.size());
+
+  std::optional<std::vector<seam_candidate_t>> seam_candidates;
 
   // A welded boundary vertex: one undisplaced position, and the offsets every
   // face that shares it wrote. Averaging them is what makes two adjacent
@@ -1562,10 +1618,14 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
     vertices.resize((size_t)face_grid_vertex_count(level));
     std::vector<vertex_blend_t> &weights = grids.grid_weights[face_index];
     weights.resize((size_t)face_grid_vertex_count(level));
+    std::vector<bool> &pinned = grids.grid_pinned[face_index];
+    pinned.assign((size_t)face_grid_vertex_count(level), false);
     grids.any = true;
 
+    if (!seam_candidates)
+      seam_candidates = collect_seam_candidates(neighbourhood, compute_brush_bounds(hull.vertices));
     const Array<bool, 4> edge_welds =
-        face_grid_edges_that_weld(brush, hull, face_index, *grid, level);
+        face_grid_edges_that_weld(brush, hull, face_index, *grid, level, *seam_candidates);
 
     for (int j = 0; j < size; ++j)
     {
@@ -1600,6 +1660,7 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
         {
           vertices[vertex] = base;
           weights[vertex] = weight;
+          pinned[vertex] = true;
           continue;
         }
 
@@ -1640,13 +1701,13 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
 }
 
 size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec3> points,
-                                 const linalg::vec3 &delta)
+                                 const linalg::vec3 &delta, brush_neighbourhood_t neighbourhood)
 {
   const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return 0;
 
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull, neighbourhood);
   if (!grids.any)
     return 0;
 
@@ -1661,8 +1722,12 @@ size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec
     if (surface.offsets.size() != grid.size())
       continue;
 
+    const std::vector<bool> &pinned = grids.grid_pinned[face_index];
     for (size_t vertex = 0; vertex < grid.size(); ++vertex)
     {
+      if (pinned[vertex])
+        continue;
+
       for (uint32_t point = 0; point < points.count; ++point)
       {
         if (linalg::length(grid[vertex] - points.data[point]) > BRUSH_WELD_EPSILON)
@@ -1679,7 +1744,8 @@ size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec
 }
 
 size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &center,
-                              float radius, float amount, int layer)
+                              float radius, float amount, int layer,
+                              brush_neighbourhood_t neighbourhood)
 {
   if (radius <= 0.f || amount <= 0.f)
     return 0;
@@ -1688,7 +1754,7 @@ size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &cente
   if (!hull)
     return 0;
 
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull, neighbourhood);
   if (!grids.any)
     return 0;
 
@@ -1723,7 +1789,8 @@ size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &cente
 }
 
 size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &center,
-                                  float radius, const linalg::vec3 &delta)
+                                  float radius, const linalg::vec3 &delta,
+                                  brush_neighbourhood_t neighbourhood)
 {
   if (radius <= 0.f)
     return 0;
@@ -1732,7 +1799,7 @@ size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &c
   if (!hull)
     return 0;
 
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull, neighbourhood);
   if (!grids.any)
     return 0;
 
@@ -1747,8 +1814,12 @@ size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &c
     if (surface.offsets.size() != grid.size())
       continue;
 
+    const std::vector<bool> &pinned = grids.grid_pinned[face_index];
     for (size_t vertex = 0; vertex < grid.size(); ++vertex)
     {
+      if (pinned[vertex])
+        continue;
+
       const float distance = linalg::length(grid[vertex] - center);
       if (distance >= radius)
         continue;
@@ -1768,13 +1839,14 @@ size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &c
 
 std::optional<brush_grid_hit_t> try_pick_brush_grid(const brush_geometry_t &brush,
                                                     const linalg::vec3 &ray_origin,
-                                                    const linalg::vec3 &ray_direction)
+                                                    const linalg::vec3 &ray_direction,
+                                                    brush_neighbourhood_t neighbourhood)
 {
   const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return std::nullopt;
 
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull, neighbourhood);
 
   std::optional<brush_grid_hit_t> nearest;
   const auto consider = [&](size_t face_index, const linalg::vec3 &a, const linalg::vec3 &b,
@@ -1830,13 +1902,13 @@ std::optional<brush_grid_hit_t> try_pick_brush_grid(const brush_geometry_t &brus
 }
 
 std::optional<brush_polyhedron_t>
-try_build_displaced_polyhedron(const brush_geometry_t &brush)
+try_build_displaced_polyhedron(const brush_geometry_t &brush, brush_neighbourhood_t neighbourhood)
 {
   std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull)
     return std::nullopt;
 
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull);
+  const brush_face_grids_t grids = build_brush_face_grids(brush, *hull, neighbourhood);
   if (!grids.any)
     return hull; // Every brush that predates Track D, and the fast path.
 
@@ -2235,10 +2307,14 @@ generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
 
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
+                                         brush_neighbourhood_t neighbourhood,
                                          const object_lightmap_ref_t &lighting)
 {
-  const std::optional<brush_polyhedron_t> polyhedron =
-      try_build_brush_polyhedron(brush.hull_points);
+  // A hole draws nothing of its own: what it takes out of its wall is the wall's mesh.
+  if (brush.subtracts_from_uid != null_entity_uid)
+    return {};
+
+  std::optional<brush_polyhedron_t> polyhedron = try_build_brush_polyhedron(brush.hull_points);
   if (!polyhedron)
   {
     log_error("generate_brush_mesh: {} vertices do not form a solid — drawing nothing",
@@ -2248,7 +2324,49 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
 
   // Built once for the whole brush rather than per face, because the weld that
   // makes two subdivided faces meet exactly is a question about the BRUSH.
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron);
+  brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron, neighbourhood);
+
+  // A wall with holes draws its SOLID's boundary: the faces come with the
+  // surface each one takes, the wall's on a wall plane and the hole's on a hole
+  // plane, and no grid, since a wall that carries one refuses its holes.
+  std::vector<const face_surface_t *> boundary_surfaces;
+  const std::vector<const brush_geometry_t *> holes =
+      collect_hole_brushes(neighbourhood.geometry, neighbourhood.self);
+  if (!holes.empty() && !brush_refuses_holes(brush))
+  {
+    std::optional<brush_solid_t> solid = try_build_brush_solid(brush, holes);
+    if (!solid)
+    {
+      log_error("generate_brush_mesh: brush {} could not be cut by its {} holes — drawing nothing",
+                neighbourhood.self, holes.size());
+      return {};
+    }
+    polyhedron        = std::move(solid->boundary);
+    boundary_surfaces = std::move(solid->boundary_surfaces);
+    grids             = {};
+    grids.grid_vertices.resize(polyhedron->faces.size());
+    grids.grid_weights.resize(polyhedron->faces.size());
+    grids.grid_pinned.resize(polyhedron->faces.size());
+  }
+
+  const auto surface_for = [&](size_t face_index) -> const face_surface_t * {
+    if (!boundary_surfaces.empty())
+      return boundary_surfaces[face_index];
+    return find_face_surface(brush, polyhedron->faces[face_index].plane);
+  };
+
+  // A corner in a non-zero smoothing group draws with the average normal of
+  // its group at that position, across this brush and its touching neighbours.
+  std::vector<int32_t> smoothing_groups(polyhedron->faces.size(), 0);
+  for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
+    if (const face_surface_t *surface = surface_for(face_index))
+      smoothing_groups[face_index] = surface->smoothing_group;
+  const std::vector<smoothing_source_t> smoothing_sources = collect_smoothing_sources(
+      brush, Span<const int32_t>(smoothing_groups.data(), smoothing_groups.size()),
+      neighbourhood);
+  const std::vector<std::vector<linalg::vec3>> corner_normals = compute_smoothed_corner_normals(
+      *polyhedron, Span<const int32_t>(smoothing_groups.data(), smoothing_groups.size()),
+      Span<const smoothing_source_t>(smoothing_sources.data(), smoothing_sources.size()));
 
   // The material a face resolves to, and the mesh slot each distinct one takes.
   // Faces are grouped rather than emitted in face order so a brush with one
@@ -2288,7 +2406,7 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
     if (face.vertex_indices.size() < 3)
       continue;
 
-    const face_surface_t *surface = find_face_surface(brush, face.plane);
+    const face_surface_t *surface = surface_for(face_index);
     if (surface && !surface->emits_geometry)
       continue;
 
@@ -2323,7 +2441,7 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
     for (size_t face_index : faces_by_slot[slot])
     {
       const brush_face_t &face = polyhedron->faces[face_index];
-      const face_surface_t *surface = find_face_surface(brush, face.plane);
+      const face_surface_t *surface = surface_for(face_index);
       const face_uv_channel_t uv =
           surface ? surface->uv : default_face_uv(face.plane.normal);
 
@@ -2338,11 +2456,11 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
       {
         // Per-face vertices: the normal is flat and the UV basis is the face's
         // own, so a corner shared by three faces is three mesh vertices.
-        for (uint32_t index : face.vertex_indices)
+        for (size_t corner = 0; corner < face.vertex_indices.size(); ++corner)
         {
-          const linalg::vec3 position = polyhedron->vertices[index];
-          mesh.vertices.push_back(
-              {position, face.plane.normal, face_uv_at(uv, position, face.plane.normal)});
+          const linalg::vec3 position = polyhedron->vertices[face.vertex_indices[corner]];
+          mesh.vertices.push_back({position, corner_normals[face_index][corner],
+                                   face_uv_at(uv, position, face.plane.normal)});
         }
 
         for (uint32_t offset = 1; offset + 1 < (uint32_t)face.vertex_indices.size(); ++offset)
@@ -2632,32 +2750,31 @@ void write_surface(const geometry_surface_t &surface,
   out.emplace_back("is_wireframe", format_bool(surface.is_wireframe));
 }
 
-// The tie, one key, written only when there is one -- so every geometry block
-// authored before B4 saves byte-for-byte as it did and a plain world brush stays
-// a plain world brush on disk.
-void write_owner(entity_uid_t owner_uid,
-                 std::vector<std::pair<std::string, std::string>> &out)
+// A uid-valued key (`owner`, `subtracts_from`), written only when there is one --
+// so every geometry block authored before the key existed saves byte-for-byte
+// as it did and a plain world brush stays a plain world brush on disk.
+void write_uid_property(const char *key, entity_uid_t uid,
+                        std::vector<std::pair<std::string, std::string>> &out)
 {
-  if (owner_uid != null_entity_uid)
-    out.emplace_back("owner", std::to_string(owner_uid));
+  if (uid != null_entity_uid)
+    out.emplace_back(key, std::to_string(uid));
 }
 
-void read_owner(const std::map<std::string, std::string> &properties,
-                entity_uid_t &owner_uid)
+void read_uid_property(const std::map<std::string, std::string> &properties, const char *key,
+                       entity_uid_t &uid)
 {
-  const std::string *raw = find_property(properties, "owner");
+  const std::string *raw = find_property(properties, key);
   if (!raw)
     return;
 
   try
   {
     const unsigned long parsed = std::stoul(*raw);
-    owner_uid = (entity_uid_t)parsed;
+    uid = (entity_uid_t)parsed;
   }
   catch (const std::exception &)
   {
-    log_error("geometry property \"owner\": \"{}\" is not a uid — the object stays untied",
-              *raw);
+    log_error("geometry property \"{}\": \"{}\" is not a uid — the key is ignored", key, *raw);
   }
 }
 
@@ -2945,7 +3062,7 @@ void serialize_geometry(const geometry_value_t &geometry,
       out_properties.emplace_back("collides", format_bool(static_mesh.collides));
     if (!static_mesh.casts_shadows)
       out_properties.emplace_back("casts_shadows", format_bool(static_mesh.casts_shadows));
-    write_owner(static_mesh.owner_uid, out_properties);
+    write_uid_property("owner", static_mesh.owner_uid, out_properties);
     return;
   }
 
@@ -2954,7 +3071,8 @@ void serialize_geometry(const geometry_value_t &geometry,
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
     out_properties.emplace_back("vertices", brush_vertices_to_text(brush.hull_points));
     write_surface(brush.surface, out_properties);
-    write_owner(brush.owner_uid, out_properties);
+    write_uid_property("owner", brush.owner_uid, out_properties);
+    write_uid_property("subtracts_from", brush.subtracts_from_uid, out_properties);
     for (const face_surface_t &face : brush.face_surfaces)
       write_face_surface(face, material_remap, out_children.emplace_back());
     return;
@@ -3006,7 +3124,7 @@ bool parse_geometry(const std::string &keyword,
     read_surface(properties, static_mesh.surface);
     read_bool(properties, "collides", static_mesh.collides);
     read_bool(properties, "casts_shadows", static_mesh.casts_shadows);
-    read_owner(properties, static_mesh.owner_uid);
+    read_uid_property(properties, "owner", static_mesh.owner_uid);
     out_geometry = std::move(static_mesh);
     return true;
   }
@@ -3042,7 +3160,8 @@ bool parse_geometry(const std::string &keyword,
 
     brush.hull_points = std::move(*vertices);
     read_surface(properties, brush.surface);
-    read_owner(properties, brush.owner_uid);
+    read_uid_property(properties, "owner", brush.owner_uid);
+    read_uid_property(properties, "subtracts_from", brush.subtracts_from_uid);
 
     for (const map_block_t &child : children)
     {

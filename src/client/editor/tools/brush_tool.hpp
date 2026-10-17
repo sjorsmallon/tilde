@@ -5,6 +5,7 @@
 #include "../../../shared/map/map_geometry.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
+#include "brush_stroke.hpp"
 
 #include <functional>
 #include <optional>
@@ -144,7 +145,9 @@ private:
     bool active = false;
     bool inverted = false;
 
-    std::optional<shared::geometry_value_t> geometry_at_the_start;
+    // Every brush the stroke has written, as it was when first touched: one
+    // for a paint, every brush the sphere covered for a sculpt.
+    std::vector<stroke_brush_before_t> brushes_at_the_start;
   };
 
   //@FIXME(SJM): layer is the target layer where we are painting towards.

@@ -48,9 +48,13 @@ struct team_wall_tint_t
 renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geometry,
                                            const linalg::quatf& orientation);
 
+// `map_geometry` is the list the object sits in, so a brush's seam with its
+// neighbours is read the way collision reads it.
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
-                   const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by = nullptr,
+                   const shared::lightmap_t &lightmap,
+                   Span<const shared::map_geometry_t> map_geometry,
+                   const linalg::mat4f* moved_by = nullptr,
                    const renderer::clock_wipe_t& clock_wipe = {},
                    std::optional<team_wall_tint_t> team_wall = {},
                    renderer::light_cut_t light_cut = renderer::light_cut_t::none,
@@ -66,9 +70,15 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
 // Takes the whole geometry rather than one kind, because both kinds that
 // generate a mesh need exactly this, and a per-kind entry point is two things
 // to remember instead of one.
+//
+// A brush's seam and its smoothed normals depend on its neighbours, so a changed
+// brush also rebuilds every subdivided or smoothed brush of `map_geometry`
+// whose bounds touch it: their values
+// did not change, which is exactly why the draw path's check would miss them.
 void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      shared::entity_uid_t uid,
                                      Span<const std::string> materials,
-                                     const shared::lightmap_t &lightmap);
+                                     const shared::lightmap_t &lightmap,
+                                     Span<const shared::map_geometry_t> map_geometry);
 
 } // namespace client

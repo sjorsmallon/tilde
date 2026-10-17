@@ -406,8 +406,8 @@ void Brush_Tool::rebuild_hull_and_handles(editor_context_t& ctx)
   // grid vertices too (the four of them), and the editor grid's points are not
   // on it at all once it has been sculpted.
   {
-    const shared::brush_face_grids_t grids =
-        shared::build_brush_face_grids(*brush, *selection_geometry.hull);
+    const shared::brush_face_grids_t grids = shared::build_brush_face_grids(
+        *brush, *selection_geometry.hull, {ctx.map->geometry, selection.uid});
     const std::vector<linalg::vec3> &grid =
         grids.grid_vertices[(size_t)selection_geometry.face_idx];
     if (!grid.empty())
@@ -532,7 +532,7 @@ bool Brush_Tool::try_rebuild_selected_brush(editor_context_t& ctx, std::vector<l
   // that just changed shape -- see geometry_def.md ss6.
   shared::sync_face_surfaces(*brush);
 
-  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap);
+  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -559,7 +559,7 @@ void Brush_Tool::nudge_selected_brush(editor_context_t& ctx,
   shared::translate_brush(*brush, direction * step);
 
   // because the vertices have moved, we need to update the mesh, since they are fully decoupled.
-  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap);
+  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
 
   for (linalg::vec3& point : selection.points)
   {
@@ -780,7 +780,8 @@ void Brush_Tool::on_mouse_down(editor_context_t& ctx,
     if (!brush || !grid_cursor.position)
       return;
 
-    stroke.geometry_at_the_start = *brush;
+    stroke.brushes_at_the_start.clear();
+    remember_brush_before_stroke(stroke.brushes_at_the_start, *ctx.map, selection.uid);
     stroke.inverted = e.mods.shift;
     stroke.active = true;
     return;
@@ -1039,11 +1040,11 @@ void Brush_Tool::on_mouse_drag(editor_context_t& ctx,
         return;
 
       *live = start;
-      shared::nudge_brush_grid_vertices(
-          *live, drag.vertex_start_points,
-          drag.axis.direction * travel_distance_along_axis);
+      shared::nudge_brush_grid_vertices(*live, drag.vertex_start_points,
+                                        drag.axis.direction * travel_distance_along_axis,
+                                        {ctx.map->geometry, selection.uid});
 
-      refresh_generated_geometry_mesh(*live, selection.uid, ctx.map->materials, ctx.map->lightmap);
+      refresh_generated_geometry_mesh(*live, selection.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
       rebuild_hull_and_handles(ctx);
       return;
     }
@@ -1326,7 +1327,7 @@ void Brush_Tool::edit_face_surface(
   if (shared::geometry_values_equal(before, *target.brush))
     return;
 
-  refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
+  refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
 
   // Subdividing REPLACES the handle set with the new grid, so the tool's
   // copy has to follow the edit rather than the next click.
@@ -1359,7 +1360,8 @@ void Brush_Tool::update_grid_stroke(editor_context_t& ctx, float dt)
     return;
 
   const std::optional<shared::brush_grid_hit_t> hit = shared::try_pick_brush_grid(
-      *brush, cached_view.mouse_ray.origin, cached_view.mouse_ray.direction);
+      *brush, cached_view.mouse_ray.origin, cached_view.mouse_ray.direction,
+      {ctx.map->geometry, selection.uid});
   if (hit)
   {
     grid_cursor.position = hit->position;
@@ -1378,52 +1380,38 @@ void Brush_Tool::update_grid_stroke(editor_context_t& ctx, float dt)
   // Off dt rather than per mouse event: a stroke is a rate, so holding still
   // keeps building up and a fast sweep lays down the same amount per unit of
   // travel whatever the frame rate is.
-  size_t touched = 0;
   if (mode == Mode::Paint)
   {
-    touched = shared::paint_brush_grid_blend(*brush, *grid_cursor.position, paint.radius,
-                                             paint.strength * dt, paint.layer);
-  }
-  else
-  {
-    const float amount = (stroke.inverted ? -1.0f : 1.0f) * sculpt.strength * dt;
-    touched = shared::sculpt_brush_grid_vertices(*brush, *grid_cursor.position,
-                                                 sculpt.radius,
-                                                 grid_cursor.face_normal * amount);
-  }
+    const size_t touched = shared::paint_brush_grid_blend(
+        *brush, *grid_cursor.position, paint.radius, paint.strength * dt, paint.layer,
+        {ctx.map->geometry, selection.uid});
+    if (touched == 0)
+      return;
 
-  if (touched == 0)
+    refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
     return;
+  }
 
-  refresh_generated_geometry_mesh(*brush, selection.uid, ctx.map->materials, ctx.map->lightmap);
+  // A sculpt covers every brush under the sphere, not only the selected one,
+  // so a hill crosses the seam between two brushes.
+  const float amount = (stroke.inverted ? -1.0f : 1.0f) * sculpt.strength * dt;
+  sculpt_brushes_under_stroke(ctx, stroke.brushes_at_the_start, *grid_cursor.position,
+                              sculpt.radius, grid_cursor.face_normal * amount);
 }
 
 void Brush_Tool::end_grid_stroke(editor_context_t& ctx)
 {
-  const std::optional<shared::geometry_value_t> before =
-      std::move(stroke.geometry_at_the_start);
-  stroke.geometry_at_the_start.reset();
+  std::vector<stroke_brush_before_t> befores = std::move(stroke.brushes_at_the_start);
+  stroke.brushes_at_the_start.clear();
   stroke.active = false;
 
-  if (!before)
+  if (befores.empty() || !ctx.map)
     return;
-
-  shared::brush_geometry_t *brush = try_get_selected_brush(ctx);
-  if (!brush)
-  {
-    log_error("brush tool: brush {} vanished mid-stroke - the edit is not undoable",
-              selection.uid);
-    return;
-  }
 
   // The whole stroke is one entry, like a drag: an undo per frame of painting
   // would be unusable.
-  if (shared::geometry_values_equal(*before, shared::geometry_value_t{*brush}))
+  if (!push_stroke_transaction(ctx, "Face grid stroke", std::move(befores)))
     return;
-
-  transaction_t transaction;
-  transaction.add_geometry_modified(selection.uid, *before, *brush);
-  ctx.transaction_system.push("Face grid stroke", std::move(transaction));
 
   // A sculpt moved the surface the player walks on; a paint moved no vertex.
   if (mode == Mode::Sculpt && ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -1629,6 +1617,12 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
       face.emits_geometry = emits_geometry;
     });
 
+  int smoothing_group = current ? current->smoothing_group : 0;
+  if (ImGui::InputInt("smoothing group (0 is flat)", &smoothing_group))
+    edit_face_surface(ctx, target, [smoothing_group](shared::face_surface_t &face) {
+      face.smoothing_group = std::max(smoothing_group, 0);
+    });
+
   const shared::face_uv_channel_t uv =
       current ? current->uv : shared::default_face_uv(target.plane.normal);
 
@@ -1686,7 +1680,7 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
       face.uv.v_shift = pattern.uv.v_shift;
     }
 
-    refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
+    refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
     transaction_t transaction;
     transaction.add_geometry_modified(target.uid, before, *target.brush);
     ctx.transaction_system.push("Copy material to every face", std::move(transaction));
@@ -1752,7 +1746,7 @@ void Brush_Tool::draw_material_ui(editor_context_t& ctx)
                                    level);
         }
 
-        refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap);
+        refresh_generated_geometry_mesh(*target.brush, target.uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
         rebuild_hull_and_handles(ctx);
 
         transaction_t transaction;
@@ -1889,8 +1883,8 @@ void Brush_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws)
     // would shade the one place the face is not.
     if (brush && subdivision_level > 0)
     {
-      const shared::brush_face_grids_t grids =
-          shared::build_brush_face_grids(*brush, *selection_geometry.hull);
+      const shared::brush_face_grids_t grids = shared::build_brush_face_grids(
+          *brush, *selection_geometry.hull, {ctx.map->geometry, selection.uid});
       const std::vector<linalg::vec3> &grid =
           grids.grid_vertices[(size_t)selection_geometry.face_idx];
 

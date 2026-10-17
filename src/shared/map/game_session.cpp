@@ -127,14 +127,16 @@ game_session_t build_session(const map_t &map)
     const entities::Entity *owner = session.entity_system.try_find(session.owner_of[i]);
     if (owner != nullptr && owner->type == entities::entity_type::Mover_Entity)
     {
-      std::vector<collision_piece_t> pieces = get_collision_pieces(entry.value, entry.uid);
+      std::vector<collision_piece_t> pieces =
+          get_collision_pieces(entry.value, entry.uid, session.geometry);
       std::vector<collision_piece_t> &rest  = session.mover_rests[session.owner_of[i]].pieces;
       rest.insert(rest.end(), std::make_move_iterator(pieces.begin()),
                   std::make_move_iterator(pieces.end()));
       continue;
     }
 
-    for (const collision_piece_t &piece : get_collision_pieces(entry.value, entry.uid))
+    for (const collision_piece_t &piece :
+         get_collision_pieces(entry.value, entry.uid, session.geometry))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;

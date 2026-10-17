@@ -37,7 +37,7 @@ static int failures = 0;
 static void add_piece_inputs(std::vector<BVH_Input>& inputs, const shared::geometry_value_t& geometry,
                              shared::entity_uid_t uid, uint32_t index)
 {
-  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, uid))
+  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, uid, {}))
   {
     BVH_Input input;
     input.aabb             = piece.bounds;

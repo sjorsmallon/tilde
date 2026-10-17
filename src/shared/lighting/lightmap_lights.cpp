@@ -123,7 +123,7 @@ static Bounding_Volume_Hierarchy build_geometry_bvh(const map_t &map,
     }
 
     const std::vector<collision_piece_t> pieces =
-        get_collision_pieces(entry.value, entry.uid);
+        get_collision_pieces(entry.value, entry.uid, map.geometry);
     if (pieces.empty() && occluding)
       log_warning("[lightmap] object {} has no collision pieces and casts no shadow.",
                   entry.uid);

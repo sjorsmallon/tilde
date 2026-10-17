@@ -455,6 +455,51 @@ int main()
       return fail("the two stamps share an owner");
   }
 
+  // A hole names its wall, which is geometry. The hole is placed BEFORE its
+  // wall here so the link can only be rewritten after every brush has a copy;
+  // a wall outside the piece is cleared loudly, the same as a stray owner.
+  {
+    map_t hole_source;
+    hole_source.name = "hole.source";
+
+    const entity_uid_t hole =
+        hole_source.add_geometry(make_box_brush({0.f, 0.f, 0.f}, {8.f, 16.f, 8.f}));
+    const entity_uid_t wall =
+        hole_source.add_geometry(make_box_brush({0.f, 0.f, 0.f}, {64.f, 8.f, 64.f}));
+    const entity_uid_t stray_hole =
+        hole_source.add_geometry(make_box_brush({128.f, 0.f, 0.f}, {8.f, 16.f, 8.f}));
+    std::get<brush_geometry_t>(hole_source.find_geometry_by_uid(hole)->value).subtracts_from_uid =
+        wall;
+    std::get<brush_geometry_t>(hole_source.find_geometry_by_uid(stray_hole)->value)
+        .subtracts_from_uid = 9999;
+
+    map_t hole_destination;
+    const paste_result_t first_hole =
+        paste_map_piece(hole_destination, hole_source, {0.f, 0.f, 0.f});
+    const paste_result_t second_hole =
+        paste_map_piece(hole_destination, hole_source, {512.f, 0.f, 0.f});
+
+    if (first_hole.cleared_reference_count != 1 || second_hole.cleared_reference_count != 1)
+      return fail("a paste did not clear exactly the one hole naming a wall outside the piece");
+
+    for (const paste_result_t *paste : {&first_hole, &second_hole})
+    {
+      const entity_uid_t copied_hole  = paste->remap.at(hole);
+      const entity_uid_t copied_wall  = paste->remap.at(wall);
+      const entity_uid_t copied_stray = paste->remap.at(stray_hole);
+
+      if (std::get<brush_geometry_t>(hole_destination.find_geometry_by_uid(copied_hole)->value)
+              .subtracts_from_uid != copied_wall)
+        return fail("a pasted hole does not name the pasted copy of its wall");
+      if (std::get<brush_geometry_t>(hole_destination.find_geometry_by_uid(copied_stray)->value)
+              .subtracts_from_uid != null_entity_uid)
+        return fail("a hole naming a wall outside the piece came through still a hole");
+    }
+
+    if (first_hole.remap.at(wall) == second_hole.remap.at(wall))
+      return fail("the two stamps share a wall");
+  }
+
   printf("prefab_test: OK (6 objects copied, 2 field references remapped, 2 slots kept, 1 outside-end row dropped, pasted "
          "twice with %zu connections remapped, material appended once)\n",
          destination.connections.size());

@@ -26,13 +26,14 @@ bool bounds_contain(const aabb_bounds_t& bounds, const linalg::vec3f& point)
 // face, so that face is the nearest by a wide margin on any wall thicker than a
 // frame's travel.
 std::optional<Plane> try_entry_plane(const geometry_value_t& geometry, entity_uid_t uid,
+                                     Span<const map_geometry_t> map_geometry,
                                      const linalg::vec3f& center)
 {
   constexpr float INSIDE_TOLERANCE = 0.01f;
 
   std::optional<Plane> entry;
   float                entry_depth = 0.f;
-  for (const collision_piece_t& piece : get_collision_pieces(geometry, uid))
+  for (const collision_piece_t& piece : get_collision_pieces(geometry, uid, map_geometry))
   {
     bool  inside       = true;
     float shallowest   = -1e30f;
@@ -95,7 +96,8 @@ void detect_team_wall_crossings(const Entity_System& system, Span<const map_geom
       if (was_inside)
         continue;
 
-      const std::optional<Plane> plane = try_entry_plane(entry.value, entry.uid, crosser.center);
+      const std::optional<Plane> plane =
+          try_entry_plane(entry.value, entry.uid, geometry, crosser.center);
       if (!plane)
       {
         // Inside the bound but inside no piece: the corner of a concave brush's

@@ -3693,7 +3693,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter, owner->solid_only_when_lensed);
 
       draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
-                    ctx.world.session.lightmap,
+                    ctx.world.session.lightmap, ctx.world.session.geometry,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
                     compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut,
                     owner != nullptr && owner->casts_dynamic_shadow);

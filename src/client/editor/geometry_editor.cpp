@@ -1,5 +1,7 @@
 #include "geometry_editor.hpp"
 #include "../../shared/assets/asset.hpp"
+#include "../../shared/map/brush/brush_holes.hpp"
+#include "../../shared/map/map.hpp"
 #include "../../shared/map/editor_grid.hpp"
 #include "../../shared/log.hpp"
 #include "../geometry_renderer.hpp"
@@ -44,6 +46,10 @@ constexpr color_t BRUSH_CONTOUR_COLOR{30, 32, 38};
 // level, and the contour is the only thing about the brush that would otherwise
 // have changed at all.
 constexpr color_t NO_COLLISION_CONTOUR_COLOR{230, 40, 40};
+
+// A hole: the volume that was authored, which the wall's mesh no longer shows.
+constexpr color_t HOLE_FILL_COLOR{255, 150, 40, 60};
+constexpr color_t HOLE_CONTOUR_COLOR{255, 150, 40};
 
 // The box a selected static mesh collides as, and the same box when its
 // collision is switched off and clip brushes are expected to stand in for it.
@@ -160,7 +166,8 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid, Span<const std::string> materials,
-                             const shared::lightmap_t &lightmap, bool collides)
+                             const shared::lightmap_t &lightmap,
+                             Span<const shared::map_geometry_t> map_geometry, bool collides)
 {
   // Brushes carry their shape in their EDGES, not in a surface texture -- the
   // flat grey they draw as says nothing on its own. Contours here rather than in
@@ -169,8 +176,24 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
   if (shared::get_kind(geometry) == shared::geometry_kind_t::Brush)
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
+
+    // A hole has no mesh: its wall draws what it leaves. The authored volume is
+    // drawn tinted so it stays visible, pickable and movable after the wall is built.
+    if (brush.subtracts_from_uid != shared::null_entity_uid)
+    {
+      if (const std::optional<shared::brush_polyhedron_t> hull =
+              shared::try_build_brush_polyhedron(brush.hull_points))
+      {
+        for (const std::vector<linalg::vec3> &polygon : shared::brush_face_polygons(*hull))
+          draws.debug.filled_polygon(Span<const linalg::vec3f>(polygon.data(), polygon.size()),
+                                     HOLE_FILL_COLOR, 0.f, {.depth_bias = 0.5f});
+      }
+      draw_brush_wireframe(draws, brush, HOLE_CONTOUR_COLOR, -60.0f);
+      return;
+    }
+
     if (solid)
-      draw_geometry(draws, geometry, uid, materials, lightmap, nullptr,
+      draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry, nullptr,
                     geometry_wipe_frame(geometry, linalg::quatf{0.0f, 0.0f, 0.0f, 1.0f}));
 
     draw_brush_wireframe(draws, brush,
@@ -179,7 +202,66 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
     return;
   }
 
-  draw_geometry(draws, geometry, uid, materials, lightmap);
+  draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry);
+}
+
+std::vector<hole_link_t> refresh_walls_of_changed_holes(const shared::map_t &map,
+                                                        Span<const hole_link_t> previous)
+{
+  std::vector<hole_link_t> current;
+  for (const shared::map_geometry_t &entry : map.geometry)
+  {
+    const shared::brush_geometry_t *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
+    if (brush != nullptr && brush->subtracts_from_uid != shared::null_entity_uid)
+      current.push_back({entry.uid, brush->subtracts_from_uid, *brush});
+  }
+
+  std::vector<shared::entity_uid_t> walls_to_rebuild;
+  const auto note_wall = [&walls_to_rebuild](shared::entity_uid_t wall) {
+    for (shared::entity_uid_t noted : walls_to_rebuild)
+      if (noted == wall)
+        return;
+    walls_to_rebuild.push_back(wall);
+  };
+
+  for (const hole_link_t &link : current)
+  {
+    const hole_link_t *before = nullptr;
+    for (const hole_link_t &candidate : previous)
+      if (candidate.hole == link.hole)
+        before = &candidate;
+
+    if (before == nullptr)
+    {
+      note_wall(link.wall);
+      continue;
+    }
+    if (before->wall != link.wall ||
+        !shared::geometry_values_equal(shared::geometry_value_t{before->value},
+                                       shared::geometry_value_t{link.value}))
+    {
+      note_wall(before->wall);
+      note_wall(link.wall);
+    }
+  }
+  for (const hole_link_t &before : previous)
+  {
+    bool still_there = false;
+    for (const hole_link_t &link : current)
+      still_there |= link.hole == before.hole;
+    if (!still_there)
+      note_wall(before.wall);
+  }
+
+  for (shared::entity_uid_t wall : walls_to_rebuild)
+  {
+    const shared::map_geometry_t *entry = map.find_geometry_by_uid(wall);
+    if (entry != nullptr)
+      refresh_generated_geometry_mesh(entry->value, wall, map.materials, map.lightmap,
+                                      map.geometry);
+  }
+
+  return current;
 }
 
 // ============================================================================

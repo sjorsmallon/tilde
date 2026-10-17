@@ -63,8 +63,20 @@ build_editor_bvh(const shared::map_t &map)
       continue;
     }
 
+    // A hole collides with nothing by design and is still clicked as the volume
+    // that was authored, so it can be moved and resized after the wall is built.
+    const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&entry.value);
+    if (brush != nullptr && brush->subtracts_from_uid != shared::null_entity_uid)
+    {
+      if (const std::optional<shared::brush_polyhedron_t> hull =
+              shared::try_build_brush_polyhedron(brush->hull_points))
+        add_leaf(entry.uid, shared::compute_brush_bounds(hull->vertices),
+                 shared::brush_collision_planes(*hull));
+      continue;
+    }
+
     const std::vector<shared::collision_piece_t> pieces =
-        shared::get_collision_pieces(entry.value, entry.uid);
+        shared::get_collision_pieces(entry.value, entry.uid, map.geometry);
     if (pieces.empty())
       result.objects_without_collision.push_back(entry.uid);
 
