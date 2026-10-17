@@ -3,7 +3,7 @@
 #include "../shared/cvars/cvar_console.hpp"
 #include "input.hpp"
 
-#include <functional>
+#include <format>
 #include <imgui.h>
 #include <string>
 #include <string_view>
@@ -19,30 +19,25 @@ public:
   static console &get();
 
   void draw();
-  void print(const char *fmt, ...);
+
+  void print_line(std::string line);
+
+  template <typename... Args>
+  void print(std::format_string<Args...> format, Args &&...args)
+  {
+    print_line(std::format(format, std::forward<Args>(args)...));
+  }
+
   void execute_command(const char *command_line);
 
-  // Lend the console the launcher's cvar values and command table. Called once
-  // from client::init(); every line typed afterwards resolves against these.
-  //
-  // There is no RegisterRemoteCVar any more, and nothing left to register: the
-  // client's CVAR_INFOS / COMMAND_INFOS tables are generated from the same
-  // cvars.def as the server's, and the handshake refuses any client whose
-  // SCHEMA_HASH differs — so autocomplete and forwarding both read a local
-  // table that provably matches the server's. Forwarding to a server is a flag
-  // check plus command_table_t::forward_to_server, which Play_State installs
-  // when it connects.
+  // Lends the launcher's values and the client's command table; null before client::init().
   void set_cvar_state(cvars::cvar_state_t *state, cvars::command_table_t *table);
 
-  // Bind a key, by its key_names.hpp name, to a command line. The bound command
-  // is executed via execute_command when the key transitions to pressed.
   bool bind_key(std::string_view key, std::string command_line);
 
-  // Binds persist as console lines in binds.cfg beside last_map.txt: written
-  // whenever one changes, replayed through execute_command once at init.
+  // binds.cfg is a tiny autoexec: every line runs through execute_command once at init.
   void load_bindings_from_file();
 
-  // Self-gating: a no-op while the console is open, so callers need not check.
   void execute_pressed_bindings();
 
   bool is_open() const { return should_draw; }
@@ -51,33 +46,23 @@ public:
 
 private:
   console();
-  ~console();
 
   void save_bindings_to_file() const;
 
-  bool should_draw;
-  bool is_folded_open;
+  int text_edit_callback(ImGuiInputTextCallbackData *data);
+  static int text_edit_callback_stub(ImGuiInputTextCallbackData *data);
 
-  // Autocomplete
-  int TextEditCallback(ImGuiInputTextCallbackData *data);
-  static int TextEditCallbackStub(ImGuiInputTextCallbackData *data);
-
-  char InputBuf[256];
-  std::vector<char *> items;
-  bool scroll_to_bottom;
-  std::vector<std::string> candidates;
-  int history_position_cursor; // -1: new line, 0..history.Size-1 browsing history.
+  bool should_draw = false;
+  bool scroll_to_bottom = false;
+  char input_buffer[256] = {};
+  std::vector<std::string> items;
+  int history_position_cursor = -1;
   std::vector<std::string> history;
 
-  // Borrowed from the launcher via set_cvar_state. Null before client::init().
-  cvars::cvar_state_t    *cvar_state_    = nullptr;
-  cvars::command_table_t *command_table_ = nullptr;
+  cvars::cvar_state_t *cvar_state = nullptr;
+  cvars::command_table_t *command_table = nullptr;
 
-  // Key bindings: Key -> command line.
-  std::unordered_map<input::key_t, std::string> bindings_;
-
-  // Commands
-  std::vector<const char *> Commands;
+  std::unordered_map<input::key_t, std::string> bindings;
 };
 
 } // namespace client

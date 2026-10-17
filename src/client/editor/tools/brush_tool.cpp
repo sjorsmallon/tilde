@@ -2,7 +2,7 @@
 
 #include "../../../shared/collision/collision_detection.hpp"
 #include "../../../shared/log.hpp"
-#include "../../hud/announcement.hpp"
+#include "../../hud.hpp"
 #include "../../geometry_renderer.hpp"
 #include "imgui.h"
 #include "renderer.hpp"

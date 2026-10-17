@@ -5,13 +5,7 @@
 #include "play_state.hpp"
 #include "../audio/audio_system.hpp"
 #include "../console.hpp"
-#include "../hud/announcement.hpp"
-#include "../hud/crosshair.hpp"
-#include "../hud/deploy_timer.hpp"
-#include "../hud/ready_status.hpp"
-#include "../hud/run_timer.hpp"
-#include "../hud/freeze_countdown.hpp"
-#include "../hud/weapon_name.hpp"
+#include "../hud.hpp"
 #include "../ghost_playback.hpp"
 #include "../replay_panel.hpp"
 #include "../weapon_fire_audio.hpp"
@@ -1664,7 +1658,7 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
   for (const auto &msg : inbox.server_text_messages)
   {
     log_terminal("[SERVER] {}", msg.message());
-    console::get().print("%s", msg.message().c_str());
+    console::get().print_line(msg.message());
   }
 
   // take on any cvar changes.
@@ -3744,7 +3738,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
     if (line != ctx.visuals.shadow_volume_debug_line)
     {
-      console::get().print(line.c_str());
+      console::get().print_line(line);
       ctx.visuals.shadow_volume_debug_line = line;
     }
 
@@ -4640,7 +4634,7 @@ void replay_record(std::string_view name, const command_context_t &)
     client::console::get().print("replay_record: could not start; see the terminal");
     return;
   }
-  client::console::get().print("replay_record: recording to %s", path->c_str());
+  client::console::get().print("replay_record: recording to {}", *path);
 }
 
 void replay_play(std::string_view path, const command_context_t &)
@@ -4650,9 +4644,7 @@ void replay_play(std::string_view path, const command_context_t &)
   const std::optional<std::string> resolved = shared::try_resolve_replay_path(std::string(path));
   if (!resolved)
   {
-    client::console::get().print("replay_play: '%.*s' not found (also tried replays/%.*s and replays/%.*s.replay)",
-                                 static_cast<int>(path.size()), path.data(), static_cast<int>(path.size()),
-                                 path.data(), static_cast<int>(path.size()), path.data());
+    client::console::get().print("replay_play: '{0}' not found (also tried replays/{0} and replays/{0}.replay)", path);
     return;
   }
 
@@ -4661,7 +4653,7 @@ void replay_play(std::string_view path, const command_context_t &)
       shared::try_read_replay_file(*resolved, entities::SCHEMA_HASH, assets::asset_table_hash(), reason);
   if (!replay)
   {
-    client::console::get().print("replay_play: '%s' %s", resolved->c_str(), reason.c_str());
+    client::console::get().print("replay_play: '{}' {}", *resolved, reason);
     return;
   }
   if (replay->header.tickrate_hz == 0)
@@ -4679,7 +4671,7 @@ void replay_play(std::string_view path, const command_context_t &)
   client::client_context_t &ctx = client::state_manager::get_client_context();
   if (!ctx.replay.active)
   {
-    client::console::get().print("%s: no replay is playing", command);
+    client::console::get().print("{}: no replay is playing", command);
     return nullptr;
   }
   return &ctx.replay;
@@ -4701,11 +4693,11 @@ void replay_speed(float factor, const command_context_t &)
     return;
   if (!(factor > 0.0f))
   {
-    client::console::get().print("replay_speed: %g is not a speed; replay_pause stops playback", factor);
+    client::console::get().print("replay_speed: {} is not a speed; replay_pause stops playback", factor);
     return;
   }
   playback->speed = factor;
-  client::console::get().print("replay_speed: %gx", factor);
+  client::console::get().print("replay_speed: {}x", factor);
 }
 
 void replay_seek(float seconds, const command_context_t &)
@@ -4715,7 +4707,7 @@ void replay_seek(float seconds, const command_context_t &)
     return;
   const double target = std::clamp(static_cast<double>(seconds), 0.0, client::replay_seconds_total(*playback));
   client::request_replay_seek(*playback, target);
-  client::console::get().print("replay_seek: %.1f / %.1f s", target, client::replay_seconds_total(*playback));
+  client::console::get().print("replay_seek: {:.1f} / {:.1f} s", target, client::replay_seconds_total(*playback));
 }
 
 void replay_skip(float seconds, const command_context_t &)
@@ -4730,7 +4722,7 @@ void replay_skip(float seconds, const command_context_t &)
           : client::replay_seconds_elapsed(*playback);
   const double target = std::clamp(from + seconds, 0.0, client::replay_seconds_total(*playback));
   client::request_replay_seek(*playback, target);
-  client::console::get().print("replay_skip: %.1f / %.1f s", target, client::replay_seconds_total(*playback));
+  client::console::get().print("replay_skip: {:.1f} / {:.1f} s", target, client::replay_seconds_total(*playback));
 }
 
 void replay_stop(const command_context_t &)
@@ -4748,7 +4740,7 @@ void replay_stop(const command_context_t &)
   }
   const std::string path = ctx.replay_recorder.path;
   shared::finish_replay_recording(ctx.replay_recorder);
-  client::console::get().print("replay_stop: wrote %s", path.c_str());
+  client::console::get().print("replay_stop: wrote {}", path);
 }
 
 } // namespace cvars::commands

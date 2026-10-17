@@ -239,7 +239,6 @@ set(ENTITY_IO_HANDLERS
     src/server/entities/game_rules_entity.cpp
     src/server/entities/logic_counter_entity.cpp
     src/server/entities/launcher_entity.cpp
-    src/server/entities/remnant_entity.cpp
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${ENTITY_IO_HANDLERS} PROPERTIES
@@ -449,11 +448,13 @@ add_library(game_shared STATIC
     src/shared/replay/replay_player_view.hpp
     src/shared/replay/replay_player_view.cpp
     src/shared/map/map_group.cpp
-    src/shared/map/brush.cpp
+    src/shared/map/brush/brush.cpp
+    src/shared/map/brush/face_neighbour.hpp
+    src/shared/map/brush/face_neighbour.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
-    src/shared/map/convex_decomposition.hpp
-    src/shared/map/convex_decomposition.cpp
+    src/shared/map/brush/convex_decomposition.hpp
+    src/shared/map/brush/convex_decomposition.cpp
     src/shared/lighting/map_baker.cpp
     src/shared/movement/pathfinding.cpp
     src/shared/lighting/lighting.hpp
@@ -468,8 +469,6 @@ add_library(game_shared STATIC
     # miniz 3.1.2, verbatim (MIT): DEFLATE for the streamed map package.
     src/third_party/miniz/miniz.h
     src/third_party/miniz/miniz.c
-    src/shared/compression.hpp
-    src/shared/compression.cpp
     src/shared/lighting/lightmap_debug_image.cpp
     src/shared/lighting/lightmap_lights.cpp
     src/shared/lighting/lightmap_probes.cpp
@@ -837,7 +836,6 @@ add_library(game_client SHARED
     src/client/weapon_fire_audio.cpp
     src/client/surface_audio.cpp
     src/client/entity_type_audio.cpp
-    src/client/snapshot_edges.cpp
     src/client/shot_debug.cpp
     src/client/fly_camera.cpp
     src/client/shadow_debug_draw.cpp
@@ -851,7 +849,6 @@ add_library(game_client SHARED
     src/client/held_snapshot.cpp
     src/client/replay_playback.cpp
     src/client/replay_panel.cpp
-    src/client/look_panel.cpp
     src/client/ghost_playback.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
@@ -859,16 +856,7 @@ add_library(game_client SHARED
     src/client/game_events/player_died.cpp
     src/client/game_events/player_spawned.cpp
     src/client/game_events/objective_reached.cpp
-    src/client/hud/kill_feed.cpp
-    src/client/hud/crosshair.cpp
-    src/client/hud/announcement.cpp
-    src/client/hud/match_announcement.cpp
-    src/client/hud/deploy_timer.cpp
-    src/client/hud/run_timer.cpp
-    src/client/hud/freeze_countdown.cpp
-    src/client/hud/ready_status.cpp
-    src/client/hud/scoreboard.cpp
-    src/client/hud/weapon_name.cpp
+    src/client/hud.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
     # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
     # same reason).
@@ -1119,8 +1107,7 @@ add_game_test(transaction_system_test INCLUDES src/client src/client/editor LINK
 # device, a swapchain or a window.
 add_game_test(debug_draw_list_test
     SOURCES src/client/debug_draw_list.cpp
-    INCLUDES src/client
-    LINKS Vulkan::Vulkan SDL2::SDL2-static)
+    INCLUDES src/client)
 
 # The UI layer's GPU-free halves: the font bake against the REAL resources/fonts
 # TTF, ui_draw_list_t's batching, the layout anchors, and the whole retained-tree
@@ -1131,13 +1118,15 @@ add_game_test(debug_draw_list_test
 # ui/ui_input.cpp is POINTEDLY absent. It is the only file in the layer that
 # reads SDL, and everything downstream takes a ui_input_t by value, so leaving
 # it out is what proves the interaction model needs no window to test.
+set(UI_TEST_SOURCES
+    src/client/ui_draw_list.cpp
+    src/client/hud.cpp
+    src/client/ui/font.cpp
+    src/client/ui/screen.cpp
+    src/client/ui/navigation.cpp
+    src/client/ui/list_menu.cpp)
 add_game_test(ui_test
-    SOURCES src/client/ui_draw_list.cpp
-            src/client/hud/announcement.cpp
-            src/client/ui/font.cpp
-            src/client/ui/screen.cpp
-            src/client/ui/navigation.cpp
-            src/client/ui/list_menu.cpp
+    SOURCES ${UI_TEST_SOURCES}
     INCLUDES src/client
     LINKS Vulkan::Vulkan SDL2::SDL2-static)
 
@@ -1169,6 +1158,10 @@ add_game_test(shadow_test)
 
 # Brush: convex hull, winding, tolerances, text round trip.
 add_game_test(brush_test)
+
+# A subdivided face keeps its boundary: weld only with a same-level neighbour,
+# pin everything else. geometry_def.md Track F.
+add_game_test(brush_boundary_test)
 
 # Convex decomposition: every piece convex, union bounds match, a
 # non-decomposable brush fails loudly rather than half-colliding.
@@ -1333,7 +1326,10 @@ add_game_test(game_rules_test
     INCLUDES src/server
     DEFINITIONS GAME_SERVER_EXPORTS)
 
-add_game_test(match_announcement_test SOURCES src/client/hud/match_announcement.cpp)
+add_game_test(match_announcement_test
+    SOURCES ${UI_TEST_SOURCES}
+    INCLUDES src/client
+    LINKS Vulkan::Vulkan SDL2::SDL2-static)
 
 # Entity I/O: connections as map data, the load check, and the queue.
 # entity_io_def.md ss11 step 3's pin. Compiles the server sources directly like

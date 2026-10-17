@@ -18,11 +18,6 @@ struct camera_t
   float pitch = 0.0f;
   bool orthographic = false;
   float ortho_height = 10.0f; // Scale/Zoom factor for ortho
-
-  // Vertical FOV used by the perspective projection. Lives on the camera rather
-  // than being read from r_fov at each use site: zoom varies it per frame, and
-  // picking must agree with whatever the projection actually used this frame.
-  // Owners seed it from r_fov; ignored when orthographic.
   float fov_degrees = 90.0f;
 
   // Orbit mode fields — when orbit is true, position is derived from

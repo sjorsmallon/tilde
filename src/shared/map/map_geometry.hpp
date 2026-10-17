@@ -2,7 +2,7 @@
 
 #include "assets/asset.hpp"
 #include "box_face.hpp"
-#include "brush.hpp"
+#include "brush/brush.hpp"
 #include "entity_uid.hpp"
 #include "lighting/lightmap.hpp"
 #include "linalg.hpp"
@@ -516,9 +516,11 @@ void sync_face_surfaces(brush_geometry_t &brush);
 // nearly. That is what "crack-free by construction, no sew step" means here: the
 // weld is a property of reading the grid, not an authoring pass to remember.
 //
-// Two faces subdivided to DIFFERENT levels are the one case it cannot close: the
-// finer face's mid-edge vertices have no counterpart on the coarser one, so they
-// leave a T-junction. Give adjacent subdivided faces the same level.
+// The weld happens only across an edge whose other face is subdivided to the
+// SAME level. Every other boundary vertex, and every corner, is PINNED to the
+// hull edge whatever offset was written for it: a sculpted face next to a flat
+// one keeps its outline, and two different levels pin rather than leave a
+// T-junction. geometry_def.md Track F.
 struct brush_face_grids_t
 {
   std::vector<std::vector<linalg::vec3>> grid_vertices;

@@ -1,6 +1,6 @@
 #include "lightmap_trace.hpp"
 
-#include "map/brush.hpp"
+#include "map/brush/brush.hpp"
 #include "map/map_geometry.hpp"
 
 #include <algorithm>

@@ -11,7 +11,7 @@
 #define SDL_MAIN_HANDLED
 
 #include "client/hitbox_debug_draw.hpp"
-#include "client/renderer.hpp"
+#include "client/debug_draw_list.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -34,7 +34,7 @@ void test_default_lifetime_survives_exactly_one_frame()
 
   // The frame it was appended in is the frame it draws in. The NEXT retire kills
   // it -- that is the old clear-per-frame behaviour, spelled as a lifetime.
-  debug.retire(FRAME);
+  debug.advance_retire_timers(FRAME);
   assert(debug.lines.empty());
 
   std::cout << "test_default_lifetime_survives_exactly_one_frame passed" << std::endl;
@@ -55,7 +55,7 @@ void test_timed_entries_outlive_the_frame_that_made_them()
   int frames = 0;
   while (!debug.lines.empty())
   {
-    debug.retire(STEP);
+    debug.advance_retire_timers(STEP);
     ++frames;
     assert(frames < 1000); // it must actually expire
   }
@@ -81,7 +81,7 @@ void test_retire_compacts_the_polygon_pool()
   assert(debug.polygons.size() == 3);
   assert(debug.polygon_vertices.size() == 11);
 
-  debug.retire(FRAME);
+  debug.advance_retire_timers(FRAME);
 
   assert(debug.polygons.size() == 2);
   assert(debug.polygon_vertices.size() == 8);

@@ -1,6 +1,6 @@
 #include "lightmap_bake.hpp"
 
-#include "map/brush.hpp"
+#include "map/brush/brush.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
 #include "span.hpp"

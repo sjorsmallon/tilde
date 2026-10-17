@@ -7,7 +7,7 @@
 #include "../../../shared/map/map.hpp"
 #include "../../../shared/shapes.hpp"
 #include "../../../shared/weapon_instance.hpp"
-#include "../../hud/announcement.hpp"
+#include "../../hud.hpp"
 #include "../entity_editor_traits.hpp"
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"

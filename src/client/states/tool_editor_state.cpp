@@ -34,7 +34,7 @@
 #include "../console.hpp"
 #include "../entity_hitbox_overlay.hpp"
 #include "../shadow_debug_draw.hpp"
-#include "../hud/announcement.hpp"
+#include "../hud.hpp"
 #include "../fly_camera.hpp"
 #include "../spot_beam.hpp"
 #include "../input.hpp"

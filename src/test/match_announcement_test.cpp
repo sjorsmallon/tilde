@@ -1,7 +1,9 @@
-// client/hud/match_announcement.cpp: the banner for every row of match_def.md's
-// wording table, with no device and no connection.
+// match_announcement_for: the banner for every row of match_def.md's wording
+// table, with no device and no connection. hud.hpp pulls in SDL.h through
+// renderer.hpp, and SDL rewrites main unless told the program owns it.
 
-#include "client/hud/match_announcement.hpp"
+#define SDL_MAIN_HANDLED
+#include "client/hud.hpp"
 
 #include <cstdio>
 #include <string>

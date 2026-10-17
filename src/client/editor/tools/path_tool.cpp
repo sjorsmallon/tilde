@@ -10,7 +10,7 @@
 #include "../../../shared/collision/movers.hpp"
 #include "../../../shared/subtick.hpp"
 #include "../../geometry_renderer.hpp"
-#include "../../hud/announcement.hpp"
+#include "../../hud.hpp"
 #include "../../renderer.hpp"
 #include "../editor_object_bounds.hpp"
 #include "imgui.h"

@@ -8,11 +8,8 @@ namespace shared
 
 bounding_sphere_t compute_bounding_sphere(Span<const assets::posed_hitbox_t> hitboxes)
 {
-  // No volumes is a target that cannot be hit, and a zero-radius sphere at the
-  // origin says exactly that. This is the ONE case where a finite default is
-  // right, because it is the truth rather than a missing value.
-  if (hitboxes.empty())
-    return {{0.f, 0.f, 0.f}, 0.f};
+  // no targets means infinitely small bounding sphere.
+  if (hitboxes.empty()) return {{0.f, 0.f, 0.f}, 0.f};
 
   vec3f minimum = hitboxes[0].center();
   vec3f maximum = minimum;
@@ -25,9 +22,9 @@ bounding_sphere_t compute_bounding_sphere(Span<const assets::posed_hitbox_t> hit
                std::max(maximum.z, center.z)};
   }
 
-  bounding_sphere_t sphere{};
-  sphere.center = (minimum + maximum) * 0.5f;
-  sphere.radius = 0.f;
+  auto sphere = bounding_sphere_t{
+    .center = (minimum + maximum) * 0.5f,
+    .radius = 0.f};
 
   for (const assets::posed_hitbox_t& hitbox : hitboxes)
   {

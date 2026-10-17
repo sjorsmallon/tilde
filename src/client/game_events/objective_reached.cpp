@@ -3,7 +3,7 @@
 #include "../audio/audio_system.hpp"
 #include "../client_context.hpp"
 #include "../event_handlers.hpp"
-#include "../hud/announcement.hpp"
+#include "../hud.hpp"
 
 #include <format>
 

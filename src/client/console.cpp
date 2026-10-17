@@ -1,22 +1,18 @@
+#include "console.hpp"
 #include "../shared/collision/predicted_world.hpp"
 #include "../shared/frame_timing.hpp"
 #include "../shared/memory_audit.hpp"
-#include "console.hpp"
-#include "cvars/cvar_console.hpp"
+#include "../shared/network/network_types.hpp"
+#include "../shared/network/udp_socket.hpp"
+#include "hud.hpp"
 #include "input.hpp"
 #include "key_names.hpp"
 #include "log.hpp"
 #include "renderer.hpp"
 #include "state_manager.hpp"
-#include "hud/announcement.hpp"
-#include "../shared/network/network_types.hpp"
-#include "../shared/network/udp_socket.hpp"
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <fstream>
-#include <iostream>
-#include <sstream>
 
 namespace client
 {
@@ -24,18 +20,7 @@ namespace client
 // Working directory, like last_map.txt.
 static constexpr const char *BINDS_FILE_PATH = "binds.cfg";
 
-console::console()
-{
-  memset(InputBuf, 0, sizeof(InputBuf));
-  history_position_cursor = -1;
-  scroll_to_bottom = false;
-  is_folded_open = true;
-  should_draw = false;
-
-  print("console Initialized.");
-}
-
-console::~console() = default;
+console::console() = default;
 
 console &console::get()
 {
@@ -43,23 +28,17 @@ console &console::get()
   return instance;
 }
 
-void console::print(const char *fmt, ...)
+void console::print_line(std::string line)
 {
-  char buffer[1024];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(buffer, IM_ARRAYSIZE(buffer), fmt, args);
-  buffer[IM_ARRAYSIZE(buffer) - 1] = 0;
-  va_end(args);
-  items.push_back(strdup(buffer));
+  items.push_back(std::move(line));
   scroll_to_bottom = true;
 }
 
 void console::set_cvar_state(cvars::cvar_state_t *state,
-                           cvars::command_table_t *table)
+                             cvars::command_table_t *table)
 {
-  cvar_state_    = state;
-  command_table_ = table;
+  cvar_state = state;
+  command_table = table;
 }
 
 bool console::bind_key(std::string_view key, std::string command_line)
@@ -71,18 +50,17 @@ bool console::bind_key(std::string_view key, std::string command_line)
               "uparrow, pgup, kp_0-kp_9, ...)", key);
     return false;
   }
-  bindings_[*bound_key] = std::move(command_line);
+  bindings[*bound_key] = std::move(command_line);
   save_bindings_to_file();
   return true;
 }
 
-// The whole file is rewritten from the map, sorted by key, so a diff of
-// binds.cfg is stable and a removed bind cannot linger.
+// The whole file is rewritten sorted by key, so a removed bind cannot linger.
 void console::save_bindings_to_file() const
 {
   std::vector<std::pair<input::key_t, const std::string *>> sorted;
-  sorted.reserve(bindings_.size());
-  for (const auto &[key, line] : bindings_)
+  sorted.reserve(bindings.size());
+  for (const auto &[key, line] : bindings)
     sorted.push_back({key, &line});
   std::sort(sorted.begin(), sorted.end(),
             [](const auto &left, const auto &right) { return left.first < right.first; });
@@ -98,18 +76,16 @@ void console::save_bindings_to_file() const
     file << "bind " << input::key_name(key) << ' ' << *line << '\n';
 }
 
-// Console lines, not a bind-only format: the file is a tiny autoexec, so a
-// line that is not a bind still runs. Absent is the normal first-boot case.
 void console::load_bindings_from_file()
 {
-  std::vector<std::string> lines;
+  auto lines = std::vector<std::string>{};
   {
     // Read to the end and close BEFORE executing: every bind rewrites the file.
     std::ifstream file(BINDS_FILE_PATH);
-    if (!file.is_open())
-      return;
 
-    std::string line;
+    if (!file.is_open()) return;
+
+    auto line = std::string{};
     while (std::getline(file, line))
     {
       while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
@@ -119,62 +95,47 @@ void console::load_bindings_from_file()
     }
   }
 
+  
   for (const std::string &line : lines)
+  {
     execute_command(line.c_str());
+  }
 }
 
 void console::execute_pressed_bindings()
 {
-  if (should_draw || input::imgui_wants_text_input())
-    return;
+  if (should_draw || input::imgui_wants_text_input()) return;
 
-  for (const auto &[key, line] : bindings_)
+  for (const auto &[key, line] : bindings)
   {
-    if (input::is_key_pressed(key))
-      execute_command(line.c_str());
+    if (input::is_key_pressed(key)) execute_command(line.c_str());
   }
 }
 
 void console::execute_command(const char *command_line)
 {
-  print("# %s", command_line);
+  print("# {}", command_line);
 
-  // Insert into history (if new)
   history_position_cursor = -1;
-  for (int i = (int)history.size() - 1; i >= 0; i--)
-  {
-    if (history[i] == command_line)
-    {
-      history.erase(history.begin() + i);
-      break;
-    }
-  }
+  std::erase(history, command_line);
   history.push_back(command_line);
 
-  if (!cvar_state_ || !command_table_)
+  if (!cvar_state || !command_table)
   {
-    // Only reachable if something drove the console before client::init(),
-    // which would mean the init order broke.
     print("[error] console has no cvar state; client::init() has not run.");
     log_error("console::execute_command before set_cvar_state: '{}'", command_line);
     return;
   }
 
-  // One dispatcher, shared with the server: a line typed here and the same
-  // line arriving over the wire take identical paths. Ownership (run it here
-  // vs. forward it) is decided inside, from the declared flags plus whether a
-  // forwarder is installed.
   auto reply = std::string{};
-  cvars::console_result_t result = cvars::execute_console_line(
-      *cvar_state_, *command_table_, command_line, cvars::command_context_t{},
-      &reply);
+  const cvars::console_result_t result = cvars::execute_console_line(
+      *cvar_state, *command_table, command_line, cvars::command_context_t{}, &reply);
 
   switch (result)
   {
     case cvars::console_result_t::empty:
     case cvars::console_result_t::forwarded:
-      // Forwarded lines are answered by the server's S2C_ServerMessage, which
-      // print()s when it arrives — echoing anything here would double up.
+      // A forwarded line is answered by S2C_ServerMessage; echoing here would double up.
       break;
 
     case cvars::console_result_t::ok:
@@ -183,21 +144,20 @@ void console::execute_command(const char *command_line)
     case cvars::console_result_t::bad_arguments:
     case cvars::console_result_t::no_handler:
       if (!reply.empty())
-        print("%s", reply.c_str());
+        print_line(std::move(reply));
       break;
   }
 }
 
-int console::TextEditCallbackStub(ImGuiInputTextCallbackData *data)
+int console::text_edit_callback_stub(ImGuiInputTextCallbackData *data)
 {
-  return console::get().TextEditCallback(data);
+  return console::get().text_edit_callback(data);
 }
 
-int console::TextEditCallback(ImGuiInputTextCallbackData *data)
+int console::text_edit_callback(ImGuiInputTextCallbackData *data)
 {
   if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion)
   {
-    // Locate beginning of current word
     const char *word_end = data->Buf + data->CursorPos;
     const char *word_start = word_end;
     while (word_start > data->Buf)
@@ -208,13 +168,9 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
       word_start--;
     }
 
-    candidates.clear();
-    std::string prefix(word_start, word_end - word_start);
+    const std::string_view prefix(word_start, static_cast<size_t>(word_end - word_start));
 
-    // Straight off the generated tables — including every @Server name. The
-    // client knows the server's whole cvar/command universe at compile time
-    // (same cvars.def, hash-checked at connect), so autocomplete no longer
-    // needs the server to sync stubs down first.
+    auto candidates = std::vector<std::string_view>{};
     for (const cvars::cvar_info_t &info : cvars::cvar_infos())
     {
       if (std::string_view(info.name).starts_with(prefix))
@@ -229,102 +185,66 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
 
     if (candidates.empty())
     {
-      print("No match for \"%.*s\"!", (int)(word_end - word_start), word_start);
+      print("No match for \"{}\"", prefix);
     }
     else if (candidates.size() == 1)
     {
-      // Single match. Delete the beginning of the word and replace it entirely
-      // so we've got nice casing
-      data->DeleteChars((int)(word_start - data->Buf),
-                        (int)(word_end - word_start));
-      data->InsertChars(data->CursorPos, candidates[0].c_str());
+      data->DeleteChars(static_cast<int>(word_start - data->Buf),
+                        static_cast<int>(word_end - word_start));
+      data->InsertChars(data->CursorPos, candidates[0].data(),
+                        candidates[0].data() + candidates[0].size());
       data->InsertChars(data->CursorPos, " ");
     }
     else
     {
-      // Multiple matches. Complete as much as possible.
-      int match_len = (int)prefix.size();
+      size_t common_length = prefix.size();
       for (;;)
       {
-        int c = 0;
-        bool all_candidates_matches = true;
-        for (int i = 0; i < candidates.size() && all_candidates_matches; i++)
+        bool all_candidates_match = common_length < candidates[0].size();
+        for (size_t i = 1; i < candidates.size() && all_candidates_match; i++)
         {
-          if (i == 0)
-            c = toupper(candidates[i][match_len]);
-          else if (c == 0 || c != toupper(candidates[i][match_len]))
-            all_candidates_matches = false;
+          all_candidates_match = common_length < candidates[i].size() &&
+                                 candidates[i][common_length] == candidates[0][common_length];
         }
-        if (!all_candidates_matches)
+        if (!all_candidates_match)
           break;
-        match_len++;
+        common_length++;
       }
 
-      if (match_len > 0)
-      {
-        data->DeleteChars((int)(word_start - data->Buf),
-                          (int)(word_end - word_start));
-        data->InsertChars(data->CursorPos, candidates[0].c_str(),
-                          candidates[0].c_str() + match_len);
-      }
+      data->DeleteChars(static_cast<int>(word_start - data->Buf),
+                        static_cast<int>(word_end - word_start));
+      data->InsertChars(data->CursorPos, candidates[0].data(),
+                        candidates[0].data() + common_length);
 
-      // List matches
       print("Possible matches:");
-      for (const auto &cand : candidates)
-        print("- %s", cand.c_str());
+      for (const std::string_view candidate : candidates)
+        print("- {}", candidate);
     }
   }
-  // support history up-downing.
+
   if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory)
   {
+    const int history_count = static_cast<int>(history.size());
+    const int previous_cursor = history_position_cursor;
+
     if (data->EventKey == ImGuiKey_UpArrow)
     {
       if (history_position_cursor == -1)
-      {
-         history_position_cursor = history.size() - 1;
-      }
-      else if (history_position_cursor > 0) 
-      {
-        history_position_cursor = history_position_cursor - 1;
-      }
-      if (history_position_cursor >= 0)
-      {
-          const std::string& history_entry = history[history_position_cursor];
-
-          data->DeleteChars(0, data->BufTextLen);
-          data->InsertChars(0, history_entry.c_str());
-      }
-      else
-      {
-          // Down past the newest history entry -> empty input
-          data->DeleteChars(0, data->BufTextLen);
-      }
+        history_position_cursor = history_count - 1;
+      else if (history_position_cursor > 0)
+        history_position_cursor--;
+    }
+    else if (data->EventKey == ImGuiKey_DownArrow)
+    {
+      if (history_position_cursor != -1)
+        history_position_cursor = history_position_cursor == history_count - 1 ? -1 : history_position_cursor + 1;
     }
 
-    if (data->EventKey == ImGuiKey_DownArrow)
+    if (history_position_cursor != previous_cursor)
     {
-      if (history_position_cursor == -1)
-      {
-        // noop.
-      }
-      else
-      {
-        history_position_cursor = (history_position_cursor == history.size() - 1) ? -1 : history_position_cursor + 1;
-
-        if (history_position_cursor == -1)
-        {
-          // back to empty input.
-          data->DeleteChars(0, data->BufTextLen);
-
-        }
-        else
-        {
-          const std::string& history_entry = history[history_position_cursor];
-          data->DeleteChars(0, data->BufTextLen);
-          data->InsertChars(0, history_entry.c_str());
-        }
-        
-      }
+      data->DeleteChars(0, data->BufTextLen);
+      if (history_position_cursor >= 0)
+        data->InsertChars(0, history[history_position_cursor].c_str());
     }
   }
 
@@ -333,35 +253,31 @@ int console::TextEditCallback(ImGuiInputTextCallbackData *data)
 
 void console::draw()
 {
-  if (!should_draw)
-    return;
+  if (!should_draw) return;
 
   ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("console", &is_folded_open))
+  if (!ImGui::Begin("console", &should_draw))
   {
     ImGui::End();
     return;
   }
 
-  // Reserve enough left-over height for 1 separator + 1 input text
   const float footer_height_to_reserve =
       ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
   if (ImGui::BeginChild("ScrollingRegion", ImVec2(0, -footer_height_to_reserve),
                         false, ImGuiWindowFlags_HorizontalScrollbar))
   {
-    // Display items
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                        ImVec2(4, 1)); // Tighten spacing
-    for (const char *item : items)
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
+    for (const std::string &item : items)
     {
       ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-      if (strncmp(item, "[error]", 7) == 0)
+      if (item.starts_with("[error]"))
         color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-      else if (strncmp(item, "# ", 2) == 0)
+      else if (item.starts_with("# "))
         color = ImVec4(1.0f, 0.8f, 0.6f, 1.0f);
 
       ImGui::PushStyleColor(ImGuiCol_Text, color);
-      ImGui::TextUnformatted(item);
+      ImGui::TextUnformatted(item.c_str());
       ImGui::PopStyleColor();
     }
     ImGui::PopStyleVar();
@@ -374,87 +290,70 @@ void console::draw()
 
   ImGui::Separator();
 
-  // Command-line
   bool reclaim_focus = false;
-  ImGuiInputTextFlags input_text_flags =
-      ImGuiInputTextFlags_EnterReturnsTrue |
-      ImGuiInputTextFlags_CallbackCompletion |
-      ImGuiInputTextFlags_CallbackHistory;
+  const ImGuiInputTextFlags input_text_flags = ImGuiInputTextFlags_EnterReturnsTrue |
+                                               ImGuiInputTextFlags_CallbackCompletion |
+                                               ImGuiInputTextFlags_CallbackHistory;
 
-  // Auto-focus on window apparition
   if (ImGui::IsWindowAppearing())
     ImGui::SetKeyboardFocusHere();
 
-  if (ImGui::InputText("Input", InputBuf, IM_ARRAYSIZE(InputBuf),
-                       input_text_flags, &TextEditCallbackStub, (void *)this))
+  if (ImGui::InputText("Input", input_buffer, IM_ARRAYSIZE(input_buffer),
+                       input_text_flags, &text_edit_callback_stub, this))
   {
-    char *s = InputBuf;
-    // Skip leading whitespace & check empty
-    while (*s && isspace(*s))
+    char *s = input_buffer;
+    while (*s && isspace(static_cast<unsigned char>(*s)))
       s++;
     if (*s)
       execute_command(s);
 
-    memset(InputBuf, 0, sizeof(InputBuf));
+    memset(input_buffer, 0, sizeof(input_buffer));
     reclaim_focus = true;
   }
 
-  // Auto-keep focus
   if (reclaim_focus || ImGui::IsItemHovered() ||
       (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
        !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0)))
-    ImGui::SetKeyboardFocusHere(-1); // Auto focus input
+    ImGui::SetKeyboardFocusHere(-1);
 
   ImGui::End();
 }
 
 } // namespace client
 
-// Declared `bind(key: string, command: string...)` @Client in cvars.def, which
-// obligates game_client to define exactly this symbol with exactly the
-// signature that parameter list implies — client_command_bindings_generated.cpp (a
-// generated TU compiled into this DLL) takes its address, so a rename or a
-// signature drift here is a link error rather than a command that silently
-// stops working. Argument count and the usage reply live in the generated
-// binder, not here; `command` is the line's untokenized tail, interior
-// whitespace intact (the old token re-join collapsed runs of spaces).
+// Each handler below is declared @Client in cvars.def; the generated binder takes its
+// address, so a rename or signature drift is a link error.
 namespace cvars::commands
 {
 
 void bind(std::string_view key, std::string_view command,
           const command_context_t &)
 {
-  std::string command_line(command);
+  auto command_line = std::string(command);
+
   if (client::console::get().bind_key(key, command_line))
-    client::console::get().print("bound '%.*s' to: %s",
-                                 static_cast<int>(key.size()), key.data(),
-                                 command_line.c_str());
+  {
+    client::console::get().print("bound '{}' to: {}", key, command_line);
+  }
 }
 
-// `connect(address: string)` @Client. Same contract as bind() above.
 void connect(std::string_view address, const command_context_t &)
 {
-  network::Address server_address;
-  std::string parse_error;
+  auto server_address = network::Address{};
+  auto parse_error = std::string{};
   if (!network::Address::parse_endpoint(std::string(address),
                                         network::server_port_number,
                                         server_address, parse_error))
   {
-    client::console::get().print("connect: %s", parse_error.c_str());
+    client::console::get().print("connect: {}", parse_error);
     return;
   }
 
-  // Play_State::on_enter reads this and connects; see client_context.hpp.
-  client::state_manager::get_client_context().requested_server_address =
-      server_address;
-  client::console::get().print("connecting to %s...",
-                               server_address.to_string().c_str());
+  client::state_manager::get_client_context().requested_server_address = server_address;
+  client::console::get().print("connecting to {}...", server_address.to_string());
   client::state_manager::switch_to(client::game_state::play);
 }
 
-// `noclip()` @Client: flips cl_noclip. Play_State reads the cvar every frame and
-// owns the camera it flies; the banner is here so a bound key says which way it
-// went.
 void noclip(const command_context_t &)
 {
   cvars::cvar_state_t& cvars = *client::state_manager::get_client_context().cvars;
@@ -487,8 +386,7 @@ void mem_frame(const command_context_t &)
 void mem_stacks(bool capture, const command_context_t &)
 {
   memory_audit::set_capture_stacks(capture);
-  client::console::get().print("mem_stacks: stack capture %s",
-                               capture ? "on" : "off");
+  client::console::get().print("mem_stacks: stack capture {}", capture ? "on" : "off");
 }
 
 void frame_report(const command_context_t &)
@@ -513,16 +411,12 @@ void shadow_volume_report(const command_context_t &)
                         .gravity     = ctx.cvars->g_gravity},
                        storage);
   const shared::shadow_volume_report_t counts = shared::build_shadow_volumes(ctx.world.session, storage);
-  const std::string report = shared::describe_shadow_volume_report(counts, storage.shadow_volumes);
-  client::console::get().print(report.c_str());
+  client::console::get().print_line(shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 
 void hitch_report(int32_t top, const command_context_t &)
 {
-  // Zones first: they say WHERE the time went, which is the question. The
-  // allocation sites say what the frame allocated, which is a different one --
-  // and on a frame that stalled on the GPU or a subprocess, the answer is
-  // "almost nothing" and the zones are the whole story.
+  // Zones first: they say WHERE the time went; the allocation sites say what was allocated.
   frame_timing::report_worst_frame_zones();
   memory_audit::report_captured_frame(top <= 0 ? 15u : static_cast<uint32_t>(top));
   client::console::get().print("hitch_report: written to the terminal");

@@ -2,8 +2,10 @@
 
 #include "../../third_party/xatlas.h"
 
+#include "array.hpp"
 #include "collision/collision_detection.hpp"
-#include "convex_decomposition.hpp"
+#include "brush/convex_decomposition.hpp"
+#include "brush/face_neighbour.hpp"
 #include "log.hpp"
 #include <algorithm>
 #include <cassert>
@@ -1473,6 +1475,35 @@ linalg::vec3 face_grid_base_vertex(const face_grid_t &grid, int subdivision_leve
   return bottom + (top - bottom) * v;
 }
 
+namespace
+{
+
+// Which of a grid's four edges weld with the face across them: only a neighbour
+// subdivided to the SAME level; any other edge is pinned to the hull. Edges in
+// corner order: 0 c00-c10 (j == 0), 1 c10-c11 (i == size - 1), 2 c01-c11
+// (j == size - 1), 3 c00-c01 (i == 0).
+Array<bool, 4> face_grid_edges_that_weld(const brush_geometry_t &brush,
+                                         const brush_polyhedron_t &hull, size_t face_index,
+                                         const face_grid_t &grid, int level)
+{
+  constexpr size_t EDGE_CORNERS[4][2] = {{0, 1}, {1, 2}, {3, 2}, {0, 3}};
+  Array<bool, 4> welds;
+  for (size_t edge = 0; edge < 4; ++edge)
+  {
+    const std::optional<size_t> neighbour =
+        try_find_face_across_edge(hull, face_index, grid.corners[EDGE_CORNERS[edge][0]],
+                                  grid.corners[EDGE_CORNERS[edge][1]]);
+    if (!neighbour)
+      continue;
+    const face_surface_t *surface = find_face_surface(brush, hull.faces[*neighbour].plane);
+    welds.data[edge] = surface && face_is_subdivided(*surface) &&
+                       surface->subdivision_level == level;
+  }
+  return welds;
+}
+
+} // namespace
+
 brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
                                           const brush_polyhedron_t &hull)
 {
@@ -1533,6 +1564,9 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
     weights.resize((size_t)face_grid_vertex_count(level));
     grids.any = true;
 
+    const Array<bool, 4> edge_welds =
+        face_grid_edges_that_weld(brush, hull, face_index, *grid, level);
+
     for (int j = 0; j < size; ++j)
     {
       for (int i = 0; i < size; ++i)
@@ -1545,10 +1579,26 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
         for (int layer = 1; layer < BLEND_LAYER_COUNT; ++layer)
           weight.weight[layer - 1] = face_layer_weight(*surface, vertex, layer);
 
-        const bool on_boundary = (i == 0 || j == 0 || i == size - 1 || j == size - 1);
-        if (!on_boundary)
+        const bool on_bottom = j == 0;
+        const bool on_right = i == size - 1;
+        const bool on_top = j == size - 1;
+        const bool on_left = i == 0;
+        const int edges_touched = (int)on_bottom + (int)on_right + (int)on_top + (int)on_left;
+        if (edges_touched == 0)
         {
           vertices[vertex] = base + offset;
+          weights[vertex] = weight;
+          continue;
+        }
+
+        // A corner, or an edge whose neighbour is flat or at another level, is
+        // PINNED: the boundary stays on the hull whatever was written for it.
+        const bool welded = edges_touched == 1 &&
+                           ((on_bottom && edge_welds.data[0]) || (on_right && edge_welds.data[1]) ||
+                            (on_top && edge_welds.data[2]) || (on_left && edge_welds.data[3]));
+        if (!welded)
+        {
+          vertices[vertex] = base;
           weights[vertex] = weight;
           continue;
         }

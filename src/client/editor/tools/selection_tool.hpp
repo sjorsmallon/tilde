@@ -4,7 +4,7 @@
 #include "../connection_panel.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
-#include "../../../shared/map/brush.hpp"
+#include "../../../shared/map/brush/brush.hpp"
 #include "../../../shared/map/map.hpp"
 #include <optional>
 #include <vector>

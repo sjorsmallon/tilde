@@ -148,6 +148,13 @@ message C2S_ClientInput {
   // still downloading sends no input at all (prediction only runs Connected), so
   // the absence is not what the server is reading here.
   optional uint32 map_content_hash = 14;
+
+  // The screen this input was aimed through: its vertical field of view and its
+  // width over its height. STATE restated every tick, like map_content_hash: the
+  // server writes it to Player_Entity::view_fov_degrees / view_aspect, clamped,
+  // and what the player watches through a lens is cut to it on every machine.
+  optional float view_fov_degrees = 15;
+  optional float view_aspect = 16;
 }
 
 // s2c is server to client.

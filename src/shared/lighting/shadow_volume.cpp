@@ -1,8 +1,8 @@
 #include "shadow_volume.hpp"
 
-#include "map/brush.hpp"
+#include "map/brush/brush.hpp"
 #include "collision/collision_detection.hpp"
-#include "map/convex_decomposition.hpp"
+#include "map/brush/convex_decomposition.hpp"
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"

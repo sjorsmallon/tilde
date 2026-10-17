@@ -1,42 +1,24 @@
 #pragma once
 
+#include "array.hpp"
 #include "linalg.hpp"
 
 #include <algorithm>
 #include <cmath>
-
-// The two AABB representations, and the one home for both.
-//
-// aabb_t is the AUTHORING form. It is what a level author edits and what the
-// editor manipulates (gizmo drag, sculpting, CSG clipping), and it mirrors
-// entities::Box_Volume, which is generated from entities.def and networked.
-//
-// aabb_bounds_t is the QUERY form. Union, expand-to-point, overlap and the
-// ray-slab test are all direct in min/max and would each need a conversion in
-// center/half-extents.
-//
-// Neither reduces to the other for free, so both stay -- but there is exactly
-// ONE of each. The min/max form used to be declared twice, here and as a global
-// `AABB` in bsp.hpp, which is why build_editor_bvh copied a struct into its own
-// twin a field at a time. bsp.hpp is gone; this is the only declaration.
-//
-// Depends on linalg and nothing else, deliberately: the Box_Volume bridge lives
-// in shapes.hpp so that including this does not drag in the generated entity
-// header.
 
 namespace shared
 {
 
 struct aabb_t
 {
-  linalg::vec3 center       = {0, 0, 0};
+  linalg::vec3 center = {0, 0, 0};
   linalg::vec3 half_extents = {1.f, 1.f, 1.f};
 };
 
 struct aabb_bounds_t
 {
-  linalg::vec3 min;
-  linalg::vec3 max;
+  linalg::vec3 min{};
+  linalg::vec3 max{};
 };
 
 // An aabb_t turned about its centre: what a lens, a growing platform and a static mesh collide and
@@ -70,13 +52,15 @@ inline aabb_bounds_t get_bounds(const oriented_box_t &box)
 }
 
 // The eight corners: the ring at -z then the ring at +z, each counter-clockwise from (-x, -y).
-inline void oriented_box_corners(const oriented_box_t &box, linalg::vec3 (&corners)[8])
+inline Array<linalg::vec3, 8> get_oriented_box_corners(const oriented_box_t &box)
 {
-  const linalg::vec3 &h        = box.half_extents;
-  const linalg::vec3  local[8] = {{-h.x, -h.y, -h.z}, {h.x, -h.y, -h.z}, {h.x, h.y, -h.z}, {-h.x, h.y, -h.z},
-                                  {-h.x, -h.y, h.z},  {h.x, -h.y, h.z},  {h.x, h.y, h.z},  {-h.x, h.y, h.z}};
-  for (int index = 0; index < 8; ++index)
+  const linalg::vec3 &h = box.half_extents;
+  const Array<linalg::vec3, 8> local = {{{-h.x, -h.y, -h.z}, {h.x, -h.y, -h.z}, {h.x, h.y, -h.z}, {-h.x, h.y, -h.z},
+                                         {-h.x, -h.y, h.z},  {h.x, -h.y, h.z},  {h.x, h.y, h.z},  {-h.x, h.y, h.z}}};
+  Array<linalg::vec3, 8> corners = {};
+  for (uint32_t index = 0; index < 8; ++index)
     corners[index] = box.center + linalg::rotate(box.orientation, local[index]);
+  return corners;
 }
 
 // The two conversions, named for the direction they already had elsewhere in

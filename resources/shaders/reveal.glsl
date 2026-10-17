@@ -171,18 +171,20 @@ float lens_margin(vec3 world_position)
                                 int(scene.lens_settings.y + 0.5));
 }
 
-// The watched cut: the deepest any watcher facing the fragment sees it (lens.hpp's any_lens_watcher_sees_point).
+// The watched cut: the deepest any watcher with the fragment in view sees it (lens.hpp's any_lens_watcher_sees_point).
 float lens_watched_margin(vec3 world_position)
 {
     const int channel = 1 << (LIGHT_CUT - LIGHT_CUT_LENS_WATCHED_RED);
     float     margin  = -1.0;
     const int watcher_count = int(scene.lens_watcher_settings.x);
     for (int index = 0; index < watcher_count; ++index) {
-        const vec3  eye     = scene.lens_watchers[index].eye.xyz;
-        const vec3  forward = scene.lens_watchers[index].forward_cosine.xyz;
-        const float cosine  = scene.lens_watchers[index].forward_cosine.w;
-        const vec3  to_fragment = world_position - eye;
-        if (dot(to_fragment, forward) < cosine * length(to_fragment))
+        const vec3 eye   = scene.lens_watchers[index].eye.xyz;
+        bool       faced = true;
+        for (int side = 0; side < 4; ++side) {
+            const vec4 plane = scene.lens_watchers[index].sides[side];
+            faced = faced && dot(plane.xyz, world_position) <= plane.w;
+        }
+        if (!faced)
             continue;
         margin = max(margin, lens_margin_from_eye(eye, world_position, channel,
                                                   int(scene.lens_watchers[index].eye.w + 0.5)));

@@ -45,6 +45,7 @@
 #include "../shared/beam_ripples.hpp"
 #include "../shared/team_wall_ripples.hpp"
 #include "camera.hpp"
+#include "debug_draw_list.hpp"
 
 namespace client
 {
@@ -168,13 +169,6 @@ enum class cull_mode_t : uint8_t
   none
 };
 
-enum class fill_mode_t : uint8_t
-{
-  solid,
-  wireframe
-};
-
-// Which outline a draw joins; each has its own mask channels, so the two never merge.
 enum class outline_t : uint8_t
 {
   none,
@@ -521,146 +515,6 @@ struct mesh_draw_t
   peel_t peel = {};
   // Kept only inside a cone that reveals, or only outside every cone that erases; its own pipeline bits.
   light_cut_t light_cut = light_cut_t::none;
-};
-
-// --- Debug drawing ---
-// Immediate-style geometry that doesn't earn a material: editor overlays,
-// hitboxes, gizmos. Append during update, hand the list to a view_pass_t.
-//
-// The list is CALLER-OWNED on purpose. Once the view is a parameter, a global
-// batch cannot answer "which viewport do these lines render into?" -- see
-// renderer_def.md. It is also the one retained home for debug geometry, which
-// is what makes a one-shot event (a hitscan trace fired in a fixed tick) able
-// to outlive the single frame it was appended in.
-
-// `draw_when_occluded` asks for a SECOND, dimmed draw of the same geometry where the depth
-// test FAILS, so the part of an entry hidden behind something reads as faint
-// instead of as absent. It is per entry and not per pass because an editor gizmo
-// being occluded is information, where a hit volume buried inside the player
-// model it belongs to is just invisible.
-struct debug_line_t
-{
-  linalg::vec3f start;
-  linalg::vec3f end;
-  color_t       color;
-  float         depth_bias;
-  float         remaining_seconds; // <= 0 dies on the next retire()
-  bool          draw_when_occluded;
-};
-
-// How a filled polygon is shaded, as one value rather than a tail of bools --
-// past three, positional flags at a call site stop being readable. Every member
-// defaults to the plain flat overlay, so `{}` is the polygon nobody asked
-// anything of.
-struct debug_face_style_t
-{
-  // Darken toward the triangle edges, so an untextured solid box reads as a box
-  // instead of a silhouette. True for the faces of a solid aabb/box; false for
-  // an overlay face (a collision polygon), where the darkening would just be
-  // noise over geometry you are trying to see through.
-  bool shaded = false;
-
-  // Also draw the hidden part, dimmed. See debug_line_t.
-  bool draw_when_occluded = false;
-
-  // Fade the face out as it turns to face the camera, leaving the silhouette --
-  // the classic rim term. What it buys is DEPTH COMPLEXITY: ten overlapping
-  // volumes drawn flat pile their face-on interiors into one wash, and this
-  // removes exactly the part that carries no shape information.
-  //
-  // Wrong for a collision polygon, which is a flat quad you look at face-on
-  // precisely to see which plane you hit -- which is why it is per polygon and
-  // not a property of the overlay pipeline.
-  bool rim = false;
-
-  // As debug_line_t::depth_bias. A highlight coplanar with the surface it
-  // highlights loses the depth test against it at 0, and is never seen.
-  float depth_bias = 0.0f;
-};
-
-struct debug_polygon_t
-{
-  uint32_t first_vertex; // slice of debug_draw_list_t::polygon_vertices
-  uint32_t vertex_count;
-  color_t             color;
-  float               remaining_seconds;
-  debug_face_style_t  style;
-};
-
-struct debug_text_t
-{
-  linalg::vec3f position;
-  std::string   text;
-  color_t       color;
-  float         remaining_seconds;
-  bool          backed = false;
-};
-
-struct debug_draw_list_t
-{
-  std::vector<debug_line_t>    lines;
-  std::vector<linalg::vec3f>   polygon_vertices; // one pool, sliced by polygons
-  std::vector<debug_polygon_t> polygons;
-  std::vector<debug_text_t>    texts;
-
-  // Per-frame maintenance -- call once at frame start. Subtracts delta_seconds
-  // from every entry and removes the expired. Entries appended with the default
-  // lifetime of 0 die here, i.e. they draw for exactly the frame they were
-  // appended in. Keeps capacity.
-  //
-  // It takes the caller's dt on purpose: whether debug draws age by game time
-  // or wall time (what pausing does to them) is the caller's decision, made by
-  // which dt it passes.
-  void retire(float delta_seconds);
-  void clear(); // wholesale drop (map switch, state exit)
-
-  // Append helpers -- typed push_backs, nothing more.
-  //
-  // `depth_bias` replaces the old sticky set_line_depth_bias: it is per call,
-  // and more negative pulls toward the camera. 0 = none.
-  // `seconds` is how long the entry outlives this frame: 0 (the default) = this
-  // frame only; > 0 = survives retire() until the time runs out.
-  void line(const linalg::vec3f& start, const linalg::vec3f& end, color_t color,
-            float depth_bias = 0.0f, float seconds = 0.0f, bool draw_when_occluded = false);
-  void aabb(const linalg::vec3f& min, const linalg::vec3f& max, color_t color,
-            fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
-            float seconds = 0.0f, bool draw_when_occluded = false);
-  // The same shape, spelled the way the EDITOR holds it: an object has a
-  // position and half-extents, where a bounds computation produces min/max.
-  // Both spellings exist because converting at every call site is how a sign
-  // error gets in.
-  void box(const linalg::vec3f& center, const linalg::vec3f& half_extents, color_t color,
-           fill_mode_t fill = fill_mode_t::wireframe, float depth_bias = 0.0f,
-           float seconds = 0.0f, bool draw_when_occluded = false);
-  // The same box turned; its twelve edges, never filled.
-  void oriented_box(const shared::oriented_box_t& box, color_t color, float depth_bias = 0.0f,
-                    float seconds = 0.0f, bool draw_when_occluded = false);
-  // Triangle-fan decomposed, and alpha-blended when the colour says so. There is
-  // no once-per-frame reset to remember -- the list IS the frame scope.
-  void filled_polygon(Span<const linalg::vec3f> vertices, color_t color, float seconds = 0.0f,
-                      debug_face_style_t style = {});
-
-  // Compositions -- these decompose into `lines` entries at append time.
-  // `draw_when_occluded` rides through to every line the head decomposes into.
-  // A manipulator is the case that needs it: a gizmo drawn at an object centre
-  // is INSIDE that object, so depth-tested it is invisible exactly when you want
-  // to grab it.
-  void arrow(const linalg::vec3f& start, const linalg::vec3f& end, color_t color,
-             float seconds = 0.0f, bool draw_when_occluded = false);
-  void wire_circle(const linalg::vec3f& center, float radius, const linalg::vec3f& normal,
-                   color_t color, float seconds = 0.0f);
-  void wire_sphere(const linalg::vec3f& center, float radius, color_t color, float seconds = 0.0f);
-  void wire_capsule(const linalg::vec3f& center, float radius, float half_height, color_t color,
-                    float seconds = 0.0f);
-
-  // Projected through the pass's view and composited over the 3D scene, so it
-  // is NOT depth-tested -- a label on a bone inside a mesh still reads.
-  // Off-screen labels are dropped.
-  void text(const linalg::vec3f& world_position, const char *text, color_t color,
-            float seconds = 0.0f);
-  // On a dark plate, for a warning that has to read over whatever the map is.
-  void backed_text(const linalg::vec3f& world_position, const char *text, color_t color,
-                   float seconds = 0.0f);
 };
 
 // --- Screen-space UI ---

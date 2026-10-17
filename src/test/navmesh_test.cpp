@@ -1,4 +1,4 @@
-#include "shared/map/brush.hpp"
+#include "shared/map/brush/brush.hpp"
 #include "shared/map/map.hpp"
 #include "shared/lighting/map_baker.hpp"
 #include "shared/movement/navmesh.hpp"

@@ -1,33 +1,5 @@
 #pragma once
 
-// Frame time DISTRIBUTION, and what was different about the slow frames.
-//
-// WHY A DISTRIBUTION AND NOT AN AVERAGE. A hitch is a TAIL event -- one frame at
-// three to ten times the others -- and an average is the one statistic
-// guaranteed to hide it. 26,000 good frames and 40 terrible ones is a mean that
-// looks perfect and a game that feels broken. So this keeps a histogram and
-// reports p50 / p95 / p99 / p99.9 / max, and the number that matters is the gap
-// between p50 and the top of that list.
-//
-// This is deliberately NOT part of the memory audit and NOT behind
-// TILDE_MEMORY_AUDIT. Capturing a stack per allocation costs 100-500ns and must
-// never ship; a QPC read and a histogram bump per frame costs nothing and is
-// worth having on always. What it does do is READ the audit's per-frame
-// allocation counter when one is installed, so a slow frame can be reported
-// with what it allocated -- "frame 8412 took 41ms and allocated 12,000 times"
-// is an actionable report in a way that either half alone is not.
-//
-// WHAT IT MEASURES IS THE CALLER'S CHOICE, and the two launcher shapes differ
-// on purpose. A client measures the PERIOD between loop iterations, because
-// that is what the player experiences and it includes the framerate cap's
-// sleep. A dedicated server measures the DURATION of a tick, because its period
-// is set by the accumulator and would say nothing.
-//
-// THREADING: none. Every entry point is called from the thread that owns the
-// loop, and the console commands that report are dispatched on that same thread.
-// There is no lock, and adding one would be the first sign that something is
-// calling end_frame() that should not be.
-
 #include <cstdint>
 
 namespace frame_timing

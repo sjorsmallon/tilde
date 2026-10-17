@@ -14,7 +14,7 @@
 // `main` unless told not to. This test owns its own entry point.
 #define SDL_MAIN_HANDLED
 
-#include "client/hud/announcement.hpp"
+#include "client/hud.hpp"
 #include "client/ui/font.hpp"
 #include "client/ui/layout.hpp"
 #include "client/ui/list_menu.hpp"

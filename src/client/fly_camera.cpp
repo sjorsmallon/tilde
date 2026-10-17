@@ -1,6 +1,6 @@
 #include "fly_camera.hpp"
 
-#include "hud/announcement.hpp"
+#include "hud.hpp"
 #include "../shared/math.hpp"
 
 #include <algorithm>

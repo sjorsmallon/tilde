@@ -4,7 +4,7 @@
 #include "../../../shared/map/map.hpp"
 #include "../../../shared/shapes.hpp"
 #include "../../../shared/log.hpp"
-#include "../../hud/announcement.hpp"
+#include "../../hud.hpp"
 #include "../transaction_system.hpp"
 #include <algorithm>
 #include <format>

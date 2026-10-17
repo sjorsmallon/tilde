@@ -8,7 +8,7 @@
 #include "../../../shared/lighting/lightmap_trace.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/cvars/generated/cvars_generated.hpp"
-#include "../../hud/announcement.hpp"
+#include "../../hud.hpp"
 #include "../../lightmap_gpu_vulkan.hpp"
 #include "../../renderer.hpp"
 #include "../../state_manager.hpp"

@@ -134,7 +134,7 @@ struct pass_builder_t
     lens_watchers.clear();
     beams.clear();
     custom.clear();
-    debug.retire(delta_seconds);
+    debug.advance_retire_timers(delta_seconds);
     seconds += delta_seconds;
   }
 

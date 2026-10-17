@@ -111,12 +111,12 @@ struct Lens {
     vec4 orientation;
 };
 
-// One lens watcher (reveal.glsl's lens_watched_margin, shared/lighting/lens.hpp's lens_watcher_t): an eye (xyz),
-// the unit direction it faces (xyz) and the cosine of how far off that facing a point may lie and still be looked at (w).
-// Its eye (xyz) and the channel bits of the lens it holds (w), then where it faces (xyz) and the cosine of its watch half-angle (w).
+// One lens watcher (reveal.glsl's lens_watched_margin, shared/lighting/lens.hpp's lens_watcher_t): its eye (xyz) and
+// the channel bits of the lens it holds (w), then the four outward sides of the view it sees, each a normal (xyz)
+// and that normal's dot with the eye (w): a point is faced where it is behind every side.
 struct LensWatcher {
     vec4 eye;
-    vec4 forward_cosine;
+    vec4 sides[4];
 };
 
 // One box of fog (fog_cells.comp): its lowest corner (xyz) and its density per world unit (w); its highest corner (xyz) and

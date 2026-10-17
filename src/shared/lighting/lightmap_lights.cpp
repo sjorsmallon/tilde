@@ -1,6 +1,6 @@
 #include "lightmap_lights.hpp"
 
-#include "map/brush.hpp"
+#include "map/brush/brush.hpp"
 #include "lightmap_bake.hpp"
 #include "lightmap_trace.hpp"
 #include "log.hpp"

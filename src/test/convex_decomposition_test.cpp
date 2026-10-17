@@ -10,7 +10,7 @@
 // first: the day something produces one, this test already says what must happen
 // to it.
 
-#include "../shared/map/convex_decomposition.hpp"
+#include "../shared/map/brush/convex_decomposition.hpp"
 #include "../shared/map/game_session.hpp"
 #include "../shared/map/map.hpp"
 #include "../shared/map/map_geometry.hpp"

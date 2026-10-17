@@ -7,7 +7,7 @@
 #include "../../shared/animation/skinning.hpp"
 #include "../camera.hpp"
 #include "../game_state.hpp"
-#include "../hud/scoreboard.hpp"
+#include "../hud.hpp"
 #include "pause_menu.hpp"
 #include "map/game_session.hpp"
 #include "../shared/network/client_transport_layer.hpp"
