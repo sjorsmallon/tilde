@@ -72,6 +72,9 @@ struct generated_mesh_source_t
   // Per submesh slot. Rebuilt with the mesh, so the two cannot describe
   // different brushes.
   std::vector<renderer::material_handle_t> overrides;
+  // The hull the editor traces the contour from. Hulling is O(n^4) in the point
+  // count, which a many-sided prism made visible when it ran per frame.
+  std::optional<shared::brush_polyhedron_t> hull;
 };
 
 std::unordered_map<shared::entity_uid_t, generated_mesh_source_t> g_generated_mesh_sources;
@@ -454,6 +457,9 @@ void rebuild_generated_geometry_mesh(const shared::geometry_value_t &geometry,
     source.value                     = geometry;
     source.materials.assign(materials.begin(), materials.end());
     source.lightmap_geometry_id = lightmap.geometry_id;
+    source.hull = is_brush ? shared::try_build_brush_polyhedron(
+                                 std::get<shared::brush_geometry_t>(geometry).hull_points)
+                           : std::nullopt;
   }
 
   char                   cache_key_buffer[48];
@@ -516,6 +522,23 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
 
     rebuild_generated_geometry_mesh(entry.value, entry.uid, materials, lightmap, map_geometry);
   }
+}
+
+const std::optional<shared::brush_polyhedron_t> &
+get_cached_brush_hull(const shared::geometry_value_t &geometry, shared::entity_uid_t uid,
+                      Span<const std::string> materials, const shared::lightmap_t &lightmap,
+                      Span<const shared::map_geometry_t> map_geometry)
+{
+  if (shared::get_kind(geometry) != shared::geometry_kind_t::Brush)
+    fatal_error("get_cached_brush_hull: uid {} is not a brush", uid);
+
+  if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
+    refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
+
+  const auto source = g_generated_mesh_sources.find(uid);
+  if (source == g_generated_mesh_sources.end())
+    fatal_error("get_cached_brush_hull: uid {} has no cache record after a refresh", uid);
+  return source->second.hull;
 }
 
 } // namespace client

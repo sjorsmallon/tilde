@@ -1675,7 +1675,8 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
     //
     // TODO(inspector-undo): the entity inspector's seed/settle, over a
     // geometry value, so a slider drag commits as one transaction.
-    if (draw_geometry_inspector(geometry->value,
+    if (draw_geometry_inspector(geometry->value, geometry->uid, ctx.map->materials,
+                                ctx.map->lightmap, ctx.map->geometry,
                                 ctx.object_collides(geometry->uid)))
     {
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -2750,7 +2751,9 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   {
     const bool outlined = draws.outline_object(uid, renderer::outline_t::selected);
     if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
-      draw_geometry_selection_highlight(geometry->value, draws, ctx.time, grid_step, outlined);
+      draw_geometry_selection_highlight(geometry->value, uid, ctx.map->materials,
+                                        ctx.map->lightmap, ctx.map->geometry, draws, ctx.time,
+                                        grid_step, outlined);
     else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
       draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step, draw_settings,
                                outlined);

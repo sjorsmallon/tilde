@@ -56,20 +56,15 @@ constexpr color_t HOLE_CONTOUR_COLOR{255, 150, 40};
 constexpr color_t STATIC_MESH_COLLISION_BOX_COLOR{60, 220, 120};
 constexpr color_t STATIC_MESH_NO_COLLISION_BOX_COLOR{120, 120, 120};
 
-// Build the hull, then trace it. The callers here all draw a brush the user is
-// editing, so the hull has to be rebuilt anyway; a caller holding a brush that
-// is NOT changing should hoist the build and call draw_brush_hull_wireframe.
-void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t &brush,
-                          color_t color, float depth_bias,
-                          const linalg::vec3 &translation = {0, 0, 0})
+// Trace an already-built hull, or the bound when there is none: a brush that
+// does not hull has no edges, and the bound keeps it selectable and visibly
+// WRONG rather than invisible.
+void draw_brush_contour(pass_builder_t &draws, const shared::brush_geometry_t &brush,
+                        const std::optional<shared::brush_polyhedron_t> &hull, color_t color,
+                        float depth_bias, const linalg::vec3 &translation = {0, 0, 0})
 {
-  std::optional<shared::brush_polyhedron_t> polyhedron =
-      shared::try_build_brush_polyhedron(brush.hull_points);
-
-  if (!polyhedron)
+  if (!hull)
   {
-    // A brush that does not hull has no edges to trace. Show the bound so the
-    // object is still selectable and visibly WRONG rather than invisible.
     const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(brush.hull_points);
     draws.debug.box((bounds.min + bounds.max) * 0.5f + translation,
                     (bounds.max - bounds.min) * 0.5f, colors::red,
@@ -77,7 +72,17 @@ void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t 
     return;
   }
 
-  draw_brush_hull_wireframe(draws, *polyhedron, translation, color, depth_bias);
+  draw_brush_hull_wireframe(draws, *hull, translation, color, depth_bias);
+}
+
+// Build the hull, then trace it: for a value in TOOL STATE with no uid to cache
+// under. A brush of the map goes through get_cached_brush_hull.
+void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t &brush,
+                          color_t color, float depth_bias,
+                          const linalg::vec3 &translation = {0, 0, 0})
+{
+  draw_brush_contour(draws, brush, shared::try_build_brush_polyhedron(brush.hull_points), color,
+                     depth_bias, translation);
 }
 
 } // namespace
@@ -176,19 +181,20 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
   if (shared::get_kind(geometry) == shared::geometry_kind_t::Brush)
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
+    const std::optional<shared::brush_polyhedron_t> &hull =
+        get_cached_brush_hull(geometry, uid, materials, lightmap, map_geometry);
 
     // A hole has no mesh: its wall draws what it leaves. The authored volume is
     // drawn tinted so it stays visible, pickable and movable after the wall is built.
     if (brush.subtracts_from_uid != shared::null_entity_uid)
     {
-      if (const std::optional<shared::brush_polyhedron_t> hull =
-              shared::try_build_brush_polyhedron(brush.hull_points))
+      if (hull)
       {
         for (const std::vector<linalg::vec3> &polygon : shared::brush_face_polygons(*hull))
           draws.debug.filled_polygon(Span<const linalg::vec3f>(polygon.data(), polygon.size()),
                                      HOLE_FILL_COLOR, 0.f, {.depth_bias = 0.5f});
       }
-      draw_brush_wireframe(draws, brush, HOLE_CONTOUR_COLOR, -60.0f);
+      draw_brush_contour(draws, brush, hull, HOLE_CONTOUR_COLOR, -60.0f);
       return;
     }
 
@@ -196,9 +202,8 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
       draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry, nullptr,
                     geometry_wipe_frame(geometry, linalg::quatf{0.0f, 0.0f, 0.0f, 1.0f}));
 
-    draw_brush_wireframe(draws, brush,
-                         collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR,
-                         -60.0f);
+    draw_brush_contour(draws, brush, hull,
+                       collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR, -60.0f);
     return;
   }
 
@@ -340,6 +345,10 @@ constexpr bool DRAW_BOX_BRUSH_FACE_GRID = false;
 } // namespace
 
 void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
+                                       shared::entity_uid_t uid,
+                                       Span<const std::string> materials,
+                                       const shared::lightmap_t &lightmap,
+                                       Span<const shared::map_geometry_t> map_geometry,
                                        pass_builder_t &draws, float time,
                                        float grid_step, bool is_outlined)
 {
@@ -404,7 +413,9 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
       break;
     }
 
-    draw_brush_wireframe(draws, brush, color, highlight_bias);
+    draw_brush_contour(draws, brush,
+                       get_cached_brush_hull(geometry, uid, materials, lightmap, map_geometry),
+                       color, highlight_bias);
     break;
   }
   }
@@ -503,7 +514,7 @@ bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
   return changed;
 }
 
-bool draw_brush_inspector(shared::brush_geometry_t &brush)
+bool draw_brush_inspector(shared::brush_geometry_t &brush, bool forms_solid)
 {
   bool changed = false;
   ImGui::TextDisabled("brush");
@@ -514,7 +525,7 @@ bool draw_brush_inspector(shared::brush_geometry_t &brush)
   ImGui::Text("%zu hull points", brush.hull_points.size());
   ImGui::Text("size  %.1f  %.1f  %.1f", size.x, size.y, size.z);
 
-  if (!shared::try_build_brush_polyhedron(brush.hull_points))
+  if (!forms_solid)
     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "does not form a solid");
 
   // The bounds centre is the only position a brush has, and writing it back
@@ -535,7 +546,10 @@ bool draw_brush_inspector(shared::brush_geometry_t &brush)
 
 } // namespace
 
-bool draw_geometry_inspector(shared::geometry_value_t &geometry, bool collides)
+bool draw_geometry_inspector(shared::geometry_value_t &geometry, shared::entity_uid_t uid,
+                             Span<const std::string> materials,
+                             const shared::lightmap_t &lightmap,
+                             Span<const shared::map_geometry_t> map_geometry, bool collides)
 {
   if (!collides)
     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
@@ -547,7 +561,9 @@ bool draw_geometry_inspector(shared::geometry_value_t &geometry, bool collides)
     return draw_static_mesh_inspector(std::get<shared::static_mesh_geometry_t>(geometry));
 
   case shared::geometry_kind_t::Brush:
-    return draw_brush_inspector(std::get<shared::brush_geometry_t>(geometry));
+    return draw_brush_inspector(
+        std::get<shared::brush_geometry_t>(geometry),
+        get_cached_brush_hull(geometry, uid, materials, lightmap, map_geometry).has_value());
   }
 
   log_error("draw_geometry_inspector: unhandled geometry kind {}",

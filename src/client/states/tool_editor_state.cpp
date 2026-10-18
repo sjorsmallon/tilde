@@ -30,7 +30,7 @@
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/clip_tool.hpp"
-#include "../editor/tools/stamp_tool.hpp"
+#include "../editor/tools/primitive_tool.hpp"
 #include "../editor/tools/particle_editor_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
 #include "../console.hpp"
@@ -81,7 +81,7 @@ constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
     {editor_tool_t::lightmap,    "Lightmap"},
     {editor_tool_t::path,        "Path"},
     {editor_tool_t::clip,        "Clip"},
-    {editor_tool_t::stamp,       "Stamp"},
+    {editor_tool_t::primitive,   "Primitive"},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
@@ -340,7 +340,7 @@ void Tool_Editor_State::on_enter()
     tools[editor_tool_t::lightmap]    = std::make_unique<Lightmap_Tool>();
     tools[editor_tool_t::path]        = std::make_unique<Path_Tool>();
     tools[editor_tool_t::clip]        = std::make_unique<Clip_Tool>();
-    tools[editor_tool_t::stamp]       = std::make_unique<Stamp_Tool>();
+    tools[editor_tool_t::primitive]   = std::make_unique<Primitive_Tool>();
   }
 
   // Enable first tool

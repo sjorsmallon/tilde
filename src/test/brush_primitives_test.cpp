@@ -3,7 +3,7 @@
 // points and sum to the half ring's polygonal volume. geometry_def.md Track I.
 
 #include "shared/map/brush/brush.hpp"
-#include "shared/map/brush/brush_stamps.hpp"
+#include "shared/map/brush/brush_primitives.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -56,14 +56,14 @@ void test_the_frame_is_right_handed_and_up_is_world_up_off_the_vertical()
 {
   for (const linalg::vec3 &axis : {X_AXIS, Y_AXIS, Z_AXIS})
   {
-    const shared::stamp_frame_t frame = shared::make_stamp_frame(axis);
+    const shared::primitive_frame_t frame = shared::make_primitive_frame(axis);
     assert(nearly(linalg::dot(frame.side, frame.up), 0.f, 1e-5f));
     assert(nearly(linalg::dot(frame.side, frame.axis), 0.f, 1e-5f));
     assert(nearly(linalg::length(linalg::cross(frame.side, frame.up) - frame.axis), 0.f, 1e-5f));
   }
-  assert(nearly(shared::make_stamp_frame(X_AXIS).up.y, 1.f, 1e-5f));
-  assert(nearly(shared::make_stamp_frame(Z_AXIS).up.y, 1.f, 1e-5f));
-  assert(nearly(std::abs(shared::make_stamp_frame(Y_AXIS).up.z), 1.f, 1e-5f));
+  assert(nearly(shared::make_primitive_frame(X_AXIS).up.y, 1.f, 1e-5f));
+  assert(nearly(shared::make_primitive_frame(Z_AXIS).up.y, 1.f, 1e-5f));
+  assert(nearly(std::abs(shared::make_primitive_frame(Y_AXIS).up.z), 1.f, 1e-5f));
 }
 
 void test_a_prism_has_sides_plus_two_faces_and_the_polygon_volume()
@@ -162,6 +162,6 @@ int main()
   test_an_arch_is_segments_convex_wedges_summing_to_the_half_ring();
   test_neighbouring_wedges_share_their_rib_points_exactly();
   test_an_arch_stands_on_its_centre_and_rises_inner_plus_thickness();
-  std::cout << "brush_stamps_test passed" << std::endl;
+  std::cout << "brush_primitives_test passed" << std::endl;
   return 0;
 }

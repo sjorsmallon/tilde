@@ -9,7 +9,7 @@
 namespace shared
 {
 
-// A stamp is point sets dropped to plain brushes with no link back, exactly as
+// A primitive is point sets dropped to plain brushes with no link back, exactly as
 // a placed prefab. geometry_def.md Track I.
 
 inline constexpr int MIN_PRISM_SIDES = 3;
@@ -17,18 +17,18 @@ inline constexpr int MAX_PRISM_SIDES = 32;
 inline constexpr int MIN_ARCH_SEGMENTS = 1;
 inline constexpr int MAX_ARCH_SEGMENTS = 64;
 
-// The two directions a stamp is laid out in around `axis`: `up` is world Y
+// The two directions a primitive is laid out in around `axis`: `up` is world Y
 // unless the axis is vertical, then world Z; `side` completes the right-handed
-// triple. The same frame for every stamp, so a prism and an arch placed on the
+// triple. The same frame for every primitive, so a prism and an arch placed on the
 // same axis agree about where their first corner is.
-struct stamp_frame_t
+struct primitive_frame_t
 {
   linalg::vec3 axis;
   linalg::vec3 up;
   linalg::vec3 side;
 };
 
-stamp_frame_t make_stamp_frame(const linalg::vec3 &axis);
+primitive_frame_t make_primitive_frame(const linalg::vec3 &axis);
 
 // One convex brush: a regular N-gon of `radius` in the frame's up/side plane,
 // extruded `half_length` both ways along the axis. The first corner lies on
@@ -48,10 +48,10 @@ make_arch_brush_point_sets(const linalg::vec3 &center, const linalg::vec3 &axis,
                            float inner_radius, float thickness, float half_depth,
                            int segments);
 
-// Whether a face of a hulled stamp is one of its curved faces: a prism's sides,
+// Whether a face of a hulled primitive is one of its curved faces: a prism's sides,
 // an arch's inner and outer rim, never a cap or a wedge's radial end. The face
 // lies along `axis` and looks straight out from, or in at, `center`.
-bool stamp_face_is_curved(const brush_polyhedron_t &hull, const brush_face_t &face,
+bool primitive_face_is_curved(const brush_polyhedron_t &hull, const brush_face_t &face,
                           const linalg::vec3 &center, const linalg::vec3 &axis);
 
 } // namespace shared

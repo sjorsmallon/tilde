@@ -32,12 +32,10 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
 
 // Every edge of an ALREADY-BUILT hull, translated by `translation`.
 //
-// Exposed because building the hull is the expensive half and some callers can
-// hoist it: try_build_brush_polyhedron tests every point triple against every
-// point, so it is O(n^4) in a count that runs to MAX_BRUSH_VERTICES. Anything
-// drawing a brush that is not changing -- a paste preview holding a clipboard
-// snapshot -- should build once and call this per frame, rather than rebuild a
-// hull per brush per frame for a point set nothing is editing.
+// Exposed because building the hull is the expensive half: try_build_brush_polyhedron
+// is O(n^4) in a count that runs to MAX_BRUSH_VERTICES. A brush of the map reads
+// its hull from get_cached_brush_hull; a tool holding a snapshot (a paste preview,
+// a primitive ghost) builds once and calls this per frame.
 void draw_brush_hull_wireframe(pass_builder_t &draws,
                                const shared::brush_polyhedron_t &hull,
                                const linalg::vec3 &translation, color_t color,
@@ -72,8 +70,13 @@ std::vector<hole_link_t> refresh_walls_of_changed_holes(const shared::map_t &map
 
 // Pulsating selection highlight, in lockstep with the entity one.
 // `grid_step` drives the grid lines drawn on a box's faces; when the outline already
-// traces the shape only that faint measuring grid is left.
+// traces the shape only that faint measuring grid is left. A brush traces the hull
+// the renderer cached under `uid`, so selecting one never hulls per frame.
 void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
+                                       shared::entity_uid_t uid,
+                                       Span<const std::string> materials,
+                                       const shared::lightmap_t &lightmap,
+                                       Span<const shared::map_geometry_t> map_geometry,
                                        pass_builder_t &draws, float time,
                                        float grid_step, bool is_outlined);
 
@@ -81,7 +84,11 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
 // anything, so the caller can rebuild the BVH and push a value-swap transaction.
 //
 // `collides` false adds a line saying so, for the same reason the contour turns
-// red: the log is not where a level is authored.
-bool draw_geometry_inspector(shared::geometry_value_t &geometry, bool collides);
+// red: the log is not where a level is authored. A brush's "does not form a
+// solid" line reads the hull the renderer cached under `uid`.
+bool draw_geometry_inspector(shared::geometry_value_t &geometry, shared::entity_uid_t uid,
+                             Span<const std::string> materials,
+                             const shared::lightmap_t &lightmap,
+                             Span<const shared::map_geometry_t> map_geometry, bool collides);
 
 } // namespace client

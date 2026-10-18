@@ -23,7 +23,7 @@ std::vector<int32_t> face_smoothing_groups(const brush_geometry_t &brush,
 
 bool brush_has_smoothed_face(const brush_geometry_t &brush);
 
-// One past the highest group any face of `geometry` is in, so a stamp's faces
+// One past the highest group any face of `geometry` is in, so a primitive's faces
 // never smooth into a neighbour that was authored by hand.
 int32_t next_free_smoothing_group(Span<const map_geometry_t> geometry);
 

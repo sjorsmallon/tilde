@@ -1,8 +1,8 @@
-#include "stamp_tool.hpp"
+#include "primitive_tool.hpp"
 
 #include "../../../shared/log.hpp"
 #include "../../../shared/map/brush/brush_smoothing.hpp"
-#include "../../../shared/map/brush/brush_stamps.hpp"
+#include "../../../shared/map/brush/brush_primitives.hpp"
 #include "../../../shared/map/map_geometry.hpp"
 #include "../../../shared/map/map_group.hpp"
 #include "../../hud.hpp"
@@ -36,15 +36,15 @@ std::vector<linalg::vec3> translated(const std::vector<linalg::vec3> &points,
 
 } // namespace
 
-void Stamp_Tool::on_enable(editor_context_t &)
+void Primitive_Tool::on_enable(editor_context_t &)
 {
   cursor_is_over_surface = false;
   rebuild_if_changed();
 }
 
-void Stamp_Tool::on_disable(editor_context_t &) { cursor_is_over_surface = false; }
+void Primitive_Tool::on_disable(editor_context_t &) { cursor_is_over_surface = false; }
 
-void Stamp_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, float)
+void Primitive_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, float)
 {
   rebuild_if_changed();
   const std::optional<linalg::vec3> point = try_pick_placement_point(ctx, view);
@@ -53,7 +53,7 @@ void Stamp_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, 
     ghost_position = *point;
 }
 
-void Stamp_Tool::rebuild_if_changed()
+void Primitive_Tool::rebuild_if_changed()
 {
   if (!hulls.empty() && settings == built_settings)
     return;
@@ -91,7 +91,7 @@ void Stamp_Tool::rebuild_if_changed()
     const std::optional<shared::brush_polyhedron_t> hull =
         shared::try_build_brush_polyhedron(points);
     if (!hull)
-      fatal_error("stamp: a stamp produced a point set that does not hull");
+      fatal_error("primitive: a primitive produced a point set that does not hull");
     hulls.push_back(*hull);
     every_point.insert(every_point.end(), points.begin(), points.end());
   }
@@ -99,7 +99,7 @@ void Stamp_Tool::rebuild_if_changed()
   built_settings = settings;
 }
 
-linalg::vec3 Stamp_Tool::compute_translation(const editor_context_t &ctx) const
+linalg::vec3 Primitive_Tool::compute_translation(const editor_context_t &ctx) const
 {
   const linalg::vec3 half_extents = (bounds.max - bounds.min) * 0.5f;
   linalg::vec3 low_corner{ghost_position.x - half_extents.x, ghost_position.y,
@@ -113,18 +113,18 @@ linalg::vec3 Stamp_Tool::compute_translation(const editor_context_t &ctx) const
   return low_corner - bounds.min;
 }
 
-void Stamp_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e)
+void Primitive_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e)
 {
   if (e.button != input::mouse_button_t::Left || !cursor_is_over_surface)
     return;
   place(ctx);
 }
 
-void Stamp_Tool::on_mouse_drag(editor_context_t &, const input::mouse_event_t &) {}
-void Stamp_Tool::on_mouse_up(editor_context_t &, const input::mouse_event_t &) {}
-void Stamp_Tool::on_key_down(editor_context_t &, const key_event_t &) {}
+void Primitive_Tool::on_mouse_drag(editor_context_t &, const input::mouse_event_t &) {}
+void Primitive_Tool::on_mouse_up(editor_context_t &, const input::mouse_event_t &) {}
+void Primitive_Tool::on_key_down(editor_context_t &, const key_event_t &) {}
 
-void Stamp_Tool::place(editor_context_t &ctx)
+void Primitive_Tool::place(editor_context_t &ctx)
 {
   const linalg::vec3 translation = compute_translation(ctx);
   const char *label = settings.kind == Kind::Prism ? "prism" : "arch";
@@ -135,16 +135,16 @@ void Stamp_Tool::place(editor_context_t &ctx)
 
   transaction_t transaction;
   std::vector<shared::entity_uid_t> members;
-  for (size_t stamp = 0; stamp < point_sets.size(); ++stamp)
+  for (size_t piece = 0; piece < point_sets.size(); ++piece)
   {
     shared::brush_geometry_t brush;
-    brush.hull_points = translated(point_sets[stamp], translation);
+    brush.hull_points = translated(point_sets[piece], translation);
     shared::sync_face_surfaces(brush);
-    for (const shared::brush_face_t &face : hulls[stamp].faces)
+    for (const shared::brush_face_t &face : hulls[piece].faces)
     {
-      if (!shared::stamp_face_is_curved(hulls[stamp], face, {0.f, 0.f, 0.f}, axis))
+      if (!shared::primitive_face_is_curved(hulls[piece], face, {0.f, 0.f, 0.f}, axis))
         continue;
-      const Plane placed{hulls[stamp].vertices[face.vertex_indices[0]] + translation,
+      const Plane placed{hulls[piece].vertices[face.vertex_indices[0]] + translation,
                          face.plane.normal};
       shared::face_surface_for(brush, placed).smoothing_group = smoothing_group;
     }
@@ -159,17 +159,17 @@ void Stamp_Tool::place(editor_context_t &ctx)
     const shared::entity_uid_t group_uid =
         shared::group_objects(*ctx.map, members, std::format("{} {}", label, members[0]));
     if (group_uid == shared::null_entity_uid)
-      log_error("stamp: the {} brushes of the {} did not group", members.size(), label);
+      log_error("primitive: the {} brushes of the {} did not group", members.size(), label);
     transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   }
 
-  ctx.transaction_system.push(std::format("Stamp {}", label), std::move(transaction));
+  ctx.transaction_system.push(std::format("Place {}", label), std::move(transaction));
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
-  hud::set_announcement(std::format("Stamped a {} ({} brushes)", label, members.size()));
+  hud::set_announcement(std::format("Placed a {} ({} brushes)", label, members.size()));
 }
 
-void Stamp_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Primitive_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
 {
   if (!cursor_is_over_surface || hulls.empty())
     return;
@@ -188,10 +188,10 @@ void Stamp_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
   }
 }
 
-void Stamp_Tool::on_draw_ui(editor_context_t &)
+void Primitive_Tool::on_draw_ui(editor_context_t &)
 {
   ImGui::SetNextWindowSize({260, 0}, ImGuiCond_FirstUseEver);
-  if (ImGui::Begin("Stamp"))
+  if (ImGui::Begin("Primitive"))
   {
     int kind = (int)settings.kind;
     if (ImGui::Combo("Kind", &kind, "Prism\0Arch\0"))

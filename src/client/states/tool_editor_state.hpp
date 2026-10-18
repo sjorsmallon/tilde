@@ -43,7 +43,7 @@ enum class editor_tool_t : uint8_t
   lightmap,
   path,
   clip,
-  stamp
+  primitive
 };
 
 inline constexpr uint32_t EDITOR_TOOL_COUNT = 11;

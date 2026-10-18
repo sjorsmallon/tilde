@@ -1,4 +1,4 @@
-#include "brush_stamps.hpp"
+#include "brush_primitives.hpp"
 
 #include "log.hpp"
 
@@ -8,9 +8,9 @@
 namespace shared
 {
 
-stamp_frame_t make_stamp_frame(const linalg::vec3 &axis)
+primitive_frame_t make_primitive_frame(const linalg::vec3 &axis)
 {
-  stamp_frame_t frame;
+  primitive_frame_t frame;
   frame.axis = linalg::normalize(axis);
   const bool axis_is_vertical = std::abs(frame.axis.y) > 0.5f;
   const linalg::vec3 world_up = axis_is_vertical ? linalg::vec3{0.f, 0.f, 1.f} : linalg::vec3{0.f, 1.f, 0.f};
@@ -27,7 +27,7 @@ std::vector<linalg::vec3> make_prism_brush_points(const linalg::vec3 &center,
     fatal_error("make_prism_brush_points: {} sides, the hull holds {} to {}", sides,
                 MIN_PRISM_SIDES, MAX_PRISM_SIDES);
 
-  const stamp_frame_t frame = make_stamp_frame(axis);
+  const primitive_frame_t frame = make_primitive_frame(axis);
   std::vector<linalg::vec3> points;
   points.reserve((size_t)sides * 2);
 
@@ -52,7 +52,7 @@ make_arch_brush_point_sets(const linalg::vec3 &center, const linalg::vec3 &axis,
     fatal_error("make_arch_brush_point_sets: {} segments, {} to {} allowed", segments,
                 MIN_ARCH_SEGMENTS, MAX_ARCH_SEGMENTS);
 
-  const stamp_frame_t frame = make_stamp_frame(axis);
+  const primitive_frame_t frame = make_primitive_frame(axis);
   const float outer_radius = inner_radius + thickness;
 
   std::vector<linalg::vec3> directions;
@@ -84,7 +84,7 @@ make_arch_brush_point_sets(const linalg::vec3 &center, const linalg::vec3 &axis,
   return wedges;
 }
 
-bool stamp_face_is_curved(const brush_polyhedron_t &hull, const brush_face_t &face,
+bool primitive_face_is_curved(const brush_polyhedron_t &hull, const brush_face_t &face,
                           const linalg::vec3 &center, const linalg::vec3 &axis)
 {
   const linalg::vec3 unit_axis = linalg::normalize(axis);

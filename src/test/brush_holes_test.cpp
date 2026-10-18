@@ -6,7 +6,7 @@
 #include "shared/assets/asset.hpp"
 #include "shared/map/brush/brush.hpp"
 #include "shared/map/brush/brush_holes.hpp"
-#include "shared/map/brush/brush_stamps.hpp"
+#include "shared/map/brush/brush_primitives.hpp"
 #include "shared/map/brush/convex_decomposition.hpp"
 #include "shared/map/map.hpp"
 #include "shared/map/map_geometry.hpp"

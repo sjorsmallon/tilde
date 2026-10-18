@@ -382,7 +382,9 @@ void Brush_Tool::rebuild_hull_and_handles(editor_context_t& ctx)
  
   if (!brush) return;
 
-  selection_geometry.hull = shared::try_build_brush_polyhedron(brush->hull_points);
+  selection_geometry.hull =
+      get_cached_brush_hull(ctx.map->find_geometry_by_uid(selection.uid)->value, selection.uid,
+                            ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
 
   if (!selection_geometry.hull) return;
 
@@ -722,8 +724,9 @@ void Brush_Tool::on_update(editor_context_t& ctx, const viewport_state_t &view,
           {
             hover.uid = uid;
 
-            std::optional<shared::brush_polyhedron_t> hovered_hull =
-                shared::try_build_brush_polyhedron(brush->hull_points);
+            const std::optional<shared::brush_polyhedron_t> &hovered_hull =
+                get_cached_brush_hull(entry->value, uid, ctx.map->materials,
+                                      ctx.map->lightmap, ctx.map->geometry);
 
             if (hovered_hull)
             {
@@ -1286,8 +1289,8 @@ Brush_Tool::resolve_face_target(editor_context_t& ctx, shared::entity_uid_t uid,
   // The plane has to come from the CURRENT hull rather than from the normal
   // alone: two parallel faces of one brush share a normal and are told apart by
   // distance, and a normal carries none.
-  const std::optional<shared::brush_polyhedron_t> hull =
-      shared::try_build_brush_polyhedron(brush->hull_points);
+  const std::optional<shared::brush_polyhedron_t> &hull = get_cached_brush_hull(
+      entry->value, uid, ctx.map->materials, ctx.map->lightmap, ctx.map->geometry);
   if (!hull)
     return target;
 
@@ -1824,11 +1827,10 @@ void Brush_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws)
       if (const shared::brush_geometry_t* brush =
               std::get_if<shared::brush_geometry_t>(&entry->value))
       {
-        // build the polyhedron.
-        std::optional<shared::brush_polyhedron_t> outline =
-            shared::try_build_brush_polyhedron(brush->hull_points);
+        const std::optional<shared::brush_polyhedron_t> &outline =
+            get_cached_brush_hull(entry->value, hover.uid, ctx.map->materials,
+                                  ctx.map->lightmap, ctx.map->geometry);
 
-        // if that succeeded, for all faces, draw the faces.
         if (outline)
         {
           for (const shared::brush_face_t &face : outline->faces)

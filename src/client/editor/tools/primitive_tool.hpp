@@ -13,7 +13,7 @@ namespace client
 // rests on the cursor hit with its low corner on the grid, and a click lands
 // every brush in one transaction and one group. No link back, exactly as a
 // placed prefab. geometry_def.md Track I.
-class Stamp_Tool : public Editor_Tool
+class Primitive_Tool : public Editor_Tool
 {
 public:
   void on_enable(editor_context_t &ctx) override;
@@ -35,7 +35,7 @@ private:
     Arch
   };
 
-  struct stamp_settings_t
+  struct primitive_settings_t
   {
     Kind kind = Kind::Prism;
     int axis_index = 1;
@@ -47,11 +47,11 @@ private:
     float arch_thickness = 32.f;
     float arch_half_depth = 32.f;
 
-    bool operator==(const stamp_settings_t &) const = default;
+    bool operator==(const primitive_settings_t &) const = default;
   };
 
-  stamp_settings_t settings;
-  stamp_settings_t built_settings;
+  primitive_settings_t settings;
+  primitive_settings_t built_settings;
 
   std::vector<std::vector<linalg::vec3>> point_sets;
   std::vector<shared::brush_polyhedron_t> hulls;

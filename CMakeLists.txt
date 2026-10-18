@@ -457,10 +457,10 @@ add_library(game_shared STATIC
     # one convex piece per hole face. geometry_def.md Track H.
     src/shared/map/brush/brush_holes.hpp
     src/shared/map/brush/brush_holes.cpp
-    # A stamp is point sets dropped to plain brushes with no link back: a
+    # A primitive is point sets dropped to plain brushes with no link back: a
     # prism, an arch. geometry_def.md Track I.
-    src/shared/map/brush/brush_stamps.hpp
-    src/shared/map/brush/brush_stamps.cpp
+    src/shared/map/brush/brush_primitives.hpp
+    src/shared/map/brush/brush_primitives.cpp
     # The consumer of smoothing_group: a corner's draw normal is its group's
     # area-weighted average at that position. geometry_def.md Track J.
     src/shared/map/brush/brush_smoothing.hpp
@@ -903,7 +903,7 @@ add_library(game_client SHARED
     src/client/editor/tools/brush_tool.cpp
     src/client/editor/tools/brush_stroke.cpp
     src/client/editor/tools/clip_tool.cpp
-    src/client/editor/tools/stamp_tool.cpp
+    src/client/editor/tools/primitive_tool.cpp
     src/client/editor/tools/lightmap_tool.cpp
     src/client/editor/tools/path_tool.cpp
     src/client/editor/path_editing.cpp
@@ -1189,10 +1189,10 @@ add_game_test(brush_split_test)
 # geometry_def.md Track H.
 add_game_test(brush_holes_test)
 
-# Stamps: a prism is one convex brush of sides + 2 faces, an arch is N convex
+# Primitives: a prism is one convex brush of sides + 2 faces, an arch is N convex
 # wedges sharing their rib points and summing to the half ring.
 # geometry_def.md Track I.
-add_game_test(brush_stamps_test)
+add_game_test(brush_primitives_test)
 
 # Smoothing groups: group zero stays flat, a prism's side corners take the
 # radial normal, an arch smooths across its wedges, a hole is never a source.

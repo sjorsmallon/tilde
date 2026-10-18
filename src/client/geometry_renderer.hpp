@@ -81,4 +81,13 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      const shared::lightmap_t &lightmap,
                                      Span<const shared::map_geometry_t> map_geometry);
 
+// The hull of a brush as the cache last built it, refreshed first when the brush
+// moved, exactly as draw_geometry refreshes the mesh. Empty when the points do
+// not form a solid. The one way a per-frame draw gets a hull: building one is
+// O(n^4) in the point count.
+const std::optional<shared::brush_polyhedron_t> &
+get_cached_brush_hull(const shared::geometry_value_t &geometry, shared::entity_uid_t uid,
+                      Span<const std::string> materials, const shared::lightmap_t &lightmap,
+                      Span<const shared::map_geometry_t> map_geometry);
+
 } // namespace client

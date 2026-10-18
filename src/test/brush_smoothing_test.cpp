@@ -1,13 +1,13 @@
 // A corner in a non-zero smoothing group draws with its group's area-weighted
 // average normal at that position; group zero keeps its plane. A prism's side
 // corners point radially, an arch smooths across its wedges, a hole brush is
-// never a source, and a stamp's curved faces are the ones that take the group.
+// never a source, and a primitive's curved faces are the ones that take the group.
 // geometry_def.md Track J.
 
 #include "shared/assets/asset.hpp"
 #include "shared/map/brush/brush.hpp"
 #include "shared/map/brush/brush_smoothing.hpp"
-#include "shared/map/brush/brush_stamps.hpp"
+#include "shared/map/brush/brush_primitives.hpp"
 #include "shared/map/map.hpp"
 #include "shared/map/map_geometry.hpp"
 
@@ -48,7 +48,7 @@ void put_curved_faces_in_group(brush_geometry_t &brush, const linalg::vec3 &axis
   const brush_polyhedron_t hull = hull_of(brush);
   shared::sync_face_surfaces(brush);
   for (const shared::brush_face_t &face : hull.faces)
-    if (shared::stamp_face_is_curved(hull, face, {0.f, 0.f, 0.f}, axis))
+    if (shared::primitive_face_is_curved(hull, face, {0.f, 0.f, 0.f}, axis))
       shared::face_surface_for(brush, face.plane).smoothing_group = group;
 }
 
@@ -241,14 +241,14 @@ void test_the_next_free_group_is_one_past_the_highest()
              Span<const shared::map_geometry_t>(map.geometry.data(), map.geometry.size())) == 8);
 }
 
-void test_a_stamps_curved_faces_are_its_sides_and_rims()
+void test_a_primitives_curved_faces_are_its_sides_and_rims()
 {
   brush_geometry_t prism;
   prism.hull_points = shared::make_prism_brush_points({0.f, 0.f, 0.f}, Y_AXIS, 64.f, 32.f, 6);
   const brush_polyhedron_t prism_hull = hull_of(prism);
   int curved = 0;
   for (const shared::brush_face_t &face : prism_hull.faces)
-    curved += shared::stamp_face_is_curved(prism_hull, face, {0.f, 0.f, 0.f}, Y_AXIS);
+    curved += shared::primitive_face_is_curved(prism_hull, face, {0.f, 0.f, 0.f}, Y_AXIS);
   assert(curved == 6);
 
   const std::vector<std::vector<linalg::vec3>> wedges =
@@ -258,7 +258,7 @@ void test_a_stamps_curved_faces_are_its_sides_and_rims()
   const brush_polyhedron_t wedge_hull = hull_of(wedge);
   curved = 0;
   for (const shared::brush_face_t &face : wedge_hull.faces)
-    curved += shared::stamp_face_is_curved(wedge_hull, face, {0.f, 0.f, 0.f}, Z_AXIS);
+    curved += shared::primitive_face_is_curved(wedge_hull, face, {0.f, 0.f, 0.f}, Z_AXIS);
   assert(curved == 2);
 }
 
@@ -277,7 +277,7 @@ int main()
   test_a_hole_brush_is_never_a_source();
   test_the_wall_boundary_ring_smooths_through_the_hole_surfaces();
   test_the_next_free_group_is_one_past_the_highest();
-  test_a_stamps_curved_faces_are_its_sides_and_rims();
+  test_a_primitives_curved_faces_are_its_sides_and_rims();
   std::cout << "brush_smoothing_test passed" << std::endl;
   return 0;
 }
