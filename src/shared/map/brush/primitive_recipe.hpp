@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace shared
 {
@@ -19,7 +20,8 @@ enum class primitive_kind_t
   Prism,
   Arch,
   Straight_Stairs,
-  Spiral_Stairs
+  Spiral_Stairs,
+  Curve
 };
 
 const char *to_string(primitive_kind_t kind);
@@ -49,6 +51,13 @@ struct primitive_recipe_t
   float spiral_tread_width = 64.f;
   float spiral_degrees_per_step = 30.f;
   bool spiral_clockwise = false;
+
+  // The curve's control points, relative to the group's lowest corner, which is
+  // where a regeneration lands; the curve is the bottom centre line of the wall.
+  std::vector<linalg::vec3> curve_points;
+  float curve_width = 32.f;
+  float curve_height = 128.f;
+  int curve_samples_per_segment = 4;
 
   bool operator==(const primitive_recipe_t &) const = default;
 };

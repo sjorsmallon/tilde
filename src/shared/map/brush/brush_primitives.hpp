@@ -21,6 +21,9 @@ inline constexpr int MIN_STAIR_STEPS = 1;
 inline constexpr int MAX_STAIR_STEPS = 64;
 inline constexpr float MIN_SPIRAL_DEGREES_PER_STEP = 1.f;
 inline constexpr float MAX_SPIRAL_DEGREES_PER_STEP = 90.f;
+inline constexpr size_t MAX_CURVE_POINTS = 64;
+inline constexpr int MIN_CURVE_SAMPLES_PER_SEGMENT = 1;
+inline constexpr int MAX_CURVE_SAMPLES_PER_SEGMENT = 16;
 
 // The two directions a primitive is laid out in around `axis`: `up` is world Y
 // unless the axis is vertical, then world Z; `side` completes the right-handed
@@ -70,6 +73,24 @@ std::vector<std::vector<linalg::vec3>>
 make_spiral_stair_brush_point_sets(const linalg::vec3 &base, int steps, float rise,
                                    float inner_radius, float tread_width,
                                    float degrees_per_step, bool clockwise);
+
+// A wall along the centripetal Catmull-Rom through `control_points`: a `width`
+// by `height` rectangle stood on every sample, its bottom centre on the curve,
+// upright along world up and across the curve's direction there, and the hull
+// of two neighbouring rectangles is one convex brush, so a curve of N samples
+// is N - 1 brushes that share their four rectangle points exactly. The curve is
+// a floor line: a leg that climbs straight up has no heading, its rectangles
+// lie in one plane, and those pieces do not hull. Fewer than two control
+// points is no wall and an empty answer.
+std::vector<std::vector<linalg::vec3>>
+make_curve_brush_point_sets(Span<const linalg::vec3> control_points, float width, float height,
+                            int samples_per_segment);
+
+// Shift a curve recipe's control points so the wall they build, unturned, has
+// its lowest corner at the origin: that corner is where `curve_points` are
+// measured from, so this is the one step between points clicked in the world
+// and the recipe that rides the group. Fewer than two points are left alone.
+void rebase_curve_points_to_wall_corner(primitive_recipe_t &recipe);
 
 // Every brush of a recipe, laid out at the origin along the recipe's axis and
 // turned its quarter turns: the one builder the panel's ghost, a placement and

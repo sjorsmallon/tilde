@@ -4,6 +4,7 @@
 #include "../../shared/span.hpp"
 #include "editor_types.hpp"
 
+#include <algorithm>
 #include <optional>
 
 //@NOTE(SJM):
@@ -13,6 +14,22 @@
 
 namespace client
 {
+
+// Where a dragged map object is drawn ahead of the map: its translation from where the map still holds it.
+struct live_drag_offset_t
+{
+  shared::entity_uid_t uid = 0;
+  linalg::vec3         translation{0, 0, 0};
+};
+
+inline const live_drag_offset_t* find_live_drag_offset(Span<const live_drag_offset_t> offsets_sorted,
+                                                       shared::entity_uid_t uid)
+{
+  const live_drag_offset_t* slot = std::lower_bound(
+      offsets_sorted.begin(), offsets_sorted.end(), uid,
+      [](const live_drag_offset_t& entry, shared::entity_uid_t key) { return entry.uid < key; });
+  return slot != offsets_sorted.end() && slot->uid == uid ? slot : nullptr;
+}
 
 class Editor_Tool
 {
@@ -49,6 +66,10 @@ public:
   // colour by it -- the Map Info connection lines are the one caller. Empty for
   // every tool that has no selection, which is most of them.
   virtual Span<const shared::entity_uid_t> selected_objects() const { return {}; }
+
+  // Geometry this tool is dragging but has not written yet, sorted by uid; the
+  // editor draws each at its offset. Empty for every tool that writes as it drags.
+  virtual Span<const live_drag_offset_t> live_drag_offsets() const { return {}; }
 };
 
 } // namespace client

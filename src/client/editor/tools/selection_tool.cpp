@@ -188,9 +188,28 @@ Selection_Tool::try_compute_selection_bounds(editor_context_t& ctx) const
   if (selected_uids.empty() || !ctx.map)
     return std::nullopt;
 
-  shared::aabb_bounds_t bounds = editor_object_bounds(*ctx.map, selected_uids[0]);
-  for (size_t index = 1; index < selected_uids.size(); ++index)
-    bounds = shared::union_aabb(bounds, editor_object_bounds(*ctx.map, selected_uids[index]));
+  // One walk of the map with the selection sorted, not one map search per selected uid.
+  std::vector<shared::entity_uid_t> sorted_selection(selected_uids.begin(), selected_uids.end());
+  std::sort(sorted_selection.begin(), sorted_selection.end());
+  const auto is_selected = [&](shared::entity_uid_t uid)
+  { return std::binary_search(sorted_selection.begin(), sorted_selection.end(), uid); };
+
+  std::optional<shared::aabb_bounds_t> bounds;
+  size_t                               found = 0;
+  const auto add = [&](const shared::aabb_bounds_t& piece)
+  {
+    bounds = bounds ? shared::union_aabb(*bounds, piece) : piece;
+    ++found;
+  };
+  for (const shared::map_geometry_t& entry : ctx.map->geometry)
+    if (is_selected(entry.uid))
+      add(shared::get_bounds(entry.value));
+  for (const shared::map_entity_t& entry : ctx.map->entities)
+    if (entry.entity && is_selected(entry.uid))
+      add(get_editor_bounds(entry.entity.get()));
+  if (found != selected_uids.size())
+    log_error("selection tool: {} of {} selected uids are not in the map", selected_uids.size() - found,
+              selected_uids.size());
   return bounds;
 }
 
@@ -229,11 +248,7 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
   else
   {
     for (const drag_origin_t &origin : drag_baseline.origins)
-    {
-      if (!shared::try_set_object_position(*ctx.map, origin.uid,
-                                           origin.position + drag.translation))
-        log_error("selection tool: object {} vanished mid-drag", origin.uid);
-    }
+      place_dragged_object(ctx, origin, origin.position + drag.translation);
   }
 
   if (!linalg::is_identity_rotation(drag.rotation))
@@ -249,10 +264,8 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
     {
       if (orbit)
       {
-        const linalg::vec3 orbited =
-            drag.pivot + linalg::rotate(drag.rotation, origin.position - drag.pivot);
-        if (!shared::try_set_object_position(*ctx.map, origin.uid, orbited))
-          log_error("selection tool: object {} vanished mid-drag", origin.uid);
+        place_dragged_object(ctx, origin,
+                             drag.pivot + linalg::rotate(drag.rotation, origin.position - drag.pivot));
       }
 
       // An object with no orientation to store still travelled -- an
@@ -276,6 +289,7 @@ void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
 {
   capture_drag_snapshots(ctx);
   apply_gizmo_drag(ctx, transform);
+  settle_live_drag(ctx);
   commit_drag_snapshots(ctx, std::move(name));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -1458,14 +1472,44 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   if (ImGui::Button("Snap to surface below (End)"))
     snap_selection_to_surface_below(ctx);
 
+  // The selection sorted once: every count below is one walk of the map asking
+  // "is this selected", never one map search per selected uid.
+  std::vector<shared::entity_uid_t> sorted_selection(selected_uids.begin(), selected_uids.end());
+  std::sort(sorted_selection.begin(), sorted_selection.end());
+  const auto is_selected = [&](shared::entity_uid_t candidate)
+  { return std::binary_search(sorted_selection.begin(), sorted_selection.end(), candidate); };
+
+  std::vector<shared::entity_uid_t> selected_brushes;
+  std::vector<shared::entity_uid_t> holes;
+  size_t                            tied_objects   = 0;
+  size_t                            untied_objects = 0;
+  for (const shared::map_geometry_t& entry : ctx.map->geometry)
+  {
+    if (!is_selected(entry.uid))
+      continue;
+    if (const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&entry.value))
+    {
+      selected_brushes.push_back(entry.uid);
+      if (brush->subtracts_from_uid != shared::null_entity_uid)
+        holes.push_back(entry.uid);
+    }
+    if (shared::get_owner_uid(entry.value) != shared::null_entity_uid)
+      ++tied_objects;
+    else
+      ++untied_objects;
+  }
+
   // Groups. The name of the one group a selection sits in, editable, or how
   // many groups it touches, and the two edits beside it.
   {
     std::vector<shared::entity_uid_t> touched;
-    for (shared::entity_uid_t selected : selected_uids)
-      if (const shared::map_group_t *group = shared::find_group_containing_member(*ctx.map, selected))
-        if (std::find(touched.begin(), touched.end(), group->uid) == touched.end())
-          touched.push_back(group->uid);
+    for (const shared::map_group_t& group : ctx.map->groups)
+      for (shared::entity_uid_t member : group.members)
+        if (is_selected(member))
+        {
+          touched.push_back(group.uid);
+          break;
+        }
 
     if (touched.size() == 1)
     {
@@ -1504,20 +1548,6 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   // so the link has to be readable and editable here, for the same reason the
   // tie below is.
   {
-    std::vector<shared::entity_uid_t> selected_brushes;
-    std::vector<shared::entity_uid_t> holes;
-    for (shared::entity_uid_t selected : selected_uids)
-    {
-      const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected);
-      const shared::brush_geometry_t* brush =
-          entry ? std::get_if<shared::brush_geometry_t>(&entry->value) : nullptr;
-      if (brush == nullptr)
-        continue;
-      selected_brushes.push_back(selected);
-      if (brush->subtracts_from_uid != shared::null_entity_uid)
-        holes.push_back(selected);
-    }
-
     if (!selected_brushes.empty())
     {
       if (holes.size() == 1 && selected_brushes.size() == 1)
@@ -1562,19 +1592,6 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   // editor shows is a thing the next edit can silently drop, and an `owner`
   // key is invisible everywhere else.
   {
-    size_t tied_objects   = 0;
-    size_t untied_objects = 0;
-    for (shared::entity_uid_t selected : selected_uids)
-    {
-      const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(selected);
-      if (entry == nullptr)
-        continue;
-      if (shared::get_owner_uid(entry->value) != shared::null_entity_uid)
-        ++tied_objects;
-      else
-        ++untied_objects;
-    }
-
     std::vector<shared::entity_uid_t> owned;
     if (selected_uids.size() == 1)
       collect_owned_geometry(ctx, selected_uids[0], owned);
@@ -2402,10 +2419,7 @@ void Selection_Tool::on_mouse_drag(editor_context_t& ctx,
       }
 
       for (const drag_origin_t &origin : drag_baseline.origins)
-      {
-        if (!shared::try_set_object_position(*ctx.map, origin.uid, origin.position + delta))
-          log_error("selection tool: object {} vanished mid-drag", origin.uid);
-      }
+        place_dragged_object(ctx, origin, origin.position + delta);
     }
     return;
   }
@@ -2433,6 +2447,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
     {
       const char* name = gizmo_drag_name(editor_gizmo.dragged_handle());
       editor_gizmo.end_drag();
+      settle_live_drag(ctx);
       commit_drag_snapshots(ctx, name);
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -2442,6 +2457,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
     if (object_drag.active)
     {
       object_drag.active = false;
+      settle_live_drag(ctx);
       commit_drag_snapshots(ctx, "Move");
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -2624,6 +2640,8 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 
   if (e.key == input::key_t::Escape)
   {
+    const bool something_was_pending = uid_pick.armed || !uid_pick.queued_rows.empty() ||
+                                       snap_pick.armed || wall_pick.armed || paste.pending;
     if (!uid_pick.queued_rows.empty())
       hud::set_announcement(std::format("{} connection(s) left unbound.\nThey are red in the "
                                         "Connections panel, where the Pick button still "
@@ -2634,6 +2652,11 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
     snap_pick = {};
     wall_pick = {};
     cancel_paste();
+    if (!something_was_pending)
+    {
+      selected_uids.clear();
+      hovered_uid = 0;
+    }
     return;
   }
 
@@ -2750,16 +2773,49 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   // where they did not.
   float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
   draws.selected_outline_color = compute_selection_pulse_color(ctx.time);
-  for (auto uid : selected_uids)
+
+  // The selection sorted once, so every walk below asks "is this selected" by
+  // binary search instead of asking the map for each selected uid in turn.
+  std::vector<shared::entity_uid_t> sorted_selection(selected_uids.begin(), selected_uids.end());
+  std::sort(sorted_selection.begin(), sorted_selection.end());
+  const auto selection_index = [&](shared::entity_uid_t uid) -> size_t
   {
-    const bool outlined = draws.outline_object(uid, renderer::outline_t::selected);
-    if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
-      draw_geometry_selection_highlight(geometry->value, uid, ctx.map->materials,
-                                        ctx.map->lightmap, ctx.map->geometry, draws, ctx.time,
-                                        grid_step, outlined);
-    else if (auto *entry = ctx.map->find_by_uid(uid); entry && entry->entity)
-      draw_selection_highlight(entry->entity.get(), draws, ctx.time, grid_step, draw_settings,
-                               outlined);
+    const auto at = std::lower_bound(sorted_selection.begin(), sorted_selection.end(), uid);
+    return at != sorted_selection.end() && *at == uid ? (size_t)(at - sorted_selection.begin())
+                                                       : SIZE_MAX;
+  };
+
+  // One walk of this frame's draw ranges: outline every selected object's meshes.
+  std::vector<uint8_t> outlined(sorted_selection.size(), 0);
+  for (const pass_builder_t::object_meshes_t &range : draws.object_meshes)
+  {
+    const size_t index = selection_index(range.uid);
+    if (index == SIZE_MAX)
+      continue;
+    for (uint32_t mesh = range.first; mesh < range.first + range.count; ++mesh)
+      draws.meshes[mesh].outline = renderer::outline_t::selected;
+    outlined[index] = 1;
+  }
+
+  // One walk of the map: the highlight of every selected object.
+  for (const shared::map_geometry_t &entry : ctx.map->geometry)
+  {
+    const size_t index = selection_index(entry.uid);
+    if (index == SIZE_MAX)
+      continue;
+    const live_drag_offset_t* dragged = find_live_drag_offset(live_drag_offsets_sorted, entry.uid);
+    draw_geometry_selection_highlight(entry.value, entry.uid, ctx.map->materials,
+                                      ctx.map->lightmap, ctx.map->geometry, draws, ctx.time,
+                                      grid_step, outlined[index] != 0,
+                                      dragged ? dragged->translation : linalg::vec3{0, 0, 0});
+  }
+  for (const shared::map_entity_t &entry : ctx.map->entities)
+  {
+    const size_t index = entry.entity ? selection_index(entry.uid) : SIZE_MAX;
+    if (index == SIZE_MAX)
+      continue;
+    draw_selection_highlight(entry.entity.get(), draws, ctx.time, grid_step, draw_settings,
+                             outlined[index] != 0);
   }
 
   // 1b. What a selected Geometry_Owner_Entity SWITCHES. Nothing in the viewport says
@@ -2779,20 +2835,19 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
   {
     constexpr float OWNED_HIGHLIGHT_INFLATE = 1.0f;
 
-    std::vector<shared::entity_uid_t> owned;
-    for (shared::entity_uid_t uid : selected_uids)
+    // One walk of the geometry: every piece whose owner is selected.
+    for (const shared::map_geometry_t &entry : ctx.map->geometry)
     {
-      collect_owned_geometry(ctx, uid, owned);
-      for (shared::entity_uid_t owned_uid : owned)
-      {
-        const shared::aabb_bounds_t bounds = shared::compute_object_bounds(*ctx.map, owned_uid);
-        draws.debug.box((bounds.min + bounds.max) * 0.5f,
-                        (bounds.max - bounds.min) * 0.5f +
-                            linalg::vec3{OWNED_HIGHLIGHT_INFLATE, OWNED_HIGHLIGHT_INFLATE,
-                                         OWNED_HIGHLIGHT_INFLATE},
-                        colors::magenta, renderer::fill_mode_t::wireframe, 0.f, 0.f,
-                        /*draw_when_occluded*/ true);
-      }
+      const shared::entity_uid_t owner = shared::get_owner_uid(entry.value);
+      if (owner == shared::null_entity_uid || selection_index(owner) == SIZE_MAX)
+        continue;
+      const shared::aabb_bounds_t bounds = shared::get_bounds(entry.value);
+      draws.debug.box((bounds.min + bounds.max) * 0.5f,
+                      (bounds.max - bounds.min) * 0.5f +
+                          linalg::vec3{OWNED_HIGHLIGHT_INFLATE, OWNED_HIGHLIGHT_INFLATE,
+                                       OWNED_HIGHLIGHT_INFLATE},
+                      colors::magenta, renderer::fill_mode_t::wireframe, 0.f, 0.f,
+                      /*draw_when_occluded*/ true);
     }
   }
 

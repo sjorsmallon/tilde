@@ -3,6 +3,7 @@
 #include "../../../shared/collision/collision_detection.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/map/map_geometry.hpp"
+#include "../../../shared/map/map_group.hpp"
 #include "../../camera.hpp"
 #include "../../hud.hpp"
 #include "../transaction_system.hpp"
@@ -245,6 +246,8 @@ void Clip_Tool::commit(editor_context_t &ctx)
 
   transaction_t transaction;
   const shared::geometry_value_t removed = entry->value;
+  std::vector<shared::map_group_t> groups_before = ctx.map->groups;
+  (void)shared::drop_recipe_of_group_containing(*ctx.map, target_uid);
   ctx.map->remove_geometry(target_uid);
   transaction.add_geometry_removed(target_uid, removed);
 
@@ -259,6 +262,7 @@ void Clip_Tool::commit(editor_context_t &ctx)
     transaction.add_geometry_created(uid, preview->back);
   }
 
+  transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   ctx.transaction_system.push("Clip brush", std::move(transaction));
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;

@@ -5711,6 +5711,26 @@ static void destroy_mesh_buffers(gpu_mesh_t &mesh)
   mesh.lightmap_memory = VK_NULL_HANDLE;
 }
 
+static void retire_mesh_buffers(gpu_mesh_t &mesh)
+{
+  retire_buffer(mesh.vertex_buffer, mesh.vertex_memory);
+  retire_buffer(mesh.index_buffer, mesh.index_memory);
+  retire_buffer(mesh.skin_buffer, mesh.skin_memory);
+  retire_buffer(mesh.blend_buffer, mesh.blend_memory);
+  retire_buffer(mesh.lightmap_buffer, mesh.lightmap_memory);
+
+  mesh.vertex_buffer = VK_NULL_HANDLE;
+  mesh.vertex_memory = VK_NULL_HANDLE;
+  mesh.index_buffer  = VK_NULL_HANDLE;
+  mesh.index_memory  = VK_NULL_HANDLE;
+  mesh.skin_buffer   = VK_NULL_HANDLE;
+  mesh.skin_memory   = VK_NULL_HANDLE;
+  mesh.blend_buffer  = VK_NULL_HANDLE;
+  mesh.blend_memory  = VK_NULL_HANDLE;
+  mesh.lightmap_buffer = VK_NULL_HANDLE;
+  mesh.lightmap_memory = VK_NULL_HANDLE;
+}
+
 // Stage and copy the three buffers. This is the ONE place a mesh touches the
 // GPU, and it blocks -- deliberately, and only ever from register_mesh /
 // update_mesh, never from a draw. Vertices go up exactly as the asset holds
@@ -5950,14 +5970,9 @@ void update_mesh(mesh_handle_t handle, const assets::mesh_asset_t &mesh)
     return;
   }
 
-  // The old buffers may still be in flight, so this waits. It is the price of
-  // re-uploading geometry mid-session (sculpting a face grid); it is paid here,
-  // where the caller asked for it, rather than inside a draw.
-  FRAME_ZONE("update_mesh (vkDeviceWaitIdle)");
-  vkDeviceWaitIdle(g_device);
-
+  // The old buffers may still be in flight, so they are retired, not destroyed.
   gpu_mesh_t &gpu_mesh = g_meshes[handle.index];
-  destroy_mesh_buffers(gpu_mesh);
+  retire_mesh_buffers(gpu_mesh);
   gpu_mesh.skeleton = mesh.skeleton;
 
   if (!upload_mesh_buffers(gpu_mesh, mesh))
@@ -6605,6 +6620,7 @@ static void cleanup_registered_resources()
   destroy_texture(g_dither3d_pattern);
   destroy_texture(g_dither3d_ramp);
 
+  destroy_all_retired_buffers();
   for (gpu_mesh_t &mesh : g_meshes)
     destroy_mesh_buffers(mesh);
   g_meshes.clear();
@@ -8067,11 +8083,15 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
                                 Span<const frame_uniform_allocation_t> skinning,
                                 const shadow_settings_t &settings)
 {
+  frame_timing::lap_zone_t lap("shadow layer: scene block");
+
   // The vertex shaders read view_projection out of the scene block, so the
   // light's matrix goes in a block of its own and nothing else in it is read.
   scene_uniform_t light_scene{};
   memcpy(light_scene.view_projection, &job.view_projection, sizeof(light_scene.view_projection));
   const uint32_t block_offset = write_scene_block(light_scene);
+
+  lap.next("shadow layer: begin pass + state");
 
   VkClearValue clear{};
   clear.depthStencil = {1.0f, 0};
@@ -8096,6 +8116,8 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout,
                           PASS_DESCRIPTOR_SET, 1, &g_shadow_pass_set, 1, &block_offset);
+
+  lap.next("shadow layer: draw loop");
 
   VkPipeline bound_pipeline = VK_NULL_HANDLE;
   for (uint32_t draw_index = 0; draw_index < draws.size(); ++draw_index)
@@ -8184,6 +8206,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
                               const linalg::vec3f                   &camera_position)
 {
   g_draw_items.clear();
+  frame_timing::lap_zone_t lap("mesh draws: resolve pipelines + sort");
 
   // Not optional: every mesh vertex shader reads view_projection out of this set.
   const VkDescriptorSet pass_set = resolve_pass_set(lightmap);
@@ -8247,6 +8270,7 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
               return a.material_index < b.material_index;
             });
 
+  lap.next("mesh draws: record sorted items");
   uint32_t bound_pipeline = UINT32_MAX;
   uint32_t bound_material = UINT32_MAX;
   uint32_t bound_draw     = UINT32_MAX;
@@ -9418,6 +9442,7 @@ bool new_frame()
 
   vkWaitForFences(g_device, 1, &g_in_flight_fences[g_current_frame_idx_in_swapchain], VK_TRUE,
                   UINT64_MAX);
+  destroy_buffers_retired_in_frame_slot(g_current_frame_idx_in_swapchain);
   collect_gpu_timing(g_current_frame_idx_in_swapchain);
 
   const VkResult result =
@@ -9489,6 +9514,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   ensure_shadow_pool(shadows);
   begin_gpu_timing(cmd, frame);
 
+  frame_timing::lap_zone_t lap("render_frame: particle compute");
+
   // 1. Particle compute, OUTSIDE the render pass. The ordering is a Vulkan fact
   //    rather than a caller decision, which is why emitters ride the pass
   //    instead of being dispatched by hand before it.
@@ -9497,6 +9524,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       record_particle_compute(cmd, emitter);
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Particles);
 
+  lap.next("render_frame: debug text projection + ImGui::Render");
+
   // 2. Everything ImGui, CPU-side, before the pass opens: world labels project
   //    through their OWN pass's view, which is the thing a single global matrix
   //    could not do.
@@ -9504,6 +9533,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     if (pass.debug)
       project_debug_texts(pass.view, *pass.debug);
   ImGui::Render();
+
+  lap.next("render_frame: settle passes (skinning, shadow layers, scene block)");
 
   // 3. Settle every pass before any render pass opens: its skinning uploads
   //    (one allocation per draw, shared by its shadow passes and the scene
@@ -9628,6 +9659,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     g_prepared_passes.push_back(prepared);
   }
 
+  lap.next("render_frame: record shadow layers + fog grid");
+
   // 4. The SHADOW passes, one depth-only render pass per claimed layer, ahead
   //    of the scene pass that samples them.
   for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index)
@@ -9656,6 +9689,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   }
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Fog);
 
+  lap.next("render_frame: record scene pass");
+
   // 5. The SCENE pass, into the HDR target, and every view pass inside it in the
   //    order given. Its framebuffer is indexed by frame in flight rather than by
   //    swapchain image: the target belongs to the frame that renders it.
@@ -9683,12 +9718,16 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     const Span<const frame_uniform_allocation_t> skinning(
         g_draw_skinning.data() + prepared.skinning_base, pass.draws.size());
 
+    frame_timing::lap_zone_t pass_lap("scene pass: skybox");
+
     // Before the geometry: the sky writes no depth and tests none, so it is the
     // background every later draw covers.
     record_skybox_draw(cmd, pass);
+    pass_lap.next("scene pass: mesh draws");
     record_mesh_draws(cmd, pass.draws, pass.lightmap, prepared.scene_block_offset, skinning,
                       pass.view.camera.position);
 
+    pass_lap.next("scene pass: particles");
     if (!pass.particles.empty())
     {
       const camera_basis_t basis = get_orientation_vectors(pass.view.camera);
@@ -9696,6 +9735,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
         record_particle_draw(cmd, emitter, view_projection_matrix, basis.right, basis.up);
     }
 
+    pass_lap.next("scene pass: debug polygons + lines");
     if (pass.debug)
     {
       const linalg::vec3f& eye = pass.view.camera.position;
@@ -9704,6 +9744,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       record_debug_lines(cmd, *pass.debug, view_projection_matrix, eye);
     }
 
+    pass_lap.next("scene pass: custom draws");
     // Last in the pass, with the viewport already applied: this is how the
     // shader editor's own pipelines keep working without the render pass being
     // part of the public API.
@@ -9714,6 +9755,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   vkCmdEndRenderPass(cmd);
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Scene);
+
+  lap.next("render_frame: record outline + beam passes");
 
   // 5b. The selection outline's mask, against the depth the scene pass just wrote.
   bool any_outlined = false;
@@ -9787,6 +9830,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     vkCmdEndRenderPass(cmd);
   }
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Beam);
+
+  lap.next("render_frame: record tonemap + present passes (UI, ImGui)");
 
   // 6. The TONEMAPPED pass: the curve and the ink. The draw covers every pixel,
   //    which is why the attachment needs no clear.
@@ -9892,6 +9937,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   vkCmdEndRenderPass(cmd);
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Present);
 
+  lap.next("render_frame: vkEndCommandBuffer + vkQueueSubmit");
+
   if (vkEndCommandBuffer(cmd) != VK_SUCCESS)
   {
     log_error("[renderer] failed to record the frame command buffer");
@@ -9928,6 +9975,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   present_info.swapchainCount     = 1;
   present_info.pSwapchains        = swapchains;
   present_info.pImageIndices      = &g_image_index;
+
+  lap.next("render_frame: vkQueuePresentKHR");
 
   const VkResult result = vkQueuePresentKHR(g_present_queue, &present_info);
   if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)

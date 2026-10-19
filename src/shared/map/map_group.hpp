@@ -91,6 +91,11 @@ void add_group_with_uid(map_t& map, map_group_t group);
 // has that uid.
 bool ungroup(map_t& map, entity_uid_t group_uid);
 
+// The freeze: a hand edit to a member means the group is no longer what its
+// recipe builds, so the recipe goes. True when one was dropped; a member of
+// no group, or of a group without a recipe, is false and no error.
+bool drop_recipe_of_group_containing(map_t& map, entity_uid_t member);
+
 // Drops every group none of whose members the map still has. Returns how many
 // it dropped. The delete's companion: called after the objects are removed,
 // recorded in the delete's transaction.

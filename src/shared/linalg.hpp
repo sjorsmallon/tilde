@@ -47,6 +47,7 @@ template <typename T> struct vec3_t
 
   T &operator[](int i) { return data[i]; }
   const T &operator[](int i) const { return data[i]; }
+  bool operator==(const vec3_t &other) const { return x == other.x && y == other.y && z == other.z; }
 };
 
 template <typename T> struct vec4_t

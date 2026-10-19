@@ -16,6 +16,7 @@ const char *to_string(primitive_kind_t kind)
     case primitive_kind_t::Arch: return "arch";
     case primitive_kind_t::Straight_Stairs: return "straight_stairs";
     case primitive_kind_t::Spiral_Stairs: return "spiral_stairs";
+    case primitive_kind_t::Curve: return "curve";
   }
   fatal_error("to_string(primitive_kind_t): unknown kind {}", (int)kind);
 }
@@ -24,7 +25,7 @@ std::optional<primitive_kind_t> try_primitive_kind_from_text(std::string_view te
 {
   for (const primitive_kind_t kind : {primitive_kind_t::Prism, primitive_kind_t::Arch,
                                       primitive_kind_t::Straight_Stairs,
-                                      primitive_kind_t::Spiral_Stairs})
+                                      primitive_kind_t::Spiral_Stairs, primitive_kind_t::Curve})
     if (text == to_string(kind))
       return kind;
   return std::nullopt;
@@ -49,6 +50,12 @@ void clamp_primitive_recipe(primitive_recipe_t &recipe)
   recipe.spiral_tread_width = std::max(recipe.spiral_tread_width, 1.f);
   recipe.spiral_degrees_per_step = std::clamp(
       recipe.spiral_degrees_per_step, MIN_SPIRAL_DEGREES_PER_STEP, MAX_SPIRAL_DEGREES_PER_STEP);
+  if (recipe.curve_points.size() > MAX_CURVE_POINTS)
+    recipe.curve_points.resize(MAX_CURVE_POINTS);
+  recipe.curve_width = std::max(recipe.curve_width, 1.f);
+  recipe.curve_height = std::max(recipe.curve_height, 1.f);
+  recipe.curve_samples_per_segment = std::clamp(
+      recipe.curve_samples_per_segment, MIN_CURVE_SAMPLES_PER_SEGMENT, MAX_CURVE_SAMPLES_PER_SEGMENT);
   if (recipe.kind == primitive_kind_t::Straight_Stairs && recipe.axis_index == 1)
     recipe.axis_index = 0;
 }
@@ -66,8 +73,9 @@ linalg::vec3 primitive_recipe_axis(const primitive_recipe_t &unclamped)
   constexpr linalg::vec3 AXES[3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
   primitive_recipe_t recipe = unclamped;
   clamp_primitive_recipe(recipe);
-  const linalg::vec3 axis =
-      recipe.kind == primitive_kind_t::Spiral_Stairs ? AXES[1] : AXES[recipe.axis_index];
+  const bool stands_on_world_up =
+      recipe.kind == primitive_kind_t::Spiral_Stairs || recipe.kind == primitive_kind_t::Curve;
+  const linalg::vec3 axis = stands_on_world_up ? AXES[1] : AXES[recipe.axis_index];
   return turn_about_up(axis, recipe.quarter_turns);
 }
 

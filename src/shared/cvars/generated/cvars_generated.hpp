@@ -648,37 +648,39 @@ enum class command_id : uint16_t
   sv_frame_report = 6,
   sv_shadow_volume_report = 7,
   sv_hitch_report = 8,
-  ent_fire = 9,
-  restart_round = 10,
-  end_match = 11,
-  ready = 12,
-  sv_replay_record = 13,
-  sv_replay_stop = 14,
-  shadow_volume_report = 15,
-  bind = 16,
-  grab_frame = 17,
-  grab_clear = 18,
-  connect = 19,
-  announce = 20,
-  noclip = 21,
-  mem_report = 22,
-  mem_frame = 23,
-  mem_stacks = 24,
-  frame_report = 25,
-  frame_reset = 26,
-  gpu_report = 27,
-  gpu_reset = 28,
-  hitch_report = 29,
-  replay_record = 30,
-  replay_play = 31,
-  replay_stop = 32,
-  replay_pause = 33,
-  replay_speed = 34,
-  replay_seek = 35,
-  replay_skip = 36,
+  sv_zone_report = 9,
+  ent_fire = 10,
+  restart_round = 11,
+  end_match = 12,
+  ready = 13,
+  sv_replay_record = 14,
+  sv_replay_stop = 15,
+  shadow_volume_report = 16,
+  bind = 17,
+  grab_frame = 18,
+  grab_clear = 19,
+  connect = 20,
+  announce = 21,
+  noclip = 22,
+  mem_report = 23,
+  mem_frame = 24,
+  mem_stacks = 25,
+  frame_report = 26,
+  frame_reset = 27,
+  gpu_report = 28,
+  gpu_reset = 29,
+  hitch_report = 30,
+  zone_report = 31,
+  replay_record = 32,
+  replay_play = 33,
+  replay_stop = 34,
+  replay_pause = 35,
+  replay_speed = 36,
+  replay_seek = 37,
+  replay_skip = 38,
 };
 
-constexpr uint32_t COMMAND_COUNT = 37;
+constexpr uint32_t COMMAND_COUNT = 39;
 
 enum cvar_type : uint8_t
 {
@@ -788,6 +790,9 @@ void sv_shadow_volume_report(const command_context_t& context);
 // @Server  What the worst tick allocated, by call site
 // usage: sv_hitch_report [top]
 void sv_hitch_report(int32_t top, const command_context_t& context);
+// @Server  Print each tick zone's time distribution over the ticks so far
+// usage: sv_zone_report
+void sv_zone_report(const command_context_t& context);
 // @Server  Send an action to one entity, as field=value pairs
 // usage: ent_fire <target> <action> [parameters...]
 void ent_fire(uint32_t target, std::string_view action, std::string_view parameters, const command_context_t& context);
@@ -851,6 +856,9 @@ void gpu_reset(const command_context_t& context);
 // @Client  What the worst frame allocated, by call site
 // usage: hitch_report [top]
 void hitch_report(int32_t top, const command_context_t& context);
+// @Client  Print each frame zone's time distribution over the frames so far
+// usage: zone_report
+void zone_report(const command_context_t& context);
 // @Client  Record what this client receives to replays/<name>.replay
 // usage: replay_record [name]
 void replay_record(std::string_view name, const command_context_t& context);

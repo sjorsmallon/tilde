@@ -464,6 +464,10 @@ add_library(game_shared STATIC
     src/shared/map/brush/primitive_recipe.cpp
     src/shared/map/brush/brush_primitives.hpp
     src/shared/map/brush/brush_primitives.cpp
+    # The one curve: centripetal Catmull-Rom through clicked points, the curve
+    # brush's spine. Bezier waits for a caller.
+    src/shared/curve.hpp
+    src/shared/curve.cpp
     # The consumer of smoothing_group: a corner's draw normal is its group's
     # area-weighted average at that position. geometry_def.md Track J.
     src/shared/map/brush/brush_smoothing.hpp
@@ -898,6 +902,7 @@ add_library(game_client SHARED
     src/client/states/tool_editor_state.cpp
     src/client/states/shader_editor_state.cpp
     src/client/editor/tools/selection_tool.cpp
+    src/client/editor/tools/selection_tool_drag.cpp
     src/client/editor/tools/placement_tool.cpp
     src/client/editor/tools/sculpting_tool.cpp
     src/client/editor/tools/pathfinding_test_tool.cpp
@@ -930,6 +935,7 @@ add_library(game_client SHARED
     src/client/renderer/device.cpp
     src/client/renderer/textures.cpp
     src/client/renderer/meshes.cpp
+    src/client/renderer/retired_buffers.cpp
     src/client/renderer/materials.cpp
     src/client/renderer/pipelines.cpp
     src/client/renderer/pass_set.cpp

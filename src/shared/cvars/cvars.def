@@ -770,6 +770,7 @@ Server_Commands :: commands {
     sv_frame_report()                  @Server  "Print the tick time distribution and the worst ticks so far"
     sv_shadow_volume_report()          @Server  "Print how the shadow volumes cut this tick: lights, casters, receivers and every refusal"
     sv_hitch_report(top: i32 = 15)     @Server  "What the worst tick allocated, by call site"
+    sv_zone_report()                   @Server  "Print each tick zone's time distribution over the ticks so far"
 
     // Source's ent_fire, and the reason it is here BEFORE any level is wired:
     // a wiring system you cannot poke from the console is one you debug by
@@ -853,6 +854,11 @@ Client_Commands :: commands {
     // happened in frame 8412", which is the question a hitch actually poses.
     // Needs -DTILDE_MEMORY_AUDIT=ON, since the per-site deltas come from there.
     hitch_report(top: i32 = 15)            @Client  "What the worst frame allocated, by call site"
+
+    // Every zone's time DISTRIBUTION over every measured frame, which is what
+    // hitch_report's single worst frame cannot say: whether a zone is slow on
+    // every frame or was slow once. frame_reset clears this too.
+    zone_report()                          @Client  "Print each frame zone's time distribution over the frames so far"
 
     // What THIS client received, gaps where packets were lost. Works against a
     // server you do not run.

@@ -4,9 +4,11 @@
 // boxes down to the base plane; a spiral is N one-rise slabs sharing their rib
 // points. geometry_def.md Track I.
 
+#include "shared/curve.hpp"
 #include "shared/map/brush/brush.hpp"
 #include "shared/map/brush/brush_primitives.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -297,6 +299,130 @@ void test_a_recipe_builds_the_same_points_turned_a_quarter_about_up()
 
 } // namespace
 
+void test_catmull_rom_passes_through_its_points_and_a_line_stays_a_line()
+{
+  const std::vector<linalg::vec3> points = {{0.f, 0.f, 0.f}, {100.f, 0.f, 0.f},
+                                            {130.f, 0.f, 0.f}, {400.f, 0.f, 0.f}};
+  const int samples_per_segment = 5;
+  const std::vector<linalg::vec3> samples = shared::sample_catmull_rom(
+      Span<const linalg::vec3>(points.data(), points.size()), samples_per_segment);
+  assert(samples.size() == (points.size() - 1) * (size_t)samples_per_segment + 1);
+  for (size_t i = 0; i < points.size(); ++i)
+    assert(nearly(linalg::length(samples[i * (size_t)samples_per_segment] - points[i]), 0.f, 1e-4f));
+  for (size_t i = 1; i < samples.size(); ++i)
+  {
+    assert(nearly(samples[i].y, 0.f, 1e-4f) && nearly(samples[i].z, 0.f, 1e-4f));
+    assert(samples[i].x > samples[i - 1].x);
+  }
+
+  const std::vector<linalg::vec3> bend = {{0.f, 0.f, 0.f}, {100.f, 0.f, 0.f}, {100.f, 0.f, 100.f}};
+  const std::vector<linalg::vec3> bent =
+      shared::sample_catmull_rom(Span<const linalg::vec3>(bend.data(), bend.size()), 8);
+  float lowest_z = 0.f;
+  float highest_x = 100.f;
+  for (const linalg::vec3 &sample : bent)
+  {
+    assert(nearly(sample.y, 0.f, 1e-4f));
+    assert(sample.x >= -1e-3f && sample.z <= 100.f + 1e-3f);
+    lowest_z = std::min(lowest_z, sample.z);
+    highest_x = std::max(highest_x, sample.x);
+  }
+  std::cout << "catmull-rom corner: dips to z " << lowest_z << ", overshoots to x " << highest_x
+            << std::endl;
+  assert(lowest_z < 0.f && lowest_z > -25.f);
+  assert(highest_x > 100.f && highest_x < 125.f);
+}
+
+void test_a_curve_wall_along_a_line_is_boxes_sharing_their_sections()
+{
+  const std::vector<linalg::vec3> points = {{10.f, 20.f, 30.f}, {170.f, 20.f, 30.f}};
+  const float width = 32.f;
+  const float height = 96.f;
+  const int samples_per_segment = 4;
+  const std::vector<std::vector<linalg::vec3>> brushes = shared::make_curve_brush_point_sets(
+      Span<const linalg::vec3>(points.data(), points.size()), width, height, samples_per_segment);
+  assert((int)brushes.size() == samples_per_segment);
+
+  const float piece_length = 160.f / (float)samples_per_segment;
+  for (size_t i = 0; i < brushes.size(); ++i)
+  {
+    assert(brushes[i].size() == 8);
+    const brush_polyhedron_t hull = hull_of(brushes[i]);
+    assert(hull.faces.size() == 6);
+    const shared::aabb_bounds_t bounds = shared::compute_brush_bounds(hull.vertices);
+    assert(nearly(bounds.min.y, 20.f, 1e-3f) && nearly(bounds.max.y, 20.f + height, 1e-3f));
+    assert(nearly(bounds.max.z - bounds.min.z, width, 1e-3f));
+    assert(nearly((bounds.max.z + bounds.min.z) * 0.5f, 30.f, 1e-3f));
+    assert(nearly(bounds.min.x, 10.f + (float)i * piece_length, 1e-3f));
+    assert(nearly(compute_volume(hull), piece_length * width * height, 1.f));
+    if (i > 0)
+      for (size_t corner = 0; corner < 4; ++corner)
+        assert(linalg::length(brushes[i][corner] - brushes[i - 1][4 + corner]) == 0.f);
+  }
+}
+
+void test_a_curve_wall_through_a_bend_hulls_every_piece_and_a_steep_leg_is_sheared()
+{
+  const std::vector<linalg::vec3> bend = {{0.f, 0.f, 0.f}, {200.f, 0.f, 0.f}, {200.f, 0.f, 200.f}};
+  const std::vector<std::vector<linalg::vec3>> brushes =
+      shared::make_curve_brush_point_sets(Span<const linalg::vec3>(bend.data(), bend.size()),
+                                          24.f, 64.f, 6);
+  assert(brushes.size() == 12);
+  for (const std::vector<linalg::vec3> &brush : brushes)
+  {
+    const brush_polyhedron_t hull = hull_of(brush);
+    assert(compute_volume(hull) > 0.f);
+  }
+
+  const std::vector<linalg::vec3> climb = {{0.f, 0.f, 0.f}, {20.f, 100.f, 0.f}};
+  const std::vector<std::vector<linalg::vec3>> steep = shared::make_curve_brush_point_sets(
+      Span<const linalg::vec3>(climb.data(), climb.size()), 24.f, 64.f, 2);
+  assert(steep.size() == 2);
+  for (const std::vector<linalg::vec3> &brush : steep)
+  {
+    const brush_polyhedron_t hull = hull_of(brush);
+    assert(hull.faces.size() == 6);
+    assert(nearly(compute_volume(hull), 10.f * 24.f * 64.f, 1.f));
+  }
+
+  const std::vector<linalg::vec3> lone = {{0.f, 0.f, 0.f}};
+  assert(shared::make_curve_brush_point_sets(Span<const linalg::vec3>(lone.data(), lone.size()),
+                                             24.f, 64.f, 2)
+             .empty());
+
+  shared::primitive_recipe_t recipe;
+  recipe.kind = shared::primitive_kind_t::Curve;
+  recipe.curve_points = bend;
+  recipe.curve_samples_per_segment = 3;
+  assert(shared::make_primitive_point_sets(recipe).size() == 6);
+  recipe.curve_points.clear();
+  assert(shared::make_primitive_point_sets(recipe).empty());
+
+  recipe.curve_points = {{100.f, 50.f, -300.f}, {300.f, 50.f, -300.f}, {300.f, 50.f, -100.f}};
+  const std::vector<std::vector<linalg::vec3>> in_the_world =
+      shared::make_primitive_point_sets(recipe);
+  shared::rebase_curve_points_to_wall_corner(recipe);
+  const std::vector<std::vector<linalg::vec3>> rebased = shared::make_primitive_point_sets(recipe);
+  assert(rebased.size() == in_the_world.size());
+  std::vector<linalg::vec3> every_point;
+  for (const std::vector<linalg::vec3> &piece : rebased)
+    every_point.insert(every_point.end(), piece.begin(), piece.end());
+  const shared::aabb_bounds_t corner = shared::compute_brush_bounds(every_point);
+  assert(nearly(corner.min.x, 0.f, 1e-3f) && nearly(corner.min.y, 0.f, 1e-3f) &&
+         nearly(corner.min.z, 0.f, 1e-3f));
+  for (size_t piece = 0; piece < rebased.size(); ++piece)
+  {
+    const float volume = compute_volume(hull_of(in_the_world[piece]));
+    assert(nearly(compute_volume(hull_of(rebased[piece])), volume, volume * 1e-3f));
+  }
+  const std::vector<linalg::vec3> once = recipe.curve_points;
+  for (const linalg::vec3 &point : once)
+    assert(nearly(point.y, 0.f, 1e-3f) && point.x >= -1e-2f && point.z >= -1e-2f);
+  shared::rebase_curve_points_to_wall_corner(recipe);
+  for (size_t i = 0; i < once.size(); ++i)
+    assert(linalg::length(recipe.curve_points[i] - once[i]) < 1e-3f);
+}
+
 int main()
 {
   test_the_frame_is_right_handed_and_up_is_world_up_off_the_vertical();
@@ -310,6 +436,9 @@ int main()
   test_a_spiral_is_one_rise_slabs_each_a_wedge_of_the_ring();
   test_a_spiral_starts_on_x_and_clockwise_mirrors_in_z();
   test_a_recipe_builds_the_same_points_turned_a_quarter_about_up();
+  test_catmull_rom_passes_through_its_points_and_a_line_stays_a_line();
+  test_a_curve_wall_along_a_line_is_boxes_sharing_their_sections();
+  test_a_curve_wall_through_a_bend_hulls_every_piece_and_a_steep_leg_is_sheared();
   std::cout << "brush_primitives_test passed" << std::endl;
   return 0;
 }

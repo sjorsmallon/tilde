@@ -136,7 +136,7 @@ outliner_result_t draw_editor_sidebar(editor_sidebar_t&                sidebar,
       ImGui::PushStyleColor(ImGuiCol_ChildBg, MULTI_EDIT_TINT);
     if (ImGui::BeginChild("##sidebar_inspector"))
     {
-      if (active_tool != nullptr && !selection.empty())
+      if (active_tool != nullptr)
         active_tool->on_draw_inspector(context);
     }
     ImGui::EndChild();

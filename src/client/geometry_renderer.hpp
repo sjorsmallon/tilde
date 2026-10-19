@@ -48,6 +48,17 @@ struct team_wall_tint_t
 renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geometry,
                                            const linalg::quatf& orientation);
 
+// Whether a draw compares the generated mesh's cache record against the live
+// value. The editor's map_t has many writers (gizmo, undo, inspector, file), so
+// it compares on every draw; a session's geometry is frozen for the session's
+// lifetime, so it is compared once by refresh_stale_generated_geometry_meshes
+// at build and trusted after.
+enum class generated_mesh_check_t
+{
+  Compare_Every_Draw,
+  Trusted_Since_Load,
+};
+
 // `map_geometry` is the list the object sits in, so a brush's seam with its
 // neighbours is read the way collision reads it.
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
@@ -58,7 +69,15 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                    const renderer::clock_wipe_t& clock_wipe = {},
                    std::optional<team_wall_tint_t> team_wall = {},
                    renderer::light_cut_t light_cut = renderer::light_cut_t::none,
-                   bool casts_dynamic_shadow = false);
+                   bool casts_dynamic_shadow = false,
+                   generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
+
+// The one compare a frozen list gets: every entry that draws from a generated
+// mesh is checked against its cache record and rebuilt where stale, so draws
+// may then pass Trusted_Since_Load.
+void refresh_stale_generated_geometry_meshes(Span<const shared::map_geometry_t> geometry,
+                                             Span<const std::string> materials,
+                                             const shared::lightmap_t &lightmap);
 
 // Rebuild the cached mesh for an object whose GENERATED form just changed -- a
 // brush point set or one of its face grids -- and re-upload it. Registers the
@@ -88,6 +107,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
 const std::optional<shared::brush_polyhedron_t> &
 get_cached_brush_hull(const shared::geometry_value_t &geometry, shared::entity_uid_t uid,
                       Span<const std::string> materials, const shared::lightmap_t &lightmap,
-                      Span<const shared::map_geometry_t> map_geometry);
+                      Span<const shared::map_geometry_t> map_geometry,
+                      generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
 
 } // namespace client

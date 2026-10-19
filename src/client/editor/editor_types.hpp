@@ -9,6 +9,7 @@
 #include "../frame_builder.hpp"
 #include "../input.hpp"
 
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -52,6 +53,42 @@ try_project_to_screen(const viewport_state_t &view, const linalg::vec3 &world_po
   return linalg::view_to_screen(view_position, view.display_size,
                                 view.camera.orthographic, view.camera.ortho_height,
                                 view.camera.fov_degrees);
+}
+
+inline constexpr float HANDLE_PICK_RADIUS_PIXELS = 14.0f;
+
+// Which of `handles` is under `screen_position`, if any. Nearest wins, so two
+// handles inside one pick radius collapse: the caller decides WHICH set it is
+// asking about.
+[[nodiscard]] inline std::optional<size_t>
+try_pick_handle_under_cursor(Span<const linalg::vec3> handles, const viewport_state_t &view,
+                             const linalg::vec2 &screen_position)
+{
+  std::optional<size_t> best_index;
+  float best_distance = HANDLE_PICK_RADIUS_PIXELS;
+  for (size_t index = 0; index < handles.size(); ++index)
+  {
+    const std::optional<linalg::vec2> projected = try_project_to_screen(view, handles[index]);
+    if (!projected)
+      continue;
+    const float dx = projected->x - screen_position.x;
+    const float dy = projected->y - screen_position.y;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    if (distance < best_distance)
+    {
+      best_distance = distance;
+      best_index = index;
+    }
+  }
+  return best_index;
+}
+
+// The pixel the mouse ray passes through, for a tool that hit-tests handles
+// outside a mouse event.
+[[nodiscard]] inline std::optional<linalg::vec2>
+try_cursor_screen_position(const viewport_state_t &view)
+{
+  return try_project_to_screen(view, view.mouse_ray.origin + view.mouse_ray.direction * 16.f);
 }
 
 class Transaction_System;

@@ -273,6 +273,53 @@ void test_exclusion_lasts_exactly_one_frame()
   expect(g_state.excluded_frame_count == 1, "with no second exclusion");
 }
 
+// The per-name distribution counts FRAMES: a zone opened twice in one frame (a
+// zone inside a loop) is one sample of their sum, and a load frame adds none.
+void test_zone_distribution_counts_frames_not_openings()
+{
+  frame_timing::reset();
+
+  {
+    FRAME_ZONE("tick");
+    {
+      FRAME_ZONE("step");
+    }
+    {
+      FRAME_ZONE("step");
+    }
+  }
+  frame_timing::end_frame(5.0, 0);
+  {
+    FRAME_ZONE("tick");
+    {
+      FRAME_ZONE("step");
+    }
+  }
+  frame_timing::end_frame(5.0, 0);
+  {
+    FRAME_ZONE("tick");
+  }
+  frame_timing::exclude_current_frame("map load");
+  frame_timing::end_frame(500.0, 0);
+
+  expect(g_state.zone_stats_count == 2, "one row per zone NAME");
+  expect(std::string_view(g_state.zone_stats[0].name) == "tick" && g_state.zone_stats[0].depth == 0,
+         "rows are in first-seen order, at the depth first seen");
+  expect(std::string_view(g_state.zone_stats[1].name) == "step" && g_state.zone_stats[1].depth == 1,
+         "the child follows its parent at depth 1");
+  expect(g_state.zone_stats[0].parent == UINT32_MAX && g_state.zone_stats[1].parent == 0,
+         "a row remembers the row it was first seen under");
+  expect(g_state.frames_with_dropped_zones == 0, "no frame overran the zone array");
+  expect(g_state.zone_stats[0].frames == 2, "a load frame adds no sample");
+  expect(g_state.zone_stats[1].frames == 2, "two openings in one frame are one sample");
+  expect(g_state.zone_stats[1].total_milliseconds <= g_state.zone_stats[0].total_milliseconds,
+         "a child's sum never exceeds its parent's");
+  expect(frame_timing::zone_percentile(g_state.zone_stats[0], 0.5) >= 0.0,
+         "a percentile is readable for a measured zone");
+  expect(frame_timing::zone_percentile(frame_timing::zone_stats_t{}, 0.5) == 0.0,
+         "and zero for one with no samples");
+}
+
 // switch_to marks the frame, and load_client_map nests inside its on_enter. The
 // outer label is the one that should survive.
 void test_first_exclusion_reason_wins()
@@ -383,6 +430,7 @@ int main()
   test_zone_overflow_keeps_depth_consistent();
   test_load_frames_are_excluded_from_the_ranking();
   test_exclusion_lasts_exactly_one_frame();
+  test_zone_distribution_counts_frames_not_openings();
   test_first_exclusion_reason_wins();
   test_reset_clears_everything();
   test_cpu_topology_is_self_consistent();

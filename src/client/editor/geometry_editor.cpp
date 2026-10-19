@@ -3,6 +3,7 @@
 #include "../../shared/map/brush/brush_holes.hpp"
 #include "../../shared/map/map.hpp"
 #include "../../shared/map/editor_grid.hpp"
+#include "../../shared/frame_timing.hpp"
 #include "../../shared/log.hpp"
 #include "../geometry_renderer.hpp"
 #include "../render_assets.hpp"
@@ -172,8 +173,13 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid, Span<const std::string> materials,
                              const shared::lightmap_t &lightmap,
-                             Span<const shared::map_geometry_t> map_geometry, bool collides)
+                             Span<const shared::map_geometry_t> map_geometry, bool collides,
+                             const linalg::vec3 &translation, generated_mesh_check_t check)
 {
+  const bool          moved = !(translation == linalg::vec3{0, 0, 0});
+  const linalg::mat4f moved_by =
+      linalg::compose_transform(translation, linalg::quatf::identity(), {1, 1, 1});
+
   // Brushes carry their shape in their EDGES, not in a surface texture -- the
   // flat grey they draw as says nothing on its own. Contours here rather than in
   // draw_geometry because that one is shared with the game, where an outline
@@ -181,8 +187,10 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
   if (shared::get_kind(geometry) == shared::geometry_kind_t::Brush)
   {
     const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
+    frame_timing::lap_zone_t lap("editor brush: cached hull (is_current)");
     const std::optional<shared::brush_polyhedron_t> &hull =
-        get_cached_brush_hull(geometry, uid, materials, lightmap, map_geometry);
+        get_cached_brush_hull(geometry, uid, materials, lightmap, map_geometry, check);
+    lap.next("editor brush: contour + solid");
 
     // A hole has no mesh: its wall draws what it leaves. The authored volume is
     // drawn tinted so it stays visible, pickable and movable after the wall is built.
@@ -190,24 +198,32 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
     {
       if (hull)
       {
-        for (const std::vector<linalg::vec3> &polygon : shared::brush_face_polygons(*hull))
+        for (std::vector<linalg::vec3> &polygon : shared::brush_face_polygons(*hull))
+        {
+          for (linalg::vec3 &corner : polygon)
+            corner = corner + translation;
           draws.debug.filled_polygon(Span<const linalg::vec3f>(polygon.data(), polygon.size()),
                                      HOLE_FILL_COLOR, 0.f, {.depth_bias = 0.5f});
+        }
       }
-      draw_brush_contour(draws, brush, hull, HOLE_CONTOUR_COLOR, -60.0f);
+      draw_brush_contour(draws, brush, hull, HOLE_CONTOUR_COLOR, -60.0f, translation);
       return;
     }
 
+    // get_cached_brush_hull just compared and refreshed this brush, so the draw need not.
     if (solid)
-      draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry, nullptr,
-                    geometry_wipe_frame(geometry, linalg::quatf{0.0f, 0.0f, 0.0f, 1.0f}));
+      draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry,
+                    moved ? &moved_by : nullptr,
+                    geometry_wipe_frame(geometry, linalg::quatf{0.0f, 0.0f, 0.0f, 1.0f}), {},
+                    renderer::light_cut_t::none, false, generated_mesh_check_t::Trusted_Since_Load);
 
     draw_brush_contour(draws, brush, hull,
-                       collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR, -60.0f);
+                       collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR, -60.0f,
+                       translation);
     return;
   }
 
-  draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry);
+  draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry, moved ? &moved_by : nullptr);
 }
 
 std::vector<hole_link_t> refresh_walls_of_changed_holes(const shared::map_t &map,
@@ -350,7 +366,8 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
                                        const shared::lightmap_t &lightmap,
                                        Span<const shared::map_geometry_t> map_geometry,
                                        pass_builder_t &draws, float time,
-                                       float grid_step, bool is_outlined)
+                                       float grid_step, bool is_outlined,
+                                       const linalg::vec3 &translation)
 {
   const color_t color = compute_selection_pulse_color(time);
 
@@ -360,7 +377,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     if (DRAW_BOX_BRUSH_FACE_GRID && brush && shared::brush_is_axis_aligned_box(brush->hull_points))
     {
       const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-      draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
+      draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f + translation,
                          (bounds.max - bounds.min) * 0.5f, with_alpha(color, 0x50), grid_step,
                          -200.0f);
     }
@@ -381,8 +398,8 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
         std::get<shared::static_mesh_geometry_t>(geometry);
     const assets::asset_handle_t<assets::mesh_asset_t> mesh_handle =
         shared::resolve_surface_mesh(static_mesh.surface);
-    push_wireframe_mesh(draws, mesh_handle, static_mesh.position, static_mesh.orientation,
-                        static_mesh.scale, color);
+    push_wireframe_mesh(draws, mesh_handle, static_mesh.position + translation,
+                        static_mesh.orientation, static_mesh.scale, color);
 
     const color_t box_color =
         static_mesh.collides ? STATIC_MESH_COLLISION_BOX_COLOR : STATIC_MESH_NO_COLLISION_BOX_COLOR;
@@ -390,7 +407,8 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
          shared::static_mesh_collision_box(static_mesh).face_polygons)
     {
       for (size_t corner = 0; corner < polygon.size(); ++corner)
-        draws.debug.line(polygon[corner], polygon[(corner + 1) % polygon.size()], box_color,
+        draws.debug.line(polygon[corner] + translation,
+                         polygon[(corner + 1) % polygon.size()] + translation, box_color,
                          highlight_bias);
     }
     break;
@@ -407,7 +425,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
     if (DRAW_BOX_BRUSH_FACE_GRID && shared::brush_is_axis_aligned_box(brush.hull_points))
     {
       const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
-      draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f,
+      draw_box_face_grid(draws, (bounds.min + bounds.max) * 0.5f + translation,
                          (bounds.max - bounds.min) * 0.5f, color, grid_step,
                          highlight_bias);
       break;
@@ -415,7 +433,7 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
 
     draw_brush_contour(draws, brush,
                        get_cached_brush_hull(geometry, uid, materials, lightmap, map_geometry),
-                       color, highlight_bias);
+                       color, highlight_bias, translation);
     break;
   }
   }

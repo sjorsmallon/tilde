@@ -243,6 +243,20 @@ bool invoke_sv_hitch_report(Span<std::string_view> args, const command_context_t
   return true;
 }
 
+// sv_zone_report
+bool invoke_sv_zone_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::sv_zone_report, args.size());
+    return false;
+  }
+
+  commands::sv_zone_report(context);
+  return true;
+}
+
 // ent_fire <target> <action> [parameters...]
 bool invoke_ent_fire(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -367,6 +381,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::sv_frame_report] = &invoke_sv_frame_report;
   table.binders[(uint32_t)command_id::sv_shadow_volume_report] = &invoke_sv_shadow_volume_report;
   table.binders[(uint32_t)command_id::sv_hitch_report] = &invoke_sv_hitch_report;
+  table.binders[(uint32_t)command_id::sv_zone_report] = &invoke_sv_zone_report;
   table.binders[(uint32_t)command_id::ent_fire] = &invoke_ent_fire;
   table.binders[(uint32_t)command_id::restart_round] = &invoke_restart_round;
   table.binders[(uint32_t)command_id::end_match] = &invoke_end_match;

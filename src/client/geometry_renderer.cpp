@@ -2,6 +2,7 @@
 #include "../shared/aabb.hpp"
 #include "../shared/assets/asset.hpp"
 #include "../shared/color.hpp"
+#include "../shared/frame_timing.hpp"
 #include "../shared/log.hpp"
 #include "../shared/map/brush/brush_smoothing.hpp"
 #include "../shared/map/brush/face_neighbour.hpp"
@@ -54,7 +55,8 @@ std::string_view generated_mesh_cache_key(shared::entity_uid_t uid, Span<char> b
 // while the contour lines walk away from it, which is exactly what happened.
 //
 // So the draw path checks instead of trusting. Same reasoning as the brush tool
-// re-hulling every frame: a cache nothing can forget to invalidate.
+// re-hulling every frame: a cache nothing can forget to invalidate. A session's
+// list has ONE writer, build_session, so it is checked once there instead.
 //
 // It holds the whole geometry VALUE rather than just the point set, because a
 // face's material is now part of what the mesh was built from and changing one
@@ -335,9 +337,12 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                    Span<const shared::map_geometry_t> map_geometry, const linalg::mat4f* moved_by,
                    const renderer::clock_wipe_t& clock_wipe,
                    std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut,
-                   bool casts_dynamic_shadow)
+                   bool casts_dynamic_shadow, generated_mesh_check_t check)
 {
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
+  // A trusted object with no record yet is built, never drawn from nothing.
+  const bool compare = check == generated_mesh_check_t::Compare_Every_Draw ||
+                       !g_generated_mesh_sources.contains(uid);
 
   switch (shared::get_kind(geometry))
   {
@@ -353,7 +358,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     // for byte what it always was.
     if (!lightmap.empty())
     {
-      if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
+      if (compare && !generated_mesh_is_current(uid, geometry, materials, lightmap))
         refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
       char                   cache_key_buffer[48];
@@ -396,9 +401,14 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!surface.visible)
       return;
 
-    if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
+    frame_timing::lap_zone_t lap("draw_geometry: brush is_current");
+    if (compare && !generated_mesh_is_current(uid, geometry, materials, lightmap))
+    {
+      lap.next("draw_geometry: brush refresh (rebuild)");
       refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
+    }
 
+    lap.next("draw_geometry: brush lookups + draw record");
     char                   cache_key_buffer[48];
     const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
     assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
@@ -410,6 +420,7 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
       log_error("draw_geometry: could not build a mesh for brush uid {}", uid);
       return;
     }
+
 
     // A brush holds WORLD-space points, so the generated mesh is already in
     // world space and the transform is identity. There is no position member to
@@ -524,15 +535,42 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   }
 }
 
+void refresh_stale_generated_geometry_meshes(Span<const shared::map_geometry_t> geometry,
+                                             Span<const std::string> materials,
+                                             const shared::lightmap_t &lightmap)
+{
+  for (const shared::map_geometry_t &entry : geometry)
+  {
+    bool generated = false;
+    switch (shared::get_kind(entry.value))
+    {
+    case shared::geometry_kind_t::Static_Mesh:
+      generated = !lightmap.empty();
+      break;
+    case shared::geometry_kind_t::Brush:
+      generated = std::get<shared::brush_geometry_t>(entry.value).subtracts_from_uid ==
+                      shared::null_entity_uid &&
+                  shared::get_surface(entry.value).visible;
+      break;
+    }
+    if (generated && !generated_mesh_is_current(entry.uid, entry.value, materials, lightmap))
+      refresh_generated_geometry_mesh(entry.value, entry.uid, materials, lightmap, geometry);
+  }
+}
+
 const std::optional<shared::brush_polyhedron_t> &
 get_cached_brush_hull(const shared::geometry_value_t &geometry, shared::entity_uid_t uid,
                       Span<const std::string> materials, const shared::lightmap_t &lightmap,
-                      Span<const shared::map_geometry_t> map_geometry)
+                      Span<const shared::map_geometry_t> map_geometry,
+                      generated_mesh_check_t check)
 {
   if (shared::get_kind(geometry) != shared::geometry_kind_t::Brush)
     fatal_error("get_cached_brush_hull: uid {} is not a brush", uid);
 
-  if (!generated_mesh_is_current(uid, geometry, materials, lightmap))
+  // A trusted brush with no record yet is built, never trusted into a fatal.
+  const bool compare = check == generated_mesh_check_t::Compare_Every_Draw ||
+                       !g_generated_mesh_sources.contains(uid);
+  if (compare && !generated_mesh_is_current(uid, geometry, materials, lightmap))
     refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
   const auto source = g_generated_mesh_sources.find(uid);

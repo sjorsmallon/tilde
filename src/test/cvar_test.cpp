@@ -192,6 +192,8 @@ void sv_shadow_volume_report(const command_context_t&) {}
 void shadow_volume_report(const command_context_t&) {}
 void hitch_report(int32_t, const command_context_t&) {}
 void sv_hitch_report(int32_t, const command_context_t&) {}
+void zone_report(const command_context_t&) {}
+void sv_zone_report(const command_context_t&) {}
 void ent_fire(uint32_t, std::string_view, std::string_view, const command_context_t&) {}
 void restart_round(const command_context_t&) {}
 void end_match(const command_context_t&) {}

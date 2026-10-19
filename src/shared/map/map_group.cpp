@@ -119,6 +119,15 @@ bool ungroup(map_t& map, entity_uid_t group_uid)
   return map.groups.size() != before;
 }
 
+bool drop_recipe_of_group_containing(map_t& map, entity_uid_t member)
+{
+  map_group_t* group = find_group_containing_member(map, member);
+  if (group == nullptr || !group->recipe)
+    return false;
+  group->recipe.reset();
+  return true;
+}
+
 size_t dissolve_groups_with_no_live_member(map_t& map)
 {
   return std::erase_if(map.groups, [&map](const map_group_t& group) {

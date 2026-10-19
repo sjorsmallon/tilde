@@ -1,7 +1,9 @@
 #include "brush_primitives.hpp"
 
+#include "../../curve.hpp"
 #include "log.hpp"
 
+#include <array>
 #include <cmath>
 #include <numbers>
 
@@ -156,6 +158,63 @@ make_spiral_stair_brush_point_sets(const linalg::vec3 &base, int steps, float ri
 }
 
 std::vector<std::vector<linalg::vec3>>
+make_curve_brush_point_sets(Span<const linalg::vec3> control_points, float width, float height,
+                            int samples_per_segment)
+{
+  if (control_points.size() < 2)
+    return {};
+
+  const std::vector<linalg::vec3> samples = sample_catmull_rom(control_points, samples_per_segment);
+  constexpr linalg::vec3 WORLD_UP{0.f, 1.f, 0.f};
+  constexpr linalg::vec3 WORLD_X{1.f, 0.f, 0.f};
+  const float half_width = width * 0.5f;
+
+  std::vector<std::array<linalg::vec3, 4>> sections;
+  sections.reserve(samples.size());
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    const linalg::vec3 &previous = samples[i == 0 ? 0 : i - 1];
+    const linalg::vec3 &next = samples[i + 1 < samples.size() ? i + 1 : i];
+    const linalg::vec3 direction = linalg::normalize(next - previous);
+    linalg::vec3 side = linalg::cross(WORLD_UP, direction);
+    if (linalg::length_squared(side) < 1e-6f)
+      side = linalg::cross(WORLD_UP, WORLD_X);
+    side = linalg::normalize(side);
+    const linalg::vec3 &at = samples[i];
+    sections.push_back({at - side * half_width, at + side * half_width,
+                        at - side * half_width + WORLD_UP * height,
+                        at + side * half_width + WORLD_UP * height});
+  }
+
+  std::vector<std::vector<linalg::vec3>> brushes;
+  brushes.reserve(sections.size() - 1);
+  for (size_t i = 0; i + 1 < sections.size(); ++i)
+  {
+    std::vector<linalg::vec3> brush;
+    brush.reserve(8);
+    brush.insert(brush.end(), sections[i].begin(), sections[i].end());
+    brush.insert(brush.end(), sections[i + 1].begin(), sections[i + 1].end());
+    brushes.push_back(std::move(brush));
+  }
+  return brushes;
+}
+
+void rebase_curve_points_to_wall_corner(primitive_recipe_t &recipe)
+{
+  const std::vector<std::vector<linalg::vec3>> pieces = make_curve_brush_point_sets(
+      Span<const linalg::vec3>(recipe.curve_points.data(), recipe.curve_points.size()),
+      recipe.curve_width, recipe.curve_height, recipe.curve_samples_per_segment);
+  if (pieces.empty())
+    return;
+  std::vector<linalg::vec3> every_point;
+  for (const std::vector<linalg::vec3> &piece : pieces)
+    every_point.insert(every_point.end(), piece.begin(), piece.end());
+  const linalg::vec3 corner = compute_brush_bounds(every_point).min;
+  for (linalg::vec3 &point : recipe.curve_points)
+    point = point - corner;
+}
+
+std::vector<std::vector<linalg::vec3>>
 make_primitive_point_sets(const primitive_recipe_t &unclamped)
 {
   constexpr linalg::vec3 ORIGIN{0.f, 0.f, 0.f};
@@ -185,6 +244,11 @@ make_primitive_point_sets(const primitive_recipe_t &unclamped)
       point_sets = make_spiral_stair_brush_point_sets(
           ORIGIN, recipe.stair_steps, recipe.stair_rise, recipe.spiral_inner_radius,
           recipe.spiral_tread_width, recipe.spiral_degrees_per_step, recipe.spiral_clockwise);
+      break;
+    case primitive_kind_t::Curve:
+      point_sets = make_curve_brush_point_sets(
+          Span<const linalg::vec3>(recipe.curve_points.data(), recipe.curve_points.size()),
+          recipe.curve_width, recipe.curve_height, recipe.curve_samples_per_segment);
       break;
   }
 

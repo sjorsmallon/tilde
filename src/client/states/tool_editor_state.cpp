@@ -17,6 +17,7 @@
 #include "../editor/connection_lines.hpp"
 #include "../editor/entity_icons.hpp"
 #include "../editor/editor_sidebar.hpp"
+#include "../../shared/frame_timing.hpp"
 #include "../editor/entity_outliner.hpp"
 #include "../editor/geometry_editor.hpp"
 #include "../editor/edit_history_panel.hpp"
@@ -362,6 +363,7 @@ void Tool_Editor_State::on_enter()
   switch_tool(editor_tool_t::selection);
 
   update_bvh();
+  generated_meshes_need_validation = true;
 }
 
 void Tool_Editor_State::on_exit()
@@ -486,7 +488,7 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
   context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
-  entity_visibility.refresh(map);
+  entity_visibility.refresh(map, hide_hole_brushes);
   context.hidden_objects = entity_visibility.hidden_this_frame;
   // context.time is NOT reset here -- it is seconds since the editor opened,
   // advanced in update(), and a tool switch is not a new clock. Resetting it
@@ -528,6 +530,7 @@ viewport_state_t Tool_Editor_State::transform_viewport_state()
 void Tool_Editor_State::update(float dt)
 {
   last_dt = dt;
+  frame_timing::lap_zone_t lap("editor update: keys + camera");
 
   // The editor's own clock, in seconds since it opened. Every animated overlay
   // reads it -- selection pulses, and the hitbox highlight in the Animation
@@ -543,12 +546,6 @@ void Tool_Editor_State::update(float dt)
 
   if (!typing)
   {
-    if (input::is_key_pressed(input::key_t::Escape))
-    {
-      state_manager::switch_to(game_state::main_menu);
-      return;
-    }
-
     if (input::is_key_pressed(input::key_t::F1))
     {
       if (input::current_modifiers().shift)
@@ -820,6 +817,7 @@ void Tool_Editor_State::update(float dt)
     }
   }
 
+  lap.next("editor update: bvh rebuild, hole walls, lightmap upload");
   if (geometry_updated_flag)
   {
     update_bvh();
@@ -842,6 +840,7 @@ void Tool_Editor_State::update(float dt)
     }
   }
 
+  lap.next("editor update: viewport + visibility");
   // Update Viewport
   context.map = &map;
   context.map_path = get_maps_dir() + map.name;
@@ -857,7 +856,7 @@ void Tool_Editor_State::update(float dt)
 
   // Flattened out of the one pass that knows both the per-entity set and the
   // per-type mask, the way objects_without_collision is.
-  entity_visibility.refresh(map);
+  entity_visibility.refresh(map, hide_hole_brushes);
   context.hidden_objects = entity_visibility.hidden_this_frame;
 
   context.time += dt;
@@ -880,6 +879,7 @@ void Tool_Editor_State::update(float dt)
   if (context.requested_paste && active_tool != editor_tool_t::selection)
     switch_tool(editor_tool_t::selection);
 
+  lap.next("editor update: tool on_update + mouse");
   if (active_tool)
   {
     tools[*active_tool]->on_update(context, viewport, dt);
@@ -917,7 +917,9 @@ void Tool_Editor_State::update(float dt)
     }
     was_lmb_down = is_lmb_down;
   }
+  tool_drag_in_progress = tool_processing_mouse;
 
+  lap.next("editor update: key events");
   // This frame's key-down events. The input system collects them from the SDL
   // event pump, so no scancode polling. Shift+<letter> is resolved here rather
   // than in a tool, because switching tools has to work from every tool --
@@ -944,6 +946,7 @@ void Tool_Editor_State::update(float dt)
 
 void Tool_Editor_State::draw_imgui_panels()
 {
+  frame_timing::lap_zone_t lap("editor panels: save key + connection validation");
   // Ctrl+S / Cmd+S — save current map to disk. Goes through commit_map_to_disk
   // so the running server's session is reloaded too.
   {
@@ -967,6 +970,7 @@ void Tool_Editor_State::draw_imgui_panels()
 
   hovered_connection = SIZE_MAX;
 
+  lap.next("editor panels: map info + popups");
   // Behind the toolbar's Map Info button; closed by default.
   if (show_map_info)
   {
@@ -989,6 +993,7 @@ void Tool_Editor_State::draw_imgui_panels()
 
       ImGui::Checkbox("Solid Entities", &draw_entities_solid);
       ImGui::Checkbox("Hide Geometry", &hide_geometry);
+      ImGui::Checkbox("Hide Hole Brushes", &hide_hole_brushes);
       ImGui::Checkbox("Entity Icons", &show_entity_icons);
       ImGui::Checkbox("Show Grid", &show_grid);
       ImGui::SliderFloat("Camera Speed", &state_manager::get_client_context().cvars->editor_speed,
@@ -1238,6 +1243,7 @@ void Tool_Editor_State::draw_imgui_panels()
   play_was_requested_by_key          = false;
   play_at_spawn_was_requested_by_key = false;
   bool       back_to_menu_was_clicked = false;
+  lap.next("editor panels: toolbar");
   if (toolbar_is_open)
   {
     for (toolbox_kind_t kind : TOOLBOX_KIND_ORDER)
@@ -1328,6 +1334,7 @@ void Tool_Editor_State::draw_imgui_panels()
   {
     const Span<const shared::entity_uid_t> selection =
         active_tool ? tools[*active_tool]->selected_objects() : Span<const shared::entity_uid_t>{};
+    lap.next("editor panels: sidebar (outliner + inspector)");
     const outliner_result_t outliner = draw_editor_sidebar(
         sidebar, context, entity_visibility, active_tool ? tools[*active_tool].get() : nullptr, selection);
 
@@ -1367,9 +1374,11 @@ void Tool_Editor_State::draw_imgui_panels()
       hud::set_announcement("Nothing to rename: select one entity or one whole group");
   }
 
+  lap.next("editor panels: history");
   if (show_edit_history && draw_edit_history_panel(transaction_system, map, show_edit_history))
     geometry_updated_flag = true;
 
+  lap.next("editor panels: icons + connection lines");
   // Icons before the tool's own overlay, and both under the panels: the tool is
   // drawing what the CURSOR is about to do, which has to sit on top of a layer
   // that is drawing where everything is.
@@ -1380,12 +1389,14 @@ void Tool_Editor_State::draw_imgui_panels()
                         connection_refusals, entity_visibility.hidden_this_frame,
                         hovered_connection, context.time);
 
+  lap.next("editor panels: tool ui");
   // Draw Tool UI (e.g. selection rectangle)
   if (active_tool)
   {
     tools[*active_tool]->on_draw_ui(context);
   }
 
+  lap.next("editor panels: camera overlay");
   // Camera position overlay (bottom-right)
   {
     ImGuiIO &io = ImGui::GetIO();
@@ -1465,6 +1476,26 @@ void Tool_Editor_State::build_frame(float delta_seconds,
                                     std::vector<renderer::view_pass_t> &passes,
                                     renderer::ui_draw_list_t &ui)
 {
+  frame_timing::lap_zone_t lap("editor build_frame: validate generated meshes");
+  if (geometry_updated_flag || generated_meshes_need_validation ||
+      map.lightmap.geometry_id != validated_lightmap_geometry_id)
+  {
+    refresh_stale_generated_geometry_meshes(map.geometry, map.materials, map.lightmap);
+    generated_meshes_need_validation = false;
+    validated_lightmap_geometry_id   = map.lightmap.geometry_id;
+  }
+
+  dragged_uids_sorted.clear();
+  live_drag_offsets = {};
+  if (tool_drag_in_progress && active_tool)
+  {
+    const Span<const shared::entity_uid_t> selected = tools[*active_tool]->selected_objects();
+    dragged_uids_sorted.assign(selected.begin(), selected.end());
+    std::sort(dragged_uids_sorted.begin(), dragged_uids_sorted.end());
+    live_drag_offsets = tools[*active_tool]->live_drag_offsets();
+  }
+
+  lap.next("editor build_frame: begin + lights");
   scene.begin_frame(delta_seconds);
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
@@ -1480,6 +1511,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   // below can write into it.
   shared::begin_frame_lights(scene.lights, map.lightmap);
 
+  lap.next("editor build_frame: grid");
   // Draw Grid
   if (show_grid)
   {
@@ -1551,19 +1583,29 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       scene.debug.line({0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
+  lap.next("editor build_frame: geometry");
   // Draw map elements: geometry through geometry_editor, entities through
   // entity_editor_traits.
   if (!hide_geometry)
   {
     for (const shared::map_geometry_t &entry : map.geometry)
     {
+      if (!context.object_is_visible(entry.uid))
+        continue;
       const size_t first_mesh = scene.meshes.size();
+      const generated_mesh_check_t check =
+          std::binary_search(dragged_uids_sorted.begin(), dragged_uids_sorted.end(), entry.uid)
+              ? generated_mesh_check_t::Compare_Every_Draw
+              : generated_mesh_check_t::Trusted_Since_Load;
+      const live_drag_offset_t* dragged = find_live_drag_offset(live_drag_offsets, entry.uid);
       draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid,
                               map.materials, map.lightmap, map.geometry,
-                              context.object_collides(entry.uid));
+                              context.object_collides(entry.uid),
+                              dragged ? dragged->translation : linalg::vec3{0, 0, 0}, check);
       scene.record_object_meshes(entry.uid, first_mesh);
     }
 
+    lap.next("editor build_frame: entities + lights");
     const bool show_hitboxes =
         state_manager::get_client_context().cvars->debug_show_hitboxes;
 
@@ -1610,9 +1652,11 @@ void Tool_Editor_State::build_frame(float delta_seconds,
         draw_entity_hitbox_overlay(entry.entity.get(), scene);
     }
 
+    lap.next("editor build_frame: path links");
     draw_path_links(map, context, scene);
   }
 
+  lap.next("editor build_frame: navmesh + particles");
   // Draw navmesh triangle wireframes, colored by island ID.
   // Suppressed when the pathfinding tool is active — it draws the navmesh itself.
   if (state_manager::get_client_context().cvars->debug_show_navmesh &&
@@ -1659,12 +1703,14 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
     scene.particles.push_back(emitter_parameters(*pe, last_dt));
 
+  lap.next("editor build_frame: tool overlay");
   // Draw Tool Overlay
   if (active_tool)
   {
     tools[*active_tool]->on_draw_overlay(context, scene);
   }
 
+  lap.next("editor build_frame: sky + to_pass");
   scene.sky = skybox.resolve(get_skybox_name(map));
 
   passes.push_back(scene.to_pass());

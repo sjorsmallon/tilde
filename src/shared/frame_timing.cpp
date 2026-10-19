@@ -4,6 +4,8 @@
 #include "memory_audit.hpp"
 
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -18,6 +20,84 @@ namespace
 {
 
 frame_timing_state_t* g_state = nullptr;
+
+// Names are compared by content after the pointer: the same literal exists
+// once per module, and "server::Tick" opened from the launcher must land in the
+// row the client's report prints.
+uint32_t find_zone_stats(const frame_timing_state_t& timing, const zone_record_t& zone)
+{
+  for (uint32_t slot = 0; slot < timing.zone_stats_count; ++slot)
+  {
+    const char* known = timing.zone_stats[slot].name;
+    if (known == zone.name || std::strcmp(known, zone.name) == 0)
+      return slot;
+  }
+  return UINT32_MAX;
+}
+
+uint32_t find_or_add_zone_stats(frame_timing_state_t& timing, const zone_record_t& zone)
+{
+  const uint32_t known = find_zone_stats(timing, zone);
+  if (known != UINT32_MAX)
+    return known;
+  const uint32_t slot = timing.zone_stats_count;
+  if (slot == MAX_ZONE_NAMES)
+    return UINT32_MAX;
+  timing.zone_stats[slot].name  = zone.name;
+  timing.zone_stats[slot].depth = zone.depth;
+  timing.zone_stats_count += 1;
+  return slot;
+}
+
+void accumulate_zone_stats(frame_timing_state_t& timing)
+{
+  if (timing.zones_dropped > 0)
+    timing.frames_with_dropped_zones += 1;
+  if (timing.zone_count + timing.zones_dropped > timing.max_zones_in_a_frame)
+    timing.max_zones_in_a_frame = timing.zone_count + timing.zones_dropped;
+
+  double   frame_milliseconds[MAX_ZONE_NAMES] = {};
+  bool     seen[MAX_ZONE_NAMES]               = {};
+  uint32_t open_slot_at_depth[MAX_ZONE_NAMES] = {};
+  for (uint32_t index = 0; index < timing.zone_count; ++index)
+  {
+    const zone_record_t& zone = timing.zones[index];
+    if (zone.name == nullptr)
+      continue;
+    const bool     is_new = find_zone_stats(timing, zone) == UINT32_MAX;
+    const uint32_t slot   = find_or_add_zone_stats(timing, zone);
+    if (slot == UINT32_MAX)
+    {
+      timing.zone_stats_dropped += 1;
+      continue;
+    }
+    // The array is a pre-order walk, so the slot open one level up IS the parent.
+    if (is_new && zone.depth > 0 && zone.depth - 1 < MAX_ZONE_NAMES)
+      timing.zone_stats[slot].parent = open_slot_at_depth[zone.depth - 1];
+    if (zone.depth < MAX_ZONE_NAMES)
+      open_slot_at_depth[zone.depth] = slot;
+    frame_milliseconds[slot] += zone.milliseconds;
+    seen[slot] = true;
+  }
+
+  for (uint32_t slot = 0; slot < timing.zone_stats_count; ++slot)
+  {
+    if (!seen[slot])
+      continue;
+    zone_stats_t& stats        = timing.zone_stats[slot];
+    const double  milliseconds = frame_milliseconds[slot];
+    const uint32_t bucket =
+        milliseconds <= 0.0 ? 0 : static_cast<uint32_t>(milliseconds / ZONE_BUCKET_MILLISECONDS);
+    stats.buckets[bucket >= ZONE_BUCKET_COUNT ? ZONE_BUCKET_COUNT - 1 : bucket] += 1;
+    stats.frames += 1;
+    stats.total_milliseconds += milliseconds;
+    if (milliseconds > stats.max_milliseconds)
+    {
+      stats.max_milliseconds = milliseconds;
+      stats.max_frame        = timing.frame_count;
+    }
+  }
+}
 
 // One call per frame, not per allocation, so a few microseconds is affordable
 // for a number nothing else can supply.
@@ -178,6 +258,7 @@ bool end_frame(double milliseconds, uint64_t allocations)
   }
   memory_audit::advance_frame_baseline();
 
+  accumulate_zone_stats(*timing);
   timing->zone_count    = 0;
   timing->zones_dropped = 0;
 
@@ -239,6 +320,36 @@ void exclude_current_frame(const char* reason)
     timing->current_frame_exclusion_reason = reason;
 }
 
+namespace
+{
+
+struct merged_zone_t
+{
+  const char* name         = nullptr;
+  uint32_t    parent       = UINT32_MAX;
+  double      milliseconds = 0.0;
+  uint32_t    count        = 0;
+};
+
+void print_merged_zones(const std::vector<merged_zone_t>& merged, uint32_t parent, uint32_t indent)
+{
+  for (uint32_t slot = 0; slot < merged.size(); ++slot)
+  {
+    const merged_zone_t& zone = merged[slot];
+    if (zone.parent != parent)
+      continue;
+    if (zone.count > 1)
+      std::printf("       %10.2f ms  %*s%s  x%u\n", zone.milliseconds, static_cast<int>(indent * 2),
+                  "", zone.name, zone.count);
+    else
+      std::printf("       %10.2f ms  %*s%s\n", zone.milliseconds, static_cast<int>(indent * 2), "",
+                  zone.name);
+    print_merged_zones(merged, slot, indent + 1);
+  }
+}
+
+} // namespace
+
 void report_worst_frame_zones()
 {
   const frame_timing_state_t* timing = g_state;
@@ -254,16 +365,105 @@ void report_worst_frame_zones()
     return;
   }
 
-  std::printf("\n[frame-zones] where the worst frame spent its time:\n");
+  // Siblings of one name under one parent print as one row with a count, so a
+  // zone opened per drawn object reads as a line and not as a page.
+  std::vector<merged_zone_t> merged;
+  std::vector<uint32_t>      open_at_depth;
   for (uint32_t index = 0; index < timing->captured_zone_count; ++index)
   {
     const zone_record_t& zone = timing->captured_zones[index];
-    std::printf("       %10.2f ms  %*s%s\n", zone.milliseconds,
-                static_cast<int>(zone.depth * 2), "", zone.name ? zone.name : "?");
+    const char*          name = zone.name ? zone.name : "?";
+    const uint32_t       parent =
+        zone.depth > 0 && zone.depth - 1 < open_at_depth.size() ? open_at_depth[zone.depth - 1]
+                                                                 : UINT32_MAX;
+    uint32_t slot = 0;
+    for (; slot < merged.size(); ++slot)
+      if (merged[slot].parent == parent && std::strcmp(merged[slot].name, name) == 0)
+        break;
+    if (slot == merged.size())
+      merged.push_back({name, parent, 0.0, 0});
+    merged[slot].milliseconds += zone.milliseconds;
+    merged[slot].count += 1;
+    if (open_at_depth.size() <= zone.depth)
+      open_at_depth.resize(zone.depth + 1, UINT32_MAX);
+    open_at_depth[zone.depth] = slot;
   }
+
+  std::printf("\n[frame-zones] where the worst frame spent its time:\n");
+  print_merged_zones(merged, UINT32_MAX, 0);
   if (timing->captured_zones_dropped > 0)
     std::printf("       (%u zones dropped — MAX_ZONES_PER_FRAME exceeded)\n",
                 timing->captured_zones_dropped);
+  std::printf("\n");
+}
+
+namespace
+{
+
+void print_zone_stats_subtree(const frame_timing_state_t& timing, uint32_t slot, uint32_t indent)
+{
+  const zone_stats_t& stats = timing.zone_stats[slot];
+  char                indented[96];
+  std::snprintf(indented, sizeof(indented), "%*s%s", static_cast<int>(indent * 2), "", stats.name);
+  std::printf("[frame-zones]   %-70.70s %8llu %8.3f %8.3f %8.3f %8.3f %9.3f %12llu\n", indented,
+              static_cast<unsigned long long>(stats.frames), zone_percentile(stats, 0.50),
+              zone_percentile(stats, 0.95), zone_percentile(stats, 0.99),
+              stats.frames ? stats.total_milliseconds / static_cast<double>(stats.frames) : 0.0,
+              stats.max_milliseconds, static_cast<unsigned long long>(stats.max_frame));
+  for (uint32_t child = 0; child < timing.zone_stats_count; ++child)
+    if (child != slot && timing.zone_stats[child].parent == slot)
+      print_zone_stats_subtree(timing, child, indent + 1);
+}
+
+} // namespace
+
+double zone_percentile(const zone_stats_t& stats, double fraction)
+{
+  if (stats.frames == 0)
+    return 0.0;
+  const uint64_t target = static_cast<uint64_t>(static_cast<double>(stats.frames) * fraction);
+  uint64_t       seen   = 0;
+  for (uint32_t index = 0; index < ZONE_BUCKET_COUNT; ++index)
+  {
+    seen += stats.buckets[index];
+    if (seen > target)
+      return (index + 0.5) * ZONE_BUCKET_MILLISECONDS;
+  }
+  return stats.max_milliseconds;
+}
+
+void report_zone_distribution()
+{
+  const frame_timing_state_t* timing = g_state;
+  if (timing == nullptr)
+  {
+    std::printf("[frame-zones] not installed in this module\n");
+    return;
+  }
+  if (timing->zone_stats_count == 0)
+  {
+    std::printf("[frame-zones] no zones measured yet\n");
+    return;
+  }
+
+  std::printf("\n[frame-zones] per zone over %llu measured frames, ms per frame (a zone opened "
+              "twice in a frame is summed); the busiest frame opened %u zones of %u:\n",
+              static_cast<unsigned long long>(timing->measured_frame_count),
+              timing->max_zones_in_a_frame, MAX_ZONES_PER_FRAME);
+  std::printf("[frame-zones]   %-70s %8s %8s %8s %8s %8s %9s %12s\n", "zone", "frames", "p50",
+              "p95", "p99", "mean", "max", "max frame");
+  // A tree, parents before children: a row keeps the parent it was first seen
+  // under, so a zone that also ran elsewhere later still prints once, there.
+  for (uint32_t slot = 0; slot < timing->zone_stats_count; ++slot)
+    if (timing->zone_stats[slot].parent == UINT32_MAX)
+      print_zone_stats_subtree(*timing, slot, 0);
+  if (timing->zone_stats_dropped > 0)
+    std::printf("[frame-zones]   (%u zone openings not tabulated — MAX_ZONE_NAMES exceeded)\n",
+                timing->zone_stats_dropped);
+  if (timing->frames_with_dropped_zones > 0)
+    std::printf("[frame-zones]   (%llu frames overran MAX_ZONES_PER_FRAME; every zone opened after "
+                "the overrun is missing from its row that frame)\n",
+                static_cast<unsigned long long>(timing->frames_with_dropped_zones));
   std::printf("\n");
 }
 

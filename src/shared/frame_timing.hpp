@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 namespace frame_timing
 {
@@ -12,12 +13,17 @@ namespace frame_timing
 inline constexpr uint32_t BUCKET_COUNT        = 501;
 inline constexpr double   BUCKET_MILLISECONDS = 0.1;
 inline constexpr uint32_t WORST_FRAME_COUNT   = 16;
-// Per frame. Generous for hand-placed phase markers and small enough that the
-// whole array is a cheap memcpy when a frame turns out to be worth keeping.
-inline constexpr uint32_t MAX_ZONES_PER_FRAME = 512;
+// Per frame. Room for a zone per drawn object on top of the phase markers, and
+// still a cheap memcpy when a frame turns out to be worth keeping.
+inline constexpr uint32_t MAX_ZONES_PER_FRAME = 4096;
 // Retained load frames. A handful is plenty -- they are named events, not a
 // distribution.
 inline constexpr uint32_t MAX_LOAD_FRAMES = 16;
+// Distinct zone NAMES tabulated across frames, and the 0.05ms buckets each one
+// keeps, 40ms wide before the overflow bucket: a zone is a slice of a frame.
+inline constexpr uint32_t MAX_ZONE_NAMES          = 64;
+inline constexpr uint32_t ZONE_BUCKET_COUNT       = 801;
+inline constexpr double   ZONE_BUCKET_MILLISECONDS = 0.05;
 
 // A named span of time inside one frame. `name` is a string LITERAL and is
 // never copied -- zones are opened on the hot path and a copy would be an
@@ -38,6 +44,22 @@ struct load_frame_t
   uint64_t    allocations  = 0;
   uint64_t    page_faults  = 0;
   const char* reason       = nullptr;
+};
+
+// One zone NAME over every measured frame: what the worst-frame capture cannot
+// say, which is whether the zone is slow on every frame or was slow once. A
+// name opened twice in one frame (a zone inside a loop) contributes their SUM
+// once, so `frames` counts frames and every percentile is a per-frame number.
+struct zone_stats_t
+{
+  const char* name   = nullptr;
+  uint32_t    depth  = 0;          // where it was first seen
+  uint32_t    parent = UINT32_MAX; // the row it was first seen under; the report prints a tree
+  uint64_t    buckets[ZONE_BUCKET_COUNT] = {};
+  uint64_t    frames             = 0;
+  double      total_milliseconds = 0.0;
+  double      max_milliseconds   = 0.0;
+  uint64_t    max_frame          = 0;
 };
 
 struct outlier_t
@@ -91,6 +113,16 @@ struct frame_timing_state_t
   uint32_t      captured_zone_count                 = 0;
   uint32_t      captured_zones_dropped              = 0;
 
+  // Every measured frame's zones folded in by name, in first-seen order, which
+  // for a stable frame is the same pre-order walk the capture above prints.
+  zone_stats_t zone_stats[MAX_ZONE_NAMES] = {};
+  uint32_t     zone_stats_count           = 0;
+  uint32_t     zone_stats_dropped         = 0; // openings of a 65th name onward
+  // Frames whose zones overran MAX_ZONES_PER_FRAME: their later zones are
+  // missing from every row above, and a row's frame count says so only here.
+  uint64_t frames_with_dropped_zones = 0;
+  uint32_t max_zones_in_a_frame      = 0;
+
   // Set by exclude_current_frame() and consumed by the next end_frame().
   const char* current_frame_exclusion_reason = nullptr;
 
@@ -136,6 +168,23 @@ struct scoped_zone_t
   scoped_zone_t& operator=(const scoped_zone_t&) = delete;
 };
 
+// A run of sibling zones through one long function: `next` closes the open
+// zone and opens the named one at the same depth, so a phase boundary is one
+// line rather than a brace pair around a few hundred lines. Every name is a
+// string literal.
+struct lap_zone_t
+{
+  std::optional<scoped_zone_t> open;
+
+  explicit lap_zone_t(const char* name) { open.emplace(name); }
+
+  void next(const char* name)
+  {
+    open.reset();
+    open.emplace(name);
+  }
+};
+
 // Marks the frame in progress as a LOAD, not a frame: it is measured and
 // reported, but kept out of the histogram, the percentiles and the worst-frame
 // competition.
@@ -153,6 +202,13 @@ void exclude_current_frame(const char* reason);
 
 // What the worst frame spent its time on, as an indented tree.
 void report_worst_frame_zones();
+
+// Every zone's per-frame time distribution over the measured frames so far.
+void report_zone_distribution();
+
+// Approximate, like percentile(): resolved to ZONE_BUCKET_MILLISECONDS and
+// saturating at the overflow bucket.
+double zone_percentile(const zone_stats_t& stats, double fraction);
 
 void report();
 void reset();

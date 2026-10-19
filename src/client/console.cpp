@@ -422,6 +422,12 @@ void hitch_report(int32_t top, const command_context_t &)
   client::console::get().print("hitch_report: written to the terminal");
 }
 
+void zone_report(const command_context_t &)
+{
+  frame_timing::report_zone_distribution();
+  client::console::get().print("zone_report: written to the terminal");
+}
+
 void frame_reset(const command_context_t &)
 {
   frame_timing::reset();

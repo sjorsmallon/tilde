@@ -331,6 +331,20 @@ bool invoke_hitch_report(Span<std::string_view> args, const command_context_t& c
   return true;
 }
 
+// zone_report
+bool invoke_zone_report(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::zone_report, args.size());
+    return false;
+  }
+
+  commands::zone_report(context);
+  return true;
+}
+
 // replay_record [name]
 bool invoke_replay_record(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -483,6 +497,7 @@ void bind_client_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::gpu_report] = &invoke_gpu_report;
   table.binders[(uint32_t)command_id::gpu_reset] = &invoke_gpu_reset;
   table.binders[(uint32_t)command_id::hitch_report] = &invoke_hitch_report;
+  table.binders[(uint32_t)command_id::zone_report] = &invoke_zone_report;
   table.binders[(uint32_t)command_id::replay_record] = &invoke_replay_record;
   table.binders[(uint32_t)command_id::replay_play] = &invoke_replay_play;
   table.binders[(uint32_t)command_id::replay_stop] = &invoke_replay_stop;

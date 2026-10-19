@@ -642,20 +642,23 @@ bool Tick()
   // Appended after the state's own UI so a banner draws over it, and appended
   // HERE rather than by each state because set_announcement() is fire-and-forget
   // from thirty call sites that share no state.
-  hud::announcement_t &announcement = hud::current_announcement();
-  hud::advance_announcement(announcement, dt);
-  hud::draw_announcement(frame_ui, *g_ui_font, renderer::screen_size(),
-                         renderer::display_scale(), announcement);
-
-  state_manager::draw_imgui_panels();
-  draw_look_panel(*state_manager::get_client_context().cvars);
-
-  // Global console Overlay
-  if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
   {
-    client::console::get().toggle();
+    FRAME_ZONE("announcement + imgui panels + console");
+    hud::announcement_t &announcement = hud::current_announcement();
+    hud::advance_announcement(announcement, dt);
+    hud::draw_announcement(frame_ui, *g_ui_font, renderer::screen_size(),
+                           renderer::display_scale(), announcement);
+
+    state_manager::draw_imgui_panels();
+    draw_look_panel(*state_manager::get_client_context().cvars);
+
+    // Global console Overlay
+    if (ImGui::IsKeyPressed(ImGuiKey_GraveAccent, false))
+    {
+      client::console::get().toggle();
+    }
+    client::console::get().draw();
   }
-  client::console::get().draw();
 
   {
     FRAME_ZONE("renderer::render_frame (submit + present)");

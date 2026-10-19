@@ -3,6 +3,7 @@
 #include "../../shared/map/brush/brush.hpp"
 #include "../../shared/entity_uid.hpp"
 #include "../../shared/map/map_geometry.hpp"
+#include "../geometry_renderer.hpp"
 #include "editor_types.hpp"
 
 namespace client
@@ -47,11 +48,15 @@ void draw_brush_hull_wireframe(pass_builder_t &draws,
 // `collides` false draws the contour in the error colour instead. A brush whose
 // collision could not be built is otherwise indistinguishable from one that
 // works until somebody walks through it, and the author is standing right here.
+//
+// `translation` is where a live drag holds the object ahead of the map (zero otherwise).
 void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid, Span<const std::string> materials,
                              const shared::lightmap_t &lightmap,
-                             Span<const shared::map_geometry_t> map_geometry, bool collides);
+                             Span<const shared::map_geometry_t> map_geometry, bool collides,
+                             const linalg::vec3 &translation,
+                             generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
 
 // A hole as the editor last drew its wall from it. A wall's mesh is built from
 // its holes, whose edits leave the wall's own value untouched, so the wall is
@@ -78,7 +83,8 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
                                        const shared::lightmap_t &lightmap,
                                        Span<const shared::map_geometry_t> map_geometry,
                                        pass_builder_t &draws, float time,
-                                       float grid_step, bool is_outlined);
+                                       float grid_step, bool is_outlined,
+                                       const linalg::vec3 &translation);
 
 // ImGui property panel for one geometry object. Returns true if the user changed
 // anything, so the caller can rebuild the BVH and push a value-swap transaction.

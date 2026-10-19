@@ -315,6 +315,18 @@ int main()
         back.groups[0].recipe->stair_steps != primitive_recipe_t{}.stair_steps)
       return fail("an arch's block should carry its axis and only its own fields");
 
+    primitive_recipe_t curve;
+    curve.kind = primitive_kind_t::Curve;
+    curve.quarter_turns = 1;
+    curve.curve_points = {{0.f, 0.f, 0.f}, {96.5f, 0.f, 0.f}, {96.5f, 12.25f, -64.f}};
+    curve.curve_width = 24.f;
+    curve.curve_height = 80.f;
+    curve.curve_samples_per_segment = 6;
+    with_recipe.groups[0].recipe = curve;
+    back = parse_map_from_string(serialize_map_to_string(with_recipe));
+    if (!back.groups[0].recipe || *back.groups[0].recipe != *with_recipe.groups[0].recipe)
+      return fail("a curve's block should carry its points, in order, and its three numbers");
+
     const entity_uid_t part[] = {a};
     map_t piece = copy_map_piece(with_recipe, part);
     if (piece.groups.size() != 1 || piece.groups[0].recipe)
@@ -323,6 +335,18 @@ int main()
     piece = copy_map_piece(with_recipe, both);
     if (piece.groups.size() != 1 || !piece.groups[0].recipe)
       return fail("a copy of the whole primitive keeps its recipe");
+
+    // ------------------------------------------------------- 10. the freeze
+    if (drop_recipe_of_group_containing(with_recipe, b))
+      return fail("a member of a group without a recipe has nothing to drop");
+    if (drop_recipe_of_group_containing(with_recipe, 9999))
+      return fail("an object in no group has nothing to drop");
+    if (!drop_recipe_of_group_containing(with_recipe, a))
+      return fail("a hand edit to a member drops its group's recipe");
+    if (with_recipe.groups[0].recipe)
+      return fail("the recipe should be gone after the freeze");
+    if (drop_recipe_of_group_containing(with_recipe, a))
+      return fail("a second drop has nothing to drop");
   }
 
   std::puts("map_group_test: all passed");

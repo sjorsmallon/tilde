@@ -17,7 +17,6 @@ namespace client
 namespace
 {
 
-constexpr float HANDLE_PICK_RADIUS = 14.0f;  // pixels
 constexpr float HANDLE_RADIUS = 5.0f;        // pixels
 constexpr float CORNER_HANDLE_RADIUS = 7.0f; // pixels
 
@@ -119,38 +118,6 @@ bool point_is_inside_face(const shared::brush_polyhedron_t &hull,
       return false;
   }
   return true;
-}
-
-// Which of `handles` is under `screen_position`, if any. Nearest wins, so two
-// handles inside one pick radius collapse -- the caller decides WHICH set it is
-// asking about.
-[[nodiscard]] std::optional<size_t>
-try_pick_vertex_handle(Span<const linalg::vec3> handles,
-                       const viewport_state_t& view,
-                       const linalg::vec2& screen_position)
-{
-  std::optional<size_t> best_index;
-  float best_distance = HANDLE_PICK_RADIUS;
-
-  for (size_t idx = 0; idx < handles.size(); ++idx)
-  {
-    // where, on the screen, does this end point up?
-    const std::optional<linalg::vec2> projected =
-        try_project_to_screen(view, handles[idx]);
-    if (!projected) continue;
-
-    const float dx = projected->x - screen_position.x;
-    const float dy = projected->y - screen_position.y;
-    const float distance = std::sqrt(dx * dx + dy * dy);
-
-    if (distance < best_distance)
-    {
-      best_distance = distance;
-      best_index = idx;
-    }
-  }
-
-  return best_index;
 }
 
 //@NOTE(SJM): you should probably re-evaluate this later because the intuition is lacking now.
@@ -571,6 +538,9 @@ void Brush_Tool::nudge_selected_brush(editor_context_t& ctx,
 
   transaction_t transaction;
   transaction.add_geometry_modified(selection.uid, before, *brush);
+  std::vector<shared::map_group_t> groups_before = ctx.map->groups;
+  (void)shared::drop_recipe_of_group_containing(*ctx.map, selection.uid);
+  transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   ctx.transaction_system.push("Nudge brush", std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -586,6 +556,7 @@ void Brush_Tool::delete_selected_brush(editor_context_t& ctx)
   const shared::geometry_value_t removed = ctx.map->find_geometry_by_uid(uid)->value;
   std::vector<shared::map_group_t> groups_before = ctx.map->groups;
 
+  (void)shared::drop_recipe_of_group_containing(*ctx.map, uid);
   ctx.map->remove_geometry(uid);
   (void)shared::dissolve_groups_with_no_live_member(*ctx.map);
 
@@ -810,7 +781,7 @@ void Brush_Tool::on_mouse_down(editor_context_t& ctx,
   if (mode == Mode::Vertex && selection_geometry.hull && selection_geometry.face_idx >= 0 &&
       e.mods.shift && !selection_geometry.handles_are_grid_vertices)
   {
-    const std::optional<size_t> clicked_handle = try_pick_vertex_handle(
+    const std::optional<size_t> clicked_handle = try_pick_handle_under_cursor(
         selection_geometry.vertex_handles, cached_view, screen_position);
 
     if (selection.points.empty())
@@ -853,7 +824,7 @@ void Brush_Tool::on_mouse_down(editor_context_t& ctx,
 
   if (extrusion.pending)
   {
-    const std::optional<size_t> clicked_handle = try_pick_vertex_handle(
+    const std::optional<size_t> clicked_handle = try_pick_handle_under_cursor(
         selection_geometry.vertex_handles, cached_view, screen_position);
     if (clicked_handle)
     {
@@ -870,7 +841,7 @@ void Brush_Tool::on_mouse_down(editor_context_t& ctx,
 
   if (mode == Mode::Vertex && selection_geometry.hull && selection_geometry.face_idx >= 0)
   {
-    const std::optional<size_t> clicked_handle = try_pick_vertex_handle(
+    const std::optional<size_t> clicked_handle = try_pick_handle_under_cursor(
         selection_geometry.vertex_handles, cached_view, screen_position);
    
     if (clicked_handle)
@@ -1104,6 +1075,12 @@ void Brush_Tool::on_mouse_up(editor_context_t& ctx,
       transaction_t transaction;
       transaction.add_geometry_modified(selection.uid, *drag.geometry_at_the_start_of_drag,
                                     *brush);
+      if (!shared::geometry_values_equal(*drag.geometry_at_the_start_of_drag, *brush))
+      {
+        std::vector<shared::map_group_t> groups_before = ctx.map->groups;
+        (void)shared::drop_recipe_of_group_containing(*ctx.map, selection.uid);
+        transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
+      }
       ctx.transaction_system.push(drag.kind == Drag::Face ? "Move brush face" : "Move brush vertices", std::move(transaction));
 
       // A grid drag writes offsets rather than vertices, so it never went

@@ -128,6 +128,15 @@ private:
   bool     lightmap_updated_flag         = false;
   uint32_t uploaded_lightmap_geometry_id = 0;
 
+  // The generated meshes follow the same flag the BVH does: validated whole in
+  // build_frame when it fires, trusted otherwise. A drag is the one edit that
+  // never raises it until it ends, so what it drags is compared every frame.
+  bool     generated_meshes_need_validation = true;
+  uint32_t validated_lightmap_geometry_id   = 0;
+  bool     tool_drag_in_progress            = false;
+  std::vector<shared::entity_uid_t> dragged_uids_sorted;
+  Span<const live_drag_offset_t>    live_drag_offsets;
+
 
   editor::grid_settings_t grid_settings;
 
@@ -154,6 +163,9 @@ private:
 
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
+  // A hole brush is drawn as its orange authored volume in the editor; this
+  // hides those through the hidden set, so they are unpickable too.
+  bool hide_hole_brushes = false;
   // The screen-space icon pass. A toggle rather than a constant because an icon
   // is not depth-tested, so a room seen from outside shows every light in it --
   // useful for finding one, in the way for looking at anything else.

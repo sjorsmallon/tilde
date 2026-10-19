@@ -38,6 +38,7 @@ public:
   void draw_selection_fields(editor_context_t& ctx);
 
   Span<const shared::entity_uid_t> selected_objects() const override { return selected_uids; }
+  Span<const live_drag_offset_t> live_drag_offsets() const override { return live_drag_offsets_sorted; }
 
 private:
 
@@ -132,6 +133,13 @@ shared::entity_uid_t hovered_uid = 0;
     }
   };
   drag_baseline_t drag_baseline{};
+
+  // selection_tool_drag.cpp: an entity is written where it is dragged; geometry
+  // is held here and written by settle_live_drag when the drag ends.
+  std::vector<live_drag_offset_t> live_drag_offsets_sorted{};
+  void place_dragged_object(editor_context_t& ctx, const drag_origin_t& origin,
+                            const linalg::vec3& position);
+  void settle_live_drag(editor_context_t& ctx);
 
   // clipboard.
   struct clipboard_t

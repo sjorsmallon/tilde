@@ -8,6 +8,7 @@
 #include "map_blocks.hpp"
 #include "movement/player_constants.hpp"
 #include "weapon_instance.hpp"
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1008,13 +1009,14 @@ material_remap_t build_material_remap(const map_t &map)
 // A uid as it is written in the file: decimal digits and nothing else. Its own
 // function rather than std::stoul because a uid that is not one is data to
 // report, not an exception to catch.
-// primitive ::= "primitive" "{" kind axis turns field* "}"
+// primitive ::= "primitive" "{" kind axis turns field* point* "}"
 // kind      ::= "kind" <primitive_kind_t text>
 // axis      ::= "axis" ("X" | "Y" | "Z")
 // turns     ::= "turns" <0..3>
 // field     ::= <a field of that kind> <number>
+// point     ::= "point" "{" "at" <x> <y> <z> "}"          (a curve's control points, in order)
 // A field that is absent keeps the recipe's default; a kind that does not parse
-// is no recipe, with a line.
+// is no recipe, with a line; a point that does not parse is skipped, with a line.
 std::optional<primitive_recipe_t> parse_primitive_recipe_block(const map_block_t &block,
                                                                entity_uid_t group_uid)
 {
@@ -1062,6 +1064,32 @@ std::optional<primitive_recipe_t> parse_primitive_recipe_block(const map_block_t
   read_float("degrees_per_step", recipe.spiral_degrees_per_step);
   if (const std::string *clockwise = text_at("clockwise"))
     recipe.spiral_clockwise = *clockwise == "1" || *clockwise == "true";
+  read_float("wall_width", recipe.curve_width);
+  read_float("wall_height", recipe.curve_height);
+  read_int("samples_per_segment", recipe.curve_samples_per_segment);
+  for (const map_block_t &child : block.children)
+  {
+    if (child.keyword != "point")
+    {
+      log_error("map parse: group {}: the primitive holds a \"{}\" block -- skipped", group_uid,
+                child.keyword);
+      continue;
+    }
+    auto at = child.properties.find("at");
+    if (at == child.properties.end())
+    {
+      log_error("map parse: group {}: a primitive point has no at -- skipped", group_uid);
+      continue;
+    }
+    linalg::vec3 point;
+    if (std::sscanf(at->second.c_str(), "%f %f %f", &point.x, &point.y, &point.z) != 3)
+    {
+      log_error("map parse: group {}: primitive point \"{}\" is not three numbers -- skipped",
+                group_uid, at->second);
+      continue;
+    }
+    recipe.curve_points.push_back(point);
+  }
   clamp_primitive_recipe(recipe);
   return recipe;
 }
@@ -1072,7 +1100,7 @@ map_block_out_t write_primitive_recipe_block(const primitive_recipe_t &recipe)
   map_block_out_t block;
   block.keyword = "primitive";
   block.properties.emplace_back("kind", to_string(recipe.kind));
-  if (recipe.kind != primitive_kind_t::Spiral_Stairs)
+  if (recipe.kind != primitive_kind_t::Spiral_Stairs && recipe.kind != primitive_kind_t::Curve)
     block.properties.emplace_back("axis", AXIS_TEXT[recipe.axis_index]);
   block.properties.emplace_back("turns", std::to_string(recipe.quarter_turns));
   const auto put = [&block](const char *key, float value) {
@@ -1104,6 +1132,20 @@ map_block_out_t write_primitive_recipe_block(const primitive_recipe_t &recipe)
       put("tread_width", recipe.spiral_tread_width);
       put("degrees_per_step", recipe.spiral_degrees_per_step);
       block.properties.emplace_back("clockwise", recipe.spiral_clockwise ? "1" : "0");
+      break;
+    case primitive_kind_t::Curve:
+      put("wall_width", recipe.curve_width);
+      put("wall_height", recipe.curve_height);
+      block.properties.emplace_back("samples_per_segment",
+                                    std::to_string(recipe.curve_samples_per_segment));
+      for (const linalg::vec3 &point : recipe.curve_points)
+      {
+        map_block_out_t point_block;
+        point_block.keyword = "point";
+        point_block.properties.emplace_back(
+            "at", std::format("{:.9g} {:.9g} {:.9g}", point.x, point.y, point.z));
+        block.children.push_back(std::move(point_block));
+      }
       break;
   }
   return block;

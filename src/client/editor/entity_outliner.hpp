@@ -25,9 +25,9 @@ struct entity_visibility_t
 
   void show_all() { hidden_entities.clear(); }
 
-  // Rebuilds `hidden_this_frame` from the map. Call once per frame before the
-  // context is handed to a tool.
-  void refresh(const shared::map_t& map);
+  // Rebuilds `hidden_this_frame` from the map, plus every hole brush when
+  // asked. Call once per frame before the context is handed to a tool.
+  void refresh(const shared::map_t& map, bool hide_hole_brushes);
 };
 
 // The row being renamed in place, if any: a group's or an entity's.

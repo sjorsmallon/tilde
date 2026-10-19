@@ -974,6 +974,8 @@ static void populate_client_world_from_map(client_context_t &ctx, const shared::
 
   // to prevent hitching
   preload_map_render_assets(map);
+  refresh_stale_generated_geometry_meshes(ctx.world.session.geometry, ctx.world.session.materials,
+                                          ctx.world.session.lightmap);
 
  // hash so we can verify we're running the same map as the server. 0 is a sentinel for not computed.
   ctx.world.map_content_hash = shared::compute_map_content_hash(map);
@@ -3624,6 +3626,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   // rather than reused from the prediction build above: this runs on the frame clock
   // and that one on the tick clock, and a set held across the gap would draw
   // a gate one frame behind the wall you can already pass.
+  frame_timing::lap_zone_t lap("build_frame: hidden set, blob shadow, geometry");
+
   shared::disabled_geometry_t hidden;
   shared::collect_hidden_geometry(ctx.world.session.entity_system,
                                   ctx.world.session.owner_of, hidden);
@@ -3645,6 +3649,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   if (camera_is_my_eye)
     draw_player_blob_shadow(drawn_local_feet(ctx));
 
+  lap.next("build_frame: geometry loop");
   if (!ctx.cvars->debug_hide_geometry)
   {
     auto mover_matrices  = std::unordered_map<shared::entity_uid_t, linalg::mat4f>{};
@@ -3696,9 +3701,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                     ctx.world.session.lightmap, ctx.world.session.geometry,
                     moved != mover_matrices.end() ? &moved->second : nullptr,
                     compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut,
-                    owner != nullptr && owner->casts_dynamic_shadow);
+                    owner != nullptr && owner->casts_dynamic_shadow,
+                    generated_mesh_check_t::Trusted_Since_Load);
     }
   }
+
+  lap.next("build_frame: debug readouts, reveal cones, fog, lenses");
 
   scene.ripples = ctx.visuals.wall_ripples.ripples;
   scene.beam_ripples = ctx.visuals.beam_ripples.ripples;
@@ -3806,6 +3814,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                  : 0;
   scene.lens_watchers = ctx.visuals.drawn_lens_watchers;
 
+  lap.next("build_frame: lights + beams");
+
   shared::begin_frame_lights(scene.lights, ctx.world.session.lightmap);
   for (auto [entity, light] : entity_system.entities_with<entities::Light>())
   {
@@ -3828,6 +3838,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (lit.light_intensity > 0.f)
       shared::add_dynamic_frame_light(scene.lights,
                                       build_spot_light_for_reveal_cone(lit, held_flashlight.inner_fraction));
+
+  lap.next("build_frame: rendered entities");
 
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {
@@ -4029,6 +4041,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     scene.meshes.push_back(draw);
   }
 
+  lap.next("build_frame: afterimages + ghosts");
+
   // The bodies players were cut away from, in the aim pose each left in, dissolving. No shadow: a dissolving body's
   // whole shadow would outlast its holes.
   const float afterimage_seconds = ctx.cvars->cl_afterimage_seconds;
@@ -4103,6 +4117,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       scene.meshes.push_back(draw);
     }
   }
+
+  lap.next("build_frame: remote players");
 
   // Render remote players and bots: the model, then the debug volumes.
   const std::optional<int32_t> first_person_slot = try_replay_first_person_slot(ctx.replay, *ctx.cvars);
@@ -4303,6 +4319,8 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     }
   }
 
+  lap.next("build_frame: debug overlays + particles");
+
   // Debug: navmesh as triangle wireframes, colored by island ID
   if (ctx.cvars->debug_show_navmesh)
   {
@@ -4438,12 +4456,16 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     scene.particles.push_back(afterimage_dust_parameters(afterimage, ctx.cvars->cl_afterimage_seconds,
                                                          world_delta_seconds));
 
+  lap.next("build_frame: sky, grabbed frames, to_pass");
+
   scene.sky = skybox.resolve(ctx.cvars->sv_skybox.c_str());
 
   place_grabbed_frames();
 
   passes.push_back(scene.to_pass());
 
+
+  lap.next("build_frame: hud");
 
   // --- Screen-space UI ---
   // Only while actually looking around: an uncaptured cursor is the player's

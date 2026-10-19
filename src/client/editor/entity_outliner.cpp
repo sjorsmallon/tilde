@@ -21,7 +21,22 @@ namespace
 
 const ImVec4 HIDDEN_TEXT_COLOR{0.55f, 0.55f, 0.60f, 1.0f};
 
-using uid_set_t = std::unordered_set<shared::entity_uid_t>;
+// A sorted copy of a uid list. `contains` is a binary search, so the rows can
+// ask it hundreds of times a frame without a set rebuilt from hundreds of
+// allocations every frame.
+struct sorted_uids_t
+{
+  std::vector<shared::entity_uid_t> uids;
+
+  sorted_uids_t() = default;
+  explicit sorted_uids_t(Span<const shared::entity_uid_t> source) : uids(source.begin(), source.end())
+  {
+    std::sort(uids.begin(), uids.end());
+  }
+
+  [[nodiscard]] bool   contains(shared::entity_uid_t uid) const { return std::binary_search(uids.begin(), uids.end(), uid); }
+  [[nodiscard]] size_t size() const { return uids.size(); }
+};
 
 // Where a selection made elsewhere is shown: the group row when the whole group
 // is selected, else the object's row with its group or the Geometry node opened.
@@ -121,13 +136,15 @@ bool draw_rename_field(row_rename_t& rename, std::string_view current, size_t ca
   return committed;
 }
 
+// `geometry` is the row's entry when the caller is already holding it, so a
+// geometry row costs no map search; null means look the uid up.
 void draw_object_row(const shared::map_t& map, entity_visibility_t& visibility, outliner_state_t& state,
-                     const uid_set_t& selected, reveal_t& reveal, shared::entity_uid_t uid,
-                     outliner_result_t& result)
+                     const sorted_uids_t& selected, reveal_t& reveal, shared::entity_uid_t uid,
+                     outliner_result_t& result, const shared::map_geometry_t* geometry = nullptr)
 {
   ImGui::PushID((int)uid);
 
-  const bool entity = is_entity(map, uid);
+  const bool entity = geometry == nullptr && is_entity(map, uid);
   if (entity)
   {
     const bool shown = draw_eye("##eye", !visibility.is_hidden(uid));
@@ -158,7 +175,15 @@ void draw_object_row(const shared::map_t& map, entity_visibility_t& visibility, 
   const bool hidden = entity && visibility.is_hidden(uid);
   if (hidden)
     ImGui::PushStyleColor(ImGuiCol_Text, HIDDEN_TEXT_COLOR);
-  if (ImGui::Selectable(object_label(map, uid).c_str(), selected.contains(uid)))
+  char label[160];
+  if (geometry != nullptr)
+    std::snprintf(label, sizeof(label), "%s  (uid %u)",
+                  std::holds_alternative<shared::brush_geometry_t>(geometry->value) ? "brush"
+                                                                                     : "static mesh",
+                  uid);
+  else
+    std::snprintf(label, sizeof(label), "%s", object_label(map, uid).c_str());
+  if (ImGui::Selectable(label, selected.contains(uid)))
     result.clicked_object = uid;
   scroll_to_if_revealed(reveal, uid, false);
   if (hidden)
@@ -181,7 +206,7 @@ void draw_object_row(const shared::map_t& map, entity_visibility_t& visibility, 
 }
 
 void draw_group_row(const shared::map_t& map, entity_visibility_t& visibility,
-                    outliner_state_t& state, const uid_set_t& selected, reveal_t& reveal,
+                    outliner_state_t& state, const sorted_uids_t& selected, reveal_t& reveal,
                     const shared::map_group_t& group, outliner_result_t& result)
 {
   ImGui::PushID((int)group.uid);
@@ -277,7 +302,7 @@ void draw_group_row(const shared::map_t& map, entity_visibility_t& visibility,
 }
 
 reveal_t compute_outliner_reveal(const shared::map_t& map, Span<const shared::entity_uid_t> selection,
-                   const uid_set_t& selected)
+                   const sorted_uids_t& selected)
 {
   reveal_t reveal;
   const shared::entity_uid_t first = selection[0];
@@ -309,7 +334,7 @@ reveal_t compute_outliner_reveal(const shared::map_t& map, Span<const shared::en
 // The selection is exactly one group's live members: that group. Else one
 // entity alone: that entity. Geometry has no name.
 void begin_requested_rename(const shared::map_t& map, Span<const shared::entity_uid_t> selection,
-                            const uid_set_t& selected, row_rename_t& rename, reveal_t& reveal,
+                            const sorted_uids_t& selected, row_rename_t& rename, reveal_t& reveal,
                             outliner_result_t& result)
 {
   if (!selection.empty())
@@ -361,12 +386,20 @@ std::string object_label(const shared::map_t& map, shared::entity_uid_t uid)
   return std::format("uid {} (gone)", uid);
 }
 
-void entity_visibility_t::refresh(const shared::map_t& map)
+void entity_visibility_t::refresh(const shared::map_t& map, bool hide_hole_brushes)
 {
   hidden_this_frame.clear();
   for (const shared::map_entity_t& entry : map.entities)
     if (entry.entity && is_hidden(entry.uid))
       hidden_this_frame.push_back(entry.uid);
+  if (!hide_hole_brushes)
+    return;
+  for (const shared::map_geometry_t& entry : map.geometry)
+  {
+    const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&entry.value);
+    if (brush != nullptr && brush->subtracts_from_uid != shared::null_entity_uid)
+      hidden_this_frame.push_back(entry.uid);
+  }
 }
 
 outliner_result_t draw_entity_outliner(const shared::map_t&              map,
@@ -395,7 +428,7 @@ outliner_result_t draw_entity_outliner(const shared::map_t&              map,
   }
   ImGui::Separator();
 
-  const uid_set_t selected(selection.begin(), selection.end());
+  const sorted_uids_t selected(selection);
 
   reveal_t   reveal;
   const bool selection_changed =
@@ -416,9 +449,10 @@ outliner_result_t draw_entity_outliner(const shared::map_t&              map,
     begin_requested_rename(map, selection, selected, state.rename, reveal, result);
   }
 
-  uid_set_t grouped;
+  std::vector<shared::entity_uid_t> grouped_members;
   for (const shared::map_group_t& group : map.groups)
-    grouped.insert(group.members.begin(), group.members.end());
+    grouped_members.insert(grouped_members.end(), group.members.begin(), group.members.end());
+  const sorted_uids_t grouped(grouped_members);
 
   if (ImGui::BeginChild("##outliner_rows"))
   {
@@ -429,22 +463,31 @@ outliner_result_t draw_entity_outliner(const shared::map_t&              map,
       if (entry.entity && !grouped.contains(entry.uid))
         draw_object_row(map, visibility, state, selected, reveal, entry.uid, result);
 
-    size_t loose_geometry = 0;
+    std::vector<const shared::map_geometry_t*> loose_geometry;
     for (const shared::map_geometry_t& entry : map.geometry)
       if (!grouped.contains(entry.uid))
-        ++loose_geometry;
+        loose_geometry.push_back(&entry);
 
-    if (loose_geometry > 0)
+    if (!loose_geometry.empty())
     {
       draw_eye_gap();
       ImGui::SameLine();
       if (reveal.open_geometry)
         ImGui::SetNextItemOpen(true);
-      if (ImGui::TreeNodeEx("##geometry", ImGuiTreeNodeFlags_SpanAvailWidth, "Geometry  (%zu)", loose_geometry))
+      if (ImGui::TreeNodeEx("##geometry", ImGuiTreeNodeFlags_SpanAvailWidth, "Geometry  (%zu)",
+                            loose_geometry.size()))
       {
-        for (const shared::map_geometry_t& entry : map.geometry)
-          if (!grouped.contains(entry.uid))
-            draw_object_row(map, visibility, state, selected, reveal, entry.uid, result);
+        // Only the rows on screen are submitted; the revealed row is submitted
+        // too, so it can scroll itself into view.
+        ImGuiListClipper clipper;
+        clipper.Begin((int)loose_geometry.size());
+        for (size_t index = 0; index < loose_geometry.size(); ++index)
+          if (loose_geometry[index]->uid == reveal.row && !reveal.row_is_group)
+            clipper.IncludeItemByIndex((int)index);
+        while (clipper.Step())
+          for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index)
+            draw_object_row(map, visibility, state, selected, reveal, loose_geometry[index]->uid,
+                            result, loose_geometry[index]);
         ImGui::TreePop();
       }
     }

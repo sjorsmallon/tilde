@@ -630,6 +630,11 @@ void sv_hitch_report(int32_t top, const command_context_t &)
   memory_audit::report_captured_frame(top <= 0 ? 15u : static_cast<uint32_t>(top));
 }
 
+void sv_zone_report(const command_context_t &)
+{
+  frame_timing::report_zone_distribution();
+}
+
 // The caller's own body is the activator, which is what lets a console line
 // stand in for a trigger. A dedicated server's own console names nobody.
 static shared::entity_uid_t caller_body(const server::server_context_t &context,

@@ -31,6 +31,11 @@ using scene_blend_attachments_t =
 scene_blend_attachments_t scene_blend_attachments(const VkPipelineColorBlendAttachmentState& color,
                                                   bool writes_data_images);
 
+// retired_buffers.cpp
+void retire_buffer(VkBuffer buffer, VkDeviceMemory memory);
+void destroy_buffers_retired_in_frame_slot(uint32_t frame_slot);
+void destroy_all_retired_buffers();
+
 // debug_draw.cpp
 void create_debug_resources();
 void destroy_debug_resources();
