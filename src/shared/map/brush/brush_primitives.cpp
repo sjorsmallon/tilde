@@ -84,6 +84,116 @@ make_arch_brush_point_sets(const linalg::vec3 &center, const linalg::vec3 &axis,
   return wedges;
 }
 
+std::vector<std::vector<linalg::vec3>>
+make_straight_stair_brush_point_sets(const linalg::vec3 &base, const linalg::vec3 &climb,
+                                     int steps, float rise, float tread_depth, float width)
+{
+  if (steps < MIN_STAIR_STEPS || steps > MAX_STAIR_STEPS)
+    fatal_error("make_straight_stair_brush_point_sets: {} steps, {} to {} allowed", steps,
+                MIN_STAIR_STEPS, MAX_STAIR_STEPS);
+  if (std::abs(linalg::normalize(climb).y) > 0.01f)
+    fatal_error("make_straight_stair_brush_point_sets: a flight climbs horizontally, "
+                "the rise is world up");
+
+  const primitive_frame_t frame = make_primitive_frame(climb);
+  const float half_width = width * 0.5f;
+
+  std::vector<std::vector<linalg::vec3>> boxes;
+  boxes.reserve((size_t)steps);
+  for (int step = 0; step < steps; ++step)
+  {
+    const float top = (float)(step + 1) * rise;
+    std::vector<linalg::vec3> box;
+    box.reserve(8);
+    for (const float along : {(float)step * tread_depth, (float)(step + 1) * tread_depth})
+      for (const float across : {-half_width, half_width})
+        for (const float height : {0.f, top})
+          box.push_back(base + frame.axis * along + frame.side * across + frame.up * height);
+    boxes.push_back(std::move(box));
+  }
+
+  return boxes;
+}
+
+std::vector<std::vector<linalg::vec3>>
+make_spiral_stair_brush_point_sets(const linalg::vec3 &base, int steps, float rise,
+                                   float inner_radius, float tread_width,
+                                   float degrees_per_step, bool clockwise)
+{
+  if (steps < MIN_STAIR_STEPS || steps > MAX_STAIR_STEPS)
+    fatal_error("make_spiral_stair_brush_point_sets: {} steps, {} to {} allowed", steps,
+                MIN_STAIR_STEPS, MAX_STAIR_STEPS);
+  if (degrees_per_step < MIN_SPIRAL_DEGREES_PER_STEP ||
+      degrees_per_step > MAX_SPIRAL_DEGREES_PER_STEP)
+    fatal_error("make_spiral_stair_brush_point_sets: {} degrees per step, {} to {} allowed",
+                degrees_per_step, MIN_SPIRAL_DEGREES_PER_STEP, MAX_SPIRAL_DEGREES_PER_STEP);
+
+  const float turn = (clockwise ? -1.f : 1.f) * degrees_per_step * std::numbers::pi_v<float> / 180.f;
+  const float outer_radius = inner_radius + tread_width;
+
+  std::vector<linalg::vec3> directions;
+  directions.reserve((size_t)steps + 1);
+  for (int rib = 0; rib <= steps; ++rib)
+  {
+    const float angle = (float)rib * turn;
+    directions.push_back({std::cos(angle), 0.f, std::sin(angle)});
+  }
+
+  std::vector<std::vector<linalg::vec3>> slabs;
+  slabs.reserve((size_t)steps);
+  for (int step = 0; step < steps; ++step)
+  {
+    std::vector<linalg::vec3> slab;
+    slab.reserve(8);
+    for (const linalg::vec3 &direction : {directions[step], directions[step + 1]})
+      for (const float rim_radius : {inner_radius, outer_radius})
+        for (const float height : {(float)step * rise, (float)(step + 1) * rise})
+          slab.push_back(base + direction * rim_radius + linalg::vec3{0.f, height, 0.f});
+    slabs.push_back(std::move(slab));
+  }
+
+  return slabs;
+}
+
+std::vector<std::vector<linalg::vec3>>
+make_primitive_point_sets(const primitive_recipe_t &unclamped)
+{
+  constexpr linalg::vec3 ORIGIN{0.f, 0.f, 0.f};
+  constexpr linalg::vec3 AXES[3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+  primitive_recipe_t recipe = unclamped;
+  clamp_primitive_recipe(recipe);
+  const linalg::vec3 axis = AXES[recipe.axis_index];
+
+  std::vector<std::vector<linalg::vec3>> point_sets;
+  switch (recipe.kind)
+  {
+    case primitive_kind_t::Prism:
+      point_sets.push_back(make_prism_brush_points(ORIGIN, axis, recipe.prism_radius,
+                                                   recipe.prism_half_length, recipe.prism_sides));
+      break;
+    case primitive_kind_t::Arch:
+      point_sets = make_arch_brush_point_sets(ORIGIN, axis, recipe.arch_inner_radius,
+                                              recipe.arch_thickness, recipe.arch_half_depth,
+                                              recipe.arch_segments);
+      break;
+    case primitive_kind_t::Straight_Stairs:
+      point_sets = make_straight_stair_brush_point_sets(ORIGIN, axis, recipe.stair_steps,
+                                                        recipe.stair_rise, recipe.stair_tread_depth,
+                                                        recipe.stair_width);
+      break;
+    case primitive_kind_t::Spiral_Stairs:
+      point_sets = make_spiral_stair_brush_point_sets(
+          ORIGIN, recipe.stair_steps, recipe.stair_rise, recipe.spiral_inner_radius,
+          recipe.spiral_tread_width, recipe.spiral_degrees_per_step, recipe.spiral_clockwise);
+      break;
+  }
+
+  for (std::vector<linalg::vec3> &points : point_sets)
+    for (linalg::vec3 &point : points)
+      point = turn_about_up(point, recipe.quarter_turns);
+  return point_sets;
+}
+
 bool primitive_face_is_curved(const brush_polyhedron_t &hull, const brush_face_t &face,
                           const linalg::vec3 &center, const linalg::vec3 &axis)
 {

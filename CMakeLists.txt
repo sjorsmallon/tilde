@@ -457,8 +457,11 @@ add_library(game_shared STATIC
     # one convex piece per hole face. geometry_def.md Track H.
     src/shared/map/brush/brush_holes.hpp
     src/shared/map/brush/brush_holes.cpp
-    # A primitive is point sets dropped to plain brushes with no link back: a
-    # prism, an arch. geometry_def.md Track I.
+    # A primitive is point sets dropped to plain brushes: a prism, an arch,
+    # stairs. Its recipe rides the group so the panel can regenerate it.
+    # geometry_def.md Track I.
+    src/shared/map/brush/primitive_recipe.hpp
+    src/shared/map/brush/primitive_recipe.cpp
     src/shared/map/brush/brush_primitives.hpp
     src/shared/map/brush/brush_primitives.cpp
     # The consumer of smoothing_group: a corner's draw normal is its group's
@@ -1190,7 +1193,9 @@ add_game_test(brush_split_test)
 add_game_test(brush_holes_test)
 
 # Primitives: a prism is one convex brush of sides + 2 faces, an arch is N convex
-# wedges sharing their rib points and summing to the half ring.
+# wedges sharing their rib points and summing to the half ring, a straight flight
+# is N boxes down to the base plane, a spiral is N one-rise slabs, a recipe
+# builds the same points turned.
 # geometry_def.md Track I.
 add_game_test(brush_primitives_test)
 

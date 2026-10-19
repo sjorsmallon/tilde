@@ -1008,6 +1008,107 @@ material_remap_t build_material_remap(const map_t &map)
 // A uid as it is written in the file: decimal digits and nothing else. Its own
 // function rather than std::stoul because a uid that is not one is data to
 // report, not an exception to catch.
+// primitive ::= "primitive" "{" kind axis turns field* "}"
+// kind      ::= "kind" <primitive_kind_t text>
+// axis      ::= "axis" ("X" | "Y" | "Z")
+// turns     ::= "turns" <0..3>
+// field     ::= <a field of that kind> <number>
+// A field that is absent keeps the recipe's default; a kind that does not parse
+// is no recipe, with a line.
+std::optional<primitive_recipe_t> parse_primitive_recipe_block(const map_block_t &block,
+                                                               entity_uid_t group_uid)
+{
+  const auto text_at = [&block](const char *key) -> const std::string * {
+    auto it = block.properties.find(key);
+    return it != block.properties.end() ? &it->second : nullptr;
+  };
+  const auto read_float = [&text_at](const char *key, float &into) {
+    if (const std::string *text = text_at(key))
+      into = std::strtof(text->c_str(), nullptr);
+  };
+  const auto read_int = [&text_at](const char *key, int &into) {
+    if (const std::string *text = text_at(key))
+      into = (int)std::strtol(text->c_str(), nullptr, 10);
+  };
+
+  const std::string *kind_text = text_at("kind");
+  const std::optional<primitive_kind_t> kind =
+      kind_text != nullptr ? try_primitive_kind_from_text(*kind_text) : std::nullopt;
+  if (!kind)
+  {
+    log_error("map parse: group {} has a primitive with kind \"{}\", which is not one -- no recipe",
+              group_uid, kind_text != nullptr ? *kind_text : "");
+    return std::nullopt;
+  }
+
+  primitive_recipe_t recipe;
+  recipe.kind = *kind;
+  if (const std::string *axis = text_at("axis"))
+    recipe.axis_index = *axis == "X" ? 0 : *axis == "Z" ? 2 : 1;
+  read_int("turns", recipe.quarter_turns);
+  read_int("sides", recipe.prism_sides);
+  read_float("radius", recipe.prism_radius);
+  read_float("half_length", recipe.prism_half_length);
+  read_int("segments", recipe.arch_segments);
+  read_float("inner_radius", recipe.arch_inner_radius);
+  read_float("thickness", recipe.arch_thickness);
+  read_float("half_depth", recipe.arch_half_depth);
+  read_int("steps", recipe.stair_steps);
+  read_float("rise", recipe.stair_rise);
+  read_float("tread_depth", recipe.stair_tread_depth);
+  read_float("width", recipe.stair_width);
+  read_float("column_radius", recipe.spiral_inner_radius);
+  read_float("tread_width", recipe.spiral_tread_width);
+  read_float("degrees_per_step", recipe.spiral_degrees_per_step);
+  if (const std::string *clockwise = text_at("clockwise"))
+    recipe.spiral_clockwise = *clockwise == "1" || *clockwise == "true";
+  clamp_primitive_recipe(recipe);
+  return recipe;
+}
+
+map_block_out_t write_primitive_recipe_block(const primitive_recipe_t &recipe)
+{
+  constexpr const char *AXIS_TEXT[3] = {"X", "Y", "Z"};
+  map_block_out_t block;
+  block.keyword = "primitive";
+  block.properties.emplace_back("kind", to_string(recipe.kind));
+  if (recipe.kind != primitive_kind_t::Spiral_Stairs)
+    block.properties.emplace_back("axis", AXIS_TEXT[recipe.axis_index]);
+  block.properties.emplace_back("turns", std::to_string(recipe.quarter_turns));
+  const auto put = [&block](const char *key, float value) {
+    block.properties.emplace_back(key, std::format("{:.9g}", value));
+  };
+  switch (recipe.kind)
+  {
+    case primitive_kind_t::Prism:
+      block.properties.emplace_back("sides", std::to_string(recipe.prism_sides));
+      put("radius", recipe.prism_radius);
+      put("half_length", recipe.prism_half_length);
+      break;
+    case primitive_kind_t::Arch:
+      block.properties.emplace_back("segments", std::to_string(recipe.arch_segments));
+      put("inner_radius", recipe.arch_inner_radius);
+      put("thickness", recipe.arch_thickness);
+      put("half_depth", recipe.arch_half_depth);
+      break;
+    case primitive_kind_t::Straight_Stairs:
+      block.properties.emplace_back("steps", std::to_string(recipe.stair_steps));
+      put("rise", recipe.stair_rise);
+      put("tread_depth", recipe.stair_tread_depth);
+      put("width", recipe.stair_width);
+      break;
+    case primitive_kind_t::Spiral_Stairs:
+      block.properties.emplace_back("steps", std::to_string(recipe.stair_steps));
+      put("rise", recipe.stair_rise);
+      put("column_radius", recipe.spiral_inner_radius);
+      put("tread_width", recipe.spiral_tread_width);
+      put("degrees_per_step", recipe.spiral_degrees_per_step);
+      block.properties.emplace_back("clockwise", recipe.spiral_clockwise ? "1" : "0");
+      break;
+  }
+  return block;
+}
+
 std::optional<uint32_t> try_uid_from_text(const std::string &text)
 {
   if (text.empty())
@@ -1451,6 +1552,11 @@ map_t parse_map_from_string(const std::string &content)
         // lines rather than one property that changes whole.
         for (const map_block_t &member_block : row.children)
         {
+          if (member_block.keyword == "primitive")
+          {
+            group.recipe = parse_primitive_recipe_block(member_block, group.uid);
+            continue;
+          }
           if (member_block.keyword != "member")
           {
             log_error("map parse: group {} holds a \"{}\" block — skipped", group.uid,
@@ -1726,7 +1832,7 @@ std::string serialize_map_to_string(const map_t &map)
 
   // Groups. A member the map no longer has is skipped here rather than pruned
   // in the session (it is inert there, and undo may bring it back), and a group
-  // that would be written with fewer than two members is not a group.
+  // that would be written with no member is not a group.
   {
     map_block_out_t block;
     block.keyword = "groups";
@@ -1738,6 +1844,9 @@ std::string serialize_map_to_string(const map_t &map)
       row.properties.emplace_back("_uid", std::to_string(group.uid));
       row.properties.emplace_back("name", group.name);
 
+      if (group.recipe)
+        row.children.push_back(write_primitive_recipe_block(*group.recipe));
+
       for (entity_uid_t member : group.members)
       {
         if (!map.has_object(member))
@@ -1748,7 +1857,7 @@ std::string serialize_map_to_string(const map_t &map)
         row.children.push_back(std::move(member_block));
       }
 
-      if (row.children.size() >= 2)
+      if (row.children.size() >= (group.recipe ? 2u : 1u))
         block.children.push_back(std::move(row));
     }
 

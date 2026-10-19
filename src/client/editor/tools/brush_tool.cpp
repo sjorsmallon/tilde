@@ -2,6 +2,7 @@
 
 #include "../../../shared/collision/collision_detection.hpp"
 #include "../../../shared/log.hpp"
+#include "../../../shared/map/map_group.hpp"
 #include "../../hud.hpp"
 #include "../../geometry_renderer.hpp"
 #include "imgui.h"
@@ -583,11 +584,14 @@ void Brush_Tool::delete_selected_brush(editor_context_t& ctx)
 
   const shared::entity_uid_t uid = selection.uid;
   const shared::geometry_value_t removed = ctx.map->find_geometry_by_uid(uid)->value;
+  std::vector<shared::map_group_t> groups_before = ctx.map->groups;
 
   ctx.map->remove_geometry(uid);
+  (void)shared::dissolve_groups_with_no_live_member(*ctx.map);
 
   transaction_t transaction;
   transaction.add_geometry_removed(uid, removed);
+  transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   ctx.transaction_system.push("Delete brush", std::move(transaction));
 
   // Everything below is keyed to the brush that no longer exists.

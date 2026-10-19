@@ -65,9 +65,9 @@ bool uid_sets_equal(Span<const entity_uid_t> left, Span<const entity_uid_t> righ
 namespace
 {
 
-void dissolve_groups_smaller_than_two(map_t& map)
+void dissolve_empty_groups(map_t& map)
 {
-  std::erase_if(map.groups, [](const map_group_t& group) { return group.members.size() < 2; });
+  std::erase_if(map.groups, [](const map_group_t& group) { return group.members.empty(); });
 }
 
 } // namespace
@@ -84,20 +84,19 @@ entity_uid_t group_objects(map_t& map, Span<const entity_uid_t> uids, std::strin
     group.members.push_back(uid);
   }
 
-  if (group.members.size() < 2)
+  if (group.members.empty())
   {
-    log_warning("group_objects: a group needs two objects; {} of the {} uids named are in the map",
-                group.members.size(), uids.size());
+    log_warning("group_objects: none of the {} uids named are in the map", uids.size());
     return null_entity_uid;
   }
 
-  // Exclusive: out of the old group first, and a group that shrank below two is
+  // Exclusive: out of the old group first, and a group left with nothing is
   // no longer a group.
   for (map_group_t& existing : map.groups)
     std::erase_if(existing.members, [&group](entity_uid_t member) {
       return std::find(group.members.begin(), group.members.end(), member) != group.members.end();
     });
-  dissolve_groups_smaller_than_two(map);
+  dissolve_empty_groups(map);
 
   group.uid  = map.next_uid++;
   group.name = std::move(name);
@@ -118,6 +117,16 @@ bool ungroup(map_t& map, entity_uid_t group_uid)
   const size_t before = map.groups.size();
   std::erase_if(map.groups, [group_uid](const map_group_t& group) { return group.uid == group_uid; });
   return map.groups.size() != before;
+}
+
+size_t dissolve_groups_with_no_live_member(map_t& map)
+{
+  return std::erase_if(map.groups, [&map](const map_group_t& group) {
+    for (entity_uid_t member : group.members)
+      if (map.has_object(member))
+        return false;
+    return true;
+  });
 }
 
 bool try_rename_group(map_t& map, entity_uid_t group_uid, std::string name)
@@ -186,14 +195,14 @@ size_t prune_map_groups(map_t& map)
 
   for (const map_group_t& group : map.groups)
   {
-    if (group.members.size() < 2)
+    if (group.members.empty())
     {
-      log_warning("map groups: \"{}\" (uid {}) has {} member(s) left -- dissolved",
-                  group.name, group.uid, group.members.size());
+      log_warning("map groups: \"{}\" (uid {}) has no member left -- dissolved", group.name,
+                  group.uid);
       ++lines;
     }
   }
-  dissolve_groups_smaller_than_two(map);
+  dissolve_empty_groups(map);
 
   return lines;
 }

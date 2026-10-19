@@ -208,13 +208,16 @@ map_t copy_map_piece(const map_t& map, Span<const entity_uid_t> uids)
     identity[entry.uid] = entry.uid;
   }
 
-  // A group of part of the selection is a group of that part; one member or
-  // none is no group. Uids are kept, like everything else in a piece.
+  // A group of part of the selection is a group of that part; no member is
+  // no group. Uids are kept, like everything else in a piece.
   for (const map_group_t& group : map.groups)
   {
     map_group_t copy = group;
-    if (remap_group_members(copy, identity) >= 2)
-      add_group_with_uid(piece, std::move(copy));
+    if (remap_group_members(copy, identity) == 0)
+      continue;
+    if (copy.members.size() != group.members.size())
+      copy.recipe.reset();
+    add_group_with_uid(piece, std::move(copy));
   }
 
   for (const connection_t& connection : map.connections)
@@ -439,7 +442,7 @@ paste_result_t paste_map_piece(map_t& destination, const map_t& source, const li
   for (const map_group_t& group : source.groups)
   {
     map_group_t copy = group;
-    if (remap_group_members(copy, result.remap) < 2)
+    if (remap_group_members(copy, result.remap) == 0)
       continue;
     copy.uid = destination.next_uid++;
     destination.groups.push_back(std::move(copy));

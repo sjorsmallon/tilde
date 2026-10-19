@@ -3,15 +3,16 @@
 // What this pins is what makes "click one, get all" trustworthy:
 //
 //   1. EXCLUSIVE. group_objects pulls a member out of its old group and
-//      dissolves what shrinks below two, so no operation can leave one object
-//      in two groups. A rename refuses an empty name and an unknown uid.
+//      dissolves what shrinks to nothing, so no operation can leave one object
+//      in two groups; a group of one stays. A rename refuses an empty name and
+//      an unknown uid.
 //   2. INERT, not pruned. A deleted member stays in the list (undo brings it
 //      back grouped); expand_to_group answers only the live ones.
 //   3. The FILE. A group round-trips through the map text with its uid, its
 //      name and its members, the dead member is skipped at the write, and
 //      next_uid clears the group's uid on the way back in.
 //   4. The LOAD CLEAN. prune_map_groups drops a missing member, refuses a
-//      second claim on one uid, and dissolves what is left with one member.
+//      second claim on one uid, and dissolves what is left with no member.
 //   5. The CARRIERS. Copy keeps the intersection, paste mints fresh uids and
 //      remaps the members onto them, twice gives two groups.
 
@@ -84,14 +85,25 @@ int main()
   const entity_uid_t third = group_objects(map, ac, "third");
   if (third == null_entity_uid)
     return fail("a third group of {a, c} was not made");
-  if (find_group_by_uid(map, first) != nullptr)
-    return fail("the first group, left with one member, was not dissolved");
-  if (find_group_by_uid(map, second) != nullptr)
-    return fail("the second group, left with one member, was not dissolved");
-  if (map.groups.size() != 1 || find_group_containing_member(map, floor) != nullptr)
-    return fail("only the third group should remain, and the floor should be loose");
+  if (find_group_by_uid(map, first) == nullptr || find_group_by_uid(map, first)->members.size() != 1)
+    return fail("the first group, left with the floor alone, should stay as a group of one");
+  if (find_group_by_uid(map, second) == nullptr || !has_member(*find_group_by_uid(map, second), b))
+    return fail("the second group, left with b alone, should stay as a group of one");
+  if (map.groups.size() != 3 || find_group_containing_member(map, floor) == nullptr)
+    return fail("the third group and the two groups of one should remain");
+  if (!ungroup(map, first) || !ungroup(map, second) || map.groups.size() != 1 ||
+      find_group_containing_member(map, floor) != nullptr || find_group_containing_member(map, b) != nullptr)
+    return fail("ungrouping the groups of one did not leave their members loose");
+  {
+    const entity_uid_t floor_alone[] = {floor};
+    const entity_uid_t floor_group = group_objects(map, floor_alone, "floor_alone");
+    if (floor_group == null_entity_uid || map.groups.size() != 2)
+      return fail("a group of one object was refused");
+    if (!ungroup(map, floor_group))
+      return fail("the group of one did not ungroup");
+  }
 
-  const entity_uid_t lonely[] = {a, 9999};
+  const entity_uid_t lonely[] = {9999, 9998};
   if (group_objects(map, lonely, "lonely") != null_entity_uid)
     return fail("a group with one real member was not refused");
 
@@ -127,21 +139,23 @@ int main()
 
   // ------------------------------------------------------------- 3. the file
   {
-    // A group of {a, b} where b is then deleted: written with one live member,
-    // so not written at all. The third group round-trips whole.
+    // A group of {b, floor} where b is then deleted: written with its one live
+    // member, floor alone. A group of {b} alone is not written at all. The
+    // third group round-trips whole.
     map_t saved = map;
-    const entity_uid_t ab[] = {a, b};
-    (void)group_objects(saved, ab, "will_not_be_written");
     const entity_uid_t bf[] = {b, floor};
     const entity_uid_t bf_group = group_objects(saved, bf, "b_and_floor");
+    const entity_uid_t b_alone[] = {b};
+    (void)group_objects(saved, b_alone, "will_not_be_written");
     saved.remove_object(b);
 
     const std::string text     = serialize_map_to_string(saved);
     map_t             reloaded = parse_map_from_string(text);
 
-    if (reloaded.groups.size() != 0)
-      return fail("a group with one live member at save time should not survive the round trip");
-    (void)bf_group;
+    if (reloaded.groups.size() != 2 || find_group_by_uid(reloaded, bf_group) == nullptr ||
+        find_group_by_uid(reloaded, bf_group)->members.size() != 1)
+      return fail("a group with one live member at save time should survive as a group of one, "
+                  "and one with none should not be written");
 
     // And one that should.
     map_t   whole = map;
@@ -174,24 +188,35 @@ int main()
     claims_a.name    = "claims_a";
     claims_a.members = {a, b, c};
     dirty.groups.push_back(claims_a);
+    map_group_t nothing_left;
+    nothing_left.uid     = dirty.next_uid++;
+    nothing_left.name    = "nothing_left";
+    nothing_left.members = {4343};
+    dirty.groups.push_back(nothing_left);
 
     const size_t lines = prune_map_groups(dirty);
-    if (lines != 3)
-      return fail(std::format("prune should say three things (missing, duplicate, dissolved), said {}",
+    if (lines != 4)
+      return fail(std::format("prune should say four things (missing, duplicate, missing, dissolved), said {}",
                               lines));
-    if (dirty.groups.size() != 1 || dirty.groups[0].name != "claims_a" ||
-        dirty.groups[0].members.size() != 2 || has_member(dirty.groups[0], a))
-      return fail("prune left the wrong groups: the first keeps a, then dissolves; the second loses a");
+    if (dirty.groups.size() != 2 || dirty.groups[0].name != "missing" ||
+        dirty.groups[0].members.size() != 1 || !has_member(dirty.groups[0], a) ||
+        dirty.groups[1].name != "claims_a" || dirty.groups[1].members.size() != 2 ||
+        has_member(dirty.groups[1], a))
+      return fail("prune left the wrong groups: the first keeps a alone; the second loses a; the third dissolves");
   }
 
   // ------------------------------------------------------------- 5. the carriers
   {
     // Extract {a, floor} out of a map whose group is {a, c}: one member comes
-    // along, so no group. Extract {a, c, floor}: the group comes whole.
+    // along, so a group of that one. Extract {floor}: no member, no group.
+    // Extract {a, c, floor}: the group comes whole.
     const entity_uid_t partial[] = {a, floor};
     const map_t        one = copy_map_piece(map, partial);
-    if (!one.groups.empty())
-      return fail("a piece holding one member of a group should carry no group");
+    if (one.groups.size() != 1 || one.groups[0].members.size() != 1 || one.groups[0].members[0] != a)
+      return fail("a piece holding one member of a group should carry a group of that one");
+    const entity_uid_t none[] = {floor};
+    if (!copy_map_piece(map, none).groups.empty())
+      return fail("a piece holding no member of a group should carry no group");
 
     const entity_uid_t all[] = {a, c, floor};
     const map_t        piece = copy_map_piece(map, all);
@@ -232,6 +257,72 @@ int main()
       return fail("the second paste's copies landed in the first paste's group");
     if (destination.next_uid <= destination.groups[1].uid)
       return fail("the destination's next_uid did not clear the pasted group uids");
+  }
+
+  // --------------------------------------------- 8. dissolve when every member is gone
+  {
+    map_t deleted;
+    const entity_uid_t x = add_at(deleted, entities::entity_type::Point_Light_Entity, {0.f, 0.f, 0.f});
+    const entity_uid_t y = add_at(deleted, entities::entity_type::Point_Light_Entity, {64.f, 0.f, 0.f});
+    const entity_uid_t z = add_at(deleted, entities::entity_type::Point_Light_Entity, {128.f, 0.f, 0.f});
+    const entity_uid_t w = add_at(deleted, entities::entity_type::Point_Light_Entity, {192.f, 0.f, 0.f});
+    const entity_uid_t xy[] = {x, y};
+    const entity_uid_t zw[] = {z, w};
+    (void)group_objects(deleted, xy, "xy");
+    const entity_uid_t zw_group = group_objects(deleted, zw, "zw");
+
+    deleted.remove_entity(x);
+    if (dissolve_groups_with_no_live_member(deleted) != 0 || deleted.groups.size() != 2)
+      return fail("a group with one live member left was dissolved");
+    deleted.remove_entity(y);
+    if (dissolve_groups_with_no_live_member(deleted) != 1 || deleted.groups.size() != 1 ||
+        deleted.groups[0].uid != zw_group)
+      return fail("a group whose every member is gone was not dissolved, or the wrong one was");
+  }
+
+  // ---------------------------------------------------------- 9. the recipe
+  {
+    map_t with_recipe = map;
+    primitive_recipe_t recipe;
+    recipe.kind = primitive_kind_t::Spiral_Stairs;
+    recipe.quarter_turns = 3;
+    recipe.stair_steps = 11;
+    recipe.stair_rise = 12.5f;
+    recipe.spiral_inner_radius = 40.f;
+    recipe.spiral_tread_width = 72.f;
+    recipe.spiral_degrees_per_step = 22.5f;
+    recipe.spiral_clockwise = true;
+    with_recipe.groups[0].recipe = recipe;
+
+    const std::string text = serialize_map_to_string(with_recipe);
+    map_t back = parse_map_from_string(text);
+    if (back.groups.size() != 1 || !back.groups[0].recipe)
+      return fail("a group's recipe did not survive the round trip");
+    if (*back.groups[0].recipe != recipe)
+      return fail("the round-tripped recipe differs from what was written");
+    const size_t kind_at = text.find("spiral_stairs");
+    if (kind_at == std::string::npos)
+      return fail("a spiral's primitive block should name its kind");
+    const std::string primitive_block = text.substr(kind_at, text.find("member", kind_at) - kind_at);
+    if (primitive_block.find("axis") != std::string::npos)
+      return fail("a spiral's primitive block should carry no axis");
+
+    with_recipe.groups[0].recipe->kind = primitive_kind_t::Arch;
+    with_recipe.groups[0].recipe->axis_index = 2;
+    back = parse_map_from_string(serialize_map_to_string(with_recipe));
+    if (!back.groups[0].recipe || back.groups[0].recipe->kind != primitive_kind_t::Arch ||
+        back.groups[0].recipe->axis_index != 2 ||
+        back.groups[0].recipe->stair_steps != primitive_recipe_t{}.stair_steps)
+      return fail("an arch's block should carry its axis and only its own fields");
+
+    const entity_uid_t part[] = {a};
+    map_t piece = copy_map_piece(with_recipe, part);
+    if (piece.groups.size() != 1 || piece.groups[0].recipe)
+      return fail("a copy of part of a primitive is a group of that part with no recipe");
+    const entity_uid_t both[] = {a, c};
+    piece = copy_map_piece(with_recipe, both);
+    if (piece.groups.size() != 1 || !piece.groups[0].recipe)
+      return fail("a copy of the whole primitive keeps its recipe");
   }
 
   std::puts("map_group_test: all passed");

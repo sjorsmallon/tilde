@@ -2645,6 +2645,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
       // deleted object at once.
       transaction_t transaction;
       std::vector<shared::connection_t> connections_before = ctx.map->connections;
+      std::vector<shared::map_group_t> groups_before = ctx.map->groups;
       relink_paths_around_removed_nodes(*ctx.map, selected_uids, transaction);
       for (auto uid : selected_uids)
       {
@@ -2678,6 +2679,8 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
       }
       (void)shared::remove_connections_naming(ctx.map->connections, selected_uids);
       transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
+      (void)shared::dissolve_groups_with_no_live_member(*ctx.map);
+      transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
       ctx.transaction_system.push("Delete", std::move(transaction));
 
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)

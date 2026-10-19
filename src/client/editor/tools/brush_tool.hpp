@@ -41,8 +41,6 @@ public:
   void on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws) override;
   void on_draw_ui(editor_context_t& ctx) override;
 
-  bool capture_keyboard() const override { return true; }
-
 private:
   static constexpr int INVALID_FACE = -1;
 

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "brush/primitive_recipe.hpp"
 #include "entity_uid.hpp"
 #include "map_connection.hpp"
 #include "span.hpp"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,12 +23,18 @@
 // objects, never groups. Both are what keep a click meaning one thing; nesting
 // is the same object having two groups, an inner and an outer, and then every
 // pick needs an "enter level" gesture. group_objects enforces the exclusion,
-// prune_map_groups refuses it out of a file.
+// prune_map_groups refuses it out of a file. A group of ONE is a group: a
+// click on it selects what the member alone would, which is harmless, and a
+// lone prism needs a group to carry its recipe. Only an empty group is none.
 //
 // A member that stops existing is INERT, not pruned: deleting a member and
 // undoing brings it back still grouped, which a prune on delete would break.
 // The one place the list is cleaned is a load (prune_map_groups) and a save
-// (the writer skips what is not there), the material table's rule.
+// (the writer skips what is not there), the material table's rule. The one
+// exception is a group whose EVERY member is gone: the editor's delete
+// dissolves it (dissolve_groups_with_no_live_member) inside the same
+// transaction as the delete, so undo brings the members and their group back
+// together and the outliner never shows an empty group.
 // ============================================================================
 
 namespace shared
@@ -41,6 +49,11 @@ struct map_group_t
   entity_uid_t              uid = null_entity_uid;
   std::string               name;
   std::vector<entity_uid_t> members;
+
+  // Present on a group the primitive tool placed: the members are what the
+  // recipe builds, so the panel can show the numbers and regenerate them. A
+  // copy of PART of such a group is not the primitive and carries no recipe.
+  std::optional<primitive_recipe_t> recipe;
 
   bool operator==(const map_group_t&) const = default;
 };
@@ -64,9 +77,9 @@ void expand_to_group(const map_t& map, entity_uid_t uid, std::vector<entity_uid_
 
 // Makes a group of the named objects under a fresh uid and returns it. Pulls
 // every member out of whatever group it was in first, and dissolves a group
-// that is left with fewer than two members -- so the operation cannot produce
-// an overlap. Refuses with a line and null_entity_uid when fewer than two of
-// the uids are objects the map has.
+// that is left with no member -- so the operation cannot produce an overlap.
+// Refuses with a line and null_entity_uid when none of the uids is an object
+// the map has.
 entity_uid_t group_objects(map_t& map, Span<const entity_uid_t> uids, std::string name);
 
 // A group with a KNOWN uid: the file reader and the carriers, which have a uid
@@ -78,6 +91,11 @@ void add_group_with_uid(map_t& map, map_group_t group);
 // has that uid.
 bool ungroup(map_t& map, entity_uid_t group_uid);
 
+// Drops every group none of whose members the map still has. Returns how many
+// it dropped. The delete's companion: called after the objects are removed,
+// recorded in the delete's transaction.
+size_t dissolve_groups_with_no_live_member(map_t& map);
+
 // Refuses with a line when no group has that uid or the name is empty.
 [[nodiscard]] bool try_rename_group(map_t& map, entity_uid_t group_uid, std::string name);
 
@@ -87,8 +105,8 @@ bool ungroup(map_t& map, entity_uid_t group_uid);
 size_t remap_group_members(map_group_t& group, const uid_remap_t& remap);
 
 // The load-time clean: drops a member the map does not have, a member already
-// claimed by an earlier group, and then any group left with fewer than two
-// members, one line each. Returns how many lines it had to say.
+// claimed by an earlier group, and then any group left with no member, one
+// line each. Returns how many lines it had to say.
 size_t prune_map_groups(map_t& map);
 
 } // namespace shared

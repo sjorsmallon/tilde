@@ -38,6 +38,7 @@
 #include "../shadow_debug_draw.hpp"
 #include "../hud.hpp"
 #include "../fly_camera.hpp"
+#include "../key_names.hpp"
 #include "../spot_beam.hpp"
 #include "../input.hpp"
 #include "../renderer.hpp"
@@ -48,6 +49,7 @@
 #include <SDL_filesystem.h>
 #include <SDL_stdinc.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -64,35 +66,48 @@ namespace client
 bool server_map_reload_hook_is_installed();
 bool invoke_server_map_reload_hook(const std::string &map_path);
 
+enum class toolbox_kind_t : uint8_t
+{
+  viewport_tool,
+  panel,
+  separate_editor
+};
+
 struct toolbox_row_t
 {
-  editor_tool_t tool;
-  const char   *label;
+  editor_tool_t  tool;
+  const char*    label;
+  toolbox_kind_t kind;
+  input::key_t   shift_key;
 };
 
 constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
-    {editor_tool_t::selection,   "Select"},
-    {editor_tool_t::placement,   "Place"},
-    {editor_tool_t::sculpting,   "Sculpt"},
-    {editor_tool_t::pathfinding, "Pathfinding"},
-    {editor_tool_t::particles,   "Particles"},
-    {editor_tool_t::animation,   "Animation"},
-    {editor_tool_t::brush,       "Brush"},
-    {editor_tool_t::lightmap,    "Lightmap"},
-    {editor_tool_t::path,        "Path"},
-    {editor_tool_t::clip,        "Clip"},
-    {editor_tool_t::primitive,   "Primitive"},
+    {editor_tool_t::selection,   "Select",      toolbox_kind_t::viewport_tool,   input::key_t::Q},
+    {editor_tool_t::placement,   "Place",       toolbox_kind_t::viewport_tool,   input::key_t::E},
+    {editor_tool_t::sculpting,   "Sculpt",      toolbox_kind_t::viewport_tool,   input::key_t::G},
+    {editor_tool_t::pathfinding, "Pathfinding", toolbox_kind_t::panel,           input::key_t::Unknown},
+    {editor_tool_t::particles,   "Particles",   toolbox_kind_t::separate_editor, input::key_t::Unknown},
+    {editor_tool_t::animation,   "Animation",   toolbox_kind_t::separate_editor, input::key_t::Unknown},
+    {editor_tool_t::brush,       "Brush",       toolbox_kind_t::viewport_tool,   input::key_t::B},
+    {editor_tool_t::lightmap,    "Lightmap",    toolbox_kind_t::panel,           input::key_t::Unknown},
+    {editor_tool_t::path,        "Path",        toolbox_kind_t::viewport_tool,   input::key_t::L},
+    {editor_tool_t::clip,        "Clip",        toolbox_kind_t::viewport_tool,   input::key_t::X},
+    {editor_tool_t::primitive,   "Primitive",   toolbox_kind_t::viewport_tool,   input::key_t::P},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
-// Ctrl+1..7 -> a toolbox row. The top-row digits are contiguous, so the digit
-// IS the row index; anything else is not a toolbox shortcut and says so.
-[[nodiscard]] static std::optional<editor_tool_t> try_toolbox_tool_for_key(input::key_t key)
+constexpr Array<toolbox_kind_t, 3> TOOLBOX_KIND_ORDER = {
+    {toolbox_kind_t::viewport_tool, toolbox_kind_t::panel, toolbox_kind_t::separate_editor}};
+
+// Shift+<letter> -> the row that declares it; Unknown is a row with no key.
+[[nodiscard]] static std::optional<editor_tool_t> try_toolbox_tool_for_shift_key(input::key_t key)
 {
-  const int row = static_cast<int>(key) - static_cast<int>(input::key_t::Num_1);
-  if (row < 0 || row >= static_cast<int>(EDITOR_TOOL_COUNT))
+  if (key == input::key_t::Unknown)
     return std::nullopt;
-  return static_cast<editor_tool_t>(row);
+  for (const toolbox_row_t& row : TOOLBOX_ROWS)
+    if (row.shift_key == key)
+      return row.tool;
+  return std::nullopt;
 }
 
 // Returns the absolute path to the maps/ directory, creating it if needed.
@@ -764,13 +779,10 @@ void Tool_Editor_State::update(float dt)
       input::set_relative_mouse_mode(false);
     }
 
-    const bool tool_captures_kb = active_tool && tools[*active_tool]->capture_keyboard();
     fly_camera_input_t fly_input = typing ? fly_camera_input_t{} : read_fly_camera_keys();
     // Shift+Space cycles the axis views above; it is not "up".
     if (mods.shift)
       fly_input.up = false;
-    if (!typing && !tool_captures_kb && input::is_key_down(input::key_t::Q))
-      fly_input.down = true;
 
     fly_camera_settings_t fly_settings;
     fly_settings.units_per_second = state_manager::get_client_context().cvars->editor_speed;
@@ -907,16 +919,16 @@ void Tool_Editor_State::update(float dt)
   }
 
   // This frame's key-down events. The input system collects them from the SDL
-  // event pump, so no scancode polling. Ctrl+<digit> is resolved here rather
+  // event pump, so no scancode polling. Shift+<letter> is resolved here rather
   // than in a tool, because switching tools has to work from every tool --
   // including from none, which is why this sits outside the block above.
   if (!typing)
   {
     for (const input::key_event_t &key_event : input::frame_key_events())
     {
-      if (key_event.mods.ctrl)
+      if (key_event.mods.shift && !key_event.mods.ctrl && !key_event.mods.alt)
       {
-        if (std::optional<editor_tool_t> tool = try_toolbox_tool_for_key(key_event.key))
+        if (std::optional<editor_tool_t> tool = try_toolbox_tool_for_shift_key(key_event.key))
         {
           switch_tool(*tool);
           hud::set_announcement(TOOLBOX_ROWS[*tool].label);
@@ -1228,18 +1240,24 @@ void Tool_Editor_State::draw_imgui_panels()
   bool       back_to_menu_was_clicked = false;
   if (toolbar_is_open)
   {
-    for (uint32_t row = 0; row < EDITOR_TOOL_COUNT; ++row)
+    for (toolbox_kind_t kind : TOOLBOX_KIND_ORDER)
     {
-      const toolbox_row_t& entry = TOOLBOX_ROWS.values[row];
-      const bool           is_active = active_tool && *active_tool == entry.tool;
-      if (is_active)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-      if (ImGui::Button(entry.label))
-        switch_tool(entry.tool);
-      if (is_active)
-        ImGui::PopStyleColor();
-      if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Ctrl+%u", row + 1);
+      if (kind != TOOLBOX_KIND_ORDER.front())
+        ImGui::Separator();
+      for (const toolbox_row_t& entry : TOOLBOX_ROWS)
+      {
+        if (entry.kind != kind)
+          continue;
+        const bool is_active = active_tool && *active_tool == entry.tool;
+        if (is_active)
+          ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(entry.label))
+          switch_tool(entry.tool);
+        if (is_active)
+          ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && entry.shift_key != input::key_t::Unknown)
+          ImGui::SetTooltip("Shift+%c", std::toupper(input::key_name(entry.shift_key)[0]));
+      }
     }
 
     ImGui::Separator();
