@@ -936,6 +936,7 @@ add_library(game_client SHARED
     src/client/renderer/textures.cpp
     src/client/renderer/meshes.cpp
     src/client/renderer/retired_buffers.cpp
+    src/client/renderer/uploads.cpp
     src/client/renderer/materials.cpp
     src/client/renderer/pipelines.cpp
     src/client/renderer/pass_set.cpp

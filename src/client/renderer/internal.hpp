@@ -18,7 +18,9 @@ namespace renderer
 // allocator -- is sized by this.
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
-extern VkDevice     g_device;
+extern VkDevice      g_device;
+extern VkQueue       g_graphics_queue;
+extern VkCommandPool g_command_pool;
 extern VkRenderPass g_scene_render_pass;
 extern uint32_t     g_current_frame_idx_in_swapchain;
 
@@ -30,6 +32,11 @@ using scene_blend_attachments_t =
     Array<VkPipelineColorBlendAttachmentState, SCENE_COLOR_ATTACHMENT_COUNT>;
 scene_blend_attachments_t scene_blend_attachments(const VkPipelineColorBlendAttachmentState& color,
                                                   bool writes_data_images);
+
+// uploads.cpp
+VkCommandBuffer pending_upload_commands();
+void            free_after_upload(VkBuffer buffer, VkDeviceMemory memory);
+void            flush_pending_uploads();
 
 // retired_buffers.cpp
 void retire_buffer(VkBuffer buffer, VkDeviceMemory memory);

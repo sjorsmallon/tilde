@@ -318,11 +318,13 @@ void main()
             coverage = mix(coverage, ink_coverage(pixel, int(reach) + 1), fract(reach));
 
         vec3 ink = surface * tonemap.ink_tint;
-        if (tonemap.ink_on_black > 0.0 && coverage > 0.0)
+        // The lens page has no black to draw white on: every line stays ink.
+        float on_black = tonemap.ink_on_black * (1.0 - tonemap.lens_view_fraction);
+        if (on_black > 0.0 && coverage > 0.0)
         {
             int around = int(ceil(reach + tonemap.ink_wobble_pixels)) + 1;
             ink = mix(ink, INK_ON_BLACK_COLOR,
-                      solid_ink_around(ivec2(gl_FragCoord.xy), around) * tonemap.ink_on_black);
+                      solid_ink_around(ivec2(gl_FragCoord.xy), around) * on_black);
         }
         color = mix(color, ink, coverage * tonemap.ink_strength);
     }

@@ -844,7 +844,7 @@ static VkDebugUtilsMessengerEXT g_debug_messenger = VK_NULL_HANDLE;
 #endif
 static VkPhysicalDevice g_physical_device = VK_NULL_HANDLE;
 VkDevice g_device = VK_NULL_HANDLE;
-static VkQueue g_graphics_queue = VK_NULL_HANDLE;
+VkQueue g_graphics_queue = VK_NULL_HANDLE;
 static VkQueue g_present_queue = VK_NULL_HANDLE;
 static VkSurfaceKHR g_surface = VK_NULL_HANDLE;
 static VkSwapchainKHR g_swapchain = VK_NULL_HANDLE;
@@ -1007,7 +1007,7 @@ static constexpr uint32_t    SHADOW_CUTOFF_PUSH_OFFSET      = 64;
 static constexpr VkShaderStageFlags SHADOW_PUSH_STAGES =
     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 static VkDescriptorPool g_descriptor_pool = VK_NULL_HANDLE;
-static VkCommandPool g_command_pool = VK_NULL_HANDLE;
+VkCommandPool g_command_pool = VK_NULL_HANDLE;
 static std::vector<VkFramebuffer> g_swapchain_framebuffers;
 static std::vector<VkCommandBuffer> g_command_buffers;
 
@@ -1580,6 +1580,7 @@ static void rebuild_swapchain()
   if (width == 0 || height == 0)
     return;
 
+  flush_pending_uploads();
   vkDeviceWaitIdle(g_device);
   cleanup_swapchain();
   create_swapchain();
@@ -2495,8 +2496,6 @@ static void destroy_frame_uniform_allocator(frame_uniform_allocator_t &allocator
 // The lit pipeline plus a per-material albedo sampler. Same push constant range
 // as g_lit_pipeline (LitPushConstants), so draw_mesh packs the block once and
 // pushes it against whichever layout it is about to draw with.
-static VkCommandBuffer begin_single_command();
-static void            end_single_command(VkCommandBuffer cmd);
 
 // Double-buffered by frame_uniform_allocator_t's rule: reset after the fence wait.
 static void create_scene_uniform_buffer()
@@ -3906,7 +3905,7 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
   vkAllocateMemory(g_device, &alloc, nullptr, &result.memory);
   vkBindImageMemory(g_device, result.image, result.memory, 0);
 
-  VkCommandBuffer cmd = begin_single_command();
+  VkCommandBuffer cmd = pending_upload_commands();
 
   move_mip_levels_to_layout(cmd, result.image, 0, mip_count, VK_IMAGE_LAYOUT_UNDEFINED,
                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -3947,9 +3946,7 @@ gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-  end_single_command(cmd);
-  vkDestroyBuffer(g_device, staging_buf, nullptr);
-  vkFreeMemory(g_device, staging_mem, nullptr);
+  free_after_upload(staging_buf, staging_mem);
 
   // Image view
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -4049,10 +4046,7 @@ static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_cou
   memcpy(mapped, bytes, (size_t)byte_count);
   vkUnmapMemory(g_device, staging_memory);
 
-  const auto drop_staging = [&]() {
-    vkDestroyBuffer(g_device, staging_buffer, nullptr);
-    vkFreeMemory(g_device, staging_memory, nullptr);
-  };
+  const auto drop_staging = [&]() { free_after_upload(staging_buffer, staging_memory); };
 
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.flags         = create_flags;
@@ -4083,7 +4077,7 @@ static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_cou
   vkAllocateMemory(g_device, &allocation, nullptr, &out.memory);
   vkBindImageMemory(g_device, out.image, out.memory, 0);
 
-  VkCommandBuffer cmd = begin_single_command();
+  VkCommandBuffer cmd = pending_upload_commands();
 
   VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -4115,7 +4109,6 @@ static bool try_upload_sampled_image(const uint8_t *bytes, VkDeviceSize byte_cou
                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                        &barrier);
 
-  end_single_command(cmd);
   drop_staging();
 
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -5141,10 +5134,7 @@ static bool try_upload_reflection_cubes(const shared::reflection_capture_set_t &
   vkMapMemory(g_device, staging_memory, 0, (VkDeviceSize)bytes.size(), 0, &mapped);
   memcpy(mapped, bytes.data(), bytes.size());
   vkUnmapMemory(g_device, staging_memory);
-  const auto drop_staging = [&]() {
-    vkDestroyBuffer(g_device, staging_buffer, nullptr);
-    vkFreeMemory(g_device, staging_memory, nullptr);
-  };
+  const auto drop_staging = [&]() { free_after_upload(staging_buffer, staging_memory); };
 
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.flags         = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
@@ -5197,7 +5187,7 @@ static bool try_upload_reflection_cubes(const shared::reflection_capture_set_t &
     fatal_error("[renderer] the reflection cube regions cover {} byte(s) of {}", offset,
                 bytes.size());
 
-  VkCommandBuffer cmd = begin_single_command();
+  VkCommandBuffer cmd = pending_upload_commands();
 
   VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -5222,7 +5212,6 @@ static bool try_upload_reflection_cubes(const shared::reflection_capture_set_t &
                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                        &barrier);
 
-  end_single_command(cmd);
   drop_staging();
 
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -5464,6 +5453,7 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightma
   // shape more often than not. The DESCRIPTOR SET is kept and rewritten, which
   // is what stops repeated bakes from exhausting the pool.
   gpu_lightmap_t &entry = g_lightmaps[handle.index];
+  flush_pending_uploads();
   vkDeviceWaitIdle(g_device);
 
   gpu_lightmap_t replacement{};
@@ -5828,20 +5818,15 @@ static bool upload_mesh_buffers(gpu_mesh_t &gpu_mesh, const assets::mesh_asset_t
     }
   }
 
-  VkCommandBuffer cmd = begin_single_command();
+  VkCommandBuffer cmd = pending_upload_commands();
   for (uint32_t index = 0; index < staged_count; ++index)
   {
     VkBufferCopy copy{};
     copy.size = staged[index].size;
     vkCmdCopyBuffer(cmd, staged[index].staging, *staged[index].target, 1, &copy);
   }
-  end_single_command(cmd);
-
   for (uint32_t index = 0; index < staged_count; ++index)
-  {
-    vkDestroyBuffer(g_device, staged[index].staging, nullptr);
-    vkFreeMemory(g_device, staged[index].staging_memory, nullptr);
-  }
+    free_after_upload(staged[index].staging, staged[index].staging_memory);
 
   // Skinned wins if a mesh somehow carries both: the skin decides where every
   // vertex ENDS UP, and a mesh drawn in its bind pose is wrong in a way no
@@ -6092,7 +6077,7 @@ static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
   // ends there -- so a layer nothing rendered this frame is still in the layout
   // its descriptor claims.
   {
-    VkCommandBuffer      cmd = begin_single_command();
+    VkCommandBuffer      cmd = pending_upload_commands();
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
     barrier.newLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
@@ -6105,7 +6090,6 @@ static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                          &barrier);
-    end_single_command(cmd);
   }
 
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -6496,6 +6480,7 @@ static void ensure_shadow_pool(const shadow_settings_t &settings)
   if (size == g_shadow_pool.size && layer_count == g_shadow_pool.layer_count)
     return;
 
+  flush_pending_uploads();
   vkDeviceWaitIdle(g_device);
   destroy_shadow_pool();
   if (!try_create_shadow_pool(size, layer_count))
@@ -6666,34 +6651,6 @@ static void cleanup_registered_resources()
 
 // --- Particle System Implementation ---
 
-static VkCommandBuffer begin_single_command()
-{
-  VkCommandBufferAllocateInfo info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-  info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  info.commandPool = g_command_pool;
-  info.commandBufferCount = 1;
-  VkCommandBuffer cmd;
-  vkAllocateCommandBuffers(g_device, &info, &cmd);
-  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  vkBeginCommandBuffer(cmd, &begin);
-  return cmd;
-}
-
-static void end_single_command(VkCommandBuffer cmd)
-{
-  vkEndCommandBuffer(cmd);
-  VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-  submit.commandBufferCount = 1;
-  submit.pCommandBuffers = &cmd;
-  // A FULL queue drain, and it runs on every texture and buffer upload. This
-  // is the single most likely home of a long stall that allocates nothing.
-  FRAME_ZONE("end_single_time_commands (vkQueueWaitIdle)");
-  vkQueueSubmit(g_graphics_queue, 1, &submit, VK_NULL_HANDLE);
-  vkQueueWaitIdle(g_graphics_queue);
-  vkFreeCommandBuffers(g_device, g_command_pool, 1, &cmd);
-}
-
 static void create_particle_texture()
 {
   static const char *PARTICLE_SPRITE_PATH = "resources/sprites/Smoke.png";
@@ -6744,7 +6701,7 @@ static void create_particle_texture()
   vkBindImageMemory(g_device, g_particle_texture, g_particle_texture_memory, 0);
 
   // Transition + copy
-  VkCommandBuffer cmd = begin_single_command();
+  VkCommandBuffer cmd = pending_upload_commands();
 
   VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
   barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -6771,10 +6728,7 @@ static void create_particle_texture()
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-  end_single_command(cmd);
-
-  vkDestroyBuffer(g_device, staging, nullptr);
-  vkFreeMemory(g_device, staging_mem, nullptr);
+  free_after_upload(staging, staging_mem);
 
   // Image view
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -6974,7 +6928,7 @@ static particle_emitter_gpu_t *get_or_create_emitter_gpu(uint64_t entity_id, uin
   {
     if (it->second.max_particles == max_particles)
       return &it->second;
-    // Size changed — destroy old
+    flush_pending_uploads();
     vkDeviceWaitIdle(g_device);
     vkDestroyBuffer(g_device, it->second.ssbo, nullptr);
     vkFreeMemory(g_device, it->second.ssbo_memory, nullptr);
@@ -7010,13 +6964,11 @@ static particle_emitter_gpu_t *get_or_create_emitter_gpu(uint64_t entity_id, uin
   }
   vkUnmapMemory(g_device, staging_mem);
 
-  VkCommandBuffer cmd = begin_single_command();
+  VkCommandBuffer cmd = pending_upload_commands();
   VkBufferCopy copy{};
   copy.size = ssbo_size;
   vkCmdCopyBuffer(cmd, staging, gpu.ssbo, 1, &copy);
-  end_single_command(cmd);
-  vkDestroyBuffer(g_device, staging, nullptr);
-  vkFreeMemory(g_device, staging_mem, nullptr);
+  free_after_upload(staging, staging_mem);
 
   // Allocate descriptor set
   VkDescriptorSetAllocateInfo ds_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -9337,6 +9289,7 @@ bool init(SDL_Window *window)
 
   // Fonts
   {
+    flush_pending_uploads();
     VkCommandBuffer command_buffer = g_command_buffers[0];
     vkResetCommandPool(g_device, g_command_pool, 0);
     VkCommandBufferBeginInfo begin_info = {};
@@ -9361,6 +9314,7 @@ bool init(SDL_Window *window)
 
 void shutdown()
 {
+  flush_pending_uploads();
   vkDeviceWaitIdle(g_device);
 
   ImGui_ImplVulkan_Shutdown();
@@ -9442,6 +9396,8 @@ bool new_frame()
 
   vkWaitForFences(g_device, 1, &g_in_flight_fences[g_current_frame_idx_in_swapchain], VK_TRUE,
                   UINT64_MAX);
+  // A retired buffer may still be the target of a pending copy.
+  flush_pending_uploads();
   destroy_buffers_retired_in_frame_slot(g_current_frame_idx_in_swapchain);
   collect_gpu_timing(g_current_frame_idx_in_swapchain);
 
@@ -9959,6 +9915,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores    = signal_semaphores;
 
+  flush_pending_uploads();
   if (vkQueueSubmit(g_graphics_queue, 1, &submit_info,
                     g_in_flight_fences[g_current_frame_idx_in_swapchain]) != VK_SUCCESS)
   {
