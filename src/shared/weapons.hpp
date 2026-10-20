@@ -25,15 +25,11 @@ struct self_impulse_t
   float upward_speed;
 };
 
-// Fire_Resolution::Hitscan's parameters: the flight alone. What the shot does
-// on arrival is the button's contact_t.
+
 struct hitscan_t
 {
-  float range; // knife 50, scout map-length
-  // Whether a Shot_Impact on static geometry leaves a bullet decal, decided by
-  // the client -- the effect itself always fires, so the knife still sounds.
-  // A BOOL rather than an "is this melee" test: a silenced pistol or a fist
-  // would each want the same answer for an unrelated reason.
+  float range;
+  // whether it leaves a decal.
   bool  leaves_bullet_impact;
 };
 
