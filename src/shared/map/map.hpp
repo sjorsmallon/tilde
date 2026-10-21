@@ -397,15 +397,16 @@ aabb_bounds_t compute_object_bounds(const map_t &map, entity_uid_t uid);
 // that have no editable box: a static mesh takes its size from its asset, a
 // point entity has none. That emptiness is what makes an object un-sculptable
 // and turns the gizmo's reshape handles off, in one place instead of a type
-// test per tool.
+// test per tool. A mesh's box is its world bounds, and writing one scales it
+// (scale_mesh_to_world_box).
 [[nodiscard]] std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid);
 [[nodiscard]] bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box);
 
 // Euler-degree orientation of whichever object holds `uid`. Empty (and nothing
 // written) for the objects that have none, which is the same decision
 // map_geometry.hpp records: a brush carries its rotation in its own points, so an
-// orientation on one would be written and never read. A static mesh and every
-// entity do have one.
+// orientation on one would be written and never read. A static mesh, a mesh (its
+// pose) and every entity do have one.
 [[nodiscard]] std::optional<linalg::quatf> try_get_object_orientation(const map_t &map,
                                                                      entity_uid_t uid);
 [[nodiscard]] bool try_set_object_orientation(map_t &map, entity_uid_t uid,

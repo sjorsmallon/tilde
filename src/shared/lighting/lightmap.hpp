@@ -114,12 +114,19 @@ struct chart_triangle_cells_t
   std::vector<uint32_t> triangles; // triangle indices, cell after cell
 };
 
+// A chart of an asset-sourced mesh is one of xatlas's unwrap pieces and names no
+// stored face; it is found by its object and its unwrap.
+inline constexpr uint32_t LIGHTMAP_UNWRAP_CHART = 0xFFFFFFFFu;
+
 struct lightmap_chart_t
 {
+  // IDENTITY: the object and the index of its stored face (geometry_def.md
+  // §11.3). A face's index is its identity, and every edit invalidates the bake.
   entity_uid_t object_uid = 0;
+  uint32_t face_index = LIGHTMAP_UNWRAP_CHART;
 
-  // IDENTITY, and it is the face's plane -- never an index into the derived
-  // face list, which is rebuilt on every edit. Same rule as face_surface_t.
+  // The chart's projection plane, a descriptor and never a key: the face's for a
+  // stored face, the area-weighted mean over the pieces of an unwrap chart.
   Plane plane;
 
   linalg::vec3 tangent_u{0.f, 0.f, 0.f};
@@ -943,24 +950,20 @@ struct object_lightmap_ref_t
   [[nodiscard]] bool has_bake() const { return lightmap && !lightmap->empty(); }
 };
 
-// The chart a face's plane names, or null. Nearest by normal then distance,
-// keyed by (object_uid, plane) -- the same identity rule find_face_surface uses,
-// for the same reason: faces are derived from the canonical vertex set and
-// rebuilt on every edit, so an index means nothing across one.
-//
-// The uid is in the key because two brushes can share a plane -- a floor and the
-// slab beneath it -- and a plane alone would let one wear the other's lighting.
-// A face that matches nothing draws UNLIT, which is a visible, correct-looking
-// way to say "this face has no bake"; wearing a neighbour's lighting is the
-// failure worth engineering against, precisely because it looks plausible.
 // Recomputes `geometry_id` from the charts, the settings and the atlas. Call it
 // on any lightmap_t that was just filled in -- the sidecar loader and the bake
 // are the two places that is true.
 void set_lightmap_geometry_id(lightmap_t &lightmap);
 
+// The chart of one stored face, keyed by (object_uid, face_index), or null.
+// The uid is in the key because two objects can share a plane -- a floor and the
+// slab beneath it -- and the index is the face's identity (geometry_def.md
+// §11.3). A face that names no chart draws UNLIT, which is a visible,
+// correct-looking way to say "this face has no bake"; wearing a neighbour's
+// lighting is the failure worth engineering against, because it looks plausible.
 [[nodiscard]] const lightmap_chart_t *find_chart(const lightmap_t &lightmap,
                                                  entity_uid_t object_uid,
-                                                 const Plane &plane);
+                                                 uint32_t face_index);
 
 // The resolve table run BACKWARDS, and the gather pass is its one caller: the
 // bake recorded which light ENTITY each slot is of, and a frame has the entity

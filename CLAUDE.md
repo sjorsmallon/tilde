@@ -195,8 +195,10 @@ prediction writes `ctx.prediction`.
 - A prefab IS a map (`prefabs/<name>.prefab`, same reader and writer), the
   clipboard IS a `map_t`, and a placed prefab is a stamp with no link back.
   `src/shared/map/map_piece.{hpp,cpp}` is the whole of copy/paste/save/place.
-- Legacy file keywords (`box`, `displacement`, three-component
-  `orientation`) are read-only and converted once; the writer never emits them.
+- Legacy file keywords (`box`, `displacement`, `brush`, `static_mesh`,
+  three-component `orientation`) are read-only and converted once
+  (`convert_legacy_geometry` runs in the reader and the writer); the writer
+  never emits them.
 - `map_t::attached_cvars` run through `execute_console_line` on load and are
   reverted on unload as a named subset (`revert_cvars_to_defaults`), never a
   group reset.
@@ -323,7 +325,7 @@ prediction writes `ctx.prediction`.
   the one switch rule. `Light_Mode {Baked, Mixed, Dynamic}` is a correctness
   requirement, and bake term and shadow map compose by product.
 - The atlas stores VISIBILITY per light slot and residual irradiance; the
-  shader shades kept lights analytically. A chart's identity is (uid, plane).
+  shader shades kept lights analytically. A chart's identity is (uid, face index).
   Bounces are SH L1; probes store direct and indirect; captures are derived
   from the probe grid. A shadow ray asks three sets in order: opaque, fences,
   glass.

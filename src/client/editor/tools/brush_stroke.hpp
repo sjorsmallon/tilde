@@ -31,6 +31,14 @@ size_t sculpt_brushes_under_stroke(editor_context_t &ctx,
                                    const linalg::vec3 &center, float radius,
                                    const linalg::vec3 &delta);
 
+// The same sweep over meshes: every mesh of the map with a grid whose bounds
+// meet the sphere, remembered before its first write and refreshed when
+// touched. geometry_def.md §11.8 increment 11.
+size_t sculpt_meshes_under_stroke(editor_context_t &ctx,
+                                  std::vector<stroke_brush_before_t> &befores,
+                                  const linalg::vec3 &center, float radius,
+                                  const linalg::vec3 &delta);
+
 // One undo entry for the whole stroke, a modified diff per remembered brush
 // that changed. Answers whether anything changed; a brush that vanished
 // mid-stroke is logged and left out.

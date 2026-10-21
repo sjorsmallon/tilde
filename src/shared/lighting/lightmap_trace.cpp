@@ -2,6 +2,7 @@
 
 #include "map/brush/brush.hpp"
 #include "map/map_geometry.hpp"
+#include "map/map_geometry_mesh.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -70,15 +71,32 @@ linalg::vec3 uniform_sphere_direction(uint32_t bits)
       linalg::vec3{radius * std::cos(angle), height, radius * std::sin(angle)});
 }
 
-const brush_geometry_t *find_brush(const traced_scene_t &scene, entity_uid_t uid)
+const mesh_geometry_t *find_mesh(const traced_scene_t &scene, entity_uid_t uid)
 {
   const auto at = std::lower_bound(
-      scene.brushes.begin(), scene.brushes.end(), uid,
-      [](const std::pair<entity_uid_t, const brush_geometry_t *> &entry,
+      scene.meshes.begin(), scene.meshes.end(), uid,
+      [](const std::pair<entity_uid_t, const mesh_geometry_t *> &entry,
          entity_uid_t key) { return entry.first < key; });
 
-  if (at == scene.brushes.end() || at->first != uid) return nullptr;
+  if (at == scene.meshes.end() || at->first != uid) return nullptr;
   return at->second;
+}
+
+// The stored face a hit landed on, or nothing for an object the scene does not
+// hold, an asset-sourced mesh (untextured to the tracer) or a hit plane no face
+// coincides with. A hit comes from the collision pieces, which carry the face's
+// plane and not its index, so this is the one spatial question the trace asks.
+const face_surface_t *face_surface_at_hit(const traced_scene_t &scene,
+                                          const ray_hit_result_t &hit,
+                                          const linalg::vec3 &hit_position)
+{
+  const mesh_geometry_t *mesh = find_mesh(scene, hit.id.index);
+  if (!mesh || mesh->faces.empty())
+    return nullptr;
+
+  const std::optional<uint32_t> face =
+      try_find_mesh_face_by_world_plane(*mesh, Plane{hit_position, hit.normal});
+  return face ? &mesh->faces[*face].surface : nullptr;
 }
 
 // The fallback is the CALLER's, because the two maps that come through here
@@ -308,14 +326,14 @@ traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierar
   scene.alpha_tested_bvh = alpha_tested;
   scene.transmissive_bvh = transmissive;
 
-  scene.brushes.reserve(map.geometry.size());
+  scene.meshes.reserve(map.geometry.size());
   for (const map_geometry_t &entry : map.geometry)
-    if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
-      scene.brushes.push_back({entry.uid, brush});
+    if (const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&entry.value))
+      scene.meshes.push_back({entry.uid, mesh});
 
-  std::sort(scene.brushes.begin(), scene.brushes.end(),
-            [](const std::pair<entity_uid_t, const brush_geometry_t *> &left,
-               const std::pair<entity_uid_t, const brush_geometry_t *> &right) {
+  std::sort(scene.meshes.begin(), scene.meshes.end(),
+            [](const std::pair<entity_uid_t, const mesh_geometry_t *> &left,
+               const std::pair<entity_uid_t, const mesh_geometry_t *> &right) {
               return left.first < right.first;
             });
 
@@ -364,15 +382,9 @@ traced_surface_t surface_at(const traced_scene_t &scene, const ray_hit_result_t 
   constexpr linalg::vec3 untextured{UNTEXTURED_BOUNCE_ALBEDO, UNTEXTURED_BOUNCE_ALBEDO,
                                     UNTEXTURED_BOUNCE_ALBEDO};
 
-  const brush_geometry_t *brush = find_brush(scene, hit.id.index);
-  if (!brush) return {untextured, {}};
-
-  // A brush whose face_surfaces are empty is every brush authored before faces
-  // existed, and its default IS this value -- material 0, the map default.
-  const face_surface_t brush_default;
-  const face_surface_t *matched =
-      find_face_surface(*brush, Plane{hit_position, hit.normal});
-  const face_surface_t &face = matched ? *matched : brush_default;
+  const face_surface_t *matched = face_surface_at_hit(scene, hit, hit_position);
+  if (!matched) return {untextured, {}};
+  const face_surface_t &face = *matched;
 
   if (face.material >= scene.materials.size()) return {untextured, {}};
   const traced_scene_t::material_t &material = scene.materials[face.material];
@@ -393,12 +405,9 @@ traced_surface_t surface_at(const traced_scene_t &scene, const ray_hit_result_t 
 linalg::vec3 transmittance_at(const traced_scene_t &scene, const ray_hit_result_t &hit,
                               const linalg::vec3 &hit_position)
 {
-  const brush_geometry_t *brush = find_brush(scene, hit.id.index);
-  if (!brush) return {0.f, 0.f, 0.f};
-
-  const face_surface_t brush_default;
-  const face_surface_t *matched = find_face_surface(*brush, Plane{hit_position, hit.normal});
-  const face_surface_t &face = matched ? *matched : brush_default;
+  const face_surface_t *matched = face_surface_at_hit(scene, hit, hit_position);
+  if (!matched) return {0.f, 0.f, 0.f};
+  const face_surface_t &face = *matched;
 
   if (face.material >= scene.materials.size()) return {0.f, 0.f, 0.f};
   const traced_scene_t::material_t &material = scene.materials[face.material];
@@ -420,12 +429,9 @@ linalg::vec3 transmittance_at(const traced_scene_t &scene, const ray_hit_result_
 bool alpha_test_is_solid_at(const traced_scene_t &scene, const ray_hit_result_t &hit,
                           const linalg::vec3 &hit_position)
 {
-  const brush_geometry_t *brush = find_brush(scene, hit.id.index);
-  if (!brush) return true;
-
-  const face_surface_t brush_default;
-  const face_surface_t *matched = find_face_surface(*brush, Plane{hit_position, hit.normal});
-  const face_surface_t &face = matched ? *matched : brush_default;
+  const face_surface_t *matched = face_surface_at_hit(scene, hit, hit_position);
+  if (!matched) return true;
+  const face_surface_t &face = *matched;
 
   if (face.material >= scene.materials.size()) return true;
   const traced_scene_t::material_t &material = scene.materials[face.material];

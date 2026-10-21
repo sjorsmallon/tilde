@@ -42,6 +42,14 @@ void draw_brush_hull_wireframe(pass_builder_t &draws,
                                const linalg::vec3 &translation, color_t color,
                                float depth_bias);
 
+// Every edge of a mesh once, through its pose and `translation`: a ring edge
+// whose reverse a later vertex walks is skipped, an edge a skin leaves
+// unpaired is kept. The contour, the ghost and the highlight of a mesh, and a
+// tool's preview of one it is about to place.
+void draw_mesh_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+                         color_t color, float depth_bias,
+                         const linalg::vec3 &translation = {0, 0, 0});
+
 // Draw geometry in the editor viewport. `solid` follows the editor's
 // "Solid Entities" toggle.
 //

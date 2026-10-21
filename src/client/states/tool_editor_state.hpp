@@ -43,10 +43,11 @@ enum class editor_tool_t : uint8_t
   lightmap,
   path,
   clip,
-  primitive
+  primitive,
+  face
 };
 
-inline constexpr uint32_t EDITOR_TOOL_COUNT = 11;
+inline constexpr uint32_t EDITOR_TOOL_COUNT = 12;
 
 } // namespace client
 

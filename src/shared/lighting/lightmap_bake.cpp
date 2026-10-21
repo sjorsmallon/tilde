@@ -1,9 +1,9 @@
 #include "lightmap_bake.hpp"
 
 #include "map/brush/brush.hpp"
-#include "map/brush/brush_holes.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
+#include "map/map_geometry_mesh.hpp"
 #include "span.hpp"
 
 #define STB_RECT_PACK_IMPLEMENTATION
@@ -202,7 +202,7 @@ void fill_grid_coverage(lightmap_chart_t &chart, const std::vector<linalg::vec3>
                         const linalg::vec3 &face_normal)
 {
   assets::mesh_asset_t surface;
-  emit_face_grid(surface, grid, face_normal, default_face_uv(face_normal));
+  emit_face_grid(surface, grid, face_normal, default_face_uv(face_normal), true);
 
   chart.triangles.reserve(surface.indices.size());
   chart.twins.reserve(surface.indices.size() / 3);
@@ -221,135 +221,50 @@ void fill_grid_coverage(lightmap_chart_t &chart, const std::vector<linalg::vec3>
   build_triangle_cells(chart);
 }
 
-// One chart per PLANE of the solid's boundary, covering every boundary face on
-// it: the ring a hole leaves in a wall face is several convex polygons on one
-// plane and stays one chart. Coverage is the triangle form, one fan per polygon,
-// with the plane's normal at every corner.
-void build_solid_boundary_charts(entity_uid_t object_uid, const brush_solid_t &solid,
-                                 const lightmap_bake_settings_t &settings,
-                                 int max_covered_in_texels, std::vector<lightmap_chart_t> &charts)
+// One chart per stored face that emits geometry, keyed by the face's index. A
+// subdivided quad is charted over where its RAISED surface projects to, which a
+// sideways offset carries past the outline, and covered by the grid it draws with.
+void build_mesh_face_charts(entity_uid_t object_uid, const mesh_geometry_t &mesh,
+                            const lightmap_bake_settings_t &settings, int max_covered_in_texels,
+                            std::vector<lightmap_chart_t> &charts)
 {
-  const std::vector<brush_face_t> &faces = solid.boundary.faces;
-  std::vector<bool>                taken(faces.size(), false);
-  std::vector<linalg::vec3>        points;
-  std::vector<size_t>              group;
-
-  for (size_t first = 0; first < faces.size(); ++first)
-  {
-    if (taken[first])
-      continue;
-
-    const Plane          &plane   = faces[first].plane;
-    const face_surface_t *surface = solid.boundary_surfaces[first];
-
-    group.clear();
-    points.clear();
-    for (size_t other = first; other < faces.size(); ++other)
-    {
-      if (taken[other] || !planes_coincide(faces[other].plane, plane))
-        continue;
-      taken[other] = true;
-      group.push_back(other);
-      for (uint32_t index : faces[other].vertex_indices)
-        points.push_back(solid.boundary.vertices[index]);
-    }
-
-    if (surface && !surface->emits_geometry)
-      continue;
-
-    std::optional<lightmap_chart_t> chart =
-        try_build_chart(object_uid, plane, points, surface ? surface->lightmap_scale : 1.f,
-                        settings, max_covered_in_texels);
-    if (!chart)
-      continue;
-
-    for (size_t face_index : group)
-    {
-      const brush_face_t &face = faces[face_index];
-      for (size_t offset = 1; offset + 1 < face.vertex_indices.size(); ++offset)
-      {
-        const uint32_t corners[3] = {face.vertex_indices[0], face.vertex_indices[offset],
-                                     face.vertex_indices[offset + 1]};
-        chart_triangle_twin_t twin;
-        for (uint32_t corner = 0; corner < 3; ++corner)
-        {
-          const linalg::vec3 &position = solid.boundary.vertices[corners[corner]];
-          chart->triangles.push_back(to_chart_space(*chart, position));
-          twin.corners[corner] = position;
-          twin.normals[corner] = plane.normal;
-        }
-        chart->twins.push_back(twin);
-      }
-    }
-    build_triangle_cells(*chart);
-    charts.push_back(std::move(*chart));
-  }
-}
-
-void build_brush_charts(entity_uid_t object_uid, const brush_geometry_t &brush,
-                        brush_neighbourhood_t neighbourhood,
-                        const lightmap_bake_settings_t &settings, int max_covered_in_texels,
-                        std::vector<lightmap_chart_t> &charts)
-{
-  if (brush.subtracts_from_uid != null_entity_uid)
-    return;
-
-  const std::optional<brush_polyhedron_t> polyhedron =
-      try_build_brush_polyhedron(brush.hull_points);
-  if (!polyhedron)
-  {
-    log_error("[lightmap] brush {} did not hull; it gets no charts.", object_uid);
-    return;
-  }
-
-  const std::vector<const brush_geometry_t *> holes =
-      collect_hole_brushes(neighbourhood.geometry, object_uid);
-  if (!holes.empty() && !brush_refuses_holes(brush))
-  {
-    const std::optional<brush_solid_t> solid = try_build_brush_solid(brush, holes);
-    if (!solid)
-    {
-      log_error("[lightmap] brush {} could not be cut by its {} holes; it gets no charts.",
-                object_uid, holes.size());
-      return;
-    }
-    build_solid_boundary_charts(object_uid, *solid, settings, max_covered_in_texels, charts);
-    return;
-  }
-
-  const brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron, neighbourhood);
-
   std::vector<linalg::vec3> points;
-  for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
   {
-    const brush_face_t &face = polyhedron->faces[face_index];
-    const face_surface_t *surface = find_face_surface(brush, face.plane);
-    if (surface && !surface->emits_geometry)
+    const mesh_face_t &face = mesh.faces[face_index];
+    const face_surface_t &surface = face.surface;
+    if (!surface.emits_geometry)
       continue;
 
+    const Plane plane = compute_mesh_world_face_plane(mesh, face_index);
     points.clear();
-    for (uint32_t vertex_index : face.vertex_indices)
-      points.push_back(polyhedron->vertices[vertex_index]);
+    for (uint32_t vertex : face.vertex_indices)
+      points.push_back(mesh.position + linalg::rotate(mesh.orientation, mesh.vertices[vertex]));
     const size_t corner_count = points.size();
 
-    // A subdivided face is charted over where its RAISED surface projects to, which a sideways offset carries past the outline.
-    const std::vector<linalg::vec3> &grid = grids.grid_vertices[face_index];
-    points.insert(points.end(), grid.begin(), grid.end());
+    const bool gridded = face_is_subdivided(surface) && face.vertex_indices.size() == 4;
+    std::vector<linalg::vec3> grid;
+    if (gridded)
+    {
+      grid = compute_mesh_face_grid_world_vertices(mesh, face_index);
+      points.insert(points.end(), grid.begin(), grid.end());
+    }
 
-    std::optional<lightmap_chart_t> chart =
-        try_build_chart(object_uid, face.plane, points, surface ? surface->lightmap_scale : 1.f,
-                        settings, max_covered_in_texels);
-    if (!chart) continue;
+    std::optional<lightmap_chart_t> chart = try_build_chart(
+        object_uid, plane, points, surface.lightmap_scale, settings, max_covered_in_texels);
+    if (!chart)
+      continue;
+    chart->face_index = face_index;
 
-    if (grid.empty())
+    if (gridded)
+    {
+      fill_grid_coverage(*chart, grid, plane.normal);
+    }
+    else
     {
       chart->polygon.reserve(corner_count);
       for (size_t corner = 0; corner < corner_count; ++corner)
         chart->polygon.push_back(to_chart_space(*chart, points[corner]));
-    }
-    else
-    {
-      fill_grid_coverage(*chart, grid, face.plane.normal);
     }
 
     charts.push_back(std::move(*chart));
@@ -465,14 +380,20 @@ build_lightmap_charts(const map_t &map, const lightmap_bake_settings_t &settings
     switch (get_kind(object.value))
     {
     case geometry_kind_t::Brush:
-      build_brush_charts(object.uid, std::get<brush_geometry_t>(object.value),
-                         {map.geometry, object.uid}, settings, max_covered_in_texels, charts);
-      break;
-
     case geometry_kind_t::Static_Mesh:
-      build_static_mesh_charts(object.uid, std::get<static_mesh_geometry_t>(object.value),
-                               settings, max_covered_in_texels, charts);
+      fatal_error("lightmap: object {} is a legacy kind; every reader converts it to a mesh "
+                  "(geometry_def.md 11.8 increment 6)", object.uid);
+
+    case geometry_kind_t::Mesh:
+    {
+      const mesh_geometry_t &mesh = std::get<mesh_geometry_t>(object.value);
+      if (const asset_mesh_source_t *asset = std::get_if<asset_mesh_source_t>(&mesh.source))
+        build_static_mesh_charts(object.uid, static_mesh_view_of_asset_mesh(mesh, *asset),
+                                 settings, max_covered_in_texels, charts);
+      else
+        build_mesh_face_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
       break;
+    }
     }
   }
 
@@ -501,7 +422,7 @@ lightmap_atlas_t pack_lightmap_charts(std::vector<lightmap_chart_t> &charts,
     if (charts[i].atlas_rect.width > atlas.size_in_texels ||
         charts[i].atlas_rect.height > atlas.size_in_texels)
     {
-      log_error("[lightmap] a chart of brush {} is {}x{} texels and no {}x{} page can "
+      log_error("[lightmap] a chart of object {} is {}x{} texels and no {}x{} page can "
                 "ever hold it; lower texels_per_world_unit or raise "
                 "atlas_size_in_texels.",
                 charts[i].object_uid, charts[i].atlas_rect.width,
@@ -706,25 +627,16 @@ namespace shared
 {
 
 const lightmap_chart_t *find_chart(const lightmap_t &lightmap, entity_uid_t object_uid,
-                                   const Plane &plane)
+                                   uint32_t face_index)
 {
-  const lightmap_chart_t *best = nullptr;
-  face_key_match_t best_match;
+  if (face_index == LIGHTMAP_UNWRAP_CHART)
+    fatal_error("find_chart: object {} asked for a stored face's chart with no face", object_uid);
 
   for (const lightmap_chart_t &chart : lightmap.charts)
-  {
-    if (chart.object_uid != object_uid)
-      continue;
+    if (chart.object_uid == object_uid && chart.face_index == face_index)
+      return &chart;
 
-    const face_key_match_t match = match_face_key(chart.plane, plane);
-    if (!match.matched || !match.is_better_than(best_match))
-      continue;
-
-    best = &chart;
-    best_match = match;
-  }
-
-  return best;
+  return nullptr;
 }
 
 size_t count_charts_keeping_light(const lightmap_t &lightmap, int16_t slot)
@@ -979,6 +891,7 @@ void set_lightmap_geometry_id(lightmap_t &lightmap)
   {
     mix(chart.light_slots.data, sizeof(chart.light_slots.data));
     mix(&chart.object_uid, sizeof(chart.object_uid));
+    mix(&chart.face_index, sizeof(chart.face_index));
     mix(&chart.plane, sizeof(chart.plane));
     mix(&chart.tangent_u, sizeof(chart.tangent_u));
     mix(&chart.tangent_v, sizeof(chart.tangent_v));

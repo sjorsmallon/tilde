@@ -3,6 +3,7 @@
 #include "../../../shared/aabb.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/map/map_geometry.hpp"
+#include "../../../shared/map/map_geometry_mesh.hpp"
 #include "../../geometry_renderer.hpp"
 #include "../transaction_system.hpp"
 
@@ -44,6 +45,31 @@ size_t sculpt_brushes_under_stroke(editor_context_t &ctx,
     remember_brush_before_stroke(befores, *ctx.map, entry.uid);
     const size_t touched = shared::sculpt_brush_grid_vertices(*brush, center, radius, delta,
                                                               {ctx.map->geometry, entry.uid});
+    if (touched == 0)
+      continue;
+
+    moved += touched;
+    refresh_generated_geometry_mesh(entry.value, entry.uid, ctx.map->materials,
+                                    ctx.map->lightmap, ctx.map->geometry);
+  }
+  return moved;
+}
+
+size_t sculpt_meshes_under_stroke(editor_context_t &ctx,
+                                  std::vector<stroke_brush_before_t> &befores,
+                                  const linalg::vec3 &center, float radius,
+                                  const linalg::vec3 &delta)
+{
+  size_t moved = 0;
+  for (shared::map_geometry_t &entry : ctx.map->geometry)
+  {
+    shared::mesh_geometry_t *mesh = std::get_if<shared::mesh_geometry_t>(&entry.value);
+    if (!mesh || !shared::mesh_has_subdivided_face(*mesh) ||
+        !shared::aabb_intersects_sphere(shared::get_bounds(entry.value), center, radius))
+      continue;
+
+    remember_brush_before_stroke(befores, *ctx.map, entry.uid);
+    const size_t touched = shared::sculpt_mesh_face_grid_vertices(*mesh, center, radius, delta);
     if (touched == 0)
       continue;
 

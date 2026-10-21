@@ -1,9 +1,10 @@
 #pragma once
 
+#include "aabb.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
-#include "map/brush/primitive_recipe.hpp"
-#include "map/map_geometry.hpp"
+#include "map/mesh/primitive_recipe.hpp"
+#include "map/face_surface.hpp"
 #include "plane.hpp"
 #include "span.hpp"
 #include <cstdint>
@@ -87,6 +88,38 @@ std::string format_mesh_defect(const mesh_defect_t &defect);
 // Every directed edge paired with its reverse. The one question a skin
 // (an open import) answers no to.
 bool mesh_is_closed(const mesh_geometry_t &mesh);
+
+// The edge table every pairing question reads: one row per directed edge of
+// every ring, sorted by (a, b), with the face that walks it.
+struct mesh_directed_edge_t
+{
+  uint32_t a;
+  uint32_t b;
+  uint32_t face_index;
+};
+
+std::vector<mesh_directed_edge_t> collect_mesh_directed_edges(const mesh_geometry_t &mesh);
+
+// The face that walks a->b, or nothing when no face does.
+[[nodiscard]] std::optional<uint32_t>
+try_find_mesh_face_walking_edge(Span<const mesh_directed_edge_t> sorted_edges, uint32_t a,
+                                uint32_t b);
+
+float compute_mesh_face_area(const mesh_geometry_t &mesh, uint32_t face_index);
+
+// Signed, by the divergence theorem over fan triangles; positive for a mesh
+// wound counter-clockwise seen from outside.
+float compute_mesh_volume(const mesh_geometry_t &mesh);
+
+aabb_bounds_t compute_mesh_local_bounds(const mesh_geometry_t &mesh);
+
+// Pose, surface, flags and owner of `mesh` with no vertices, no faces and an
+// inline source: what every mesh derived from another starts as.
+mesh_geometry_t copy_mesh_pose_and_surface(const mesh_geometry_t &mesh);
+
+// One mesh per connected shell (faces joined through shared edges), each
+// renumbering the vertices it uses. A connected mesh comes back as itself.
+std::vector<mesh_geometry_t> separate_mesh_shells(const mesh_geometry_t &mesh);
 
 // Newell's method over the ring, in the mesh's local space; the normal points
 // out of the solid for a counter-clockwise ring. Dies on a degenerate face,

@@ -14,6 +14,7 @@
 #include "shared/map/brush/brush.hpp"
 #include "shared/map/game_session.hpp"
 #include "shared/map/map.hpp"
+#include "shared/map/map_geometry_legacy.hpp"
 #include "shared/map/map_geometry.hpp"
 
 #include <algorithm>
@@ -1270,8 +1271,13 @@ void test_map_round_trip_and_session_collision()
   const shared::map_geometry_t *reloaded_wedge = reloaded.find_geometry_by_uid(wedge_uid);
   assert(reloaded_box != nullptr);
   assert(reloaded_wedge != nullptr);
-  assert(shared::geometry_values_equal(reloaded_box->value, shared::geometry_value_t{box_brush}));
-  assert(shared::geometry_values_equal(reloaded_wedge->value, shared::geometry_value_t{wedge}));
+  // The file holds the meshes the brushes convert to (geometry_def.md 11.8 increment 6).
+  assert(shared::geometry_values_equal(
+      reloaded_box->value,
+      shared::geometry_value_t{*shared::try_convert_brush_to_mesh(box_brush, box_uid, map.geometry)}));
+  assert(shared::geometry_values_equal(
+      reloaded_wedge->value,
+      shared::geometry_value_t{*shared::try_convert_brush_to_mesh(wedge, wedge_uid, map.geometry)}));
 
   // The wedge collides as its hull, not its bound: five planes, one of them a
   // slope. A box-shaped collision would report six axis-aligned ones.

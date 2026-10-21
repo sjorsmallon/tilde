@@ -2,6 +2,7 @@
 #include "../../shared/assets/asset.hpp"
 #include "../../shared/map/brush/brush_holes.hpp"
 #include "../../shared/map/map.hpp"
+#include "../../shared/map/map_geometry_mesh.hpp"
 #include "../../shared/map/editor_grid.hpp"
 #include "../../shared/frame_timing.hpp"
 #include "../../shared/log.hpp"
@@ -88,6 +89,23 @@ void draw_brush_wireframe(pass_builder_t &draws, const shared::brush_geometry_t 
 
 } // namespace
 
+void draw_mesh_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+                         color_t color, float depth_bias, const linalg::vec3 &translation)
+{
+  const std::vector<shared::mesh_directed_edge_t> edges =
+      shared::collect_mesh_directed_edges(mesh);
+  for (const shared::mesh_directed_edge_t &edge : edges)
+  {
+    if (edge.a > edge.b && shared::try_find_mesh_face_walking_edge(edges, edge.b, edge.a))
+      continue;
+    const linalg::vec3 start =
+        mesh.position + linalg::rotate(mesh.orientation, mesh.vertices[edge.a]) + translation;
+    const linalg::vec3 end =
+        mesh.position + linalg::rotate(mesh.orientation, mesh.vertices[edge.b]) + translation;
+    draws.debug.line(start, end, color, depth_bias);
+  }
+}
+
 // Every hull edge as a line loop per face. Shared edges are drawn twice, which
 // costs nothing at brush sizes and keeps this to one loop with no edge table.
 void draw_brush_hull_wireframe(pass_builder_t &draws,
@@ -116,13 +134,17 @@ linalg::vec3 compute_geometry_placement_center(const shared::geometry_value_t &g
                                                const linalg::vec3 &ghost_position,
                                                float grid_step)
 {
-  const linalg::vec3 half_extents = shared::get_half_extents(geometry);
-
+  // The POSE is what is placed and the bounds are what is aligned; a mesh's
+  // pose need not sit at its bounds centre, so the two are kept apart.
+  const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
+  const linalg::vec3 half_extents = (bounds.max - bounds.min) * 0.5f;
+  const linalg::vec3 pose_from_bounds_center =
+      shared::get_position(geometry) - (bounds.min + bounds.max) * 0.5f;
   linalg::vec3 center = ghost_position;
   center.y += half_extents.y;
 
   if (grid_step <= 0.0f)
-    return center;
+    return center + pose_from_bounds_center;
 
   // Put the LOW corner on a grid line and derive the centre from it, so an
   // object of any size lands where the brush tool would snap a vertex.
@@ -131,12 +153,15 @@ linalg::vec3 compute_geometry_placement_center(const shared::geometry_value_t &g
                              editor::snap(low_corner.y, grid_step),
                              editor::snap(low_corner.z, grid_step)};
 
-  return aligned + half_extents;
+  return aligned + half_extents + pose_from_bounds_center;
 }
 
-void draw_geometry_ghost(const shared::geometry_value_t &geometry,
+void draw_geometry_ghost(const shared::geometry_value_t &authored_geometry,
                          pass_builder_t &draws, const linalg::vec3 &center)
 {
+  shared::geometry_value_t view_storage;
+  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
+
   // A static mesh previews as its own wireframe mesh when the asset resolves —
   // placing a prop by its bounding box tells you nothing about its orientation.
   if (shared::get_kind(geometry) == shared::geometry_kind_t::Static_Mesh)
@@ -162,6 +187,13 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
     return;
   }
 
+  // A mesh traces its stored edges, carried from its pose to `center`.
+  if (const shared::mesh_geometry_t* mesh = std::get_if<shared::mesh_geometry_t>(&geometry))
+  {
+    draw_mesh_wireframe(draws, *mesh, colors::yellow, 0.0f, center - mesh->position);
+    return;
+  }
+
   draws.debug.box(center, shared::get_half_extents(geometry), colors::yellow);
 }
 
@@ -169,13 +201,15 @@ void draw_geometry_ghost(const shared::geometry_value_t &geometry,
 // Viewport drawing
 // ============================================================================
 
-void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
+void draw_geometry_in_editor(const shared::geometry_value_t &authored_geometry,
                              pass_builder_t &draws, shared::entity_uid_t uid,
                              bool solid, Span<const std::string> materials,
                              const shared::lightmap_t &lightmap,
                              Span<const shared::map_geometry_t> map_geometry, bool collides,
                              const linalg::vec3 &translation, generated_mesh_check_t check)
 {
+  shared::geometry_value_t view_storage;
+  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
   const bool          moved = !(translation == linalg::vec3{0, 0, 0});
   const linalg::mat4f moved_by =
       linalg::compose_transform(translation, linalg::quatf::identity(), {1, 1, 1});
@@ -220,6 +254,19 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
     draw_brush_contour(draws, brush, hull,
                        collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR, -60.0f,
                        translation);
+    return;
+  }
+
+  // A mesh's contour is its stored edges: no hull, nothing cached.
+  if (const shared::mesh_geometry_t* mesh = std::get_if<shared::mesh_geometry_t>(&geometry))
+  {
+    if (solid)
+      draw_geometry(draws, geometry, uid, materials, lightmap, map_geometry,
+                    moved ? &moved_by : nullptr,
+                    geometry_wipe_frame(geometry, linalg::quatf{0.0f, 0.0f, 0.0f, 1.0f}), {},
+                    renderer::light_cut_t::none, false, check);
+    draw_mesh_wireframe(draws, *mesh, collides ? BRUSH_CONTOUR_COLOR : NO_COLLISION_CONTOUR_COLOR,
+                        -60.0f, translation);
     return;
   }
 
@@ -360,7 +407,7 @@ constexpr bool DRAW_BOX_BRUSH_FACE_GRID = false;
 
 } // namespace
 
-void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
+void draw_geometry_selection_highlight(const shared::geometry_value_t &authored_geometry,
                                        shared::entity_uid_t uid,
                                        Span<const std::string> materials,
                                        const shared::lightmap_t &lightmap,
@@ -369,6 +416,8 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
                                        float grid_step, bool is_outlined,
                                        const linalg::vec3 &translation)
 {
+  shared::geometry_value_t view_storage;
+  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
   const color_t color = compute_selection_pulse_color(time);
 
   if (is_outlined)
@@ -392,6 +441,11 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
 
   switch (shared::get_kind(geometry))
   {
+  case shared::geometry_kind_t::Mesh:
+    draw_mesh_wireframe(draws, std::get<shared::mesh_geometry_t>(geometry), color, highlight_bias,
+                        translation);
+    break;
+
   case shared::geometry_kind_t::Static_Mesh:
   {
     const shared::static_mesh_geometry_t &static_mesh =
@@ -454,23 +508,20 @@ void draw_geometry_selection_highlight(const shared::geometry_value_t &geometry,
 namespace
 {
 
-bool draw_surface_inspector(shared::geometry_surface_t &surface)
+// The mesh assets of this build as a combo over `path`; a path no asset carries
+// is said so, not cleared.
+bool draw_mesh_asset_combo(std::string &path)
 {
   bool changed = false;
-
-  if (!ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen))
-    return false;
-
-  ImGui::PushID("surface");
 
   const Span<const assets::asset_entry_t> meshes =
       assets::asset_class_entries(assets::asset_class_t::mesh_asset);
 
-  const char* preview = surface.mesh_path.empty() ? "(none)" : surface.mesh_path.c_str();
-  bool mesh_is_in_build = surface.mesh_path.empty();
+  const char* preview = path.empty() ? "(none)" : path.c_str();
+  bool mesh_is_in_build = path.empty();
   for (const assets::asset_entry_t& mesh : meshes)
   {
-    if (!mesh.path.empty() && surface.mesh_path == mesh.path)
+    if (!mesh.path.empty() && path == mesh.path)
     {
       preview = mesh.name.c_str();
       mesh_is_in_build = true;
@@ -479,9 +530,9 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
 
   if (ImGui::BeginCombo("mesh", preview))
   {
-    if (ImGui::Selectable("(none)", surface.mesh_path.empty()) && !surface.mesh_path.empty())
+    if (ImGui::Selectable("(none)", path.empty()) && !path.empty())
     {
-      surface.mesh_path.clear();
+      path.clear();
       changed = true;
     }
 
@@ -490,10 +541,10 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
       if (mesh.path.empty())
         continue;
 
-      const bool selected = surface.mesh_path == mesh.path;
+      const bool selected = path == mesh.path;
       if (ImGui::Selectable(mesh.name.c_str(), selected) && !selected)
       {
-        surface.mesh_path = mesh.path;
+        path = mesh.path;
         changed = true;
       }
       if (selected)
@@ -504,6 +555,23 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
 
   if (!mesh_is_in_build)
     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "mesh not in this build");
+
+  return changed;
+}
+
+// `offers_mesh_asset` is the brush-era mesh_path on the surface; a mesh names
+// its asset on its source instead.
+bool draw_surface_inspector(shared::geometry_surface_t &surface, bool offers_mesh_asset)
+{
+  bool changed = false;
+
+  if (!ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen))
+    return false;
+
+  ImGui::PushID("surface");
+
+  if (offers_mesh_asset)
+    changed |= draw_mesh_asset_combo(surface.mesh_path);
 
   changed |= ImGui::ColorEdit3("color", &surface.color.x);
   changed |= ImGui::DragFloat("roughness", &surface.roughness, 0.01f, 0.f, 1.f);
@@ -528,7 +596,49 @@ bool draw_static_mesh_inspector(shared::static_mesh_geometry_t &static_mesh)
   changed |= ImGui::Checkbox("casts shadows", &static_mesh.casts_shadows);
   if (!static_mesh.casts_shadows)
     ImGui::TextDisabled("a light inside it shines through it");
-  changed |= draw_surface_inspector(static_mesh.surface);
+  changed |= draw_surface_inspector(static_mesh.surface, true);
+  return changed;
+}
+
+bool draw_mesh_inspector(shared::mesh_geometry_t &mesh)
+{
+  bool changed = false;
+  ImGui::TextDisabled("mesh");
+
+  const shared::aabb_bounds_t bounds = shared::compute_mesh_world_bounds(mesh);
+  const linalg::vec3          size   = bounds.max - bounds.min;
+  ImGui::Text("size  %.1f  %.1f  %.1f", size.x, size.y, size.z);
+
+  changed |= ImGui::DragFloat3("position", &mesh.position.x, 0.5f);
+  changed |= edit_rotation_as_euler("rotation", mesh.orientation);
+
+  if (shared::asset_mesh_source_t* asset = std::get_if<shared::asset_mesh_source_t>(&mesh.source))
+  {
+    ImGui::TextDisabled("source: asset");
+    changed |= draw_mesh_asset_combo(asset->path);
+    changed |= ImGui::DragFloat3("scale", &asset->scale.x, 0.01f);
+    changed |= ImGui::Checkbox("collides as its box", &mesh.collides);
+    if (!mesh.collides)
+      ImGui::TextDisabled("no collision of its own: block it out with a clip mesh");
+  }
+  else
+  {
+    if (const shared::recipe_mesh_source_t* recipe =
+            std::get_if<shared::recipe_mesh_source_t>(&mesh.source))
+      ImGui::TextDisabled("source: %s recipe", shared::to_string(recipe->recipe.kind));
+    else
+      ImGui::TextDisabled("source: inline");
+    ImGui::Text("%zu vertices, %zu faces", mesh.vertices.size(), mesh.faces.size());
+    if (const std::optional<shared::mesh_defect_t> defect = shared::find_mesh_defect(mesh))
+      ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "not a solid: %s",
+                         shared::format_mesh_defect(*defect).c_str());
+    changed |= ImGui::Checkbox("collides", &mesh.collides);
+  }
+
+  changed |= ImGui::Checkbox("casts shadows", &mesh.casts_shadows);
+  if (!mesh.casts_shadows)
+    ImGui::TextDisabled("a light inside it shines through it");
+  changed |= draw_surface_inspector(mesh.surface, false);
   return changed;
 }
 
@@ -558,7 +668,7 @@ bool draw_brush_inspector(shared::brush_geometry_t &brush, bool forms_solid)
     changed = true;
   }
 
-  changed |= draw_surface_inspector(brush.surface);
+  changed |= draw_surface_inspector(brush.surface, true);
   return changed;
 }
 
@@ -577,6 +687,9 @@ bool draw_geometry_inspector(shared::geometry_value_t &geometry, shared::entity_
   {
   case shared::geometry_kind_t::Static_Mesh:
     return draw_static_mesh_inspector(std::get<shared::static_mesh_geometry_t>(geometry));
+
+  case shared::geometry_kind_t::Mesh:
+    return draw_mesh_inspector(std::get<shared::mesh_geometry_t>(geometry));
 
   case shared::geometry_kind_t::Brush:
     return draw_brush_inspector(

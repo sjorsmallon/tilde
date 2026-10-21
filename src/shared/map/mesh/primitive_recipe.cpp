@@ -1,9 +1,9 @@
 #include "primitive_recipe.hpp"
 
-#include "brush_primitives.hpp"
 #include "log.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace shared
 {
@@ -58,6 +58,18 @@ void clamp_primitive_recipe(primitive_recipe_t &recipe)
       recipe.curve_samples_per_segment, MIN_CURVE_SAMPLES_PER_SEGMENT, MAX_CURVE_SAMPLES_PER_SEGMENT);
   if (recipe.kind == primitive_kind_t::Straight_Stairs && recipe.axis_index == 1)
     recipe.axis_index = 0;
+}
+
+primitive_frame_t make_primitive_frame(const linalg::vec3 &axis)
+{
+  primitive_frame_t frame;
+  frame.axis = linalg::normalize(axis);
+  const bool axis_is_vertical = std::abs(frame.axis.y) > 0.5f;
+  const linalg::vec3 world_up =
+      axis_is_vertical ? linalg::vec3{0.f, 0.f, 1.f} : linalg::vec3{0.f, 1.f, 0.f};
+  frame.side = linalg::normalize(linalg::cross(world_up, frame.axis));
+  frame.up = linalg::normalize(linalg::cross(frame.axis, frame.side));
+  return frame;
 }
 
 linalg::vec3 turn_about_up(const linalg::vec3 &point, int quarter_turns)

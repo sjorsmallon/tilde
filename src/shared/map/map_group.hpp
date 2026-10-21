@@ -1,6 +1,5 @@
 #pragma once
 
-#include "brush/primitive_recipe.hpp"
 #include "entity_uid.hpp"
 #include "map_connection.hpp"
 #include "span.hpp"
@@ -24,8 +23,8 @@
 // is the same object having two groups, an inner and an outer, and then every
 // pick needs an "enter level" gesture. group_objects enforces the exclusion,
 // prune_map_groups refuses it out of a file. A group of ONE is a group: a
-// click on it selects what the member alone would, which is harmless, and a
-// lone prism needs a group to carry its recipe. Only an empty group is none.
+// click on it selects what the member alone would, which is harmless. Only an
+// empty group is none.
 //
 // A member that stops existing is INERT, not pruned: deleting a member and
 // undoing brings it back still grouped, which a prune on delete would break.
@@ -49,11 +48,6 @@ struct map_group_t
   entity_uid_t              uid = null_entity_uid;
   std::string               name;
   std::vector<entity_uid_t> members;
-
-  // Present on a group the primitive tool placed: the members are what the
-  // recipe builds, so the panel can show the numbers and regenerate them. A
-  // copy of PART of such a group is not the primitive and carries no recipe.
-  std::optional<primitive_recipe_t> recipe;
 
   bool operator==(const map_group_t&) const = default;
 };
@@ -90,11 +84,6 @@ void add_group_with_uid(map_t& map, map_group_t group);
 // Dissolves the group; its members become loose objects. False when no group
 // has that uid.
 bool ungroup(map_t& map, entity_uid_t group_uid);
-
-// The freeze: a hand edit to a member means the group is no longer what its
-// recipe builds, so the recipe goes. True when one was dropped; a member of
-// no group, or of a group without a recipe, is false and no error.
-bool drop_recipe_of_group_containing(map_t& map, entity_uid_t member);
 
 // Drops every group none of whose members the map still has. Returns how many
 // it dropped. The delete's companion: called after the objects are removed,

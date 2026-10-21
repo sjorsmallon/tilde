@@ -5,7 +5,9 @@
 // displacement_entity, plus one retired wedge_entity):
 //   1. Legacy geometry entities convert into map.geometry at load, and land in
 //      the geometry list rather than the entity list -- a displacement_entity
-//      into a brush with one subdivided face (geometry_def.md Track D).
+//      into a mesh with one subdivided face (geometry_def.md Track D), since
+//      every brush and static mesh reads as a mesh (geometry_def.md §11.8
+//      increment 6; the writer emits neither).
 //   2. Wedge entities are dropped at load.
 //   3. Saving the converted map and re-loading it is lossless for geometry, and
 //      the saved file no longer contains the legacy form.
@@ -20,6 +22,9 @@
 #include "map/map.hpp"
 #include "map/game_session.hpp"
 #include "map/map_connection.hpp"
+#include "map/map_geometry_legacy.hpp"
+#include "map/map_geometry_mesh.hpp"
+#include "map/mesh/mesh_decomposition.hpp"
 #include "network/map_transfer.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -49,15 +54,52 @@ static size_t count_geometry_of_kind(const map_t &m, geometry_kind_t kind)
   return n;
 }
 
-// The brushes, in map order. The fixture's legacy aabb_entity blocks convert to
-// these -- a box IS a brush since geometry_def.md Track B.
-static std::vector<const brush_geometry_t *> get_brushes(const map_t &m)
+// The meshes, in map order. The fixture's legacy aabb_entity blocks convert to
+// boxes, a box IS a brush (geometry_def.md Track B), and a brush reads as a
+// mesh (geometry_def.md §11.8 increment 6).
+static std::vector<const mesh_geometry_t *> get_meshes(const map_t &m)
 {
-  std::vector<const brush_geometry_t *> out;
+  std::vector<const mesh_geometry_t *> out;
   for (const map_geometry_t &g : m.geometry)
-    if (const auto *brush = std::get_if<brush_geometry_t>(&g.value))
-      out.push_back(brush);
+    if (const auto *mesh = std::get_if<mesh_geometry_t>(&g.value))
+      out.push_back(mesh);
   return out;
+}
+
+static const mesh_face_t *find_mesh_face_by_normal(const mesh_geometry_t &mesh,
+                                                   const linalg::vec3 &normal)
+{
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
+    if (linalg::dot(compute_mesh_world_face_plane(mesh, face_index).normal, normal) > 0.999f)
+      return &mesh.faces[face_index];
+  return nullptr;
+}
+
+// Eight vertices and one face per world axis: what a converted box is.
+static bool mesh_is_axis_aligned_box(const mesh_geometry_t &mesh)
+{
+  if (mesh.vertices.size() != 8 || mesh.faces.size() != 6)
+    return false;
+  for (const linalg::vec3 &axis : {linalg::vec3{1, 0, 0}, linalg::vec3{-1, 0, 0},
+                                   linalg::vec3{0, 1, 0}, linalg::vec3{0, -1, 0},
+                                   linalg::vec3{0, 0, 1}, linalg::vec3{0, 0, -1}})
+    if (!find_mesh_face_by_normal(mesh, axis))
+      return false;
+  return true;
+}
+
+static bool point_is_inside_any_piece(Span<const collision_piece_t> pieces,
+                                      const linalg::vec3 &point)
+{
+  for (const collision_piece_t &piece : pieces)
+  {
+    bool inside = true;
+    for (const Plane &plane : piece.planes)
+      inside = inside && linalg::dot(point - plane.point, plane.normal) <= 0.f;
+    if (inside)
+      return true;
+  }
+  return false;
 }
 
 static indirect_sh_l1_t bounce_l1_probe_value(const linalg::vec3 &l0,
@@ -81,23 +123,27 @@ int main()
     return fail("try_load_map(maps/test) failed");
   map_t &loaded = *loaded_opt;
 
-  const size_t brushes = count_geometry_of_kind(loaded, geometry_kind_t::Brush);
-  if (brushes == 0)
-    return fail("conversion: expected at least 1 brush from the fixture's "
+  const size_t meshes = count_geometry_of_kind(loaded, geometry_kind_t::Mesh);
+  if (meshes == 0)
+    return fail("conversion: expected at least 1 mesh from the fixture's "
                 "legacy aabb_entity blocks");
+  if (count_geometry_of_kind(loaded, geometry_kind_t::Brush) != 0 ||
+      count_geometry_of_kind(loaded, geometry_kind_t::Static_Mesh) != 0)
+    return fail("conversion: a legacy kind survived the load; every brush and static "
+                "mesh reads as a mesh (geometry_def.md 11.8 increment 6)");
 
   // A displacement is a brush with one SUBDIVIDED FACE now (geometry_def.md
   // Track D), so the fixture's displacement_entity converts into the brush list
   // like everything else -- and what identifies it is the grid it kept.
   size_t subdivided_faces = 0;
-  for (const brush_geometry_t *brush : get_brushes(loaded))
-    for (const face_surface_t &face : brush->face_surfaces)
-      if (face.subdivision_level > 0)
+  for (const mesh_geometry_t *mesh : get_meshes(loaded))
+    for (const mesh_face_t &face : mesh->faces)
+      if (face.surface.subdivision_level > 0)
         ++subdivided_faces;
 
   if (subdivided_faces != 1)
     return fail("conversion: expected the fixture's displacement_entity to "
-                "become exactly one subdivided brush face");
+                "become exactly one subdivided mesh face");
 
   // Geometry must NOT have landed in the entity list — that's the whole point.
   for (const auto &e : loaded.entities)
@@ -111,12 +157,12 @@ int main()
   // Every converted box must carry the legacy volume's half_extents, not a
   // default — a zeroed or default-sized box means the "volume" blob wasn't read.
   // The extents live in the point set now, so they are read back off the bound.
-  for (const brush_geometry_t *brush : get_brushes(loaded))
+  for (const mesh_geometry_t *mesh : get_meshes(loaded))
   {
-    if (!brush_is_axis_aligned_box(brush->hull_points))
-      return fail("conversion: a converted aabb_entity is not a box-shaped brush");
+    if (!mesh_is_axis_aligned_box(*mesh))
+      return fail("conversion: a converted aabb_entity is not a box-shaped mesh");
 
-    const aabb_bounds_t bounds = compute_brush_bounds(brush->hull_points);
+    const aabb_bounds_t bounds = get_bounds(geometry_value_t{*mesh});
     const linalg::vec3  h      = (bounds.max - bounds.min) * 0.5f;
     if (h.x == 0.f && h.y == 0.f && h.z == 0.f)
       return fail("conversion: box brush loaded with zeroed half_extents");
@@ -126,26 +172,34 @@ int main()
   }
 
   // A converted grid must be sized for its subdivision level, which is the
-  // invariant the fixed-size schema array used to guarantee -- and the brush it
-  // sits on must still build a displaced polyhedron, which is what says the grid
-  // landed on a QUAD.
-  for (const brush_geometry_t *brush : get_brushes(loaded))
+  // invariant the fixed-size schema array used to guarantee, sit on a QUAD, and
+  // collide as the surface it draws: the column path of a sculpted face answers
+  // with more than the one piece a flat box is.
+  for (const map_geometry_t &entry : loaded.geometry)
   {
-    for (const face_surface_t &face : brush->face_surfaces)
+    const mesh_geometry_t &mesh = std::get<mesh_geometry_t>(entry.value);
+    bool sculpted = false;
+    for (const mesh_face_t &face : mesh.faces)
     {
-      if (face.subdivision_level <= 0)
+      if (face.surface.subdivision_level <= 0)
         continue;
-      if (!face_is_subdivided(face))
+      sculpted = true;
+      if (!face_is_subdivided(face.surface))
         return fail("conversion: a subdivided face's grid does not match its "
                     "subdivision level");
-      if (face.blend.size() != face.offsets.size())
+      if (face.surface.blend.size() != face.surface.offsets.size())
         return fail("conversion: a subdivided face's blend array is not sized "
                     "for its grid");
+      if (face.vertex_indices.size() != 4)
+        return fail("conversion: a converted grid did not land on a quad");
     }
 
-    if (!try_build_displaced_polyhedron(*brush, {}))
-      return fail("conversion: a converted brush does not build a displaced "
-                  "polyhedron");
+    const std::vector<collision_piece_t> pieces =
+        get_collision_pieces(entry.value, entry.uid, loaded.geometry);
+    if (pieces.empty())
+      return fail("conversion: a converted mesh does not collide");
+    if (sculpted && pieces.size() < 2)
+      return fail("conversion: the sculpted face collides as a flat box");
   }
 
   // --- 2. Save & re-load --------------------------------------------------
@@ -163,13 +217,13 @@ int main()
   std::filesystem::remove(out + ".navmesh");
 
   // --- 3. Compare counts --------------------------------------------------
-  if (count_geometry_of_kind(reloaded, geometry_kind_t::Brush) != brushes)
-    return fail("roundtrip: brush count drift");
+  if (count_geometry_of_kind(reloaded, geometry_kind_t::Mesh) != meshes)
+    return fail("roundtrip: mesh count drift");
   {
     size_t reloaded_subdivided_faces = 0;
-    for (const brush_geometry_t *brush : get_brushes(reloaded))
-      for (const face_surface_t &face : brush->face_surfaces)
-        if (face.subdivision_level > 0)
+    for (const mesh_geometry_t *mesh : get_meshes(reloaded))
+      for (const mesh_face_t &face : mesh->faces)
+        if (face.surface.subdivision_level > 0)
           ++reloaded_subdivided_faces;
     if (reloaded_subdivided_faces != subdivided_faces)
       return fail("roundtrip: subdivided face count drift");
@@ -200,10 +254,15 @@ int main()
         saved.find("\"wedge_entity\"") != std::string::npos)
       return fail("roundtrip: saved text still contains legacy geometry "
                   "entity blocks");
-    // A box is a brush now (Track B), so "box" is a READ-ONLY legacy keyword:
-    // the writer must never emit one again, or the next load converts forever.
-    if (saved.find("\nbrush\n{") == std::string::npos)
-      return fail("roundtrip: saved text has no brush geometry block");
+    // A box is a brush (Track B) and a brush is a mesh (§11), so "box", "brush"
+    // and "static_mesh" are READ-ONLY legacy keywords: the writer must never
+    // emit one again, or the next load converts forever.
+    if (saved.find("\nmesh\n{") == std::string::npos)
+      return fail("roundtrip: saved text has no mesh geometry block");
+    if (saved.find("\nbrush\n{") != std::string::npos)
+      return fail("roundtrip: saved text still writes legacy brush blocks");
+    if (saved.find("\nstatic_mesh\n{") != std::string::npos)
+      return fail("roundtrip: saved text still writes legacy static_mesh blocks");
     if (saved.find("\nbox\n{") != std::string::npos)
       return fail("roundtrip: saved text still writes legacy box blocks");
     // Same for "displacement" (Track D): the kind is gone and the keyword is
@@ -242,15 +301,18 @@ int main()
     if (reloaded.geometry.size() != 1)
       return fail("rotation: the static mesh did not survive the round trip");
 
-    const auto *reloaded_mesh = std::get_if<static_mesh_geometry_t>(&reloaded.geometry[0].value);
-    if (!reloaded_mesh)
-      return fail("rotation: the static mesh came back as another kind");
-
-    // Bit-exact, because geometry_values_equal is and it is the undo primitive:
-    // a lossy round trip pushes a phantom undo entry the moment anything is
-    // touched. That is what %.9g in format_quat_exact is for.
-    if (!geometry_values_equal(reloaded.geometry[0].value, rotated.geometry[0].value))
-      return fail("rotation: a saved-and-reloaded static mesh compares unequal to itself");
+    // A static_mesh row reads back as the asset-sourced mesh it converts to
+    // (geometry_def.md §11.8 increment 6), bit-exact: geometry_values_equal is
+    // the undo primitive, and a lossy round trip pushes a phantom undo entry
+    // the moment anything is touched. That is what %.9g in format_quat_exact
+    // is for.
+    const auto *reloaded_mesh = std::get_if<mesh_geometry_t>(&reloaded.geometry[0].value);
+    if (!reloaded_mesh || !std::holds_alternative<asset_mesh_source_t>(reloaded_mesh->source))
+      return fail("rotation: the static mesh did not read back as an asset-sourced mesh");
+    if (!geometry_values_equal(reloaded.geometry[0].value,
+                               geometry_value_t{convert_static_mesh_to_mesh(mesh)}))
+      return fail("rotation: a saved-and-reloaded static mesh compares unequal to the mesh "
+                  "it converts to");
 
     // The legacy geometry key, converted through the same euler convention the
     // pre-cutover writer used.
@@ -260,9 +322,9 @@ int main()
     legacy.replace(rotation_key, line_end - rotation_key, "\"orientation\" \"0 90 0\"");
 
     const map_t converted = parse_map_from_string(legacy);
-    const auto *converted_mesh = std::get_if<static_mesh_geometry_t>(&converted.geometry[0].value);
+    const auto *converted_mesh = std::get_if<mesh_geometry_t>(&converted.geometry[0].value);
     if (!converted_mesh)
-      return fail("rotation: the legacy orientation key did not read back a static mesh");
+      return fail("rotation: the legacy orientation key did not read back a mesh");
 
     const linalg::vec3f converted_facing = linalg::forward(converted_mesh->orientation);
     const linalg::vec3f expected_facing  = linalg::forward(linalg::from_euler_degrees({0, 90, 0}));
@@ -318,11 +380,13 @@ int main()
     map_t silent;
     silent.add_geometry(mesh);
     const map_t reloaded = parse_map_from_string(serialize_map_to_string(silent));
-    const auto *reloaded_mesh = std::get_if<static_mesh_geometry_t>(&reloaded.geometry[0].value);
+    const auto *reloaded_mesh = std::get_if<mesh_geometry_t>(&reloaded.geometry[0].value);
     if (!reloaded_mesh || reloaded_mesh->collides)
       return fail("mesh collision: collides = false did not survive the file");
-    if (!geometry_values_equal(reloaded.geometry[0].value, silent.geometry[0].value))
-      return fail("mesh collision: a reloaded non-colliding mesh compares unequal to itself");
+    if (!geometry_values_equal(reloaded.geometry[0].value,
+                               geometry_value_t{convert_static_mesh_to_mesh(mesh)}))
+      return fail("mesh collision: a reloaded non-colliding mesh compares unequal to its "
+                  "conversion");
   }
 
   // A static mesh can switch its shadow off, and only then does the file say so.
@@ -337,10 +401,12 @@ int main()
     map_t fixture;
     fixture.add_geometry(mesh);
     const map_t reloaded = parse_map_from_string(serialize_map_to_string(fixture));
-    const auto *reloaded_mesh = std::get_if<static_mesh_geometry_t>(&reloaded.geometry[0].value);
+    const auto *reloaded_mesh = std::get_if<mesh_geometry_t>(&reloaded.geometry[0].value);
     if (!reloaded_mesh || reloaded_mesh->casts_shadows)
       return fail("mesh shadow: casts_shadows = false did not survive the file");
-    if (geometry_values_equal(reloaded.geometry[0].value, casting.geometry[0].value))
+    const geometry_value_t casting_converted{convert_static_mesh_to_mesh(
+        std::get<static_mesh_geometry_t>(casting.geometry[0].value))};
+    if (geometry_values_equal(reloaded.geometry[0].value, casting_converted))
       return fail("mesh shadow: the flag does not take part in equality");
   }
 
@@ -581,8 +647,8 @@ int main()
     const std::string canonical = serialize_map_to_string(loaded);
     const map_t from_canonical = parse_map_from_string(canonical);
 
-    if (count_geometry_of_kind(from_canonical, geometry_kind_t::Brush) != brushes)
-      return fail("canonical: brush count drift through string round-trip");
+    if (count_geometry_of_kind(from_canonical, geometry_kind_t::Mesh) != meshes)
+      return fail("canonical: mesh count drift through string round-trip");
 
     // Hash must be stable through a full serialize->parse->hash cycle.
     if (compute_map_content_hash(from_canonical) != hash0)
@@ -957,16 +1023,18 @@ int main()
     face_map.materials = {"", "resources/textures/unused_here",
                           "resources/textures/harsh_bricks"};
 
+    // Authored as a brush: the writer converts it, so the file holds a mesh row
+    // whose faces are keyed by index, found here by their normals.
     brush_geometry_t brush;
     brush.hull_points = make_box_brush_points({0, 0, 0}, {64, 64, 64});
     sync_face_surfaces(brush);
     if (brush.face_surfaces.size() != 6)
       return fail("faces: a box brush did not hull into six faces");
 
-    brush.face_surfaces[0].material       = 2;
-    brush.face_surfaces[1].emits_geometry = false;
-    brush.face_surfaces[2].uv.u_scale     = 32.0f;
-    brush.face_surfaces[2].uv.u_shift     = 7.5f;
+    face_surface_for(brush, Plane{{64, 0, 0}, {1, 0, 0}}).material = 2;
+    face_surface_for(brush, Plane{{-64, 0, 0}, {-1, 0, 0}}).emits_geometry = false;
+    face_surface_for(brush, Plane{{0, 64, 0}, {0, 1, 0}}).uv.u_scale = 32.0f;
+    face_surface_for(brush, Plane{{0, 64, 0}, {0, 1, 0}}).uv.u_shift = 7.5f;
     face_map.add_geometry(brush);
 
     const std::string canonical = serialize_map_to_string(face_map);
@@ -984,23 +1052,26 @@ int main()
     if (reparsed.geometry.size() != 1)
       return fail("faces: the brush did not survive the round trip");
 
-    const brush_geometry_t &reloaded =
-        std::get<brush_geometry_t>(reparsed.geometry.front().value);
-    if (reloaded.face_surfaces.size() != brush.face_surfaces.size())
+    const mesh_geometry_t &reloaded = std::get<mesh_geometry_t>(reparsed.geometry.front().value);
+    if (reloaded.faces.size() != brush.face_surfaces.size())
       return fail("faces: a face was lost across the round trip");
-    if (reloaded.face_surfaces[0].material != 1)
+    const mesh_face_t *textured = find_mesh_face_by_normal(reloaded, {1, 0, 0});
+    const mesh_face_t *nodraw = find_mesh_face_by_normal(reloaded, {-1, 0, 0});
+    const mesh_face_t *shifted = find_mesh_face_by_normal(reloaded, {0, 1, 0});
+    if (!textured || !nodraw || !shifted)
+      return fail("faces: the box's faces did not come back on their planes");
+    if (textured->surface.material != 1)
       return fail("faces: the remap did not follow the material it kept");
-    if (reloaded.face_surfaces[1].emits_geometry)
+    if (nodraw->surface.emits_geometry)
       return fail("faces: emits_geometry did not survive");
-    if (reloaded.face_surfaces[2].uv.u_scale != 32.0f ||
-        reloaded.face_surfaces[2].uv.u_shift != 7.5f)
+    if (shifted->surface.uv.u_scale != 32.0f || shifted->surface.uv.u_shift != 7.5f)
       return fail("faces: the uv channel did not survive bit-exactly");
 
     if (serialize_map_to_string(reparsed) != canonical)
       return fail("faces: re-serialized text is not stable");
 
-    // The pre-faces form: no face blocks at all. Every face falls back to the
-    // brush default, which is what makes this format change need no version.
+    // The pre-faces form: a brush with no stored surfaces. Every face of the
+    // mesh it converts to carries the brush default.
     brush_geometry_t faceless_brush;
     faceless_brush.hull_points = make_box_brush_points({0, 0, 0}, {32, 32, 32});
     map_t faceless_map;
@@ -1009,9 +1080,14 @@ int main()
         parse_map_from_string(serialize_map_to_string(faceless_map));
     if (faceless_reparsed.geometry.size() != 1)
       return fail("faces: a brush with no face blocks did not load");
-    if (!std::get<brush_geometry_t>(faceless_reparsed.geometry.front().value)
-             .face_surfaces.empty())
-      return fail("faces: a brush with no face blocks invented some");
+    const mesh_geometry_t &faceless =
+        std::get<mesh_geometry_t>(faceless_reparsed.geometry.front().value);
+    if (faceless.faces.size() != 6)
+      return fail("faces: a brush with no face blocks did not read as a six-faced mesh");
+    for (const mesh_face_t &face : faceless.faces)
+      if (face.surface.material != 0 || !face.surface.emits_geometry ||
+          face.surface.subdivision_level != 0)
+        return fail("faces: a brush with no face blocks invented a surface");
   }
 
   // --- the tie (prediction_def.md §4) -----------------------------------------
@@ -1067,10 +1143,11 @@ int main()
       return fail("tie: an owner uid the map does not hold was not refused");
   }
 
-  // --- the hole (geometry_def.md Track H) -------------------------------------
+  // --- the hole, baked in (geometry_def.md §11; Track H superseded) -------------
   //
-  // `subtracts_from` on the HOLE, written only when set, so a solid brush saves
-  // byte-for-byte as before.
+  // A hole brush is not a solid: the writer cuts it into its wall and emits the
+  // wall's boundary as ONE mesh, so the file holds no hole and no link, and the
+  // mesh it holds is not convex, decomposes, and has nothing where the hole was.
   {
     map_t hole_map;
     const entity_uid_t wall = hole_map.add_geometry(make_box_brush({0, 0, 0}, {64, 8, 64}));
@@ -1081,34 +1158,31 @@ int main()
     const std::string text     = serialize_map_to_string(hole_map);
     const map_t       reloaded = parse_map_from_string(text);
 
-    if (text.find("\"subtracts_from\"") == std::string::npos)
-      return fail("hole: the subtracts_from key was not written");
-    if (reloaded.geometry.size() != 2)
-      return fail("hole: the geometry did not survive the round trip");
-    if (std::get<brush_geometry_t>(reloaded.geometry[0].value).subtracts_from_uid !=
-        null_entity_uid)
-      return fail("hole: the wall came back subtracting from something");
-    if (std::get<brush_geometry_t>(reloaded.geometry[1].value).subtracts_from_uid != wall)
-      return fail("hole: the wall uid did not survive the round trip");
-    if (!geometry_values_equal(reloaded.geometry[1].value, hole_map.geometry[1].value))
-      return fail("hole: a reloaded hole compares unequal to itself");
+    if (text.find("\"subtracts_from\"") != std::string::npos)
+      return fail("hole: the writer still emits a hole link");
+    if (reloaded.geometry.size() != 1 || reloaded.geometry[0].uid != wall)
+      return fail("hole: the file holds something other than the cut wall");
+    const mesh_geometry_t &cut = std::get<mesh_geometry_t>(reloaded.geometry[0].value);
+    if (cut.faces.size() != 16)
+      return fail("hole: a slab with a square hole through it has sixteen faces");
+    if (mesh_is_convex(cut))
+      return fail("hole: the cut wall is convex, so the hole is not in it");
+
+    const std::vector<collision_piece_t> pieces =
+        get_collision_pieces(reloaded.geometry[0].value, wall, reloaded.geometry);
+    if (pieces.empty())
+      return fail("hole: the cut wall does not collide");
+    if (point_is_inside_any_piece(pieces, {0, 0, 0}))
+      return fail("hole: the hole still collides");
+    if (!point_is_inside_any_piece(pieces, {40, 0, 40}))
+      return fail("hole: the slab beside the hole does not collide");
     if (serialize_map_to_string(reloaded) != text)
       return fail("hole: re-serialized text is not stable");
-
-    map_t solid_map;
-    solid_map.add_geometry(make_box_brush({0, 0, 0}, {16, 16, 16}));
-    if (serialize_map_to_string(solid_map).find("\"subtracts_from\"") != std::string::npos)
-      return fail("hole: a solid brush wrote a subtracts_from key");
-
-    geometry_value_t solid = hole_map.geometry[1].value;
-    std::get<brush_geometry_t>(solid).subtracts_from_uid = null_entity_uid;
-    if (geometry_values_equal(solid, hole_map.geometry[1].value))
-      return fail("hole: clearing subtracts_from did not change the value");
   }
 
-  printf("map_migration_test: OK (%zu brushes, %zu subdivided faces converted from "
+  printf("map_migration_test: OK (%zu meshes, %zu subdivided faces converted from "
          "legacy entity blocks, wedges dropped, trigger round-trip OK, "
          "canonical hash stable, package round-trip OK)\n",
-         brushes, subdivided_faces);
+         meshes, subdivided_faces);
   return 0;
 }

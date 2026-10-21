@@ -215,8 +215,6 @@ map_t copy_map_piece(const map_t& map, Span<const entity_uid_t> uids)
     map_group_t copy = group;
     if (remap_group_members(copy, identity) == 0)
       continue;
-    if (copy.members.size() != group.members.size())
-      copy.recipe.reset();
     add_group_with_uid(piece, std::move(copy));
   }
 
@@ -322,6 +320,14 @@ paste_result_t paste_map_piece(map_t& destination, const map_t& source, const li
       {
         face.material       = adopt_material(face.material);
         face.blend_material = adopt_material(face.blend_material);
+      }
+    }
+    if (mesh_geometry_t* mesh = std::get_if<mesh_geometry_t>(&value))
+    {
+      for (mesh_face_t& face : mesh->faces)
+      {
+        face.surface.material       = adopt_material(face.surface.material);
+        face.surface.blend_material = adopt_material(face.surface.blend_material);
       }
     }
 

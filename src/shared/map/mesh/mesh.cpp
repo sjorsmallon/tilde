@@ -1,6 +1,7 @@
 #include "mesh.hpp"
 
 #include "log.hpp"
+#include "map/brush/brush.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,39 +12,6 @@ namespace shared
 
 namespace
 {
-
-struct directed_edge_t
-{
-  uint32_t a;
-  uint32_t b;
-  uint32_t face_index;
-};
-
-bool edge_before(const directed_edge_t &left, const directed_edge_t &right)
-{
-  return left.a != right.a ? left.a < right.a : left.b < right.b;
-}
-
-std::vector<directed_edge_t> collect_directed_edges(const mesh_geometry_t &mesh)
-{
-  std::vector<directed_edge_t> edges;
-  for (uint32_t face_index = 0; face_index < mesh.faces.size(); ++face_index)
-  {
-    const std::vector<uint32_t> &ring = mesh.faces[face_index].vertex_indices;
-    for (size_t i = 0; i < ring.size(); ++i)
-      edges.push_back({ring[i], ring[(i + 1) % ring.size()], face_index});
-  }
-  std::sort(edges.begin(), edges.end(), edge_before);
-  return edges;
-}
-
-bool has_directed_edge(const std::vector<directed_edge_t> &sorted_edges, uint32_t a, uint32_t b)
-{
-  const directed_edge_t probe{a, b, 0};
-  std::vector<directed_edge_t>::const_iterator found =
-      std::lower_bound(sorted_edges.begin(), sorted_edges.end(), probe, edge_before);
-  return found != sorted_edges.end() && found->a == a && found->b == b;
-}
 
 linalg::vec3 newell_normal(const mesh_geometry_t &mesh, const std::vector<uint32_t> &ring)
 {
@@ -105,7 +73,37 @@ std::optional<mesh_defect_t> find_face_defect(const mesh_geometry_t &mesh, uint3
   return std::nullopt;
 }
 
+bool edge_before(const mesh_directed_edge_t &left, const mesh_directed_edge_t &right)
+{
+  return left.a != right.a ? left.a < right.a : left.b < right.b;
+}
+
 } // namespace
+
+std::vector<mesh_directed_edge_t> collect_mesh_directed_edges(const mesh_geometry_t &mesh)
+{
+  std::vector<mesh_directed_edge_t> edges;
+  for (uint32_t face_index = 0; face_index < mesh.faces.size(); ++face_index)
+  {
+    const std::vector<uint32_t> &ring = mesh.faces[face_index].vertex_indices;
+    for (size_t i = 0; i < ring.size(); ++i)
+      edges.push_back({ring[i], ring[(i + 1) % ring.size()], face_index});
+  }
+  std::sort(edges.begin(), edges.end(), edge_before);
+  return edges;
+}
+
+std::optional<uint32_t>
+try_find_mesh_face_walking_edge(Span<const mesh_directed_edge_t> sorted_edges, uint32_t a,
+                                uint32_t b)
+{
+  const mesh_directed_edge_t probe{a, b, 0};
+  const mesh_directed_edge_t *found =
+      std::lower_bound(sorted_edges.begin(), sorted_edges.end(), probe, edge_before);
+  if (found == sorted_edges.end() || found->a != a || found->b != b)
+    return std::nullopt;
+  return found->face_index;
+}
 
 std::optional<mesh_defect_t> find_mesh_defect(const mesh_geometry_t &mesh)
 {
@@ -113,13 +111,13 @@ std::optional<mesh_defect_t> find_mesh_defect(const mesh_geometry_t &mesh)
     if (std::optional<mesh_defect_t> defect = find_face_defect(mesh, face_index))
       return defect;
 
-  const std::vector<directed_edge_t> edges = collect_directed_edges(mesh);
+  const std::vector<mesh_directed_edge_t> edges = collect_mesh_directed_edges(mesh);
   for (size_t i = 1; i < edges.size(); ++i)
     if (edges[i].a == edges[i - 1].a && edges[i].b == edges[i - 1].b)
       return mesh_defect_t{mesh_defect_kind_t::Edge_Is_Doubled, edges[i].face_index, edges[i].a,
                            edges[i].b};
-  for (const directed_edge_t &edge : edges)
-    if (!has_directed_edge(edges, edge.b, edge.a))
+  for (const mesh_directed_edge_t &edge : edges)
+    if (!try_find_mesh_face_walking_edge(edges, edge.b, edge.a))
       return mesh_defect_t{mesh_defect_kind_t::Edge_Is_Unpaired, edge.face_index, edge.a, edge.b};
 
   return std::nullopt;
@@ -153,11 +151,108 @@ std::string format_mesh_defect(const mesh_defect_t &defect)
 
 bool mesh_is_closed(const mesh_geometry_t &mesh)
 {
-  const std::vector<directed_edge_t> edges = collect_directed_edges(mesh);
-  for (const directed_edge_t &edge : edges)
-    if (!has_directed_edge(edges, edge.b, edge.a))
+  const std::vector<mesh_directed_edge_t> edges = collect_mesh_directed_edges(mesh);
+  for (const mesh_directed_edge_t &edge : edges)
+    if (!try_find_mesh_face_walking_edge(edges, edge.b, edge.a))
       return false;
   return true;
+}
+
+float compute_mesh_face_area(const mesh_geometry_t &mesh, uint32_t face_index)
+{
+  if (face_index >= mesh.faces.size())
+    fatal_error("compute_mesh_face_area: face {} of {}", face_index, mesh.faces.size());
+  return 0.5f * linalg::length(newell_normal(mesh, mesh.faces[face_index].vertex_indices));
+}
+
+float compute_mesh_volume(const mesh_geometry_t &mesh)
+{
+  float six_volumes = 0.f;
+  for (const mesh_face_t &face : mesh.faces)
+  {
+    const std::vector<uint32_t> &ring = face.vertex_indices;
+    const linalg::vec3 &first = mesh.vertices[ring[0]];
+    for (size_t i = 1; i + 1 < ring.size(); ++i)
+      six_volumes += linalg::dot(
+          first, linalg::cross(mesh.vertices[ring[i]], mesh.vertices[ring[i + 1]]));
+  }
+  return six_volumes / 6.f;
+}
+
+aabb_bounds_t compute_mesh_local_bounds(const mesh_geometry_t &mesh)
+{
+  if (mesh.vertices.empty())
+    return {};
+  aabb_bounds_t bounds{mesh.vertices[0], mesh.vertices[0]};
+  for (const linalg::vec3 &vertex : mesh.vertices)
+    expand_aabb_to_include_point(bounds, vertex);
+  return bounds;
+}
+
+mesh_geometry_t copy_mesh_pose_and_surface(const mesh_geometry_t &mesh)
+{
+  mesh_geometry_t copy;
+  copy.position = mesh.position;
+  copy.orientation = mesh.orientation;
+  copy.surface = mesh.surface;
+  copy.collides = mesh.collides;
+  copy.casts_shadows = mesh.casts_shadows;
+  copy.owner_uid = mesh.owner_uid;
+  return copy;
+}
+
+std::vector<mesh_geometry_t> separate_mesh_shells(const mesh_geometry_t &mesh)
+{
+  const std::vector<mesh_directed_edge_t> edges = collect_mesh_directed_edges(mesh);
+  const uint32_t face_count = (uint32_t)mesh.faces.size();
+  std::vector<bool> visited(face_count, false);
+  std::vector<mesh_geometry_t> shells;
+
+  for (uint32_t seed = 0; seed < face_count; ++seed)
+  {
+    if (visited[seed])
+      continue;
+    std::vector<uint32_t> shell_faces;
+    std::vector<uint32_t> pending{seed};
+    visited[seed] = true;
+    while (!pending.empty())
+    {
+      const uint32_t face_index = pending.back();
+      pending.pop_back();
+      shell_faces.push_back(face_index);
+      const std::vector<uint32_t> &ring = mesh.faces[face_index].vertex_indices;
+      for (size_t i = 0; i < ring.size(); ++i)
+      {
+        const std::optional<uint32_t> neighbour =
+            try_find_mesh_face_walking_edge(edges, ring[(i + 1) % ring.size()], ring[i]);
+        if (neighbour && !visited[*neighbour])
+        {
+          visited[*neighbour] = true;
+          pending.push_back(*neighbour);
+        }
+      }
+    }
+    std::sort(shell_faces.begin(), shell_faces.end());
+
+    mesh_geometry_t shell = copy_mesh_pose_and_surface(mesh);
+    std::vector<uint32_t> new_index(mesh.vertices.size(), UINT32_MAX);
+    for (uint32_t face_index : shell_faces)
+    {
+      mesh_face_t face = mesh.faces[face_index];
+      for (uint32_t &index : face.vertex_indices)
+      {
+        if (new_index[index] == UINT32_MAX)
+        {
+          new_index[index] = (uint32_t)shell.vertices.size();
+          shell.vertices.push_back(mesh.vertices[index]);
+        }
+        index = new_index[index];
+      }
+      shell.faces.push_back(std::move(face));
+    }
+    shells.push_back(std::move(shell));
+  }
+  return shells;
 }
 
 Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index)

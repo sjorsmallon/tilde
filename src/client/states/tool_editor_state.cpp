@@ -24,6 +24,7 @@
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
 #include "../editor/tools/brush_tool.hpp"
+#include "../editor/tools/face_tool.hpp"
 #include "../editor/tools/lightmap_tool.hpp"
 #include "../editor/tools/path_tool.hpp"
 #include "../editor/path_editing.hpp"
@@ -94,6 +95,7 @@ constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
     {editor_tool_t::path,        "Path",        toolbox_kind_t::viewport_tool,   input::key_t::L},
     {editor_tool_t::clip,        "Clip",        toolbox_kind_t::viewport_tool,   input::key_t::X},
     {editor_tool_t::primitive,   "Primitive",   toolbox_kind_t::viewport_tool,   input::key_t::P},
+    {editor_tool_t::face,        "Face",        toolbox_kind_t::viewport_tool,   input::key_t::F},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
@@ -357,6 +359,7 @@ void Tool_Editor_State::on_enter()
     tools[editor_tool_t::path]        = std::make_unique<Path_Tool>();
     tools[editor_tool_t::clip]        = std::make_unique<Clip_Tool>();
     tools[editor_tool_t::primitive]   = std::make_unique<Primitive_Tool>();
+    tools[editor_tool_t::face]        = std::make_unique<Face_Tool>();
   }
 
   // Enable first tool

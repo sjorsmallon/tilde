@@ -2,6 +2,7 @@
 
 #include "../../shared/collision/collision_detection.hpp"
 #include "../../shared/map/map.hpp"
+#include "../../shared/map/map_geometry_mesh.hpp"
 #include "../../shared/shapes.hpp"
 #include "entity_editor_traits.hpp"
 
@@ -60,6 +61,22 @@ build_editor_bvh(const shared::map_t &map)
     {
       const shared::collision_piece_t box = shared::static_mesh_collision_box(*static_mesh);
       add_leaf(entry.uid, box.bounds, box.planes);
+      continue;
+    }
+
+    // A mesh with its collision switched off is still clicked as the shape it
+    // would collide as, and by its bound when that shape does not decompose.
+    const shared::mesh_geometry_t* mesh = std::get_if<shared::mesh_geometry_t>(&entry.value);
+    if (mesh != nullptr && !mesh->collides)
+    {
+      shared::mesh_geometry_t as_collider = *mesh;
+      as_collider.collides = true;
+      const std::vector<shared::collision_piece_t> pieces =
+          shared::compute_mesh_collision_pieces(as_collider, entry.uid);
+      if (pieces.empty())
+        add_leaf(entry.uid, shared::get_bounds(entry.value));
+      for (const shared::collision_piece_t &piece : pieces)
+        add_leaf(entry.uid, piece.bounds, piece.planes);
       continue;
     }
 

@@ -4,8 +4,8 @@
 #include "../shared/color.hpp"
 #include "../shared/frame_timing.hpp"
 #include "../shared/log.hpp"
-#include "../shared/map/brush/brush_smoothing.hpp"
 #include "../shared/map/brush/face_neighbour.hpp"
+#include "../shared/map/map_geometry_mesh.hpp"
 #include "render_assets.hpp"
 #include <string>
 #include <unordered_map>
@@ -13,6 +13,21 @@
 
 namespace client
 {
+
+// An asset-sourced mesh draws as the static mesh it views (geometry_def.md
+// 11.6), so every entry point resolves the value it draws before anything
+// reads the kind or records what the cache was built from.
+const shared::geometry_value_t &drawn_geometry_value(const shared::geometry_value_t &geometry,
+                                                     shared::geometry_value_t &storage)
+{
+  const shared::mesh_geometry_t *mesh = std::get_if<shared::mesh_geometry_t>(&geometry);
+  const shared::asset_mesh_source_t *asset =
+      mesh ? std::get_if<shared::asset_mesh_source_t>(&mesh->source) : nullptr;
+  if (!asset)
+    return geometry;
+  storage = shared::static_mesh_view_of_asset_mesh(*mesh, *asset);
+  return storage;
+}
 
 namespace
 {
@@ -115,11 +130,15 @@ assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geom
   {
   case shared::geometry_kind_t::Brush:
     return shared::generate_brush_mesh(std::get<shared::brush_geometry_t>(geometry),
-                                       materials, {map_geometry, uid}, {&lightmap, uid});
+                                       materials, {map_geometry, uid});
 
   case shared::geometry_kind_t::Static_Mesh:
     return shared::generate_lightmapped_static_mesh(
         std::get<shared::static_mesh_geometry_t>(geometry), {&lightmap, uid});
+
+  case shared::geometry_kind_t::Mesh:
+    return shared::generate_mesh_geometry_mesh(std::get<shared::mesh_geometry_t>(geometry),
+                                               materials, {&lightmap, uid});
   }
 
   log_error("generate_geometry_mesh: unhandled geometry kind {}",
@@ -216,17 +235,17 @@ renderer::material_handle_t face_material(const renderer::material_parameters_t 
   return handle;
 }
 
-// The override table for a generated brush mesh: one entry per submesh slot,
+// The override table for a generated brush or mesh: one entry per submesh slot,
 // grid-shaded where a Lit face's material resolved to no texture and the slot's
-// own state everywhere else. Built from the mesh's OWN materials, which
-// generate_brush_mesh already filled with the resolved texture for each slot --
-// so a slot naming a texture that failed to load carries the renderer's magenta
+// own state everywhere else. Built from the mesh's OWN materials, which the
+// generator already filled with the resolved texture for each slot -- so a
+// slot naming a texture that failed to load carries the renderer's magenta
 // checkerboard and is visible rather than silently flat.
 //
 // Stored beside the source record so it is rebuilt exactly when the mesh is, and
-// the two cannot describe different brushes.
+// the two cannot describe different objects.
 std::vector<renderer::material_handle_t>
-build_brush_material_overrides(renderer::mesh_handle_t mesh)
+build_generated_material_overrides(renderer::mesh_handle_t mesh)
 {
   std::vector<renderer::material_handle_t> table;
   for (renderer::material_handle_t slot : renderer::mesh_default_materials(mesh))
@@ -318,6 +337,56 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
   return true;
 }
 
+// A brush or a mesh through the generated cache. The generated mesh is
+// WORLD-space -- a brush's vertices are its position, a mesh is baked through
+// its pose -- so the transform is identity.
+void draw_generated_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
+                             shared::entity_uid_t uid, Span<const std::string> materials,
+                             const shared::lightmap_t &lightmap,
+                             Span<const shared::map_geometry_t> map_geometry,
+                             const linalg::mat4f* moved_by, const renderer::clock_wipe_t& clock_wipe,
+                             std::optional<team_wall_tint_t> team_wall,
+                             renderer::light_cut_t light_cut, bool casts_shadows,
+                             bool casts_dynamic_shadow, bool compare)
+{
+  frame_timing::lap_zone_t lap("draw_geometry: generated is_current");
+  if (compare && !generated_mesh_is_current(uid, geometry, materials, lightmap))
+  {
+    lap.next("draw_geometry: generated refresh (rebuild)");
+    refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
+  }
+
+  lap.next("draw_geometry: generated lookups + draw record");
+  char                   cache_key_buffer[48];
+  const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
+  const renderer::mesh_handle_t mesh = get_render_mesh(assets::find_mesh_in_cache(cache_key));
+  if (!mesh.valid())
+  {
+    log_error("draw_geometry: could not build a mesh for {} uid {}",
+              shared::get_kind_name(shared::get_kind(geometry)), uid);
+    return;
+  }
+
+  renderer::mesh_draw_t draw{};
+  draw.mesh          = mesh;
+  draw.transform     = moved_by != nullptr ? *moved_by : linalg::mat4f::identity();
+  draw.shadow_caster = !casts_shadows ? renderer::shadow_caster_t::none
+                       : (moved_by != nullptr || casts_dynamic_shadow)
+                           ? renderer::shadow_caster_t::dynamic_object
+                           : renderer::shadow_caster_t::static_geometry;
+  draw.clock_wipe    = moved_clock_wipe(clock_wipe, moved_by);
+
+  const auto source = g_generated_mesh_sources.find(uid);
+  if (source != g_generated_mesh_sources.end())
+    draw.material_overrides = source->second.overrides;
+
+  if (team_wall)
+    team_wall_draw(draw, *team_wall);
+  light_cut_draw(draw, light_cut);
+
+  draws.meshes.push_back(draw);
+}
+
 } // namespace
 
 renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geometry,
@@ -331,7 +400,7 @@ renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geome
                                 .armed  = false};
 }
 
-void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
+void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &authored_geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap,
                    Span<const shared::map_geometry_t> map_geometry, const linalg::mat4f* moved_by,
@@ -339,6 +408,8 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
                    std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut,
                    bool casts_dynamic_shadow, generated_mesh_check_t check)
 {
+  shared::geometry_value_t view_storage;
+  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
   // A trusted object with no record yet is built, never drawn from nothing.
   const bool compare = check == generated_mesh_check_t::Compare_Every_Draw ||
@@ -346,6 +417,17 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
 
   switch (shared::get_kind(geometry))
   {
+  case shared::geometry_kind_t::Mesh:
+  {
+    if (!surface.visible)
+      return;
+    draw_generated_geometry(draws, geometry, uid, materials, lightmap, map_geometry, moved_by,
+                            clock_wipe, team_wall, light_cut,
+                            std::get<shared::mesh_geometry_t>(geometry).casts_shadows,
+                            casts_dynamic_shadow, compare);
+    return;
+  }
+
   case shared::geometry_kind_t::Static_Mesh:
   {
     const shared::static_mesh_geometry_t &static_mesh =
@@ -401,47 +483,9 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geomet
     if (!surface.visible)
       return;
 
-    frame_timing::lap_zone_t lap("draw_geometry: brush is_current");
-    if (compare && !generated_mesh_is_current(uid, geometry, materials, lightmap))
-    {
-      lap.next("draw_geometry: brush refresh (rebuild)");
-      refresh_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
-    }
-
-    lap.next("draw_geometry: brush lookups + draw record");
-    char                   cache_key_buffer[48];
-    const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
-    assets::asset_handle_t<assets::mesh_asset_t> mesh_asset =
-        assets::find_mesh_in_cache(cache_key);
-
-    const renderer::mesh_handle_t mesh = get_render_mesh(mesh_asset);
-    if (!mesh.valid())
-    {
-      log_error("draw_geometry: could not build a mesh for brush uid {}", uid);
-      return;
-    }
-
-
-    // A brush holds WORLD-space points, so the generated mesh is already in
-    // world space and the transform is identity. There is no position member to
-    // put in one, which is the whole point: the vertices ARE the position.
-    renderer::mesh_draw_t draw{};
-    draw.mesh          = mesh;
-    draw.transform     = moved_by != nullptr ? *moved_by : linalg::mat4f::identity();
-    draw.shadow_caster = (moved_by != nullptr || casts_dynamic_shadow)
-                             ? renderer::shadow_caster_t::dynamic_object
-                             : renderer::shadow_caster_t::static_geometry;
-    draw.clock_wipe    = moved_clock_wipe(clock_wipe, moved_by);
-
-    const auto source = g_generated_mesh_sources.find(uid);
-    if (source != g_generated_mesh_sources.end())
-      draw.material_overrides = source->second.overrides;
-
-    if (team_wall)
-      team_wall_draw(draw, *team_wall);
-    light_cut_draw(draw, light_cut);
-
-    draws.meshes.push_back(draw);
+    draw_generated_geometry(draws, geometry, uid, materials, lightmap, map_geometry, moved_by,
+                            clock_wipe, team_wall, light_cut, true, casts_dynamic_shadow,
+                            compare);
     return;
   }
   }
@@ -458,7 +502,9 @@ void rebuild_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      const shared::lightmap_t &lightmap,
                                      Span<const shared::map_geometry_t> map_geometry)
 {
-  const bool is_brush = shared::get_kind(geometry) == shared::geometry_kind_t::Brush;
+  const shared::geometry_kind_t kind = shared::get_kind(geometry);
+  const bool is_brush = kind == shared::geometry_kind_t::Brush;
+  const bool generates_materials = is_brush || kind == shared::geometry_kind_t::Mesh;
 
   // Record what the mesh is about to be built from, so the draw path can tell
   // whether it still matches. A lightmapped static mesh is baked into world
@@ -503,19 +549,21 @@ void rebuild_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   // The slot table follows the mesh it describes -- a rebuild can change how
   // many submeshes there are, so a stale table would name the wrong material for
   // every slot after the one that moved.
-  if (is_brush)
+  if (generates_materials)
     g_generated_mesh_sources[uid].overrides =
-        build_brush_material_overrides(get_render_mesh(mesh_asset));
+        build_generated_material_overrides(get_render_mesh(mesh_asset));
 }
 
 } // namespace
 
-void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
+void refresh_generated_geometry_mesh(const shared::geometry_value_t &authored_geometry,
                                      shared::entity_uid_t uid,
                                      Span<const std::string> materials,
                                      const shared::lightmap_t &lightmap,
                                      Span<const shared::map_geometry_t> map_geometry)
 {
+  shared::geometry_value_t view_storage;
+  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
   rebuild_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
   if (shared::get_kind(geometry) != shared::geometry_kind_t::Brush)
@@ -526,7 +574,7 @@ void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
   {
     const shared::brush_geometry_t *other = std::get_if<shared::brush_geometry_t>(&entry.value);
     if (entry.uid == uid || !other ||
-        !(shared::brush_has_subdivided_face(*other) || shared::brush_has_smoothed_face(*other)) ||
+        !shared::brush_has_subdivided_face(*other) ||
         !shared::aabbs_intersect_with_tolerance(shared::get_bounds(entry.value), bounds,
                                                 shared::BRUSH_WELD_EPSILON))
       continue;
@@ -541,20 +589,25 @@ void refresh_stale_generated_geometry_meshes(Span<const shared::map_geometry_t> 
 {
   for (const shared::map_geometry_t &entry : geometry)
   {
+    shared::geometry_value_t view_storage;
+    const shared::geometry_value_t &value = drawn_geometry_value(entry.value, view_storage);
     bool generated = false;
-    switch (shared::get_kind(entry.value))
+    switch (shared::get_kind(value))
     {
     case shared::geometry_kind_t::Static_Mesh:
       generated = !lightmap.empty();
       break;
     case shared::geometry_kind_t::Brush:
-      generated = std::get<shared::brush_geometry_t>(entry.value).subtracts_from_uid ==
+      generated = std::get<shared::brush_geometry_t>(value).subtracts_from_uid ==
                       shared::null_entity_uid &&
-                  shared::get_surface(entry.value).visible;
+                  shared::get_surface(value).visible;
+      break;
+    case shared::geometry_kind_t::Mesh:
+      generated = shared::get_surface(value).visible;
       break;
     }
-    if (generated && !generated_mesh_is_current(entry.uid, entry.value, materials, lightmap))
-      refresh_generated_geometry_mesh(entry.value, entry.uid, materials, lightmap, geometry);
+    if (generated && !generated_mesh_is_current(entry.uid, value, materials, lightmap))
+      refresh_generated_geometry_mesh(value, entry.uid, materials, lightmap, geometry);
   }
 }
 

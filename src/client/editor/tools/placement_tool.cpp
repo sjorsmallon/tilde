@@ -162,6 +162,9 @@ static shared::geometry_value_t make_placement_prototype(shared::geometry_kind_t
       shared::sync_face_surfaces(brush);
       return brush;
     }
+
+    case shared::geometry_kind_t::Mesh:
+      return shared::make_box_mesh({0, 0, 0}, default_extents);
   }
 
   log_error("make_placement_prototype: unhandled geometry kind {} — using a brush", (int)kind);

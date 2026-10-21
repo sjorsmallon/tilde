@@ -538,9 +538,6 @@ void Brush_Tool::nudge_selected_brush(editor_context_t& ctx,
 
   transaction_t transaction;
   transaction.add_geometry_modified(selection.uid, before, *brush);
-  std::vector<shared::map_group_t> groups_before = ctx.map->groups;
-  (void)shared::drop_recipe_of_group_containing(*ctx.map, selection.uid);
-  transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   ctx.transaction_system.push("Nudge brush", std::move(transaction));
 
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
@@ -556,7 +553,6 @@ void Brush_Tool::delete_selected_brush(editor_context_t& ctx)
   const shared::geometry_value_t removed = ctx.map->find_geometry_by_uid(uid)->value;
   std::vector<shared::map_group_t> groups_before = ctx.map->groups;
 
-  (void)shared::drop_recipe_of_group_containing(*ctx.map, uid);
   ctx.map->remove_geometry(uid);
   (void)shared::dissolve_groups_with_no_live_member(*ctx.map);
 
@@ -1075,12 +1071,6 @@ void Brush_Tool::on_mouse_up(editor_context_t& ctx,
       transaction_t transaction;
       transaction.add_geometry_modified(selection.uid, *drag.geometry_at_the_start_of_drag,
                                     *brush);
-      if (!shared::geometry_values_equal(*drag.geometry_at_the_start_of_drag, *brush))
-      {
-        std::vector<shared::map_group_t> groups_before = ctx.map->groups;
-        (void)shared::drop_recipe_of_group_containing(*ctx.map, selection.uid);
-        transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
-      }
       ctx.transaction_system.push(drag.kind == Drag::Face ? "Move brush face" : "Move brush vertices", std::move(transaction));
 
       // A grid drag writes offsets rather than vertices, so it never went

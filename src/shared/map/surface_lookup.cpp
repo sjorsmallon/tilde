@@ -1,6 +1,7 @@
 #include "surface_lookup.hpp"
 
 #include "map_geometry.hpp"
+#include "map_geometry_mesh.hpp"
 
 #include <variant>
 
@@ -14,17 +15,22 @@ uint16_t material_index_under(const game_session_t& session, const ground_contac
   if (contact.id.index >= session.geometry.size())
     return 0;
 
-  const brush_geometry_t* brush = std::get_if<brush_geometry_t>(&session.geometry[contact.id.index].value);
-  if (brush == nullptr)
-    return 0;
+  const geometry_value_t& value = session.geometry[contact.id.index].value;
+  uint16_t material = 0;
+  if (const brush_geometry_t* brush = std::get_if<brush_geometry_t>(&value))
+  {
+    const face_surface_t* matched = find_face_surface(*brush, contact.plane);
+    material = matched ? matched->material : 0;
+  }
+  else if (const mesh_geometry_t* mesh = std::get_if<mesh_geometry_t>(&value))
+  {
+    const std::optional<uint32_t> face = try_find_mesh_face_by_world_plane(*mesh, contact.plane);
+    material = face ? mesh->faces[*face].surface.material : 0;
+  }
 
-  const face_surface_t* matched = find_face_surface(*brush, contact.plane);
-  const face_surface_t  brush_default;
-  const face_surface_t& face = matched ? *matched : brush_default;
-
-  if (face.material >= session.materials.size())
+  if (material >= session.materials.size())
     return 0;
-  return face.material;
+  return material;
 }
 
 } // namespace shared

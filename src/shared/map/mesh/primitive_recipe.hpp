@@ -6,14 +6,13 @@
 #include <string_view>
 #include <vector>
 
+// The numbers a primitive is built from: the SOURCE of a recipe mesh
+// (geometry_def.md §11.3, §11.8 increment 10). Every kind's fields are here so
+// switching kind in the panel keeps what was typed; the file carries only the
+// fields of the kind. The pose is never stored here: the mesh carries it.
+
 namespace shared
 {
-
-// The numbers a primitive was placed from, kept on its group so the panel can
-// show them again and regenerate the members. The origin is never stored: a
-// regeneration lands where the group's bounds now are. Every kind's fields are
-// here so switching kind in the panel keeps what was typed; the file carries
-// only the fields of the kind. geometry_def.md Track I.
 
 enum class primitive_kind_t
 {
@@ -26,6 +25,18 @@ enum class primitive_kind_t
 
 const char *to_string(primitive_kind_t kind);
 [[nodiscard]] std::optional<primitive_kind_t> try_primitive_kind_from_text(std::string_view text);
+
+inline constexpr int MIN_PRISM_SIDES = 3;
+inline constexpr int MAX_PRISM_SIDES = 32;
+inline constexpr int MIN_ARCH_SEGMENTS = 1;
+inline constexpr int MAX_ARCH_SEGMENTS = 64;
+inline constexpr int MIN_STAIR_STEPS = 1;
+inline constexpr int MAX_STAIR_STEPS = 64;
+inline constexpr float MIN_SPIRAL_DEGREES_PER_STEP = 1.f;
+inline constexpr float MAX_SPIRAL_DEGREES_PER_STEP = 90.f;
+inline constexpr size_t MAX_CURVE_POINTS = 64;
+inline constexpr int MIN_CURVE_SAMPLES_PER_SEGMENT = 1;
+inline constexpr int MAX_CURVE_SAMPLES_PER_SEGMENT = 16;
 
 struct primitive_recipe_t
 {
@@ -52,8 +63,9 @@ struct primitive_recipe_t
   float spiral_degrees_per_step = 30.f;
   bool spiral_clockwise = false;
 
-  // The curve's control points, relative to the group's lowest corner, which is
-  // where a regeneration lands; the curve is the bottom centre line of the wall.
+  // The curve's control points in the mesh's local frame, relative to the
+  // wall's lowest corner (rebase_curve_points_to_wall_corner); the curve is
+  // the bottom centre line of the wall.
   std::vector<linalg::vec3> curve_points;
   float curve_width = 32.f;
   float curve_height = 128.f;
@@ -66,9 +78,21 @@ struct primitive_recipe_t
 // limits, lengths at least one unit, a flight's climb never vertical.
 void clamp_primitive_recipe(primitive_recipe_t &recipe);
 
+// The two directions a primitive is laid out in around `axis`: `up` is world Y
+// unless the axis is vertical, then world Z; `side` completes the right-handed
+// triple (side, up, axis). The same frame for every primitive, so a prism and
+// an arch placed on the same axis agree about where their first corner is.
+struct primitive_frame_t
+{
+  linalg::vec3 axis;
+  linalg::vec3 up;
+  linalg::vec3 side;
+};
+
+primitive_frame_t make_primitive_frame(const linalg::vec3 &axis);
+
 // The world axis a recipe is laid out along after its quarter turns: the
 // prism's length, the arch's depth, the flight's climb, world up for a spiral.
-// The axis `primitive_face_is_curved` is asked about.
 linalg::vec3 primitive_recipe_axis(const primitive_recipe_t &recipe);
 
 // A quarter turn about world up is a component swap, so a turned primitive

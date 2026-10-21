@@ -108,7 +108,10 @@ static constexpr uint32_t PACKAGE_MAGIC   = 0x504B4720; // "PKG "
 //    (lightmap_sidecar.cpp version 9, lighting_def.md gate 6 step 4).
 // 10: the visibility pages are RGB, three layers per atlas page
 //    (lightmap_sidecar.cpp version 10, transparency_plan.md step 7).
-static constexpr uint32_t PACKAGE_VERSION = 10;
+// 11: the map text reads `brush` and `static_mesh` rows as meshes and writes
+//    `mesh` rows (geometry_def.md section 11.8 increment 6); an older client
+//    would drop every mesh row it is sent.
+static constexpr uint32_t PACKAGE_VERSION = 11;
 
 // Navmesh floats/indices are written as raw bytes (exact), matching the on-disk
 // .navmesh sidecar's exactness — write_coord's 5-bit fraction would corrupt

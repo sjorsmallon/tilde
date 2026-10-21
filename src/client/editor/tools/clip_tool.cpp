@@ -247,7 +247,6 @@ void Clip_Tool::commit(editor_context_t &ctx)
   transaction_t transaction;
   const shared::geometry_value_t removed = entry->value;
   std::vector<shared::map_group_t> groups_before = ctx.map->groups;
-  (void)shared::drop_recipe_of_group_containing(*ctx.map, target_uid);
   ctx.map->remove_geometry(target_uid);
   transaction.add_geometry_removed(target_uid, removed);
 

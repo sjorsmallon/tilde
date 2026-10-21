@@ -3,6 +3,7 @@
 #include "assets/asset.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
+#include "map/map_geometry_mesh.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -58,40 +59,55 @@ void append_triangle(gpu_bake_scene_t &scene, entity_uid_t uid, const linalg::ve
   scene.triangle_object_uids.push_back(uid);
 }
 
-void append_brush(gpu_bake_scene_t &scene, const map_t &map, entity_uid_t uid,
-                  const brush_geometry_t &brush)
+// Face by face, so a triangle carries the material of the stored face it is cut
+// from: the flat ring as a fan, a subdivided quad as the grid it draws with.
+void append_mesh_faces(gpu_bake_scene_t &scene, entity_uid_t uid, const mesh_geometry_t &mesh)
 {
-  const assets::mesh_asset_t mesh = generate_brush_mesh(brush, map.materials, {map.geometry, uid});
-
-  // Keyed by PLANE, the face's identity, through the same find_face_surface the
-  // tracer's surface_at asks at a hit -- so the material a triangle carries is
-  // the one the CPU would have resolved there. A brush whose face_surfaces are
-  // empty answers with material 0, the map default, exactly as surface_at does.
-  const face_surface_t brush_default;
-
-  for (size_t first = 0; first + 2 < mesh.indices.size(); first += 3)
+  assets::mesh_asset_t grid_surface;
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
   {
-    const vertex_xnu &a = mesh.vertices[mesh.indices[first]];
-    const vertex_xnu &b = mesh.vertices[mesh.indices[first + 1]];
-    const vertex_xnu &c = mesh.vertices[mesh.indices[first + 2]];
+    const mesh_face_t &face = mesh.faces[face_index];
+    const face_surface_t &surface = face.surface;
+    if (!surface.emits_geometry) continue;
 
-    linalg::vec3 normal = linalg::cross(b.position - a.position, c.position - a.position);
-    const float length = linalg::length(normal);
-    if (length <= 1e-6f) continue;
-    normal = normal * (1.f / length);
-
-    const face_surface_t *matched = find_face_surface(brush, Plane{a.position, normal});
-    const face_surface_t &face = matched ? *matched : brush_default;
-    const uint32_t material = face.material < scene.untextured_material
-                                  ? (uint32_t)face.material
+    const uint32_t material = surface.material < scene.untextured_material
+                                  ? (uint32_t)surface.material
                                   : scene.untextured_material;
+    const Plane plane = compute_mesh_world_face_plane(mesh, face_index);
 
-    append_triangle(scene, uid, a.position, b.position, c.position, a.uv, b.uv, c.uv,
-                    material);
+    if (face_is_subdivided(surface) && face.vertex_indices.size() == 4)
+    {
+      grid_surface = {};
+      emit_face_grid(grid_surface, compute_mesh_face_grid_world_vertices(mesh, face_index),
+                     plane.normal, surface.uv, true);
+      for (size_t first = 0; first + 2 < grid_surface.indices.size(); first += 3)
+      {
+        const vertex_xnu &a = grid_surface.vertices[grid_surface.indices[first]];
+        const vertex_xnu &b = grid_surface.vertices[grid_surface.indices[first + 1]];
+        const vertex_xnu &c = grid_surface.vertices[grid_surface.indices[first + 2]];
+        append_triangle(scene, uid, a.position, b.position, c.position, a.uv, b.uv, c.uv,
+                        material);
+      }
+      continue;
+    }
+
+    const auto world_corner = [&](size_t corner) {
+      return mesh.position +
+             linalg::rotate(mesh.orientation, mesh.vertices[face.vertex_indices[corner]]);
+    };
+    const linalg::vec3 a = world_corner(0);
+    const linalg::vec2 uv_a = face_uv_at(surface.uv, a, plane.normal);
+    for (size_t offset = 1; offset + 1 < face.vertex_indices.size(); ++offset)
+    {
+      const linalg::vec3 b = world_corner(offset);
+      const linalg::vec3 c = world_corner(offset + 1);
+      append_triangle(scene, uid, a, b, c, uv_a, face_uv_at(surface.uv, b, plane.normal),
+                      face_uv_at(surface.uv, c, plane.normal), material);
+    }
   }
 }
 
-// A static mesh is untextured to the tracer -- surface_at resolves brushes only
+// An asset-sourced mesh is untextured to the tracer -- surface_at resolves stored faces only
 // -- and it is untextured here, carrying its real uvs so the day a mesh material
 // arrives it is one table entry and not a new record.
 void append_static_mesh(gpu_bake_scene_t &scene, entity_uid_t uid,
@@ -140,7 +156,7 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
 
   // Three times over the same list, opaque first: the passes partition the
   // geometry exactly the way the three BVHs do, through the same one question,
-  // so a brush cannot be in two ranges or in none.
+  // so a mesh cannot be in two ranges or in none.
   constexpr light_occlusion_t PASSES[] = {light_occlusion_t::Opaque,
                                           light_occlusion_t::Alpha_Tested,
                                           light_occlusion_t::Transmissive};
@@ -157,11 +173,14 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
           compute_light_occlusion(entry.value, map.materials) != pass)
         continue;
 
-      if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
-        append_brush(scene, map, entry.uid, *brush);
-      else if (const static_mesh_geometry_t *static_mesh =
-                   std::get_if<static_mesh_geometry_t>(&entry.value))
-        append_static_mesh(scene, entry.uid, *static_mesh);
+      const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&entry.value);
+      if (!mesh)
+        fatal_error("[lightmap] object {} is a legacy kind; every reader converts it to a "
+                    "mesh (geometry_def.md 11.8 increment 6)", entry.uid);
+      if (const asset_mesh_source_t *asset = std::get_if<asset_mesh_source_t>(&mesh->source))
+        append_static_mesh(scene, entry.uid, static_mesh_view_of_asset_mesh(*mesh, *asset));
+      else
+        append_mesh_faces(scene, entry.uid, *mesh);
     }
   }
 

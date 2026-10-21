@@ -6,6 +6,9 @@
 #include "log.hpp"
 #include "lighting/lightmap_sidecar.hpp"
 #include "map_blocks.hpp"
+#include "map_geometry_mesh.hpp"
+#include "map_geometry_legacy.hpp"
+#include "map_geometry_text.hpp"
 #include "movement/player_constants.hpp"
 #include "weapon_instance.hpp"
 #include <cstdio>
@@ -36,7 +39,7 @@ namespace
 // Layout: magic(4) + version(4) + num_vertices(4) + num_polygons(4)
 //       + vertices[num_vertices * (float x, float y, float z)]
 //       + polygons[num_polygons * (uint32 num_verts, int32 verts[N], int32 neighbors[N], int32 island)]
-static constexpr uint32_t NAVMESH_MAGIC   = 0x504F4C59; // "POLY"
+static constexpr uint32_t NAVMESH_MAGIC  = 0x504F4C59; // "POLY"
 static constexpr uint32_t NAVMESH_VERSION = 3;
 
 static std::string navmesh_path_for(const std::string &map_path)
@@ -756,6 +759,9 @@ std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid)
     case geometry_kind_t::Static_Mesh:
       return std::nullopt; // sized by its mesh asset
 
+    case geometry_kind_t::Mesh:
+      return to_aabb(get_bounds(entry->value));
+
     case geometry_kind_t::Brush:
     {
       return to_aabb(
@@ -786,6 +792,10 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
     {
     case geometry_kind_t::Static_Mesh:
       return false;
+
+    case geometry_kind_t::Mesh:
+      scale_mesh_to_world_box(std::get<mesh_geometry_t>(entry->value), box);
+      return true;
 
     case geometry_kind_t::Brush:
     {
@@ -860,10 +870,16 @@ std::optional<linalg::quatf> try_get_object_orientation(const map_t &map, entity
 {
   if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
-    if (get_kind(entry->value) != geometry_kind_t::Static_Mesh)
+    switch (get_kind(entry->value))
+    {
+    case geometry_kind_t::Static_Mesh:
+      return std::get<static_mesh_geometry_t>(entry->value).orientation;
+    case geometry_kind_t::Mesh:
+      return std::get<mesh_geometry_t>(entry->value).orientation;
+    case geometry_kind_t::Brush:
       return std::nullopt;
-
-    return std::get<static_mesh_geometry_t>(entry->value).orientation;
+    }
+    return std::nullopt;
   }
 
   if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
@@ -877,11 +893,18 @@ bool try_set_object_orientation(map_t &map, entity_uid_t uid,
 {
   if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
-    if (get_kind(entry->value) != geometry_kind_t::Static_Mesh)
+    switch (get_kind(entry->value))
+    {
+    case geometry_kind_t::Static_Mesh:
+      std::get<static_mesh_geometry_t>(entry->value).orientation = orientation;
+      return true;
+    case geometry_kind_t::Mesh:
+      std::get<mesh_geometry_t>(entry->value).orientation = orientation;
+      return true;
+    case geometry_kind_t::Brush:
       return false;
-
-    std::get<static_mesh_geometry_t>(entry->value).orientation = orientation;
-    return true;
+    }
+    return false;
   }
 
   if (map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
@@ -954,7 +977,7 @@ std::optional<uint32_t> try_material_index_from_text(const std::string &text)
   return value;
 }
 
-// Which entries of `materials` a brush face actually names, and where each one
+// Which entries of `materials` a mesh face actually names, and where each one
 // lands once the unreferenced ones are dropped. Entry 0 is the map default and
 // is always kept, so a map with no textured face still writes a one-entry table
 // and every index in it stays valid.
@@ -964,20 +987,22 @@ struct material_remap_t
   std::vector<uint16_t> old_to_new;
 };
 
-material_remap_t build_material_remap(const map_t &map)
+material_remap_t build_material_remap(Span<const std::string> materials,
+                                      Span<const map_geometry_t> geometry)
 {
-  std::vector<bool> referenced(map.materials.size(), false);
+  std::vector<bool> referenced(materials.count, false);
   if (!referenced.empty())
     referenced[0] = true;
 
-  for (const map_geometry_t &entry : map.geometry)
+  for (const map_geometry_t &entry : geometry)
   {
-    const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value);
-    if (!brush)
+    const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&entry.value);
+    if (!mesh)
       continue;
 
-    for (const face_surface_t &face : brush->face_surfaces)
+    for (const mesh_face_t &mesh_face : mesh->faces)
     {
+      const face_surface_t &face = mesh_face.surface;
       // Every LAYER's material counts as a reference, not just the base one:
       // an entry named only by a blend layer that got dropped here would
       // silently retarget that layer at the next save.
@@ -991,13 +1016,13 @@ material_remap_t build_material_remap(const map_t &map)
   }
 
   material_remap_t remap;
-  remap.old_to_new.assign(map.materials.size(), 0);
-  for (size_t i = 0; i < map.materials.size(); ++i)
+  remap.old_to_new.assign(materials.count, 0);
+  for (size_t i = 0; i < materials.count; ++i)
   {
     if (!referenced[i])
       continue;
     remap.old_to_new[i] = (uint16_t)remap.kept.size();
-    remap.kept.push_back(map.materials[i]);
+    remap.kept.push_back(materials[i]);
   }
 
   if (remap.kept.empty())
@@ -1009,6 +1034,8 @@ material_remap_t build_material_remap(const map_t &map)
 // A uid as it is written in the file: decimal digits and nothing else. Its own
 // function rather than std::stoul because a uid that is not one is data to
 // report, not an exception to catch.
+} // namespace
+
 // primitive ::= "primitive" "{" kind axis turns field* point* "}"
 // kind      ::= "kind" <primitive_kind_t text>
 // axis      ::= "axis" ("X" | "Y" | "Z")
@@ -1018,7 +1045,7 @@ material_remap_t build_material_remap(const map_t &map)
 // A field that is absent keeps the recipe's default; a kind that does not parse
 // is no recipe, with a line; a point that does not parse is skipped, with a line.
 std::optional<primitive_recipe_t> parse_primitive_recipe_block(const map_block_t &block,
-                                                               entity_uid_t group_uid)
+                                                               entity_uid_t owner_uid)
 {
   const auto text_at = [&block](const char *key) -> const std::string * {
     auto it = block.properties.find(key);
@@ -1038,8 +1065,8 @@ std::optional<primitive_recipe_t> parse_primitive_recipe_block(const map_block_t
       kind_text != nullptr ? try_primitive_kind_from_text(*kind_text) : std::nullopt;
   if (!kind)
   {
-    log_error("map parse: group {} has a primitive with kind \"{}\", which is not one -- no recipe",
-              group_uid, kind_text != nullptr ? *kind_text : "");
+    log_error("map parse: object {} has a primitive with kind \"{}\", which is not one -- no recipe",
+              owner_uid, kind_text != nullptr ? *kind_text : "");
     return std::nullopt;
   }
 
@@ -1071,21 +1098,21 @@ std::optional<primitive_recipe_t> parse_primitive_recipe_block(const map_block_t
   {
     if (child.keyword != "point")
     {
-      log_error("map parse: group {}: the primitive holds a \"{}\" block -- skipped", group_uid,
+      log_error("map parse: object {}: the primitive holds a \"{}\" block -- skipped", owner_uid,
                 child.keyword);
       continue;
     }
     auto at = child.properties.find("at");
     if (at == child.properties.end())
     {
-      log_error("map parse: group {}: a primitive point has no at -- skipped", group_uid);
+      log_error("map parse: object {}: a primitive point has no at -- skipped", owner_uid);
       continue;
     }
     linalg::vec3 point;
     if (std::sscanf(at->second.c_str(), "%f %f %f", &point.x, &point.y, &point.z) != 3)
     {
-      log_error("map parse: group {}: primitive point \"{}\" is not three numbers -- skipped",
-                group_uid, at->second);
+      log_error("map parse: object {}: primitive point \"{}\" is not three numbers -- skipped",
+                owner_uid, at->second);
       continue;
     }
     recipe.curve_points.push_back(point);
@@ -1150,6 +1177,9 @@ map_block_out_t write_primitive_recipe_block(const primitive_recipe_t &recipe)
   }
   return block;
 }
+
+namespace
+{
 
 std::optional<uint32_t> try_uid_from_text(const std::string &text)
 {
@@ -1596,7 +1626,9 @@ map_t parse_map_from_string(const std::string &content)
         {
           if (member_block.keyword == "primitive")
           {
-            group.recipe = parse_primitive_recipe_block(member_block, group.uid);
+            log_error("map parse: group {} carries a primitive block, which a group no longer "
+                      "holds (geometry_def.md 11.8 increment 10) — dropped",
+                      group.uid);
             continue;
           }
           if (member_block.keyword != "member")
@@ -1741,6 +1773,15 @@ map_t parse_map_from_string(const std::string &content)
 
   convert_legacy_trigger_actions(out_map, legacy_triggers);
 
+  // Every brush and static mesh becomes a mesh here, before the groups are
+  // pruned, so a hole a group held is dropped as a missing member.
+  const legacy_geometry_report_t legacy_geometry = convert_legacy_geometry(out_map.geometry);
+  if (legacy_geometry.converted_anything())
+    log_terminal("map parse: {} brushes and {} static meshes read as meshes, {} holes cut "
+                 "into their walls, {} objects refused",
+                 legacy_geometry.brushes_converted, legacy_geometry.static_meshes_converted,
+                 legacy_geometry.holes_removed, legacy_geometry.objects_refused);
+
   // After every object is in, so a member declared further down the file than
   // its group is not mistaken for a missing one.
   (void)prune_map_groups(out_map);
@@ -1806,7 +1847,13 @@ std::string serialize_map_to_string(const map_t &map)
   // HERE and only here: an index is only meaningful against the table it was
   // minted from, so compacting mid-session would invalidate every undo snapshot
   // holding one.
-  const material_remap_t material_remap = build_material_remap(map);
+  // The writer emits no brush and no static mesh: what is still one in memory
+  // (the editor's own placements until increment 10) is written as the mesh it
+  // loads back as.
+  std::vector<map_geometry_t> geometry = map.geometry;
+  (void)convert_legacy_geometry(geometry);
+
+  const material_remap_t material_remap = build_material_remap(map.materials, geometry);
   if (material_remap.kept.size() > 1 || !material_remap.kept[0].empty())
   {
     map_block_out_t block;
@@ -1886,9 +1933,6 @@ std::string serialize_map_to_string(const map_t &map)
       row.properties.emplace_back("_uid", std::to_string(group.uid));
       row.properties.emplace_back("name", group.name);
 
-      if (group.recipe)
-        row.children.push_back(write_primitive_recipe_block(*group.recipe));
-
       for (entity_uid_t member : group.members)
       {
         if (!map.has_object(member))
@@ -1899,7 +1943,7 @@ std::string serialize_map_to_string(const map_t &map)
         row.children.push_back(std::move(member_block));
       }
 
-      if (row.children.size() >= (group.recipe ? 2u : 1u))
+      if (!row.children.empty())
         block.children.push_back(std::move(row));
     }
 
@@ -1908,7 +1952,7 @@ std::string serialize_map_to_string(const map_t &map)
   }
 
   // Geometry first, so a level's structure reads before its props.
-  for (const map_geometry_t &entry : map.geometry)
+  for (const map_geometry_t &entry : geometry)
   {
     map_block_out_t block;
     block.properties.emplace_back("_uid", std::to_string(entry.uid));

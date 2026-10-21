@@ -8,6 +8,9 @@
 #include "../shared/lighting/lightmap_sidecar.hpp"
 #include "../shared/lighting/lightmap_solve.hpp"
 #include "../shared/lighting/lightmap_trace.hpp"
+#include "../shared/map/map_geometry_legacy.hpp"
+#include "../shared/map/map_geometry_mesh.hpp"
+#include "../shared/map/mesh/mesh.hpp"
 #include "../third_party/stb_image_write.h"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
 #include "entities/generated/entities/reflection_volume_entity_generated.hpp"
@@ -27,10 +30,36 @@
 namespace
 {
 
+// The stored face of `mesh` whose world normal is `normal`: how a test names a
+// face, since a box's face order is the builder's.
+uint32_t index_of_face_facing(const shared::mesh_geometry_t &mesh, const linalg::vec3 &normal)
+{
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
+    if (linalg::dot(shared::compute_mesh_world_face_plane(mesh, face_index).normal, normal) >
+        0.999f)
+      return face_index;
+  assert(false && "no face faces that way");
+  return 0;
+}
+
+shared::face_surface_t &surface_facing(shared::mesh_geometry_t &mesh, const linalg::vec3 &normal)
+{
+  return mesh.faces[index_of_face_facing(mesh, normal)].surface;
+}
+
+// An asset-sourced mesh as the static mesh it views, which the unwrap and the
+// world-triangle helpers still take (increment 14 retires the view).
+shared::static_mesh_geometry_t view_as_static_mesh(const shared::geometry_value_t &value)
+{
+  const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(value);
+  return shared::static_mesh_view_of_asset_mesh(
+      mesh, std::get<shared::asset_mesh_source_t>(mesh.source));
+}
+
 void a_box_gets_one_chart_per_face()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 64, 64})});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
@@ -46,11 +75,10 @@ void a_box_gets_one_chart_per_face()
   }
 }
 
-// A wall with a hole charts its SOLID: one chart per plane, the ring on a wall
-// face several polygons under one chart with triangle coverage, the hole's
-// sides charted under the wall's uid, and the hole brush itself charting
-// nothing. geometry_def.md Track H.
-void a_wall_with_a_hole_gets_one_chart_per_plane_of_its_solid()
+// A wall with a hole converts to a mesh whose top and bottom are several
+// coplanar faces, and every stored face is one chart keyed by its index: the
+// hole's sides chart under the wall's uid, and the hole brush itself is gone.
+void a_converted_wall_with_a_hole_gets_one_chart_per_face()
 {
   shared::map_t map;
   const shared::entity_uid_t wall =
@@ -59,32 +87,28 @@ void a_wall_with_a_hole_gets_one_chart_per_plane_of_its_solid()
       map.add_geometry(shared::make_box_brush({0, 0, 0}, {16, 32, 16}));
   std::get<shared::brush_geometry_t>(map.find_geometry_by_uid(hole)->value).subtracts_from_uid =
       wall;
+  const shared::legacy_geometry_report_t report = shared::convert_legacy_geometry(map.geometry);
+  assert(report.brushes_converted == 1 && report.holes_removed == 1);
+  assert(map.geometry.size() == 1 && map.geometry[0].uid == wall);
+  const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
 
   const std::vector<shared::lightmap_chart_t> charts = shared::build_lightmap_charts(map, {});
-  assert(charts.size() == 10);
+  assert(charts.size() == mesh.faces.size());
 
-  int ring_charts = 0;
   int side_charts = 0;
-  for (const shared::lightmap_chart_t &chart : charts)
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
   {
-    assert(chart.object_uid == wall);
-    if (std::abs(chart.plane.normal.y) > 0.99f)
-    {
-      ++ring_charts;
-      assert(chart.polygon.empty());
-      assert(chart.triangles.size() >= 3 * 8);
-      assert(chart.twins.size() * 3 == chart.triangles.size());
-      assert(chart.atlas_rect.width == 68 && chart.atlas_rect.height == 68);
-    }
-    else if (std::abs(chart.plane.point.x) < 16.01f && std::abs(chart.plane.point.z) < 16.01f)
+    const shared::lightmap_chart_t &chart = charts[face_index];
+    assert(chart.object_uid == wall && chart.face_index == face_index);
+    assert(chart.polygon.size() == mesh.faces[face_index].vertex_indices.size());
+    if (std::abs(chart.plane.normal.y) < 0.01f && std::abs(chart.plane.point.x) < 16.01f &&
+        std::abs(chart.plane.point.z) < 16.01f)
     {
       ++side_charts;
-      assert(chart.twins.size() == 2);
       assert((chart.atlas_rect.width == 12 && chart.atlas_rect.height == 8) ||
              (chart.atlas_rect.width == 8 && chart.atlas_rect.height == 12));
     }
   }
-  assert(ring_charts == 2);
   assert(side_charts == 4);
 }
 
@@ -94,7 +118,7 @@ void a_wall_with_a_hole_gets_one_chart_per_plane_of_its_solid()
 void chart_size_follows_the_face_extent()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 32, 16})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 32, 16})});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
@@ -123,7 +147,7 @@ void chart_size_follows_the_face_extent()
 void a_chart_origin_lies_on_its_face_plane()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({500, -300, 128}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({500, -300, 128}, {64, 64, 64})});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
@@ -142,15 +166,19 @@ void a_chart_origin_lies_on_its_face_plane()
 void a_chart_origin_is_snapped_to_the_texel_grid()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({37.5f, 11.25f, -3.f}, {50, 50, 50})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({37.5f, 11.25f, -3.f}, {50, 50, 50})});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
   assert(charts.size() == 6);
 
+  // The projection's reference is the face's first corner, so the origin is a
+  // whole number of texels from it.
+  const shared::mesh_geometry_t &box = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
   for (const shared::lightmap_chart_t &chart : charts)
   {
-    const linalg::vec3 reference = chart.plane.point;
+    const linalg::vec3 reference =
+        box.position + box.vertices[box.faces[chart.face_index].vertex_indices[0]];
     const linalg::vec3 offset = chart.origin - reference;
     const float along_u = linalg::dot(offset, chart.tangent_u) / chart.world_units_per_texel;
     const float along_v = linalg::dot(offset, chart.tangent_v) / chart.world_units_per_texel;
@@ -164,11 +192,10 @@ void a_chart_origin_is_snapped_to_the_texel_grid()
 void lightmap_scale_multiplies_the_density()
 {
   shared::map_t map;
-  shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 64, 64});
-  shared::sync_face_surfaces(brush);
-  for (shared::face_surface_t &face : brush.face_surfaces)
-    face.lightmap_scale = 2.f;
-  map.geometry.push_back({map.next_uid++, brush});
+  shared::mesh_geometry_t box = shared::make_box_mesh({0, 0, 0}, {64, 64, 64});
+  for (shared::mesh_face_t &face : box.faces)
+    face.surface.lightmap_scale = 2.f;
+  map.geometry.push_back({map.next_uid++, box});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
@@ -185,10 +212,9 @@ void lightmap_scale_multiplies_the_density()
 void a_face_that_emits_no_geometry_gets_no_chart()
 {
   shared::map_t map;
-  shared::brush_geometry_t brush = shared::make_box_brush({0, 0, 0}, {64, 64, 64});
-  shared::sync_face_surfaces(brush);
-  brush.face_surfaces[0].emits_geometry = false;
-  map.geometry.push_back({map.next_uid++, brush});
+  shared::mesh_geometry_t box = shared::make_box_mesh({0, 0, 0}, {64, 64, 64});
+  box.faces[0].surface.emits_geometry = false;
+  map.geometry.push_back({map.next_uid++, box});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
@@ -203,7 +229,7 @@ void packing_places_every_chart_without_overlap()
   for (int i = 0; i < 40; ++i)
   {
     map.geometry.push_back({map.next_uid++,
-                            shared::make_box_brush({(float)i * 300.f, 0, 0},
+                            shared::make_box_mesh({(float)i * 300.f, 0, 0},
                                                    {64.f + (float)i, 32, 96})});
   }
 
@@ -247,7 +273,7 @@ void packing_places_every_chart_without_overlap()
 void a_chart_too_big_for_a_page_fails_loudly()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 64, 64})});
 
   shared::lightmap_bake_settings_t settings;
   settings.atlas_size_in_texels = 8;
@@ -263,7 +289,7 @@ void a_chart_too_big_for_a_page_fails_loudly()
 void a_chart_polygon_fits_inside_its_own_rect()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({13.f, -7.f, 90.f}, {64, 40, 24})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({13.f, -7.f, 90.f}, {64, 40, 24})});
 
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, {});
@@ -289,7 +315,7 @@ void a_chart_polygon_fits_inside_its_own_rect()
 void the_chart_size_cap_lowers_density_instead_of_truncating()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {2048, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {2048, 64, 64})});
 
   shared::lightmap_bake_settings_t settings;
   const std::vector<shared::lightmap_chart_t> charts =
@@ -321,7 +347,7 @@ void the_chart_size_cap_lowers_density_instead_of_truncating()
 void a_vertex_uv_lands_on_its_own_chart()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({256, -64, 32}, {64, 48, 96})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({256, -64, 32}, {64, 48, 96})});
 
   shared::lightmap_bake_settings_t settings;
   std::vector<shared::lightmap_chart_t> charts =
@@ -360,7 +386,7 @@ void a_vertex_uv_lands_on_its_own_chart()
 
 shared::lightmap_t bake_one_box(shared::map_t &map)
 {
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 64, 64})});
 
   shared::lightmap_t lightmap;
   lightmap.charts = shared::build_lightmap_charts(map, lightmap.settings);
@@ -453,6 +479,7 @@ void a_sidecar_round_trips_every_chart()
     const shared::lightmap_chart_t &after = loaded.charts[i];
 
     assert(after.object_uid == before.object_uid);
+    assert(after.face_index == before.face_index);
     assert(after.page == before.page);
     assert(after.atlas_rect.min_x == before.atlas_rect.min_x);
     assert(after.atlas_rect.min_y == before.atlas_rect.min_y);
@@ -515,54 +542,54 @@ void the_geometry_id_follows_the_packing()
   assert(reassigned.geometry_id != again.geometry_id);
 }
 
-// Two brushes can share a plane -- a floor and the slab beneath it -- and a plane
-// alone would let one wear the other's lighting.
+// Two objects can share a plane -- a floor and the slab beneath it -- and a face
+// index alone would let one wear the other's lighting.
 void a_chart_never_crosses_to_another_object()
 {
   shared::map_t map;
   const shared::entity_uid_t lower = map.next_uid++;
-  map.geometry.push_back({lower, shared::make_box_brush({0, 0, 0}, {64, 8, 64})});
+  map.geometry.push_back({lower, shared::make_box_mesh({0, 0, 0}, {64, 8, 64})});
   const shared::entity_uid_t upper = map.next_uid++;
-  map.geometry.push_back({upper, shared::make_box_brush({0, 32, 0}, {64, 8, 64})});
+  map.geometry.push_back({upper, shared::make_box_mesh({0, 32, 0}, {64, 8, 64})});
 
   shared::lightmap_t lightmap;
   lightmap.charts = shared::build_lightmap_charts(map, lightmap.settings);
   lightmap.atlas = shared::pack_lightmap_charts(lightmap.charts, lightmap.settings);
 
-  const Plane top_of_lower{{0, 8, 0}, {0, 1, 0}};
+  // The same face INDEX on two objects: a box's top is the same face of both,
+  // and the uid is what keeps the two charts apart.
+  const uint32_t top =
+      index_of_face_facing(std::get<shared::mesh_geometry_t>(map.geometry[0].value), {0, 1, 0});
+  assert(top == index_of_face_facing(std::get<shared::mesh_geometry_t>(map.geometry[1].value),
+                                     {0, 1, 0}));
 
-  const shared::lightmap_chart_t *from_lower =
-      shared::find_chart(lightmap, lower, top_of_lower);
-  const shared::lightmap_chart_t *from_upper =
-      shared::find_chart(lightmap, upper, top_of_lower);
-
-  // The distance tolerance is deliberately loose -- a face slid along its own
-  // normal by a drag is still that face -- so the upper brush answers with its
-  // OWN nearest parallel face rather than with nothing. That is exactly why the
-  // uid is in the key: what must never happen is one of them answering with the
-  // other's chart.
-  assert(from_lower && from_lower->object_uid == lower);
-  assert(from_upper && from_upper->object_uid == upper);
+  const shared::lightmap_chart_t *from_lower = shared::find_chart(lightmap, lower, top);
+  const shared::lightmap_chart_t *from_upper = shared::find_chart(lightmap, upper, top);
+  assert(from_lower && from_lower->object_uid == lower && from_lower->face_index == top);
+  assert(from_upper && from_upper->object_uid == upper && from_upper->face_index == top);
   assert(from_lower != from_upper);
+
+  // A face the bake never charted, and an object it never saw, answer nothing.
+  assert(!shared::find_chart(lightmap, lower, 6));
+  assert(!shared::find_chart(lightmap, 9999, top));
 }
 
 // The whole point of the sidecar: a vertex carries where to sample from.
-void a_lit_face_writes_uvs_and_a_strange_brush_writes_none()
+void a_lit_face_writes_uvs_and_a_strange_mesh_writes_none()
 {
   shared::map_t map;
   const shared::lightmap_t lightmap = bake_one_box(map);
-  const shared::brush_geometry_t &brush =
-      std::get<shared::brush_geometry_t>(map.geometry[0].value);
+  const shared::mesh_geometry_t &box = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
   const shared::entity_uid_t uid = map.geometry[0].uid;
 
   const std::vector<std::string> materials{""};
 
   // No bake at all: the array stays empty and the mesh uploads what it always did.
-  const assets::mesh_asset_t unlit = shared::generate_brush_mesh(brush, materials, {});
+  const assets::mesh_asset_t unlit = shared::generate_mesh_geometry_mesh(box, materials, {});
   assert(!unlit.is_lightmapped());
 
   const assets::mesh_asset_t lit =
-      shared::generate_brush_mesh(brush, materials, {}, {&lightmap, uid});
+      shared::generate_mesh_geometry_mesh(box, materials, {&lightmap, uid});
   assert(lit.is_lightmapped());
   assert(lit.lightmap.size() == lit.vertices.size());
 
@@ -582,14 +609,11 @@ void a_lit_face_writes_uvs_and_a_strange_brush_writes_none()
     assert(vertex.light_slots[3] == shared::LIGHTMAP_NO_LIGHT_SLOT);
   }
 
-  // A brush the bake never reached carries no array at all, rather than one full
+  // A mesh the bake never reached carries no array at all, rather than one full
   // of zeros -- zero is texel (0, 0) of page 0, and it belongs to somebody else.
-  const shared::geometry_value_t stranger_value =
-      shared::make_box_brush({4096, 0, 0}, {8, 8, 8});
-  const shared::brush_geometry_t &stranger_brush =
-      std::get<shared::brush_geometry_t>(stranger_value);
+  const shared::mesh_geometry_t stranger_box = shared::make_box_mesh({4096, 0, 0}, {8, 8, 8});
   const assets::mesh_asset_t stranger =
-      shared::generate_brush_mesh(stranger_brush, materials, {}, {&lightmap, 9999});
+      shared::generate_mesh_geometry_mesh(stranger_box, materials, {&lightmap, 9999});
   assert(!stranger.is_lightmapped());
 }
 
@@ -656,7 +680,7 @@ shared::map_t map_with_a_floor_and_a_light(
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {128, 8, 128})});
+      {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {128, 8, 128})});
 
   std::shared_ptr<entities::Point_Light_Entity> light =
       std::make_shared<entities::Point_Light_Entity>();
@@ -775,13 +799,8 @@ shared::map_t map_with_a_raised_floor_and_a_light(int subdivision_level, float r
 {
   shared::map_t map = map_with_a_floor_and_a_light(light_height, 1.f);
 
-  shared::brush_geometry_t &floor = std::get<shared::brush_geometry_t>(map.geometry[0].value);
-  shared::sync_face_surfaces(floor);
-
-  Plane top;
-  top.normal = {0, 1, 0};
-  top.point  = {0, 0, 0};
-  shared::face_surface_t &face = shared::face_surface_for(floor, top);
+  shared::mesh_geometry_t &floor = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  shared::face_surface_t &face = surface_facing(floor, {0, 1, 0});
   shared::resize_face_grid(face, subdivision_level);
 
   const int size = subdivision_level + 1;
@@ -989,7 +1008,7 @@ void a_light_a_chart_drops_becomes_the_residual()
 void an_occluder_darkens_both_modes()
 {
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   const shared::lightmap_solve_mode_t modes[] = {
       shared::lightmap_solve_mode_t::Direct_Light,
@@ -1011,7 +1030,7 @@ void an_occluder_darkens_both_modes()
 
   shared::map_t residual_map = map_with_a_floor_and_a_residual_light(64.f, 1.f);
   residual_map.geometry.push_back(
-      {residual_map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+      {residual_map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
   assert(texel_under_the_light(bake_for(residual_map)).x == 0.f);
 }
 
@@ -1068,7 +1087,7 @@ void top_face_texel_nearest(const shared::lightmap_t &lightmap, float world_x,
 void a_mask_slot_is_named_by_its_light_and_carries_the_shadow()
 {
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   shared::lightmap_visibility_masks_t masks;
   const shared::lightmap_t lightmap = bake_for(map, {}, &masks);
@@ -1099,7 +1118,7 @@ void a_mask_is_not_gated_on_the_flat_face_normal()
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {128, 8, 128})});
+      {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {128, 8, 128})});
 
   std::shared_ptr<entities::Point_Light_Entity> light =
       std::make_shared<entities::Point_Light_Entity>();
@@ -1133,7 +1152,7 @@ void a_mask_is_not_gated_on_the_flat_face_normal()
 void asking_for_masks_does_not_move_a_pixel()
 {
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   const shared::lightmap_solve_mode_t modes[] = {
       shared::lightmap_solve_mode_t::Direct_Light,
@@ -1196,7 +1215,7 @@ void a_source_radius_softens_a_shadow_edge()
   const auto coverage_with_radius = [&](float radius) {
     shared::map_t map = map_with_a_floor_and_a_light(
         64.f, 1.f, entities::Light_Mode::Baked, radius);
-    map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+    map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
     shared::lightmap_visibility_masks_t masks;
     const shared::lightmap_t lightmap = bake_for(map, solve, &masks);
@@ -1237,7 +1256,7 @@ void a_source_radius_softens_a_shadow_edge()
 void a_punctual_light_spends_no_extra_rays()
 {
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   shared::lightmap_solve_settings_t one;
   one.soft_shadow_samples = 1;
@@ -1263,7 +1282,7 @@ void one_shadow_ray_toward_the_disc_averages_to_the_spiral()
 {
   shared::map_t map =
       map_with_a_floor_and_a_light(64.f, 1.f, entities::Light_Mode::Baked, 24.f);
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   const std::vector<shared::baked_light_t> lights = shared::collect_lights(map);
   assert(lights.size() == 1);
@@ -1365,7 +1384,7 @@ shared::map_t map_with_a_floor()
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {128, 8, 128})});
+      {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {128, 8, 128})});
   return map;
 }
 
@@ -1379,7 +1398,7 @@ void a_chart_names_its_lights_and_stores_their_coverage()
   const shared::entity_uid_t overhead = add_light(map, {0, 64, 0}, 1.f);
   const shared::entity_uid_t off_to_the_side = add_light(map, {400, 64, 0}, 1.f);
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+      {map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   const shared::lightmap_t lightmap = bake_for(map);
 
@@ -1513,7 +1532,7 @@ void the_two_modes_store_the_same_visibility()
   shared::map_t map = map_with_a_floor();
   add_light(map, {0, 64, 0}, 1.f);
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+      {map.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
 
   shared::lightmap_solve_settings_t direct;
   shared::lightmap_solve_settings_t visibility;
@@ -1761,7 +1780,7 @@ void the_gutter_is_filled_from_the_chart_that_owns_it()
 void supersampling_resolves_a_shadow_edge_the_centre_sample_cannot()
 {
   shared::map_t map = map_with_a_floor_and_a_light(64.f, 1.f);
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 32, 0}, {30, 4, 30})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 32, 0}, {30, 4, 30})});
 
   const auto partial_texel_count = [&](int samples_per_edge) {
     shared::lightmap_solve_settings_t solve;
@@ -1823,9 +1842,9 @@ shared::map_t map_with_a_floor_a_ceiling_and_a_light_between_them()
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {64, 8, 64})});
+      {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {64, 8, 64})});
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, 72, 0}, {64, 8, 64})});
+      {map.next_uid++, shared::make_box_mesh({0, 72, 0}, {64, 8, 64})});
 
   std::shared_ptr<entities::Point_Light_Entity> light =
       std::make_shared<entities::Point_Light_Entity>();
@@ -1958,9 +1977,9 @@ shared::map_t map_with_a_floor_and_a_ceiling_and_no_light()
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {64, 8, 64})});
+      {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {64, 8, 64})});
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, 72, 0}, {64, 8, 64})});
+      {map.next_uid++, shared::make_box_mesh({0, 72, 0}, {64, 8, 64})});
   return map;
 }
 
@@ -2082,9 +2101,9 @@ void a_spot_light_on_the_floor_lights_the_wall_it_is_aimed_at()
 {
   shared::map_t map;
   const shared::entity_uid_t floor_uid = map.next_uid++;
-  map.geometry.push_back({floor_uid, shared::make_box_brush({0, -8, 0}, {512, 8, 512})});
+  map.geometry.push_back({floor_uid, shared::make_box_mesh({0, -8, 0}, {512, 8, 512})});
   const shared::entity_uid_t wall_uid = map.next_uid++;
-  map.geometry.push_back({wall_uid, shared::make_box_brush({300, 256, 0}, {16, 256, 512})});
+  map.geometry.push_back({wall_uid, shared::make_box_mesh({300, 256, 0}, {16, 256, 512})});
 
   // Identity orientation is +X forward (linalg::basis_from), which is what the
   // editor's cone gizmo draws along, so this aims straight at the wall's -X face
@@ -2360,7 +2379,7 @@ void tracing_indirect_light_moves_no_direct_pixel()
 void a_probe_grid_pads_the_geometry_by_one_spacing()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 64, 64})});
 
   const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
   assert(grid.has_value());
@@ -2383,7 +2402,7 @@ void a_probe_grid_pads_the_geometry_by_one_spacing()
 void a_probe_grid_snaps_to_the_spacing_and_not_to_the_brush()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({10, 0, 0}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({10, 0, 0}, {64, 64, 64})});
 
   const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
   assert(grid.has_value());
@@ -2399,7 +2418,7 @@ void a_probe_grid_snaps_to_the_spacing_and_not_to_the_brush()
 void a_probe_inside_a_brush_is_inside_and_one_on_its_face_is_too()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 64, 64})});
 
   const std::optional<shared::probe_grid_t> grid = shared::try_build_probe_grid(map, 64.f);
   assert(grid.has_value());
@@ -2429,7 +2448,7 @@ void a_grid_too_long_for_a_3d_texture_is_refused()
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, 0, 0}, {64.f * 300.f, 64, 64})});
+      {map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64.f * 300.f, 64, 64})});
 
   assert(!shared::try_build_probe_grid(map, 64.f).has_value());
   assert(shared::try_build_probe_grid(map, 256.f).has_value());
@@ -2444,12 +2463,12 @@ void a_grid_too_long_for_a_3d_texture_is_refused()
 shared::map_t map_with_a_closed_room()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, -16, 0}, {288, 16, 288})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 272, 0}, {288, 16, 288})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({-272, 128, 0}, {16, 128, 288})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({272, 128, 0}, {16, 128, 288})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, -272}, {288, 128, 16})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, 272}, {288, 128, 16})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, -16, 0}, {288, 16, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 272, 0}, {288, 16, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({-272, 128, 0}, {16, 128, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({272, 128, 0}, {16, 128, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 128, -272}, {288, 128, 16})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 128, 272}, {288, 128, 16})});
   return map;
 }
 
@@ -2526,7 +2545,7 @@ void a_capture_lattice_snaps_to_the_probe_spacing()
 void a_capture_inside_a_solid_is_absent_and_a_pillar_bounds_its_neighbour()
 {
   shared::map_t map = map_with_a_closed_room();
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, 0}, {16, 16, 16})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 128, 0}, {16, 16, 16})});
 
   const shared::reflection_capture_set_t set = build_captures_for(map, 128.f);
   assert(set.captures.size() == 8);
@@ -2552,8 +2571,8 @@ void a_capture_inside_a_solid_is_absent_and_a_pillar_bounds_its_neighbour()
 void a_capture_facing_nothing_is_open_on_that_face()
 {
   shared::map_t map;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, -16, 0}, {288, 16, 288})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 128, 64}, {8, 136, 8})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, -16, 0}, {288, 16, 288})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 128, 64}, {8, 136, 8})});
 
   const shared::reflection_capture_set_t set = build_captures_for(map, 128.f, 4096.f);
   const shared::reflection_capture_t *capture = find_capture_at(set, {0, 128, 0});
@@ -2743,9 +2762,8 @@ void a_cube_texel_direction_points_into_its_face()
 void a_capture_sees_an_emissive_ceiling_directly_and_the_floor_reflects_it()
 {
   shared::map_t map = map_with_a_floor_and_a_ceiling_and_no_light();
-  shared::brush_geometry_t& ceiling =
-      std::get<shared::brush_geometry_t>(map.geometry[1].value);
-  shared::face_surface_for(ceiling, Plane{{0, 64, 0}, {0, -1, 0}}).material = 1;
+  shared::mesh_geometry_t &ceiling = std::get<shared::mesh_geometry_t>(map.geometry[1].value);
+  surface_facing(ceiling, {0, -1, 0}).material = 1;
 
   const assets::texture_asset_t albedo = one_texel(255, 255, 255);
   const assets::texture_asset_t emissive = one_texel(255, 128, 0);
@@ -3185,7 +3203,7 @@ shared::lightmap_t bake_probes_for(const shared::map_t &map, float spacing,
 void a_probe_bake_fills_the_volume_and_dilates_into_solids()
 {
   shared::map_t map = map_with_a_floor_a_ceiling_and_a_light_between_them();
-  map.geometry.front().value = shared::make_box_brush({0, -40, 0}, {64, 40, 64});
+  map.geometry.front().value = shared::make_box_mesh({0, -40, 0}, {64, 40, 64});
   const shared::lightmap_t lightmap = bake_probes_for(map, 16.f, probe_solve_settings());
   assert(!lightmap.probes.empty());
 
@@ -3331,9 +3349,8 @@ constexpr float BOX_HALF_EXTENT = 64.f;
 shared::map_t map_with_a_mesh(const char* mesh_path, float scale)
 {
   shared::map_t map;
-  shared::static_mesh_geometry_t object;
-  object.surface.mesh_path = mesh_path;
-  object.scale = {scale, scale, scale};
+  shared::mesh_geometry_t object;
+  object.source = shared::asset_mesh_source_t{mesh_path, {scale, scale, scale}};
   map.geometry.push_back({map.next_uid++, object});
   return map;
 }
@@ -3411,8 +3428,7 @@ void a_static_mesh_is_unwrapped_into_charts()
   // one chart and has no reason to cut one.
   assert(!charts.empty() && charts.size() <= 6);
 
-  const shared::static_mesh_geometry_t& box =
-      std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const shared::static_mesh_geometry_t box = view_as_static_mesh(map.geometry[0].value);
   const std::vector<shared::world_triangle_t> faces = shared::static_mesh_world_triangles(box);
   assert(faces.size() == 12);
   assert_charts_cover_every_face_once(charts, faces, settings);
@@ -3463,8 +3479,7 @@ void a_sphere_unwraps_into_few_charts()
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, settings);
 
-  const shared::static_mesh_geometry_t& sphere =
-      std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const shared::static_mesh_geometry_t sphere = view_as_static_mesh(map.geometry[0].value);
   const std::vector<shared::world_triangle_t> faces =
       shared::static_mesh_world_triangles(sphere);
   size_t real_faces = 0;
@@ -3503,10 +3518,10 @@ void a_box_mesh_bakes_what_the_light_delivers()
     add_the_four_lights_that_outrank_everything(map);
   };
 
-  shared::map_t brush_map;
-  brush_map.geometry.push_back(
-      {brush_map.next_uid++, shared::make_box_brush({0, 0, 0}, {64, 64, 64})});
-  light_it(brush_map);
+  shared::map_t faces_map;
+  faces_map.geometry.push_back(
+      {faces_map.next_uid++, shared::make_box_mesh({0, 0, 0}, {64, 64, 64})});
+  light_it(faces_map);
 
   shared::map_t mesh_map = map_with_a_box_mesh();
   light_it(mesh_map);
@@ -3557,7 +3572,7 @@ void a_box_mesh_bakes_what_the_light_delivers()
 
   // The brush's top face is exactly 32x32 texels; the mesh's is the same area
   // on whatever grid xatlas gave it.
-  check(brush_map, 32 * 32, 0);
+  check(faces_map, 32 * 32, 0);
   check(mesh_map, 32 * 32, 100);
 }
 
@@ -3574,8 +3589,7 @@ void a_lightmapped_static_mesh_draws_through_its_unwrap()
   shared::set_lightmap_geometry_id(lightmap);
   assert(lightmap.atlas.page_count == 1);
 
-  const shared::static_mesh_geometry_t& box =
-      std::get<shared::static_mesh_geometry_t>(map.geometry[0].value);
+  const shared::static_mesh_geometry_t box = view_as_static_mesh(map.geometry[0].value);
   const assets::mesh_asset_t* source = assets::get(shared::resolve_surface_mesh(box.surface));
   assert(source);
   const assets::mesh_asset_t mesh =
@@ -3693,7 +3707,7 @@ void a_static_mesh_casts_a_shadow_in_the_bake()
 void a_static_mesh_with_shadows_off_is_in_no_occluder_set()
 {
   shared::map_t map = map_with_a_box_mesh();
-  std::get<shared::static_mesh_geometry_t>(map.geometry[0].value).casts_shadows = false;
+  std::get<shared::mesh_geometry_t>(map.geometry[0].value).casts_shadows = false;
 
   assert(shared::compute_light_occlusion(map.geometry[0].value, map.materials) ==
          shared::light_occlusion_t::None);
@@ -3741,14 +3755,12 @@ void a_blend_faced_brush_does_not_occlude_the_bake()
 
   shared::map_t map;
   map.materials = {"", GLASS_MATERIAL_PATH};
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {32, 4, 32})});
 
-  shared::brush_geometry_t &pane =
-      std::get<shared::brush_geometry_t>(map.geometry[0].value);
-  shared::sync_face_surfaces(pane);
-  assert(pane.face_surfaces.size() == 6);
-  for (shared::face_surface_t &face : pane.face_surfaces)
-    face.material = 1;
+  shared::mesh_geometry_t &pane = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  assert(pane.faces.size() == 6);
+  for (shared::mesh_face_t &face : pane.faces)
+    face.surface.material = 1;
 
   const Bounding_Volume_Hierarchy glass = shared::build_occluder_bvh(map);
   assert(!ray_is_blocked({&glass, nullptr, nullptr, nullptr}, {0.f, -100.f, 0.f}));
@@ -3762,7 +3774,7 @@ void a_blend_faced_brush_does_not_occlude_the_bake()
   assert(transparent.first_transmissive_triangle == 0);
   assert(transparent.triangles.size() == 12);
 
-  pane.face_surfaces[0].material = 0;
+  pane.faces[0].surface.material = 0;
   const Bounding_Volume_Hierarchy solid = shared::build_occluder_bvh(map);
   assert(ray_is_blocked({&solid, nullptr, nullptr, nullptr}, {0.f, -100.f, 0.f}));
 
@@ -3794,11 +3806,10 @@ void a_cutout_brush_casts_a_holey_shadow()
 
   shared::map_t map;
   map.materials = {"", FENCE_MATERIAL_PATH};
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {32, 4, 32})});
 
-  shared::brush_geometry_t &fence = std::get<shared::brush_geometry_t>(map.geometry[0].value);
-  shared::sync_face_surfaces(fence);
-  for (shared::face_surface_t &face : fence.face_surfaces) face.material = 1;
+  shared::mesh_geometry_t &fence = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  for (shared::mesh_face_t &face : fence.faces) face.surface.material = 1;
 
   // Its own set: neither the opaque one nor the glass.
   assert(shared::compute_light_occlusion(map.geometry[0].value, map.materials) ==
@@ -3858,11 +3869,10 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
 
   shared::map_t map;
   map.materials = {"", GLASS_MATERIAL_PATH};
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {32, 4, 32})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {32, 4, 32})});
 
-  shared::brush_geometry_t &pane = std::get<shared::brush_geometry_t>(map.geometry[0].value);
-  shared::sync_face_surfaces(pane);
-  for (shared::face_surface_t &face : pane.face_surfaces) face.material = 1;
+  shared::mesh_geometry_t &pane = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  for (shared::mesh_face_t &face : pane.faces) face.surface.material = 1;
 
   // The two sets partition the map exactly: the pane is in one of them and the
   // other is empty.
@@ -3908,11 +3918,9 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
 
   // ONE tint per PIECE crossed: the pane is a convex brush, so a ray that enters
   // and leaves it is filtered once, not twice. A second pane above it is.
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 64, 0}, {32, 4, 32})});
-  shared::brush_geometry_t &second =
-      std::get<shared::brush_geometry_t>(map.geometry[1].value);
-  shared::sync_face_surfaces(second);
-  for (shared::face_surface_t &face : second.face_surfaces) face.material = 1;
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 64, 0}, {32, 4, 32})});
+  shared::mesh_geometry_t &second = std::get<shared::mesh_geometry_t>(map.geometry[1].value);
+  for (shared::mesh_face_t &face : second.faces) face.surface.material = 1;
 
   const Bounding_Volume_Hierarchy two_panes = shared::build_transmissive_bvh(map);
   const shared::traced_scene_t traced_pair =
@@ -3926,7 +3934,7 @@ void a_blend_faced_brush_tints_the_light_that_passes_through_it()
   // much of it is in the way: a blocked ray delivers nothing.
   shared::map_t with_a_wall = map;
   with_a_wall.geometry.push_back(
-      {with_a_wall.next_uid++, shared::make_box_brush({0, 32, 0}, {32, 4, 32})});
+      {with_a_wall.next_uid++, shared::make_box_mesh({0, 32, 0}, {32, 4, 32})});
   const Bounding_Volume_Hierarchy wall = shared::build_occluder_bvh(with_a_wall);
   const Bounding_Volume_Hierarchy behind = shared::build_transmissive_bvh(with_a_wall);
   const shared::traced_scene_t walled = shared::build_traced_scene(with_a_wall, wall, nullptr, &behind);
@@ -3949,22 +3957,20 @@ void the_gpu_scene_is_made_of_what_the_tracer_sees()
   map.materials = {"", ""};
 
   const shared::entity_uid_t floor_uid = map.next_uid++;
-  map.geometry.push_back({floor_uid, shared::make_box_brush({0, -8, 0}, {64, 8, 64})});
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 72, 0}, {64, 8, 64})});
+  map.geometry.push_back({floor_uid, shared::make_box_mesh({0, -8, 0}, {64, 8, 64})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 72, 0}, {64, 8, 64})});
 
-  shared::static_mesh_geometry_t prop;
-  prop.surface.mesh_path = "resources/models/Box.mesh";
+  shared::mesh_geometry_t prop;
+  prop.source = shared::asset_mesh_source_t{"resources/models/Box.mesh", {32, 32, 32}};
   prop.position = {200, 40, 0};
-  prop.scale = {32, 32, 32};
   const shared::entity_uid_t prop_uid = map.next_uid++;
   map.geometry.push_back({prop_uid, prop});
 
   // The floor's top face names material 1, its bottom an index the table does
   // not have; everything else stays at the map default.
-  shared::brush_geometry_t& floor =
-      std::get<shared::brush_geometry_t>(map.geometry[0].value);
-  shared::face_surface_for(floor, Plane{{0, 0, 0}, {0, 1, 0}}).material = 1;
-  shared::face_surface_for(floor, Plane{{0, -16, 0}, {0, -1, 0}}).material = 7;
+  shared::mesh_geometry_t &floor = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  surface_facing(floor, {0, 1, 0}).material = 1;
+  surface_facing(floor, {0, -1, 0}).material = 7;
 
   const assets::texture_asset_t albedo = one_texel(255, 255, 255);
   const assets::texture_asset_t emissive = one_texel(255, 128, 0);
@@ -4468,9 +4474,9 @@ void a_texel_buried_in_a_neighbouring_brush_reads_as_its_exposed_neighbour()
 {
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -32, 0}, {128, 32, 128})});
+      {map.next_uid++, shared::make_box_mesh({0, -32, 0}, {128, 32, 128})});
   const shared::entity_uid_t wall = map.next_uid;
-  map.geometry.push_back({map.next_uid++, shared::make_box_brush({0, 0, 0}, {8, 64, 8})});
+  map.geometry.push_back({map.next_uid++, shared::make_box_mesh({0, 0, 0}, {8, 64, 8})});
 
   std::shared_ptr<entities::Point_Light_Entity> light =
       std::make_shared<entities::Point_Light_Entity>();
@@ -4775,7 +4781,7 @@ int main()
   a_texture_reaches_the_gpu_scene_at_its_own_size();
 
   a_box_gets_one_chart_per_face();
-  a_wall_with_a_hole_gets_one_chart_per_plane_of_its_solid();
+  a_converted_wall_with_a_hole_gets_one_chart_per_face();
   chart_size_follows_the_face_extent();
   a_chart_origin_lies_on_its_face_plane();
   a_chart_origin_is_snapped_to_the_texel_grid();
@@ -4790,7 +4796,7 @@ int main()
   a_sidecar_round_trips_every_chart();
   the_geometry_id_follows_the_packing();
   a_chart_never_crosses_to_another_object();
-  a_lit_face_writes_uvs_and_a_strange_brush_writes_none();
+  a_lit_face_writes_uvs_and_a_strange_mesh_writes_none();
   rgb9e5_holds_every_scale_a_bake_produces();
   rgb9e5_takes_its_exponent_from_the_brightest_channel();
   the_visibility_mode_writes_white_or_nothing();

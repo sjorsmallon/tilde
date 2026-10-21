@@ -1,11 +1,14 @@
 #include "map_geometry.hpp"
+#include "map_geometry_mesh.hpp"
+#include "map_geometry_text.hpp"
+#include "map_geometry_text.hpp"
+#include "map_geometry_text.hpp"
 
 #include "../../third_party/xatlas.h"
 
 #include "array.hpp"
 #include "collision/collision_detection.hpp"
 #include "brush/brush_holes.hpp"
-#include "brush/brush_smoothing.hpp"
 #include "brush/convex_decomposition.hpp"
 #include "brush/face_neighbour.hpp"
 #include "log.hpp"
@@ -29,6 +32,7 @@ const char *get_kind_name(geometry_kind_t kind)
   {
   case geometry_kind_t::Static_Mesh:  return "static_mesh";
   case geometry_kind_t::Brush:        return "brush";
+  case geometry_kind_t::Mesh:         return "mesh";
   }
 
   log_error("get_kind_name: unhandled geometry kind {}", (int)kind);
@@ -41,6 +45,7 @@ geometry_value_t make_default_geometry(geometry_kind_t kind)
   {
   case geometry_kind_t::Static_Mesh:  return static_mesh_geometry_t{};
   case geometry_kind_t::Brush:        return brush_geometry_t{};
+  case geometry_kind_t::Mesh:         return make_box_mesh({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
   }
 
   log_error("make_default_geometry: unhandled geometry kind {} — defaulting to a brush",
@@ -105,6 +110,8 @@ linalg::vec3 get_position(const geometry_value_t &geometry)
   case geometry_kind_t::Static_Mesh:
     return std::get<static_mesh_geometry_t>(geometry).position;
 
+  case geometry_kind_t::Mesh:
+    return std::get<mesh_geometry_t>(geometry).position;
 
   case geometry_kind_t::Brush:
   {
@@ -126,6 +133,9 @@ void set_position(geometry_value_t &geometry, const linalg::vec3 &position)
     std::get<static_mesh_geometry_t>(geometry).position = position;
     return;
 
+  case geometry_kind_t::Mesh:
+    std::get<mesh_geometry_t>(geometry).position = position;
+    return;
 
   case geometry_kind_t::Brush:
   {
@@ -149,6 +159,9 @@ entity_uid_t get_owner_uid(const geometry_value_t &geometry)
 
   case geometry_kind_t::Brush:
     return std::get<brush_geometry_t>(geometry).owner_uid;
+
+  case geometry_kind_t::Mesh:
+    return std::get<mesh_geometry_t>(geometry).owner_uid;
   }
 
   log_error("get_owner_uid: unhandled geometry kind {}", (int)get_kind(geometry));
@@ -165,6 +178,10 @@ void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid)
 
   case geometry_kind_t::Brush:
     std::get<brush_geometry_t>(geometry).owner_uid = owner_uid;
+    return;
+
+  case geometry_kind_t::Mesh:
+    std::get<mesh_geometry_t>(geometry).owner_uid = owner_uid;
     return;
   }
 
@@ -184,6 +201,13 @@ void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta)
 
   case geometry_kind_t::Brush:
     translate_brush(std::get<brush_geometry_t>(geometry), delta);
+    return;
+
+  case geometry_kind_t::Mesh:
+    {
+      mesh_geometry_t &mesh = std::get<mesh_geometry_t>(geometry);
+      mesh.position = mesh.position + delta;
+    }
     return;
   }
 
@@ -296,6 +320,9 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry)
         compute_brush_bounds(std::get<brush_geometry_t>(geometry).hull_points);
     return (bounds.max - bounds.min) * 0.5f;
   }
+
+  case geometry_kind_t::Mesh:
+    return compute_mesh_world_half_extents(std::get<mesh_geometry_t>(geometry));
   }
 
   log_error("get_half_extents: unhandled geometry kind {}", (int)get_kind(geometry));
@@ -306,6 +333,9 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
 {
   switch (get_kind(geometry))
   {
+  case geometry_kind_t::Mesh:
+    return compute_mesh_world_bounds(std::get<mesh_geometry_t>(geometry));
+
   case geometry_kind_t::Brush:
   {
     // The hull's bound, GROWN by the extreme offsets any subdivided face
@@ -386,6 +416,8 @@ collision_piece_t piece_from_polyhedron(const brush_polyhedron_t &polyhedron)
   return piece;
 }
 
+} // namespace
+
 // ONE COLUMN PER GRID TRIANGLE, and it is exact rather than an approximation.
 //
 // A subdivided face's grid is a structure we generated, so handing it to a
@@ -446,9 +478,9 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
   if (size < 2)
     return std::nullopt;
 
-  const std::optional<face_grid_t> base_grid = try_face_grid(polygon, normal);
-  if (!base_grid)
-    return std::nullopt;
+  if (grids.grid_corners.size() != grids.grid_vertices.size())
+    fatal_error("try_build_subdivided_face_columns: the grids carry no corners");
+  const face_grid_t &base_grid = grids.grid_corners[subdivided_face];
 
   std::vector<Plane> other_planes;
   for (size_t face_index = 0; face_index < hull.faces.size(); ++face_index)
@@ -465,7 +497,7 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
 
   const int  level   = size - 1;
   const auto base_at = [&](int i, int j) {
-    return face_grid_base_vertex(*base_grid, level, i, j);
+    return face_grid_base_vertex(base_grid, level, i, j);
   };
   const auto grid_at = [&](int i, int j) { return grid[(size_t)(j * size + i)]; };
 
@@ -563,6 +595,9 @@ try_build_subdivided_face_columns(const brush_polyhedron_t &hull,
 
   return pieces;
 }
+
+namespace
+{
 
 // ONE PYRAMID PER BOUNDARY FACE, from a point every one of them can see.
 //
@@ -697,6 +732,9 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
       return {};
     return {static_mesh_collision_box(static_mesh)};
   }
+
+  case geometry_kind_t::Mesh:
+    return compute_mesh_collision_pieces(std::get<mesh_geometry_t>(geometry), uid);
 
   case geometry_kind_t::Brush:
   {
@@ -840,6 +878,8 @@ bool vec3_equal(const linalg::vec3 &lhs, const linalg::vec3 &rhs)
   return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
 }
 
+} // namespace
+
 bool surfaces_equal(const geometry_surface_t &lhs, const geometry_surface_t &rhs)
 {
   return lhs.mesh_path == rhs.mesh_path &&
@@ -878,6 +918,9 @@ bool face_surfaces_identical(const face_surface_t &lhs, const face_surface_t &rh
          lhs.subdivision_level == rhs.subdivision_level &&
          grids_equal(lhs.offsets, rhs.offsets) && lhs.blend == rhs.blend;
 }
+
+namespace
+{
 
 // ORDER CARRIES NO MEANING, for the same reason it carries none in the vertex
 // set: a face's identity is its PLANE, so a list in a different arrangement
@@ -929,6 +972,9 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
            a.owner_uid == b.owner_uid;
   }
 
+  case geometry_kind_t::Mesh:
+    return mesh_geometries_equal(std::get<mesh_geometry_t>(lhs), std::get<mesh_geometry_t>(rhs));
+
   case geometry_kind_t::Brush:
   {
     const brush_geometry_t &a = std::get<brush_geometry_t>(lhs);
@@ -974,6 +1020,9 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
 light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
                                      Span<const std::string> materials)
 {
+  if (const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&geometry))
+    return compute_mesh_light_occlusion(*mesh, materials);
+
   // A static mesh's material is not resolved anywhere in the bake yet, so it is
   // opaque the way it always was, unless its author switched its shadow off.
   const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&geometry);
@@ -1186,14 +1235,6 @@ void sync_face_surfaces(brush_geometry_t &brush)
 void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> &grid,
                     const linalg::vec3 &face_normal, const face_uv_channel_t &uv)
 {
-  const int size = (int)std::lround(std::sqrt((double)grid.size()));
-  if (size < 2)
-    return;
-
-  const auto at = [&](int i, int j) -> const linalg::vec3 & {
-    return grid[(size_t)(std::clamp(j, 0, size - 1) * size + std::clamp(i, 0, size - 1))];
-  };
-
   // The grid runs CCW in (u, v), but brush_face_grid_tangents picks its basis
   // from |normal|, so cross(u, v) is the outward normal on only half the faces.
   linalg::vec3 tangent_u{0, 0, 0};
@@ -1201,6 +1242,20 @@ void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> 
   brush_face_grid_tangents(face_normal, tangent_u, tangent_v);
   const bool grid_winds_outward =
       linalg::dot(linalg::cross(tangent_u, tangent_v), face_normal) > 0.f;
+  emit_face_grid(mesh, grid, face_normal, uv, grid_winds_outward);
+}
+
+void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> &grid,
+                    const linalg::vec3 &face_normal, const face_uv_channel_t &uv,
+                    bool grid_winds_outward)
+{
+  const int size = (int)std::lround(std::sqrt((double)grid.size()));
+  if (size < 2)
+    return;
+
+  const auto at = [&](int i, int j) -> const linalg::vec3 & {
+    return grid[(size_t)(std::clamp(j, 0, size - 1) * size + std::clamp(i, 0, size - 1))];
+  };
 
   const uint32_t base = (uint32_t)mesh.vertices.size();
 
@@ -1564,6 +1619,7 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
   grids.grid_vertices.resize(hull.faces.size());
   grids.grid_weights.resize(hull.faces.size());
   grids.grid_pinned.resize(hull.faces.size());
+  grids.grid_corners.resize(hull.faces.size());
 
   std::optional<std::vector<seam_candidate_t>> seam_candidates;
 
@@ -1620,6 +1676,7 @@ brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
     weights.resize((size_t)face_grid_vertex_count(level));
     std::vector<bool> &pinned = grids.grid_pinned[face_index];
     pinned.assign((size_t)face_grid_vertex_count(level), false);
+    grids.grid_corners[face_index] = *grid;
     grids.any = true;
 
     if (!seam_candidates)
@@ -2307,8 +2364,7 @@ generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
 
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
-                                         brush_neighbourhood_t neighbourhood,
-                                         const object_lightmap_ref_t &lighting)
+                                         brush_neighbourhood_t neighbourhood)
 {
   // A hole draws nothing of its own: what it takes out of its wall is the wall's mesh.
   if (brush.subtracts_from_uid != null_entity_uid)
@@ -2355,19 +2411,6 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
     return find_face_surface(brush, polyhedron->faces[face_index].plane);
   };
 
-  // A corner in a non-zero smoothing group draws with the average normal of
-  // its group at that position, across this brush and its touching neighbours.
-  std::vector<int32_t> smoothing_groups(polyhedron->faces.size(), 0);
-  for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
-    if (const face_surface_t *surface = surface_for(face_index))
-      smoothing_groups[face_index] = surface->smoothing_group;
-  const std::vector<smoothing_source_t> smoothing_sources = collect_smoothing_sources(
-      brush, Span<const int32_t>(smoothing_groups.data(), smoothing_groups.size()),
-      neighbourhood);
-  const std::vector<std::vector<linalg::vec3>> corner_normals = compute_smoothed_corner_normals(
-      *polyhedron, Span<const int32_t>(smoothing_groups.data(), smoothing_groups.size()),
-      Span<const smoothing_source_t>(smoothing_sources.data(), smoothing_sources.size()));
-
   // The material a face resolves to, and the mesh slot each distinct one takes.
   // Faces are grouped rather than emitted in face order so a brush with one
   // material is one submesh, which is what it was before faces existed.
@@ -2395,11 +2438,6 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
   std::vector<std::vector<size_t>> faces_by_slot;
   bool mesh_blends = false;
 
-  // Whether ANY face of this brush names a chart. A brush the bake never reached
-  // leaves `lightmap` empty rather than filling it with sentinels, so it uploads
-  // byte for byte what it did before the bake existed.
-  bool mesh_is_lightmapped = false;
-
   for (size_t face_index = 0; face_index < polyhedron->faces.size(); ++face_index)
   {
     const brush_face_t &face = polyhedron->faces[face_index];
@@ -2409,10 +2447,6 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
     const face_surface_t *surface = surface_for(face_index);
     if (surface && !surface->emits_geometry)
       continue;
-
-    if (lighting.has_bake() &&
-        find_chart(*lighting.lightmap, lighting.object_uid, face.plane))
-      mesh_is_lightmapped = true;
 
     slot_layers_t layers;
     layers.blends = surface && face_is_blended(*surface);
@@ -2459,7 +2493,7 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
         for (size_t corner = 0; corner < face.vertex_indices.size(); ++corner)
         {
           const linalg::vec3 position = polyhedron->vertices[face.vertex_indices[corner]];
-          mesh.vertices.push_back({position, corner_normals[face_index][corner],
+          mesh.vertices.push_back({position, face.plane.normal,
                                    face_uv_at(uv, position, face.plane.normal)});
         }
 
@@ -2468,33 +2502,6 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
           mesh.indices.push_back(base);
           mesh.indices.push_back(base + offset);
           mesh.indices.push_back(base + offset + 1);
-        }
-      }
-
-      // Lightmap coordinates for whatever the two paths above emitted, read back
-      // out of the vertices rather than computed inside each -- the projection
-      // takes a world position and both paths have already written one, so this
-      // is one arm instead of two that can disagree.
-      //
-      // Covers the WHOLE mesh once anything on it is lit, for the same reason
-      // `blend` does: a parallel array covering part of a buffer is not one.
-      if (mesh_is_lightmapped)
-      {
-        mesh.lightmap.resize(mesh.vertices.size());
-
-        if (const lightmap_chart_t *chart =
-                find_chart(*lighting.lightmap, lighting.object_uid, face.plane))
-        {
-          for (size_t vertex = base; vertex < mesh.vertices.size(); ++vertex)
-          {
-            mesh.lightmap[vertex].uv =
-                lightmap_uv_for(*chart, lighting.lightmap->settings,
-                                lighting.lightmap->atlas, mesh.vertices[vertex].position);
-            // The chart's slots, verbatim: the visibility texel this vertex
-            // names has one channel per slot, and nothing but the chart knows
-            // which light each of them is.
-            mesh.lightmap[vertex].light_slots = chart->light_slots;
-          }
         }
       }
 
@@ -2570,9 +2577,6 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
 // space-separated vec3s, "0"/"1" bools), so a converted map's numbers look the
 // same in a diff as they did before the exit.
 // ============================================================================
-
-namespace
-{
 
 std::string format_float(float value)
 {
@@ -2880,13 +2884,19 @@ void read_float_array(const std::map<std::string, std::string> &properties,
 void write_face_surface(const face_surface_t &face, Span<const uint16_t> material_remap,
                         map_block_out_t &out)
 {
+  out.keyword = "face";
+  out.properties.emplace_back("normal", format_vec3_exact(face.key_normal));
+  out.properties.emplace_back("distance", format_float_exact(face.key_distance));
+  write_face_surface_fields(face, material_remap, out);
+}
+
+void write_face_surface_fields(const face_surface_t &face, Span<const uint16_t> material_remap,
+                               map_block_out_t &out)
+{
   const auto remap = [&](uint16_t index) -> uint16_t {
     return (index < material_remap.count) ? material_remap[index] : index;
   };
 
-  out.keyword = "face";
-  out.properties.emplace_back("normal", format_vec3_exact(face.key_normal));
-  out.properties.emplace_back("distance", format_float_exact(face.key_distance));
   out.properties.emplace_back("material", std::to_string(remap(face.material)));
   out.properties.emplace_back("blend_material", std::to_string(remap(face.blend_material)));
   out.properties.emplace_back("emits_geometry", format_bool(face.emits_geometry));
@@ -2985,6 +2995,9 @@ face_surface_t read_face_surface(const map_block_t &block)
 
 // --- the legacy `displacement` block ---
 //
+namespace
+{
+
 // A displacement was a box with ONE subdivided face and its own flat grid array.
 // Both halves land on the face whose plane the old `active_face` names: the
 // legacy row-major order (i along the face's u tangent, j along its v) is the
@@ -3066,6 +3079,11 @@ void serialize_geometry(const geometry_value_t &geometry,
     return;
   }
 
+  case geometry_kind_t::Mesh:
+    write_mesh_row(std::get<mesh_geometry_t>(geometry), material_remap, out_properties,
+                   out_children);
+    return;
+
   case geometry_kind_t::Brush:
   {
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
@@ -3098,6 +3116,15 @@ bool parse_geometry(const std::string &keyword,
   // keyword has a get_kind_name entry, so serialize_geometry can never emit one
   // again, which is what makes the conversion one-time rather than a pass
   // re-running on every load forever.
+  if (keyword == get_kind_name(geometry_kind_t::Mesh))
+  {
+    std::optional<mesh_geometry_t> mesh = try_parse_mesh_row(properties, children);
+    if (!mesh)
+      return false;
+    out_geometry = std::move(*mesh);
+    return true;
+  }
+
   if (keyword == "box" || keyword == "displacement")
   {
     linalg::vec3 position{0.f, 0.f, 0.f};

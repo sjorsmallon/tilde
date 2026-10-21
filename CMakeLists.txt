@@ -457,25 +457,42 @@ add_library(game_shared STATIC
     # one convex piece per hole face. geometry_def.md Track H.
     src/shared/map/brush/brush_holes.hpp
     src/shared/map/brush/brush_holes.cpp
-    # A primitive is point sets dropped to plain brushes: a prism, an arch,
-    # stairs. Its recipe rides the group so the panel can regenerate it.
-    # geometry_def.md Track I.
-    src/shared/map/brush/primitive_recipe.hpp
-    src/shared/map/brush/primitive_recipe.cpp
+    # The brush-era prism (the round hole brush), until the brush goes.
+    # geometry_def.md Track I, superseded by section 11.
     src/shared/map/brush/brush_primitives.hpp
     src/shared/map/brush/brush_primitives.cpp
     # The one curve: centripetal Catmull-Rom through clicked points, the curve
     # brush's spine. Bezier waits for a caller.
     src/shared/curve.hpp
     src/shared/curve.cpp
-    # The consumer of smoothing_group: a corner's draw normal is its group's
-    # area-weighted average at that position. geometry_def.md Track J.
-    src/shared/map/brush/brush_smoothing.hpp
-    src/shared/map/brush/brush_smoothing.cpp
     # Convexity is a bake-time property: one brush becomes N convex BVH
     # primitives sharing an id. See geometry_def.md section 5.
     src/shared/map/brush/convex_decomposition.hpp
     src/shared/map/brush/convex_decomposition.cpp
+    # The one geometry kind: stored planar faces with a pose, closed and planar
+    # checked after every edit. geometry_def.md section 11.
+    src/shared/map/mesh/mesh.hpp
+    src/shared/map/mesh/mesh.cpp
+    # The plane split both the clip tool and the decomposition cut through, and
+    # the reflex-edge decomposition collision is derived by. geometry_def.md 11.3.
+    src/shared/map/mesh/mesh_split.hpp
+    src/shared/map/mesh/mesh_split.cpp
+    src/shared/map/mesh/mesh_decomposition.hpp
+    src/shared/map/mesh/mesh_decomposition.cpp
+    # A primitive is one recipe mesh: the recipe is the source, the mesh is
+    # derived, a hand edit freezes it. geometry_def.md section 11.8 increment 10.
+    src/shared/map/mesh/primitive_recipe.hpp
+    src/shared/map/mesh/primitive_recipe.cpp
+    src/shared/map/mesh/mesh_primitives.hpp
+    src/shared/map/mesh/mesh_primitives.cpp
+    # The mesh arms of the seam functions, beside map_geometry.cpp.
+    src/shared/map/face_surface.hpp
+    src/shared/map/map_geometry_text.hpp
+    src/shared/map/map_geometry_mesh.hpp
+    src/shared/map/map_geometry_mesh.cpp
+    # The legacy readers: brush and static_mesh rows become meshes on read.
+    src/shared/map/map_geometry_legacy.hpp
+    src/shared/map/map_geometry_legacy.cpp
     src/shared/lighting/map_baker.cpp
     src/shared/movement/pathfinding.cpp
     src/shared/lighting/lighting.hpp
@@ -910,6 +927,7 @@ add_library(game_client SHARED
     src/client/editor/tools/animation_tool.cpp
     src/client/editor/tools/brush_tool.cpp
     src/client/editor/tools/brush_stroke.cpp
+    src/client/editor/tools/face_tool.cpp
     src/client/editor/tools/clip_tool.cpp
     src/client/editor/tools/primitive_tool.cpp
     src/client/editor/tools/lightmap_tool.cpp
@@ -1183,6 +1201,18 @@ add_game_test(lightmap_bake_test)
 # the receiver's texel size is the cone's (gate 9).
 add_game_test(shadow_test)
 
+# Mesh: the two invariants, closed and planar, refused by name. geometry_def.md section 11.
+add_game_test(mesh_test)
+
+# Reflex-edge decomposition: a convex mesh is one piece, the L is two boxes, a
+# U is three, an arch is its segments; volumes sum and bounds match. The split
+# under it refuses a miss and closes every half. geometry_def.md section 11.3.
+add_game_test(mesh_decomposition_test)
+
+# Primitives as recipe meshes: every kind a closed solid at its corner that
+# decomposes into the pieces the brush era placed; regenerate, freeze, rebase.
+add_game_test(mesh_primitives_test)
+
 # Brush: convex hull, winding, tolerances, text round trip.
 add_game_test(brush_test)
 
@@ -1199,17 +1229,10 @@ add_game_test(brush_split_test)
 # geometry_def.md Track H.
 add_game_test(brush_holes_test)
 
-# Primitives: a prism is one convex brush of sides + 2 faces, an arch is N convex
-# wedges sharing their rib points and summing to the half ring, a straight flight
-# is N boxes down to the base plane, a spiral is N one-rise slabs, a recipe
-# builds the same points turned.
-# geometry_def.md Track I.
+# The brush-era prism (the round hole brush): one convex brush of sides + 2
+# faces with the polygon's volume, lying along its axis; and the one curve.
+# geometry_def.md Track I, superseded by section 11.
 add_game_test(brush_primitives_test)
-
-# Smoothing groups: group zero stays flat, a prism's side corners take the
-# radial normal, an arch smooths across its wedges, a hole is never a source.
-# geometry_def.md Track J.
-add_game_test(brush_smoothing_test)
 
 # Convex decomposition: every piece convex, union bounds match, a
 # non-decomposable brush fails loudly rather than half-colliding.

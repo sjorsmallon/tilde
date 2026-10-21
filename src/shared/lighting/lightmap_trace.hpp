@@ -89,7 +89,7 @@ struct traced_scene_t
 
   // Sorted by uid, so a hit resolves by binary search rather than by walking the
   // map's geometry list once per bounce.
-  std::vector<std::pair<entity_uid_t, const brush_geometry_t *>> brushes;
+  std::vector<std::pair<entity_uid_t, const mesh_geometry_t *>> meshes;
 
   // By map material index. A null albedo is a material that resolved to none,
   // which reads as UNTEXTURED_BOUNCE_ALBEDO rather than as black; a null
@@ -170,12 +170,12 @@ struct traced_surface_t
                                           const linalg::vec3 &hit_position);
 
 // What survives a crossing of ONE transmissive surface: `albedo * (1 - alpha)`
-// at the hit, in linear RGB. The same brush-and-face walk surface_at makes, and
+// at the hit, in linear RGB. The same mesh-and-face walk surface_at makes, and
 // deliberately the same one -- a shadow ray tinted by a material the bounce does
 // not agree it hit is two answers about one face.
 //
 // A hit on a face that is not `blend` transmits nothing and answers ZERO: the
-// transmissive BVH holds whole brushes, so a brush that got in there for one
+// transmissive BVH holds whole meshes, so a mesh that got in there for one
 // glass face still has its opaque faces in it.
 [[nodiscard]] linalg::vec3 transmittance_at(const traced_scene_t &scene,
                                             const ray_hit_result_t &hit,
@@ -184,7 +184,7 @@ struct traced_surface_t
 // Is this hit on the SOLID part of an alpha-tested surface -- a grate's BAR
 // rather than the gap between two of them? The same walk again, asking the
 // albedo's fourth channel against the material's cutoff. A face that is not
-// `cutout` is solid, so a brush that got into the tested set for its other faces
+// `cutout` is solid, so a mesh that got into the tested set for its other faces
 // still stops a ray through this one.
 //
 // TRUE means the ray is STOPPED. The name says what the texel is, not what the

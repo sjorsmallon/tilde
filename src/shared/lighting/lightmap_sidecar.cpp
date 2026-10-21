@@ -86,7 +86,11 @@ constexpr uint32_t LIGHTMAP_MAGIC = 0x504D4C54; // "TLMP"
 //    every page set, so a version-9 reader would decode a third of the pages
 //    and call it the whole answer. REFUSED, for gate 2's reason: a shadow's
 //    colour can only come from a bake.
-constexpr uint32_t LIGHTMAP_VERSION = 10;
+// 11: a chart is keyed by (object uid, FACE INDEX) (geometry_def.md 11.8
+//    increment 7); the index rides after the uid, and the plane after it is a
+//    descriptor. A version-10 file keyed every chart by plane, which no stored
+//    face can find; REFUSED.
+constexpr uint32_t LIGHTMAP_VERSION = 11;
 
 std::string lightmap_path_for(const std::string &map_path)
 {
@@ -141,6 +145,7 @@ void save_lightmap_sidecar(const std::string &map_path, const lightmap_t &lightm
   for (const lightmap_chart_t &chart : lightmap.charts)
   {
     write((uint32_t)chart.object_uid);
+    write(chart.face_index);
     write_vec3(chart.plane.point);
     write_vec3(chart.plane.normal);
     write_vec3(chart.origin);
@@ -310,6 +315,7 @@ lightmap_t load_lightmap_sidecar(const std::string &map_path, uint32_t map_conte
     uint32_t object_uid = 0;
     read(object_uid);
     chart.object_uid = object_uid;
+    read(chart.face_index);
 
     read_vec3(chart.plane.point);
     read_vec3(chart.plane.normal);

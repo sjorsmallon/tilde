@@ -19,6 +19,7 @@
 // navmesh, which load_map read back unchanged).
 
 #include "log.hpp"
+#include "assets/asset_state.hpp"
 #include "map/map.hpp"
 #include <cstdio>
 #include <filesystem>
@@ -33,6 +34,7 @@ struct conversion_report_t
   size_t static_meshes = 0;
   size_t brushes = 0;
   size_t subdivided_faces = 0;
+  size_t meshes = 0;
   size_t entities = 0;
   bool was_legacy = false;      // the file still held geometry as entity blocks
   bool needs_rewrite = false;   // the file's text is not what save_map writes
@@ -47,6 +49,14 @@ conversion_report_t inspect(const shared::map_t &map, const std::string &origina
     switch (shared::get_kind(entry.value))
     {
     case shared::geometry_kind_t::Static_Mesh: ++report.static_meshes; break;
+    case shared::geometry_kind_t::Mesh:
+    {
+      ++report.meshes;
+      for (const shared::mesh_face_t &face : std::get<shared::mesh_geometry_t>(entry.value).faces)
+        if (face.surface.subdivision_level > 0)
+          ++report.subdivided_faces;
+      break;
+    }
     case shared::geometry_kind_t::Brush:
     {
       ++report.brushes;
@@ -135,10 +145,10 @@ bool convert_one(const std::string &path, bool check_only)
   else if (report.needs_rewrite)
     status = "  [not canonical]";
 
-  std::printf("%s: %zu static_mesh, %zu brush (%zu subdivided faces), %zu "
+  std::printf("%s: %zu mesh (%zu subdivided faces), %zu brush, %zu static_mesh, %zu "
               "entities%s\n",
-              path.c_str(), report.static_meshes, report.brushes,
-              report.subdivided_faces, report.entities, status);
+              path.c_str(), report.meshes, report.subdivided_faces, report.brushes,
+              report.static_meshes, report.entities, status);
 
   if (check_only)
     return true;
@@ -198,6 +208,11 @@ int main(int argc, char **argv)
     std::printf("usage: map_convert [--check] <map-file> [<map-file> ...]\n");
     return 2;
   }
+
+  // A map names assets by field; the ids come from the tree, as in the game.
+  static assets::asset_state_t asset_state;
+  assets::set_state(&asset_state);
+  assets::number_asset_ids_from_tree(asset_state, "resources");
 
   bool all_ok = true;
   for (const std::string &path : paths)

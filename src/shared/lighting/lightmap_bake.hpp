@@ -1,6 +1,6 @@
 #pragma once
 
-// Charts and packing: a brush face becomes a rectangle, and the rectangles
+// Charts and packing: a mesh face becomes a rectangle, and the rectangles
 // become atlas pages. The TYPES all live in lightmap.hpp, which knows nothing
 // about a map -- that is what lets map_t hold a lightmap_t with no include
 // cycle, so this header is the two entry points and nothing else.
@@ -13,12 +13,11 @@
 namespace shared
 {
 
-// One chart per brush face and one per PLANE of a static mesh, in the six steps
-// lightmap.hpp lists above lightmap_chart_t. A mesh's coplanar triangles share a
-// chart whether or not they touch, which is what keeps the (uid, plane) key
-// unique with no second identity; the chart's coverage is then a triangle list
-// rather than a polygon. A face with `emits_geometry` false gets none: nothing
-// draws it, so nothing samples it.
+// One chart per stored face of a mesh, keyed by the face's index, in the six
+// steps lightmap.hpp lists above lightmap_chart_t; an asset-sourced mesh's
+// charts are xatlas's unwrap pieces, whose coverage is a triangle list rather
+// than a polygon. A face with `emits_geometry` false gets none: nothing draws
+// it, so nothing samples it.
 //
 // `face_surface_t::lightmap_scale` multiplies the density per face, and
 // `max_chart_extent_in_texels` caps the result by LOWERING that density rather
