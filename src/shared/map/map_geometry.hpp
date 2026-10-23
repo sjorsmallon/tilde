@@ -22,19 +22,16 @@
 // ============================================================================
 // Map-owned geometry.
 //
-// Brushes and static meshes are plain C++ value types owned by map_t, NOT
+// Meshes and brushes are plain C++ value types owned by map_t, NOT
 // entities. They are never networked, so they don't pay for the schema system's
 // blittable / fixed-size / memcmp constraints — which is why a face's
 // subdivision grid can be a std::vector instead of the old
 // schema_array_t<float32, 3267>, a hard cap of subdivision level 32 that was the
 // wire format's limitation leaking into what a level could express.
 //
-// TWO KINDS, and they are the two that genuinely differ: authored geometry, and
-// a referenced art asset. box_geometry_t went in Track B and
-// displacement_geometry_t in Track D; both were spellings of brush_geometry_t,
-// and a displacement in particular was a port of Source 1's workaround for a
-// BSP tree we never had (geometry_def.md §2). A displacement is a brush with one
-// subdivided face now, and every brush face can carry a grid.
+// One kind, the mesh (geometry_def.md §11); the brush stays an alternative
+// until the last increment of §11.8 removes it. A referenced art asset is a
+// mesh with an asset source (map_geometry_asset.hpp).
 //
 // Everything here copies. That is the point: a whole-value snapshot is the
 // editor's undo primitive for geometry (see transaction_system's geometry
@@ -45,32 +42,11 @@
 namespace shared
 {
 
-// A reference to a mesh asset placed in the world. Collision is its bounding
-// box, turned with it; no shape is derived from the triangles.
-struct static_mesh_geometry_t
-{
-  linalg::vec3 position{0.f, 0.f, 0.f};
-  linalg::quatf orientation = linalg::quatf::identity();
-  linalg::vec3 scale{1.f, 1.f, 1.f};
-  geometry_surface_t surface;
-
-  // Off for a prop whose collision is authored as clip brushes around it.
-  bool collides = true;
-
-  // Off for a light fixture: the housing a light sits inside must not shadow it.
-  bool casts_shadows = true;
-
-  // The Geometry_Owner_Entity this object is tied to, or null_entity_uid for plain world
-  // geometry. See brush_geometry_t::owner_uid -- the argument is the same and
-  // is written there.
-  entity_uid_t owner_uid = null_entity_uid;
-};
-
 // A solid, stored as the point set whose hull it is. See brush.hpp for why the
 // vertices are canonical and the planes derived, and for the three rules that
 // keep off-grid vertices representable.
 //
-// Unlike the two above it, a brush has no `position` member: its position IS
+// A brush has no `position` member: its position IS
 // its points, and a second copy of that would be a second thing to keep in step.
 // get_position/set_position work off the bounds centre.
 struct brush_geometry_t
@@ -99,12 +75,11 @@ struct brush_geometry_t
   std::vector<face_surface_t> face_surfaces;
 
   // The default a face inherits when no stored surface matches it, and the
-  // per-object properties that stay per-object: visibility, wireframe, and the
-  // mesh_path override.
+  // per-object properties that stay per-object: visibility and wireframe.
   geometry_surface_t surface;
 
   // The Geometry_Owner_Entity this brush is tied to, or null_entity_uid for plain world
-  // geometry. THE BRUSH NAMES ITS OWNER and nothing names the brush: Source
+  // geometry. THE OBJECT NAMES ITS OWNER and nothing names the brush: Source
   // nests the solids inside the entity block, we keep a flat geometry list with
   // uids, so the pointer runs this way and N brushes per entity costs no array.
   // The other direction is DERIVED -- game_session_t::owner_of, and an on-demand
@@ -136,20 +111,19 @@ bool brush_is_axis_aligned_box(Span<const linalg::vec3> vertices);
 // One geometry object. `std::variant` rather than a tagged struct so a
 // whole-value copy is the snapshot, and so adding a kind is a compile error at
 // every site that switches over it.
-// Mesh is the THIRD alternative for the length of geometry_def.md §11.8; the
-// last increment deletes the other two.
-using geometry_value_t = std::variant<static_mesh_geometry_t, brush_geometry_t, mesh_geometry_t>;
+// Mesh is the second alternative for the length of geometry_def.md §11.8; the
+// last increment deletes the brush.
+using geometry_value_t = std::variant<brush_geometry_t, mesh_geometry_t>;
 
 // Kind tags, kept in lockstep with geometry_value_t's alternatives so the
 // variant index and this enum are interchangeable.
 enum class geometry_kind_t : uint8_t
 {
-  Static_Mesh = 0,
-  Brush = 1,
-  Mesh = 2,
+  Brush = 0,
+  Mesh = 1,
 };
 
-inline constexpr size_t geometry_kind_count = 3;
+inline constexpr size_t geometry_kind_count = 2;
 
 inline geometry_kind_t get_kind(const geometry_value_t &geometry)
 {
@@ -185,9 +159,9 @@ void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid);
 // every stamp. Texture lock rides along, since translate_brush carries it.
 void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta);
 
-// Half-extents of the object's own shape. For static meshes this is derived
-// from the (scaled) mesh bounds, falling back to a default box if the mesh
-// hasn't loaded.
+// Half-extents of the object's world bound. For an asset-sourced mesh this is
+// derived from the (scaled) asset bounds, falling back to a default box if the
+// asset does not resolve.
 linalg::vec3 get_half_extents(const geometry_value_t &geometry);
 
 // World-space AABB used for picking and as the BVH leaf bound.
@@ -202,8 +176,8 @@ struct collision_piece_t
   std::vector<std::vector<linalg::vec3>> face_polygons;
 };
 
-// The collision solids of one object. A static mesh collides as its oriented
-// box and yields exactly one, or none with `collides` off; a brush collides as its real
+// The collision solids of one object. An asset-sourced mesh collides as its
+// oriented box and yields exactly one, or none with `collides` off; a brush collides as its real
 // DISPLACED surface, is DECOMPOSED, and yields N, all of which the caller
 // registers under ONE Collision_Id — see geometry_def.md §5 and
 // convex_decomposition.hpp.
@@ -228,11 +202,6 @@ collision_piece_t piece_from_aabb(const aabb_t &aabb);
 // Six planes and six faces in world space.
 collision_piece_t piece_from_oriented_box(const oriented_box_t &box);
 
-// The box a static mesh collides as: its mesh bounds under its scale, turned by
-// its orientation. Answered whether or not `collides` is set, so the editor can
-// pick and draw the box of a mesh that has its collision switched off.
-collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh);
-
 // How an object stops light, which is the ONE question that partitions the map
 // into the bake's three occluder sets. Both the CPU's BVHs and the GPU's
 // acceleration structures ask it, so the two cannot disagree about which set a
@@ -253,7 +222,7 @@ enum class light_occlusion_t : uint8_t
   // Stops nothing, and TINTS what it passes (transparency_plan.md step 7).
   // Every face resolves to a `blend` material.
   Transmissive,
-  // In no set at all: a static mesh with `casts_shadows` off.
+  // In no set at all: a mesh with `casts_shadows` off.
   None,
 };
 
@@ -276,11 +245,6 @@ const geometry_surface_t &get_surface(const geometry_value_t &geometry);
 // flavor is that it does NOT lose a change too small to survive being formatted
 // to text, which is the bug the entity flavor still has.
 bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &rhs);
-
-// Resolve a surface's mesh_path to a mesh asset through assets::load_mesh.
-// Returns an invalid handle for an empty path.
-assets::asset_handle_t<assets::mesh_asset_t>
-resolve_surface_mesh(const geometry_surface_t &surface);
 
 // Resolve a map material -- an entry of map_t::materials -- to the four maps the
 // renderer binds. A PBR folder resolves to all four; a single texture file
@@ -485,55 +449,6 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush, brush_neighbourhoo
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
                                          brush_neighbourhood_t neighbourhood);
-
-// --- A static mesh, in the world ---------------------------------------------
-//
-// Everything the bake asks of a static mesh -- its charts, its shadow casters,
-// its lightmapped draw copy -- starts from its triangles in WORLD space, so
-// there is one place that transform is applied. A triangle is its three corners
-// and its OUTWARD unit normal; a degenerate triangle keeps its place in the list
-// (index t is still source triangle t) with a zero normal, and every consumer
-// skips those.
-struct world_triangle_t
-{
-  Array<linalg::vec3, 3> corners;
-  linalg::vec3 normal{0.f, 0.f, 0.f};
-
-  [[nodiscard]] bool is_degenerate() const
-  {
-    return normal.x == 0.f && normal.y == 0.f && normal.z == 0.f;
-  }
-  [[nodiscard]] Plane plane() const { return Plane{corners[0], normal}; }
-};
-
-[[nodiscard]] linalg::mat4f static_mesh_transform(const static_mesh_geometry_t &static_mesh);
-
-// Empty when the surface names no mesh or names one that is not there; the
-// caller has the uid and logs.
-[[nodiscard]] std::vector<world_triangle_t>
-static_mesh_world_triangles(const static_mesh_geometry_t &static_mesh);
-
-// The asset's vertices moved into world space, index for index -- what an
-// unwrapped vertex's xref names. Empty under the same condition as above.
-[[nodiscard]] std::vector<vertex_xnu>
-static_mesh_world_vertices(const static_mesh_geometry_t &static_mesh);
-
-// xatlas over the INSTANCE's world triangles (lightmap_unwrap_plan.md step 2), so
-// the density it sizes charts at is the instance's, scale included. One entry
-// per chart, uvs in world units from each chart's own min corner. Empty when
-// the mesh does not resolve or xatlas refuses it, and it says so.
-[[nodiscard]] std::vector<chart_unwrap_t>
-unwrap_static_mesh(const static_mesh_geometry_t &static_mesh, float texels_per_world_unit);
-
-// The mesh a LIGHTMAPPED static mesh draws as: the asset's triangles moved into
-// world space, one vertex per triangle CORNER, so every vertex belongs to exactly
-// one chart -- the pooled asset is welded, and a corner three faces share cannot
-// carry three atlas positions. Same submeshes and materials as the asset, and
-// `lightmap` filled from the object's unwrap charts, found by its uid. Drawn with
-// the identity, like a brush.
-[[nodiscard]] assets::mesh_asset_t
-generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
-                                 const object_lightmap_ref_t &lighting);
 
 // --- Text serialization ------------------------------------------------------
 //

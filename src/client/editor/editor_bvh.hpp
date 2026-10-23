@@ -45,27 +45,15 @@ build_editor_bvh(const shared::map_t &map)
     inputs.push_back(input);
   };
 
-  // Geometry picks against its real shape. For a static mesh the
-  // plane set IS the bound, so those pick exactly as they did; brush is the one
-  // kind where the hull differs, and clicking the empty corner of its bounding
-  // box should not select it. A brush decomposes into several pieces, each its
-  // own leaf under the same uid — clicking any of them selects the object, and
-  // the notch of a concave brush now correctly falls through to what is behind.
+  // Geometry picks against its real shape: clicking the empty corner of its
+  // bounding box should not select it. A mesh decomposes into several pieces,
+  // each its own leaf under the same uid — clicking any of them selects the
+  // object, and the notch of a concave mesh falls through to what is behind.
   for (const shared::map_geometry_t &entry : map.geometry)
   {
-    // A mesh with its collision switched off is still clicked as its box, and
-    // is not a brush that failed: nothing about it is reported.
-    const shared::static_mesh_geometry_t* static_mesh =
-        std::get_if<shared::static_mesh_geometry_t>(&entry.value);
-    if (static_mesh != nullptr && !static_mesh->collides)
-    {
-      const shared::collision_piece_t box = shared::static_mesh_collision_box(*static_mesh);
-      add_leaf(entry.uid, box.bounds, box.planes);
-      continue;
-    }
-
     // A mesh with its collision switched off is still clicked as the shape it
-    // would collide as, and by its bound when that shape does not decompose.
+    // would collide as (an asset-sourced one as its box), and by its bound when
+    // that shape does not decompose. Nothing about it is reported.
     const shared::mesh_geometry_t* mesh = std::get_if<shared::mesh_geometry_t>(&entry.value);
     if (mesh != nullptr && !mesh->collides)
     {
@@ -77,18 +65,6 @@ build_editor_bvh(const shared::map_t &map)
         add_leaf(entry.uid, shared::get_bounds(entry.value));
       for (const shared::collision_piece_t &piece : pieces)
         add_leaf(entry.uid, piece.bounds, piece.planes);
-      continue;
-    }
-
-    // A hole collides with nothing by design and is still clicked as the volume
-    // that was authored, so it can be moved and resized after the wall is built.
-    const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&entry.value);
-    if (brush != nullptr && brush->subtracts_from_uid != shared::null_entity_uid)
-    {
-      if (const std::optional<shared::brush_polyhedron_t> hull =
-              shared::try_build_brush_polyhedron(brush->hull_points))
-        add_leaf(entry.uid, shared::compute_brush_bounds(hull->vertices),
-                 shared::brush_collision_planes(*hull));
       continue;
     }
 

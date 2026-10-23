@@ -22,13 +22,13 @@ connections
     "action" "Play"
   }
 }
-static_mesh
+mesh
 {
   "_uid" "29"
-  "position" "0.000000 67.271362 0.000000"
+  "position" "0 67.2713623 0"
   "rotation" "0 0 0 1"
-  "scale" "1.000000 1.000000 1.000000"
-  "mesh_path" "resources/glb/button.glb"
+  "asset" "resources/glb/button.glb"
+  "scale" "1 1 1"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"

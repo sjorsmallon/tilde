@@ -30,31 +30,6 @@ void remember_brush_before_stroke(std::vector<stroke_brush_before_t> &befores,
   befores.push_back({uid, entry->value});
 }
 
-size_t sculpt_brushes_under_stroke(editor_context_t &ctx,
-                                   std::vector<stroke_brush_before_t> &befores,
-                                   const linalg::vec3 &center, float radius,
-                                   const linalg::vec3 &delta)
-{
-  size_t moved = 0;
-  for (shared::map_geometry_t &entry : ctx.map->geometry)
-  {
-    shared::brush_geometry_t *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
-    if (!brush || !shared::aabb_intersects_sphere(shared::get_bounds(entry.value), center, radius))
-      continue;
-
-    remember_brush_before_stroke(befores, *ctx.map, entry.uid);
-    const size_t touched = shared::sculpt_brush_grid_vertices(*brush, center, radius, delta,
-                                                              {ctx.map->geometry, entry.uid});
-    if (touched == 0)
-      continue;
-
-    moved += touched;
-    refresh_generated_geometry_mesh(entry.value, entry.uid, ctx.map->materials,
-                                    ctx.map->lightmap, ctx.map->geometry);
-  }
-  return moved;
-}
-
 size_t sculpt_meshes_under_stroke(editor_context_t &ctx,
                                   std::vector<stroke_brush_before_t> &befores,
                                   const linalg::vec3 &center, float radius,

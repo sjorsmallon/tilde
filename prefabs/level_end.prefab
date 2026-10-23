@@ -38,13 +38,13 @@ groups
     }
   }
 }
-static_mesh
+mesh
 {
   "_uid" "7"
-  "position" "-98.616699 147.720306 -19.231247"
+  "position" "-98.6166992 147.720306 -19.2312469"
   "rotation" "0 0 0 1"
-  "scale" "3.000000 3.000000 3.000000"
-  "mesh_path" "resources/glb/Duck.glb"
+  "asset" "resources/glb/Duck.glb"
+  "scale" "3 3 3"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -74,7 +74,11 @@ entity
   "light.mode" "Dynamic"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
+  "light.cuts_geometry" "false"
+  "rides.mover" "0"
   "range" "591.2"
   "inner_degrees" "20"
   "outer_degrees" "35"
+  "beam" "false"
+  "solid_beam" "false"
 }

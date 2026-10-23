@@ -14,7 +14,6 @@
 #include "../path_editing.hpp"
 #include "../transaction_system.hpp"
 #include "../../../shared/map/game_session.hpp"
-#include "../../../shared/map/brush/brush_holes.hpp"
 #include "../../../shared/map/map_connection.hpp"
 #include "../../../shared/map/map_piece.hpp"
 #include "../../../shared/map/map_group.hpp"
@@ -807,99 +806,6 @@ void Selection_Tool::tie_selection_to_existing_entity(editor_context_t& ctx)
   tie_selection_to_owner(ctx, owners[0], transaction_t{});
 }
 
-void Selection_Tool::subtract_selection_from_wall(editor_context_t& ctx,
-                                                 shared::entity_uid_t wall_uid)
-{
-  if (!ctx.map)
-    return;
-
-  const shared::map_geometry_t* wall_entry = ctx.map->find_geometry_by_uid(wall_uid);
-  const shared::brush_geometry_t* wall =
-      wall_entry ? std::get_if<shared::brush_geometry_t>(&wall_entry->value) : nullptr;
-  if (wall == nullptr)
-  {
-    hud::set_announcement(std::format("{} is not a brush — nothing was subtracted", wall_uid));
-    return;
-  }
-  if (wall->subtracts_from_uid != shared::null_entity_uid)
-  {
-    hud::set_announcement(std::format("Brush {} is itself a hole — nothing was subtracted", wall_uid));
-    return;
-  }
-  if (shared::brush_refuses_holes(*wall))
-  {
-    log_error("selection tool: brush {} is subdivided or painted and refuses holes", wall_uid);
-    hud::set_announcement(
-        std::format("Brush {} is subdivided or painted and refuses holes", wall_uid));
-    return;
-  }
-
-  const shared::aabb_bounds_t wall_bounds = shared::get_bounds(wall_entry->value);
-  transaction_t               transaction;
-  size_t                      subtracted = 0;
-  size_t                      missing    = 0;
-  for (shared::entity_uid_t uid : selected_uids)
-  {
-    shared::map_geometry_t* entry = uid != wall_uid ? ctx.map->find_geometry_by_uid(uid) : nullptr;
-    shared::brush_geometry_t* brush =
-        entry ? std::get_if<shared::brush_geometry_t>(&entry->value) : nullptr;
-    if (brush == nullptr)
-      continue;
-
-    const shared::geometry_value_t before = entry->value;
-    brush->subtracts_from_uid              = wall_uid;
-    transaction.add_geometry_modified(uid, before, entry->value);
-    ++subtracted;
-    if (!shared::aabbs_intersect_with_tolerance(shared::get_bounds(entry->value), wall_bounds,
-                                                shared::BRUSH_WELD_EPSILON))
-      ++missing;
-  }
-
-  if (subtracted == 0)
-  {
-    hud::set_announcement("Select the brushes to subtract first, then pick the wall");
-    return;
-  }
-
-  ctx.transaction_system.push("Subtract from brush", std::move(transaction));
-  if (missing > 0)
-    log_warning("selection tool: {} of {} hole(s) miss brush {} entirely", missing, subtracted,
-                wall_uid);
-  hud::set_announcement(
-      missing > 0
-          ? std::format("{} brush(es) now subtract from brush {} — {} of them miss it entirely",
-                        subtracted, wall_uid, missing)
-          : std::format("{} brush(es) now subtract from brush {}", subtracted, wall_uid));
-}
-
-void Selection_Tool::make_selection_solid(editor_context_t& ctx)
-{
-  if (!ctx.map)
-    return;
-
-  transaction_t transaction;
-  size_t        made_solid = 0;
-  for (shared::entity_uid_t uid : selected_uids)
-  {
-    shared::map_geometry_t*   entry = ctx.map->find_geometry_by_uid(uid);
-    shared::brush_geometry_t* brush =
-        entry ? std::get_if<shared::brush_geometry_t>(&entry->value) : nullptr;
-    if (brush == nullptr || brush->subtracts_from_uid == shared::null_entity_uid)
-      continue;
-
-    const shared::geometry_value_t before = entry->value;
-    brush->subtracts_from_uid              = shared::null_entity_uid;
-    transaction.add_geometry_modified(uid, before, entry->value);
-    ++made_solid;
-  }
-
-  if (made_solid == 0)
-    return;
-
-  ctx.transaction_system.push("Make solid", std::move(transaction));
-  hud::set_announcement(std::format("{} brush(es) are solid again", made_solid));
-}
-
 void Selection_Tool::tie_selection_to_new_entity(editor_context_t& ctx, entities::entity_type type)
 {
   if (!ctx.map)
@@ -1308,7 +1214,6 @@ void Selection_Tool::on_enable(editor_context_t& ctx)
   editor_gizmo.clear_target();
   uid_pick.disarm();
   snap_pick = {};
-  wall_pick = {};
   press_was_spent_on_pick_or_paste = false;
 }
 
@@ -1320,7 +1225,6 @@ void Selection_Tool::on_disable(editor_context_t& ctx)
   cancel_paste();
   uid_pick.disarm();
   snap_pick = {};
-  wall_pick = {};
   press_was_spent_on_pick_or_paste = false;
 }
 
@@ -1396,20 +1300,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
   // proximity hit on a light in front of a wall is visibly a choice rather than
   // a surprise. Not drawn while another gesture owns the cursor -- a paste
   // preview, a drag or an armed pick each already say what the click will do.
-  if (wall_pick.armed && ctx.map)
-  {
-    const ImVec2 mouse = ImGui::GetMousePos();
-    const shared::map_geometry_t* entry =
-        hovered_uid != 0 ? ctx.map->find_geometry_by_uid(hovered_uid) : nullptr;
-    const bool is_brush = entry && std::holds_alternative<shared::brush_geometry_t>(entry->value);
-    const std::string label =
-        is_brush ? std::format("brush {}", hovered_uid) : std::string("no brush under the cursor");
-    draw_cursor_target_marker(ImGui::GetForegroundDrawList(), mouse, std::nullopt, label.c_str(),
-                              is_brush ? IM_COL32(255, 180, 60, 255) : IM_COL32(255, 140, 140, 255));
-  }
-
-  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !snap_pick.armed && !wall_pick.armed &&
-      !paste.pending &&
+  if (ctx.map && hovered_uid != 0 && !uid_pick.armed && !snap_pick.armed && !paste.pending &&
       !box_drag.active && !object_drag.active && !editor_gizmo.is_dragging())
   {
     const std::optional<linalg::vec3> anchor =
@@ -1479,20 +1370,12 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   const auto is_selected = [&](shared::entity_uid_t candidate)
   { return std::binary_search(sorted_selection.begin(), sorted_selection.end(), candidate); };
 
-  std::vector<shared::entity_uid_t> selected_brushes;
-  std::vector<shared::entity_uid_t> holes;
-  size_t                            tied_objects   = 0;
-  size_t                            untied_objects = 0;
+  size_t tied_objects   = 0;
+  size_t untied_objects = 0;
   for (const shared::map_geometry_t& entry : ctx.map->geometry)
   {
     if (!is_selected(entry.uid))
       continue;
-    if (const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&entry.value))
-    {
-      selected_brushes.push_back(entry.uid);
-      if (brush->subtracts_from_uid != shared::null_entity_uid)
-        holes.push_back(entry.uid);
-    }
     if (shared::get_owner_uid(entry.value) != shared::null_entity_uid)
       ++tied_objects;
     else
@@ -1542,49 +1425,6 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
     if (!touched.empty() && ImGui::Button("Ungroup (Ctrl+Shift+G)"))
       ungroup_selection(ctx);
     ImGui::Checkbox("Ignore groups (Ctrl+W)", &ignoring_groups);
-  }
-
-  // The hole. A brush naming its wall draws and collides as nothing of its own,
-  // so the link has to be readable and editable here, for the same reason the
-  // tie below is.
-  {
-    if (!selected_brushes.empty())
-    {
-      if (holes.size() == 1 && selected_brushes.size() == 1)
-      {
-        const shared::entity_uid_t wall =
-            std::get<shared::brush_geometry_t>(ctx.map->find_geometry_by_uid(holes[0])->value)
-                .subtracts_from_uid;
-        ImGui::Text("Hole in brush %u", wall);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Select wall"))
-          ctx.requested_selection = wall;
-      }
-      else if (!holes.empty())
-      {
-        ImGui::Text("%zu of %zu selected brushes are holes", holes.size(),
-                    selected_brushes.size());
-      }
-
-      if (wall_pick.armed)
-      {
-        ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Click the wall to subtract from. Esc cancels.");
-      }
-      else if (ImGui::Button("Subtract from brush..."))
-      {
-        uid_pick.disarm();
-        snap_pick = {};
-        cancel_paste();
-        wall_pick = {.armed = true};
-        hud::set_announcement("Click the brush to subtract the selection from. Esc cancels.");
-      }
-      if (!holes.empty())
-      {
-        ImGui::SameLine();
-        if (ImGui::Button("Make solid"))
-          make_selection_solid(ctx);
-      }
-    }
   }
 
   // The tie. One line saying where the selection stands, and the two edits
@@ -2242,17 +2082,6 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
 {
   if (e.button == input::mouse_button_t::Left)
   {
-    if (wall_pick.armed && ctx.map)
-    {
-      press_was_spent_on_pick_or_paste = true;
-      wall_pick = {};
-      if (hovered_uid != 0)
-        subtract_selection_from_wall(ctx, hovered_uid);
-      else
-        hud::set_announcement("No brush under the cursor — the pick is cancelled.");
-      return;
-    }
-
     if (snap_pick.armed && ctx.map)
     {
       press_was_spent_on_pick_or_paste = true;
@@ -2641,7 +2470,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
   if (e.key == input::key_t::Escape)
   {
     const bool something_was_pending = uid_pick.armed || !uid_pick.queued_rows.empty() ||
-                                       snap_pick.armed || wall_pick.armed || paste.pending;
+                                       snap_pick.armed || paste.pending;
     if (!uid_pick.queued_rows.empty())
       hud::set_announcement(std::format("{} connection(s) left unbound.\nThey are red in the "
                                         "Connections panel, where the Pick button still "
@@ -2650,7 +2479,6 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
                                             (uid_pick.armed ? 1u : 0u)));
     uid_pick.disarm();
     snap_pick = {};
-    wall_pick = {};
     cancel_paste();
     if (!something_was_pending)
     {

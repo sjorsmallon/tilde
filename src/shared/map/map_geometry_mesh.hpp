@@ -15,11 +15,6 @@
 namespace shared
 {
 
-// An asset-sourced mesh seen as the static mesh it bounds and collides as: its
-// oriented box (§11.6). Dies with static_mesh_geometry_t in increment 14.
-static_mesh_geometry_t static_mesh_view_of_asset_mesh(const mesh_geometry_t &mesh,
-                                                      const asset_mesh_source_t &source);
-
 aabb_bounds_t compute_mesh_world_bounds(const mesh_geometry_t &mesh);
 
 linalg::vec3 compute_mesh_world_half_extents(const mesh_geometry_t &mesh);
@@ -35,8 +30,9 @@ void scale_mesh_to_world_box(mesh_geometry_t &mesh, const aabb_t &box);
 
 // The decomposition's pieces through the pose for an inline or recipe source,
 // the column path for a convex mesh with ONE sculpted face (a second sculpted
-// face, or a reflex edge beside one, collides flat with a line until increment
-// 12), the oriented box for an asset source, nothing with `collides` off. A mesh
+// face, or a reflex edge beside one, collides flat with a line: open, noted
+// under geometry_def.md 11.8 increment 12), the oriented box for an asset
+// source, nothing with `collides` off. A mesh
 // that refuses to decompose is logged by `uid` and collides with nothing.
 std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry_t &mesh,
                                                              entity_uid_t uid);
@@ -47,6 +43,12 @@ light_occlusion_t compute_mesh_light_occlusion(const mesh_geometry_t &mesh,
 
 // A face's plane in world space, through the pose.
 Plane compute_mesh_world_face_plane(const mesh_geometry_t &mesh, uint32_t face_index);
+
+// A stored vertex in world space, through the pose.
+linalg::vec3 compute_mesh_world_vertex(const mesh_geometry_t &mesh, uint32_t vertex_index);
+
+// A world plane in the mesh's local space: what the split takes.
+Plane compute_mesh_local_plane(const mesh_geometry_t &mesh, const Plane &world_plane);
 
 // The face whose world plane coincides with `plane`, or nothing: what a contact
 // on the mesh's collision asks.
@@ -98,7 +100,8 @@ size_t sculpt_mesh_face_grid_vertices(mesh_geometry_t &mesh, const linalg::vec3 
                                       float radius, const linalg::vec3 &delta);
 
 // The mesh as it draws (geometry_def.md §11.8 increment 5), for an inline or
-// recipe source; an asset source draws as the static mesh it views. World-space
+// recipe source; an asset source draws through generate_lightmapped_asset_mesh
+// (map_geometry_asset.hpp). World-space
 // vertices under the pose with an identity draw transform, as a brush; one
 // vertex per face corner; the normal at a corner is the area-weighted mean over
 // the faces that share the vertex AND the smoothing group, with no search by

@@ -27,11 +27,12 @@ groups
     }
   }
 }
-brush
+mesh
 {
   "_uid" "42"
-  "vertices" "-32.25 19.4140625 -892.094116, -32.25 19.4140625 -102.488434, -32.25 1245.36475 -892.094116, -32.25 1245.36475 -102.488434, -7.125 19.4140625 -892.094116, -7.125 19.4140625 -102.488434, -7.125 1245.36475 -892.094116, -7.125 1245.36475 -102.488434"
-  "mesh_path" ""
+  "position" "-19.6875 632.389404 -497.29126"
+  "rotation" "0 0 0 1"
+  "vertices" "-12.5625 -612.975342 -394.802856, -12.5625 -612.975342 394.802826, -12.5625 612.975342 -394.802856, -12.5625 612.975342 394.802826, 12.5625 -612.975342 -394.802856, 12.5625 -612.975342 394.802826, 12.5625 612.975342 -394.802856, 12.5625 612.975342 394.802826"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -39,8 +40,7 @@ brush
   "owner" "43"
   face
   {
-    "normal" "-0.99999994 0 0"
-    "distance" "32.25"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -55,8 +55,7 @@ brush
   }
   face
   {
-    "normal" "-0 -1 -0"
-    "distance" "-19.4140625"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -71,8 +70,7 @@ brush
   }
   face
   {
-    "normal" "0 0 -0.99999994"
-    "distance" "892.094116"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -87,8 +85,7 @@ brush
   }
   face
   {
-    "normal" "-0 -0 0.99999994"
-    "distance" "-102.488403"
+    "indices" "5 7 3 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -103,8 +100,7 @@ brush
   }
   face
   {
-    "normal" "0 1 0"
-    "distance" "1245.36475"
+    "indices" "7 6 2 3"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -119,8 +115,7 @@ brush
   }
   face
   {
-    "normal" "0.99999994 -0 -0"
-    "distance" "-7.125"
+    "indices" "6 7 5 4"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -134,11 +129,12 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "56"
-  "vertices" "-32.25 0 48.2851257, -32.25 0 728.288574, -32.25 1245.36475 48.2851257, -32.25 1245.36475 728.288574, -6.078125 0 48.2851257, -6.078125 0 728.288574, -6.078125 1245.36475 48.2851257, -6.078125 1245.36475 728.288574"
-  "mesh_path" ""
+  "position" "-19.1640625 622.682373 388.286865"
+  "rotation" "0 0 0 1"
+  "vertices" "-13.0859375 -622.682373 -340.00174, -13.0859375 -622.682373 340.001709, -13.0859375 622.682373 -340.00174, -13.0859375 622.682373 340.001709, 13.0859375 -622.682373 -340.00174, 13.0859375 -622.682373 340.001709, 13.0859375 622.682373 -340.00174, 13.0859375 622.682373 340.001709"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -146,8 +142,7 @@ brush
   "owner" "57"
   face
   {
-    "normal" "-1 0 0"
-    "distance" "32.25"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -162,8 +157,7 @@ brush
   }
   face
   {
-    "normal" "-0 -1 -0"
-    "distance" "0"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -178,8 +172,7 @@ brush
   }
   face
   {
-    "normal" "0 0 -1"
-    "distance" "-48.2851257"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -194,8 +187,7 @@ brush
   }
   face
   {
-    "normal" "-0 -0 1"
-    "distance" "728.288574"
+    "indices" "5 7 3 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -210,8 +202,7 @@ brush
   }
   face
   {
-    "normal" "0 1 0"
-    "distance" "1245.36475"
+    "indices" "7 6 2 3"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -226,8 +217,7 @@ brush
   }
   face
   {
-    "normal" "1 -0 -0"
-    "distance" "-6.078125"
+    "indices" "6 7 5 4"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -251,6 +241,15 @@ entity
   "switch_state.value" "true"
   "wipe_timer" "0"
   "passable_by" "Red"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
+  "solid_only_when_lensed" "false"
+  "casts_dynamic_shadow" "false"
 }
 entity
 {
@@ -262,4 +261,13 @@ entity
   "switch_state.value" "true"
   "wipe_timer" "0"
   "passable_by" "Blu"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
+  "solid_only_when_lensed" "false"
+  "casts_dynamic_shadow" "false"
 }

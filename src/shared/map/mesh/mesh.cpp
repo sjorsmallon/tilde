@@ -203,10 +203,18 @@ mesh_geometry_t copy_mesh_pose_and_surface(const mesh_geometry_t &mesh)
 
 std::vector<mesh_geometry_t> separate_mesh_shells(const mesh_geometry_t &mesh)
 {
+  std::vector<mesh_geometry_t> shells;
+  for (mesh_shell_t &shell : separate_mesh_shells_with_sources(mesh))
+    shells.push_back(std::move(shell.mesh));
+  return shells;
+}
+
+std::vector<mesh_shell_t> separate_mesh_shells_with_sources(const mesh_geometry_t &mesh)
+{
   const std::vector<mesh_directed_edge_t> edges = collect_mesh_directed_edges(mesh);
   const uint32_t face_count = (uint32_t)mesh.faces.size();
   std::vector<bool> visited(face_count, false);
-  std::vector<mesh_geometry_t> shells;
+  std::vector<mesh_shell_t> shells;
 
   for (uint32_t seed = 0; seed < face_count; ++seed)
   {
@@ -234,7 +242,7 @@ std::vector<mesh_geometry_t> separate_mesh_shells(const mesh_geometry_t &mesh)
     }
     std::sort(shell_faces.begin(), shell_faces.end());
 
-    mesh_geometry_t shell = copy_mesh_pose_and_surface(mesh);
+    mesh_shell_t shell{copy_mesh_pose_and_surface(mesh), {}};
     std::vector<uint32_t> new_index(mesh.vertices.size(), UINT32_MAX);
     for (uint32_t face_index : shell_faces)
     {
@@ -243,12 +251,13 @@ std::vector<mesh_geometry_t> separate_mesh_shells(const mesh_geometry_t &mesh)
       {
         if (new_index[index] == UINT32_MAX)
         {
-          new_index[index] = (uint32_t)shell.vertices.size();
-          shell.vertices.push_back(mesh.vertices[index]);
+          new_index[index] = (uint32_t)shell.mesh.vertices.size();
+          shell.mesh.vertices.push_back(mesh.vertices[index]);
         }
         index = new_index[index];
       }
-      shell.faces.push_back(std::move(face));
+      shell.mesh.faces.push_back(std::move(face));
+      shell.source_faces.push_back(face_index);
     }
     shells.push_back(std::move(shell));
   }
@@ -265,6 +274,12 @@ Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index)
   if (normal_length <= 1e-6f)
     fatal_error("compute_mesh_face_plane: face {} is degenerate", face_index);
   return Plane{.point = ring_centroid(mesh, ring), .normal = normal * (1.f / normal_length)};
+}
+
+bool planes_coincide(const Plane &a, const Plane &b)
+{
+  return linalg::dot(a.normal, b.normal) > 0.999f &&
+         std::abs(linalg::dot(a.normal, b.point - a.point)) <= BRUSH_COPLANAR_EPSILON;
 }
 
 mesh_geometry_t make_box_mesh(const linalg::vec3 &center, const linalg::vec3 &half_extents)

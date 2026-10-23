@@ -121,10 +121,22 @@ mesh_geometry_t copy_mesh_pose_and_surface(const mesh_geometry_t &mesh);
 // renumbering the vertices it uses. A connected mesh comes back as itself.
 std::vector<mesh_geometry_t> separate_mesh_shells(const mesh_geometry_t &mesh);
 
+// The same, each shell saying which input face every face of it was.
+struct mesh_shell_t
+{
+  mesh_geometry_t mesh;
+  std::vector<uint32_t> source_faces;
+};
+
+std::vector<mesh_shell_t> separate_mesh_shells_with_sources(const mesh_geometry_t &mesh);
+
 // Newell's method over the ring, in the mesh's local space; the normal points
 // out of the solid for a counter-clockwise ring. Dies on a degenerate face,
 // which find_mesh_defect refuses first.
 Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index);
+
+// Same normal, same offset, within BRUSH_COPLANAR_EPSILON.
+bool planes_coincide(const Plane &a, const Plane &b);
 
 // Pose at the centre, vertices at the half extents.
 mesh_geometry_t make_box_mesh(const linalg::vec3 &center, const linalg::vec3 &half_extents);

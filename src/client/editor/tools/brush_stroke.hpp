@@ -23,17 +23,10 @@ struct stroke_brush_before_t
 void remember_brush_before_stroke(std::vector<stroke_brush_before_t> &befores,
                                   const shared::map_t &map, shared::entity_uid_t uid);
 
-// Sculpt every brush of the map whose bounds meet the sphere, remembering each
-// one before its first write and refreshing the mesh of each one touched.
-// Answers how many grid vertices moved over all of them.
-size_t sculpt_brushes_under_stroke(editor_context_t &ctx,
-                                   std::vector<stroke_brush_before_t> &befores,
-                                   const linalg::vec3 &center, float radius,
-                                   const linalg::vec3 &delta);
-
-// The same sweep over meshes: every mesh of the map with a grid whose bounds
-// meet the sphere, remembered before its first write and refreshed when
-// touched. geometry_def.md §11.8 increment 11.
+// Sculpt every mesh of the map with a grid whose bounds meet the sphere,
+// remembering each one before its first write and refreshing the mesh of each
+// one touched. Answers how many grid vertices moved over all of them.
+// geometry_def.md §11.8 increment 11.
 size_t sculpt_meshes_under_stroke(editor_context_t &ctx,
                                   std::vector<stroke_brush_before_t> &befores,
                                   const linalg::vec3 &center, float radius,

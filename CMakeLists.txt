@@ -451,12 +451,6 @@ add_library(game_shared STATIC
     src/shared/map/brush/brush.cpp
     src/shared/map/brush/face_neighbour.hpp
     src/shared/map/brush/face_neighbour.cpp
-    src/shared/map/brush/brush_split.hpp
-    src/shared/map/brush/brush_split.cpp
-    # A hole is a convex brush naming its wall; the solid is derived at bake as
-    # one convex piece per hole face. geometry_def.md Track H.
-    src/shared/map/brush/brush_holes.hpp
-    src/shared/map/brush/brush_holes.cpp
     # The brush-era prism (the round hole brush), until the brush goes.
     # geometry_def.md Track I, superseded by section 11.
     src/shared/map/brush/brush_primitives.hpp
@@ -479,6 +473,10 @@ add_library(game_shared STATIC
     src/shared/map/mesh/mesh_split.cpp
     src/shared/map/mesh/mesh_decomposition.hpp
     src/shared/map/mesh/mesh_decomposition.cpp
+    # The boolean: a wall less a convex cutter, run at edit time and by the
+    # legacy reader, its result stored. geometry_def.md section 11.8 increment 13.
+    src/shared/map/mesh/mesh_boolean.hpp
+    src/shared/map/mesh/mesh_boolean.cpp
     # A primitive is one recipe mesh: the recipe is the source, the mesh is
     # derived, a hand edit freezes it. geometry_def.md section 11.8 increment 10.
     src/shared/map/mesh/primitive_recipe.hpp
@@ -490,7 +488,10 @@ add_library(game_shared STATIC
     src/shared/map/map_geometry_text.hpp
     src/shared/map/map_geometry_mesh.hpp
     src/shared/map/map_geometry_mesh.cpp
-    # The legacy readers: brush and static_mesh rows become meshes on read.
+    # An asset-sourced mesh: the asset placed with a pose, its box and its world triangles.
+    src/shared/map/map_geometry_asset.hpp
+    src/shared/map/map_geometry_asset.cpp
+    # The legacy reader: brush rows become meshes on read.
     src/shared/map/map_geometry_legacy.hpp
     src/shared/map/map_geometry_legacy.cpp
     src/shared/lighting/map_baker.cpp
@@ -925,10 +926,11 @@ add_library(game_client SHARED
     src/client/editor/tools/pathfinding_test_tool.cpp
     src/client/editor/tools/particle_editor_tool.cpp
     src/client/editor/tools/animation_tool.cpp
-    src/client/editor/tools/brush_tool.cpp
+    src/client/editor/tools/vertex_tool.cpp
     src/client/editor/tools/brush_stroke.cpp
     src/client/editor/tools/face_tool.cpp
     src/client/editor/tools/clip_tool.cpp
+    src/client/editor/tools/subtract_tool.cpp
     src/client/editor/tools/primitive_tool.cpp
     src/client/editor/tools/lightmap_tool.cpp
     src/client/editor/tools/path_tool.cpp
@@ -1220,14 +1222,11 @@ add_game_test(brush_test)
 # pin everything else. geometry_def.md Track F.
 add_game_test(brush_boundary_test)
 
-# A brush cut by a plane: two halves whose volumes sum, surfaces reattached by
-# plane, a cut through a subdivided face refused. geometry_def.md Track G.
-add_game_test(brush_split_test)
-
-# A convex hole out of a convex wall: one convex piece per hole face, none
-# holding the hole's centre, volumes summing, two holes composing.
-# geometry_def.md Track H.
-add_game_test(brush_holes_test)
+# The boolean: a convex cutter out of any closed mesh, the result closed and
+# planar with the cutter's faces carrying its materials, the volume the wall
+# less the overlap; a miss, a swallow, two cuts composing, a cut that leaves two
+# shells, a posed wall, and the refusals. geometry_def.md section 11.8 increment 13.
+add_game_test(mesh_boolean_test)
 
 # The brush-era prism (the round hole brush): one convex brush of sides + 2
 # faces with the polygon's volume, lying along its axis; and the one curve.

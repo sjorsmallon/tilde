@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../../shared/map/brush/brush_split.hpp"
 #include "../../../shared/map/map.hpp"
+#include "../../../shared/map/mesh/mesh_split.hpp"
 #include "../editor_tool.hpp"
 
 #include <optional>
@@ -10,11 +10,12 @@
 namespace client
 {
 
-// Cut one brush by a plane. The first click picks the brush and the face the
-// cap inherits; two points plus the view direction at the second click define
-// the plane, a third point replaces that with the plane through all three.
-// Both halves draw tinted, Tab cycles what is kept, Enter commits one
-// transaction replacing the brush by one or two. geometry_def.md Track G.
+// Cut one mesh by a plane: the split of geometry_def.md §11.8 increment 2,
+// driven by hand. The first click picks the mesh and the face the caps
+// inherit; two points plus the view direction at the second click define the
+// plane, a third point replaces that with the plane through all three. Both
+// halves draw tinted, Tab cycles what is kept, Enter commits one transaction
+// replacing the mesh by the shells of the kept halves.
 class Clip_Tool : public Editor_Tool
 {
 public:
@@ -39,18 +40,19 @@ private:
   };
 
   shared::entity_uid_t target_uid = shared::null_entity_uid;
-  Plane cap_plane{};
+  std::optional<uint32_t> cap_face_index;
   std::vector<linalg::vec3> points;
   std::optional<Plane> cut_plane;
   Keep keep = Keep::Both;
 
-  std::optional<shared::brush_split_t> preview;
+  std::optional<shared::mesh_split_t> preview;
   std::optional<shared::geometry_value_t> previewed_value;
 
   viewport_state_t cached_view{};
 
-  void clear(editor_context_t &ctx);
+  void clear();
   void add_point(editor_context_t &ctx, const linalg::vec3 &point);
+  void rebuild_cut_plane();
   void rebuild_preview(editor_context_t &ctx);
   void commit(editor_context_t &ctx);
 };

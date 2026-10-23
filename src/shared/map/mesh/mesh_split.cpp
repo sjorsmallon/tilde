@@ -76,6 +76,7 @@ struct half_builder_t
 {
   const mesh_geometry_t &source;
   mesh_geometry_t mesh;
+  std::vector<uint32_t> source_faces;
   std::vector<uint32_t> vertex_map;
   std::map<std::pair<uint32_t, uint32_t>, uint32_t> crossing_map;
 
@@ -107,13 +108,15 @@ struct half_builder_t
     return index;
   }
 
-  void add_face(const std::vector<ring_point_t> &ring, const face_surface_t &surface)
+  void add_face(const std::vector<ring_point_t> &ring, const face_surface_t &surface,
+                uint32_t source_face)
   {
     mesh_face_t face;
     face.surface = surface;
     for (const ring_point_t &point : ring)
       face.vertex_indices.push_back(intern(point));
     mesh.faces.push_back(std::move(face));
+    source_faces.push_back(source_face);
   }
 
   void add_whole_face(uint32_t face_index)
@@ -121,7 +124,7 @@ struct half_builder_t
     std::vector<ring_point_t> ring;
     for (uint32_t index : source.faces[face_index].vertex_indices)
       ring.push_back(point_of_vertex(source, index));
-    add_face(ring, source.faces[face_index].surface);
+    add_face(ring, source.faces[face_index].surface, face_index);
   }
 
   // The kept side's boundary is the face's arcs inside it joined by segments
@@ -233,9 +236,18 @@ struct half_builder_t
       if (points_coincide(face_ring.front().position, face_ring.back().position))
         face_ring.pop_back();
       if (face_ring.size() >= 3)
-        add_face(face_ring, source.faces[face_index].surface);
+        add_face(face_ring, flattened_surface(source.faces[face_index].surface), face_index);
     }
     return true;
+  }
+
+  // A grid is a patch over the four corners it was sculpted on; a part of that
+  // quad has different corners, so the part comes out flat.
+  static face_surface_t flattened_surface(const face_surface_t &surface)
+  {
+    face_surface_t flat = surface;
+    resize_face_grid(flat, 0);
+    return flat;
   }
 
   // Every edge still unpaired lies on the cut; walked backwards they chain
@@ -276,6 +288,7 @@ struct half_builder_t
         return false;
       }
       mesh.faces.push_back(std::move(cap));
+      source_faces.push_back(MESH_SPLIT_CAP);
     }
     return true;
   }
@@ -283,7 +296,11 @@ struct half_builder_t
 
 } // namespace
 
-uint32_t count_faces_crossed_by_plane(const mesh_geometry_t &mesh, const Plane &plane)
+namespace
+{
+
+uint32_t count_crossed_faces(const mesh_geometry_t &mesh, const Plane &plane,
+                             bool subdivided_only)
 {
   std::vector<plane_side_t> sides(mesh.vertices.size());
   for (size_t i = 0; i < mesh.vertices.size(); ++i)
@@ -291,6 +308,8 @@ uint32_t count_faces_crossed_by_plane(const mesh_geometry_t &mesh, const Plane &
   uint32_t crossed = 0;
   for (const mesh_face_t &face : mesh.faces)
   {
+    if (subdivided_only && !face_is_subdivided(face.surface))
+      continue;
     bool has_front = false;
     bool has_back = false;
     for (uint32_t index : face.vertex_indices)
@@ -301,6 +320,19 @@ uint32_t count_faces_crossed_by_plane(const mesh_geometry_t &mesh, const Plane &
     crossed += has_front && has_back;
   }
   return crossed;
+}
+
+} // namespace
+
+uint32_t count_faces_crossed_by_plane(const mesh_geometry_t &mesh, const Plane &plane)
+{
+  return count_crossed_faces(mesh, plane, false);
+}
+
+uint32_t count_subdivided_faces_crossed_by_plane(const mesh_geometry_t &mesh,
+                                                 const Plane &plane)
+{
+  return count_crossed_faces(mesh, plane, true);
 }
 
 std::optional<mesh_split_t> try_split_mesh_by_plane(const mesh_geometry_t &mesh,
@@ -362,7 +394,8 @@ std::optional<mesh_split_t> try_split_mesh_by_plane(const mesh_geometry_t &mesh,
   }
 
   const uint32_t cap_face_count = (uint32_t)(front.mesh.faces.size() - front_faces_before_caps);
-  return mesh_split_t{std::move(front.mesh), std::move(back.mesh), cap_face_count};
+  return mesh_split_t{std::move(front.mesh), std::move(back.mesh), cap_face_count,
+                      std::move(front.source_faces), std::move(back.source_faces)};
 }
 
 } // namespace shared

@@ -382,20 +382,12 @@ std::string object_label(const shared::map_t& map, shared::entity_uid_t uid)
   return std::format("uid {} (gone)", uid);
 }
 
-void entity_visibility_t::refresh(const shared::map_t& map, bool hide_hole_brushes)
+void entity_visibility_t::refresh(const shared::map_t& map)
 {
   hidden_this_frame.clear();
   for (const shared::map_entity_t& entry : map.entities)
     if (entry.entity && is_hidden(entry.uid))
       hidden_this_frame.push_back(entry.uid);
-  if (!hide_hole_brushes)
-    return;
-  for (const shared::map_geometry_t& entry : map.geometry)
-  {
-    const shared::brush_geometry_t* brush = std::get_if<shared::brush_geometry_t>(&entry.value);
-    if (brush != nullptr && brush->subtracts_from_uid != shared::null_entity_uid)
-      hidden_this_frame.push_back(entry.uid);
-  }
 }
 
 outliner_result_t draw_entity_outliner(const shared::map_t&              map,

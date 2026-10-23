@@ -13,8 +13,6 @@ namespace shared
 
 struct geometry_surface_t
 {
-  std::string mesh_path;
-
   linalg::vec3 color{1.f, 1.f, 1.f};
   float roughness = 0.5f;
 

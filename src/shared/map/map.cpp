@@ -185,8 +185,6 @@ void convert_legacy_render_component(const std::string &render_blob,
     return (it == fields.end()) ? nullptr : &it->second;
   };
 
-  if (const std::string *mesh_path = field("mesh_path"))
-    surface.mesh_path = *mesh_path;
   if (const std::string *visible = field("visible"))
     surface.visible = (*visible == "true" || *visible == "1");
   if (const std::string *is_wireframe = field("is_wireframe"))
@@ -272,23 +270,25 @@ bool convert_legacy_geometry_entity(const std::string &classname,
 
   if (classname == "static_mesh_entity")
   {
-    static_mesh_geometry_t static_mesh;
-    static_mesh.position = legacy_position();
+    mesh_geometry_t mesh;
+    asset_mesh_source_t asset;
+    mesh.position = legacy_position();
     if (const std::string *orientation = property("orientation"))
-      static_mesh.orientation =
-          linalg::from_euler_degrees(parse_legacy_vec3(*orientation, {0, 0, 0}));
-    legacy_surface(static_mesh.surface);
+      mesh.orientation = linalg::from_euler_degrees(parse_legacy_vec3(*orientation, {0, 0, 0}));
+    legacy_surface(mesh.surface);
 
-    // Scale lived on the render component, not on the entity.
+    // The path and the scale lived on the render component, not on the entity.
     if (const std::string *render = property("render"))
     {
       const std::map<std::string, std::string> fields = parse_legacy_component_blob(*render);
-      auto it = fields.find("scale");
-      if (it != fields.end())
-        static_mesh.scale = parse_legacy_vec3(it->second, static_mesh.scale);
+      if (const auto it = fields.find("mesh_path"); it != fields.end())
+        asset.path = it->second;
+      if (const auto it = fields.find("scale"); it != fields.end())
+        asset.scale = parse_legacy_vec3(it->second, asset.scale);
     }
 
-    out_geometry = std::move(static_mesh);
+    mesh.source = std::move(asset);
+    out_geometry = std::move(mesh);
     return true;
   }
 
@@ -756,9 +756,6 @@ std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid)
   {
     switch (get_kind(entry->value))
     {
-    case geometry_kind_t::Static_Mesh:
-      return std::nullopt; // sized by its mesh asset
-
     case geometry_kind_t::Mesh:
       return to_aabb(get_bounds(entry->value));
 
@@ -790,9 +787,6 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
   {
     switch (get_kind(entry->value))
     {
-    case geometry_kind_t::Static_Mesh:
-      return false;
-
     case geometry_kind_t::Mesh:
       scale_mesh_to_world_box(std::get<mesh_geometry_t>(entry->value), box);
       return true;
@@ -872,8 +866,6 @@ std::optional<linalg::quatf> try_get_object_orientation(const map_t &map, entity
   {
     switch (get_kind(entry->value))
     {
-    case geometry_kind_t::Static_Mesh:
-      return std::get<static_mesh_geometry_t>(entry->value).orientation;
     case geometry_kind_t::Mesh:
       return std::get<mesh_geometry_t>(entry->value).orientation;
     case geometry_kind_t::Brush:
@@ -895,9 +887,6 @@ bool try_set_object_orientation(map_t &map, entity_uid_t uid,
   {
     switch (get_kind(entry->value))
     {
-    case geometry_kind_t::Static_Mesh:
-      std::get<static_mesh_geometry_t>(entry->value).orientation = orientation;
-      return true;
     case geometry_kind_t::Mesh:
       std::get<mesh_geometry_t>(entry->value).orientation = orientation;
       return true;
@@ -1773,14 +1762,14 @@ map_t parse_map_from_string(const std::string &content)
 
   convert_legacy_trigger_actions(out_map, legacy_triggers);
 
-  // Every brush and static mesh becomes a mesh here, before the groups are
-  // pruned, so a hole a group held is dropped as a missing member.
+  // Every brush becomes a mesh here, before the groups are pruned, so a hole a
+  // group held is dropped as a missing member.
   const legacy_geometry_report_t legacy_geometry = convert_legacy_geometry(out_map.geometry);
   if (legacy_geometry.converted_anything())
-    log_terminal("map parse: {} brushes and {} static meshes read as meshes, {} holes cut "
-                 "into their walls, {} objects refused",
-                 legacy_geometry.brushes_converted, legacy_geometry.static_meshes_converted,
-                 legacy_geometry.holes_removed, legacy_geometry.objects_refused);
+    log_terminal("map parse: {} brushes read as meshes, {} holes cut into their walls, {} "
+                 "objects refused",
+                 legacy_geometry.brushes_converted, legacy_geometry.holes_removed,
+                 legacy_geometry.objects_refused);
 
   // After every object is in, so a member declared further down the file than
   // its group is not mistaken for a missing one.

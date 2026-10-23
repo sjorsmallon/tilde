@@ -33,7 +33,9 @@
 #include "editor_types.hpp"
 #include "transaction_system.hpp"
 #include "tools/animation_tool.hpp"
+#include "tools/clip_tool.hpp"
 #include "tools/face_tool.hpp"
+#include "tools/subtract_tool.hpp"
 #include "tools/lightmap_tool.hpp"
 #include "tools/particle_editor_tool.hpp"
 #include "tools/path_tool.hpp"
@@ -41,6 +43,7 @@
 #include "tools/placement_tool.hpp"
 #include "tools/sculpting_tool.hpp"
 #include "tools/selection_tool.hpp"
+#include "tools/vertex_tool.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -78,6 +81,9 @@ int main()
   tools.push_back(std::make_unique<client::Face_Tool>());
   tools.push_back(std::make_unique<client::Lightmap_Tool>());
   tools.push_back(std::make_unique<client::Path_Tool>());
+  tools.push_back(std::make_unique<client::Clip_Tool>());
+  tools.push_back(std::make_unique<client::Vertex_Tool>());
+  tools.push_back(std::make_unique<client::Subtract_Tool>());
 
   for (const std::unique_ptr<client::Editor_Tool> &tool : tools)
   {

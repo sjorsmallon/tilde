@@ -67,11 +67,6 @@ void copy_face_material(const shared::face_surface_t &pattern, shared::face_surf
 
 bool face_is_quad(const shared::mesh_face_t &face) { return face.vertex_indices.size() == 4; }
 
-linalg::vec3 mesh_world_vertex(const shared::mesh_geometry_t &mesh, uint32_t vertex)
-{
-  return mesh.position + linalg::rotate(mesh.orientation, mesh.vertices[vertex]);
-}
-
 const char *material_label(const shared::map_t &map, uint16_t index)
 {
   if (index >= map.materials.size())
@@ -807,13 +802,13 @@ void Face_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
     std::vector<linalg::vec3f> polygon;
     polygon.reserve(face.vertex_indices.size());
     for (uint32_t vertex : face.vertex_indices)
-      polygon.push_back(mesh_world_vertex(*mesh, vertex));
+      polygon.push_back(shared::compute_mesh_world_vertex(*mesh, vertex));
     draws.debug.filled_polygon(polygon, SELECTED_FACE_FILL, 0.0f, {.depth_bias = OVERLAY_DEPTH_BIAS});
   }
 
   linalg::vec3 centroid{0, 0, 0};
   for (uint32_t vertex : face.vertex_indices)
-    centroid = centroid + mesh_world_vertex(*mesh, vertex);
+    centroid = centroid + shared::compute_mesh_world_vertex(*mesh, vertex);
   centroid = centroid * (1.0f / (float)face.vertex_indices.size());
   const Plane world_plane = shared::compute_mesh_world_face_plane(*mesh, face_index);
   draws.debug.arrow(centroid, centroid + world_plane.normal * 32.0f, colors::yellow);

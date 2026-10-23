@@ -3,6 +3,7 @@
 #include "assets/asset.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
+#include "map/map_geometry_asset.hpp"
 #include "map/map_geometry_mesh.hpp"
 
 #include <algorithm>
@@ -110,14 +111,14 @@ void append_mesh_faces(gpu_bake_scene_t &scene, entity_uid_t uid, const mesh_geo
 // An asset-sourced mesh is untextured to the tracer -- surface_at resolves stored faces only
 // -- and it is untextured here, carrying its real uvs so the day a mesh material
 // arrives it is one table entry and not a new record.
-void append_static_mesh(gpu_bake_scene_t &scene, entity_uid_t uid,
-                        const static_mesh_geometry_t &static_mesh)
+void append_asset_mesh(gpu_bake_scene_t &scene, entity_uid_t uid, const mesh_geometry_t &mesh)
 {
-  const std::vector<world_triangle_t> triangles = static_mesh_world_triangles(static_mesh);
-  const assets::mesh_asset_t *asset = assets::get(resolve_surface_mesh(static_mesh.surface));
+  const std::vector<world_triangle_t> triangles = compute_asset_mesh_world_triangles(mesh);
+  const assets::mesh_asset_t *asset =
+      assets::get(resolve_mesh_asset(get_mesh_asset_source(mesh)));
   if (triangles.empty() || !asset)
   {
-    log_warning("[lightmap] static mesh {} names no mesh that resolves; the GPU scene "
+    log_warning("[lightmap] asset mesh {} names no mesh that resolves; the GPU scene "
                 "has no triangles for it.", uid);
     return;
   }
@@ -177,8 +178,8 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
       if (!mesh)
         fatal_error("[lightmap] object {} is a legacy kind; every reader converts it to a "
                     "mesh (geometry_def.md 11.8 increment 6)", entry.uid);
-      if (const asset_mesh_source_t *asset = std::get_if<asset_mesh_source_t>(&mesh->source))
-        append_static_mesh(scene, entry.uid, static_mesh_view_of_asset_mesh(*mesh, *asset));
+      if (std::holds_alternative<asset_mesh_source_t>(mesh->source))
+        append_asset_mesh(scene, entry.uid, *mesh);
       else
         append_mesh_faces(scene, entry.uid, *mesh);
     }

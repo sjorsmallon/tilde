@@ -71,11 +71,12 @@ groups
     }
   }
 }
-brush
+mesh
 {
   "_uid" "66"
-  "vertices" "-242.210938 41.7511063 -286.68457, -242.210938 41.7511063 287.62793, -242.210938 169.751099 -286.68457, -242.210938 169.751099 287.62793, 213.632812 41.7511063 -286.68457, 213.632812 41.7511063 287.62793, 213.632812 169.751099 -286.68457, 213.632812 169.751099 287.62793"
-  "mesh_path" ""
+  "position" "-14.2890625 105.751099 0.471679688"
+  "rotation" "0 0 0 1"
+  "vertices" "-227.921875 -63.9999924 -287.15625, -227.921875 -63.9999924 287.15625, -227.921875 64 -287.15625, -227.921875 64 287.15625, 227.921875 -63.9999924 -287.15625, 227.921875 -63.9999924 287.15625, 227.921875 64 -287.15625, 227.921875 64 287.15625"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -83,8 +84,7 @@ brush
   "owner" "138"
   face
   {
-    "normal" "-1 0 0"
-    "distance" "242.210938"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -99,8 +99,7 @@ brush
   }
   face
   {
-    "normal" "-0 -1 -0"
-    "distance" "-41.7511063"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -115,8 +114,7 @@ brush
   }
   face
   {
-    "normal" "0 0 -0.99999994"
-    "distance" "286.68457"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -131,8 +129,7 @@ brush
   }
   face
   {
-    "normal" "-0 -0 0.99999994"
-    "distance" "287.627869"
+    "indices" "5 7 3 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -147,8 +144,7 @@ brush
   }
   face
   {
-    "normal" "0 1 0"
-    "distance" "169.751099"
+    "indices" "7 6 2 3"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -163,8 +159,7 @@ brush
   }
   face
   {
-    "normal" "1 -0 -0"
-    "distance" "213.632812"
+    "indices" "6 7 5 4"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -191,9 +186,13 @@ entity
   "light.mode" "Dynamic"
   "light.source_radius" "0"
   "light.casts_shadows" "true"
+  "light.cuts_geometry" "false"
+  "rides.mover" "0"
   "range" "2056"
   "inner_degrees" "31"
   "outer_degrees" "35"
+  "beam" "false"
+  "solid_beam" "false"
 }
 entity
 {
@@ -214,4 +213,15 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
+  "solid_only_when_lensed" "false"
+  "casts_dynamic_shadow" "false"
 }

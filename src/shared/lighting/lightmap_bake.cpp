@@ -3,6 +3,7 @@
 #include "map/brush/brush.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
+#include "map/map_geometry_asset.hpp"
 #include "map/map_geometry_mesh.hpp"
 #include "span.hpp"
 
@@ -21,10 +22,15 @@ namespace shared
 namespace
 {
 
+// A face whose vertices came out of a plane crossing spans a float's noise past
+// its true extent; that noise does not earn a texel.
+constexpr float CHART_EXTENT_TEXEL_SLACK = 1e-3f;
+
 int chart_extent_in_texels(float extent_in_world_units, float world_units_per_texel,
                            int gutter_in_texels)
 {
-  const int covered = (int)std::ceil(extent_in_world_units / world_units_per_texel);
+  const int covered =
+      (int)std::ceil(extent_in_world_units / world_units_per_texel - CHART_EXTENT_TEXEL_SLACK);
   return std::max(covered, 1) + 2 * gutter_in_texels;
 }
 
@@ -99,11 +105,12 @@ std::optional<lightmap_chart_t> try_build_chart(entity_uid_t object_uid, const P
       max_u - min_u, max_v - min_v,
       1.f / (settings.texels_per_world_unit * lightmap_scale), max_covered_in_texels);
 
-  // 4. anchor
+  // 4. anchor, with the same slack as the size: a corner a float's noise below
+  // a texel boundary sits on it, not one texel down.
   const float snapped_min_u =
-      std::floor(min_u / world_units_per_texel) * world_units_per_texel;
+      std::floor(min_u / world_units_per_texel + CHART_EXTENT_TEXEL_SLACK) * world_units_per_texel;
   const float snapped_min_v =
-      std::floor(min_v / world_units_per_texel) * world_units_per_texel;
+      std::floor(min_v / world_units_per_texel + CHART_EXTENT_TEXEL_SLACK) * world_units_per_texel;
 
   // 5. size
   const int width_in_texels = chart_extent_in_texels(
@@ -271,24 +278,23 @@ void build_mesh_face_charts(entity_uid_t object_uid, const mesh_geometry_t &mesh
   }
 }
 
-// A static mesh's charts are xatlas's (lightmap_unwrap_plan.md step 2): the
+// An asset-sourced mesh's charts are xatlas's (lightmap_unwrap_plan.md step 2): the
 // unwrap is the chart's coverage and its twin, and the record keeps a plane
 // only as a descriptor -- the reach report names a face by its normal -- never
 // as a key. The size steps are try_build_chart's over the unwrap's extent; the
 // anchor snap is not needed, since chart space already starts at the min corner.
-void build_static_mesh_charts(entity_uid_t object_uid, const static_mesh_geometry_t &static_mesh,
-                              const lightmap_bake_settings_t &settings,
-                              int max_covered_in_texels, std::vector<lightmap_chart_t> &charts)
+void build_asset_mesh_charts(entity_uid_t object_uid, const mesh_geometry_t &mesh,
+                             const lightmap_bake_settings_t &settings,
+                             int max_covered_in_texels, std::vector<lightmap_chart_t> &charts)
 {
-  std::vector<chart_unwrap_t> unwraps =
-      unwrap_static_mesh(static_mesh, settings.texels_per_world_unit);
+  std::vector<chart_unwrap_t> unwraps = unwrap_asset_mesh(mesh, settings.texels_per_world_unit);
   if (unwraps.empty())
   {
-    log_warning("[lightmap] static mesh {} unwrapped to nothing; it gets no charts.",
+    log_warning("[lightmap] asset mesh {} unwrapped to nothing; it gets no charts.",
                 object_uid);
     return;
   }
-  const std::vector<vertex_xnu> world = static_mesh_world_vertices(static_mesh);
+  const std::vector<vertex_xnu> world = compute_asset_mesh_world_vertices(mesh);
 
   for (chart_unwrap_t& unwrap : unwraps)
   {
@@ -305,7 +311,7 @@ void build_static_mesh_charts(entity_uid_t object_uid, const static_mesh_geometr
     if (width_in_texels > settings.max_chart_extent_in_texels ||
         height_in_texels > settings.max_chart_extent_in_texels)
     {
-      log_error("[lightmap] static mesh {} produced a {}x{} chart past the {} cap after "
+      log_error("[lightmap] asset mesh {} produced a {}x{} chart past the {} cap after "
                 "the density was already lowered to fit; it gets no chart.",
                 object_uid, width_in_texels, height_in_texels,
                 settings.max_chart_extent_in_texels);
@@ -329,7 +335,7 @@ void build_static_mesh_charts(entity_uid_t object_uid, const static_mesh_geometr
       {
         const unwrapped_vertex_t& vertex = unwrap.vertices[unwrap.indices[t * 3 + corner]];
         if (vertex.xref >= world.size())
-          fatal_error("[lightmap] static mesh {}'s unwrap names vertex {} of {}.",
+          fatal_error("[lightmap] asset mesh {}'s unwrap names vertex {} of {}.",
                       object_uid, vertex.xref, world.size());
         chart.triangles.push_back(vertex.uv);
         twin.corners[corner] = world[vertex.xref].position;
@@ -380,16 +386,14 @@ build_lightmap_charts(const map_t &map, const lightmap_bake_settings_t &settings
     switch (get_kind(object.value))
     {
     case geometry_kind_t::Brush:
-    case geometry_kind_t::Static_Mesh:
       fatal_error("lightmap: object {} is a legacy kind; every reader converts it to a mesh "
                   "(geometry_def.md 11.8 increment 6)", object.uid);
 
     case geometry_kind_t::Mesh:
     {
       const mesh_geometry_t &mesh = std::get<mesh_geometry_t>(object.value);
-      if (const asset_mesh_source_t *asset = std::get_if<asset_mesh_source_t>(&mesh.source))
-        build_static_mesh_charts(object.uid, static_mesh_view_of_asset_mesh(mesh, *asset),
-                                 settings, max_covered_in_texels, charts);
+      if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
+        build_asset_mesh_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
       else
         build_mesh_face_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
       break;

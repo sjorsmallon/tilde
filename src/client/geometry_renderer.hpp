@@ -59,12 +59,6 @@ enum class generated_mesh_check_t
   Trusted_Since_Load,
 };
 
-// An asset-sourced mesh is drawn, previewed and highlighted as the static mesh
-// it views (geometry_def.md 11.6); `storage` holds the view when one is needed.
-// Dies with static_mesh_geometry_t in increment 14.
-const shared::geometry_value_t &drawn_geometry_value(const shared::geometry_value_t &geometry,
-                                                     shared::geometry_value_t &storage);
-
 // `map_geometry` is the list the object sits in, so a brush's seam with its
 // neighbours is read the way collision reads it.
 void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,

@@ -99,21 +99,65 @@ bool mesh_is_convex(const mesh_geometry_t &mesh)
 std::optional<std::vector<mesh_geometry_t>>
 try_decompose_mesh_into_convex_pieces(const mesh_geometry_t &mesh)
 {
+  std::optional<std::vector<convex_piece_t>> tagged =
+      try_decompose_mesh_into_tagged_convex_pieces(mesh);
+  if (!tagged)
+    return std::nullopt;
+  std::vector<mesh_geometry_t> pieces;
+  pieces.reserve(tagged->size());
+  for (convex_piece_t &piece : *tagged)
+    pieces.push_back(std::move(piece.mesh));
+  return pieces;
+}
+
+namespace
+{
+
+// The shells of `half`, each face's source composed through `half_sources`
+// (the split's, per face of the half) and then `parent_sources` (the parent's,
+// per face of the parent); a cap stays a cap.
+void push_shells_with_sources(std::vector<convex_piece_t> &pending, const mesh_geometry_t &half,
+                              Span<const uint32_t> half_sources,
+                              Span<const uint32_t> parent_sources)
+{
+  for (mesh_shell_t &shell : separate_mesh_shells_with_sources(half))
+  {
+    convex_piece_t piece{std::move(shell.mesh), {}};
+    piece.source_faces.reserve(shell.source_faces.size());
+    for (uint32_t face_in_half : shell.source_faces)
+    {
+      const uint32_t face_in_parent = half_sources[face_in_half];
+      piece.source_faces.push_back(face_in_parent == MESH_SPLIT_CAP
+                                       ? MESH_SPLIT_CAP
+                                       : parent_sources[face_in_parent]);
+    }
+    pending.push_back(std::move(piece));
+  }
+}
+
+} // namespace
+
+std::optional<std::vector<convex_piece_t>>
+try_decompose_mesh_into_tagged_convex_pieces(const mesh_geometry_t &mesh)
+{
   if (std::optional<mesh_defect_t> defect = find_mesh_defect(mesh))
   {
     log_error("decompose: not a closed planar mesh: {}", format_mesh_defect(*defect));
     return std::nullopt;
   }
 
-  std::vector<mesh_geometry_t> pending = separate_mesh_shells(mesh);
-  std::vector<mesh_geometry_t> pieces;
+  std::vector<convex_piece_t> pending;
+  for (mesh_shell_t &shell : separate_mesh_shells_with_sources(mesh))
+    pending.push_back({std::move(shell.mesh), std::move(shell.source_faces)});
+
+  std::vector<convex_piece_t> pieces;
   uint32_t splits = 0;
   while (!pending.empty())
   {
-    mesh_geometry_t current = std::move(pending.back());
+    convex_piece_t current = std::move(pending.back());
     pending.pop_back();
 
-    const std::optional<reflex_edge_t> reflex = find_reflex_edge(current);
+    const std::optional<reflex_edge_t> reflex = find_reflex_edge(current.mesh);
     if (!reflex)
     {
       if (pieces.size() >= MAX_MESH_CONVEX_PIECES)
@@ -130,7 +174,7 @@ try_decompose_mesh_into_convex_pieces(const mesh_geometry_t &mesh)
       log_error("decompose: more than {} splits", MAX_MESH_DECOMPOSITION_SPLITS);
       return std::nullopt;
     }
-    std::optional<mesh_split_t> split = try_split_at_reflex_edge(current, *reflex);
+    std::optional<mesh_split_t> split = try_split_at_reflex_edge(current.mesh, *reflex);
     if (!split)
     {
       log_error("decompose: no plane through edge {}->{} (faces {} and {}) splits the mesh",
@@ -138,10 +182,16 @@ try_decompose_mesh_into_convex_pieces(const mesh_geometry_t &mesh)
                 reflex->other_face_index);
       return std::nullopt;
     }
-    for (mesh_geometry_t &shell : separate_mesh_shells(split->front))
-      pending.push_back(std::move(shell));
-    for (mesh_geometry_t &shell : separate_mesh_shells(split->back))
-      pending.push_back(std::move(shell));
+    const Span<const uint32_t> parent_sources(current.source_faces.data(),
+                                              (uint32_t)current.source_faces.size());
+    push_shells_with_sources(pending, split->front,
+                             Span<const uint32_t>(split->front_source_faces.data(),
+                                                  (uint32_t)split->front_source_faces.size()),
+                             parent_sources);
+    push_shells_with_sources(pending, split->back,
+                             Span<const uint32_t>(split->back_source_faces.data(),
+                                                  (uint32_t)split->back_source_faces.size()),
+                             parent_sources);
   }
   return pieces;
 }

@@ -88,13 +88,13 @@ groups
     }
   }
 }
-static_mesh
+mesh
 {
   "_uid" "67"
-  "position" "36.333740 60.189911 -2.853638"
+  "position" "36.3337402 60.1899109 -2.85363793"
   "rotation" "0.701057374 0.701057315 -0.0922959447 -0.0922959819"
-  "scale" "6.000000 6.000000 6.000000"
-  "mesh_path" "resources/glb/stopwatch.glb"
+  "asset" "resources/glb/stopwatch.glb"
+  "scale" "6 6 6"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -160,4 +160,13 @@ entity
   "switch_state.value" "true"
   "wipe_timer" "64"
   "passable_by" "Free_For_All"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
+  "solid_only_when_lensed" "false"
+  "casts_dynamic_shadow" "false"
 }

@@ -109,7 +109,7 @@ static_assert(sizeof(probe_trace_t) == 16 * sizeof(float) &&
 // runs on the GPU. The material table is PARALLEL to traced_scene_t::materials
 // -- index i is map material i, the same table `face_surface_t::material`
 // indexes -- with ONE trailing untextured entry (`untextured_material`) for what
-// surface_at answers with the untextured grey: a static mesh's triangle, and a
+// surface_at answers with the untextured grey: an asset mesh's triangle, and a
 // face naming an index the table does not have.
 
 // An index into gpu_bake_scene_t::textures, or this: reads as
@@ -188,8 +188,8 @@ struct gpu_bake_scene_t
   }
 };
 
-// The union of every brush's generate_brush_mesh output and every static
-// mesh's static_mesh_world_triangles, with the materials resolved through the
+// The union of every mesh's stored faces and every asset mesh's
+// compute_asset_mesh_world_triangles, with the materials resolved through the
 // TRACED scene's table -- derived from it rather than resolved a second time, so
 // the two solves cannot disagree about what material i is made of. Materials
 // resolve on the calling thread for the reason build_traced_scene does: a

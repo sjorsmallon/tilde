@@ -16,11 +16,11 @@ entity
   "volume.half_extents" "63.8 65.4 78.6"
   "weakness" "Teal"
   "render.mesh" "target"
+  "render.material" "Missing"
+  "render.color" "1 0.4 0"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "0 0 0 1"
-  "render.material" "Missing"
-  "render.color" "1 0.4 0"
 }

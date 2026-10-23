@@ -1,14 +1,11 @@
 #include "map_geometry.hpp"
+#include "map_geometry_asset.hpp"
 #include "map_geometry_mesh.hpp"
 #include "map_geometry_text.hpp"
-#include "map_geometry_text.hpp"
-#include "map_geometry_text.hpp"
-
-#include "../../third_party/xatlas.h"
 
 #include "array.hpp"
 #include "collision/collision_detection.hpp"
-#include "brush/brush_holes.hpp"
+#include "mesh/mesh.hpp"
 #include "brush/convex_decomposition.hpp"
 #include "brush/face_neighbour.hpp"
 #include "log.hpp"
@@ -30,7 +27,6 @@ const char *get_kind_name(geometry_kind_t kind)
 {
   switch (kind)
   {
-  case geometry_kind_t::Static_Mesh:  return "static_mesh";
   case geometry_kind_t::Brush:        return "brush";
   case geometry_kind_t::Mesh:         return "mesh";
   }
@@ -43,7 +39,6 @@ geometry_value_t make_default_geometry(geometry_kind_t kind)
 {
   switch (kind)
   {
-  case geometry_kind_t::Static_Mesh:  return static_mesh_geometry_t{};
   case geometry_kind_t::Brush:        return brush_geometry_t{};
   case geometry_kind_t::Mesh:         return make_box_mesh({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
   }
@@ -107,9 +102,6 @@ linalg::vec3 get_position(const geometry_value_t &geometry)
 {
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-    return std::get<static_mesh_geometry_t>(geometry).position;
-
   case geometry_kind_t::Mesh:
     return std::get<mesh_geometry_t>(geometry).position;
 
@@ -129,10 +121,6 @@ void set_position(geometry_value_t &geometry, const linalg::vec3 &position)
 {
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-    std::get<static_mesh_geometry_t>(geometry).position = position;
-    return;
-
   case geometry_kind_t::Mesh:
     std::get<mesh_geometry_t>(geometry).position = position;
     return;
@@ -154,9 +142,6 @@ entity_uid_t get_owner_uid(const geometry_value_t &geometry)
 {
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-    return std::get<static_mesh_geometry_t>(geometry).owner_uid;
-
   case geometry_kind_t::Brush:
     return std::get<brush_geometry_t>(geometry).owner_uid;
 
@@ -172,10 +157,6 @@ void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid)
 {
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-    std::get<static_mesh_geometry_t>(geometry).owner_uid = owner_uid;
-    return;
-
   case geometry_kind_t::Brush:
     std::get<brush_geometry_t>(geometry).owner_uid = owner_uid;
     return;
@@ -192,13 +173,6 @@ void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta)
 {
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-    {
-      static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-      static_mesh.position                = static_mesh.position + delta;
-    }
-    return;
-
   case geometry_kind_t::Brush:
     translate_brush(std::get<brush_geometry_t>(geometry), delta);
     return;
@@ -214,81 +188,8 @@ void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta)
   log_error("translate_geometry: unhandled geometry kind {}", (int)get_kind(geometry));
 }
 
-assets::asset_handle_t<assets::mesh_asset_t>
-resolve_surface_mesh(const geometry_surface_t &surface)
-{
-  if (surface.mesh_path.empty())
-    return {};
-
-  // Picked from the manifest in the editor but stored as a PATH, so a map naming a
-  // mesh this build lacks still loads -- which is why it is probed rather than
-  // assumed. An invalid handle means "no mesh", as for the empty path.
-  if (!assets::asset_exists(surface.mesh_path.c_str()))
-  {
-    log_error("geometry surface names mesh '{}', which is not there", surface.mesh_path);
-    return {};
-  }
-
-  return assets::load_mesh(surface.mesh_path.c_str());
-}
-
 namespace
 {
-
-// Half-extents of a static mesh: the mesh's own bounds scaled, or a default box
-// while the mesh is still unresolved. Also reports the mesh-space center offset,
-// because a mesh's bounds are not necessarily centered on its origin.
-bool compute_static_mesh_extents(const static_mesh_geometry_t &static_mesh,
-                                 linalg::vec3 &out_center_offset,
-                                 linalg::vec3 &out_half_extents)
-{
-  const assets::asset_handle_t<assets::mesh_asset_t> handle =
-      resolve_surface_mesh(static_mesh.surface);
-  if (!handle.valid())
-    return false;
-
-  const assets::mesh_asset_t *mesh = assets::get(handle);
-  if (!mesh || mesh->vertices.empty())
-    return false;
-
-  const aabb_bounds_t mesh_bounds = assets::compute_mesh_bounds(mesh);
-  const linalg::vec3 mesh_center = (mesh_bounds.min + mesh_bounds.max) * 0.5f;
-  const linalg::vec3 mesh_half = (mesh_bounds.max - mesh_bounds.min) * 0.5f;
-  const linalg::vec3 &scale = static_mesh.scale;
-
-  out_center_offset = {mesh_center.x * scale.x, mesh_center.y * scale.y,
-                       mesh_center.z * scale.z};
-  out_half_extents = {std::abs(mesh_half.x * scale.x), std::abs(mesh_half.y * scale.y),
-                      std::abs(mesh_half.z * scale.z)};
-  return true;
-}
-
-// A static mesh's box in its own frame: where its centre sits in the world, and
-// the half-extents along its own (rotated) axes.
-struct static_mesh_box_t
-{
-  linalg::vec3 center;
-  linalg::vec3 half_extents;
-};
-
-static_mesh_box_t compute_static_mesh_box(const static_mesh_geometry_t &static_mesh)
-{
-  constexpr float fallback_half_extent = 32.f;
-
-  linalg::vec3 center_offset{0.f, 0.f, 0.f};
-  linalg::vec3 half_extents{fallback_half_extent, fallback_half_extent, fallback_half_extent};
-  compute_static_mesh_extents(static_mesh, center_offset, half_extents);
-
-  return {static_mesh.position + linalg::rotate(static_mesh.orientation, center_offset),
-          half_extents};
-}
-
-// The world-axis half-extents of that box once turned.
-linalg::vec3 static_mesh_world_half_extents(const static_mesh_geometry_t &static_mesh,
-                                            const linalg::vec3 &half_extents)
-{
-  return oriented_box_reach(half_extents, static_mesh.orientation);
-}
 
 // Convert local box geometry to the world-space aabb_t the shapes.hpp helpers
 // (collision planes, face polygons) already know how to chew on.
@@ -306,14 +207,6 @@ linalg::vec3 get_half_extents(const geometry_value_t &geometry)
 {
   switch (get_kind(geometry))
   {
-
-  case geometry_kind_t::Static_Mesh:
-  {
-    const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    return static_mesh_world_half_extents(static_mesh,
-                                          compute_static_mesh_box(static_mesh).half_extents);
-  }
-
   case geometry_kind_t::Brush:
   {
     const aabb_bounds_t bounds =
@@ -361,14 +254,6 @@ aabb_bounds_t get_bounds(const geometry_value_t &geometry)
     }
 
     return {bounds.min + lowest, bounds.max + highest};
-  }
-
-  case geometry_kind_t::Static_Mesh:
-  {
-    const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    const static_mesh_box_t box = compute_static_mesh_box(static_mesh);
-    const linalg::vec3 reach = static_mesh_world_half_extents(static_mesh, box.half_extents);
-    return {box.center - reach, box.center + reach};
   }
   }
 
@@ -712,27 +597,12 @@ try_build_boundary_pyramids(const brush_polyhedron_t &displaced,
 
 } // namespace
 
-collision_piece_t static_mesh_collision_box(const static_mesh_geometry_t &static_mesh)
-{
-  const static_mesh_box_t box = compute_static_mesh_box(static_mesh);
-  return piece_from_oriented_box(
-      {.center = box.center, .half_extents = box.half_extents, .orientation = static_mesh.orientation});
-}
-
 std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
                                                     entity_uid_t uid,
                                                     Span<const map_geometry_t> map_geometry)
 {
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-  {
-    const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    if (!static_mesh.collides)
-      return {};
-    return {static_mesh_collision_box(static_mesh)};
-  }
-
   case geometry_kind_t::Mesh:
     return compute_mesh_collision_pieces(std::get<mesh_geometry_t>(geometry), uid);
 
@@ -744,10 +614,6 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
     // gone rather than moved.
     const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
 
-    // A hole is not a solid: what it takes out of its wall is the wall's answer.
-    if (brush.subtracts_from_uid != null_entity_uid)
-      return {};
-
     const std::optional<brush_polyhedron_t> hull =
         try_build_brush_polyhedron(brush.hull_points);
     if (!hull)
@@ -756,38 +622,6 @@ std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geom
                 "will not collide",
                 uid, brush.hull_points.size());
       return {};
-    }
-
-    const std::vector<const brush_geometry_t *> holes = collect_hole_brushes(map_geometry, uid);
-    if (!holes.empty())
-    {
-      if (brush_refuses_holes(brush))
-      {
-        log_error("get_collision_pieces: brush {} is subdivided or painted and refuses its {} "
-                  "holes — it collides solid",
-                  uid, holes.size());
-      }
-      else
-      {
-        const std::optional<brush_solid_t> solid = try_build_brush_solid(brush, holes);
-        if (!solid)
-        {
-          log_error("get_collision_pieces: brush {} could not be cut by its {} holes — it "
-                    "will not collide",
-                    uid, holes.size());
-          return {};
-        }
-        if (solid->pieces.empty())
-          log_error("get_collision_pieces: brush {} is swallowed by its holes — nothing is left "
-                    "to collide with",
-                    uid);
-
-        std::vector<collision_piece_t> collision_pieces;
-        collision_pieces.reserve(solid->pieces.size());
-        for (const brush_polyhedron_t &piece : solid->pieces)
-          collision_pieces.push_back(piece_from_polyhedron(piece));
-        return collision_pieces;
-      }
     }
 
     // A brush's stored form is a point set, so its BASE solid is always convex --
@@ -868,11 +702,6 @@ const geometry_surface_t &get_surface(const geometry_value_t &geometry)
 namespace
 {
 
-bool quat_equal(const linalg::quatf &lhs, const linalg::quatf &rhs)
-{
-  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z && lhs.w == rhs.w;
-}
-
 bool vec3_equal(const linalg::vec3 &lhs, const linalg::vec3 &rhs)
 {
   return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
@@ -882,8 +711,7 @@ bool vec3_equal(const linalg::vec3 &lhs, const linalg::vec3 &rhs)
 
 bool surfaces_equal(const geometry_surface_t &lhs, const geometry_surface_t &rhs)
 {
-  return lhs.mesh_path == rhs.mesh_path &&
-         vec3_equal(lhs.color, rhs.color) && lhs.roughness == rhs.roughness &&
+  return vec3_equal(lhs.color, rhs.color) && lhs.roughness == rhs.roughness &&
          lhs.visible == rhs.visible && lhs.is_wireframe == rhs.is_wireframe;
 }
 
@@ -962,16 +790,6 @@ bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &
 
   switch (get_kind(lhs))
   {
-  case geometry_kind_t::Static_Mesh:
-  {
-    const static_mesh_geometry_t &a = std::get<static_mesh_geometry_t>(lhs);
-    const static_mesh_geometry_t &b = std::get<static_mesh_geometry_t>(rhs);
-    return vec3_equal(a.position, b.position) && quat_equal(a.orientation, b.orientation) &&
-           vec3_equal(a.scale, b.scale) && surfaces_equal(a.surface, b.surface) &&
-           a.collides == b.collides && a.casts_shadows == b.casts_shadows &&
-           a.owner_uid == b.owner_uid;
-  }
-
   case geometry_kind_t::Mesh:
     return mesh_geometries_equal(std::get<mesh_geometry_t>(lhs), std::get<mesh_geometry_t>(rhs));
 
@@ -1023,14 +841,9 @@ light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
   if (const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&geometry))
     return compute_mesh_light_occlusion(*mesh, materials);
 
-  // A static mesh's material is not resolved anywhere in the bake yet, so it is
-  // opaque the way it always was, unless its author switched its shadow off.
-  const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&geometry);
-  if (!brush)
-    return std::get<static_mesh_geometry_t>(geometry).casts_shadows ? light_occlusion_t::Opaque
-                                                                     : light_occlusion_t::None;
+  const brush_geometry_t &brush = std::get<brush_geometry_t>(geometry);
 
-  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush->hull_points);
+  const std::optional<brush_polyhedron_t> hull = try_build_brush_polyhedron(brush.hull_points);
   if (!hull || hull->faces.empty()) return light_occlusion_t::Opaque;
 
   // EVERY face must agree, or the brush is opaque: the answer is per object and
@@ -1041,7 +854,7 @@ light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
   bool every_face_is_tested = true;
   for (const brush_face_t &face : hull->faces)
   {
-    const face_surface_t *matched = find_face_surface(*brush, face.plane);
+    const face_surface_t *matched = find_face_surface(brush, face.plane);
     const face_surface_t &surface = matched ? *matched : brush_default;
     const std::string     path =
         surface.material < materials.count ? materials[surface.material] : std::string();
@@ -2046,330 +1859,10 @@ try_build_displaced_polyhedron(const brush_geometry_t &brush, brush_neighbourhoo
   return displaced;
 }
 
-linalg::mat4f static_mesh_transform(const static_mesh_geometry_t &static_mesh)
-{
-  return linalg::compose_transform(static_mesh.position, static_mesh.orientation,
-                                   static_mesh.scale);
-}
-
-namespace
-{
-
-linalg::vec3 transform_point(const linalg::mat4f &transform, const linalg::vec3 &point)
-{
-  const linalg::vec4 moved = transform * linalg::vec4{point.x, point.y, point.z, 1.f};
-  return {moved.x, moved.y, moved.z};
-}
-
-// A normal transforms by the inverse transpose: R * S^-1 for a rotation and a
-// diagonal scale, which is what keeps it perpendicular under a non-uniform one.
-linalg::vec3 static_mesh_world_normal(const static_mesh_geometry_t &static_mesh,
-                                      const linalg::vec3 &mesh_normal)
-{
-  const linalg::vec3 &scale = static_mesh.scale;
-  const linalg::vec3 unscaled{scale.x != 0.f ? mesh_normal.x / scale.x : 0.f,
-                              scale.y != 0.f ? mesh_normal.y / scale.y : 0.f,
-                              scale.z != 0.f ? mesh_normal.z / scale.z : 0.f};
-  const linalg::vec3 rotated = linalg::rotate(static_mesh.orientation, unscaled);
-  const float length = linalg::length(rotated);
-  return length > 0.f ? rotated * (1.f / length) : linalg::vec3{0.f, 0.f, 0.f};
-}
-
-} // namespace
-
-std::vector<world_triangle_t>
-static_mesh_world_triangles(const static_mesh_geometry_t &static_mesh)
-{
-  std::vector<world_triangle_t> triangles;
-
-  const assets::mesh_asset_t *mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
-  if (!mesh || mesh->indices.size() < 3)
-    return triangles;
-
-  const linalg::mat4f transform = static_mesh_transform(static_mesh);
-  triangles.reserve(mesh->indices.size() / 3);
-
-  for (size_t first = 0; first + 2 < mesh->indices.size(); first += 3)
-  {
-    world_triangle_t triangle;
-    linalg::vec3 authored_normal{0.f, 0.f, 0.f};
-    for (int corner = 0; corner < 3; ++corner)
-    {
-      const vertex_xnu &vertex = mesh->vertices[mesh->indices[first + (size_t)corner]];
-      triangle.corners[corner] = transform_point(transform, vertex.position);
-      authored_normal = authored_normal + static_mesh_world_normal(static_mesh, vertex.normal);
-    }
-
-    // The geometric normal is the plane; the authored normals say which side is
-    // OUT, which the winding alone cannot once a negative scale has mirrored it.
-    linalg::vec3 normal = linalg::cross(triangle.corners[1] - triangle.corners[0],
-                                        triangle.corners[2] - triangle.corners[0]);
-    const float length = linalg::length(normal);
-    if (length > 1e-6f)
-    {
-      normal = normal * (1.f / length);
-      if (linalg::dot(normal, authored_normal) < 0.f) normal = normal * -1.f;
-      triangle.normal = normal;
-    }
-
-    triangles.push_back(triangle);
-  }
-
-  return triangles;
-}
-
-std::vector<vertex_xnu> static_mesh_world_vertices(const static_mesh_geometry_t &static_mesh)
-{
-  std::vector<vertex_xnu> vertices;
-
-  const assets::mesh_asset_t* mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
-  if (!mesh)
-    return vertices;
-
-  const linalg::mat4f transform = static_mesh_transform(static_mesh);
-  vertices.reserve(mesh->vertices.size());
-  for (const vertex_xnu& vertex : mesh->vertices)
-    vertices.push_back({transform_point(transform, vertex.position),
-                        static_mesh_world_normal(static_mesh, vertex.normal), vertex.uv});
-  return vertices;
-}
-
-std::vector<chart_unwrap_t> unwrap_static_mesh(const static_mesh_geometry_t &static_mesh,
-                                               float texels_per_world_unit)
-{
-  std::vector<chart_unwrap_t> unwraps;
-
-  const assets::mesh_asset_t* mesh = assets::get(resolve_surface_mesh(static_mesh.surface));
-  const std::vector<vertex_xnu> vertices = static_mesh_world_vertices(static_mesh);
-  if (!mesh || vertices.empty() || mesh->indices.size() < 3)
-    return unwraps;
-  if (!(texels_per_world_unit > 0.f))
-  {
-    log_error("[lightmap] unwrap asked at {} texels per unit; nothing to size a chart by.",
-              texels_per_world_unit);
-    return unwraps;
-  }
-
-  xatlas::Atlas* atlas = xatlas::Create();
-
-  xatlas::MeshDecl declaration;
-  declaration.vertexCount = (uint32_t)vertices.size();
-  declaration.vertexPositionData = &vertices[0].position;
-  declaration.vertexPositionStride = sizeof(vertex_xnu);
-  declaration.vertexNormalData = &vertices[0].normal;
-  declaration.vertexNormalStride = sizeof(vertex_xnu);
-  declaration.indexData = mesh->indices.data();
-  declaration.indexCount = (uint32_t)mesh->indices.size();
-  declaration.indexFormat = xatlas::IndexFormat::UInt32;
-
-  const xatlas::AddMeshError error = xatlas::AddMesh(atlas, declaration, 1);
-  if (error != xatlas::AddMeshError::Success)
-  {
-    log_error("[lightmap] xatlas refused {}: {}.", static_mesh.surface.mesh_path,
-              xatlas::StringForEnum(error));
-    xatlas::Destroy(atlas);
-    return unwraps;
-  }
-
-  // xatlas unwraps, we pack: its own packing runs only to get every chart's uvs
-  // into one per-chart space at our density, and its atlas is thrown away.
-  xatlas::PackOptions pack_options;
-  pack_options.texelsPerUnit = texels_per_world_unit;
-  pack_options.resolution = 0;
-  pack_options.padding = 0;
-  pack_options.bilinear = false;
-  xatlas::Generate(atlas, xatlas::ChartOptions(), pack_options);
-
-  const xatlas::Mesh& output = atlas->meshes[0];
-  const float world_units_per_atlas_texel = 1.f / texels_per_world_unit;
-
-  // Keyed by the SOURCE vertex a face corner names, not by xatlas's output
-  // vertex: its xref goes through the colocal weld and can name another face's
-  // copy of a shared corner, which carries that face's normal.
-  std::vector<uint32_t> chart_vertex_index_by_source_vertex(vertices.size(), UINT32_MAX);
-  std::vector<uint32_t> touched;
-  unwraps.reserve(output.chartCount);
-
-  for (uint32_t chart_index = 0; chart_index < output.chartCount; ++chart_index)
-  {
-    const xatlas::Chart& chart = output.chartArray[chart_index];
-    if (chart.type == xatlas::ChartType::Invalid)
-    {
-      log_warning("[lightmap] xatlas could not parameterize {} face(s) of {}; they draw unlit.",
-                  chart.faceCount, static_mesh.surface.mesh_path);
-      continue;
-    }
-
-    chart_unwrap_t unwrap;
-    unwrap.faces.reserve(chart.faceCount);
-    unwrap.indices.reserve((size_t)chart.faceCount * 3);
-    touched.clear();
-
-    for (uint32_t f = 0; f < chart.faceCount; ++f)
-    {
-      const uint32_t face = chart.faceArray[f];
-      unwrap.faces.push_back(face);
-      for (uint32_t corner = 0; corner < 3; ++corner)
-      {
-        const uint32_t source_vertex = mesh->indices[(size_t)face * 3 + corner];
-        if (chart_vertex_index_by_source_vertex[source_vertex] == UINT32_MAX)
-        {
-          const xatlas::Vertex& vertex =
-              output.vertexArray[output.indexArray[(size_t)face * 3 + corner]];
-          chart_vertex_index_by_source_vertex[source_vertex] = (uint32_t)unwrap.vertices.size();
-          touched.push_back(source_vertex);
-          unwrap.vertices.push_back({source_vertex,
-                                     {vertex.uv[0] * world_units_per_atlas_texel,
-                                      vertex.uv[1] * world_units_per_atlas_texel}});
-        }
-        unwrap.indices.push_back(chart_vertex_index_by_source_vertex[source_vertex]);
-      }
-    }
-    for (uint32_t source_vertex : touched) chart_vertex_index_by_source_vertex[source_vertex] = UINT32_MAX;
-
-    linalg::vec2 minimum = unwrap.vertices[0].uv;
-    for (const unwrapped_vertex_t& vertex : unwrap.vertices)
-      minimum = {std::min(minimum.x, vertex.uv.x), std::min(minimum.y, vertex.uv.y)};
-    for (unwrapped_vertex_t& vertex : unwrap.vertices)
-      vertex.uv = {vertex.uv.x - minimum.x, vertex.uv.y - minimum.y};
-
-    unwraps.push_back(std::move(unwrap));
-  }
-
-  xatlas::Destroy(atlas);
-  return unwraps;
-}
-
-assets::mesh_asset_t
-generate_lightmapped_static_mesh(const static_mesh_geometry_t &static_mesh,
-                                 const object_lightmap_ref_t &lighting)
-{
-  assets::mesh_asset_t out;
-
-  const assets::mesh_asset_t *source = assets::get(resolve_surface_mesh(static_mesh.surface));
-  if (!source)
-    return out;
-
-  const std::vector<vertex_xnu> world = static_mesh_world_vertices(static_mesh);
-
-  out.materials = source->materials;
-  out.submeshes = source->submeshes;
-
-  // One vertex per triangle CORNER and no lightmap array: byte for byte what a
-  // mesh without a bake always uploaded.
-  const auto copy_unlit = [&]() {
-    out.vertices.clear();
-    out.indices.clear();
-    out.lightmap.clear();
-    out.vertices.reserve(source->indices.size());
-    out.indices.reserve(source->indices.size());
-    for (uint32_t index : source->indices)
-    {
-      out.indices.push_back((uint32_t)out.vertices.size());
-      out.vertices.push_back(world[index]);
-    }
-  };
-
-  std::vector<const lightmap_chart_t*> charts;
-  if (lighting.has_bake())
-    for (const lightmap_chart_t& chart : lighting.lightmap->charts)
-      if (chart.object_uid == lighting.object_uid && !chart.unwrap.empty())
-        charts.push_back(&chart);
-
-  if (charts.empty())
-  {
-    copy_unlit();
-    return out;
-  }
-
-  // The unwrap's vertices, one per chart, with the index at each face's three
-  // corners pointing into them -- so the index list keeps the source's face
-  // order and every submesh range holds. A face no chart covers gets three
-  // fresh unlit corners.
-  const size_t face_count = source->indices.size() / 3;
-  std::vector<uint8_t> covered(face_count, 0);
-  out.indices.assign(face_count * 3, UINT32_MAX);
-
-  const auto refuse = [&](const char* what, size_t value, size_t limit) {
-    log_error("[lightmap] static mesh {}'s unwrap names {} {} of {}; the bake does not "
-              "match {} and it draws unlit. Rebake.",
-              lighting.object_uid, what, value, limit, static_mesh.surface.mesh_path);
-    copy_unlit();
-  };
-
-  for (const lightmap_chart_t* chart : charts)
-  {
-    const chart_unwrap_t& unwrap = chart->unwrap;
-    const uint32_t base = (uint32_t)out.vertices.size();
-
-    for (const unwrapped_vertex_t& vertex : unwrap.vertices)
-    {
-      if (vertex.xref >= world.size())
-      {
-        refuse("vertex", vertex.xref, world.size());
-        return out;
-      }
-      out.vertices.push_back(world[vertex.xref]);
-      out.lightmap.push_back(
-          {lightmap_uv_from_chart_space(*chart, lighting.lightmap->settings,
-                                        lighting.lightmap->atlas, vertex.uv),
-           chart->light_slots});
-    }
-
-    for (size_t t = 0; t < unwrap.faces.size(); ++t)
-    {
-      const uint32_t face = unwrap.faces[t];
-      if (face >= face_count)
-      {
-        refuse("face", face, face_count);
-        return out;
-      }
-      if (covered[face])
-      {
-        refuse("face twice, face", face, face_count);
-        return out;
-      }
-      covered[face] = 1;
-      for (size_t corner = 0; corner < 3; ++corner)
-      {
-        const uint32_t local = unwrap.indices[t * 3 + corner];
-        if (local >= unwrap.vertices.size())
-        {
-          refuse("chart vertex", local, unwrap.vertices.size());
-          return out;
-        }
-        if (unwrap.vertices[local].xref != source->indices[(size_t)face * 3 + corner])
-        {
-          refuse("another mesh's corner, vertex", unwrap.vertices[local].xref, world.size());
-          return out;
-        }
-        out.indices[(size_t)face * 3 + corner] = base + local;
-      }
-    }
-  }
-
-  for (size_t face = 0; face < face_count; ++face)
-  {
-    if (covered[face]) continue;
-    for (size_t corner = 0; corner < 3; ++corner)
-    {
-      out.indices[face * 3 + corner] = (uint32_t)out.vertices.size();
-      out.vertices.push_back(world[source->indices[face * 3 + corner]]);
-      out.lightmap.push_back({});
-    }
-  }
-
-  return out;
-}
-
 assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
                                          Span<const std::string> materials,
                                          brush_neighbourhood_t neighbourhood)
 {
-  // A hole draws nothing of its own: what it takes out of its wall is the wall's mesh.
-  if (brush.subtracts_from_uid != null_entity_uid)
-    return {};
-
   std::optional<brush_polyhedron_t> polyhedron = try_build_brush_polyhedron(brush.hull_points);
   if (!polyhedron)
   {
@@ -2382,32 +1875,7 @@ assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
   // makes two subdivided faces meet exactly is a question about the BRUSH.
   brush_face_grids_t grids = build_brush_face_grids(brush, *polyhedron, neighbourhood);
 
-  // A wall with holes draws its SOLID's boundary: the faces come with the
-  // surface each one takes, the wall's on a wall plane and the hole's on a hole
-  // plane, and no grid, since a wall that carries one refuses its holes.
-  std::vector<const face_surface_t *> boundary_surfaces;
-  const std::vector<const brush_geometry_t *> holes =
-      collect_hole_brushes(neighbourhood.geometry, neighbourhood.self);
-  if (!holes.empty() && !brush_refuses_holes(brush))
-  {
-    std::optional<brush_solid_t> solid = try_build_brush_solid(brush, holes);
-    if (!solid)
-    {
-      log_error("generate_brush_mesh: brush {} could not be cut by its {} holes — drawing nothing",
-                neighbourhood.self, holes.size());
-      return {};
-    }
-    polyhedron        = std::move(solid->boundary);
-    boundary_surfaces = std::move(solid->boundary_surfaces);
-    grids             = {};
-    grids.grid_vertices.resize(polyhedron->faces.size());
-    grids.grid_weights.resize(polyhedron->faces.size());
-    grids.grid_pinned.resize(polyhedron->faces.size());
-  }
-
   const auto surface_for = [&](size_t face_index) -> const face_surface_t * {
-    if (!boundary_surfaces.empty())
-      return boundary_surfaces[face_index];
     return find_face_surface(brush, polyhedron->faces[face_index].plane);
   };
 
@@ -2747,7 +2215,6 @@ void read_rotation(const std::map<std::string, std::string> &properties,
 void write_surface(const geometry_surface_t &surface,
                    std::vector<std::pair<std::string, std::string>> &out)
 {
-  out.emplace_back("mesh_path", surface.mesh_path);
   out.emplace_back("color", format_vec3(surface.color));
   out.emplace_back("roughness", format_float(surface.roughness));
   out.emplace_back("visible", format_bool(surface.visible));
@@ -2785,7 +2252,6 @@ void read_uid_property(const std::map<std::string, std::string> &properties, con
 void read_surface(const std::map<std::string, std::string> &properties,
                   geometry_surface_t &surface)
 {
-  read_string(properties, "mesh_path", surface.mesh_path);
   read_vec3(properties, "color", surface.color);
   read_float(properties, "roughness", surface.roughness);
   read_bool(properties, "visible", surface.visible);
@@ -3064,21 +2530,6 @@ void serialize_geometry(const geometry_value_t &geometry,
 
   switch (get_kind(geometry))
   {
-  case geometry_kind_t::Static_Mesh:
-  {
-    const static_mesh_geometry_t &static_mesh = std::get<static_mesh_geometry_t>(geometry);
-    out_properties.emplace_back("position", format_vec3(static_mesh.position));
-    out_properties.emplace_back("rotation", format_quat_exact(static_mesh.orientation));
-    out_properties.emplace_back("scale", format_vec3(static_mesh.scale));
-    write_surface(static_mesh.surface, out_properties);
-    if (!static_mesh.collides)
-      out_properties.emplace_back("collides", format_bool(static_mesh.collides));
-    if (!static_mesh.casts_shadows)
-      out_properties.emplace_back("casts_shadows", format_bool(static_mesh.casts_shadows));
-    write_uid_property("owner", static_mesh.owner_uid, out_properties);
-    return;
-  }
-
   case geometry_kind_t::Mesh:
     write_mesh_row(std::get<mesh_geometry_t>(geometry), material_remap, out_properties,
                    out_children);
@@ -3142,17 +2593,21 @@ bool parse_geometry(const std::string &keyword,
     return true;
   }
 
-  if (keyword == get_kind_name(geometry_kind_t::Static_Mesh))
+  // A legacy `static_mesh` row is an asset-sourced mesh with the same pose.
+  if (keyword == "static_mesh")
   {
-    static_mesh_geometry_t static_mesh;
-    read_vec3(properties, "position", static_mesh.position);
-    read_rotation(properties, static_mesh.orientation);
-    read_vec3(properties, "scale", static_mesh.scale);
-    read_surface(properties, static_mesh.surface);
-    read_bool(properties, "collides", static_mesh.collides);
-    read_bool(properties, "casts_shadows", static_mesh.casts_shadows);
-    read_uid_property(properties, "owner", static_mesh.owner_uid);
-    out_geometry = std::move(static_mesh);
+    mesh_geometry_t mesh;
+    asset_mesh_source_t asset;
+    read_vec3(properties, "position", mesh.position);
+    read_rotation(properties, mesh.orientation);
+    read_vec3(properties, "scale", asset.scale);
+    read_string(properties, "mesh_path", asset.path);
+    read_surface(properties, mesh.surface);
+    read_bool(properties, "collides", mesh.collides);
+    read_bool(properties, "casts_shadows", mesh.casts_shadows);
+    read_uid_property(properties, "owner", mesh.owner_uid);
+    mesh.source = std::move(asset);
+    out_geometry = std::move(mesh);
     return true;
   }
 
@@ -3187,6 +2642,12 @@ bool parse_geometry(const std::string &keyword,
 
     brush.hull_points = std::move(*vertices);
     read_surface(properties, brush.surface);
+    std::string mesh_path;
+    read_string(properties, "mesh_path", mesh_path);
+    if (!mesh_path.empty())
+      log_warning("brush: its mesh_path \"{}\" drew an asset in place of the hull, which a "
+                  "mesh does not - the faces draw",
+                  mesh_path);
     read_uid_property(properties, "owner", brush.owner_uid);
     read_uid_property(properties, "subtracts_from", brush.subtracts_from_uid);
 

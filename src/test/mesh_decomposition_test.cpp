@@ -202,6 +202,31 @@ void test_a_cut_through_a_box_yields_two_capped_halves()
   assert(nearly(shared::compute_mesh_face_plane(split->front, 5).normal.x, -1.f, 1e-5f));
 }
 
+// A grid is a patch over the quad it was sculpted on; the part of that quad
+// on one side of the cut is a different face, so it comes out flat, and the
+// faces the plane never crosses keep theirs.
+void test_a_cut_through_a_subdivided_face_comes_out_flat()
+{
+  mesh_geometry_t box = shared::make_box_mesh({0.f, 0.f, 0.f}, {32.f, 32.f, 32.f});
+  for (shared::mesh_face_t &face : box.faces)
+    shared::resize_face_grid(face.surface, 2);
+  const Plane plane{{8.f, 0.f, 0.f}, {1.f, 0.f, 0.f}};
+  assert(shared::count_faces_crossed_by_plane(box, plane) == 4);
+  assert(shared::count_subdivided_faces_crossed_by_plane(box, plane) == 4);
+
+  const std::optional<shared::mesh_split_t> split = shared::try_split_mesh_by_plane(box, plane, {});
+  assert(split.has_value());
+  for (const mesh_geometry_t *half : {&split->front, &split->back})
+  {
+    assert(!shared::find_mesh_defect(*half).has_value());
+    uint32_t subdivided = 0;
+    for (const shared::mesh_face_t &face : half->faces)
+      subdivided += shared::face_is_subdivided(face.surface);
+    assert(subdivided == 1);
+  }
+  std::cout << "  the crossed grids are flat, the two uncrossed faces keep theirs\n";
+}
+
 void test_a_cut_through_vertices_keeps_both_halves_closed()
 {
   const mesh_geometry_t l_shape = make_l_shape();
@@ -252,6 +277,7 @@ int main()
   test_a_plane_that_misses_or_touches_is_refused();
   test_a_cut_through_a_box_yields_two_capped_halves();
   test_a_cut_through_vertices_keeps_both_halves_closed();
+  test_a_cut_through_a_subdivided_face_comes_out_flat();
   test_a_cut_that_separates_arms_comes_back_as_shells();
   test_an_open_mesh_is_refused();
 

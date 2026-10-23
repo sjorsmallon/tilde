@@ -8,6 +8,7 @@
 #include "../shared/lighting/lightmap_sidecar.hpp"
 #include "../shared/lighting/lightmap_solve.hpp"
 #include "../shared/lighting/lightmap_trace.hpp"
+#include "../shared/map/map_geometry_asset.hpp"
 #include "../shared/map/map_geometry_legacy.hpp"
 #include "../shared/map/map_geometry_mesh.hpp"
 #include "../shared/map/mesh/mesh.hpp"
@@ -45,15 +46,6 @@ uint32_t index_of_face_facing(const shared::mesh_geometry_t &mesh, const linalg:
 shared::face_surface_t &surface_facing(shared::mesh_geometry_t &mesh, const linalg::vec3 &normal)
 {
   return mesh.faces[index_of_face_facing(mesh, normal)].surface;
-}
-
-// An asset-sourced mesh as the static mesh it views, which the unwrap and the
-// world-triangle helpers still take (increment 14 retires the view).
-shared::static_mesh_geometry_t view_as_static_mesh(const shared::geometry_value_t &value)
-{
-  const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(value);
-  return shared::static_mesh_view_of_asset_mesh(
-      mesh, std::get<shared::asset_mesh_source_t>(mesh.source));
 }
 
 void a_box_gets_one_chart_per_face()
@@ -3428,8 +3420,8 @@ void a_static_mesh_is_unwrapped_into_charts()
   // one chart and has no reason to cut one.
   assert(!charts.empty() && charts.size() <= 6);
 
-  const shared::static_mesh_geometry_t box = view_as_static_mesh(map.geometry[0].value);
-  const std::vector<shared::world_triangle_t> faces = shared::static_mesh_world_triangles(box);
+  const shared::mesh_geometry_t &box = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  const std::vector<shared::world_triangle_t> faces = shared::compute_asset_mesh_world_triangles(box);
   assert(faces.size() == 12);
   assert_charts_cover_every_face_once(charts, faces, settings);
 
@@ -3479,9 +3471,9 @@ void a_sphere_unwraps_into_few_charts()
   const std::vector<shared::lightmap_chart_t> charts =
       shared::build_lightmap_charts(map, settings);
 
-  const shared::static_mesh_geometry_t sphere = view_as_static_mesh(map.geometry[0].value);
+  const shared::mesh_geometry_t &sphere = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
   const std::vector<shared::world_triangle_t> faces =
-      shared::static_mesh_world_triangles(sphere);
+      shared::compute_asset_mesh_world_triangles(sphere);
   size_t real_faces = 0;
   for (const shared::world_triangle_t& face : faces)
     if (!face.is_degenerate()) ++real_faces;
@@ -3589,11 +3581,11 @@ void a_lightmapped_static_mesh_draws_through_its_unwrap()
   shared::set_lightmap_geometry_id(lightmap);
   assert(lightmap.atlas.page_count == 1);
 
-  const shared::static_mesh_geometry_t box = view_as_static_mesh(map.geometry[0].value);
-  const assets::mesh_asset_t* source = assets::get(shared::resolve_surface_mesh(box.surface));
+  const shared::mesh_geometry_t &box = std::get<shared::mesh_geometry_t>(map.geometry[0].value);
+  const assets::mesh_asset_t* source = assets::get(shared::resolve_mesh_asset(shared::get_mesh_asset_source(box)));
   assert(source);
   const assets::mesh_asset_t mesh =
-      shared::generate_lightmapped_static_mesh(box, {&lightmap, map.geometry[0].uid});
+      shared::generate_lightmapped_asset_mesh(box, {&lightmap, map.geometry[0].uid});
 
   // Same faces, in the same order, so every submesh range still holds; fewer
   // vertices than corners, because a chart's vertices are shared inside it.
@@ -3602,7 +3594,7 @@ void a_lightmapped_static_mesh_draws_through_its_unwrap()
   assert(mesh.lightmap.size() == mesh.vertices.size());
   assert(mesh.submeshes.size() == source->submeshes.size());
 
-  const std::vector<shared::world_triangle_t> faces = shared::static_mesh_world_triangles(box);
+  const std::vector<shared::world_triangle_t> faces = shared::compute_asset_mesh_world_triangles(box);
   for (size_t face = 0; face < faces.size(); ++face)
     for (uint32_t corner = 0; corner < 3; ++corner)
     {
@@ -3633,7 +3625,7 @@ void a_lightmapped_static_mesh_draws_through_its_unwrap()
 
   // Without a bake the copy is still the world-space mesh, with no lightmap
   // array: it uploads byte for byte what it always did.
-  const assets::mesh_asset_t unlit = shared::generate_lightmapped_static_mesh(box, {});
+  const assets::mesh_asset_t unlit = shared::generate_lightmapped_asset_mesh(box, {});
   assert(unlit.vertices.size() == 36);
   assert(unlit.lightmap.empty());
 }

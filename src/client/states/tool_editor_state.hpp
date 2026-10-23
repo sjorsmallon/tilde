@@ -39,15 +39,16 @@ enum class editor_tool_t : uint8_t
   pathfinding,
   particles,
   animation,
-  brush,
   lightmap,
   path,
   clip,
   primitive,
-  face
+  face,
+  vertex,
+  subtract
 };
 
-inline constexpr uint32_t EDITOR_TOOL_COUNT = 12;
+inline constexpr uint32_t EDITOR_TOOL_COUNT = 13;
 
 } // namespace client
 
@@ -120,7 +121,6 @@ private:
 
   editor_bvh_t editor_bvh;
   bool geometry_updated_flag = false;
-  std::vector<hole_link_t> hole_links;
 
   // The bake's counterpart. Two writers, one flag: the Lightmap tool sets it on
   // Apply, and update() sets it when the map's charts change under a load --
@@ -164,9 +164,6 @@ private:
 
   // When true, map geometry (AABBs/wedges/meshes) is not rendered.
   bool hide_geometry = false;
-  // A hole brush is drawn as its orange authored volume in the editor; this
-  // hides those through the hidden set, so they are unpickable too.
-  bool hide_hole_brushes = false;
   // The screen-space icon pass. A toggle rather than a constant because an icon
   // is not depth-tested, so a room seen from outside shows every light in it --
   // useful for finding one, in the way for looking at anything else.

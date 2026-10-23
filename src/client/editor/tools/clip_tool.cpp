@@ -3,6 +3,7 @@
 #include "../../../shared/collision/collision_detection.hpp"
 #include "../../../shared/log.hpp"
 #include "../../../shared/map/map_geometry.hpp"
+#include "../../../shared/map/map_geometry_mesh.hpp"
 #include "../../../shared/map/map_group.hpp"
 #include "../../camera.hpp"
 #include "../../hud.hpp"
@@ -30,7 +31,6 @@ struct surface_pick_t
 {
   shared::entity_uid_t uid = shared::null_entity_uid;
   linalg::vec3 point;
-  linalg::vec3 normal;
 };
 
 std::optional<surface_pick_t> try_pick_surface(const editor_context_t &ctx,
@@ -51,7 +51,6 @@ std::optional<surface_pick_t> try_pick_surface(const editor_context_t &ctx,
                  : shared::null_entity_uid;
   pick.point = {editor::snap(point.x, step), editor::snap(point.y, step),
                 editor::snap(point.z, step)};
-  pick.normal = hit.normal;
   return pick;
 }
 
@@ -80,24 +79,28 @@ const char *keep_label(int keep)
   }
 }
 
-void draw_half_tinted(pass_builder_t &draws, const shared::brush_geometry_t &half, color_t fill,
-                      const Plane &cut_plane)
+const shared::mesh_geometry_t *try_find_mesh(const editor_context_t &ctx,
+                                             shared::entity_uid_t uid)
 {
-  const std::optional<shared::brush_polyhedron_t> hull =
-      shared::try_build_brush_polyhedron(half.hull_points);
-  if (!hull)
-    return;
+  const shared::map_geometry_t *entry = ctx.map ? ctx.map->find_geometry_by_uid(uid) : nullptr;
+  return entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+}
 
-  const std::vector<std::vector<linalg::vec3>> polygons = shared::brush_face_polygons(*hull);
-  for (size_t face = 0; face < polygons.size(); ++face)
+// Every face through the pose, the caps (the last `cap_face_count`) outlined.
+void draw_half_tinted(pass_builder_t &draws, const shared::mesh_geometry_t &half, color_t fill,
+                      uint32_t cap_face_count)
+{
+  const size_t first_cap = half.faces.size() - std::min<size_t>(cap_face_count, half.faces.size());
+  for (size_t face_index = 0; face_index < half.faces.size(); ++face_index)
   {
-    const std::vector<linalg::vec3> &polygon = polygons[face];
-    draws.debug.filled_polygon(Span<const linalg::vec3f>(polygon.data(), polygon.size()), fill,
-                               0.f, {.depth_bias = 0.5f});
+    const shared::mesh_face_t &face = half.faces[face_index];
+    std::vector<linalg::vec3f> polygon;
+    polygon.reserve(face.vertex_indices.size());
+    for (uint32_t vertex : face.vertex_indices)
+      polygon.push_back(shared::compute_mesh_world_vertex(half, vertex));
+    draws.debug.filled_polygon(polygon, fill, 0.f, {.depth_bias = 0.5f});
 
-    const bool is_cap =
-        std::abs(linalg::dot(hull->faces[face].plane.normal, cut_plane.normal)) > 0.999f;
-    if (!is_cap)
+    if (face_index < first_cap)
       continue;
     for (size_t i = 0; i < polygon.size(); ++i)
       draws.debug.line(polygon[i], polygon[(i + 1) % polygon.size()], CAP_OUTLINE);
@@ -106,13 +109,14 @@ void draw_half_tinted(pass_builder_t &draws, const shared::brush_geometry_t &hal
 
 } // namespace
 
-void Clip_Tool::on_enable(editor_context_t &ctx) { clear(ctx); }
+void Clip_Tool::on_enable(editor_context_t &) { clear(); }
 
-void Clip_Tool::on_disable(editor_context_t &ctx) { clear(ctx); }
+void Clip_Tool::on_disable(editor_context_t &) { clear(); }
 
-void Clip_Tool::clear(editor_context_t &)
+void Clip_Tool::clear()
 {
   target_uid = shared::null_entity_uid;
+  cap_face_index.reset();
   points.clear();
   cut_plane.reset();
   preview.reset();
@@ -126,10 +130,10 @@ void Clip_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, f
     return;
 
   const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
-  if (!entry || !std::holds_alternative<shared::brush_geometry_t>(entry->value))
+  if (!entry || !std::holds_alternative<shared::mesh_geometry_t>(entry->value))
   {
-    hud::set_announcement("clip: the brush is gone");
-    clear(ctx);
+    hud::set_announcement("clip: the mesh is gone");
+    clear();
     return;
   }
 
@@ -137,11 +141,16 @@ void Clip_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, f
     rebuild_preview(ctx);
 }
 
+void Clip_Tool::rebuild_cut_plane()
+{
+  const linalg::vec3 forward = get_orientation_vectors(cached_view.camera).forward;
+  cut_plane = try_plane_through(Span<const linalg::vec3>(points.data(), points.size()), forward);
+}
+
 void Clip_Tool::add_point(editor_context_t &ctx, const linalg::vec3 &point)
 {
   points.push_back(point);
-  const linalg::vec3 forward = get_orientation_vectors(cached_view.camera).forward;
-  cut_plane = try_plane_through(Span<const linalg::vec3>(points.data(), points.size()), forward);
+  rebuild_cut_plane();
   rebuild_preview(ctx);
 }
 
@@ -153,15 +162,28 @@ void Clip_Tool::rebuild_preview(editor_context_t &ctx)
     return;
 
   const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
-  const shared::brush_geometry_t *brush =
-      entry ? std::get_if<shared::brush_geometry_t>(&entry->value) : nullptr;
-  if (!brush)
+  const shared::mesh_geometry_t *mesh =
+      entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  if (!mesh)
     return;
-
-  const shared::face_surface_t *clicked = shared::find_face_surface(*brush, cap_plane);
-  shared::face_surface_t cap_surface = clicked ? *clicked : shared::face_surface_t{};
-  preview = shared::try_split_brush_by_plane(*brush, *cut_plane, cap_surface);
   previewed_value = entry->value;
+
+  const Plane local_plane = shared::compute_mesh_local_plane(*mesh, *cut_plane);
+  if (shared::count_subdivided_faces_crossed_by_plane(*mesh, local_plane) > 0)
+  {
+    hud::set_announcement("clip refused: the cut crosses a subdivided face - flatten it first");
+    return;
+  }
+
+  // The caps take the clicked face's material half with a fresh projection
+  // for their own normal; a grid is the clicked face's shape, never the cap's.
+  shared::face_surface_t cap_surface;
+  if (cap_face_index && *cap_face_index < mesh->faces.size())
+    cap_surface = mesh->faces[*cap_face_index].surface;
+  shared::resize_face_grid(cap_surface, 0);
+  cap_surface.uv = shared::default_face_uv(cut_plane->normal);
+
+  preview = shared::try_split_mesh_by_plane(*mesh, local_plane, cap_surface);
   if (!preview)
     hud::set_announcement("clip refused: see the log");
 }
@@ -172,13 +194,11 @@ void Clip_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t 
   {
     if (points.size() <= 1)
     {
-      clear(ctx);
+      clear();
       return;
     }
     points.pop_back();
-    const linalg::vec3 forward = get_orientation_vectors(cached_view.camera).forward;
-    cut_plane =
-        try_plane_through(Span<const linalg::vec3>(points.data(), points.size()), forward);
+    rebuild_cut_plane();
     rebuild_preview(ctx);
     return;
   }
@@ -192,15 +212,22 @@ void Clip_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t 
 
   if (target_uid == shared::null_entity_uid || points.size() >= 3)
   {
-    const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(pick->uid);
-    if (!entry || !std::holds_alternative<shared::brush_geometry_t>(entry->value))
+    const shared::mesh_geometry_t *mesh = try_find_mesh(ctx, pick->uid);
+    if (!mesh)
     {
-      hud::set_announcement("clip: the first point must be on a brush");
+      hud::set_announcement("clip: the first point must be on a mesh");
       return;
     }
-    clear(ctx);
+    if (std::holds_alternative<shared::asset_mesh_source_t>(mesh->source))
+    {
+      hud::set_announcement("clip: an asset-sourced mesh has no vertices of its own to cut");
+      return;
+    }
+    clear();
     target_uid = pick->uid;
-    cap_plane = Plane{pick->point, pick->normal};
+    if (const std::optional<shared::mesh_face_hit_t> face_hit = shared::try_pick_mesh_face(
+            *mesh, cached_view.mouse_ray.origin, cached_view.mouse_ray.direction))
+      cap_face_index = face_hit->face_index;
   }
 
   add_point(ctx, pick->point);
@@ -221,7 +248,7 @@ void Clip_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
     commit(ctx);
     return;
   case input::key_t::Escape:
-    clear(ctx);
+    clear();
     return;
   default:
     return;
@@ -239,8 +266,8 @@ void Clip_Tool::commit(editor_context_t &ctx)
   const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
   if (!entry)
   {
-    log_error("clip: brush {} vanished before the commit", target_uid);
-    clear(ctx);
+    log_error("clip: mesh {} vanished before the commit", target_uid);
+    clear();
     return;
   }
 
@@ -250,22 +277,26 @@ void Clip_Tool::commit(editor_context_t &ctx)
   ctx.map->remove_geometry(target_uid);
   transaction.add_geometry_removed(target_uid, removed);
 
+  // A half the cut left in two arms is two objects: what a half IS, not how
+  // the split happened to number it.
+  const auto place_half = [&](const shared::mesh_geometry_t &half)
+  {
+    for (const shared::mesh_geometry_t &shell : shared::separate_mesh_shells(half))
+    {
+      const shared::entity_uid_t uid = ctx.map->add_geometry(shell);
+      transaction.add_geometry_created(uid, shell);
+    }
+  };
   if (keep != Keep::Back)
-  {
-    const shared::entity_uid_t uid = ctx.map->add_geometry(preview->front);
-    transaction.add_geometry_created(uid, preview->front);
-  }
+    place_half(preview->front);
   if (keep != Keep::Front)
-  {
-    const shared::entity_uid_t uid = ctx.map->add_geometry(preview->back);
-    transaction.add_geometry_created(uid, preview->back);
-  }
+    place_half(preview->back);
 
   transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
-  ctx.transaction_system.push("Clip brush", std::move(transaction));
+  ctx.transaction_system.push("Clip mesh", std::move(transaction));
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
-  clear(ctx);
+  clear();
 }
 
 void Clip_Tool::on_draw_overlay(editor_context_t &, pass_builder_t &draws)
@@ -279,9 +310,9 @@ void Clip_Tool::on_draw_overlay(editor_context_t &, pass_builder_t &draws)
     return;
 
   draw_half_tinted(draws, preview->front, keep == Keep::Back ? DISCARDED_FILL : KEPT_FRONT_FILL,
-                   *cut_plane);
+                   preview->cap_face_count);
   draw_half_tinted(draws, preview->back, keep == Keep::Front ? DISCARDED_FILL : KEPT_BACK_FILL,
-                   *cut_plane);
+                   preview->cap_face_count);
 }
 
 void Clip_Tool::on_draw_ui(editor_context_t &)
@@ -289,7 +320,7 @@ void Clip_Tool::on_draw_ui(editor_context_t &)
   ImGui::SetNextWindowSize({260, 0}, ImGuiCond_FirstUseEver);
   if (ImGui::Begin("Clip"))
   {
-    ImGui::TextUnformatted("Click a brush, then a second point: the cut");
+    ImGui::TextUnformatted("Click a mesh, then a second point: the cut");
     ImGui::TextUnformatted("runs through both along the view. A third");
     ImGui::TextUnformatted("point sets the plane exactly.");
     ImGui::Separator();

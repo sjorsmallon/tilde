@@ -9,6 +9,7 @@
 #include "shared/map/map_geometry_mesh.hpp"
 #include "shared/map/mesh/mesh.hpp"
 #include "shared/map/mesh/mesh_primitives.hpp"
+#include "shared/map/mesh/mesh_split.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -265,6 +266,31 @@ void test_a_mesh_scales_to_a_world_box()
   std::cout << "  scaled through the pose; a flat axis only translates\n";
 }
 
+// The clip tool cuts by a WORLD plane; the split takes a local one. A turned
+// box at a distance cut by the world plane x = 100 lands its halves' world
+// vertices on each side of that plane, caps on it.
+void test_a_world_plane_cuts_a_turned_mesh_where_it_stands()
+{
+  mesh_geometry_t mesh = shared::make_box_mesh({100.f, 0.f, 0.f}, {10.f, 10.f, 10.f});
+  mesh.orientation = linalg::from_axis_angle({0.f, 1.f, 0.f}, 45.f);
+  const Plane world_plane{{100.f, 0.f, 0.f}, {1.f, 0.f, 0.f}};
+  const Plane local_plane = shared::compute_mesh_local_plane(mesh, world_plane);
+  assert(std::fabs(linalg::length(local_plane.normal) - 1.f) < 1e-5f);
+  assert(nearly(local_plane.point, {0.f, 0.f, 0.f}));
+
+  const std::optional<shared::mesh_split_t> split =
+      shared::try_split_mesh_by_plane(mesh, local_plane, {});
+  assert(split.has_value());
+  for (uint32_t vertex = 0; vertex < (uint32_t)split->front.vertices.size(); ++vertex)
+    assert(shared::compute_mesh_world_vertex(split->front, vertex).x >= 100.f - 1e-3f);
+  for (uint32_t vertex = 0; vertex < (uint32_t)split->back.vertices.size(); ++vertex)
+    assert(shared::compute_mesh_world_vertex(split->back, vertex).x <= 100.f + 1e-3f);
+  const Plane cap = shared::compute_mesh_world_face_plane(
+      split->back, (uint32_t)split->back.faces.size() - 1);
+  assert(nearly(cap.normal, {1.f, 0.f, 0.f}));
+  std::cout << "  a world plane through the pose cuts where it stands\n";
+}
+
 void test_the_mesh_row_round_trips_bit_for_bit()
 {
   const shared::geometry_value_t inline_value = make_textured_l_shape();
@@ -392,6 +418,7 @@ int main()
   test_the_mesh_answers_the_seam_through_the_variant();
   test_the_mesh_row_round_trips_bit_for_bit();
   test_a_mesh_scales_to_a_world_box();
+  test_a_world_plane_cuts_a_turned_mesh_where_it_stands();
   test_a_defective_mesh_row_is_refused();
   test_a_box_is_a_closed_planar_mesh();
   test_an_l_shape_is_a_closed_planar_mesh();

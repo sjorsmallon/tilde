@@ -51,6 +51,18 @@ bool mesh_is_convex(const mesh_geometry_t &mesh);
 [[nodiscard]] std::optional<std::vector<mesh_geometry_t>>
 try_decompose_mesh_into_convex_pieces(const mesh_geometry_t &mesh);
 
+// The same pieces, each saying which input face every face of it came from,
+// MESH_SPLIT_CAP for a face the decomposition's own cuts made: what lets the
+// boolean drop those seams again after it has cut the pieces.
+struct convex_piece_t
+{
+  mesh_geometry_t mesh;
+  std::vector<uint32_t> source_faces;
+};
+
+[[nodiscard]] std::optional<std::vector<convex_piece_t>>
+try_decompose_mesh_into_tagged_convex_pieces(const mesh_geometry_t &mesh);
+
 // The piece's planes and polygons in WORLD space, through the pose.
 collision_piece_t collision_piece_from_convex_mesh(const mesh_geometry_t &mesh);
 

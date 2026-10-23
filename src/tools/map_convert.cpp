@@ -31,7 +31,7 @@ namespace
 
 struct conversion_report_t
 {
-  size_t static_meshes = 0;
+  size_t asset_meshes = 0;
   size_t brushes = 0;
   size_t subdivided_faces = 0;
   size_t meshes = 0;
@@ -48,11 +48,13 @@ conversion_report_t inspect(const shared::map_t &map, const std::string &origina
   {
     switch (shared::get_kind(entry.value))
     {
-    case shared::geometry_kind_t::Static_Mesh: ++report.static_meshes; break;
     case shared::geometry_kind_t::Mesh:
     {
+      const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(entry.value);
       ++report.meshes;
-      for (const shared::mesh_face_t &face : std::get<shared::mesh_geometry_t>(entry.value).faces)
+      if (std::holds_alternative<shared::asset_mesh_source_t>(mesh.source))
+        ++report.asset_meshes;
+      for (const shared::mesh_face_t &face : mesh.faces)
         if (face.surface.subdivision_level > 0)
           ++report.subdivided_faces;
       break;
@@ -145,10 +147,10 @@ bool convert_one(const std::string &path, bool check_only)
   else if (report.needs_rewrite)
     status = "  [not canonical]";
 
-  std::printf("%s: %zu mesh (%zu subdivided faces), %zu brush, %zu static_mesh, %zu "
+  std::printf("%s: %zu mesh (%zu from an asset, %zu subdivided faces), %zu brush, %zu "
               "entities%s\n",
-              path.c_str(), report.meshes, report.subdivided_faces, report.brushes,
-              report.static_meshes, report.entities, status);
+              path.c_str(), report.meshes, report.asset_meshes, report.subdivided_faces,
+              report.brushes, report.entities, status);
 
   if (check_only)
     return true;

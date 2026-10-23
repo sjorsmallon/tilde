@@ -171,11 +171,12 @@ groups
     }
   }
 }
-brush
+mesh
 {
   "_uid" "57"
-  "vertices" "-180.40625 0 -444.371582, -180.40625 0 129.939331, -180.40625 128 -444.371582, -180.40625 128 129.939331, 275.4375 0 -444.371582, 275.4375 0 129.939331, 275.4375 128 -444.371582, 275.4375 128 129.939331"
-  "mesh_path" ""
+  "position" "47.515625 64 -157.216125"
+  "rotation" "0 0 0 1"
+  "vertices" "-227.921875 -64 -287.155457, -227.921875 -64 287.155457, -227.921875 64 -287.155457, -227.921875 64 287.155457, 227.921875 -64 -287.155457, 227.921875 -64 287.155457, 227.921875 64 -287.155457, 227.921875 64 287.155457"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -183,8 +184,7 @@ brush
   "owner" "56"
   face
   {
-    "normal" "-1 0 0"
-    "distance" "180.40625"
+    "indices" "3 2 0 1"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -199,8 +199,7 @@ brush
   }
   face
   {
-    "normal" "-0 -0.99999994 -0"
-    "distance" "0"
+    "indices" "4 5 1 0"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -215,8 +214,7 @@ brush
   }
   face
   {
-    "normal" "0 0 -0.99999994"
-    "distance" "444.37146"
+    "indices" "6 4 0 2"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -231,8 +229,7 @@ brush
   }
   face
   {
-    "normal" "-0 -0 0.99999994"
-    "distance" "129.939331"
+    "indices" "5 7 3 1"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -247,8 +244,7 @@ brush
   }
   face
   {
-    "normal" "0 0.99999994 0"
-    "distance" "128"
+    "indices" "7 6 2 3"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -263,8 +259,7 @@ brush
   }
   face
   {
-    "normal" "1 -0 -0"
-    "distance" "275.4375"
+    "indices" "6 7 5 4"
     "material" "1"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -297,6 +292,17 @@ entity
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
+  "revealed_by_light" "false"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
+  "solid_only_when_lensed" "false"
+  "casts_dynamic_shadow" "false"
 }
 entity
 {

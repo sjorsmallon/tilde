@@ -22,6 +22,7 @@
 #include "map/map.hpp"
 #include "map/game_session.hpp"
 #include "map/map_connection.hpp"
+#include "map/map_geometry_asset.hpp"
 #include "map/map_geometry_legacy.hpp"
 #include "map/map_geometry_mesh.hpp"
 #include "map/mesh/mesh_decomposition.hpp"
@@ -127,10 +128,9 @@ int main()
   if (meshes == 0)
     return fail("conversion: expected at least 1 mesh from the fixture's "
                 "legacy aabb_entity blocks");
-  if (count_geometry_of_kind(loaded, geometry_kind_t::Brush) != 0 ||
-      count_geometry_of_kind(loaded, geometry_kind_t::Static_Mesh) != 0)
-    return fail("conversion: a legacy kind survived the load; every brush and static "
-                "mesh reads as a mesh (geometry_def.md 11.8 increment 6)");
+  if (count_geometry_of_kind(loaded, geometry_kind_t::Brush) != 0)
+    return fail("conversion: a legacy kind survived the load; every brush reads as a mesh "
+                "(geometry_def.md 11.8 increment 6)");
 
   // A displacement is a brush with one SUBDIVIDED FACE now (geometry_def.md
   // Track D), so the fixture's displacement_entity converts into the brush list
@@ -285,34 +285,41 @@ int main()
   // four. Both are one-time; only the first is provably one-time.
   {
     map_t rotated;
-    static_mesh_geometry_t mesh;
-    mesh.position           = {10.f, 20.f, 30.f};
-    mesh.orientation        = linalg::from_view_angles(35.f, -12.f);
-    mesh.surface.mesh_path  = "resources/obj/Pyramid.obj";
+    mesh_geometry_t mesh;
+    mesh.position    = {10.f, 20.f, 30.f};
+    mesh.orientation = linalg::from_view_angles(35.f, -12.f);
+    mesh.source      = asset_mesh_source_t{"resources/obj/Pyramid.obj", {1.f, 1.f, 1.f}};
     rotated.add_geometry(mesh);
 
     const std::string saved = serialize_map_to_string(rotated);
     if (saved.find("\"rotation\"") == std::string::npos)
-      return fail("rotation: a saved static mesh has no \"rotation\" key");
+      return fail("rotation: a saved asset mesh has no \"rotation\" key");
     if (saved.find("\"orientation\"") != std::string::npos)
       return fail("rotation: the writer still emits the legacy \"orientation\" key");
 
     const map_t reloaded = parse_map_from_string(saved);
     if (reloaded.geometry.size() != 1)
-      return fail("rotation: the static mesh did not survive the round trip");
+      return fail("rotation: the asset mesh did not survive the round trip");
 
-    // A static_mesh row reads back as the asset-sourced mesh it converts to
-    // (geometry_def.md §11.8 increment 6), bit-exact: geometry_values_equal is
-    // the undo primitive, and a lossy round trip pushes a phantom undo entry
-    // the moment anything is touched. That is what %.9g in format_quat_exact
-    // is for.
-    const auto *reloaded_mesh = std::get_if<mesh_geometry_t>(&reloaded.geometry[0].value);
-    if (!reloaded_mesh || !std::holds_alternative<asset_mesh_source_t>(reloaded_mesh->source))
-      return fail("rotation: the static mesh did not read back as an asset-sourced mesh");
-    if (!geometry_values_equal(reloaded.geometry[0].value,
-                               geometry_value_t{convert_static_mesh_to_mesh(mesh)}))
-      return fail("rotation: a saved-and-reloaded static mesh compares unequal to the mesh "
-                  "it converts to");
+    // Bit-exact: geometry_values_equal is the undo primitive, and a lossy round
+    // trip pushes a phantom undo entry the moment anything is touched. That is
+    // what %.9g in format_quat_exact is for.
+    if (!geometry_values_equal(reloaded.geometry[0].value, geometry_value_t{mesh}))
+      return fail("rotation: a saved-and-reloaded asset mesh compares unequal to itself");
+
+    // A legacy `static_mesh` row reads straight into an asset-sourced mesh.
+    const map_t legacy_row = parse_map_from_string(
+        "static_mesh\n{\n  \"_uid\" \"7\"\n  \"position\" \"1 2 3\"\n  \"rotation\" \"0 0 0 1\"\n"
+        "  \"scale\" \"3 3 3\"\n  \"mesh_path\" \"resources/obj/Pyramid.obj\"\n}\n");
+    const auto *legacy_mesh = legacy_row.geometry.empty()
+                                  ? nullptr
+                                  : std::get_if<mesh_geometry_t>(&legacy_row.geometry[0].value);
+    const auto *legacy_asset =
+        legacy_mesh ? std::get_if<asset_mesh_source_t>(&legacy_mesh->source) : nullptr;
+    if (!legacy_asset || legacy_asset->path != "resources/obj/Pyramid.obj" ||
+        legacy_asset->scale.x != 3.f || legacy_mesh->position.z != 3.f)
+      return fail("rotation: a legacy static_mesh row did not read as an asset-sourced mesh "
+                  "with its path, scale and position");
 
     // The legacy geometry key, converted through the same euler convention the
     // pre-cutover writer used.
@@ -333,15 +340,16 @@ int main()
                   "rotation it named");
   }
 
-  // A static mesh collides as a box that TURNS with it, and can switch that box
-  // off. No mesh path, so the box is the 32-unit fallback and no asset is needed.
+  // An asset mesh collides as a box that TURNS with it, and can switch that box
+  // off. No asset path, so the box is the 32-unit fallback and no asset is needed.
   {
-    static_mesh_geometry_t mesh;
+    mesh_geometry_t mesh;
+    mesh.source      = asset_mesh_source_t{};
     mesh.orientation = linalg::from_axis_angle({0.f, 1.f, 0.f}, 45.f);
 
     const std::vector<collision_piece_t> pieces = get_collision_pieces(geometry_value_t{mesh}, 1, {});
     if (pieces.size() != 1 || pieces[0].planes.size() != 6)
-      return fail("mesh collision: a static mesh is not one six-plane piece");
+      return fail("mesh collision: an asset mesh is not one six-plane piece");
 
     auto is_inside = [&](const linalg::vec3 &point)
     {
@@ -360,11 +368,11 @@ int main()
     if (std::abs(bounds.max.x - 45.2548f) > 0.01f || std::abs(bounds.max.y - 32.f) > 0.01f)
       return fail("mesh collision: the bound does not enclose the turned box");
 
-    mesh.scale = {-1.f, 1.f, 1.f};
+    std::get<asset_mesh_source_t>(mesh.source).scale = {-1.f, 1.f, 1.f};
     const aabb_bounds_t mirrored = get_bounds(geometry_value_t{mesh});
     if (mirrored.min.x >= mirrored.max.x)
       return fail("mesh collision: a negative scale inverted the bound");
-    mesh.scale = {1.f, 1.f, 1.f};
+    std::get<asset_mesh_source_t>(mesh.source).scale = {1.f, 1.f, 1.f};
 
     map_t colliding;
     colliding.add_geometry(mesh);
@@ -374,7 +382,7 @@ int main()
     mesh.collides = false;
     if (!get_collision_pieces(geometry_value_t{mesh}, 1, {}).empty())
       return fail("mesh collision: a mesh with collision off still collides");
-    if (static_mesh_collision_box(mesh).planes.size() != 6)
+    if (compute_asset_mesh_collision_box(mesh).planes.size() != 6)
       return fail("mesh collision: the editor's box went away with the flag");
 
     map_t silent;
@@ -383,15 +391,14 @@ int main()
     const auto *reloaded_mesh = std::get_if<mesh_geometry_t>(&reloaded.geometry[0].value);
     if (!reloaded_mesh || reloaded_mesh->collides)
       return fail("mesh collision: collides = false did not survive the file");
-    if (!geometry_values_equal(reloaded.geometry[0].value,
-                               geometry_value_t{convert_static_mesh_to_mesh(mesh)}))
-      return fail("mesh collision: a reloaded non-colliding mesh compares unequal to its "
-                  "conversion");
+    if (!geometry_values_equal(reloaded.geometry[0].value, geometry_value_t{mesh}))
+      return fail("mesh collision: a reloaded non-colliding mesh compares unequal to itself");
   }
 
-  // A static mesh can switch its shadow off, and only then does the file say so.
+  // An asset mesh can switch its shadow off, and only then does the file say so.
   {
-    static_mesh_geometry_t mesh;
+    mesh_geometry_t mesh;
+    mesh.source = asset_mesh_source_t{};
     map_t casting;
     casting.add_geometry(mesh);
     if (serialize_map_to_string(casting).find("\"casts_shadows\"") != std::string::npos)
@@ -404,9 +411,7 @@ int main()
     const auto *reloaded_mesh = std::get_if<mesh_geometry_t>(&reloaded.geometry[0].value);
     if (!reloaded_mesh || reloaded_mesh->casts_shadows)
       return fail("mesh shadow: casts_shadows = false did not survive the file");
-    const geometry_value_t casting_converted{convert_static_mesh_to_mesh(
-        std::get<static_mesh_geometry_t>(casting.geometry[0].value))};
-    if (geometry_values_equal(reloaded.geometry[0].value, casting_converted))
+    if (geometry_values_equal(reloaded.geometry[0].value, casting.geometry[0].value))
       return fail("mesh shadow: the flag does not take part in equality");
   }
 

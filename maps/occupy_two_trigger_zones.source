@@ -104,61 +104,120 @@ connections
     }
   }
 }
-brush
+mesh
 {
   "_uid" "1"
-  "vertices" "-640 -128 -640, -640 -128 640, -640 0 -640, -640 0 640, 640 -128 -640, 640 -128 640, 640 0 -640, 640 0 640"
-  "mesh_path" ""
+  "position" "0 -64 0"
+  "rotation" "0 0 0 1"
+  "vertices" "-640 -64 -640, -640 -64 640, -640 64 -640, -640 64 640, 640 -64 -640, 640 -64 640, 640 64 -640, 640 64 640"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
+  face
+  {
+    "indices" "3 2 0 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "4 5 1 0"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 4 0 2"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
 }
-brush
+mesh
 {
   "_uid" "6"
-  "vertices" "768 -64 -640, 768 -64 640, 768 64 -640, 768 64 640, 2048 -64 -640, 2048 -64 640, 2048 64 -640, 2048 64 640"
-  "mesh_path" ""
+  "position" "1408 0 0"
+  "rotation" "0 0 0 1"
+  "vertices" "-640 -64 -640, -640 -64 640, -640 64 -640, -640 64 640, 640 -64 -640, 640 -64 640, 640 64 -640, 640 64 640"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "640"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "64"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 -1 0"
-    "distance" "64"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 -0 -0"
-    "distance" "-768"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -173,24 +232,7 @@ brush
   }
   face
   {
-    "normal" "1 0 0"
-    "distance" "2048"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "64"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "64"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -205,12 +247,56 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "640"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
     "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "64"
@@ -220,51 +306,19 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "7"
-  "vertices" "768.000305 128 0, 768.000305 128 128, 768.000305 768 0, 768.000305 768 128, 2749.40015 128 0, 2749.40015 128 128, 2749.40015 768 0, 2749.40015 768 128"
-  "mesh_path" ""
+  "position" "1758.7002 448 64"
+  "rotation" "0 0 0 1"
+  "vertices" "-990.69989 -320 -64, -990.69989 -320 64, -990.69989 320 -64, -990.69989 320 64, 990.699951 -320 -64, 990.699951 -320 64, 990.699951 320 -64, 990.699951 320 64"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "0 -0.99999994 0"
-    "distance" "-127.999992"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 -0 -0.99999994"
-    "distance" "-0"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 0 0"
-    "distance" "-768.000305"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -279,45 +333,72 @@ brush
   }
   face
   {
-    "normal" "1 -0 -0"
-    "distance" "2749.40015"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 -0 0.99999994"
-    "distance" "127.999992"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 0.99999994 -0"
-    "distance" "767.999939"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 4 0 2"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "0"
     "u_scale" "128"
@@ -326,51 +407,19 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "8"
-  "vertices" "2084.62305 64 -1931.89453, 2084.62305 64 2463.16797, 2084.62305 192 -1931.89453, 2084.62305 192 2463.16797, 3364.62305 64 -1931.89453, 3364.62305 64 2463.16797, 3364.62305 192 -1931.89453, 3364.62305 192 2463.16797"
-  "mesh_path" ""
+  "position" "2724.62305 128 265.636719"
+  "rotation" "0 0 0 1"
+  "vertices" "-640 -64 -2197.53125, -640 -64 2197.53125, -640 64 -2197.53125, -640 64 2197.53125, 640 -64 -2197.53125, 640 -64 2197.53125, 640 64 -2197.53125, 640 64 2197.53125"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "1931.89453"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "-1316.62305"
-    "v_shift" "-64"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 -1 0"
-    "distance" "-64"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "-1316.62305"
-    "v_shift" "-34.5455322"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 -0 -0"
-    "distance" "-2084.62305"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -385,24 +434,7 @@ brush
   }
   face
   {
-    "normal" "1 0 0"
-    "distance" "3364.62305"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "-34.5455322"
-    "v_shift" "-64"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "192"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -417,8 +449,22 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "2463.16797"
+    "indices" "6 4 0 2"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-1316.62305"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -431,52 +477,50 @@ brush
     "lightmap_scale" "1"
     "smoothing_group" "0"
   }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-1316.62305"
+    "v_shift" "-34.5455322"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-34.5455322"
+    "v_shift" "-64"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
 }
-brush
+mesh
 {
   "_uid" "10"
-  "vertices" "2688 192 -1221.94385, 2688 192 1591.6748, 2688 1088 -1221.94385, 2688 1088 1591.6748, 2816 192 -1221.94385, 2816 192 1591.6748, 2816 1088 -1221.94385, 2816 1088 1591.6748"
-  "mesh_path" ""
+  "position" "2752 640 184.865479"
+  "rotation" "0 0 0 1"
+  "vertices" "-64 -448 -1406.80933, -64 -448 1406.80933, -64 448 -1406.80933, -64 448 1406.80933, 64 -448 -1406.80933, 64 -448 1406.80933, 64 448 -1406.80933, 64 448 1406.80933"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "0 -1 0"
-    "distance" "-192"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 -0 -1"
-    "distance" "1221.94385"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 0 0"
-    "distance" "-2688"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -491,45 +535,72 @@ brush
   }
   face
   {
-    "normal" "1 -0 -0"
-    "distance" "2816"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 -0 1"
-    "distance" "1591.6748"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "0"
-    "v_shift" "0"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "1088"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 4 0 2"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "0"
+    "v_shift" "0"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
     "u_shift" "0"
     "v_shift" "0"
     "u_scale" "128"
@@ -538,51 +609,19 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "12"
-  "vertices" "3569.01709 256 -2023.77051, 3569.01709 256 -1343.40918, 3569.01709 373.246826 -2023.77051, 3569.01709 373.246826 -1343.40918, 3843.67334 256 -2023.77051, 3843.67334 256 -1343.40918, 3843.67334 373.246826 -2023.77051, 3843.67334 373.246826 -1343.40918"
-  "mesh_path" ""
+  "position" "3706.34521 314.623413 -1683.58984"
+  "rotation" "0 0 0 1"
+  "vertices" "-137.328125 -58.6234131 -340.180664, -137.328125 -58.6234131 340.180664, -137.328125 58.6234131 -340.180664, -137.328125 58.6234131 340.180664, 137.328125 -58.6234131 -340.180664, 137.328125 -58.6234131 340.180664, 137.328125 58.6234131 -340.180664, 137.328125 58.6234131 340.180664"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "2023.77051"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "-3633.01685"
-    "v_shift" "-320"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 -1 0"
-    "distance" "-256"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "-3633.01685"
-    "v_shift" "1407.40857"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 -0 -0"
-    "distance" "-3569.01709"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -597,24 +636,7 @@ brush
   }
   face
   {
-    "normal" "1 0 0"
-    "distance" "3843.67334"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "1407.40857"
-    "v_shift" "-320"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "373.246826"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -629,14 +651,58 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "-1343.40918"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "-3633.01685"
+    "v_shift" "-320"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-3633.01685"
+    "v_shift" "-320"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-3633.01685"
+    "v_shift" "1407.40857"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "1407.40857"
     "v_shift" "-320"
     "u_scale" "128"
     "v_scale" "128"
@@ -644,51 +710,19 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "13"
-  "vertices" "3638.37866 256 1268.79822, 3638.37866 256 1825.64661, 3638.37866 384 1268.79822, 3638.37866 384 1825.64661, 4034.45825 256 1268.79822, 4034.45825 256 1825.64661, 4034.45825 384 1268.79822, 4034.45825 384 1825.64661"
-  "mesh_path" ""
+  "position" "3836.41846 320 1547.22241"
+  "rotation" "0 0 0 1"
+  "vertices" "-198.039795 -64 -278.424194, -198.039795 -64 278.424194, -198.039795 64 -278.424194, -198.039795 64 278.424194, 198.039795 -64 -278.424194, 198.039795 -64 278.424194, 198.039795 64 -278.424194, 198.039795 64 278.424194"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "-1268.79822"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "-3702.37817"
-    "v_shift" "-320"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 -1 0"
-    "distance" "-256"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "-3702.37817"
-    "v_shift" "-1761.64648"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0.99999994 -0 -0"
-    "distance" "-3638.37842"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -703,24 +737,7 @@ brush
   }
   face
   {
-    "normal" "0.99999994 0 0"
-    "distance" "4034.45801"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "-1761.64648"
-    "v_shift" "-320"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "384"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -735,14 +752,58 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "1825.64661"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "-3702.37817"
+    "v_shift" "-320"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-3702.37817"
+    "v_shift" "-320"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-3702.37817"
+    "v_shift" "-1761.64648"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1761.64648"
     "v_shift" "-320"
     "u_scale" "128"
     "v_scale" "128"
@@ -750,51 +811,19 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "14"
-  "vertices" "4220.9502 263.820923 -2004.18066, 4220.9502 263.820923 -1323.81934, 4220.9502 381.067749 -2004.18066, 4220.9502 381.067749 -1323.81934, 4495.60645 263.820923 -2004.18066, 4495.60645 263.820923 -1323.81934, 4495.60645 381.067749 -2004.18066, 4495.60645 381.067749 -1323.81934"
-  "mesh_path" ""
+  "position" "4358.27832 322.444336 -1664"
+  "rotation" "0 0 0 1"
+  "vertices" "-137.328125 -58.6234131 -340.180664, -137.328125 -58.6234131 340.180664, -137.328125 58.6234131 -340.180664, -137.328125 58.6234131 340.180664, 137.328125 -58.6234131 -340.180664, 137.328125 -58.6234131 340.180664, 137.328125 58.6234131 -340.180664, 137.328125 58.6234131 340.180664"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "2004.18066"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "-4284.9502"
-    "v_shift" "-327.820923"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 -1 0"
-    "distance" "-263.820923"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "-4284.9502"
-    "v_shift" "1387.81873"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 -0 -0"
-    "distance" "-4220.9502"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -809,24 +838,7 @@ brush
   }
   face
   {
-    "normal" "1 0 0"
-    "distance" "4495.60645"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "1387.81873"
-    "v_shift" "-327.820923"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "381.067749"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -841,14 +853,58 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "-1323.81934"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "-4284.9502"
+    "v_shift" "-327.820923"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-4284.9502"
+    "v_shift" "-327.820923"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-4284.9502"
+    "v_shift" "1387.81873"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "1387.81873"
     "v_shift" "-327.820923"
     "u_scale" "128"
     "v_scale" "128"
@@ -856,51 +912,19 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "15"
-  "vertices" "4348.9502 333.19751 1152, 4348.9502 333.19751 1832.36133, 4348.9502 450.444336 1152, 4348.9502 450.444336 1832.36133, 4623.60645 333.19751 1152, 4623.60645 333.19751 1832.36133, 4623.60645 450.444336 1152, 4623.60645 450.444336 1832.36133"
-  "mesh_path" ""
+  "position" "4486.27832 391.820923 1492.18066"
+  "rotation" "0 0 0 1"
+  "vertices" "-137.328125 -58.6234131 -340.180664, -137.328125 -58.6234131 340.180664, -137.328125 58.6234131 -340.180664, -137.328125 58.6234131 340.180664, 137.328125 -58.6234131 -340.180664, 137.328125 -58.6234131 340.180664, 137.328125 58.6234131 -340.180664, 137.328125 58.6234131 340.180664"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "-1152"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "-4412.9502"
-    "v_shift" "-397.19751"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 -1 0"
-    "distance" "-333.19751"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "-4412.9502"
-    "v_shift" "-1768.36194"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-1 -0 -0"
-    "distance" "-4348.9502"
+    "indices" "3 2 0 1"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -915,24 +939,7 @@ brush
   }
   face
   {
-    "normal" "1 0 0"
-    "distance" "4623.60645"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "-1768.36194"
-    "v_shift" "-397.19751"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "450.444336"
+    "indices" "4 5 1 0"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -947,14 +954,58 @@ brush
   }
   face
   {
-    "normal" "0 0 1"
-    "distance" "1832.36133"
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "1 0 0"
     "v_axis" "0 1 0"
     "u_shift" "-4412.9502"
+    "v_shift" "-397.19751"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-4412.9502"
+    "v_shift" "-397.19751"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-4412.9502"
+    "v_shift" "-1768.36194"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 7 5 4"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1768.36194"
     "v_shift" "-397.19751"
     "u_scale" "128"
     "v_scale" "128"
@@ -962,19 +1013,49 @@ brush
     "smoothing_group" "0"
   }
 }
-brush
+mesh
 {
   "_uid" "16"
-  "vertices" "4652.71631 391.820923 -2174.19556, 4652.71631 391.820923 1764.51196, 4652.71631 509.067749 -2174.19556, 4652.71631 509.067749 1764.51196, 5403.30615 391.820923 -2174.19556, 5403.30615 391.820923 1764.51196, 5403.30615 509.067749 -2174.19556, 5403.30615 509.067749 1764.51196"
-  "mesh_path" ""
+  "position" "5028.01123 450.444336 -204.841797"
+  "rotation" "0 0 0 1"
+  "vertices" "-375.294922 -58.6234131 -1969.35376, -375.294922 -58.6234131 1969.35376, -375.294922 58.6234131 -1969.35376, -375.294922 58.6234131 1969.35376, 375.294922 -58.6234131 -1969.35376, 375.294922 -58.6234131 1969.35376, 375.294922 58.6234131 -1969.35376, 375.294922 58.6234131 1969.35376"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
   face
   {
-    "normal" "-0 -0 -1"
-    "distance" "2174.19556"
+    "indices" "3 2 0 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "0 0 1"
+    "v_axis" "0 1 0"
+    "u_shift" "-1700.51135"
+    "v_shift" "-455.820923"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "4 5 1 0"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 0 1"
+    "u_shift" "-5192.65039"
+    "v_shift" "-1700.51135"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "6 4 0 2"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -989,8 +1070,22 @@ brush
   }
   face
   {
-    "normal" "0 -1 0"
-    "distance" "-391.820923"
+    "indices" "5 7 3 1"
+    "material" "0"
+    "blend_material" "0"
+    "emits_geometry" "1"
+    "u_axis" "1 0 0"
+    "v_axis" "0 1 0"
+    "u_shift" "-5192.65039"
+    "v_shift" "-455.820923"
+    "u_scale" "128"
+    "v_scale" "128"
+    "lightmap_scale" "1"
+    "smoothing_group" "0"
+  }
+  face
+  {
+    "indices" "7 6 2 3"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
@@ -1005,62 +1100,13 @@ brush
   }
   face
   {
-    "normal" "-1 -0 -0"
-    "distance" "-4652.71631"
+    "indices" "6 7 5 4"
     "material" "0"
     "blend_material" "0"
     "emits_geometry" "1"
     "u_axis" "0 0 1"
     "v_axis" "0 1 0"
     "u_shift" "-1700.51135"
-    "v_shift" "-455.820923"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "1 0 0"
-    "distance" "5403.30615"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "0 0 1"
-    "v_axis" "0 1 0"
-    "u_shift" "-1700.51135"
-    "v_shift" "-455.820923"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "-0 1 -0"
-    "distance" "509.067749"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 0 1"
-    "u_shift" "-5192.65039"
-    "v_shift" "-1700.51135"
-    "u_scale" "128"
-    "v_scale" "128"
-    "lightmap_scale" "1"
-    "smoothing_group" "0"
-  }
-  face
-  {
-    "normal" "0 0 1"
-    "distance" "1764.51196"
-    "material" "0"
-    "blend_material" "0"
-    "emits_geometry" "1"
-    "u_axis" "1 0 0"
-    "v_axis" "0 1 0"
-    "u_shift" "-5192.65039"
     "v_shift" "-455.820923"
     "u_scale" "128"
     "v_scale" "128"
@@ -1101,13 +1147,13 @@ entity
   "volume.half_extents" "63.8 65.4 78.6"
   "weakness" "Teal"
   "render.mesh" "target"
+  "render.material" "Missing"
+  "render.color" "1 0.4 0"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "0 0 0 1"
-  "render.material" "Missing"
-  "render.color" "1 0.4 0"
 }
 entity
 {
@@ -1122,13 +1168,13 @@ entity
   "volume.half_extents" "63.8 65.4 78.6"
   "weakness" "Teal"
   "render.mesh" "target"
+  "render.material" "Missing"
+  "render.color" "1 0.4 0"
   "render.visible" "true"
   "render.is_wireframe" "false"
   "render.offset" "0 0 0"
   "render.scale" "2 2 2"
   "render.rotation" "0 0 0 1"
-  "render.material" "Missing"
-  "render.color" "1 0.4 0"
 }
 entity
 {
@@ -1159,6 +1205,7 @@ entity
   "position" "5248 576 128"
   "orientation" "0 0 0 1"
   "name" ""
+  "match.mode" "deathmatch"
 }
 entity
 {

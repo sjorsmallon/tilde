@@ -84,14 +84,6 @@ shared::entity_uid_t hovered_uid = 0;
   };
   snap_pick_t snap_pick{};
 
-  // The inspector's "Subtract from brush" arms it: the next viewport click names
-  // the WALL, and every selected brush becomes a hole in it.
-  struct wall_pick_t
-  {
-    bool armed = false;
-  };
-  wall_pick_t wall_pick{};
-
   // --- Drags -------------------------------------------------------------------
 
   struct box_drag_t
@@ -342,13 +334,6 @@ shared::entity_uid_t hovered_uid = 0;
   void collect_selected_geometry_owners(const editor_context_t&            ctx,
                                         std::vector<shared::entity_uid_t>& out) const;
   void untie_selection(editor_context_t& ctx);
-
-  // A hole names its wall (geometry_def.md Track H). Subtracting writes
-  // subtracts_from_uid on every selected brush but the wall; a subdivided or
-  // painted wall refuses, a hole whose bounds miss the wall is announced. One
-  // transaction per gesture.
-  void subtract_selection_from_wall(editor_context_t& ctx, shared::entity_uid_t wall_uid);
-  void make_selection_solid(editor_context_t& ctx);
 
   // Every geometry uid `owner` switches, walked on demand. No cached list on
   // the entity: the file stores one direction, so a second one held here is an

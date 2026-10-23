@@ -5,6 +5,7 @@
 #include "../shared/frame_timing.hpp"
 #include "../shared/log.hpp"
 #include "../shared/map/brush/face_neighbour.hpp"
+#include "../shared/map/map_geometry_asset.hpp"
 #include "../shared/map/map_geometry_mesh.hpp"
 #include "render_assets.hpp"
 #include <string>
@@ -13,21 +14,6 @@
 
 namespace client
 {
-
-// An asset-sourced mesh draws as the static mesh it views (geometry_def.md
-// 11.6), so every entry point resolves the value it draws before anything
-// reads the kind or records what the cache was built from.
-const shared::geometry_value_t &drawn_geometry_value(const shared::geometry_value_t &geometry,
-                                                     shared::geometry_value_t &storage)
-{
-  const shared::mesh_geometry_t *mesh = std::get_if<shared::mesh_geometry_t>(&geometry);
-  const shared::asset_mesh_source_t *asset =
-      mesh ? std::get_if<shared::asset_mesh_source_t>(&mesh->source) : nullptr;
-  if (!asset)
-    return geometry;
-  storage = shared::static_mesh_view_of_asset_mesh(*mesh, *asset);
-  return storage;
-}
 
 namespace
 {
@@ -132,13 +118,13 @@ assets::mesh_asset_t generate_geometry_mesh(const shared::geometry_value_t &geom
     return shared::generate_brush_mesh(std::get<shared::brush_geometry_t>(geometry),
                                        materials, {map_geometry, uid});
 
-  case shared::geometry_kind_t::Static_Mesh:
-    return shared::generate_lightmapped_static_mesh(
-        std::get<shared::static_mesh_geometry_t>(geometry), {&lightmap, uid});
-
   case shared::geometry_kind_t::Mesh:
-    return shared::generate_mesh_geometry_mesh(std::get<shared::mesh_geometry_t>(geometry),
-                                               materials, {&lightmap, uid});
+  {
+    const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(geometry);
+    if (std::holds_alternative<shared::asset_mesh_source_t>(mesh.source))
+      return shared::generate_lightmapped_asset_mesh(mesh, {&lightmap, uid});
+    return shared::generate_mesh_geometry_mesh(mesh, materials, {&lightmap, uid});
+  }
   }
 
   log_error("generate_geometry_mesh: unhandled geometry kind {}",
@@ -400,7 +386,7 @@ renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geome
                                 .armed  = false};
 }
 
-void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &authored_geometry,
+void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap,
                    Span<const shared::map_geometry_t> map_geometry, const linalg::mat4f* moved_by,
@@ -408,8 +394,6 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &author
                    std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut,
                    bool casts_dynamic_shadow, generated_mesh_check_t check)
 {
-  shared::geometry_value_t view_storage;
-  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
   const shared::geometry_surface_t &surface = shared::get_surface(geometry);
   // A trusted object with no record yet is built, never drawn from nothing.
   const bool compare = check == generated_mesh_check_t::Compare_Every_Draw ||
@@ -419,25 +403,21 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &author
   {
   case shared::geometry_kind_t::Mesh:
   {
-    if (!surface.visible)
+    const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(geometry);
+    if (!std::holds_alternative<shared::asset_mesh_source_t>(mesh.source))
+    {
+      if (!surface.visible)
+        return;
+      draw_generated_geometry(draws, geometry, uid, materials, lightmap, map_geometry, moved_by,
+                              clock_wipe, team_wall, light_cut, mesh.casts_shadows,
+                              casts_dynamic_shadow, compare);
       return;
-    draw_generated_geometry(draws, geometry, uid, materials, lightmap, map_geometry, moved_by,
-                            clock_wipe, team_wall, light_cut,
-                            std::get<shared::mesh_geometry_t>(geometry).casts_shadows,
-                            casts_dynamic_shadow, compare);
-    return;
-  }
+    }
 
-  case shared::geometry_kind_t::Static_Mesh:
-  {
-    const shared::static_mesh_geometry_t &static_mesh =
-        std::get<shared::static_mesh_geometry_t>(geometry);
-
-    // With a bake, a static mesh draws as its own WORLD-space copy through the
-    // generated cache, exactly as a brush does -- the pooled asset is welded
-    // and shared between maps, so it cannot carry this instance's atlas
-    // positions. Without one it is the pooled asset under a transform, byte
-    // for byte what it always was.
+    // With a bake, an asset-sourced mesh draws as its own WORLD-space copy
+    // through the generated cache -- the pooled asset is welded and shared
+    // between maps, so it cannot carry this instance's atlas positions. Without
+    // one it is the pooled asset under its transform.
     if (!lightmap.empty())
     {
       if (compare && !generated_mesh_is_current(uid, geometry, materials, lightmap))
@@ -447,17 +427,18 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &author
       const std::string_view cache_key = generated_mesh_cache_key(uid, cache_key_buffer);
       if (draw_surface_mesh(draws, surface, get_render_mesh(assets::find_mesh_in_cache(cache_key)),
                             linalg::mat4f::identity(), moved_by, clock_wipe, team_wall,
-                            light_cut, static_mesh.casts_shadows, casts_dynamic_shadow))
+                            light_cut, mesh.casts_shadows, casts_dynamic_shadow))
         return;
     }
     else if (draw_surface_mesh(draws, surface,
-                               get_render_mesh(shared::resolve_surface_mesh(surface)),
-                               shared::static_mesh_transform(static_mesh), moved_by, clock_wipe,
-                               team_wall, light_cut, static_mesh.casts_shadows, casts_dynamic_shadow))
+                               get_render_mesh(
+                                   shared::resolve_mesh_asset(shared::get_mesh_asset_source(mesh))),
+                               shared::compute_asset_mesh_transform(mesh), moved_by, clock_wipe,
+                               team_wall, light_cut, mesh.casts_shadows, casts_dynamic_shadow))
       return;
 
-    // A static mesh with no resolvable mesh has nothing to draw but its bound —
-    // show it in yellow so a broken/missing asset is visible rather than absent.
+    // An asset that does not resolve has nothing to draw but its bound — shown
+    // in yellow so a broken or missing asset is visible rather than absent.
     const shared::aabb_bounds_t bounds = shared::get_bounds(geometry);
     draws.debug.aabb(bounds.min, bounds.max, colors::yellow);
     return;
@@ -465,21 +446,6 @@ void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &author
 
   case shared::geometry_kind_t::Brush:
   {
-    const shared::brush_geometry_t &brush = std::get<shared::brush_geometry_t>(geometry);
-
-    // A hole is drawn by its wall's mesh and has none of its own; the editor
-    // draws its authored volume tinted beside this.
-    if (brush.subtracts_from_uid != shared::null_entity_uid)
-      return;
-
-    if (!surface.mesh_path.empty() &&
-        draw_surface_mesh(draws, surface,
-                          get_render_mesh(shared::resolve_surface_mesh(surface)),
-                          linalg::compose_transform(shared::get_position(geometry), {0, 0, 0, 1},
-                                                    {1, 1, 1}),
-                          moved_by, clock_wipe, team_wall, light_cut, true, casts_dynamic_shadow))
-      return;
-
     if (!surface.visible)
       return;
 
@@ -502,13 +468,12 @@ void rebuild_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      const shared::lightmap_t &lightmap,
                                      Span<const shared::map_geometry_t> map_geometry)
 {
-  const shared::geometry_kind_t kind = shared::get_kind(geometry);
-  const bool is_brush = kind == shared::geometry_kind_t::Brush;
-  const bool generates_materials = is_brush || kind == shared::geometry_kind_t::Mesh;
+  const bool is_brush = shared::get_kind(geometry) == shared::geometry_kind_t::Brush;
+  const bool generates_materials = shared::find_asset_sourced_mesh(geometry) == nullptr;
 
   // Record what the mesh is about to be built from, so the draw path can tell
-  // whether it still matches. A lightmapped static mesh is baked into world
-  // space like a brush, so a move goes stale the same way.
+  // whether it still matches. A lightmapped asset-sourced mesh is baked into
+  // world space like the rest, so a move goes stale the same way.
   {
     generated_mesh_source_t &source = g_generated_mesh_sources[uid];
     source.value                     = geometry;
@@ -556,14 +521,12 @@ void rebuild_generated_geometry_mesh(const shared::geometry_value_t &geometry,
 
 } // namespace
 
-void refresh_generated_geometry_mesh(const shared::geometry_value_t &authored_geometry,
+void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
                                      shared::entity_uid_t uid,
                                      Span<const std::string> materials,
                                      const shared::lightmap_t &lightmap,
                                      Span<const shared::map_geometry_t> map_geometry)
 {
-  shared::geometry_value_t view_storage;
-  const shared::geometry_value_t &geometry = drawn_geometry_value(authored_geometry, view_storage);
   rebuild_generated_geometry_mesh(geometry, uid, materials, lightmap, map_geometry);
 
   if (shared::get_kind(geometry) != shared::geometry_kind_t::Brush)
@@ -589,25 +552,11 @@ void refresh_stale_generated_geometry_meshes(Span<const shared::map_geometry_t> 
 {
   for (const shared::map_geometry_t &entry : geometry)
   {
-    shared::geometry_value_t view_storage;
-    const shared::geometry_value_t &value = drawn_geometry_value(entry.value, view_storage);
-    bool generated = false;
-    switch (shared::get_kind(value))
-    {
-    case shared::geometry_kind_t::Static_Mesh:
-      generated = !lightmap.empty();
-      break;
-    case shared::geometry_kind_t::Brush:
-      generated = std::get<shared::brush_geometry_t>(value).subtracts_from_uid ==
-                      shared::null_entity_uid &&
-                  shared::get_surface(value).visible;
-      break;
-    case shared::geometry_kind_t::Mesh:
-      generated = shared::get_surface(value).visible;
-      break;
-    }
-    if (generated && !generated_mesh_is_current(entry.uid, value, materials, lightmap))
-      refresh_generated_geometry_mesh(value, entry.uid, materials, lightmap, geometry);
+    const bool generated = shared::find_asset_sourced_mesh(entry.value) != nullptr
+                               ? !lightmap.empty()
+                               : shared::get_surface(entry.value).visible;
+    if (generated && !generated_mesh_is_current(entry.uid, entry.value, materials, lightmap))
+      refresh_generated_geometry_mesh(entry.value, entry.uid, materials, lightmap, geometry);
   }
 }
 

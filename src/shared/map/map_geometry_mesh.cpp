@@ -2,8 +2,9 @@
 
 #include "../collision/collision_detection.hpp"
 #include "log.hpp"
+#include "map_geometry_asset.hpp"
 #include "map_geometry_text.hpp"
-#include "brush/brush_holes.hpp"
+#include "mesh/mesh.hpp"
 #include "mesh/mesh_decomposition.hpp"
 #include "mesh/mesh_primitives.hpp"
 
@@ -15,25 +16,10 @@
 namespace shared
 {
 
-static_mesh_geometry_t static_mesh_view_of_asset_mesh(const mesh_geometry_t &mesh,
-                                                      const asset_mesh_source_t &source)
-{
-  static_mesh_geometry_t view;
-  view.position = mesh.position;
-  view.orientation = mesh.orientation;
-  view.scale = source.scale;
-  view.surface = mesh.surface;
-  view.surface.mesh_path = source.path;
-  view.collides = mesh.collides;
-  view.casts_shadows = mesh.casts_shadows;
-  view.owner_uid = mesh.owner_uid;
-  return view;
-}
-
 aabb_bounds_t compute_mesh_world_bounds(const mesh_geometry_t &mesh)
 {
-  if (const asset_mesh_source_t *asset = std::get_if<asset_mesh_source_t>(&mesh.source))
-    return get_bounds(geometry_value_t{static_mesh_view_of_asset_mesh(mesh, *asset)});
+  if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
+    return get_bounds(compute_asset_mesh_box(mesh));
 
   if (mesh.vertices.empty())
     return {mesh.position, mesh.position};
@@ -108,8 +94,8 @@ std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry
 {
   if (!mesh.collides)
     return {};
-  if (const asset_mesh_source_t *asset = std::get_if<asset_mesh_source_t>(&mesh.source))
-    return {static_mesh_collision_box(static_mesh_view_of_asset_mesh(mesh, *asset))};
+  if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
+    return {compute_asset_mesh_collision_box(mesh)};
 
   uint32_t sculpted_faces = 0;
   for (const mesh_face_t &face : mesh.faces)
@@ -119,7 +105,7 @@ std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry
   {
     if (!mesh_is_convex(mesh))
       log_error("get_collision_pieces: mesh {} is sculpted and not convex - its grids collide "
-                "flat (geometry_def.md 11.8 increment 12)",
+                "flat (geometry_def.md 11.8, open after increment 12)",
                 uid);
     else
     {
@@ -198,6 +184,20 @@ Plane compute_mesh_world_face_plane(const mesh_geometry_t &mesh, uint32_t face_i
   world.normal = linalg::rotate(mesh.orientation, local.normal);
   world.point = mesh.position + linalg::rotate(mesh.orientation, local.point);
   return world;
+}
+
+linalg::vec3 compute_mesh_world_vertex(const mesh_geometry_t &mesh, uint32_t vertex_index)
+{
+  return mesh.position + linalg::rotate(mesh.orientation, mesh.vertices[vertex_index]);
+}
+
+Plane compute_mesh_local_plane(const mesh_geometry_t &mesh, const Plane &world_plane)
+{
+  const linalg::quatf inverse_orientation = linalg::conjugate(mesh.orientation);
+  Plane local;
+  local.normal = linalg::rotate(inverse_orientation, world_plane.normal);
+  local.point = linalg::rotate(inverse_orientation, world_plane.point - mesh.position);
+  return local;
 }
 
 std::optional<uint32_t> try_find_mesh_face_by_world_plane(const mesh_geometry_t &mesh,
@@ -430,8 +430,8 @@ assets::mesh_asset_t generate_mesh_geometry_mesh(const mesh_geometry_t &mesh,
                                                  const object_lightmap_ref_t &lighting)
 {
   if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
-    fatal_error("generate_mesh_geometry_mesh: an asset-sourced mesh draws as the static mesh "
-                "it views");
+    fatal_error("generate_mesh_geometry_mesh: an asset-sourced mesh draws through "
+                "generate_lightmapped_asset_mesh");
 
   mesh_geometry_t world = mesh;
   world.position = {0.f, 0.f, 0.f};

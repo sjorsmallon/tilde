@@ -5,6 +5,7 @@
 #include "lightmap_trace.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
+#include "map/map_geometry_asset.hpp"
 #include "shader_math.hpp"
 
 #include <algorithm>
@@ -68,18 +69,18 @@ static Bounding_Volume_Hierarchy build_geometry_bvh(const map_t &map,
         compute_light_occlusion(entry.value, map.materials) != wanted)
       continue;
 
-    // A static mesh COLLIDES as its bound and must not SHADOW as it: a texel on
+    // An asset-sourced mesh COLLIDES as its bound and must not SHADOW as it: a texel on
     // a sphere sits inside the sphere's box, and every ray from it would start
     // in shadow. So the bake's own BVH gets one zero-thickness convex piece per
     // triangle -- the triangle's plane both ways and its three edge planes --
     // which the slab test handles exactly, and which is two-sided by
     // construction. The runtime BVH is untouched.
-    if (get_kind(entry.value) == geometry_kind_t::Static_Mesh)
+    if (const mesh_geometry_t *asset_mesh = find_asset_sourced_mesh(entry.value))
     {
       const std::vector<world_triangle_t> triangles =
-          static_mesh_world_triangles(std::get<static_mesh_geometry_t>(entry.value));
+          compute_asset_mesh_world_triangles(*asset_mesh);
       if (triangles.empty() && occluding)
-        log_warning("[lightmap] static mesh {} names no mesh that resolves and casts no "
+        log_warning("[lightmap] asset mesh {} names no mesh that resolves and casts no "
                     "shadow.", entry.uid);
 
       for (const world_triangle_t &triangle : triangles)

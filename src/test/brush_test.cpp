@@ -433,7 +433,6 @@ void test_geometry_block_round_trip()
   brush.hull_points        = shared::make_box_brush_points({32, 0, -16}, {64, 32, 96});
   brush.hull_points[2].y  += 24.0f; // a corner pulled off the box, so it is not a cube
   brush.surface.color   = {0.25f, 0.5f, 0.75f};
-  brush.surface.mesh_path = "";
   shared::sync_face_surfaces(brush);
   assert(!brush.face_surfaces.empty());
   brush.face_surfaces[1].material       = 3;

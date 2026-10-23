@@ -23,8 +23,8 @@
 #include "../editor/edit_history_panel.hpp"
 #include "../editor/map_cvars_panel.hpp"
 #include "../editor/tools/animation_tool.hpp"
-#include "../editor/tools/brush_tool.hpp"
 #include "../editor/tools/face_tool.hpp"
+#include "../editor/tools/vertex_tool.hpp"
 #include "../editor/tools/lightmap_tool.hpp"
 #include "../editor/tools/path_tool.hpp"
 #include "../editor/path_editing.hpp"
@@ -32,6 +32,7 @@
 #include "../editor/tools/placement_tool.hpp"
 #include "../editor/tools/sculpting_tool.hpp"
 #include "../editor/tools/clip_tool.hpp"
+#include "../editor/tools/subtract_tool.hpp"
 #include "../editor/tools/primitive_tool.hpp"
 #include "../editor/tools/particle_editor_tool.hpp"
 #include "../editor/tools/selection_tool.hpp"
@@ -90,12 +91,13 @@ constexpr Enum_Array<editor_tool_t, toolbox_row_t> TOOLBOX_ROWS = {{
     {editor_tool_t::pathfinding, "Pathfinding", toolbox_kind_t::panel,           input::key_t::Unknown},
     {editor_tool_t::particles,   "Particles",   toolbox_kind_t::separate_editor, input::key_t::Unknown},
     {editor_tool_t::animation,   "Animation",   toolbox_kind_t::separate_editor, input::key_t::Unknown},
-    {editor_tool_t::brush,       "Brush",       toolbox_kind_t::viewport_tool,   input::key_t::B},
     {editor_tool_t::lightmap,    "Lightmap",    toolbox_kind_t::panel,           input::key_t::Unknown},
     {editor_tool_t::path,        "Path",        toolbox_kind_t::viewport_tool,   input::key_t::L},
     {editor_tool_t::clip,        "Clip",        toolbox_kind_t::viewport_tool,   input::key_t::X},
     {editor_tool_t::primitive,   "Primitive",   toolbox_kind_t::viewport_tool,   input::key_t::P},
     {editor_tool_t::face,        "Face",        toolbox_kind_t::viewport_tool,   input::key_t::F},
+    {editor_tool_t::vertex,      "Vertex",      toolbox_kind_t::viewport_tool,   input::key_t::V},
+    {editor_tool_t::subtract,    "Subtract",    toolbox_kind_t::viewport_tool,   input::key_t::H},
 }};
 static_assert(rows_in_enum_order<&toolbox_row_t::tool>(TOOLBOX_ROWS));
 
@@ -354,12 +356,13 @@ void Tool_Editor_State::on_enter()
     tools[editor_tool_t::pathfinding] = std::make_unique<Pathfinding_Test_Tool>();
     tools[editor_tool_t::particles]   = std::make_unique<Particle_Editor_Tool>();
     tools[editor_tool_t::animation]   = std::make_unique<Animation_Tool>();
-    tools[editor_tool_t::brush]       = std::make_unique<Brush_Tool>();
     tools[editor_tool_t::lightmap]    = std::make_unique<Lightmap_Tool>();
     tools[editor_tool_t::path]        = std::make_unique<Path_Tool>();
     tools[editor_tool_t::clip]        = std::make_unique<Clip_Tool>();
     tools[editor_tool_t::primitive]   = std::make_unique<Primitive_Tool>();
     tools[editor_tool_t::face]        = std::make_unique<Face_Tool>();
+    tools[editor_tool_t::vertex]      = std::make_unique<Vertex_Tool>();
+    tools[editor_tool_t::subtract]    = std::make_unique<Subtract_Tool>();
   }
 
   // Enable first tool
@@ -491,7 +494,7 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
   context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
-  entity_visibility.refresh(map, hide_hole_brushes);
+  entity_visibility.refresh(map);
   context.hidden_objects = entity_visibility.hidden_this_frame;
   // context.time is NOT reset here -- it is seconds since the editor opened,
   // advanced in update(), and a tool switch is not a new clock. Resetting it
@@ -820,14 +823,13 @@ void Tool_Editor_State::update(float dt)
     }
   }
 
-  lap.next("editor update: bvh rebuild, hole walls, lightmap upload");
+  lap.next("editor update: bvh rebuild, lightmap upload");
   if (geometry_updated_flag)
   {
     update_bvh();
     geometry_updated_flag = false;
   }
 
-  hole_links = refresh_walls_of_changed_holes(map, hole_links);
 
   if (lightmap_updated_flag || map.lightmap.geometry_id != uploaded_lightmap_geometry_id)
   {
@@ -859,7 +861,7 @@ void Tool_Editor_State::update(float dt)
 
   // Flattened out of the one pass that knows both the per-entity set and the
   // per-type mask, the way objects_without_collision is.
-  entity_visibility.refresh(map, hide_hole_brushes);
+  entity_visibility.refresh(map);
   context.hidden_objects = entity_visibility.hidden_this_frame;
 
   context.time += dt;
@@ -996,7 +998,6 @@ void Tool_Editor_State::draw_imgui_panels()
 
       ImGui::Checkbox("Solid Entities", &draw_entities_solid);
       ImGui::Checkbox("Hide Geometry", &hide_geometry);
-      ImGui::Checkbox("Hide Hole Brushes", &hide_hole_brushes);
       ImGui::Checkbox("Entity Icons", &show_entity_icons);
       ImGui::Checkbox("Show Grid", &show_grid);
       ImGui::SliderFloat("Camera Speed", &state_manager::get_client_context().cvars->editor_speed,

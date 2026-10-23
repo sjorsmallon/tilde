@@ -2,6 +2,7 @@
 
 #include "../shared/log.hpp"
 #include "../shared/map/map_geometry.hpp"
+#include "../shared/map/map_geometry_asset.hpp"
 
 #include <unordered_map>
 #include <vector>
@@ -160,11 +161,8 @@ void preload_map_render_assets(const shared::map_t &map)
   }
 
   for (const shared::map_geometry_t &geometry : map.geometry)
-  {
-    const shared::geometry_surface_t &surface = shared::get_surface(geometry.value);
-    if (!surface.mesh_path.empty())
-      get_render_mesh(shared::resolve_surface_mesh(surface));
-  }
+    if (const shared::mesh_geometry_t *mesh = shared::find_asset_sourced_mesh(geometry.value))
+      get_render_mesh(shared::resolve_mesh_asset(shared::get_mesh_asset_source(*mesh)));
 
   log_terminal("[render_assets] preloaded {} meshes for the map", g_mesh_by_asset.size());
 }

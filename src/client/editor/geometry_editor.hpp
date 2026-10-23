@@ -66,21 +66,6 @@ void draw_geometry_in_editor(const shared::geometry_value_t &geometry,
                              const linalg::vec3 &translation,
                              generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
 
-// A hole as the editor last drew its wall from it. A wall's mesh is built from
-// its holes, whose edits leave the wall's own value untouched, so the wall is
-// rebuilt here when a hole moves, is re-pointed, appears or disappears.
-struct hole_link_t
-{
-  shared::entity_uid_t      hole = shared::null_entity_uid;
-  shared::entity_uid_t      wall = shared::null_entity_uid;
-  shared::brush_geometry_t  value;
-};
-
-// Rebuild the mesh of every wall whose holes differ from `previous`, and answer
-// the links as they stand now. Called once per editor frame.
-std::vector<hole_link_t> refresh_walls_of_changed_holes(const shared::map_t &map,
-                                                        Span<const hole_link_t> previous);
-
 // Pulsating selection highlight, in lockstep with the entity one.
 // `grid_step` drives the grid lines drawn on a box's faces; when the outline already
 // traces the shape only that faint measuring grid is left. A brush traces the hull
