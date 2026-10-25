@@ -28,9 +28,9 @@ int main()
   map_t test_map;
   test_map.name = "Test Map";
 
-  // A box brush — map-owned geometry, not an entity.
+  // A box mesh — map-owned geometry, not an entity.
   const entity_uid_t floor_uid =
-      test_map.add_geometry(make_box_brush({0, 0, 0}, {10, 10, 10}));
+      test_map.add_geometry(make_box_mesh({0, 0, 0}, {10, 10, 10}));
 
   // Add a Player Spawn marker
   auto spawn_ent = shared::create_map_entity("player_spawn_entity");
@@ -84,34 +84,26 @@ int main()
   // the session must not write through into the map — the old shared_ptr path
   // did exactly that, and P7's ownership work depends on it staying broken apart.
   {
-    brush_geometry_t *session_brush =
-        std::get_if<brush_geometry_t>(&session.geometry[0].value);
-    if (!session_brush)
-    {
-      log_error("Session geometry 0 should be a brush");
-      return 1;
-    }
-    const std::vector<linalg::vec3> original_vertices = session_brush->hull_points;
-    session_brush->hull_points = make_box_brush_points({0, 0, 0}, {99, 99, 99});
+    mesh_geometry_t &session_mesh = session.geometry[0].value;
+    const linalg::vec3 original_position = session_mesh.position;
+    session_mesh.position = {99, 99, 99};
 
-    const map_geometry_t  *map_entry = test_map.find_geometry_by_uid(floor_uid);
-    const brush_geometry_t *map_brush =
-        map_entry ? std::get_if<brush_geometry_t>(&map_entry->value) : nullptr;
-    if (!map_brush)
+    const map_geometry_t *map_entry = test_map.find_geometry_by_uid(floor_uid);
+    if (!map_entry)
     {
-      log_error("Map geometry {} should still be a brush", floor_uid);
+      log_error("Map geometry {} should still exist", floor_uid);
       return 1;
     }
-    if (compute_brush_bounds(map_brush->hull_points).max.x != 10.f)
+    if (map_entry->value.position.x != 0.f)
     {
       log_error("Session aliases the map's geometry: writing the session's copy "
-                "changed the map's bounds to {}",
-                compute_brush_bounds(map_brush->hull_points).max.x);
+                "moved the map's mesh to x = {}",
+                map_entry->value.position.x);
       return 1;
     }
 
     // Put it back so the BVH check below still describes the real geometry.
-    session_brush->hull_points = original_vertices;
+    session_mesh.position = original_position;
   }
 
   // Verify the runtime spawn counter was seeded past the highest map uid.
@@ -622,8 +614,8 @@ int main()
 
     // A wall the ray hits first, and a wall behind it that it must reach once
     // the first is switched off. Both boxes, 20 units apart along +X.
-    const entity_uid_t near_wall = tie_map.add_geometry(make_box_brush({0, 0, 0}, {4, 64, 64}));
-    const entity_uid_t far_wall  = tie_map.add_geometry(make_box_brush({40, 0, 0}, {4, 64, 64}));
+    const entity_uid_t near_wall = tie_map.add_geometry(make_box_mesh({0, 0, 0}, {4, 64, 64}));
+    const entity_uid_t far_wall  = tie_map.add_geometry(make_box_mesh({40, 0, 0}, {4, 64, 64}));
 
     auto [owner_uid, owner] = spawn_entity(tie_map, entities::entity_type::Geometry_Owner_Entity);
     if (!owner)
@@ -706,8 +698,8 @@ int main()
   // A mover's geometry is in the per-tick cut and not in the tree (mover_def.md ss9 step 2).
   {
     map_t mover_map;
-    const entity_uid_t platform = mover_map.add_geometry(make_box_brush({0, 0, 0}, {16, 4, 16}));
-    const entity_uid_t wall     = mover_map.add_geometry(make_box_brush({0, 0, 200}, {16, 16, 4}));
+    const entity_uid_t platform = mover_map.add_geometry(make_box_mesh({0, 0, 0}, {16, 4, 16}));
+    const entity_uid_t wall     = mover_map.add_geometry(make_box_mesh({0, 0, 200}, {16, 16, 4}));
 
     auto [start_uid, start_entity] = spawn_entity(mover_map, entities::entity_type::Path_Node_Entity);
     auto [end_uid, end_entity]     = spawn_entity(mover_map, entities::entity_type::Path_Node_Entity);
@@ -835,8 +827,8 @@ int main()
                                   entities::entity_type light_type, const linalg::vec3f& light_position)
     {
       map_t shadow_map;
-      (void)shadow_map.add_geometry(make_box_brush(caster_center, caster_half_extents));
-      const entity_uid_t platform = shadow_map.add_geometry(make_box_brush({0, 0, 0}, {256, 4, 256}));
+      (void)shadow_map.add_geometry(make_box_mesh(caster_center, caster_half_extents));
+      const entity_uid_t platform = shadow_map.add_geometry(make_box_mesh({0, 0, 0}, {256, 4, 256}));
       auto [owner_uid, owner_entity] = spawn_entity(shadow_map, entities::entity_type::Geometry_Owner_Entity);
       entities::entity_as<entities::Geometry_Owner_Entity>(owner_entity.get())->solid_only_in_shadow = true;
       set_owner_uid(shadow_map.find_geometry_by_uid(platform)->value, owner_uid);
@@ -882,8 +874,8 @@ int main()
     // erased platform casts too, from behind itself, and reaches no receiver but itself, which does not count.
     {
       map_t ordered_map;
-      (void)ordered_map.add_geometry(make_box_brush({0, 100, 0}, {16, 16, 16}));
-      const entity_uid_t platform = ordered_map.add_geometry(make_box_brush({0, 0, 0}, {256, 4, 256}));
+      (void)ordered_map.add_geometry(make_box_mesh({0, 100, 0}, {16, 16, 16}));
+      const entity_uid_t platform = ordered_map.add_geometry(make_box_mesh({0, 0, 0}, {256, 4, 256}));
       auto [owner_uid, owner_entity] = spawn_entity(ordered_map, entities::entity_type::Geometry_Owner_Entity);
       entities::entity_as<entities::Geometry_Owner_Entity>(owner_entity.get())->erased_in_shadow = true;
       set_owner_uid(ordered_map.find_geometry_by_uid(platform)->value, owner_uid);
@@ -929,10 +921,10 @@ int main()
   // Every object along a ray, nearest first, once each: the editor's click cycle.
   {
     map_t stacked_map;
-    const entity_uid_t near_box   = stacked_map.add_geometry(make_box_brush({0, 0, 0}, {8, 8, 8}));
-    const entity_uid_t far_box    = stacked_map.add_geometry(make_box_brush({0, 0, 200}, {8, 8, 8}));
-    const entity_uid_t middle_box = stacked_map.add_geometry(make_box_brush({0, 0, 100}, {8, 8, 8}));
-    (void)stacked_map.add_geometry(make_box_brush({100, 0, 100}, {8, 8, 8}));
+    const entity_uid_t near_box   = stacked_map.add_geometry(make_box_mesh({0, 0, 0}, {8, 8, 8}));
+    const entity_uid_t far_box    = stacked_map.add_geometry(make_box_mesh({0, 0, 200}, {8, 8, 8}));
+    const entity_uid_t middle_box = stacked_map.add_geometry(make_box_mesh({0, 0, 100}, {8, 8, 8}));
+    (void)stacked_map.add_geometry(make_box_mesh({100, 0, 100}, {8, 8, 8}));
     const game_session_t stacked = build_session(stacked_map);
 
     std::vector<ray_hit_result_t> hits;

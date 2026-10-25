@@ -55,8 +55,7 @@ void test_a_face_answers_with_its_material()
   shared::map_t map;
   map.name = "surface_lookup";
 
-  shared::brush_geometry_t brush = shared::make_box_brush({0.f, 0.f, 0.f}, {64.f, 32.f, 64.f});
-  shared::sync_face_surfaces(brush);
+  shared::mesh_geometry_t box = shared::make_box_mesh({0.f, 0.f, 0.f}, {64.f, 32.f, 64.f});
 
   const uint16_t brick = map.material_index_for("resources/textures/bricks_mortar");
   assert(brick == 1);
@@ -64,9 +63,11 @@ void test_a_face_answers_with_its_material()
   Plane top;
   top.normal = {0.f, 1.f, 0.f};
   top.point  = {0.f, 32.f, 0.f};
-  shared::face_surface_for(brush, top).material = brick;
+  for (uint32_t face_index = 0; face_index < (uint32_t)box.faces.size(); ++face_index)
+    if (shared::compute_mesh_face_plane(box, face_index).normal.y > 0.999f)
+      box.faces[face_index].surface.material = brick;
 
-  map.add_geometry(brush);
+  map.add_geometry(box);
   const shared::game_session_t session = shared::build_session(map);
   assert(session.geometry.size() == 1);
 

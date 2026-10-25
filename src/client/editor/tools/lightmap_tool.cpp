@@ -717,17 +717,8 @@ void Lightmap_Tool::rebuild_charts(editor_context_t& ctx)
               baked.charts.size());
 }
 
-void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
+void Lightmap_Tool::on_draw_inspector(editor_context_t& ctx)
 {
-  ImGui::SetNextWindowSize({340, 0}, ImGuiCond_Once);
-  if (!ImGui::Begin("Lightmap Bake"))
-  {
-    ImGui::End();
-    return;
-  }
-
-  ImGui::Separator();
-
   ImGui::SliderFloat("Texels / unit", &settings.texels_per_world_unit, 0.03125f, 4.0f,
                      "%.4f", ImGuiSliderFlags_Logarithmic);
   ImGui::SliderInt("Gutter", &settings.gutter_in_texels, 0, 8);
@@ -1338,8 +1329,6 @@ void Lightmap_Tool::on_draw_ui(editor_context_t& ctx)
                      "rest are dropped with a line naming the face and the light. The "
                      "debug masks are the same walk kept for EVERY light, written as "
                      "PNGs, which is where a dropped one is visible.");
-
-  ImGui::End();
 }
 
 } // namespace client

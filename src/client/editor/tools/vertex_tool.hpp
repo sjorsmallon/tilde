@@ -33,6 +33,7 @@ public:
 
   void on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws) override;
   void on_draw_ui(editor_context_t &ctx) override;
+  void on_draw_inspector(editor_context_t &ctx) override;
 
   Span<const shared::entity_uid_t> selected_objects() const override;
 
@@ -86,7 +87,7 @@ private:
     linalg::vec3 plane_normal{0, 1, 0};
     linalg::vec3 start_plane_point{0, 0, 0};
     linalg::vec3 world_delta{0, 0, 0};
-    std::optional<shared::geometry_value_t> geometry_at_start;
+    std::optional<shared::mesh_geometry_t> geometry_at_start;
     std::vector<linalg::vec3> vertices_at_start;
   };
 

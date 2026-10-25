@@ -95,7 +95,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   const vec3 hull_center_offset{0.f, settings.shared.half_height, 0.f};
   vec3       hull_center = state.feet + hull_center_offset;
   const shared::steep_face_rule_t steep_faces = shared::get_steep_face_rule_for_locomotion_model(settings.model);
-  const shared::contacts_t        contacts    = shared::resolve_collisions(
+  const shared::contacts_t        contacts    = shared::sense_contacts(
       settings, steep_faces, bvh, world, hull_center, recording_bucket);
 
   // we are grounded if (and only if):
@@ -124,6 +124,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
       shared::step_override(settings, bvh, world, state, input.front, dt);
 
   shared::settled_move_t settled;
+  float                  stair_rise = 0.f;
   if (over.holds)
   {
     settled = {.hull_center      = hull_center,
@@ -133,52 +134,39 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   }
   else
   {
-    vec3 new_center   = hull_center;
-    vec3 new_velocity = state.velocity;
-
+    // --- 3 SLIDE ---
+    shared::slide_result_t slid;
     if (over.moves)
     {
-      const shared::slide_result_t slid =
-          shared::slide(settings, steep_faces, contacts, grounded, over.wanted, hull_center, dt);
-      new_center   = slid.hull_center;
-      new_velocity = slid.velocity;
+      slid = shared::slide(settings, steep_faces, bvh, world, contacts, grounded, over.wanted,
+                           hull_center, dt);
     }
     else
     {
-      const vec3           wish_direction = shared::flat_wish_direction(input);
-      shared::stair_step_t stair{};
-      if (grounded && !jump.from_ground && length(wish_direction) > 0.f &&
-          !contacts.wall_planes.empty())
-        stair = shared::try_stair_step(settings, steep_faces, bvh, world, contacts, state, input,
-                                       hull_center, wish_direction, recording_bucket);
+      const shared::wanted_move_t wanted =
+          shared::decide_move(settings, contacts, grounded, jump.velocity, state, input);
+      slid = shared::slide(settings, steep_faces, bvh, world, contacts, grounded, wanted,
+                           hull_center, dt);
 
-      if (stair.taken)
+      // A ground slide that a wall stopped tries the step over it, from where the step opened.
+      if (grounded && !jump.from_ground && !slid.wall_planes.empty())
       {
-        new_center   = stair.hull_center;
-        new_velocity = stair.velocity;
+        if (std::optional<shared::slide_result_t> stepped = shared::try_stair_step(
+                settings, steep_faces, bvh, world, contacts, wanted, slid, hull_center, dt))
+        {
+          stair_rise = stepped->hull_center.y - slid.hull_center.y;
+          slid       = std::move(*stepped);
+        }
       }
-      else
-      {
-        // --- 3 SLIDE ---
-        const shared::wanted_move_t wanted =
-            shared::decide_move(settings, contacts, grounded, jump.velocity, state, input);
-        const shared::slide_result_t slid =
-            shared::slide(settings, steep_faces, contacts, grounded, wanted, hull_center, dt);
-        new_center   = slid.hull_center;
-        new_velocity = slid.velocity;
-        shared::clip_model_memory(settings, state, contacts.wall_planes);
-      }
+      shared::clip_model_memory(settings, state, slid.wall_planes);
     }
 
-    settled = shared::resolve_after_move(settings, steep_faces, bvh, world, new_center,
-                                         new_velocity, recording_bucket);
-
     // A walking step keeps its feet: only a jump or an override leaves the ground on purpose.
-    const bool walked_off = grounded && !over.moves && !jump.from_ground && !jump.in_air;
-    if (walked_off)
-      settled = shared::snap_to_ground_below(settings, steep_faces, bvh, world, settled,
-                                             recording_bucket);
-    shared::clip_model_memory(settings, state, settled.wall_planes);
+    const bool  walking      = grounded && !over.moves && !jump.from_ground && !jump.in_air;
+    const float ground_reach = walking ? settings.shared.step_height : shared::ground_probe_distance;
+    settled = shared::settle_move(settings, bvh, world, slid, ground_reach);
+    if (walking)
+      stair_rise -= slid.hull_center.y - settled.hull_center.y;
   }
 
   // --- STRIDE: a foot plants every pm_footstep_stride of ground walked ---
@@ -281,6 +269,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
     out_events->land_impact_speed = settled.land_impact_speed;
     out_events->stepped           = stepped;
     out_events->step_speed        = dt > 0.f ? walked_flat / dt : 0.f;
+    out_events->stair_rise        = stair_rise;
     out_events->ground_contact    = settled.ground_contact;
     out_events->launched_by_pad   = touch.launched;
     out_events->pad_uid           = touch.uid;
@@ -316,6 +305,7 @@ void shared::accumulate_move_events(Move_Events& into, const Move_Events& step)
     into.stepped    = true;
     into.step_speed = step.step_speed;
   }
+  into.stair_rise += step.stair_rise;
   if (step.override_ended.kind != entities::Movement_Override::None)
     into.override_ended = step.override_ended;
   into.ground_contact = step.ground_contact;

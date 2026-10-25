@@ -38,7 +38,7 @@ struct reflex_edge_t
 // without one is convex. Dies on an unpaired edge; check find_mesh_defect first.
 [[nodiscard]] std::optional<reflex_edge_t> find_reflex_edge(const mesh_geometry_t &mesh);
 
-// Every vertex behind every face plane, within BRUSH_COPLANAR_EPSILON.
+// Every vertex behind every face plane, within COPLANAR_EPSILON.
 bool mesh_is_convex(const mesh_geometry_t &mesh);
 
 // N convex closed meshes, each carrying the pose, whose union is `mesh`. Each

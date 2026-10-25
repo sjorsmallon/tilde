@@ -144,6 +144,11 @@ struct Move_Events
   float                    step_speed     = 0.f;
   shared::ground_contact_t ground_contact = {};
 
+  // The height a walking hull was lifted or set down in one go this step, which the slide
+  // along the surface did not account for: a stair step up, a ledge walked down. The view
+  // eases over it; the hull does not.
+  float stair_rise = 0.f;
+
   // A movement volume launched the hull this tick, and which one. The effect
   // rides the STEP because the step is where it became true: the launched
   // player's own client fires its launch cosmetic from this and drops the

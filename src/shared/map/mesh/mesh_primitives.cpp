@@ -1,7 +1,7 @@
 #include "mesh_primitives.hpp"
 
 #include "../../curve.hpp"
-#include "../brush/brush.hpp"
+#include "geometry/convex_hull.hpp"
 #include "log.hpp"
 
 #include <algorithm>
@@ -167,7 +167,7 @@ bool ring_is_planar(const mesh_geometry_t &mesh, const std::vector<uint32_t> &ri
   normal = linalg::normalize(normal);
   const linalg::vec3 &origin = mesh.vertices[ring[0]];
   for (uint32_t index : ring)
-    if (std::abs(linalg::dot(normal, mesh.vertices[index] - origin)) > BRUSH_COPLANAR_EPSILON)
+    if (std::abs(linalg::dot(normal, mesh.vertices[index] - origin)) > COPLANAR_EPSILON)
       return false;
   return true;
 }
@@ -183,11 +183,22 @@ void push_quad_or_triangles(mesh_geometry_t &mesh, std::vector<uint32_t> ring)
   mesh.faces.push_back({{ring[0], ring[2], ring[3]}, {}});
 }
 
-mesh_geometry_t build_curve_wall(const primitive_recipe_t &recipe)
+struct curve_wall_section_t
 {
-  mesh_geometry_t mesh;
+  linalg::vec3 left;
+  linalg::vec3 right;
+};
+
+// The kept samples of the curve as the bottom corners of the wall's sections,
+// in the frame the points are stored in. A sample with no horizontal advance
+// on the last kept one is skipped; so is one a bend tighter than the half
+// width folds through itself: a side running backwards, or a section quad
+// that is a bow tie. The corner takes a chord. Fewer than two is nothing.
+std::vector<curve_wall_section_t> compute_curve_wall_sections(const primitive_recipe_t &recipe)
+{
+  std::vector<curve_wall_section_t> sections;
   if (recipe.curve_points.size() < 2)
-    return mesh;
+    return sections;
 
   const std::vector<linalg::vec3> samples = sample_catmull_rom(
       Span<const linalg::vec3>(recipe.curve_points.data(), recipe.curve_points.size()),
@@ -195,16 +206,9 @@ mesh_geometry_t build_curve_wall(const primitive_recipe_t &recipe)
   const float half_width = recipe.curve_width * 0.5f;
 
   std::optional<linalg::vec3> last_kept;
-  size_t sections = 0;
   for (size_t i = 0; i < samples.size(); ++i)
   {
     const linalg::vec3 &at = samples[i];
-    if (last_kept)
-    {
-      const linalg::vec3 advance{at.x - last_kept->x, 0.f, at.z - last_kept->z};
-      if (linalg::length(advance) < CURVE_MIN_HORIZONTAL_ADVANCE)
-        continue;
-    }
     const linalg::vec3 &previous = samples[i == 0 ? 0 : i - 1];
     const linalg::vec3 &next = samples[i + 1 < samples.size() ? i + 1 : i];
     const linalg::vec3 direction = linalg::normalize(next - previous);
@@ -212,35 +216,148 @@ mesh_geometry_t build_curve_wall(const primitive_recipe_t &recipe)
     if (linalg::length_squared(side) < 1e-6f)
       side = linalg::cross(WORLD_UP, WORLD_X);
     side = linalg::normalize(side);
+    const linalg::vec3 left = at - side * half_width;
+    const linalg::vec3 right = at + side * half_width;
 
-    mesh.vertices.push_back(at - side * half_width);
-    mesh.vertices.push_back(at + side * half_width);
-    mesh.vertices.push_back(at - side * half_width + WORLD_UP * recipe.curve_height);
-    mesh.vertices.push_back(at + side * half_width + WORLD_UP * recipe.curve_height);
+    if (last_kept)
+    {
+      const curve_wall_section_t &last = sections.back();
+      const linalg::vec3 advance{at.x - last_kept->x, 0.f, at.z - last_kept->z};
+      if (linalg::length(advance) < CURVE_MIN_HORIZONTAL_ADVANCE)
+        continue;
+      const auto flat = [](const linalg::vec3 &point) { return linalg::vec2{point.x, point.z}; };
+      if (linalg::dot(left - last.left, advance) <= 0.f ||
+          linalg::dot(right - last.right, advance) <= 0.f ||
+          segments_cross(flat(last.left), flat(last.right), flat(left), flat(right)) ||
+          segments_cross(flat(last.left), flat(left), flat(last.right), flat(right)))
+        continue;
+    }
+
+    sections.push_back({left, right});
     last_kept = at;
-    ++sections;
   }
-  if (sections < 2)
-  {
-    mesh.vertices.clear();
+  if (sections.size() < 2)
+    sections.clear();
+  return sections;
+}
+
+void push_curve_wall_section_vertices(mesh_geometry_t &mesh, const curve_wall_section_t &section,
+                                      float height)
+{
+  mesh.vertices.push_back(section.left);
+  mesh.vertices.push_back(section.right);
+  mesh.vertices.push_back(section.left + WORLD_UP * height);
+  mesh.vertices.push_back(section.right + WORLD_UP * height);
+}
+
+// The six faces between the section whose first vertex is `b` and the one
+// whose first vertex is `n`, bottom and top split when the climb twists them.
+void push_curve_wall_section_faces(mesh_geometry_t &mesh, uint32_t b, uint32_t n)
+{
+  push_quad_or_triangles(mesh, {b, b + 1, n + 1, n});
+  push_quad_or_triangles(mesh, {b + 2, n + 2, n + 3, b + 3});
+  mesh.faces.push_back({{b, n, n + 2, b + 2}, {}});
+  smooth_face(mesh, mesh.faces.size() - 1);
+  mesh.faces.push_back({{b + 1, b + 3, n + 3, n + 1}, {}});
+  smooth_face(mesh, mesh.faces.size() - 1);
+}
+
+mesh_geometry_t build_curve_wall(const primitive_recipe_t &recipe)
+{
+  mesh_geometry_t mesh;
+  const std::vector<curve_wall_section_t> sections = compute_curve_wall_sections(recipe);
+  if (sections.empty())
     return mesh;
-  }
+
+  for (const curve_wall_section_t &section : sections)
+    push_curve_wall_section_vertices(mesh, section, recipe.curve_height);
 
   mesh.faces.push_back({{0, 2, 3, 1}, {}});
-  for (uint32_t section = 0; section + 1 < sections; ++section)
-  {
-    const uint32_t b = section * 4;
-    const uint32_t n = b + 4;
-    push_quad_or_triangles(mesh, {b, b + 1, n + 1, n});
-    push_quad_or_triangles(mesh, {b + 2, n + 2, n + 3, b + 3});
-    mesh.faces.push_back({{b, n, n + 2, b + 2}, {}});
-    smooth_face(mesh, mesh.faces.size() - 1);
-    mesh.faces.push_back({{b + 1, b + 3, n + 3, n + 1}, {}});
-    smooth_face(mesh, mesh.faces.size() - 1);
-  }
-  const uint32_t e = (uint32_t)(sections - 1) * 4;
+  for (uint32_t section = 0; section + 1 < sections.size(); ++section)
+    push_curve_wall_section_faces(mesh, section * 4, section * 4 + 4);
+  const uint32_t e = (uint32_t)(sections.size() - 1) * 4;
   mesh.faces.push_back({{e, e + 1, e + 3, e + 2}, {}});
   return mesh;
+}
+
+// The prism over `bottom`, a ring in the order of a section's bottom quad
+// (left, right, next right, next left), wound as the loft winds its faces: the
+// ring is the bottom, its lift the top, one vertical quad per edge.
+mesh_geometry_t build_prism_over_bottom_ring(Span<const linalg::vec3> bottom, float height)
+{
+  mesh_geometry_t prism;
+  const uint32_t count = (uint32_t)bottom.count;
+  for (uint32_t i = 0; i < count; ++i)
+    prism.vertices.push_back(bottom[i]);
+  for (uint32_t i = 0; i < count; ++i)
+    prism.vertices.push_back(bottom[i] + WORLD_UP * height);
+
+  std::vector<uint32_t> bottom_ring;
+  std::vector<uint32_t> top_ring{count};
+  for (uint32_t i = 0; i < count; ++i)
+  {
+    bottom_ring.push_back(i);
+    if (i > 0)
+      top_ring.push_back(count + count - i);
+  }
+  push_quad_or_triangles(prism, std::move(bottom_ring));
+  push_quad_or_triangles(prism, std::move(top_ring));
+  for (uint32_t i = 0; i < count; ++i)
+  {
+    const uint32_t j = (i + 1) % count;
+    prism.faces.push_back({{i, count + i, count + j, j}, {}});
+  }
+  return prism;
+}
+
+// One convex prism per section, or two when a bend folds the section's quad
+// into a dart: a simple quad has at most one reflex corner, and the diagonal
+// from it makes two convex triangles.
+void append_curve_wall_section_solids(std::vector<mesh_geometry_t> &solids,
+                                      const curve_wall_section_t &from,
+                                      const curve_wall_section_t &to, float height)
+{
+  const linalg::vec3 quad[4] = {from.left, from.right, to.right, to.left};
+  int negative_turns = 0;
+  bool turn_is_negative[4];
+  for (size_t i = 0; i < 4; ++i)
+  {
+    const linalg::vec3 &previous = quad[(i + 3) % 4];
+    const linalg::vec3 &corner = quad[i];
+    const linalg::vec3 &next = quad[(i + 1) % 4];
+    const float turn = (corner.x - previous.x) * (next.z - corner.z) -
+                       (corner.z - previous.z) * (next.x - corner.x);
+    turn_is_negative[i] = turn < 0.f;
+    negative_turns += turn_is_negative[i];
+  }
+  if (negative_turns != 1 && negative_turns != 3)
+  {
+    solids.push_back(build_prism_over_bottom_ring(Span<const linalg::vec3>(quad, 4), height));
+    return;
+  }
+
+  size_t reflex = 0;
+  for (size_t i = 0; i < 4; ++i)
+    if (turn_is_negative[i] == (negative_turns == 1))
+      reflex = i;
+  const linalg::vec3 first[3] = {quad[reflex], quad[(reflex + 1) % 4], quad[(reflex + 2) % 4]};
+  const linalg::vec3 second[3] = {quad[reflex], quad[(reflex + 2) % 4], quad[(reflex + 3) % 4]};
+  solids.push_back(build_prism_over_bottom_ring(Span<const linalg::vec3>(first, 3), height));
+  solids.push_back(build_prism_over_bottom_ring(Span<const linalg::vec3>(second, 3), height));
+}
+
+std::vector<mesh_geometry_t> build_curve_wall_section_solids(const primitive_recipe_t &recipe)
+{
+  std::vector<mesh_geometry_t> solids;
+  const std::vector<curve_wall_section_t> sections = compute_curve_wall_sections(recipe);
+  if (sections.empty())
+    return solids;
+
+  solids.reserve(sections.size() - 1);
+  for (size_t section = 0; section + 1 < sections.size(); ++section)
+    append_curve_wall_section_solids(solids, sections[section], sections[section + 1],
+                                     recipe.curve_height);
+  return solids;
 }
 
 } // namespace
@@ -274,6 +391,20 @@ mesh_geometry_t make_primitive_mesh(const primitive_recipe_t &unclamped)
     fatal_error("make_primitive_mesh: a {} built {}", to_string(recipe.kind),
                 format_mesh_defect(*defect));
   return mesh;
+}
+
+std::vector<mesh_geometry_t> make_curve_wall_section_solids(const primitive_recipe_t &unclamped)
+{
+  primitive_recipe_t recipe = unclamped;
+  clamp_primitive_recipe(recipe);
+  if (recipe.kind != primitive_kind_t::Curve)
+    fatal_error("make_curve_wall_section_solids: a {} has no sections", to_string(recipe.kind));
+
+  std::vector<mesh_geometry_t> solids = build_curve_wall_section_solids(recipe);
+  for (mesh_geometry_t &solid : solids)
+    for (linalg::vec3 &vertex : solid.vertices)
+      vertex = turn_about_up(vertex, recipe.quarter_turns);
+  return solids;
 }
 
 void regenerate_mesh_from_recipe(mesh_geometry_t &mesh, const primitive_recipe_t &recipe)

@@ -1,7 +1,7 @@
 #include "mesh_boolean.hpp"
 
 #include "log.hpp"
-#include "map/brush/brush.hpp"
+#include "geometry/convex_hull.hpp"
 #include "mesh_decomposition.hpp"
 #include "mesh_split.hpp"
 
@@ -52,8 +52,8 @@ mesh_side_t classify_mesh_against_plane(const mesh_geometry_t &mesh, const Plane
   for (const linalg::vec3 &vertex : mesh.vertices)
   {
     const float distance = linalg::dot(plane.normal, vertex - plane.point);
-    any_front |= distance > BRUSH_COPLANAR_EPSILON;
-    any_back |= distance < -BRUSH_COPLANAR_EPSILON;
+    any_front |= distance > COPLANAR_EPSILON;
+    any_back |= distance < -COPLANAR_EPSILON;
   }
   if (any_front && any_back)
     return mesh_side_t::Crossing;
@@ -206,7 +206,7 @@ mesh_subtraction_t sew_fragments(const mesh_geometry_t &wall, Span<const tagged_
   std::vector<linalg::vec3> &vertices = out.result.vertices;
   const auto intern = [&vertices](const linalg::vec3 &point) -> uint32_t {
     for (uint32_t index = 0; index < (uint32_t)vertices.size(); ++index)
-      if (linalg::length(vertices[index] - point) <= BRUSH_WELD_EPSILON)
+      if (linalg::length(vertices[index] - point) <= GEOMETRY_WELD_EPSILON)
         return index;
     vertices.push_back(point);
     return (uint32_t)vertices.size() - 1;
@@ -405,7 +405,7 @@ void split_mesh_edges_at_collinear_vertices(mesh_geometry_t &mesh)
       const linalg::vec3 &start = mesh.vertices[a];
       const linalg::vec3 along = mesh.vertices[b] - start;
       const float length = linalg::length(along);
-      if (length <= BRUSH_WELD_EPSILON)
+      if (length <= GEOMETRY_WELD_EPSILON)
         continue;
 
       between.clear();
@@ -416,9 +416,9 @@ void split_mesh_edges_at_collinear_vertices(mesh_geometry_t &mesh)
           continue;
         const linalg::vec3 offset = mesh.vertices[candidate] - start;
         const float t = linalg::dot(offset, along) / (length * length);
-        if (t * length <= BRUSH_WELD_EPSILON || (1.f - t) * length <= BRUSH_WELD_EPSILON)
+        if (t * length <= GEOMETRY_WELD_EPSILON || (1.f - t) * length <= GEOMETRY_WELD_EPSILON)
           continue;
-        if (linalg::length(offset - along * t) > BRUSH_WELD_EPSILON)
+        if (linalg::length(offset - along * t) > GEOMETRY_WELD_EPSILON)
           continue;
         between.push_back({t, candidate});
       }

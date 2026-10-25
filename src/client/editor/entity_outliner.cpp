@@ -177,8 +177,7 @@ void draw_object_row(const shared::map_t& map, entity_visibility_t& visibility, 
     ImGui::PushStyleColor(ImGuiCol_Text, HIDDEN_TEXT_COLOR);
   char label[160];
   if (geometry != nullptr)
-    std::snprintf(label, sizeof(label), "%s  (uid %u)",
-                  shared::get_kind_name(shared::get_kind(geometry->value)), uid);
+    std::snprintf(label, sizeof(label), "mesh  (uid %u)", uid);
   else
     std::snprintf(label, sizeof(label), "%s", object_label(map, uid).c_str());
   if (ImGui::Selectable(label, selected.contains(uid)))
@@ -377,8 +376,7 @@ std::string object_label(const shared::map_t& map, shared::entity_uid_t uid)
     return std::format("{}  {}", entities::entity_info(entry->entity->type).classname,
                        row_label(*entry->entity, uid));
   if (const shared::map_geometry_t* entry = map.find_geometry_by_uid(uid))
-    return std::format("{}  (uid {})", shared::get_kind_name(shared::get_kind(entry->value)),
-                       uid);
+    return std::format("mesh  (uid {})", uid);
   return std::format("uid {} (gone)", uid);
 }
 

@@ -2,7 +2,7 @@
 
 #include "assets/asset.hpp"
 #include "box_face.hpp"
-#include "brush/brush.hpp"
+#include "geometry/convex_hull.hpp"
 #include "entity_uid.hpp"
 #include "face_surface.hpp"
 #include "lighting/lightmap.hpp"
@@ -16,22 +16,20 @@
 #include <map>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 // ============================================================================
 // Map-owned geometry.
 //
-// Meshes and brushes are plain C++ value types owned by map_t, NOT
-// entities. They are never networked, so they don't pay for the schema system's
+// A mesh is a plain C++ value type owned by map_t, NOT an
+// entity. They are never networked, so they don't pay for the schema system's
 // blittable / fixed-size / memcmp constraints — which is why a face's
 // subdivision grid can be a std::vector instead of the old
 // schema_array_t<float32, 3267>, a hard cap of subdivision level 32 that was the
 // wire format's limitation leaking into what a level could express.
 //
-// One kind, the mesh (geometry_def.md §11); the brush stays an alternative
-// until the last increment of §11.8 removes it. A referenced art asset is a
-// mesh with an asset source (map_geometry_asset.hpp).
+// One kind, the mesh (geometry_def.md §11). A referenced art asset is a mesh
+// with an asset source (map_geometry_asset.hpp).
 //
 // Everything here copies. That is the point: a whole-value snapshot is the
 // editor's undo primitive for geometry (see transaction_system's geometry
@@ -42,130 +40,35 @@
 namespace shared
 {
 
-// A solid, stored as the point set whose hull it is. See brush.hpp for why the
-// vertices are canonical and the planes derived, and for the three rules that
-// keep off-grid vertices representable.
-//
-// A brush has no `position` member: its position IS
-// its points, and a second copy of that would be a second thing to keep in step.
-// get_position/set_position work off the bounds centre.
-struct brush_geometry_t
-{
-  // A SET, not a sequence: the order these are in carries no meaning, and
-  // geometry_values_equal compares them as a set for that reason. The file
-  // writer sorts them so one shape has one spelling on disk, which is a
-  // property of the FILE rather than of the value.
-  //
-  // Defaults to a 128-unit cube so a default-constructed brush is a valid solid
-  // rather than a degenerate one nothing downstream can hull.
-  //
-  // POINTS, not vertices, and the distinction is the one that keeps this
-  // separable from mesh_asset_t::vertices: a point is a position, a vertex is a
-  // position plus its attributes. A box corner is ONE point shared by three
-  // faces, and three mesh vertices -- the faces disagree about its normal, its
-  // material UV and its lightmap chart, so nothing here can carry those.
-  std::vector<linalg::vec3> hull_points =
-      make_box_brush_points({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
-
-  // Keyed by PLANE, not positional: this is not parallel to the derived face
-  // list and does not have to be the same length as it. A face matching nothing
-  // here falls back to `surface` below. Empty is the whole "this brush is
-  // untextured blockout" case, and is how every brush written before faces
-  // existed loads.
-  std::vector<face_surface_t> face_surfaces;
-
-  // The default a face inherits when no stored surface matches it, and the
-  // per-object properties that stay per-object: visibility and wireframe.
-  geometry_surface_t surface;
-
-  // The Geometry_Owner_Entity this brush is tied to, or null_entity_uid for plain world
-  // geometry. THE OBJECT NAMES ITS OWNER and nothing names the brush: Source
-  // nests the solids inside the entity block, we keep a flat geometry list with
-  // uids, so the pointer runs this way and N brushes per entity costs no array.
-  // The other direction is DERIVED -- game_session_t::owner_of, and an on-demand
-  // walk in the editor -- because both stored is two answers that can disagree.
-  // prediction_def.md ss4.2.
-  entity_uid_t owner_uid = null_entity_uid;
-
-  // The wall this brush is a hole in (a geometry uid), stored on the HOLE in the
-  // direction owner_uid runs; the solid is derived at bake. geometry_def.md Track H.
-  entity_uid_t subtracts_from_uid = null_entity_uid;
-};
-
-// An axis-aligned box, as the brush it now is. `box_geometry_t` was a spelling
-// of exactly this and is gone (geometry_def.md Track B): the eight corner points
-// hull to the same solid the position/half_extents pair described, and every
-// later face feature comes with them for free.
-//
-// Face surfaces are deliberately left EMPTY -- that is the "untextured blockout"
-// case find_face_surface already answers with the brush default, and it is what
-// every brush authored before faces existed looks like.
-brush_geometry_t make_box_brush(const linalg::vec3 &center,
-                                const linalg::vec3 &half_extents);
-
-// Whether this point set is the eight corners of a world-axis-aligned box, i.e.
-// whether the brush is one make_box_brush could have produced. The selection
-// highlight asks so it can keep drawing the measured face grid on one.
-bool brush_is_axis_aligned_box(Span<const linalg::vec3> vertices);
-
-// One geometry object. `std::variant` rather than a tagged struct so a
-// whole-value copy is the snapshot, and so adding a kind is a compile error at
-// every site that switches over it.
-// Mesh is the second alternative for the length of geometry_def.md §11.8; the
-// last increment deletes the brush.
-using geometry_value_t = std::variant<brush_geometry_t, mesh_geometry_t>;
-
-// Kind tags, kept in lockstep with geometry_value_t's alternatives so the
-// variant index and this enum are interchangeable.
-enum class geometry_kind_t : uint8_t
-{
-  Brush = 0,
-  Mesh = 1,
-};
-
-inline constexpr size_t geometry_kind_count = 2;
-
-inline geometry_kind_t get_kind(const geometry_value_t &geometry)
-{
-  return static_cast<geometry_kind_t>(geometry.index());
-}
-
-// The keyword this kind is written under in a .source file, and the label the
-// editor shows. Same string for both on purpose — one name per kind.
-const char *get_kind_name(geometry_kind_t kind);
-
-// Construct a default-valued geometry of the given kind.
-geometry_value_t make_default_geometry(geometry_kind_t kind);
+// The keyword a mesh row is written under in a .source file (map_format_def.md §4).
+inline constexpr const char *MESH_ROW_KEYWORD = "mesh";
 
 // --- The uniform editing seam ------------------------------------------------
 //
 // Every tool needs exactly four things from an object it can edit: where it is,
-// how big it is, whether a ray hits it, and a snapshot it can restore. Kinds
-// differ only behind these calls. (Snapshot/restore needs no function — the
-// value copies.)
+// how big it is, whether a ray hits it, and a snapshot it can restore.
+// (Snapshot/restore needs no function — the value copies.)
 
-linalg::vec3 get_position(const geometry_value_t &geometry);
-void set_position(geometry_value_t &geometry, const linalg::vec3 &position);
+linalg::vec3 get_position(const mesh_geometry_t &geometry);
+void set_position(mesh_geometry_t &geometry, const linalg::vec3 &position);
 
-// The entity this object is tied to, across both kinds -- null_entity_uid for
-// plain world geometry. One pair of accessors rather than a std::visit at every
-// site, for the same reason get_position is one.
-[[nodiscard]] entity_uid_t get_owner_uid(const geometry_value_t &geometry);
-void set_owner_uid(geometry_value_t &geometry, entity_uid_t owner_uid);
+// The entity this object is tied to, null_entity_uid for plain world geometry.
+[[nodiscard]] entity_uid_t get_owner_uid(const mesh_geometry_t &geometry);
+void set_owner_uid(mesh_geometry_t &geometry, entity_uid_t owner_uid);
 
 // Moves an object by a delta rather than to a place. set_position would do it
 // as (target - current) around a derived centre, which costs a float of drift
 // per hop -- and a piece is rebased twice, once at the copy and once at
-// every stamp. Texture lock rides along, since translate_brush carries it.
-void translate_geometry(geometry_value_t &geometry, const linalg::vec3 &delta);
+// every stamp.
+void translate_geometry(mesh_geometry_t &geometry, const linalg::vec3 &delta);
 
 // Half-extents of the object's world bound. For an asset-sourced mesh this is
 // derived from the (scaled) asset bounds, falling back to a default box if the
 // asset does not resolve.
-linalg::vec3 get_half_extents(const geometry_value_t &geometry);
+linalg::vec3 get_half_extents(const mesh_geometry_t &geometry);
 
 // World-space AABB used for picking and as the BVH leaf bound.
-aabb_bounds_t get_bounds(const geometry_value_t &geometry);
+aabb_bounds_t get_bounds(const mesh_geometry_t &geometry);
 
 // One convex collision solid: the shape of a BVH_Primitive, minus the id.
 // Planes face outward and face_polygons[i] is the polygon of planes[i].
@@ -177,25 +80,16 @@ struct collision_piece_t
 };
 
 // The collision solids of one object. An asset-sourced mesh collides as its
-// oriented box and yields exactly one, or none with `collides` off; a brush collides as its real
-// DISPLACED surface, is DECOMPOSED, and yields N, all of which the caller
-// registers under ONE Collision_Id — see geometry_def.md §5 and
-// convex_decomposition.hpp.
+// oriented box and yields exactly one, or none with `collides` off; an inline
+// mesh is DECOMPOSED into convex pieces and yields N, all of which the caller
+// registers under ONE Collision_Id — see geometry_def.md §5 and §11.
 //
 // The planes and the polygons come back together because they are one answer.
-// As two calls they were free to disagree, and did: a brush that failed to hull
-// logged from one of them and returned an empty list from the other.
 //
-// `uid` is only ever what a failure names. A brush that cannot be decomposed
-// gets a loud error and NO pieces, never its hull as a fallback — a hull is
-// bigger than the brush it came from, which is a wall the player cannot see.
-//
-// `map_geometry` is the list the brush sits in, for the seam rule; empty for
-// anything that sits in no map, a spawned platform or a test.
-struct map_geometry_t;
-std::vector<collision_piece_t> get_collision_pieces(const geometry_value_t &geometry,
-                                                    entity_uid_t uid,
-                                                    Span<const map_geometry_t> map_geometry);
+// `uid` is only ever what a failure names. A mesh that cannot be decomposed
+// gets a loud error and NO pieces, never a fallback bigger than itself.
+std::vector<collision_piece_t> get_collision_pieces(const mesh_geometry_t &geometry,
+                                                    entity_uid_t uid);
 
 collision_piece_t piece_from_aabb(const aabb_t &aabb);
 
@@ -205,12 +99,12 @@ collision_piece_t piece_from_oriented_box(const oriented_box_t &box);
 // How an object stops light, which is the ONE question that partitions the map
 // into the bake's three occluder sets. Both the CPU's BVHs and the GPU's
 // acceleration structures ask it, so the two cannot disagree about which set a
-// brush is in.
+// mesh is in.
 //
 // The unit is the whole OBJECT, not the face: the CPU occluder BVH holds convex
-// pieces, and a piece is not a face. So a brush is only as see-through as its
-// LEAST see-through face -- a solid brush with one glass face still casts a
-// solid shadow, and a window is its own thin brush.
+// pieces, and a piece is not a face. So a mesh is only as see-through as its
+// LEAST see-through face -- a solid with one glass face still casts a solid
+// shadow, and a window is its own thin mesh.
 enum class light_occlusion_t : uint8_t
 {
   // Stops every ray. Everything authored before transparency.
@@ -226,25 +120,25 @@ enum class light_occlusion_t : uint8_t
   None,
 };
 
-[[nodiscard]] light_occlusion_t compute_light_occlusion(const geometry_value_t &geometry,
+[[nodiscard]] light_occlusion_t compute_light_occlusion(const mesh_geometry_t &geometry,
                                                    Span<const std::string> materials);
 
 // The first of the three, which is the set a shadow ray is STOPPED by with no
 // texel read at all.
-[[nodiscard]] inline bool geometry_occludes_light(const geometry_value_t &geometry,
+[[nodiscard]] inline bool geometry_occludes_light(const mesh_geometry_t &geometry,
                                                   Span<const std::string> materials)
 {
   return compute_light_occlusion(geometry, materials) == light_occlusion_t::Opaque;
 }
 
-geometry_surface_t &get_surface(geometry_value_t &geometry);
-const geometry_surface_t &get_surface(const geometry_value_t &geometry);
+geometry_surface_t &get_surface(mesh_geometry_t &geometry);
+const geometry_surface_t &get_surface(const mesh_geometry_t &geometry);
 
 // Exact value equality, for "did this edit actually change anything?".
 // Deliberately bit-exact on floats: the whole point of the value-swap undo
 // flavor is that it does NOT lose a change too small to survive being formatted
 // to text, which is the bug the entity flavor still has.
-bool geometry_values_equal(const geometry_value_t &lhs, const geometry_value_t &rhs);
+bool geometry_values_equal(const mesh_geometry_t &lhs, const mesh_geometry_t &rhs);
 
 // Resolve a map material -- an entry of map_t::materials -- to the four maps the
 // renderer binds. A PBR folder resolves to all four; a single texture file
@@ -259,86 +153,12 @@ assets::material_maps_t resolve_material_maps(const std::string &material_path);
 linalg::vec2 face_uv_at(const face_uv_channel_t &uv, const linalg::vec3 &position,
                         const linalg::vec3 &normal);
 
-// --- Face identity -----------------------------------------------------------
-//
-// A face's identity is its PLANE. Faces are derived from the canonical vertex
-// set and rebuilt on every edit, so an index means nothing across one -- these
-// two are what make an extruded face keep its source face's material and a
-// dragged vertex not shuffle the materials of the faces it moved.
-
-// The stored surface whose plane is nearest `plane`, by normal then by distance,
-// or nullptr if the brush stores none close enough. Pure: the draw path and the
-// hull rebuild ask the same question, so a brush whose surfaces were never
-// synced still draws with the right materials.
-const face_surface_t *find_face_surface(const brush_geometry_t &brush, const Plane &plane);
-
-// Move every vertex by `delta`, and carry the face surfaces with it: the keys
-// slide along their own normals, and the UV shifts move the opposite way so the
-// texture stays on the face.
-//
-// That second half is TEXTURE LOCK, and it is not optional. A face's UV axes are
-// WORLD-space, so without it every drag slides the texture across the surface
-// and an author learns to fear the move tool. It lives here rather than at the
-// call sites because there are several of them (the gizmo, the arrow nudge,
-// paste) and a translation that forgot is indistinguishable from one that meant
-// to slide the texture.
-void translate_brush(brush_geometry_t &brush, const linalg::vec3 &delta);
-
-// The stored surface for this face, to WRITE through. Populates the brush's face
-// list from its hull first if it has none yet -- which is every brush authored
-// before faces existed -- and appends an entry keyed to `plane` if the match
-// still finds nothing. Never null, so an editor assigning a material has no
-// failure case to handle.
-face_surface_t &face_surface_for(brush_geometry_t &brush, const Plane &plane);
-
-// Rewrite `face_surfaces` against the brush's CURRENT hull: one entry per derived
-// face, each taking find_face_surface's answer (or the brush default), with its
-// key rewritten to the derived plane. Call after any edit to `vertices`.
-//
-// Edits that KNOW what they did -- extrude, bevel, split -- should write the keys
-// themselves instead; the nearest-plane match is the fallback for vertex drags,
-// where planes move continuously and the match is stable.
-void sync_face_surfaces(brush_geometry_t &brush);
-
-// The displaced grid of every face of one brush, indexed by hull face. An entry
-// is EMPTY for a face that carries no grid; otherwise it is
+// The displaced grid of every face of one solid, indexed by face. An entry is
+// EMPTY for a face that carries no grid; otherwise it is
 // face_grid_vertex_count() world positions, row-major.
-//
-// Vertices on a face BOUNDARY are welded across the faces that share them --
-// grouped by their undisplaced position and given the average of the offsets
-// written for them -- so two adjacent subdivided faces meet exactly rather than
-// nearly. That is what "crack-free by construction, no sew step" means here: the
-// weld is a property of reading the grid, not an authoring pass to remember.
-//
-// The weld happens only across an edge whose other face is subdivided to the
-// SAME level. Every other boundary vertex, and every corner, is PINNED to the
-// hull edge whatever offset was written for it: a sculpted face next to a flat
-// one keeps its outline, and two different levels pin rather than leave a
-// T-junction. geometry_def.md Track F.
-//
-// The face across an edge is the brush's own neighbour face; when that one is
-// FLAT, a coplanar face of another brush with the same edge stands in for it,
-// so two floor tiles subdivided alike weld their seam. That is the only thing
-// the neighbourhood is asked.
-struct brush_neighbourhood_t
-{
-  Span<const map_geometry_t> geometry;
-  entity_uid_t self = null_entity_uid;
-};
-
-struct brush_face_grids_t
+struct face_grids_t
 {
   std::vector<std::vector<linalg::vec3>> grid_vertices;
-
-  // The blend weights of the same vertices, welded the same way and for the
-  // same reason: a boundary vertex painted from one face and not from its
-  // neighbour would otherwise show the seam the position weld exists to hide.
-  // Parallel to grid_vertices, entry for entry.
-  std::vector<std::vector<vertex_blend_t>> grid_weights;
-
-  // Which of the same vertices are pinned to the hull edge. A writer skips
-  // them, so a stored offset is always one the read shows. Parallel, entry for entry.
-  std::vector<std::vector<bool>> grid_pinned;
 
   // The four corners each grid is anchored to, c00 first. Parallel, entry for entry.
   std::vector<face_grid_t> grid_corners;
@@ -346,130 +166,40 @@ struct brush_face_grids_t
   bool any = false;
 };
 
-brush_face_grids_t build_brush_face_grids(const brush_geometry_t &brush,
-                                          const brush_polyhedron_t &hull,
-                                          brush_neighbourhood_t neighbourhood);
-
-// The exact collision of a CONVEX hull with ONE subdivided face: a column per
+// The exact collision of a CONVEX solid with ONE subdivided face: a column per
 // grid triangle plus a piece per face edge beyond the grid's shadow. Nothing
 // with no grid or with two, and the caller falls back. The grid is read as its
-// corners anchor it (`grid_corners`), so a brush grid and a mesh grid both fit.
+// corners anchor it (`grid_corners`).
 [[nodiscard]] std::optional<std::vector<collision_piece_t>>
-try_build_subdivided_face_columns(const brush_polyhedron_t &hull, const brush_face_grids_t &grids);
+try_build_subdivided_face_columns(const convex_polyhedron_t &hull, const face_grids_t &grids);
 
 // One face's grid as the triangles and smooth normals it DRAWS with, appended to `mesh`; the lightmap bake samples the same ones.
-// A brush grid is anchored to brush_face_grid_tangents and its winding is read off that basis; a mesh grid is anchored to the ring and always winds outward.
-void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> &grid,
-                    const linalg::vec3 &face_normal, const face_uv_channel_t &uv);
+// A mesh grid is anchored to the ring and always winds outward.
 void emit_face_grid(assets::mesh_asset_t &mesh, const std::vector<linalg::vec3> &grid,
                     const linalg::vec3 &face_normal, const face_uv_channel_t &uv,
                     bool grid_winds_outward);
 
-// Move every grid vertex whose CURRENT displaced position is one of `points` by
-// `delta`, and answer how many moved. The editor's grid drag, and the reason it
-// is here rather than in the tool: a boundary vertex belongs to every face that
-// shares it, so writing one face's offsets and letting build_brush_face_grids
-// average would move the vertex a FRACTION of the drag. Writing all of them is
-// what makes the weld a no-op and the drag exact.
-//
-// Matched by position within BRUSH_WELD_EPSILON, the same way the brush-vertex
-// drag matches its own points. A pinned vertex is never written.
-size_t nudge_brush_grid_vertices(brush_geometry_t &brush, Span<const linalg::vec3> points,
-                                 const linalg::vec3 &delta, brush_neighbourhood_t neighbourhood);
-
-// Paint `layer` into every grid vertex within `radius` of `center`, by `amount`
-// at the centre falling smoothly to nothing at the rim, and answer how many
-// were touched. Here rather than in the tool for exactly nudge's reason: a
-// boundary vertex belongs to every face that shares it, so writing one face's
-// weights and letting the weld average would paint a FRACTION of the stroke.
-size_t paint_brush_grid_blend(brush_geometry_t &brush, const linalg::vec3 &center,
-                              float radius, float amount, int layer,
-                              brush_neighbourhood_t neighbourhood);
-
-// Push every grid vertex within `radius` of `center` by `delta`, full at the
-// centre falling to nothing at the rim, and answer how many moved. The RADIAL
-// half of nudge_brush_grid_vertices: that one moves a named set exactly (a
-// handle drag), this one moves whatever the stroke covers (a sculpt brush).
-//
-// The weld comes out a no-op rather than a half-move for paint's reason: every
-// face sharing a boundary vertex reads the same welded position, so every copy
-// takes the same falloff and the same delta. A pinned vertex is never written.
-//
-// `delta` is a world vector rather than a scalar because the DIRECTION is the
-// caller's: a stroke pushes along the face it landed on, never along the hill
-// it is standing on, or a crater curls in over its own rim.
-size_t sculpt_brush_grid_vertices(brush_geometry_t &brush, const linalg::vec3 &center,
-                                  float radius, const linalg::vec3 &delta,
-                                  brush_neighbourhood_t neighbourhood);
-
-// Where a ray meets the brush's DISPLACED surface, and which hull face it hit.
-// The paint cursor needs the sculpted surface rather than the face plane: on a
-// sculpted face the two are far apart, and a radius measured from the plane
-// paints through the hill it is standing on.
-struct brush_grid_hit_t
-{
-  linalg::vec3 position{0, 0, 0};
-  // The DISPLACED surface's normal there, not the face plane's -- it is what a
-  // cursor drawn on a sculpted face has to lie against.
-  linalg::vec3 normal{0, 0, 0};
-  size_t       face = 0;
-  float        distance = 0.f;
-};
-
-[[nodiscard]] std::optional<brush_grid_hit_t>
-try_pick_brush_grid(const brush_geometry_t &brush, const linalg::vec3 &ray_origin,
-                    const linalg::vec3 &ray_direction, brush_neighbourhood_t neighbourhood);
-
-// The brush's REAL surface: its hull, with every subdivided face replaced by the
-// triangles of its displaced grid. A brush with no subdivided face comes back as
-// its hull unchanged, which is the fast path and every brush that predates
-// Track D.
-//
-// The result is a closed polyhedron and is very often NOT convex -- that is the
-// point, and convex_decomposition.hpp is what the collision path puts it
-// through. Two triangles per grid cell rather than one quad, because an offset
-// grid is a bilinear patch and a bilinear patch has no plane.
-[[nodiscard]] std::optional<brush_polyhedron_t>
-try_build_displaced_polyhedron(const brush_geometry_t &brush, brush_neighbourhood_t neighbourhood);
-
-// Hull the brush's points, then triangulate the faces -- with every subdivided
-// face emitted as its displaced grid instead, two triangles per cell and one
-// averaged normal per grid vertex. An overload rather than a second name because
-// it IS generate_brush_mesh, just entered one level up. A brush whose points do
-// not hull logs and returns an empty mesh -- it draws as nothing, which is what
-// a broken solid should look like rather than silently becoming a box.
-//
-// `materials` is map_t::materials -- the face surfaces hold indices into it, and
-// this is where an index becomes a path the renderer can resolve. Faces are
-// grouped into one submesh per distinct material, so a brush with one material
-// costs one draw exactly as it did before faces existed. A face with
-// emits_geometry false contributes no triangles. A brush has no lightmap: a
-// chart is a stored face's (geometry_def.md 11.8 increment 7), and no loaded
-// map holds a brush.
-assets::mesh_asset_t generate_brush_mesh(const brush_geometry_t &brush,
-                                         Span<const std::string> materials,
-                                         brush_neighbourhood_t neighbourhood);
-
 // --- Text serialization ------------------------------------------------------
 //
-// Handwritten, one function per kind, keys emitted in declaration order so the
-// on-disk form is git-diffable. See map.cpp for the file grammar; these two
-// own the inside of a geometry block only.
+// Handwritten, keys emitted in declaration order so the on-disk form is
+// git-diffable. See map.cpp for the file grammar; these two own the inside of
+// a geometry block only.
 
 // Emit `geometry` as its block keyword plus declaration-ordered key/value pairs.
 // `material_remap` maps an old material index to the one being written, for
 // save_map's drop-and-remap pass over map_t::materials. Empty means identity.
-void serialize_geometry(const geometry_value_t &geometry,
+void serialize_geometry(const mesh_geometry_t &geometry,
                         Span<const uint16_t> material_remap,
                         std::string &out_keyword,
                         std::vector<std::pair<std::string, std::string>> &out_properties,
                         std::vector<map_block_out_t> &out_children);
 
-// Parse a geometry block. `keyword` selects the kind; unknown keywords return
-// false (the caller reports it). Missing keys keep their default.
-bool parse_geometry(const std::string &keyword,
-                    const std::map<std::string, std::string> &properties,
-                    Span<const map_block_t> children,
-                    geometry_value_t &out_geometry);
+// Parse a geometry block. A file holds `mesh` rows only; any other keyword, or a
+// row that does not read, is nothing (the caller reports it). Missing keys keep
+// their default.
+[[nodiscard]] std::optional<mesh_geometry_t>
+try_parse_geometry(const std::string &keyword,
+                   const std::map<std::string, std::string> &properties,
+                   Span<const map_block_t> children);
 
 } // namespace shared

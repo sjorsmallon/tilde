@@ -128,6 +128,21 @@ bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& o
                                         const vec3f& dir, float radius, float& out_t,
                                         float& out_t_exit, vec3f& out_normal);
 
+// A box sweep stops this far short of the face it hit, along the normal, so a hull
+// left where a sweep stopped is never exactly on a face; and a box within this of a
+// face it runs ALONGSIDE is on the face, not in it. A ray or sphere has no such
+// tolerance: a shadow ray along the edge two triangles share must be inside both.
+constexpr float hull_sweep_skin = 1.f / 32.f;
+
+// The same sweep for an axis-aligned box of `half_width` by `half_height` by
+// `half_width` about `origin`: each plane is grown by the box's support radius
+// along its normal instead of by one radius, so the centre ray against the grown
+// hull is the box against the real one for every face, edge and corner pairing.
+// The caller stops the hit `hull_sweep_skin` short (sweep_hull does).
+bool intersect_box_sweep_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                                     const vec3f& dir, float half_width, float half_height,
+                                     float& out_t, float& out_t_exit, vec3f& out_normal);
+
 // A brush that is switched off this tick, by INDEX -- see
 // shared/disabled_geometry.hpp for why the switch is a parameter and not a bit
 // in the tree. Non-zero means "not there": the primitive is skipped as if it had

@@ -38,13 +38,13 @@ static bool near(const vec3f& a, const vec3f& b, float tolerance = 1e-3f)
 }
 
 // One box brush per entry, at consecutive geometry indices.
-static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::geometry_value_t>& boxes)
+static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::mesh_geometry_t>& boxes)
 {
   std::vector<BVH_Input> inputs;
   for (uint32_t index = 0; index < boxes.size(); ++index)
   {
     for (const shared::collision_piece_t& piece :
-         shared::get_collision_pieces(boxes[index], index + 1, {}))
+         shared::get_collision_pieces(boxes[index], index + 1))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -60,7 +60,7 @@ static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared
 // A floor whose top face is y = 0, spanning 2048 either way.
 static Bounding_Volume_Hierarchy floor_world()
 {
-  return build_world_from_boxes({shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f})});
+  return build_world_from_boxes({shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f})});
 }
 
 static constexpr shared::entity_uid_t platform_uid = 77;
@@ -72,7 +72,7 @@ static shared::mover_t platform_resting_at(const vec3f& center, const vec3f& hal
   mover.pose_at_tick_start.position = center;
   mover.pose_at_tick_end.position   = center;
   mover.pieces =
-      shared::get_collision_pieces(shared::make_box_brush(center, half_extents), platform_uid, {});
+      shared::get_collision_pieces(shared::make_box_mesh(center, half_extents), platform_uid);
   mover.swept_bounds = mover.pieces.front().bounds;
   return mover;
 }
@@ -207,8 +207,8 @@ int main()
   printf("two solids: the nearer wins whatever the primitive order\n");
   {
     const Bounding_Volume_Hierarchy two = build_world_from_boxes({
-        shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
-        shared::make_box_brush({0.f, 40.f, 0.f}, {16.f, 8.f, 16.f}),
+        shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
+        shared::make_box_mesh({0.f, 40.f, 0.f}, {16.f, 8.f, 16.f}),
     });
     const std::optional<shared::projectile_hit_t> hit =
         shared::sweep_projectile(two, {}, {0.f, 200.f, 0.f}, {0.f, -100.f, 0.f}, 8.f);
@@ -269,7 +269,7 @@ int main()
     check(targets.size() == 1, "a damageable is a target by its volume");
 
     const Bounding_Volume_Hierarchy wall = build_world_from_boxes({
-        shared::make_box_brush({200.f, 64.f, 0.f}, {8.f, 64.f, 64.f}),
+        shared::make_box_mesh({200.f, 64.f, 0.f}, {8.f, 64.f, 64.f}),
     });
     const vec3f from{0.f, 8.f, 0.f};
     const vec3f to{300.f, 8.f, 0.f};

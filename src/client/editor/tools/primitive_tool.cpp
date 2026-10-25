@@ -46,7 +46,7 @@ const shared::mesh_geometry_t *try_recipe_mesh_by_uid(const shared::map_t &map,
 {
   const shared::map_geometry_t *entry = map.find_geometry_by_uid(uid);
   const shared::mesh_geometry_t *mesh =
-      entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+      entry ? &entry->value : nullptr;
   if (mesh == nullptr || !std::holds_alternative<shared::recipe_mesh_source_t>(mesh->source))
     return nullptr;
   return mesh;
@@ -326,7 +326,7 @@ void Primitive_Tool::end_curve_drag(editor_context_t &ctx)
   if (!ctx.map || !edited_uid)
     return;
   shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(*edited_uid);
-  shared::mesh_geometry_t *mesh = entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  shared::mesh_geometry_t *mesh = entry ? &entry->value : nullptr;
   if (mesh == nullptr)
     return;
 
@@ -349,7 +349,7 @@ void Primitive_Tool::end_curve_drag(editor_context_t &ctx)
 void Primitive_Tool::regenerate(editor_context_t &ctx)
 {
   shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(*edited_uid);
-  shared::mesh_geometry_t *mesh = entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  shared::mesh_geometry_t *mesh = entry ? &entry->value : nullptr;
   if (mesh == nullptr)
     return;
   shared::clamp_primitive_recipe(settings);

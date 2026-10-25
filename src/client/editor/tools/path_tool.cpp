@@ -579,7 +579,7 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
     for (shared::entity_uid_t uid : owned)
       if (const shared::map_geometry_t* geometry = ctx.map->find_geometry_by_uid(uid))
         draw_geometry(draws, geometry->value, uid, ctx.map->materials, ctx.map->lightmap,
-                      ctx.map->geometry, &moved_by);
+                      &moved_by);
     if (rest)
       draw_posed_box(draws, rest_frame, pose, *rest, colors::magenta);
 
@@ -631,17 +631,10 @@ void Path_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
   gizmo.draw(draws);
 }
 
-void Path_Tool::on_draw_ui(editor_context_t& ctx)
+void Path_Tool::on_draw_inspector(editor_context_t& ctx)
 {
   if (!ctx.map)
     return;
-
-  ImGui::SetNextWindowSize({340, 0}, ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Path"))
-  {
-    ImGui::End();
-    return;
-  }
 
   ImGui::TextDisabled("Click empty space: add a node after the active one,");
   ImGui::TextDisabled("  at its height. Shift: on the surface. Alt: no snap.");
@@ -756,8 +749,6 @@ void Path_Tool::on_draw_ui(editor_context_t& ctx)
     for (const shared::path_refusal_t& refusal : refusals)
       ImGui::TextColored({1.0f, 0.3f, 0.3f, 1.0f}, "%s", refusal.reason.c_str());
   }
-
-  ImGui::End();
 }
 
 std::optional<view_focus_t> Path_Tool::view_focus() const

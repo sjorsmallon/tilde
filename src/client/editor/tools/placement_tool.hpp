@@ -26,7 +26,7 @@ public:
 
   void on_draw_overlay(editor_context_t& ctx,
                        pass_builder_t &draws) override;
-  void on_draw_ui(editor_context_t& ctx) override;
+  void on_draw_inspector(editor_context_t& ctx) override;
 
   // Prefab files on disk, refreshed on demand rather than per frame: a
   // directory listing is a syscall per entry, and prefabs appear when the
@@ -45,7 +45,7 @@ private:
   int selected_type_index = 0;
 
   // one or the other is populated.
-  std::optional<shared::geometry_value_t> geometry_to_place;
+  std::optional<shared::mesh_geometry_t> geometry_to_place;
   std::shared_ptr<::entities::Entity> entity_to_place;
 };
 

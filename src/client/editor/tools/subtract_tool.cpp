@@ -49,7 +49,7 @@ const shared::mesh_geometry_t *try_find_mesh(const editor_context_t &ctx,
                                              shared::entity_uid_t uid)
 {
   const shared::map_geometry_t *entry = try_find_entry(ctx, uid);
-  return entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  return entry ? &entry->value : nullptr;
 }
 
 void draw_face_tinted(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
@@ -96,7 +96,7 @@ void Subtract_Tool::on_update(editor_context_t &ctx, const viewport_state_t &vie
     return;
 
   const shared::map_geometry_t *wall = try_find_entry(ctx, wall_uid);
-  if (!wall || !std::holds_alternative<shared::mesh_geometry_t>(wall->value))
+  if (!wall)
   {
     hud::set_announcement("subtract: the wall is gone");
     clear();
@@ -106,7 +106,7 @@ void Subtract_Tool::on_update(editor_context_t &ctx, const viewport_state_t &vie
     return;
 
   const shared::map_geometry_t *cutter = try_find_entry(ctx, cutter_uid);
-  if (!cutter || !std::holds_alternative<shared::mesh_geometry_t>(cutter->value))
+  if (!cutter)
   {
     hud::set_announcement("subtract: the cutter is gone");
     cutter_uid = shared::null_entity_uid;
@@ -132,9 +132,9 @@ void Subtract_Tool::rebuild_preview(editor_context_t &ctx)
   const shared::map_geometry_t *wall_entry = try_find_entry(ctx, wall_uid);
   const shared::map_geometry_t *cutter_entry = try_find_entry(ctx, cutter_uid);
   const shared::mesh_geometry_t *wall =
-      wall_entry ? std::get_if<shared::mesh_geometry_t>(&wall_entry->value) : nullptr;
+      wall_entry ? &wall_entry->value : nullptr;
   const shared::mesh_geometry_t *cutter =
-      cutter_entry ? std::get_if<shared::mesh_geometry_t>(&cutter_entry->value) : nullptr;
+      cutter_entry ? &cutter_entry->value : nullptr;
   if (!wall || !cutter)
     return;
   previewed_wall = wall_entry->value;
@@ -251,8 +251,8 @@ void Subtract_Tool::commit(editor_context_t &ctx)
 
   transaction_t transaction;
   std::vector<shared::map_group_t> groups_before = ctx.map->groups;
-  const shared::geometry_value_t removed_wall = wall_entry->value;
-  const shared::geometry_value_t removed_cutter = cutter_entry->value;
+  const shared::mesh_geometry_t removed_wall = wall_entry->value;
+  const shared::mesh_geometry_t removed_cutter = cutter_entry->value;
   ctx.map->remove_geometry(wall_uid);
   ctx.map->remove_geometry(cutter_uid);
   transaction.add_geometry_removed(wall_uid, removed_wall);
@@ -298,35 +298,30 @@ void Subtract_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws
     draw_mesh_tinted(draws, *cutter, CUTTER_FILL, &CUTTER_OUTLINE);
 }
 
-void Subtract_Tool::on_draw_ui(editor_context_t &)
+void Subtract_Tool::on_draw_inspector(editor_context_t &)
 {
-  ImGui::SetNextWindowSize({260, 0}, ImGuiCond_FirstUseEver);
-  if (ImGui::Begin("Subtract"))
-  {
-    ImGui::TextUnformatted("Click the wall, then the cutter: a convex");
-    ImGui::TextUnformatted("mesh. The wall less the cutter is previewed,");
-    ImGui::TextUnformatted("its faces on the cutter outlined white.");
-    ImGui::Separator();
-    if (wall_uid == shared::null_entity_uid)
-      ImGui::TextUnformatted("Wall: none");
-    else
-      ImGui::Text("Wall: mesh %u", wall_uid);
-    if (cutter_uid == shared::null_entity_uid)
-      ImGui::TextUnformatted("Cutter: none");
-    else
-      ImGui::Text("Cutter: mesh %u  (Tab swaps)", cutter_uid);
-    if (!preview)
-      ImGui::TextUnformatted(cutter_uid == shared::null_entity_uid ? "No cut yet" : "Refused: see the log");
-    else if (preview->missed)
-      ImGui::TextUnformatted("The cutter misses the wall");
-    else if (preview->result.faces.empty())
-      ImGui::TextUnformatted("The cutter swallows the wall: Enter removes both");
-    else
-      ImGui::Text("%zu faces; Enter commits, the cutter is consumed",
-                  preview->result.faces.size());
-    ImGui::TextUnformatted("Right click steps back, Escape clears");
-  }
-  ImGui::End();
+  ImGui::TextUnformatted("Click the wall, then the cutter: a convex");
+  ImGui::TextUnformatted("mesh. The wall less the cutter is previewed,");
+  ImGui::TextUnformatted("its faces on the cutter outlined white.");
+  ImGui::Separator();
+  if (wall_uid == shared::null_entity_uid)
+    ImGui::TextUnformatted("Wall: none");
+  else
+    ImGui::Text("Wall: mesh %u", wall_uid);
+  if (cutter_uid == shared::null_entity_uid)
+    ImGui::TextUnformatted("Cutter: none");
+  else
+    ImGui::Text("Cutter: mesh %u  (Tab swaps)", cutter_uid);
+  if (!preview)
+    ImGui::TextUnformatted(cutter_uid == shared::null_entity_uid ? "No cut yet" : "Refused: see the log");
+  else if (preview->missed)
+    ImGui::TextUnformatted("The cutter misses the wall");
+  else if (preview->result.faces.empty())
+    ImGui::TextUnformatted("The cutter swallows the wall: Enter removes both");
+  else
+    ImGui::Text("%zu faces; Enter commits, the cutter is consumed",
+                preview->result.faces.size());
+  ImGui::TextUnformatted("Right click steps back, Escape clears");
 }
 
 } // namespace client

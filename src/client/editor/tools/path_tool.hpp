@@ -24,7 +24,7 @@ public:
   void on_key_down(editor_context_t& ctx, const key_event_t& e) override;
 
   void on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws) override;
-  void on_draw_ui(editor_context_t& ctx) override;
+  void on_draw_inspector(editor_context_t& ctx) override;
 
   std::optional<view_focus_t> view_focus() const override;
   Span<const shared::entity_uid_t> selected_objects() const override;
@@ -36,7 +36,7 @@ private:
     linalg::vec3 position = {0, 0, 0};
     std::optional<linalg::quatf> orientation{};
     entity_snapshot_t entity_before{};
-    std::optional<shared::geometry_value_t> geometry_before{};
+    std::optional<shared::mesh_geometry_t> geometry_before{};
   };
 
   struct field_edit_t

@@ -1,6 +1,5 @@
 #include "lightmap_bake.hpp"
 
-#include "map/brush/brush.hpp"
 #include "log.hpp"
 #include "map/map_geometry.hpp"
 #include "map/map_geometry_asset.hpp"
@@ -67,9 +66,7 @@ std::optional<lightmap_chart_t> try_build_chart(entity_uid_t object_uid, const P
                                                 int max_covered_in_texels)
 {
   // 1. basis
-  linalg::vec3 tangent_u;
-  linalg::vec3 tangent_v;
-  brush_face_grid_tangents(plane.normal, tangent_u, tangent_v);
+  const tangent_basis_t tangents = compute_axis_aligned_tangents(plane.normal);
 
   // 2. project
   const linalg::vec3 reference = points[0];
@@ -78,8 +75,8 @@ std::optional<lightmap_chart_t> try_build_chart(entity_uid_t object_uid, const P
   for (size_t i = 0; i < points.count; ++i)
   {
     const linalg::vec3 offset_from_reference = points[i] - reference;
-    const float u = linalg::dot(offset_from_reference, tangent_u);
-    const float v = linalg::dot(offset_from_reference, tangent_v);
+    const float u = linalg::dot(offset_from_reference, tangents.u);
+    const float v = linalg::dot(offset_from_reference, tangents.v);
 
     // 3. bounds
     if (i == 0)
@@ -131,9 +128,9 @@ std::optional<lightmap_chart_t> try_build_chart(entity_uid_t object_uid, const P
   lightmap_chart_t chart;
   chart.object_uid = object_uid;
   chart.plane = plane;
-  chart.tangent_u = tangent_u;
-  chart.tangent_v = tangent_v;
-  chart.origin = reference + tangent_u * snapped_min_u + tangent_v * snapped_min_v;
+  chart.tangent_u = tangents.u;
+  chart.tangent_v = tangents.v;
+  chart.origin = reference + tangents.u * snapped_min_u + tangents.v * snapped_min_v;
   chart.world_units_per_texel = world_units_per_texel;
   chart.atlas_rect.width = width_in_texels;
   chart.atlas_rect.height = height_in_texels;
@@ -383,22 +380,11 @@ build_lightmap_charts(const map_t &map, const lightmap_bake_settings_t &settings
 
   for (const map_geometry_t &object : map.geometry)
   {
-    switch (get_kind(object.value))
-    {
-    case geometry_kind_t::Brush:
-      fatal_error("lightmap: object {} is a legacy kind; every reader converts it to a mesh "
-                  "(geometry_def.md 11.8 increment 6)", object.uid);
-
-    case geometry_kind_t::Mesh:
-    {
-      const mesh_geometry_t &mesh = std::get<mesh_geometry_t>(object.value);
-      if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
-        build_asset_mesh_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
-      else
-        build_mesh_face_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
-      break;
-    }
-    }
+    const mesh_geometry_t &mesh = object.value;
+    if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
+      build_asset_mesh_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
+    else
+      build_mesh_face_charts(object.uid, mesh, settings, max_covered_in_texels, charts);
   }
 
   return charts;

@@ -83,7 +83,7 @@ const shared::mesh_geometry_t *try_find_mesh(const editor_context_t &ctx,
                                              shared::entity_uid_t uid)
 {
   const shared::map_geometry_t *entry = ctx.map ? ctx.map->find_geometry_by_uid(uid) : nullptr;
-  return entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  return entry ? &entry->value : nullptr;
 }
 
 // Every face through the pose, the caps (the last `cap_face_count`) outlined.
@@ -130,7 +130,7 @@ void Clip_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, f
     return;
 
   const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
-  if (!entry || !std::holds_alternative<shared::mesh_geometry_t>(entry->value))
+  if (!entry)
   {
     hud::set_announcement("clip: the mesh is gone");
     clear();
@@ -163,7 +163,7 @@ void Clip_Tool::rebuild_preview(editor_context_t &ctx)
 
   const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
   const shared::mesh_geometry_t *mesh =
-      entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+      entry ? &entry->value : nullptr;
   if (!mesh)
     return;
   previewed_value = entry->value;
@@ -272,7 +272,7 @@ void Clip_Tool::commit(editor_context_t &ctx)
   }
 
   transaction_t transaction;
-  const shared::geometry_value_t removed = entry->value;
+  const shared::mesh_geometry_t removed = entry->value;
   std::vector<shared::map_group_t> groups_before = ctx.map->groups;
   ctx.map->remove_geometry(target_uid);
   transaction.add_geometry_removed(target_uid, removed);
@@ -315,21 +315,16 @@ void Clip_Tool::on_draw_overlay(editor_context_t &, pass_builder_t &draws)
                    preview->cap_face_count);
 }
 
-void Clip_Tool::on_draw_ui(editor_context_t &)
+void Clip_Tool::on_draw_inspector(editor_context_t &)
 {
-  ImGui::SetNextWindowSize({260, 0}, ImGuiCond_FirstUseEver);
-  if (ImGui::Begin("Clip"))
-  {
-    ImGui::TextUnformatted("Click a mesh, then a second point: the cut");
-    ImGui::TextUnformatted("runs through both along the view. A third");
-    ImGui::TextUnformatted("point sets the plane exactly.");
-    ImGui::Separator();
-    ImGui::Text("Points: %d / 3", (int)points.size());
-    ImGui::Text("Keep: %s  (Tab)", keep_label((int)keep));
-    ImGui::TextUnformatted(preview ? "Enter commits" : "No cut yet");
-    ImGui::TextUnformatted("Right click removes a point, Escape clears");
-  }
-  ImGui::End();
+  ImGui::TextUnformatted("Click a mesh, then a second point: the cut");
+  ImGui::TextUnformatted("runs through both along the view. A third");
+  ImGui::TextUnformatted("point sets the plane exactly.");
+  ImGui::Separator();
+  ImGui::Text("Points: %d / 3", (int)points.size());
+  ImGui::Text("Keep: %s  (Tab)", keep_label((int)keep));
+  ImGui::TextUnformatted(preview ? "Enter commits" : "No cut yet");
+  ImGui::TextUnformatted("Right click removes a point, Escape clears");
 }
 
 } // namespace client

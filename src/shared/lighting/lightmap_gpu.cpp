@@ -96,13 +96,13 @@ void append_mesh_faces(gpu_bake_scene_t &scene, entity_uid_t uid, const mesh_geo
       return mesh.position +
              linalg::rotate(mesh.orientation, mesh.vertices[face.vertex_indices[corner]]);
     };
-    const linalg::vec3 a = world_corner(0);
-    const linalg::vec2 uv_a = face_uv_at(surface.uv, a, plane.normal);
-    for (size_t offset = 1; offset + 1 < face.vertex_indices.size(); ++offset)
+    for (const std::array<uint32_t, 3> &triangle : triangulate_mesh_face(mesh, face_index))
     {
-      const linalg::vec3 b = world_corner(offset);
-      const linalg::vec3 c = world_corner(offset + 1);
-      append_triangle(scene, uid, a, b, c, uv_a, face_uv_at(surface.uv, b, plane.normal),
+      const linalg::vec3 a = world_corner(triangle[0]);
+      const linalg::vec3 b = world_corner(triangle[1]);
+      const linalg::vec3 c = world_corner(triangle[2]);
+      append_triangle(scene, uid, a, b, c, face_uv_at(surface.uv, a, plane.normal),
+                      face_uv_at(surface.uv, b, plane.normal),
                       face_uv_at(surface.uv, c, plane.normal), material);
     }
   }
@@ -174,14 +174,11 @@ gpu_bake_scene_t build_gpu_bake_scene(const map_t &map, const traced_scene_t &tr
           compute_light_occlusion(entry.value, map.materials) != pass)
         continue;
 
-      const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&entry.value);
-      if (!mesh)
-        fatal_error("[lightmap] object {} is a legacy kind; every reader converts it to a "
-                    "mesh (geometry_def.md 11.8 increment 6)", entry.uid);
-      if (std::holds_alternative<asset_mesh_source_t>(mesh->source))
-        append_asset_mesh(scene, entry.uid, *mesh);
+      const mesh_geometry_t &mesh = entry.value;
+      if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
+        append_asset_mesh(scene, entry.uid, mesh);
       else
-        append_mesh_faces(scene, entry.uid, *mesh);
+        append_mesh_faces(scene, entry.uid, mesh);
     }
   }
 

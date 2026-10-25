@@ -11,6 +11,7 @@
 #include "shared/map/mesh/mesh_primitives.hpp"
 #include "shared/map/mesh/mesh_split.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -104,6 +105,24 @@ void test_a_face_wound_the_wrong_way_is_refused()
   assert_defect(box, mesh_defect_kind_t::Edge_Is_Doubled);
 }
 
+void test_a_face_that_crosses_itself_is_refused()
+{
+  // The bottom ring visited corner-wise instead of around: every vertex still
+  // on the plane, every edge still paired, and the face a bow tie.
+  mesh_geometry_t box = shared::make_box_mesh({0.f, 0.f, 0.f}, {32.f, 32.f, 32.f});
+  bool rewired = false;
+  for (shared::mesh_face_t &face : box.faces)
+  {
+    if (face.vertex_indices == std::vector<uint32_t>{0, 1, 5, 4})
+    {
+      face.vertex_indices = {0, 1, 4, 5};
+      rewired = true;
+    }
+  }
+  assert(rewired);
+  assert_defect(box, mesh_defect_kind_t::Face_Crosses_Itself);
+}
+
 void test_structural_defects_are_refused()
 {
   mesh_geometry_t box = shared::make_box_mesh({0.f, 0.f, 0.f}, {32.f, 32.f, 32.f});
@@ -126,13 +145,10 @@ void test_structural_defects_are_refused()
   assert_defect(flat, mesh_defect_kind_t::Face_Is_Degenerate);
 }
 
-// The mesh as the third alternative of geometry_value_t (geometry_def.md 11.8
-// increment 3): every seam question answered through the variant.
-void test_the_mesh_answers_the_seam_through_the_variant()
+// The seam every tool reads a mesh through (geometry_def.md 11.8 increment 3).
+void test_the_mesh_answers_the_seam()
 {
-  shared::geometry_value_t value = shared::make_default_geometry(shared::geometry_kind_t::Mesh);
-  assert(shared::get_kind(value) == shared::geometry_kind_t::Mesh);
-  assert(std::string(shared::get_kind_name(shared::geometry_kind_t::Mesh)) == "mesh");
+  mesh_geometry_t value = shared::make_box_mesh({0.f, 0.f, 0.f}, {64.f, 64.f, 64.f});
   assert(nearly(shared::get_position(value), {0.f, 0.f, 0.f}));
   assert(nearly(shared::get_half_extents(value), {64.f, 64.f, 64.f}));
 
@@ -146,18 +162,18 @@ void test_the_mesh_answers_the_seam_through_the_variant()
   shared::set_owner_uid(value, 42);
   assert(shared::get_owner_uid(value) == 42);
   shared::get_surface(value).is_wireframe = true;
-  assert(std::get<mesh_geometry_t>(value).surface.is_wireframe);
+  assert(value.surface.is_wireframe);
 
-  shared::geometry_value_t copy = value;
+  shared::mesh_geometry_t copy = value;
   assert(shared::geometry_values_equal(value, copy));
-  std::get<mesh_geometry_t>(copy).faces[0].surface.material = 3;
+  copy.faces[0].surface.material = 3;
   assert(!shared::geometry_values_equal(value, copy));
-  std::get<mesh_geometry_t>(copy).faces[0].surface.material = 0;
-  std::get<mesh_geometry_t>(copy).vertices[0].x += 1e-4f;
+  copy.faces[0].surface.material = 0;
+  copy.vertices[0].x += 1e-4f;
   assert(!shared::geometry_values_equal(value, copy));
 
   const std::vector<shared::collision_piece_t> pieces =
-      shared::get_collision_pieces(value, 7, {});
+      shared::get_collision_pieces(value, 7);
   assert(pieces.size() == 1);
   assert(pieces[0].planes.size() == 6);
   assert(nearly(pieces[0].bounds.min, bounds.min) && nearly(pieces[0].bounds.max, bounds.max));
@@ -168,18 +184,18 @@ void test_the_mesh_answers_the_seam_through_the_variant()
   mesh_geometry_t l_shape = shared::make_extruded_mesh(l_footprint, {0.f, 0.f, 1.f}, 96.f);
   l_shape.position = {1000.f, 0.f, 0.f};
   l_shape.orientation = linalg::from_axis_angle({0.f, 0.f, 1.f}, 90.f);
-  const shared::geometry_value_t turned = l_shape;
+  const shared::mesh_geometry_t turned = l_shape;
   const shared::aabb_bounds_t turned_bounds = shared::get_bounds(turned);
   assert(nearly(turned_bounds.min, {872.f, 0.f, 0.f}));
   assert(nearly(turned_bounds.max, {1000.f, 128.f, 96.f}));
   const std::vector<shared::collision_piece_t> turned_pieces =
-      shared::get_collision_pieces(turned, 8, {});
+      shared::get_collision_pieces(turned, 8);
   assert(turned_pieces.size() == 2);
   for (const shared::collision_piece_t &piece : turned_pieces)
     assert(piece.bounds.min.x >= 872.f - 1e-3f && piece.bounds.max.x <= 1000.f + 1e-3f);
 
   l_shape.collides = false;
-  assert(shared::get_collision_pieces(l_shape, 9, {}).empty());
+  assert(shared::get_collision_pieces(l_shape, 9).empty());
 }
 
 // What the writer produced, as the reader sees it: a map in place of the
@@ -196,16 +212,16 @@ shared::map_block_t as_parsed_block(const shared::map_block_out_t &written)
   return block;
 }
 
-shared::geometry_value_t round_trip_through_text(const shared::geometry_value_t &value)
+shared::mesh_geometry_t round_trip_through_text(const shared::mesh_geometry_t &value)
 {
   shared::map_block_out_t written;
   shared::serialize_geometry(value, {}, written.keyword, written.properties, written.children);
   assert(written.keyword == "mesh");
   const shared::map_block_t parsed = as_parsed_block(written);
-  shared::geometry_value_t read;
-  const bool ok = shared::parse_geometry(parsed.keyword, parsed.properties, parsed.children, read);
-  assert(ok);
-  return read;
+  std::optional<shared::mesh_geometry_t> read =
+      shared::try_parse_geometry(parsed.keyword, parsed.properties, parsed.children);
+  assert(read);
+  return std::move(*read);
 }
 
 mesh_geometry_t make_textured_l_shape()
@@ -293,7 +309,7 @@ void test_a_world_plane_cuts_a_turned_mesh_where_it_stands()
 
 void test_the_mesh_row_round_trips_bit_for_bit()
 {
-  const shared::geometry_value_t inline_value = make_textured_l_shape();
+  const shared::mesh_geometry_t inline_value = make_textured_l_shape();
   assert(shared::geometry_values_equal(inline_value, round_trip_through_text(inline_value)));
 
   shared::primitive_recipe_t recipe;
@@ -303,21 +319,21 @@ void test_the_mesh_row_round_trips_bit_for_bit()
   mesh_geometry_t recipe_mesh = shared::make_primitive_mesh(recipe);
   recipe_mesh.position = {1.f, 2.f, 3.f};
   recipe_mesh.faces[3].surface.material = 2;
-  const shared::geometry_value_t recipe_value = recipe_mesh;
-  const shared::geometry_value_t recipe_read = round_trip_through_text(recipe_value);
+  const shared::mesh_geometry_t recipe_value = recipe_mesh;
+  const shared::mesh_geometry_t recipe_read = round_trip_through_text(recipe_value);
   assert(shared::geometry_values_equal(recipe_value, recipe_read));
   assert(std::holds_alternative<shared::recipe_mesh_source_t>(
-      std::get<mesh_geometry_t>(recipe_read).source));
-  assert(std::get<mesh_geometry_t>(recipe_read).faces[3].surface.material == 2);
+      recipe_read.source));
+  assert(recipe_read.faces[3].surface.material == 2);
 
   mesh_geometry_t asset_mesh;
   asset_mesh.position = {5.f, 6.f, 7.f};
   asset_mesh.source = shared::asset_mesh_source_t{"resources/obj/Error.obj", {1.5f, 2.f, 0.25f}};
   asset_mesh.casts_shadows = false;
-  const shared::geometry_value_t asset_value = asset_mesh;
-  const shared::geometry_value_t asset_read = round_trip_through_text(asset_value);
+  const shared::mesh_geometry_t asset_value = asset_mesh;
+  const shared::mesh_geometry_t asset_read = round_trip_through_text(asset_value);
   assert(shared::geometry_values_equal(asset_value, asset_read));
-  assert(std::get<mesh_geometry_t>(asset_read).faces.empty());
+  assert(asset_read.faces.empty());
 }
 
 void test_a_defective_mesh_row_is_refused()
@@ -327,8 +343,7 @@ void test_a_defective_mesh_row_is_refused()
   shared::map_block_out_t written;
   shared::serialize_geometry(open, {}, written.keyword, written.properties, written.children);
   const shared::map_block_t parsed = as_parsed_block(written);
-  shared::geometry_value_t read;
-  assert(!shared::parse_geometry(parsed.keyword, parsed.properties, parsed.children, read));
+  assert(!shared::try_parse_geometry(parsed.keyword, parsed.properties, parsed.children));
 }
 
 // Every triangle winds outward: its geometric normal agrees with the normal
@@ -410,12 +425,204 @@ void test_the_mesh_draws_with_shared_vertices_and_smoothed_normals()
   assert(lifted_corners == 1);
 }
 
+shared::face_surface_t &find_face_facing(mesh_geometry_t &mesh, const linalg::vec3 &normal)
+{
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
+    if (linalg::dot(shared::compute_mesh_face_plane(mesh, face_index).normal, normal) > 0.999f)
+      return mesh.faces[face_index].surface;
+  assert(false);
+  return mesh.faces.front().surface;
+}
+
+// Inside ANY of the pieces, which is what the union of them means.
+bool point_is_inside_collision(const std::vector<shared::collision_piece_t> &pieces,
+                               const linalg::vec3 &point, float margin)
+{
+  for (const shared::collision_piece_t &piece : pieces)
+  {
+    bool inside = true;
+    for (const Plane &plane : piece.planes)
+      inside = inside && linalg::dot(plane.normal, point - plane.point) <= -margin;
+    if (inside)
+      return true;
+  }
+  return false;
+}
+
+void assert_pieces_are_convex(const std::vector<shared::collision_piece_t> &pieces)
+{
+  for (const shared::collision_piece_t &piece : pieces)
+  {
+    assert(piece.planes.size() == piece.face_polygons.size());
+    assert(piece.planes.size() >= 4);
+    for (const std::vector<linalg::vec3> &polygon : piece.face_polygons)
+      for (const linalg::vec3 &point : polygon)
+        for (const Plane &plane : piece.planes)
+          assert(linalg::dot(plane.normal, point - plane.point) <= 0.1f);
+  }
+}
+
+// A 25x25 grid is where a general BSP takes seconds per object; a piece count in
+// the thousands can only come from the structural column path.
+void test_a_real_sized_grid_decomposes_structurally()
+{
+  mesh_geometry_t mesh = shared::make_box_mesh({0, 0, 0}, {336, 64, 462});
+  shared::face_surface_t &top = find_face_facing(mesh, {0, 1, 0});
+  shared::resize_face_grid(top, 24);
+  assert(top.offsets.size() == 625);
+  for (int j = 0; j < 25; ++j)
+    for (int i = 0; i < 25; ++i)
+      top.offsets[(size_t)(j * 25 + i)] = {0.f, (i % 2 == 0) ? 24.f : -12.f, 0.f};
+
+  const std::vector<shared::collision_piece_t> pieces =
+      shared::get_collision_pieces(shared::mesh_geometry_t{mesh}, 1);
+  assert(pieces.size() > 1000);
+  assert(pieces.size() <= 24 * 24 * 2);
+  assert_pieces_are_convex(pieces);
+
+  shared::aabb_bounds_t covered{{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
+  for (const shared::collision_piece_t &piece : pieces)
+  {
+    covered.min = {std::min(covered.min.x, piece.bounds.min.x),
+                   std::min(covered.min.y, piece.bounds.min.y),
+                   std::min(covered.min.z, piece.bounds.min.z)};
+    covered.max = {std::max(covered.max.x, piece.bounds.max.x),
+                   std::max(covered.max.y, piece.bounds.max.y),
+                   std::max(covered.max.z, piece.bounds.max.z)};
+  }
+  // The crests and the floor, or the player walks through a drawn surface; and
+  // the object's bound holds them, since it is the BVH leaf.
+  assert(covered.max.y >= 88.f - 0.5f);
+  assert(covered.min.y <= -64.f + 0.5f);
+  assert(shared::get_bounds(shared::mesh_geometry_t{mesh}).max.y >= covered.max.y - 0.5f);
+}
+
+// Narrower at the sculpted end: the face's shadow is not the whole solid, so the
+// columns tile only part of it and the edge pieces cover the flare.
+void test_a_face_narrower_than_its_mesh_still_collides()
+{
+  mesh_geometry_t mesh = shared::make_box_mesh({0, 0, 0}, {64, 32, 64});
+  for (linalg::vec3 &vertex : mesh.vertices)
+    if (vertex.y > 0.f)
+      vertex = {vertex.x * 0.5f, vertex.y, vertex.z * 0.5f};
+  assert(!shared::find_mesh_defect(mesh));
+
+  shared::face_surface_t &top = find_face_facing(mesh, {0, 1, 0});
+  shared::resize_face_grid(top, 8);
+  top.offsets[4 * 9 + 4] = {0, 24.f, 0};
+
+  const std::vector<shared::collision_piece_t> pieces =
+      shared::get_collision_pieces(shared::mesh_geometry_t{mesh}, 1);
+  assert(!pieces.empty());
+  assert_pieces_are_convex(pieces);
+
+  // Sampled off the grid lines: a point on a column seam is strictly inside none.
+  assert(point_is_inside_collision(pieces, {3.f, 44.f, 1.f}, 0.5f));
+  assert(!point_is_inside_collision(pieces, {3.f, 52.f, 1.f}, 0.5f));
+  assert(point_is_inside_collision(pieces, {56.f, -24.f, 0}, 0.5f));
+  assert(!point_is_inside_collision(pieces, {80.f, -24.f, 0}, 0.5f));
+}
+
 } // namespace
+
+// The ring projected onto the plane its Newell normal is least aligned with, so a point-in-polygon
+// test can run in 2D.
+linalg::vec2 drop_dominant_axis(const linalg::vec3 &point, const linalg::vec3 &normal)
+{
+  const float ax = std::fabs(normal.x);
+  const float ay = std::fabs(normal.y);
+  const float az = std::fabs(normal.z);
+  if (ax >= ay && ax >= az)
+    return {point.y, point.z};
+  if (ay >= az)
+    return {point.z, point.x};
+  return {point.x, point.y};
+}
+
+bool point_in_polygon(const linalg::vec2 &point, const std::vector<linalg::vec2> &polygon)
+{
+  bool inside = false;
+  for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
+  {
+    const linalg::vec2 &a = polygon[i];
+    const linalg::vec2 &b = polygon[j];
+    if ((a.y > point.y) != (b.y > point.y) &&
+        point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x)
+      inside = !inside;
+  }
+  return inside;
+}
+
+void assert_triangulation_tiles_the_face(const mesh_geometry_t &mesh, uint32_t face_index,
+                                         const char *label)
+{
+  const std::vector<uint32_t> &ring = mesh.faces[face_index].vertex_indices;
+  linalg::vec3 normal{0.f, 0.f, 0.f};
+  for (size_t i = 0; i < ring.size(); ++i)
+  {
+    const linalg::vec3 &current = mesh.vertices[ring[i]];
+    const linalg::vec3 &next = mesh.vertices[ring[(i + 1) % ring.size()]];
+    normal = normal + linalg::cross(current, next);
+  }
+  std::vector<linalg::vec2> polygon;
+  for (uint32_t vertex : ring)
+    polygon.push_back(drop_dominant_axis(mesh.vertices[vertex], normal));
+
+  const std::vector<std::array<uint32_t, 3>> triangles =
+      shared::triangulate_mesh_face(mesh, face_index);
+  assert(triangles.size() == ring.size() - 2);
+
+  float area = 0.f;
+  for (const std::array<uint32_t, 3> &triangle : triangles)
+  {
+    const linalg::vec3 &a = mesh.vertices[ring[triangle[0]]];
+    const linalg::vec3 &b = mesh.vertices[ring[triangle[1]]];
+    const linalg::vec3 &c = mesh.vertices[ring[triangle[2]]];
+    const linalg::vec3 doubled = linalg::cross(b - a, c - a);
+    assert(linalg::dot(doubled, normal) > 0.f && "a triangle is wound as the ring is");
+    area += 0.5f * linalg::length(doubled);
+    const linalg::vec2 centroid = drop_dominant_axis((a + b + c) * (1.f / 3.f), normal);
+    if (!point_in_polygon(centroid, polygon))
+    {
+      std::cerr << label << ": face " << face_index << " triangle (" << triangle[0] << ' '
+                << triangle[1] << ' ' << triangle[2] << ") lies outside the ring" << std::endl;
+      assert(false);
+    }
+  }
+  const float face_area = shared::compute_mesh_face_area(mesh, face_index);
+  assert(std::fabs(area - face_area) <= 1e-3f * face_area && "the triangles tile the face");
+}
+
+void test_a_concave_face_triangulates_inside_itself()
+{
+  shared::primitive_recipe_t recipe;
+  recipe.kind = shared::primitive_kind_t::Straight_Stairs;
+  recipe.stair_steps = 4;
+  const mesh_geometry_t stairs = shared::make_primitive_mesh(recipe);
+
+  int sawtooth_faces = 0;
+  for (uint32_t face_index = 0; face_index < (uint32_t)stairs.faces.size(); ++face_index)
+  {
+    assert_triangulation_tiles_the_face(stairs, face_index, "stairs");
+    if (stairs.faces[face_index].vertex_indices.size() == 2 * 4 + 2)
+      ++sawtooth_faces;
+  }
+  assert(sawtooth_faces == 2 && "a flight has two sawtooth sides");
+
+  const mesh_geometry_t box = shared::make_box_mesh({0.f, 0.f, 0.f}, {32.f, 16.f, 8.f});
+  for (uint32_t face_index = 0; face_index < (uint32_t)box.faces.size(); ++face_index)
+  {
+    assert(shared::triangulate_mesh_face(box, face_index).size() == 2);
+    assert_triangulation_tiles_the_face(box, face_index, "box");
+  }
+  std::cout << "  a concave face triangulates inside itself, a convex one as the fan" << std::endl;
+}
 
 int main()
 {
+  test_a_concave_face_triangulates_inside_itself();
   test_the_mesh_draws_with_shared_vertices_and_smoothed_normals();
-  test_the_mesh_answers_the_seam_through_the_variant();
+  test_the_mesh_answers_the_seam();
   test_the_mesh_row_round_trips_bit_for_bit();
   test_a_mesh_scales_to_a_world_box();
   test_a_world_plane_cuts_a_turned_mesh_where_it_stands();
@@ -425,7 +632,10 @@ int main()
   test_an_open_mesh_is_refused();
   test_a_bent_face_is_refused_and_the_epsilon_holds();
   test_a_face_wound_the_wrong_way_is_refused();
+  test_a_face_that_crosses_itself_is_refused();
   test_structural_defects_are_refused();
+  test_a_real_sized_grid_decomposes_structurally();
+  test_a_face_narrower_than_its_mesh_still_collides();
 
   std::cout << "all mesh tests passed" << std::endl;
   return 0;

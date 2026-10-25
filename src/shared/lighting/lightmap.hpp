@@ -42,7 +42,7 @@ inline constexpr int16_t LIGHTMAP_NO_LIGHT_SLOT = -1;
 
 // Building one is six steps, and build_lightmap_charts runs them in this order:
 //
-//   1. basis      brush_face_grid_tangents(normal) -> orthonormal u, v in the
+//   1. basis      compute_axis_aligned_tangents(normal) -> orthonormal u, v in the
 //                 face's plane. Derived from the normal alone, so a rebake
 //                 reproduces it.
 //   2. project    (dot(p - reference, u), dot(p - reference, v)) per vertex.

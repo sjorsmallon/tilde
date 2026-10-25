@@ -1,6 +1,6 @@
 #include "movement_kernel.hpp"
+#include "hull_sweep.hpp"
 #include "lighting/lens.hpp"
-#include "locomotion.hpp"
 #include "player_constants.hpp"
 #include <algorithm>
 #include <cmath>
@@ -8,6 +8,12 @@
 
 namespace shared
 {
+
+namespace
+{
+// A face is ground when it leans no further than 45 degrees from up.
+constexpr float GROUND_NORMAL_MINIMUM_Y = 0.707f;
+} // namespace
 
 vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
 {
@@ -73,6 +79,144 @@ namespace
   if (into_face >= 0.f)
     return velocity;
   return velocity - flat_normal * into_face;
+}
+
+[[nodiscard]] float compute_support_radius(const vec3& normal, float half_width, float half_height)
+{
+  return half_width * fabsf(normal.x) + half_height * fabsf(normal.y) + half_width * fabsf(normal.z);
+}
+
+// The face a sweep stopped at, as the plane it lies in: the hull rests hull_sweep_skin off it.
+[[nodiscard]] Plane contact_plane_for_hit(const hull_sweep_hit_t& hit, const vec3& resting_center,
+                                          float half_width, float half_height)
+{
+  Plane face;
+  face.normal = hit.normal;
+  face.point  = resting_center -
+               hit.normal * (compute_support_radius(hit.normal, half_width, half_height) + hull_sweep_skin);
+  return face;
+}
+
+// Quake's PM_SlideMove clip: against each face met so far; a clip that pushes into an earlier
+// face slides along the edge the two share; into a third, the corner stops it dead.
+[[nodiscard]] vec3 clip_against_faces(vec3 vector, Span<const vec3> normals,
+                                      Span<const float> overbounces)
+{
+  for (size_t i = 0; i < normals.count; ++i)
+  {
+    if (dot(vector, normals[i]) >= 0.f)
+      continue;
+    vector = clip_vector(vector, normals[i], overbounces[i]);
+    for (size_t j = 0; j < normals.count; ++j)
+    {
+      if (j == i || dot(vector, normals[j]) >= 0.f)
+        continue;
+      const vec3  crease        = cross(normals[i], normals[j]);
+      const float crease_length = length(crease);
+      if (crease_length < 1e-4f)
+        return vec3{0.f, 0.f, 0.f};
+      const vec3 edge = crease * (1.f / crease_length);
+      vector          = edge * dot(edge, vector);
+      for (size_t k = 0; k < normals.count; ++k)
+        if (k != i && k != j && dot(vector, normals[k]) < 0.f)
+          return vec3{0.f, 0.f, 0.f};
+    }
+  }
+  return vector;
+}
+
+struct swept_travel_t
+{
+  vec3               hull_center;
+  vec3               velocity;
+  std::vector<Plane> wall_planes;
+  float              ground_impact_speed = 0.f;
+};
+
+// `travel` is the step's displacement and `end_velocity` the velocity the step ends with; under
+// gravity the two differ by half a step of it, and both are clipped by every face met, as Quake
+// clips its midpoint and end velocities. A ground face clips with no overbounce: the 0.1% it
+// would leave pointing up is a rising velocity, and a rising hull is never grounded.
+// The faces the hull TOUCHES when the step opens (`contacts`) clip before the first sweep, so a
+// hull resting against a wall or a ramp is clipped the same however the tick is split; the
+// faces the sweep meets join them.
+[[nodiscard]] swept_travel_t sweep_travel(const movement_settings_t& settings,
+                                          steep_face_rule_t steep_faces,
+                                          const Bounding_Volume_Hierarchy& bvh,
+                                          const predicted_world_t& world,
+                                          const contacts_t& contacts, vec3 hull_center,
+                                          vec3 end_velocity, vec3 travel)
+{
+  constexpr int MAX_BUMPS   = 4;
+  const float   half_width  = settings.shared.half_width;
+  const float   half_height = settings.shared.half_height;
+
+  swept_travel_t     result{.hull_center = hull_center, .velocity = end_velocity};
+  std::vector<vec3>  normals;
+  std::vector<float> overbounces;
+  // Under the Wall rule a steep face first takes the horizontal speed into it, as the vertical
+  // wall beneath it would, OUTSIDE the crease logic: it and the face are one face, not an edge.
+  std::vector<vec3>  flat_normals;
+
+  const auto add_wall_or_ceiling = [&](const vec3& normal)
+  {
+    const bool is_ceiling = normal.y < -GROUND_NORMAL_MINIMUM_Y;
+    if (!is_ceiling && stops_speed_as_a_wall(steep_faces, normal))
+      flat_normals.push_back(compute_flat_normal(normal));
+    normals.push_back(normal);
+    overbounces.push_back(settings.shared.overbounce);
+  };
+  const auto clip_both = [&]
+  {
+    for (const vec3& flat_normal : flat_normals)
+    {
+      travel          = without_horizontal_speed_into(travel, flat_normal);
+      result.velocity = without_horizontal_speed_into(result.velocity, flat_normal);
+    }
+    travel          = clip_against_faces(travel, normals, overbounces);
+    result.velocity = clip_against_faces(result.velocity, normals, overbounces);
+  };
+
+  for (const Plane& plane : contacts.wall_planes)
+    add_wall_or_ceiling(plane.normal);
+  for (const Plane& plane : contacts.ceiling_planes)
+    add_wall_or_ceiling(plane.normal);
+  if (!normals.empty())
+    clip_both();
+
+  for (int bump = 0; bump < MAX_BUMPS && dot(travel, travel) > 0.f; ++bump)
+  {
+    const std::optional<hull_sweep_hit_t> hit =
+        sweep_hull(bvh, world, result.hull_center, result.hull_center + travel, half_width, half_height);
+    if (!hit)
+    {
+      result.hull_center = result.hull_center + travel;
+      break;
+    }
+
+    result.hull_center = result.hull_center + travel * hit->t;
+    travel             = travel * (1.f - hit->t);
+
+    const bool is_ground  = hit->normal.y > GROUND_NORMAL_MINIMUM_Y;
+    const bool is_ceiling = hit->normal.y < -GROUND_NORMAL_MINIMUM_Y;
+    if (is_ground)
+    {
+      if (result.velocity.y < 0.f)
+        result.ground_impact_speed = std::max(result.ground_impact_speed, -result.velocity.y);
+      normals.push_back(hit->normal);
+      overbounces.push_back(1.f);
+    }
+    else
+    {
+      if (!is_ceiling)
+        result.wall_planes.push_back(contact_plane_for_hit(*hit, result.hull_center, half_width, half_height));
+      add_wall_or_ceiling(hit->normal);
+    }
+
+    clip_both();
+  }
+
+  return result;
 }
 
 } // namespace
@@ -169,8 +313,9 @@ float hull_penetration_depth(const std::vector<Plane>& planes, const vec3& cente
   return depth;
 }
 
-// Resolve collisions against the BVH using hull-plane-based penetration test.
-// Pushes player_pos out of overlapping hulls and classifies contact normals.
+// The pieces the hull TOUCHES or is inside of: for each, the face it is least deep behind, as a
+// contact plane. A hull inside, or nearer than the skin, is pushed out to hull_sweep_skin off
+// that face, where a sweep would have left it.
 //
 // `debug_faces` is the caller's bucket, already gated on debug_show_collisions by
 // the caller: the recording happens in SHARED code but the drawing is
@@ -186,7 +331,7 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
   const float half_height = settings.shared.half_height;
 
   contacts_t result;
-  constexpr float cos_45 = 0.707f;
+  constexpr float cos_45 = GROUND_NORMAL_MINIMUM_Y;
 
   shared::aabb_bounds_t player_aabb = hull_aabb(player_pos, half_width, half_height);
 
@@ -222,9 +367,10 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
                               half_width * fabsf(plane.normal.z);
       float penetration = signed_dist - support_radius;
 
-      if (penetration >= 0.f)
+      // Outside this face by more than the band: not touching the piece. Within it, the hull
+      // TOUCHES: a resting hull sits hull_sweep_skin off its face and the band must hold it.
+      if (penetration >= 2.f * hull_sweep_skin)
       {
-        // Player is fully outside this face -> not inside the hull
         outside = true;
         break;
       }
@@ -250,14 +396,9 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
     if (outside)
       continue;
 
-    // Push player out along the least-penetrated face, but keep a small
-    // skin width of penetration. Without this, the player lands exactly at
-    // the surface (penetration = 0), which the penetration test reads as
-    // "outside" next frame — so ground contact is never detected. Leaving
-    // a tiny margin ensures the next frame's test finds penetration < 0
-    // and properly classifies the contact (ground/wall/ceiling).
-    constexpr float skin_width = 0.01f;
-    float push_amount = -min_penetration - skin_width;
+    // Push the hull out to where a sweep would have stopped it, hull_sweep_skin off the face. The
+    // ground and the walls are the sweep's business from there.
+    const float push_amount = -min_penetration + hull_sweep_skin;
     if (push_amount > 0.f)
     {
       // Out of a wall-ruled steep face the hull leaves sideways, or walking into its foot lifts it.
@@ -307,316 +448,191 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
   return result;
 }
 
+std::optional<ground_below_t> find_ground_below(const movement_settings_t& settings,
+                                                const Bounding_Volume_Hierarchy& bvh,
+                                                const predicted_world_t& world,
+                                                const vec3& hull_center, float reach)
+{
+  const float half_width  = settings.shared.half_width;
+  const float half_height = settings.shared.half_height;
+
+  const std::optional<hull_sweep_hit_t> hit = sweep_hull(
+      bvh, world, hull_center, hull_center - vec3{0.f, reach, 0.f}, half_width, half_height);
+  if (!hit || hit->normal.y <= GROUND_NORMAL_MINIMUM_Y)
+    return std::nullopt;
+
+  const float distance       = reach * hit->t;
+  const vec3  resting_center = hull_center - vec3{0.f, distance, 0.f};
+  const Plane face           = contact_plane_for_hit(*hit, resting_center, half_width, half_height);
+
+  return ground_below_t{.distance = distance,
+                        .contact  = {.id = hit->id, .mover_uid = hit->mover_uid, .plane = face}};
+}
+
+contacts_t sense_contacts(const movement_settings_t& settings, steep_face_rule_t steep_faces,
+                          const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
+                          vec3& hull_center, debug_collision::Face_Bucket* debug_faces)
+{
+  contacts_t contacts =
+      resolve_collisions(settings, steep_faces, bvh, world, hull_center, debug_faces);
+
+  contacts.ground_planes.clear();
+  contacts.ground_contact   = {};
+  contacts.ground_mover_uid = null_entity_uid;
+  if (const std::optional<ground_below_t> ground =
+          find_ground_below(settings, bvh, world, hull_center, ground_probe_distance))
+  {
+    contacts.ground_planes.push_back(ground->contact.plane);
+    contacts.ground_contact   = ground->contact;
+    contacts.ground_mover_uid = ground->contact.mover_uid;
+  }
+  return contacts;
+}
+
 slide_result_t slide(const movement_settings_t& settings, steep_face_rule_t steep_faces,
+                     const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                      const contacts_t& contacts, bool grounded, const wanted_move_t& wanted,
                      const vec3& hull_center, const float dt)
 {
-  const float          overbounce = settings.shared.overbounce;
+  const float               overbounce = settings.shared.overbounce;
   const ground_under_step_t frame = compute_ground_under_step(contacts, grounded, wanted.vertical_velocity);
-  constexpr auto       world_down = vec3{0.f, -1.f, 0.f};
 
-  // clip the new velocity against the ground plane. take the length before
-  // it is clipped.
-  vec3  new_velocity = wanted.velocity;
-  float new_speed    = length(new_velocity);
-  new_velocity = clip_vector(new_velocity, frame.normal, overbounce);
-
-  // since we take the velocity before clipping. it can be we clip the movement
-  // vectors (effectively reducing player speed.) but we still want to retain
-  // the speed we were moving in before.
-  new_velocity = normalize(new_velocity);
-  new_velocity = new_speed * new_velocity;
+  // Clip the wanted velocity into the ground's frame and give it back its speed: on a slope the
+  // wish walks along the surface at the speed it asked for.
+  vec3        new_velocity = wanted.velocity;
+  const float new_speed    = length(new_velocity);
+  new_velocity             = clip_vector(new_velocity, frame.normal, overbounce);
+  new_velocity             = normalize(new_velocity) * new_speed;
 
   if (frame.walking)
   {
-    // readjust the velocity for all the wall collider planes.
-    for (const Plane& collider_plane : contacts.wall_planes)
-    {
-      // we should not collide with the plane if we are trying to move away from
-      // it.
-      const vec3 wall_normal = stops_speed_as_a_wall(steep_faces, collider_plane.normal)
-                                   ? compute_flat_normal(collider_plane.normal)
-                                   : collider_plane.normal;
-
-      new_speed = length(new_velocity);
-      new_velocity = normalize(new_velocity);
-      if (dot(new_velocity, wall_normal) > 0.f)
-      {
-        new_velocity = new_velocity * new_speed;
-        continue;
-      }
-
-      new_velocity = clip_vector(new_velocity, wall_normal, overbounce);
-
-      // Speed-preserving rescale: when sliding along a wall we normalize and
-      // rescale to new_speed so that touching a wall doesn't bleed speed.
-      // BUT: new_velocity was a unit vector entering clip_vector, so when
-      // pressing nearly perpendicular into a wall the clip leaves only a tiny
-      // residual (< 0.01) pointing slightly away. Normalizing that to a unit
-      // vector and rescaling to new_speed launches the player backward at full
-      // speed every frame — causing an oscillation that friction eventually
-      // snaps to zero. Guard: only rescale when the tangential component is
-      // meaningful. A tiny residual is left as-is; friction zeroes it next frame.
-      {
-        float clip_len = length(new_velocity);
-        if (clip_len > 0.01f)
-          new_velocity = (new_velocity * (1.0f / clip_len)) * new_speed;
-      }
-    }
-
     new_velocity = clip_horizontal_speed(new_velocity, wanted.horizontal_speed_limit);
 
-    // NOTE: integrate position BEFORE snapping Y velocity. This order matters!
-    // On slopes, the ground clip gives velocity a Y component so the player
-    // follows the surface. If we zeroed Y first, the position would move
-    // purely horizontally — floating off the slope, losing ground contact, and
-    // falling into air mode (which has no friction and no jump). The snap
-    // afterward prevents Y from accumulating across frames.
-    //
-    // We snap ALL Y (not just negative) because the overbounce factor in
-    // clip_vector can produce tiny positive Y on slopes too. Even a small
-    // positive Y fails the grounded check (vel_y <= 0) next frame, kicking
-    // the player into air mode where gravity builds up negative Y.
-    const vec3 position = hull_center + limited_travel(new_velocity, dt, wanted.travel_limit);
+    swept_travel_t swept = sweep_travel(settings, steep_faces, bvh, world, contacts, hull_center,
+                                        new_velocity, limited_travel(new_velocity, dt, wanted.travel_limit));
 
+    // The ground clip above gave the velocity its y so the travel followed the slope; it is not
+    // kept, or the next step would read it as a rise or a fall.
     if (frame.has_ground)
-      new_velocity.y = 0.f;
+      swept.velocity.y = 0.f;
 
-    return {.hull_center = position, .velocity = new_velocity};
+    // A walking hull meeting a ground face changed slope; only a flying one lands.
+    return {.hull_center = swept.hull_center,
+            .velocity    = swept.velocity,
+            .wall_planes = std::move(swept.wall_planes)};
   }
 
-  float new_y_velocity = wanted.vertical_velocity;
+  // The travel integrates with the step's MIDPOINT y velocity, which under a constant g is the
+  // exact parabola, the one answer that does not move when dt does; the step ends with the full
+  // step of gravity. See player_move_step_invariance_test.
+  const float gravity_step = wanted.gravity * dt;
 
-  // clip against the ceiling.
-  if (contacts.has_ceiling())
-  {
-    auto cos_angle_plane_world_down = dot(contacts.ceiling_normal(), world_down);
-    if (cos_angle_plane_world_down > 0.707f)
-    {
-      // if we were already moving down, it does not matter.
-      new_y_velocity = (new_y_velocity < 0.f ? new_y_velocity : 0.f);
-    }
-  }
+  // The limit bounds what the MODEL added, so it is applied before the faces see the vector: a
+  // ramp turning gravity into speed is not the model's push.
+  new_velocity = clip_horizontal_speed(new_velocity, wanted.horizontal_speed_limit);
+  vec3 midpoint_velocity = new_velocity;
+  midpoint_velocity.y    = wanted.vertical_velocity - 0.5f * gravity_step;
+  vec3 end_velocity      = new_velocity;
+  end_velocity.y         = wanted.vertical_velocity - gravity_step;
 
-  // Apply gravity as two halves around the position integration. Position then
-  // integrates with the step's MIDPOINT y velocity, and under a constant g the
-  // midpoint IS the exact mean of the endpoints -- so this reproduces
-  // p0 + v0*dt - 0.5*g*dt^2 rather than the -1.0 that integrating with the END
-  // velocity gave.
-  //
-  // The point is not the extra 5% of jump apex, it is that the exact parabola
-  // is the one answer that does not move when dt does: the old form dropped
-  // 1.0*g*dt^2 whole, 0.75 split in two, 0.625 in four. Sub-tick makes that
-  // difference reachable. See player_move_step_invariance_test.
-  const float half_gravity_step = 0.5f * wanted.gravity * dt;
+  // In the air the WHOLE vector is clipped against every face met, as one vector and with no
+  // rescale, Source's TryPlayerMove: a vertical wall never touches the vertical, a ramp steeper
+  // than 45 degrees turns the fall into along-ramp speed and a sideways push into lift, which IS
+  // surfing.
+  const swept_travel_t swept =
+      sweep_travel(settings, steep_faces, bvh, world, contacts, hull_center, end_velocity,
+                   limited_travel(midpoint_velocity, dt, wanted.travel_limit));
 
-  // The limit bounds what the MODEL added, so it is applied before the walls
-  // see the vector: a ramp turning gravity into speed is not the model's push.
-  new_velocity   = clip_horizontal_speed(new_velocity, wanted.horizontal_speed_limit);
-  new_velocity.y = new_y_velocity - half_gravity_step;
-
-  // In the air the WHOLE vector is clipped against every wall, as one vector
-  // and with no rescale -- Source's TryPlayerMove. A vertical wall has no y in
-  // its normal and so never touches the vertical; a wall steeper than 45
-  // degrees (a surf ramp) turns the fall into along-ramp speed and a sideways
-  // push into lift, which IS surfing. Rescaling to the pre-clip speed here
-  // handed back gravity's whole step as along-ramp speed whatever the angle,
-  // and clipping the horizontal alone threw the lift away with its y.
-  for (const Plane& collider_plane : contacts.wall_planes)
-  {
-    if (stops_speed_as_a_wall(steep_faces, collider_plane.normal))
-      new_velocity =
-          without_horizontal_speed_into(new_velocity, compute_flat_normal(collider_plane.normal));
-    if (dot(new_velocity, collider_plane.normal) < 0.f)
-      new_velocity = clip_vector(new_velocity, collider_plane.normal, overbounce);
-  }
-
-  // @FIXME: test if we can actually be at the new position (collide with the
-  // environment and push back). we need to perform a new trace here to prevent
-  // tunneling / getting stuck in the ground.
-  const vec3 position = hull_center + limited_travel(new_velocity, dt, wanted.travel_limit);
-
-  new_velocity.y -= half_gravity_step;
-  return {.hull_center = position, .velocity = new_velocity};
+  return {.hull_center         = swept.hull_center,
+          .velocity            = swept.velocity,
+          .wall_planes         = std::move(swept.wall_planes),
+          .ground_impact_speed = swept.ground_impact_speed};
 }
 
-settled_move_t resolve_after_move(const movement_settings_t& settings,
-                                  steep_face_rule_t steep_faces,
-                                  const Bounding_Volume_Hierarchy& bvh,
-                                  const predicted_world_t& world, vec3 hull_center, vec3 velocity,
-                                  debug_collision::Face_Bucket* debug_faces)
+settled_move_t settle_move(const movement_settings_t& settings, const Bounding_Volume_Hierarchy& bvh,
+                           const predicted_world_t& world, const slide_result_t& slid,
+                           float ground_reach)
 {
-  // Post-move collision resolve: push position out of any geometry we
-  // tunneled into, and correct velocity so it doesn't fight the surface.
-  contacts_t post = resolve_collisions(settings, steep_faces, bvh, world, hull_center, debug_faces);
+  vec3 hull_center = slid.hull_center;
+  vec3 velocity    = slid.velocity;
 
-  const float overbounce = settings.shared.overbounce;
-
-  // Ground: the pre-move resolve uses a penetration test, so the player must
-  // be *inside* geometry for has_ground to be true. But this resolve pushes
-  // the player to exactly the surface (penetration = 0), which reads as
-  // "outside" next frame — so the pre-move resolve won't detect ground.
-  // Without this snap, the player enters air_move, gravity accumulates
-  // unchecked (-3800+), and the post-move keeps pushing them back each frame
-  // in an invisible free-fall loop.
-  //
-  // We do a plain Y=0 snap here, NOT clip_vector — overbounce would push
-  // velocity slightly upward, which fails the grounded check (vel_y <= 0).
-  // This snap firing on a downward velocity *is* a landing: the player came in
-  // falling (air_move leaves new_vel.y negative) and the ground arrests it.
-  // Walking/resting on flat ground never trips this — my_walk_move zeroes y, so
-  // new_vel.y is already 0. The arrested speed is the impact magnitude.
+  // A rising hull is never on the ground, whatever is below: a jump's first step leaves the
+  // floor on purpose. A hull within reach is set down on the face, and the downward speed it
+  // arrived with, taken by the slide's ground clip or still in the velocity, is the landing.
+  const std::optional<ground_below_t> ground =
+      velocity.y <= 0.f ? find_ground_below(settings, bvh, world, hull_center, ground_reach)
+                        : std::nullopt;
   float land_impact_speed = 0.f;
-  if (post.has_ground() && velocity.y < 0.f)
+  if (ground)
   {
-    land_impact_speed = -velocity.y;
-    velocity.y = 0.f;
-  }
-
-  for (const Plane& plane : post.ceiling_planes)
-  {
-    if (dot(velocity, plane.normal) < 0.f)
-      velocity = clip_vector(velocity, plane.normal, overbounce);
-  }
-  for (const Plane& plane : post.wall_planes)
-  {
-    if (stops_speed_as_a_wall(steep_faces, plane.normal))
-      velocity = without_horizontal_speed_into(velocity, compute_flat_normal(plane.normal));
-    if (dot(velocity, plane.normal) < 0.f)
-      velocity = clip_vector(velocity, plane.normal, overbounce);
+    hull_center.y -= ground->distance;
+    land_impact_speed = std::max(slid.ground_impact_speed, -velocity.y);
+    velocity.y        = 0.f;
   }
 
   return {.hull_center       = hull_center,
           .velocity          = velocity,
-          .grounded          = post.has_ground(),
-          .ground_mover_uid  = post.ground_mover_uid,
-          .ground_contact    = post.ground_contact,
-          .land_impact_speed = land_impact_speed,
-          .wall_planes       = std::move(post.wall_planes)};
+          .grounded          = ground.has_value(),
+          .ground_mover_uid  = ground ? ground->contact.mover_uid : null_entity_uid,
+          .ground_contact    = ground ? ground->contact : ground_contact_t{},
+          .land_impact_speed = land_impact_speed};
 }
 
-settled_move_t snap_to_ground_below(const movement_settings_t& settings,
-                                    steep_face_rule_t steep_faces,
-                                    const Bounding_Volume_Hierarchy& bvh,
-                                    const predicted_world_t& world, const settled_move_t& settled,
-                                    debug_collision::Face_Bucket* debug_faces)
+namespace
 {
-  if (settled.grounded || settled.velocity.y > 0.f)
-    return settled;
-
-  vec3 lowered = settled.hull_center - vec3{0.f, settings.shared.step_height, 0.f};
-  const contacts_t below =
-      resolve_collisions(settings, steep_faces, bvh, world, lowered, debug_faces);
-
-  // No floor within reach, or the floor found pushed the hull above where it was: a ledge, not a slope.
-  if (!below.has_ground() || lowered.y > settled.hull_center.y)
-    return settled;
-
-  settled_move_t snapped    = settled;
-  snapped.hull_center       = lowered;
-  snapped.velocity.y        = 0.f;
-  snapped.grounded          = true;
-  snapped.ground_mover_uid  = below.ground_mover_uid;
-  snapped.ground_contact    = below.ground_contact;
-  snapped.land_impact_speed = 0.f;
-  snapped.wall_planes       = below.wall_planes;
-  return snapped;
+[[nodiscard]] float ground_distance_between(const vec3& from, const vec3& to)
+{
+  const float dx = to.x - from.x;
+  const float dz = to.z - from.z;
+  return std::sqrt(dx * dx + dz * dz);
 }
+} // namespace
 
-// Stair-step glide: if grounded and pressing into a wall, try raising the
-// player by pm_step_height and re-testing. If no wall at the raised height
-// blocks our wish direction, the obstacle is short enough to step over.
-// Walk from the raised position, then drop back down onto the surface.
-stair_step_t try_stair_step(const movement_settings_t& settings, steep_face_rule_t steep_faces,
-                            const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
-                            const contacts_t& contacts, const move_state_t& state,
-                            const move_input_t& input, const vec3& hull_center,
-                            const vec3& wish_direction, debug_collision::Face_Bucket* debug_faces)
+std::optional<slide_result_t> try_stair_step(const movement_settings_t& settings,
+                                             steep_face_rule_t steep_faces,
+                                             const Bounding_Volume_Hierarchy& bvh,
+                                             const predicted_world_t& world,
+                                             const contacts_t& contacts, const wanted_move_t& wanted,
+                                             const slide_result_t& slid, const vec3& hull_center,
+                                             const float dt)
 {
-  // Only proceed if we're actually pressing toward at least one wall.
-  bool pressing_into_wall = false;
-  for (const Plane& plane : contacts.wall_planes)
-  {
-    if (dot(wish_direction, plane.normal) < 0.f)
-    {
-      pressing_into_wall = true;
-      break;
-    }
-  }
+  bool pushing_into_a_wall = false;
+  for (const Plane& wall : slid.wall_planes)
+    pushing_into_a_wall |= dot(wanted.velocity, wall.normal) < 0.f;
+  if (!pushing_into_a_wall)
+    return std::nullopt;
 
-  if (!pressing_into_wall)
-    return {};
-
+  const float half_width  = settings.shared.half_width;
+  const float half_height = settings.shared.half_height;
   const float step_height = settings.shared.step_height;
-  vec3        raised_position = hull_center + vec3{0.f, step_height, 0.f};
-  const contacts_t raised =
-      resolve_collisions(settings, steep_faces, bvh, world, raised_position, debug_faces);
 
-  // Only abort if a raised wall specifically blocks our wish direction.
-  // Walls from other nearby obstacles that we're not moving into are ignored.
-  for (const Plane& plane : raised.wall_planes)
-  {
-    if (dot(wish_direction, plane.normal) < 0.f)
-      return {};
-  }
+  const vec3                            up{0.f, step_height, 0.f};
+  const std::optional<hull_sweep_hit_t> ceiling =
+      sweep_hull(bvh, world, hull_center, hull_center + up, half_width, half_height);
+  const float rise = ceiling ? step_height * ceiling->t : step_height;
+  if (rise <= 0.f)
+    return std::nullopt;
+  const vec3 raised_center = hull_center + vec3{0.f, rise, 0.f};
 
-  if (raised.has_ceiling())
-    return {};
+  // The walls the step opened against are what it is stepping over; one still there at the
+  // raised height is met again by the sweep, a hair into the move.
+  contacts_t raised_contacts = contacts;
+  raised_contacts.wall_planes.clear();
+  slide_result_t stepped =
+      slide(settings, steep_faces, bvh, world, raised_contacts, true, wanted, raised_center, dt);
 
-  // old_velocity may be near-zero: it was clipped against the wall that
-  // triggered this step-up and then zeroed by friction. Reconstruct to
-  // the intended running speed so the player carries momentum through
-  // the step rather than shuffling across it at ~0 units/s.
-  vec3 raised_velocity = vec3{state.velocity.x, 0.f, state.velocity.z};
-  if (length(raised_velocity) < settings.shared.speed_threshold)
-    raised_velocity = wish_direction * settings.shared.run_speed;
+  const vec3                            down{0.f, -rise, 0.f};
+  const std::optional<hull_sweep_hit_t> landing = sweep_hull(
+      bvh, world, stepped.hull_center, stepped.hull_center + down, half_width, half_height);
+  if (landing && landing->normal.y <= GROUND_NORMAL_MINIMUM_Y)
+    return std::nullopt;
+  stepped.hull_center = stepped.hull_center + down * (landing ? landing->t : 1.f);
 
-  move_state_t        raised_state = state;
-  raised_state.velocity            = raised_velocity;
-  const wanted_move_t wanted =
-      decide_move(settings, raised, true, raised_velocity, raised_state, input);
-  const slide_result_t stepped =
-      slide(settings, steep_faces, raised, true, wanted, raised_position, input.dt);
+  if (ground_distance_between(hull_center, stepped.hull_center) <=
+      ground_distance_between(hull_center, slid.hull_center))
+    return std::nullopt;
 
-  // Drop back down by step_height. resolve_collisions will push the
-  // player up to sit on top of whatever surface is below (the step top,
-  // or the original floor if we overshot).
-  //
-  // IMPORTANT: we also push extra forward by step_height in the wish
-  // direction before dropping. Without this, the player's center is only
-  // (velocity * dt) ≈ 5 units past the step edge. The step's side face
-  // then has less absolute penetration than the top face, so
-  // resolve_collisions pushes the player sideways (wall) instead of up
-  // (ground). Adding step_height of extra horizontal offset guarantees
-  // the top face always wins the SAT test regardless of step size.
-  vec3 drop_position = stepped.hull_center;
-  drop_position.x += wish_direction.x * step_height;
-  drop_position.z += wish_direction.z * step_height;
-  drop_position.y -= step_height;
-  const contacts_t dropped =
-      resolve_collisions(settings, steep_faces, bvh, world, drop_position, debug_faces);
-
-  // Reject the step if a wall still blocks the wish direction at the
-  // drop position — that means we ran into a real obstacle, not just
-  // the edge of the stair we were climbing.
-  for (const Plane& plane : dropped.wall_planes)
-  {
-    if (dot(wish_direction, plane.normal) < 0.f)
-      return {};
-  }
-
-  if (!dropped.has_ground())
-    return {};
-
-  // Do not use the stepped velocity here. The velocity entering the step may
-  // have been partially clipped by the wall (anywhere from 0..run_speed), so
-  // it inherits that reduced speed after friction — giving the player a
-  // visible slowdown on every step. The step bypasses the wall entirely, so
-  // carry full speed in the wish direction instead.
-  vec3 velocity = wish_direction * settings.shared.run_speed;
-  velocity.y    = 0.f;
-
-  return {.taken = true, .hull_center = drop_position, .velocity = velocity};
+  return stepped;
 }
 
 volume_touch_t touch_movement_volumes(const movement_settings_t& settings,

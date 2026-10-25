@@ -8,12 +8,12 @@
 #include "player_move.hpp"
 #include "collision/predicted_world.hpp"
 #include <limits>
+#include <optional>
 #include <vector>
 
 // The half of a step that senses the world and slides the hull through it. It
 // is one copy for every model: nothing in here reads a model's numbers, and
-// nothing calls back up into one except the stair-step, which asks decide_move
-// for the wanted move from the raised position.
+// nothing calls back up into one.
 namespace shared
 {
 
@@ -101,14 +101,50 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
                                             const predicted_world_t& world, vec3& hull_center,
                                             debug_collision::Face_Bucket* debug_faces);
 
-struct slide_result_t
+// How far below a resting hull the ground may still be under it: a sweep leaves the hull
+// hull_sweep_skin above the face, the resolver leaves it a hair inside, a mover's carry a hair off.
+constexpr float ground_probe_distance = 0.25f;
+
+struct ground_below_t
 {
-  vec3 hull_center = {};
-  vec3 velocity    = {};
+  // Down from the hull centre to where the feet rest on the face; zero when touching.
+  float            distance = 0.f;
+  ground_contact_t contact;
 };
 
+// The ground under a hull is a SWEEP straight down, never a penetration: the first face within
+// `reach`, when it is one the hull can stand on. A wall or a steep face first is no ground.
+[[nodiscard]] std::optional<ground_below_t> find_ground_below(const movement_settings_t& settings,
+                                                              const Bounding_Volume_Hierarchy& bvh,
+                                                              const predicted_world_t& world,
+                                                              const vec3& hull_center, float reach);
+
+// The step's opening contacts: the resolver pushes a hull that starts inside something out and
+// names the walls and ceilings it touches; the ground is find_ground_below's, within the probe.
+[[nodiscard]] contacts_t sense_contacts(const movement_settings_t& settings,
+                                        steep_face_rule_t steep_faces,
+                                        const Bounding_Volume_Hierarchy& bvh,
+                                        const predicted_world_t& world, vec3& hull_center,
+                                        debug_collision::Face_Bucket* debug_faces);
+
+struct slide_result_t
+{
+  vec3               hull_center = {};
+  vec3               velocity    = {};
+  // The walls the travel stopped at, in the order met: the stair step's gate, a model's memory clip.
+  std::vector<Plane> wall_planes;
+  // The downward speed a ground face took out of the velocity, the landing's impact.
+  float              ground_impact_speed = 0.f;
+};
+
+// The hull travels its wanted move as a SWEEP: it stops at the first face, clips what is left of
+// the move and the velocity against every face met so far, and goes on, four bumps at most. It
+// never enters anything. A face the hull cannot stand on is a wall; under the Wall rule a steep
+// one clips as the vertical wall beneath it and as itself.
 [[nodiscard]] slide_result_t slide(const movement_settings_t& settings,
-                                   steep_face_rule_t steep_faces, const contacts_t& contacts,
+                                   steep_face_rule_t steep_faces,
+                                   const Bounding_Volume_Hierarchy& bvh,
+                                   const predicted_world_t& world, const contacts_t& contacts,
                                    bool grounded, const wanted_move_t& wanted,
                                    const vec3& hull_center, float dt);
 
@@ -120,41 +156,28 @@ struct settled_move_t
   shared::entity_uid_t ground_mover_uid  = shared::null_entity_uid;
   ground_contact_t     ground_contact;
   float                land_impact_speed = 0.f;
-  // The walls the velocity was clipped against, for a model whose memory must be clipped too.
-  std::vector<Plane>   wall_planes;
 };
 
-[[nodiscard]] settled_move_t resolve_after_move(const movement_settings_t& settings,
-                                                steep_face_rule_t steep_faces,
-                                                const Bounding_Volume_Hierarchy& bvh,
-                                                const predicted_world_t& world, vec3 hull_center,
-                                                vec3 velocity,
-                                                debug_collision::Face_Bucket* debug_faces);
+// `ground_reach` is how far below the moved hull the ground may be and still catch it: the
+// probe for a flying step, step_height for a walking one, so a decline dropping away under a
+// walking hull is walked down rather than flown off. A hull within reach is set down on it.
+[[nodiscard]] settled_move_t settle_move(const movement_settings_t& settings,
+                                         const Bounding_Volume_Hierarchy& bvh,
+                                         const predicted_world_t& world,
+                                         const slide_result_t& slid, float ground_reach);
 
-// A step that opened on the ground and ended over nothing looks for the ground within
-// step_height below: a decline dropping away under a walking hull is walked down, not flown off.
-[[nodiscard]] settled_move_t snap_to_ground_below(const movement_settings_t& settings,
-                                                  steep_face_rule_t steep_faces,
-                                                  const Bounding_Volume_Hierarchy& bvh,
-                                                  const predicted_world_t& world,
-                                                  const settled_move_t& settled,
-                                                  debug_collision::Face_Bucket* debug_faces);
-
-struct stair_step_t
-{
-  bool taken       = false;
-  vec3 hull_center = {};
-  vec3 velocity    = {};
-};
-
-[[nodiscard]] stair_step_t try_stair_step(const movement_settings_t& settings,
-                                          steep_face_rule_t steep_faces,
-                                          const Bounding_Volume_Hierarchy& bvh,
-                                          const predicted_world_t& world,
-                                          const contacts_t& contacts, const move_state_t& state,
-                                          const move_input_t& input, const vec3& hull_center,
-                                          const vec3& wish_direction,
-                                          debug_collision::Face_Bucket* debug_faces);
+// Quake's PM_StepSlideMove over a wall the ground slide stopped at: the hull sweeps up by
+// step_height, slides the same wanted move from there, sweeps back down by what it rose, and
+// the step is taken when it got further along the ground than the slide did. Three sweeps and
+// no push: where the raised slide ends is where the hull comes down, on a tread of any depth.
+[[nodiscard]] std::optional<slide_result_t> try_stair_step(const movement_settings_t& settings,
+                                                           steep_face_rule_t steep_faces,
+                                                           const Bounding_Volume_Hierarchy& bvh,
+                                                           const predicted_world_t& world,
+                                                           const contacts_t& contacts,
+                                                           const wanted_move_t& wanted,
+                                                           const slide_result_t& slid,
+                                                           const vec3& hull_center, float dt);
 
 struct volume_touch_t
 {

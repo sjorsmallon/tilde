@@ -7,7 +7,6 @@
 #include "lighting/lightmap_sidecar.hpp"
 #include "map_blocks.hpp"
 #include "map_geometry_mesh.hpp"
-#include "map_geometry_legacy.hpp"
 #include "map_geometry_text.hpp"
 #include "movement/player_constants.hpp"
 #include "weapon_instance.hpp"
@@ -127,21 +126,11 @@ static bool load_navmesh(const std::string &map_path, navmesh_t &nav)
 
 
 
-// ============================================================================
-// One-time conversion of pre-exit geometry entities
-//
-// Geometry used to be entities, so it was written as 'entity' blocks with
-// schema-serialized properties — including component fields flattened into a
-// single "key:value|key:value" blob ("render", "volume"). Nothing writes that
-// form any more; this reads it, and the next save emits proper geometry blocks.
-// One conversion, no versioned format, no permanent shim.
-// ============================================================================
-
 // Split a legacy component blob into its key/value pairs. Splits on '|', then at
 // the FIRST ':' of each part. Nested components were flattened into the same
 // list, so "material:roughness:0.5|color:1 1 1" yields
 // {"material": "roughness:0.5", "color": "1 1 1"} — the nested value keeps its
-// own "key:value" text, which convert_legacy_render_component() below unpicks.
+// own "key:value" text.
 std::map<std::string, std::string> parse_legacy_component_blob(const std::string &blob)
 {
   std::map<std::string, std::string> fields;
@@ -161,243 +150,6 @@ std::map<std::string, std::string> parse_legacy_component_blob(const std::string
     start = bar + 1;
   }
   return fields;
-}
-
-linalg::vec3 parse_legacy_vec3(const std::string &text, linalg::vec3 fallback)
-{
-  std::istringstream stream(text);
-  linalg::vec3 parsed;
-  if (stream >> parsed.x >> parsed.y >> parsed.z)
-    return parsed;
-  return fallback;
-}
-
-// Read a legacy "render" blob into the geometry surface it becomes.
-void convert_legacy_render_component(const std::string &render_blob,
-                                     geometry_surface_t &surface)
-{
-  const std::map<std::string, std::string> fields =
-      parse_legacy_component_blob(render_blob);
-
-  auto field = [&](const char *key) -> const std::string *
-  {
-    auto it = fields.find(key);
-    return (it == fields.end()) ? nullptr : &it->second;
-  };
-
-  if (const std::string *visible = field("visible"))
-    surface.visible = (*visible == "true" || *visible == "1");
-  if (const std::string *is_wireframe = field("is_wireframe"))
-    surface.is_wireframe = (*is_wireframe == "true" || *is_wireframe == "1");
-  if (const std::string *color = field("color"))
-    surface.color = parse_legacy_vec3(*color, surface.color);
-  if (const std::string *roughness = field("roughness"))
-  {
-    try
-    {
-      surface.roughness = std::stof(*roughness);
-    }
-    catch (const std::exception &)
-    {
-      log_error("map conversion: legacy render roughness \"{}\" is not a float",
-                *roughness);
-    }
-  }
-}
-
-// Convert one legacy geometry entity block. Returns false if this classname was
-// never geometry (so the caller keeps treating it as an entity).
-bool convert_legacy_geometry_entity(const std::string &classname,
-                                    const std::map<std::string, std::string> &properties,
-                                    geometry_value_t &out_geometry)
-{
-  auto property = [&](const char *key) -> const std::string *
-  {
-    auto it = properties.find(key);
-    return (it == properties.end()) ? nullptr : &it->second;
-  };
-
-  // Legacy geometry's shape came from a box_volume_t component field named
-  // "volume", holding just "half_extents:X Y Z" — and before THAT refactor, from
-  // a flat "half_extents" property on the entity itself. Both forms are read
-  // here, which is what retires the old "center"/"half_extents" compatibility
-  // shims: they don't move to the geometry writer, they end at this conversion.
-  auto legacy_half_extents = [&](linalg::vec3 fallback) -> linalg::vec3
-  {
-    if (const std::string *volume = property("volume"))
-    {
-      const std::map<std::string, std::string> fields =
-          parse_legacy_component_blob(*volume);
-      auto it = fields.find("half_extents");
-      if (it != fields.end())
-        return parse_legacy_vec3(it->second, fallback);
-    }
-
-    // Pre-box_volume_t form.
-    if (const std::string *half_extents = property("half_extents"))
-      return parse_legacy_vec3(*half_extents, fallback);
-
-    return fallback;
-  };
-
-  // "center" is the pre-position name, from when the shape carried its own
-  // center instead of the entity carrying a position.
-  auto legacy_position = [&]() -> linalg::vec3
-  {
-    if (const std::string *position = property("position"))
-      return parse_legacy_vec3(*position, {0, 0, 0});
-    if (const std::string *center = property("center"))
-      return parse_legacy_vec3(*center, {0, 0, 0});
-    return {0, 0, 0};
-  };
-
-  auto legacy_surface = [&](geometry_surface_t &surface)
-  {
-    if (const std::string *render = property("render"))
-      convert_legacy_render_component(*render, surface);
-  };
-
-  if (classname == "aabb_entity")
-  {
-    // An axis-aligned box is a brush now (geometry_def.md Track B), so the
-    // legacy arm mints one directly rather than converting twice.
-    brush_geometry_t brush =
-        make_box_brush(legacy_position(), legacy_half_extents({1.f, 1.f, 1.f}));
-    legacy_surface(brush.surface);
-    out_geometry = std::move(brush);
-    return true;
-  }
-
-  if (classname == "static_mesh_entity")
-  {
-    mesh_geometry_t mesh;
-    asset_mesh_source_t asset;
-    mesh.position = legacy_position();
-    if (const std::string *orientation = property("orientation"))
-      mesh.orientation = linalg::from_euler_degrees(parse_legacy_vec3(*orientation, {0, 0, 0}));
-    legacy_surface(mesh.surface);
-
-    // The path and the scale lived on the render component, not on the entity.
-    if (const std::string *render = property("render"))
-    {
-      const std::map<std::string, std::string> fields = parse_legacy_component_blob(*render);
-      if (const auto it = fields.find("mesh_path"); it != fields.end())
-        asset.path = it->second;
-      if (const auto it = fields.find("scale"); it != fields.end())
-        asset.scale = parse_legacy_vec3(it->second, asset.scale);
-    }
-
-    mesh.source = std::move(asset);
-    out_geometry = std::move(mesh);
-    return true;
-  }
-
-  if (classname == "displacement_entity")
-  {
-    // A displacement was a BOX with one subdivided face, and that is now what a
-    // brush with one subdivided face is (geometry_def.md Track D). So the arm
-    // mints the box, finds the plane of the face the grid was on, and hands the
-    // grid straight over -- the legacy row-major (i along the face's u tangent,
-    // j along its v) is the order face_grid_base_vertex walks, so no index is
-    // remapped and no vertex is resampled.
-    const linalg::vec3 position     = legacy_position();
-    const linalg::vec3 half_extents = legacy_half_extents({1.f, 1.f, 1.f});
-
-    box_face_t active_face = box_face_t::Invalid;
-    if (const std::string *raw = property("active_face"))
-    {
-      try
-      {
-        const int32_t parsed = (int32_t)std::stol(*raw);
-        if (parsed < 0 || parsed >= (int32_t)box_face_count)
-          log_error("map conversion: legacy active_face {} is not a box face", parsed);
-        else
-          active_face = (box_face_t)parsed;
-      }
-      catch (const std::exception &)
-      {
-        log_error("map conversion: legacy active_face \"{}\" is not an int", *raw);
-      }
-    }
-
-    int32_t subdivision_level = 4;
-    if (const std::string *raw = property("subdivision_level"))
-    {
-      try
-      {
-        subdivision_level = (int32_t)std::stol(*raw);
-      }
-      catch (const std::exception &)
-      {
-        log_error("map conversion: legacy subdivision_level \"{}\" is not an int", *raw);
-      }
-    }
-    if (subdivision_level < 0)
-    {
-      log_error("map conversion: legacy subdivision_level {} is negative — flat",
-                subdivision_level);
-      subdivision_level = 0;
-    }
-
-    // The legacy array was "<float_count> f f f ...", three floats per vertex.
-    std::vector<linalg::vec3> grid;
-    if (const std::string *raw = property("displacements"))
-    {
-      std::istringstream stream(*raw);
-      size_t announced_float_count = 0;
-      if (stream >> announced_float_count)
-      {
-        linalg::vec3 value;
-        while (stream >> value.x >> value.y >> value.z)
-          grid.push_back(value);
-
-        if (grid.size() * 3 != announced_float_count)
-          log_error("map conversion: legacy displacements announced {} floats, "
-                    "read {} vertices ({} floats)",
-                    announced_float_count, grid.size(), grid.size() * 3);
-      }
-      else
-      {
-        log_error("map conversion: legacy displacements has no leading float "
-                  "count — grid left flat");
-      }
-    }
-
-    brush_geometry_t brush = make_box_brush(position, half_extents);
-    legacy_surface(brush.surface);
-
-    if (active_face == box_face_t::Invalid)
-    {
-      // A displacement that never had a face was a box, and converts to one.
-      out_geometry = std::move(brush);
-      return true;
-    }
-
-    const linalg::vec3 normal = get_box_face_normal(active_face);
-    Plane plane;
-    plane.normal = normal;
-    plane.point  = position + linalg::vec3{normal.x * half_extents.x,
-                                           normal.y * half_extents.y,
-                                           normal.z * half_extents.z};
-
-    face_surface_t &face = face_surface_for(brush, plane);
-    resize_face_grid(face, subdivision_level);
-
-    const size_t expected = face.offsets.size();
-    if (grid.size() != expected)
-    {
-      log_error("map conversion: legacy displacement grid holds {} vertices, "
-                "subdivision {} wants {} — padding with flat",
-                grid.size(), subdivision_level, expected);
-      grid.resize(expected, linalg::vec3{0, 0, 0});
-    }
-    face.offsets = std::move(grid);
-
-    out_geometry = std::move(brush);
-    return true;
-  }
-
-  return false;
 }
 
 // ============================================================================
@@ -753,21 +505,7 @@ std::optional<linalg::vec3> try_get_object_position(const map_t &map, entity_uid
 std::optional<aabb_t> try_get_object_box(const map_t &map, entity_uid_t uid)
 {
   if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
-  {
-    switch (get_kind(entry->value))
-    {
-    case geometry_kind_t::Mesh:
-      return to_aabb(get_bounds(entry->value));
-
-    case geometry_kind_t::Brush:
-    {
-      return to_aabb(
-          compute_brush_bounds(std::get<brush_geometry_t>(entry->value).hull_points));
-    }
-    }
-
-    return std::nullopt;
-  }
+    return to_aabb(get_bounds(entry->value));
 
   if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
   {
@@ -785,45 +523,8 @@ bool try_set_object_box(map_t &map, entity_uid_t uid, const aabb_t &box)
 
   if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
-    switch (get_kind(entry->value))
-    {
-    case geometry_kind_t::Mesh:
-      scale_mesh_to_world_box(std::get<mesh_geometry_t>(entry->value), box);
-      return true;
-
-    case geometry_kind_t::Brush:
-    {
-      // Scale the point set so its bound becomes the requested box. A brush has
-      // no extents of its own to assign, so a gizmo resize has to reach the
-      // vertices -- and an axis the brush is flat on has no scale factor, so it
-      // only translates.
-      brush_geometry_t   &brush = std::get<brush_geometry_t>(entry->value);
-      const aabb_bounds_t bounds = compute_brush_bounds(brush.hull_points);
-      const linalg::vec3  old_center      = (bounds.min + bounds.max) * 0.5f;
-      const linalg::vec3  old_half_extents = (bounds.max - bounds.min) * 0.5f;
-
-      const linalg::vec3 scale = {
-          old_half_extents.x > 1e-4f ? half_extents.x / old_half_extents.x : 1.f,
-          old_half_extents.y > 1e-4f ? half_extents.y / old_half_extents.y : 1.f,
-          old_half_extents.z > 1e-4f ? half_extents.z / old_half_extents.z : 1.f,
-      };
-
-      for (linalg::vec3 &vertex : brush.hull_points)
-      {
-        vertex = {center.x + (vertex.x - old_center.x) * scale.x,
-                  center.y + (vertex.y - old_center.y) * scale.y,
-                  center.z + (vertex.z - old_center.z) * scale.z};
-      }
-
-      // A non-uniform scale ROTATES every face that is not axis-aligned, so
-      // unlike a translation there is no key rewrite to do by hand -- re-key
-      // against the hull the scale produced.
-      sync_face_surfaces(brush);
-      return true;
-    }
-    }
-
-    return false;
+    scale_mesh_to_world_box(entry->value, box);
+    return true;
   }
 
   if (map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
@@ -863,16 +564,7 @@ collect_object_bounds(const map_t &map)
 std::optional<linalg::quatf> try_get_object_orientation(const map_t &map, entity_uid_t uid)
 {
   if (const map_geometry_t *entry = map.find_geometry_by_uid(uid))
-  {
-    switch (get_kind(entry->value))
-    {
-    case geometry_kind_t::Mesh:
-      return std::get<mesh_geometry_t>(entry->value).orientation;
-    case geometry_kind_t::Brush:
-      return std::nullopt;
-    }
-    return std::nullopt;
-  }
+    return entry->value.orientation;
 
   if (const map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
     return entry->entity->orientation;
@@ -885,15 +577,8 @@ bool try_set_object_orientation(map_t &map, entity_uid_t uid,
 {
   if (map_geometry_t *entry = map.find_geometry_by_uid(uid))
   {
-    switch (get_kind(entry->value))
-    {
-    case geometry_kind_t::Mesh:
-      std::get<mesh_geometry_t>(entry->value).orientation = orientation;
-      return true;
-    case geometry_kind_t::Brush:
-      return false;
-    }
-    return false;
+    entry->value.orientation = orientation;
+    return true;
   }
 
   if (map_entity_t *entry = map.find_by_uid(uid); entry && entry->entity)
@@ -985,11 +670,7 @@ material_remap_t build_material_remap(Span<const std::string> materials,
 
   for (const map_geometry_t &entry : geometry)
   {
-    const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&entry.value);
-    if (!mesh)
-      continue;
-
-    for (const mesh_face_t &mesh_face : mesh->faces)
+    for (const mesh_face_t &mesh_face : entry.value.faces)
     {
       const face_surface_t &face = mesh_face.surface;
       // Every LAYER's material counts as a reference, not just the base one:
@@ -1646,8 +1327,9 @@ map_t parse_map_from_string(const std::string &content)
     // --- geometry blocks ---
     if (block.keyword != "entity")
     {
-      geometry_value_t geometry;
-      if (!parse_geometry(block.keyword, block.properties, block.children, geometry))
+      std::optional<mesh_geometry_t> geometry =
+          try_parse_geometry(block.keyword, block.properties, block.children);
+      if (!geometry)
       {
         log_error("map parse: unknown block keyword \"{}\" — block skipped",
                   block.keyword);
@@ -1655,9 +1337,9 @@ map_t parse_map_from_string(const std::string &content)
       }
 
       if (uid != 0)
-        out_map.add_geometry_with_uid(uid, std::move(geometry));
+        out_map.add_geometry_with_uid(uid, std::move(*geometry));
       else
-        out_map.add_geometry(std::move(geometry));
+        out_map.add_geometry(std::move(*geometry));
       continue;
     }
 
@@ -1675,33 +1357,6 @@ map_t parse_map_from_string(const std::string &content)
       auto name_it = block.properties.find("name");
       if (name_it != block.properties.end())
         out_map.name = name_it->second;
-      continue;
-    }
-
-    // Geometry written by a pre-exit build arrives as an entity block. Convert
-    // it in place; the next save writes it as a geometry block and the legacy
-    // form is gone from that file forever.
-    {
-      geometry_value_t geometry;
-      if (convert_legacy_geometry_entity(classname, block.properties, geometry))
-      {
-        if (uid != 0)
-          out_map.add_geometry_with_uid(uid, std::move(geometry));
-        else
-          out_map.add_geometry(std::move(geometry));
-        continue;
-      }
-    }
-
-    // Wedges were retired before the geometry exit and never came back — the
-    // geometry kinds are brush / static mesh. Drop them loudly;
-    // they are real data being discarded.
-    if (classname == "wedge_entity")
-    {
-      auto position_it = block.properties.find("position");
-      log_error("map parse: dropped a retired wedge_entity at position \"{}\" — "
-                "wedges are not a geometry kind; rebuild it from boxes",
-                position_it == block.properties.end() ? "?" : position_it->second);
       continue;
     }
 
@@ -1761,15 +1416,6 @@ map_t parse_map_from_string(const std::string &content)
   }
 
   convert_legacy_trigger_actions(out_map, legacy_triggers);
-
-  // Every brush becomes a mesh here, before the groups are pruned, so a hole a
-  // group held is dropped as a missing member.
-  const legacy_geometry_report_t legacy_geometry = convert_legacy_geometry(out_map.geometry);
-  if (legacy_geometry.converted_anything())
-    log_terminal("map parse: {} brushes read as meshes, {} holes cut into their walls, {} "
-                 "objects refused",
-                 legacy_geometry.brushes_converted, legacy_geometry.holes_removed,
-                 legacy_geometry.objects_refused);
 
   // After every object is in, so a member declared further down the file than
   // its group is not mistaken for a missing one.
@@ -1836,13 +1482,7 @@ std::string serialize_map_to_string(const map_t &map)
   // HERE and only here: an index is only meaningful against the table it was
   // minted from, so compacting mid-session would invalidate every undo snapshot
   // holding one.
-  // The writer emits no brush and no static mesh: what is still one in memory
-  // (the editor's own placements until increment 10) is written as the mesh it
-  // loads back as.
-  std::vector<map_geometry_t> geometry = map.geometry;
-  (void)convert_legacy_geometry(geometry);
-
-  const material_remap_t material_remap = build_material_remap(map.materials, geometry);
+  const material_remap_t material_remap = build_material_remap(map.materials, map.geometry);
   if (material_remap.kept.size() > 1 || !material_remap.kept[0].empty())
   {
     map_block_out_t block;
@@ -1941,7 +1581,7 @@ std::string serialize_map_to_string(const map_t &map)
   }
 
   // Geometry first, so a level's structure reads before its props.
-  for (const map_geometry_t &entry : geometry)
+  for (const map_geometry_t &entry : map.geometry)
   {
     map_block_out_t block;
     block.properties.emplace_back("_uid", std::to_string(entry.uid));

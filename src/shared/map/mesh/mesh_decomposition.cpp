@@ -1,7 +1,7 @@
 #include "mesh_decomposition.hpp"
 
 #include "log.hpp"
-#include "map/brush/brush.hpp"
+#include "geometry/convex_hull.hpp"
 #include "mesh_split.hpp"
 
 namespace shared
@@ -91,7 +91,7 @@ bool mesh_is_convex(const mesh_geometry_t &mesh)
   const std::vector<Plane> planes = compute_all_face_planes(mesh);
   for (const Plane &plane : planes)
     for (const linalg::vec3 &vertex : mesh.vertices)
-      if (linalg::dot(plane.normal, vertex - plane.point) > BRUSH_COPLANAR_EPSILON)
+      if (linalg::dot(plane.normal, vertex - plane.point) > COPLANAR_EPSILON)
         return false;
   return true;
 }

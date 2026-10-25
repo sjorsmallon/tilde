@@ -1,8 +1,7 @@
 #include "shadow_volume.hpp"
 
-#include "map/brush/brush.hpp"
 #include "collision/collision_detection.hpp"
-#include "map/brush/convex_decomposition.hpp"
+#include "geometry/convex_decomposition.hpp"
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
@@ -384,11 +383,11 @@ std::optional<shadow_occluder_t> try_cast_shadow_occluder(const shadow_light_t& 
         radius = std::max(radius, linalg::length(corner - center));
     cut_planes.assign(piece_planes.begin(), piece_planes.end());
     cut_planes.push_back(*try_shadow_light_far_cap(light, center));
-    const std::optional<brush_polyhedron_t> cut = try_build_convex_from_planes(cut_planes, center, radius + 1.f);
+    const std::optional<convex_polyhedron_t> cut = try_build_convex_from_planes(cut_planes, center, radius + 1.f);
     if (!cut)
       return std::nullopt;
     cut_planes.clear();
-    for (const brush_face_t& face : cut->faces)
+    for (const convex_face_t& face : cut->faces)
     {
       cut_planes.push_back(face.plane);
       std::vector<linalg::vec3>& polygon = cut_polygons.emplace_back();
@@ -635,7 +634,7 @@ std::string describe_shadow_volume_report(const shadow_volume_report_t& report, 
   if (report.cutting_lights == 0)
     text += "\n  no light has cuts_geometry set while switched on: nothing casts";
   if (report.receiver_pieces == 0)
-    text += "\n  no switched-on Geometry_Owner_Entity with solid_only_in_shadow or erased_in_shadow owns a brush: nothing receives";
+    text += "\n  no switched-on Geometry_Owner_Entity with solid_only_in_shadow or erased_in_shadow owns geometry: nothing receives";
   for (const shadow_volume_t& volume : kept)
   {
     linalg::vec3f near_center{0.f, 0.f, 0.f};
@@ -647,7 +646,7 @@ std::string describe_shadow_volume_report(const shadow_volume_report_t& report, 
     }
     near_center = near_center * (1.f / static_cast<float>(std::max(volume.side_count, 1u)));
     far_center  = far_center * (1.f / static_cast<float>(std::max(volume.side_count, 1u)));
-    text += std::format("\n  caster {} (0 is an unowned brush) from light {}: {} sides, {} front planes, silhouette about "
+    text += std::format("\n  caster {} (0 is unowned geometry) from light {}: {} sides, {} front planes, silhouette about "
                         "({:.0f} {:.0f} {:.0f}), far ring about ({:.0f} {:.0f} {:.0f})",
                         volume.caster, volume.light, volume.side_count, volume.front_plane_count, near_center.x,
                         near_center.y, near_center.z, far_center.x, far_center.y, far_center.z);
@@ -711,7 +710,7 @@ bool piece_role_receives(piece_role_t role)
   return role == piece_role_t::Receives || role == piece_role_t::Erased;
 }
 
-// Owners resolved once per geometry index rather than once per primitive, since a brush is several.
+// Owners resolved once per geometry index rather than once per primitive, since a mesh is several pieces.
 std::vector<piece_role_t> resolve_piece_roles(const Entity_System& system, Span<const entity_uid_t> owner_of)
 {
   std::vector<piece_role_t> role_of(owner_of.size(), piece_role_t::Casts);

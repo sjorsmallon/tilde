@@ -176,15 +176,8 @@ void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t& ctx,
   }
 }
 
-void Pathfinding_Test_Tool::on_draw_ui(editor_context_t& ctx)
+void Pathfinding_Test_Tool::on_draw_inspector(editor_context_t& ctx)
 {
-  ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
-  if (!ImGui::Begin("Pathfinding Test"))
-  {
-    ImGui::End();
-    return;
-  }
-
   ImGui::TextDisabled("LMB = start  |  Shift+LMB = end  |  R = reset");
   ImGui::Separator();
 
@@ -206,8 +199,6 @@ void Pathfinding_Test_Tool::on_draw_ui(editor_context_t& ctx)
     ImGui::TextColored({1.f, 0.3f, 0.3f, 1.f}, "No path found.");
   else
     ImGui::Text("Path: %d waypoints", (int)path.size());
-
-  ImGui::End();
 }
 
 } // namespace client

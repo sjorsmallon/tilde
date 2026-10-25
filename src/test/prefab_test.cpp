@@ -78,12 +78,9 @@ static const connection_t *find_row(const map_t &map, entities::entity_action ac
   return nullptr;
 }
 
-static const brush_geometry_t *first_brush(const map_t &map)
+static const mesh_geometry_t *first_mesh(const map_t &map)
 {
-  for (const map_geometry_t &entry : map.geometry)
-    if (const brush_geometry_t *brush = std::get_if<brush_geometry_t>(&entry.value))
-      return brush;
-  return nullptr;
+  return map.geometry.empty() ? nullptr : &map.geometry[0].value;
 }
 
 static entity_uid_t add_at(map_t &map, entities::entity_type type, const linalg::vec3 &position)
@@ -143,12 +140,9 @@ int main()
     write_weapon_kind_counts(
         *entities::entity_as<entities::Weapon_Entity>(source.find_by_uid(weapon_uid)->entity.get()));
 
-  brush_geometry_t floor_brush = make_box_brush({200.f, 8.f, -100.f}, {64.f, 8.f, 64.f});
-  sync_face_surfaces(floor_brush);
-  if (floor_brush.face_surfaces.empty())
-    return fail("the fixture brush produced no faces");
-  floor_brush.face_surfaces.front().material = source.material_index_for(TEST_MATERIAL);
-  const entity_uid_t floor = source.add_geometry(floor_brush);
+  mesh_geometry_t floor_mesh = make_box_mesh({200.f, 8.f, -100.f}, {64.f, 8.f, 64.f});
+  floor_mesh.faces.front().surface.material = source.material_index_for(TEST_MATERIAL);
+  const entity_uid_t floor = source.add_geometry(floor_mesh);
 
   // 1. INSIDE: the trigger switches the light on.
   {
@@ -389,10 +383,10 @@ int main()
       destination.materials[1] != TEST_MATERIAL)
     return fail("the destination's material table is not the piece's material appended once");
   {
-    const brush_geometry_t *pasted = first_brush(destination);
-    if (pasted == nullptr || pasted->face_surfaces.empty())
-      return fail("a pasted brush lost its faces");
-    if (pasted->face_surfaces.front().material != 1)
+    const mesh_geometry_t *pasted = first_mesh(destination);
+    if (pasted == nullptr || pasted->faces.empty())
+      return fail("a pasted mesh lost its faces");
+    if (pasted->faces.front().surface.material != 1)
       return fail("a pasted face does not name the destination's index for its material");
   }
 
@@ -424,9 +418,9 @@ int main()
       return fail("a geometry_owner_entity would not spawn");
 
     const entity_uid_t tied_brush =
-        tie_source.add_geometry(make_box_brush({0.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));
+        tie_source.add_geometry(make_box_mesh({0.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));
     const entity_uid_t stray_brush =
-        tie_source.add_geometry(make_box_brush({64.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));
+        tie_source.add_geometry(make_box_mesh({64.f, 0.f, 0.f}, {16.f, 16.f, 16.f}));
     set_owner_uid(tie_source.find_geometry_by_uid(tied_brush)->value, inside_owner);
     // A uid from another map entirely: nothing in the piece answers to it.
     set_owner_uid(tie_source.find_geometry_by_uid(stray_brush)->value, 9999);

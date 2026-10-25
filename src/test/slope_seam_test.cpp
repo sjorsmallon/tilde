@@ -4,14 +4,15 @@
 // was pulled down, so the seam between the flat top and the slope is a convex edge
 // of a single hull):
 //
-//   1. resolve_collisions must push along the LEAST penetrated plane. The ground
+//   1. resolve_collisions must push along the LEAST penetrated plane (the ground itself is
+//      now a sweep, find_ground_below, so the bias only steers the push). The ground
 //      bias once compared a biased candidate against the unbiased winner, so the
 //      flat top's plane, extended past the seam, beat the slope's plane whenever
 //      it was listed later: a hull resting on the slope near the seam was lifted
 //      to the flat's height, found itself over nothing, fell two ticks and was
 //      lifted again, forever.
 //   2. A step that opens on the ground and ends over nothing looks for ground
-//      within pm_step_height below (snap_to_ground_below). Without it a hull
+//      within pm_step_height below (settle_move's ground reach). Without it a hull
 //      walking off the flat onto the slope, or down an axis-aligned decline under
 //      quake (the overbounce leaves 0.1% of the velocity pointing away from the
 //      surface), floats until gravity catches up and lands hard.
@@ -34,10 +35,10 @@ using cvars::cvar_state_t;
 
 static int failures = 0;
 
-static void add_piece_inputs(std::vector<BVH_Input>& inputs, const shared::geometry_value_t& geometry,
+static void add_piece_inputs(std::vector<BVH_Input>& inputs, const shared::mesh_geometry_t& geometry,
                              shared::entity_uid_t uid, uint32_t index)
 {
-  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, uid, {}))
+  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, uid))
   {
     BVH_Input input;
     input.aabb             = piece.bounds;
@@ -51,13 +52,13 @@ static void add_piece_inputs(std::vector<BVH_Input>& inputs, const shared::geome
 // A wedge from x = -512 (top at `rise`) down to x = 0 (top at 0), on a floor whose top is y = 0 for x in [0, 2048].
 static Bounding_Volume_Hierarchy wedge_world(float rise)
 {
-  shared::brush_geometry_t wedge;
-  wedge.hull_points = {{-512.f, -64.f, -256.f}, {-512.f, -64.f, 256.f}, {0.f, -64.f, -256.f},
-                       {0.f, -64.f, 256.f},     {-512.f, rise, -256.f}, {-512.f, rise, 256.f},
-                       {0.f, 0.f, -256.f},      {0.f, 0.f, 256.f}};
-  const shared::geometry_value_t floor = shared::make_box_brush({1024.f, -32.f, 0.f}, {1024.f, 32.f, 256.f});
+  const linalg::vec3 wedge_points[] = {{-512.f, -64.f, -256.f}, {-512.f, -64.f, 256.f}, {0.f, -64.f, -256.f},
+                                       {0.f, -64.f, 256.f},     {-512.f, rise, -256.f}, {-512.f, rise, 256.f},
+                                       {0.f, 0.f, -256.f},      {0.f, 0.f, 256.f}};
+  const shared::mesh_geometry_t wedge = *shared::try_make_convex_hull_mesh(wedge_points);
+  const shared::mesh_geometry_t floor = shared::make_box_mesh({1024.f, -32.f, 0.f}, {1024.f, 32.f, 256.f});
   std::vector<BVH_Input> inputs;
-  add_piece_inputs(inputs, shared::geometry_value_t{wedge}, 1, 0);
+  add_piece_inputs(inputs, wedge, 1, 0);
   add_piece_inputs(inputs, floor, 2, 1);
   return build_bvh(inputs);
 }
@@ -66,12 +67,11 @@ static Bounding_Volume_Hierarchy wedge_world(float rise)
 // seam, which runs from (-640, 0, -640) to (640, 0, 640); the flat top is y = 0 above it.
 static Bounding_Volume_Hierarchy map_brush_world()
 {
-  shared::brush_geometry_t brush;
-  brush.hull_points = {{-640.f, -256.f, 640.f}, {-640.f, -128.f, -640.f}, {-640.f, 0.f, -640.f},
-                       {-627.750305f, -250.496887f, 627.750305f}, {640.f, -128.f, -640.f},
-                       {640.f, -128.f, 640.f}, {640.f, 0.f, -640.f}, {640.f, 0.f, 640.f}};
+  const linalg::vec3 points[] = {{-640.f, -256.f, 640.f}, {-640.f, -128.f, -640.f}, {-640.f, 0.f, -640.f},
+                                 {-627.750305f, -250.496887f, 627.750305f}, {640.f, -128.f, -640.f},
+                                 {640.f, -128.f, 640.f}, {640.f, 0.f, -640.f}, {640.f, 0.f, 640.f}};
   std::vector<BVH_Input> inputs;
-  add_piece_inputs(inputs, shared::geometry_value_t{brush}, 1, 0);
+  add_piece_inputs(inputs, *shared::try_make_convex_hull_mesh(points), 1, 0);
   return build_bvh(inputs);
 }
 

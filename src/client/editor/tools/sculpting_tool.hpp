@@ -39,7 +39,7 @@ private:
   // Pre-drag state, one flavor per regime — exactly one is engaged. See
   // commit_sculpt.
   entity_snapshot_t sculpt_start_entity;
-  std::optional<shared::geometry_value_t> sculpt_start_geometry;
+  std::optional<shared::mesh_geometry_t> sculpt_start_geometry;
 
   // The SHAPE alone -- a sampled centre would teleport the target onto the
   // object it was copied from.

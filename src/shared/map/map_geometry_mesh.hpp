@@ -17,6 +17,10 @@ namespace shared
 
 aabb_bounds_t compute_mesh_world_bounds(const mesh_geometry_t &mesh);
 
+// The bound grown by every sculpted grid, which leaves the face it sits on: the
+// picking bound and the BVH leaf.
+aabb_bounds_t compute_mesh_world_bounds_with_grids(const mesh_geometry_t &mesh);
+
 linalg::vec3 compute_mesh_world_half_extents(const mesh_geometry_t &mesh);
 
 // The gizmo's reshape (geometry_def.md §11.8 increment 9): every world point of
@@ -31,13 +35,14 @@ void scale_mesh_to_world_box(mesh_geometry_t &mesh, const aabb_t &box);
 // The decomposition's pieces through the pose for an inline or recipe source,
 // the column path for a convex mesh with ONE sculpted face (a second sculpted
 // face, or a reflex edge beside one, collides flat with a line: open, noted
-// under geometry_def.md 11.8 increment 12), the oriented box for an asset
-// source, nothing with `collides` off. A mesh
-// that refuses to decompose is logged by `uid` and collides with nothing.
+// under geometry_def.md 11.8 increment 12), one prism per section for a curve
+// recipe (make_curve_wall_section_solids, §11.11), the oriented box for an
+// asset source, nothing with `collides` off. A mesh that refuses to decompose
+// is logged by `uid` and collides with nothing.
 std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry_t &mesh,
                                                              entity_uid_t uid);
 
-// The brush rule over stored faces: every face must agree, or the mesh is opaque.
+// Over stored faces: every face must agree, or the mesh is opaque.
 light_occlusion_t compute_mesh_light_occlusion(const mesh_geometry_t &mesh,
                                                Span<const std::string> materials);
 
@@ -62,9 +67,9 @@ try_find_mesh_face_by_world_plane(const mesh_geometry_t &mesh, const Plane &plan
 std::vector<linalg::vec3> compute_mesh_face_grid_world_vertices(const mesh_geometry_t &mesh,
                                                                 uint32_t face_index);
 
-// The mesh's vertices and faces in world space as a brush polyhedron, for the
-// column builder of a sculpted face. Dies with brush_polyhedron_t in increment 14.
-brush_polyhedron_t compute_mesh_world_polyhedron(const mesh_geometry_t &mesh);
+// The mesh's vertices and faces in world space as one polyhedron, for the
+// column builder of a sculpted face.
+convex_polyhedron_t compute_mesh_world_polyhedron(const mesh_geometry_t &mesh);
 
 // Whether any face carries a grid: what a stroke across the map asks of a
 // mesh before it reads one.
@@ -102,7 +107,7 @@ size_t sculpt_mesh_face_grid_vertices(mesh_geometry_t &mesh, const linalg::vec3 
 // The mesh as it draws (geometry_def.md §11.8 increment 5), for an inline or
 // recipe source; an asset source draws through generate_lightmapped_asset_mesh
 // (map_geometry_asset.hpp). World-space
-// vertices under the pose with an identity draw transform, as a brush; one
+// vertices under the pose with an identity draw transform; one
 // vertex per face corner; the normal at a corner is the area-weighted mean over
 // the faces that share the vertex AND the smoothing group, with no search by
 // position; a grid on a quad is anchored to the ring (c00 is the ring's first

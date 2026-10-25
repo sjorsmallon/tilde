@@ -55,9 +55,7 @@ int main()
   const entity_uid_t a = add_at(map, entities::entity_type::Point_Light_Entity, {0.f, 64.f, 0.f});
   const entity_uid_t b = add_at(map, entities::entity_type::Trigger_Volume_Entity, {64.f, 64.f, 0.f});
   const entity_uid_t c = add_at(map, entities::entity_type::Player_Spawn_Entity, {128.f, 64.f, 0.f});
-  brush_geometry_t floor_brush = make_box_brush({64.f, 8.f, 0.f}, {64.f, 8.f, 64.f});
-  sync_face_surfaces(floor_brush);
-  const entity_uid_t floor = map.add_geometry(floor_brush);
+  const entity_uid_t floor = map.add_geometry(make_box_mesh({64.f, 8.f, 0.f}, {64.f, 8.f, 64.f}));
 
   if (a == null_entity_uid || b == null_entity_uid || c == null_entity_uid)
     return fail("a fixture entity would not be created");

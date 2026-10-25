@@ -14,7 +14,7 @@ namespace client
 struct stroke_brush_before_t
 {
   shared::entity_uid_t uid = shared::null_entity_uid;
-  shared::geometry_value_t before;
+  shared::mesh_geometry_t before;
 };
 
 // Remember `uid`'s value before the stroke first writes it. A later call for

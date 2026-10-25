@@ -1,6 +1,5 @@
 #include "lightmap_lights.hpp"
 
-#include "map/brush/brush.hpp"
 #include "lightmap_bake.hpp"
 #include "lightmap_trace.hpp"
 #include "log.hpp"
@@ -124,7 +123,7 @@ static Bounding_Volume_Hierarchy build_geometry_bvh(const map_t &map,
     }
 
     const std::vector<collision_piece_t> pieces =
-        get_collision_pieces(entry.value, entry.uid, map.geometry);
+        get_collision_pieces(entry.value, entry.uid);
     if (pieces.empty() && occluding)
       log_warning("[lightmap] object {} has no collision pieces and casts no shadow.",
                   entry.uid);
@@ -489,13 +488,11 @@ static linalg::vec3 shadow_ray_transmittance_to_disc_point(
     const linalg::vec3 &surface_normal, const light_arrival_t &arrival, float radius,
     float angle, float shadow_ray_bias)
 {
-  linalg::vec3 tangent_u;
-  linalg::vec3 tangent_v;
-  brush_face_grid_tangents(arrival.direction, tangent_u, tangent_v);
+  const tangent_basis_t tangents = compute_axis_aligned_tangents(arrival.direction);
 
   const linalg::vec3 centre = surface_position + arrival.direction * arrival.distance;
-  const linalg::vec3 target = centre + tangent_u * (std::cos(angle) * radius) +
-                              tangent_v * (std::sin(angle) * radius);
+  const linalg::vec3 target = centre + tangents.u * (std::cos(angle) * radius) +
+                              tangents.v * (std::sin(angle) * radius);
 
   const linalg::vec3 to_target = target - surface_position;
   const float distance = std::sqrt(linalg::dot(to_target, to_target));

@@ -32,7 +32,7 @@ void Sculpting_Tool::on_disable(editor_context_t& ctx)
 void Sculpting_Tool::commit_sculpt(editor_context_t& ctx)
 {
   const entity_snapshot_t entity_snapshot = std::move(sculpt_start_entity);
-  const std::optional<shared::geometry_value_t> geometry_snapshot =
+  const std::optional<shared::mesh_geometry_t> geometry_snapshot =
       std::move(sculpt_start_geometry);
 
   sculpt_start_entity.reset();
@@ -262,7 +262,7 @@ void Sculpting_Tool::apply_size_clipboard(editor_context_t& ctx,
     half_extents[axis] = std::max(half_extents[axis], editor::MIN_EXTENT);
 
   entity_snapshot_t                       before_entity;
-  std::optional<shared::geometry_value_t> before_geometry;
+  std::optional<shared::mesh_geometry_t> before_geometry;
 
   if (const shared::map_geometry_t *geometry = ctx.map->find_geometry_by_uid(uid))
     before_geometry = geometry->value;

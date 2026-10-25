@@ -776,14 +776,11 @@ void draw_animation_clip_panel(clip_playback_t &clip)
 
 } // namespace
 
-void Animation_Tool::on_draw_ui(editor_context_t& ctx)
+void Animation_Tool::on_draw_inspector(editor_context_t& ctx)
 {
-  ImGui::Begin("Animation");
-  // no bone is placed , return, because the rest of this function assumes there is one.
   if (!model.posed)
   {
     ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "No model to pose.");
-    ImGui::End();
     return;
   }
 
@@ -879,8 +876,6 @@ void Animation_Tool::on_draw_ui(editor_context_t& ctx)
     }
     ImGui::TreePop();
   }
-
-  ImGui::End();
 }
 
 } // namespace client

@@ -108,7 +108,7 @@ shared::mesh_geometry_t *Face_Tool::try_get_mesh(editor_context_t &ctx, shared::
   if (uid == shared::null_entity_uid || !ctx.map)
     return nullptr;
   shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid);
-  return entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  return entry ? &entry->value : nullptr;
 }
 
 const shared::face_surface_t *Face_Tool::try_get_face_surface(editor_context_t &ctx,
@@ -256,7 +256,7 @@ void Face_Tool::edit_face_surface(editor_context_t &ctx, const face_ref_t &targe
   if (!mesh || !target.face_index || *target.face_index >= mesh->faces.size())
     return;
 
-  const shared::geometry_value_t before = *mesh;
+  const shared::mesh_geometry_t before = *mesh;
   shared::face_surface_t &surface = mesh->faces[*target.face_index].surface;
   const shared::face_surface_t surface_before = surface;
   edit(surface);
@@ -266,8 +266,7 @@ void Face_Tool::edit_face_surface(editor_context_t &ctx, const face_ref_t &targe
   if (shared::geometry_values_equal(before, *mesh))
     return;
 
-  refresh_generated_geometry_mesh(*mesh, target.uid, ctx.map->materials, ctx.map->lightmap,
-                                  ctx.map->geometry);
+  refresh_generated_geometry_mesh(*mesh, target.uid, ctx.map->materials, ctx.map->lightmap);
 
   // The grid is the surface the player stands on; a material is not.
   if (face_grid_shape_changed(surface_before, surface) &&
@@ -286,13 +285,12 @@ void Face_Tool::edit_mesh(editor_context_t &ctx, shared::entity_uid_t uid, const
   if (!mesh)
     return;
 
-  const shared::geometry_value_t before = *mesh;
+  const shared::mesh_geometry_t before = *mesh;
   edit(*mesh);
   if (shared::geometry_values_equal(before, *mesh))
     return;
 
-  refresh_generated_geometry_mesh(*mesh, uid, ctx.map->materials, ctx.map->lightmap,
-                                  ctx.map->geometry);
+  refresh_generated_geometry_mesh(*mesh, uid, ctx.map->materials, ctx.map->lightmap);
   if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
     *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
@@ -338,8 +336,7 @@ void Face_Tool::update_grid_stroke(editor_context_t &ctx, float dt)
         *mesh, *grid_cursor.position, paint.radius, paint.strength * dt, paint.layer);
     if (touched == 0)
       return;
-    refresh_generated_geometry_mesh(*mesh, selection.uid, ctx.map->materials, ctx.map->lightmap,
-                                    ctx.map->geometry);
+    refresh_generated_geometry_mesh(*mesh, selection.uid, ctx.map->materials, ctx.map->lightmap);
     return;
   }
 
@@ -659,10 +656,8 @@ void Face_Tool::draw_sculpt_ui(editor_context_t &ctx)
     ImGui::TextDisabled("cursor is off the mesh");
 }
 
-void Face_Tool::on_draw_ui(editor_context_t &ctx)
+void Face_Tool::on_draw_inspector(editor_context_t &ctx)
 {
-  ImGui::Begin("Face Tool");
-
   constexpr Mode MODE_BUTTONS[] = {Mode::Surface, Mode::Paint, Mode::Sculpt};
   constexpr const char *MODE_LABELS[] = {"Surface", "Paint", "Sculpt"};
 
@@ -703,8 +698,6 @@ void Face_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::TextDisabled("drag        sculpt the face grid out (Sculpt mode)");
   ImGui::TextDisabled("shift+drag  sculpt it in (Sculpt mode)");
   ImGui::TextDisabled("esc         drop the face, then the mesh");
-
-  ImGui::End();
 }
 
 // ============================================================================

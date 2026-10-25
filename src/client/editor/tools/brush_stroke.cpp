@@ -38,19 +38,18 @@ size_t sculpt_meshes_under_stroke(editor_context_t &ctx,
   size_t moved = 0;
   for (shared::map_geometry_t &entry : ctx.map->geometry)
   {
-    shared::mesh_geometry_t *mesh = std::get_if<shared::mesh_geometry_t>(&entry.value);
-    if (!mesh || !shared::mesh_has_subdivided_face(*mesh) ||
-        !shared::aabb_intersects_sphere(shared::get_bounds(entry.value), center, radius))
+    shared::mesh_geometry_t &mesh = entry.value;
+    if (!shared::mesh_has_subdivided_face(mesh) ||
+        !shared::aabb_intersects_sphere(shared::get_bounds(mesh), center, radius))
       continue;
 
     remember_brush_before_stroke(befores, *ctx.map, entry.uid);
-    const size_t touched = shared::sculpt_mesh_face_grid_vertices(*mesh, center, radius, delta);
+    const size_t touched = shared::sculpt_mesh_face_grid_vertices(mesh, center, radius, delta);
     if (touched == 0)
       continue;
 
     moved += touched;
-    refresh_generated_geometry_mesh(entry.value, entry.uid, ctx.map->materials,
-                                    ctx.map->lightmap, ctx.map->geometry);
+    refresh_generated_geometry_mesh(mesh, entry.uid, ctx.map->materials, ctx.map->lightmap);
   }
   return moved;
 }

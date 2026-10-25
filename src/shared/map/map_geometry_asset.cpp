@@ -9,12 +9,11 @@
 namespace shared
 {
 
-const mesh_geometry_t *find_asset_sourced_mesh(const geometry_value_t &geometry)
+const mesh_geometry_t *find_asset_sourced_mesh(const mesh_geometry_t &geometry)
 {
-  const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&geometry);
-  if (mesh == nullptr || !std::holds_alternative<asset_mesh_source_t>(mesh->source))
+  if (!std::holds_alternative<asset_mesh_source_t>(geometry.source))
     return nullptr;
-  return mesh;
+  return &geometry;
 }
 
 const asset_mesh_source_t &get_mesh_asset_source(const mesh_geometry_t &mesh)

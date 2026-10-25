@@ -268,7 +268,7 @@ static void snapshot_on_load(const std::string &full_path)
 // place has nothing to land against.
 static void add_default_floor(shared::map_t &map)
 {
-  map.add_geometry(shared::make_box_brush(
+  map.add_geometry(shared::make_box_mesh(
       {0, editor::DEFAULT_FLOOR_Y, 0},
       {editor::DEFAULT_FLOOR_HALF_W, editor::DEFAULT_FLOOR_HALF_H,
        editor::DEFAULT_FLOOR_HALF_W}));
@@ -823,14 +823,7 @@ void Tool_Editor_State::update(float dt)
     }
   }
 
-  lap.next("editor update: bvh rebuild, lightmap upload");
-  if (geometry_updated_flag)
-  {
-    update_bvh();
-    geometry_updated_flag = false;
-  }
-
-
+  lap.next("editor update: lightmap upload");
   if (lightmap_updated_flag || map.lightmap.geometry_id != uploaded_lightmap_geometry_id)
   {
     lightmap_updated_flag         = false;
@@ -1480,8 +1473,14 @@ void Tool_Editor_State::build_frame(float delta_seconds,
                                     std::vector<renderer::view_pass_t> &passes,
                                     renderer::ui_draw_list_t &ui)
 {
-  frame_timing::lap_zone_t lap("editor build_frame: validate generated meshes");
-  if (geometry_updated_flag || generated_meshes_need_validation ||
+  frame_timing::lap_zone_t lap("editor build_frame: bvh rebuild, validate generated meshes");
+  if (geometry_updated_flag)
+  {
+    update_bvh();
+    geometry_updated_flag = false;
+    generated_meshes_need_validation = true;
+  }
+  if (generated_meshes_need_validation ||
       map.lightmap.geometry_id != validated_lightmap_geometry_id)
   {
     refresh_stale_generated_geometry_meshes(map.geometry, map.materials, map.lightmap);
@@ -1603,7 +1602,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
               : generated_mesh_check_t::Trusted_Since_Load;
       const live_drag_offset_t* dragged = find_live_drag_offset(live_drag_offsets, entry.uid);
       draw_geometry_in_editor(entry.value, scene, entry.uid, draw_entities_solid,
-                              map.materials, map.lightmap, map.geometry,
+                              map.materials, map.lightmap,
                               context.object_collides(entry.uid),
                               dragged ? dragged->translation : linalg::vec3{0, 0, 0}, check);
       scene.record_object_meshes(entry.uid, first_mesh);

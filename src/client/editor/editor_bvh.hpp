@@ -16,7 +16,7 @@ namespace client
 // one answer: the second falls out of building the first and a separate pass over
 // the map would be free to disagree with it.
 //
-// A brush that cannot be decomposed logs and collides with nothing. That is loud
+// A mesh that cannot be decomposed logs and collides with nothing. That is loud
 // in a terminal and invisible in a viewport, and the person who would fix it is
 // the one standing in the editor -- so the level author gets told in the place
 // they authored it, not only in the log. See get_collision_pieces.
@@ -54,10 +54,9 @@ build_editor_bvh(const shared::map_t &map)
     // A mesh with its collision switched off is still clicked as the shape it
     // would collide as (an asset-sourced one as its box), and by its bound when
     // that shape does not decompose. Nothing about it is reported.
-    const shared::mesh_geometry_t* mesh = std::get_if<shared::mesh_geometry_t>(&entry.value);
-    if (mesh != nullptr && !mesh->collides)
+    if (!entry.value.collides)
     {
-      shared::mesh_geometry_t as_collider = *mesh;
+      shared::mesh_geometry_t as_collider = entry.value;
       as_collider.collides = true;
       const std::vector<shared::collision_piece_t> pieces =
           shared::compute_mesh_collision_pieces(as_collider, entry.uid);
@@ -68,10 +67,15 @@ build_editor_bvh(const shared::map_t &map)
       continue;
     }
 
+    // A mesh that failed to decompose is reported AND stays clickable by its
+    // bound: the person who fixes it has to be able to select it.
     const std::vector<shared::collision_piece_t> pieces =
-        shared::get_collision_pieces(entry.value, entry.uid, map.geometry);
+        shared::get_collision_pieces(entry.value, entry.uid);
     if (pieces.empty())
+    {
       result.objects_without_collision.push_back(entry.uid);
+      add_leaf(entry.uid, shared::get_bounds(entry.value));
+    }
 
     for (const shared::collision_piece_t &piece : pieces)
       add_leaf(entry.uid, piece.bounds, piece.planes);

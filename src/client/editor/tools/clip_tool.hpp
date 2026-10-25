@@ -29,7 +29,7 @@ public:
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
 
   void on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws) override;
-  void on_draw_ui(editor_context_t &ctx) override;
+  void on_draw_inspector(editor_context_t &ctx) override;
 
 private:
   enum class Keep
@@ -46,7 +46,7 @@ private:
   Keep keep = Keep::Both;
 
   std::optional<shared::mesh_split_t> preview;
-  std::optional<shared::geometry_value_t> previewed_value;
+  std::optional<shared::mesh_geometry_t> previewed_value;
 
   viewport_state_t cached_view{};
 

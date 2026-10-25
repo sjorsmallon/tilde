@@ -62,6 +62,10 @@ public:
   // The sidebar's lower pane, drawn inside it: no window of its own.
   virtual void on_draw_inspector(editor_context_t& ctx) {}
 
+  // Whether the sidebar shows the outliner above the pane. False for a tool
+  // that edits an asset or runs a job, which then takes the whole height.
+  virtual bool edits_map_objects() const { return true; }
+
   // What this tool currently has selected, for panels OUTSIDE the tools that
   // colour by it -- the Map Info connection lines are the one caller. Empty for
   // every tool that has no selection, which is most of them.

@@ -1,7 +1,7 @@
 #include "mesh_split.hpp"
 
 #include "log.hpp"
-#include "map/brush/brush.hpp"
+#include "geometry/convex_hull.hpp"
 
 #include <algorithm>
 #include <map>
@@ -21,9 +21,9 @@ enum class plane_side_t
 
 plane_side_t classify_distance(float distance)
 {
-  if (distance > BRUSH_COPLANAR_EPSILON)
+  if (distance > COPLANAR_EPSILON)
     return plane_side_t::Front;
-  if (distance < -BRUSH_COPLANAR_EPSILON)
+  if (distance < -COPLANAR_EPSILON)
     return plane_side_t::Back;
   return plane_side_t::On;
 }

@@ -56,7 +56,7 @@ int main()
   // map, a BVH, a transaction system and a grid, and some of them assert on it.
   shared::map_t map;
   map.geometry.push_back(
-      {map.next_uid++, shared::make_box_brush({0, -8, 0}, {256, 8, 256})});
+      {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {256, 8, 256})});
 
   const Bounding_Volume_Hierarchy bvh = client::build_editor_bvh(map).bvh;
   client::Transaction_System      transactions;

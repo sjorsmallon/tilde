@@ -17,7 +17,7 @@ namespace client
 // static pass in Play_State and the editor's per-entity traits. Both had grown
 // their own copy of "resolve the mesh path, else fall back to the kind's
 // primitive", and they had already drifted (the editor cached generated
-// generated brush meshes, the game regenerated one every frame).
+// meshes, the game regenerated one every frame).
 //
 // `uid` only names the cache slot for a generated mesh, so the same object
 // doesn't get rebuilt once per view per frame.
@@ -45,7 +45,7 @@ struct team_wall_tint_t
 // right and forward. Unarmed and unwiped; a caller with a timer sets those. A locked_wall face
 // reads the frame for its keyhole whether or not a timer is wired, which is why it is built here
 // and not only where the timer is.
-renderer::clock_wipe_t geometry_wipe_frame(const shared::geometry_value_t& geometry,
+renderer::clock_wipe_t geometry_wipe_frame(const shared::mesh_geometry_t& geometry,
                                            const linalg::quatf& orientation);
 
 // Whether a draw compares the generated mesh's cache record against the live
@@ -59,18 +59,25 @@ enum class generated_mesh_check_t
   Trusted_Since_Load,
 };
 
-// `map_geometry` is the list the object sits in, so a brush's seam with its
-// neighbours is read the way collision reads it.
-void draw_geometry(pass_builder_t &draws, const shared::geometry_value_t &geometry,
+void draw_geometry(pass_builder_t &draws, const shared::mesh_geometry_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap,
-                   Span<const shared::map_geometry_t> map_geometry,
                    const linalg::mat4f* moved_by = nullptr,
                    const renderer::clock_wipe_t& clock_wipe = {},
                    std::optional<team_wall_tint_t> team_wall = {},
                    renderer::light_cut_t light_cut = renderer::light_cut_t::none,
                    bool casts_dynamic_shadow = false,
                    generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
+
+// Every edge of a mesh once as a line, through its pose and then `world`: a ring edge whose
+// reverse a later vertex walks is skipped, an edge a skin leaves unpaired is kept.
+void draw_mesh_edges(pass_builder_t &draws, const shared::mesh_geometry_t &mesh, color_t color,
+                     float depth_bias, const linalg::mat4f &world);
+
+// The wireframe of one piece of map geometry where it is drawn: its edges for an inline mesh, the
+// render mesh as lines for an asset-sourced one, which stores no edges of its own.
+void draw_geometry_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+                             color_t color, float depth_bias, const linalg::mat4f* moved_by);
 
 // The one compare a frozen list gets: every entry that draws from a generated
 // mesh is checked against its cache record and rebuilt where stale, so draws
@@ -80,34 +87,14 @@ void refresh_stale_generated_geometry_meshes(Span<const shared::map_geometry_t> 
                                              const shared::lightmap_t &lightmap);
 
 // Rebuild the cached mesh for an object whose GENERATED form just changed -- a
-// brush point set or one of its face grids -- and re-upload it. Registers the
-// mesh if this is the first time. The cache is keyed by uid only, so it cannot
+// vertex, a face or one of its grids -- and re-upload it. Registers the mesh
+// if this is the first time. The cache is keyed by uid only, so it cannot
 // notice an edit by itself: call this after one. The draw path checks anyway --
 // see the cache record in the .cpp -- so a missed call costs a frame, not a
 // stale solid that never catches up.
-//
-// Takes the whole geometry rather than one kind, because both kinds that
-// generate a mesh need exactly this, and a per-kind entry point is two things
-// to remember instead of one.
-//
-// A brush's seam and its smoothed normals depend on its neighbours, so a changed
-// brush also rebuilds every subdivided or smoothed brush of `map_geometry`
-// whose bounds touch it: their values
-// did not change, which is exactly why the draw path's check would miss them.
-void refresh_generated_geometry_mesh(const shared::geometry_value_t &geometry,
+void refresh_generated_geometry_mesh(const shared::mesh_geometry_t &geometry,
                                      shared::entity_uid_t uid,
                                      Span<const std::string> materials,
-                                     const shared::lightmap_t &lightmap,
-                                     Span<const shared::map_geometry_t> map_geometry);
-
-// The hull of a brush as the cache last built it, refreshed first when the brush
-// moved, exactly as draw_geometry refreshes the mesh. Empty when the points do
-// not form a solid. The one way a per-frame draw gets a hull: building one is
-// O(n^4) in the point count.
-const std::optional<shared::brush_polyhedron_t> &
-get_cached_brush_hull(const shared::geometry_value_t &geometry, shared::entity_uid_t uid,
-                      Span<const std::string> materials, const shared::lightmap_t &lightmap,
-                      Span<const shared::map_geometry_t> map_geometry,
-                      generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
+                                     const shared::lightmap_t &lightmap);
 
 } // namespace client

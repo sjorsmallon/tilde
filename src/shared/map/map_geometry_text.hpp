@@ -51,11 +51,8 @@ void write_uid_property(const char *key, entity_uid_t uid,
 void read_uid_property(const std::map<std::string, std::string> &properties, const char *key,
                        entity_uid_t &uid);
 
-// A `face` block: the plane key then the fields (a brush), or the fields alone
-// after a key of the caller's own (a mesh writes `indices`). The reader takes
-// whichever keys are there.
-void write_face_surface(const face_surface_t &face, Span<const uint16_t> material_remap,
-                        map_block_out_t &out);
+// A `face` block's fields, after a key of the caller's own (a mesh writes
+// `indices`).
 void write_face_surface_fields(const face_surface_t &face, Span<const uint16_t> material_remap,
                                map_block_out_t &out);
 face_surface_t read_face_surface(const map_block_t &block);

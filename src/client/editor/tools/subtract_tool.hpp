@@ -27,15 +27,15 @@ public:
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
 
   void on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws) override;
-  void on_draw_ui(editor_context_t &ctx) override;
+  void on_draw_inspector(editor_context_t &ctx) override;
 
 private:
   shared::entity_uid_t wall_uid = shared::null_entity_uid;
   shared::entity_uid_t cutter_uid = shared::null_entity_uid;
 
   std::optional<shared::mesh_subtraction_t> preview;
-  std::optional<shared::geometry_value_t> previewed_wall;
-  std::optional<shared::geometry_value_t> previewed_cutter;
+  std::optional<shared::mesh_geometry_t> previewed_wall;
+  std::optional<shared::mesh_geometry_t> previewed_cutter;
 
   viewport_state_t cached_view{};
 

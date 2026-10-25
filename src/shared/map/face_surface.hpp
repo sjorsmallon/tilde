@@ -37,10 +37,6 @@ face_uv_channel_t default_face_uv(const linalg::vec3 &normal);
 
 struct face_surface_t
 {
-  // a face is identified by it's normal.
-  linalg::vec3 key_normal{0.f, 0.f, 0.f};
-  float key_distance = 0.f;
-
   // Indices into map_t::materials, never paths. A material is one per FACE and
   // faces are the most numerous thing in a map; geometry_def.md ss4 has the
   // three ways a per-face string compounds.
@@ -70,15 +66,13 @@ struct face_surface_t
   // grid of cells, so the grid has (n+1)^2 vertices, row-major, i fastest.
   //
   // This is what displacement_geometry_t became: a displacement was a box with
-  // one subdivided face, and it is now a brush with one subdivided face. The
-  // exception is gone and the feature is not -- and because it lives on the
-  // FACE, every face of every brush has it, which is what makes blending a
-  // tessellation feature rather than a displacement one (geometry_def.md
-  // Track E).
+  // one subdivided face, and it is now a mesh with one subdivided face. Because
+  // it lives on the FACE, every face of every mesh has it, which is what makes
+  // blending a tessellation feature rather than a displacement one
+  // (geometry_def.md Track E).
   //
   // Only a QUAD face can carry a grid: a grid is a bilinear patch over four
-  // corners and there is no such thing over five. A subdivided face that stops
-  // being a quad loses its grid loudly in sync_face_surfaces.
+  // corners and there is no such thing over five.
   int32_t subdivision_level = 0;
 
   // Per grid vertex, and both are either empty (flat / unpainted) or exactly
@@ -141,14 +135,9 @@ bool face_is_subdivided(const face_surface_t &face);
 // the author sculpted instead of flattening it. Level 0 clears both.
 void resize_face_grid(face_surface_t &face, int new_subdivision_level);
 
-// A quad face's four corners in canonical grid order: c00, c10, c11, c01, i.e.
-// (u,v) = (0,0), (1,0), (1,1), (0,1) in the face's own tangent basis.
-//
-// CANONICAL is the whole point. Faces are derived and rewound on every hull
-// rebuild, so the polygon's own first vertex means nothing across an edit -- the
-// grid is anchored to the tangent basis instead (brush_face_grid_tangents), with
-// c00 the corner lowest in v then in u. That is what keeps offsets[3] naming the
-// same corner of the same face after a vertex drag.
+// A quad face's four corners in grid order: c00, c10, c11, c01. A mesh grid is
+// anchored to the RING, c00 the ring's first vertex (geometry_def.md 11.8
+// increment 5).
 struct face_grid_t
 {
   linalg::vec3 corners[4];

@@ -13,7 +13,7 @@ namespace shared
 {
 
 // The mesh when `geometry` is one sourced from an asset, else nothing.
-const mesh_geometry_t *find_asset_sourced_mesh(const geometry_value_t &geometry);
+const mesh_geometry_t *find_asset_sourced_mesh(const mesh_geometry_t &geometry);
 
 // The mesh's asset source; dies on a mesh with another source, a caller bug.
 const asset_mesh_source_t &get_mesh_asset_source(const mesh_geometry_t &mesh);

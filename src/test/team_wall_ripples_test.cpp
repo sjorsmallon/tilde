@@ -35,7 +35,7 @@ int main()
 
   // A wall 32 thick along x, its -x face at x = -16.
   std::vector<shared::map_geometry_t> geometry;
-  geometry.push_back({.uid = 7, .value = shared::make_box_brush({0.f, 0.f, 0.f}, {16.f, 64.f, 64.f})});
+  geometry.push_back({.uid = 7, .value = shared::make_box_mesh({0.f, 0.f, 0.f}, {16.f, 64.f, 64.f})});
   const shared::entity_uid_t owner_of[] = {owner};
 
   shared::wall_ripple_state_t state;

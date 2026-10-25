@@ -1,4 +1,3 @@
-#include "shared/map/brush/brush.hpp"
 #include "shared/map/map.hpp"
 #include "shared/lighting/map_baker.hpp"
 #include "shared/movement/navmesh.hpp"
@@ -428,16 +427,13 @@ static void test_3x1_strip()
 
 // ---------------------------------------------------------------------------
 // The bake half. Everything above tests simplify_navmesh() on a hand-built
-// navmesh; these run bake_map() over real geometry, which is where a brush's
-// hull has to survive the trip through the BVH.
+// navmesh; these run bake_map() over real geometry, which is where a mesh's
+// shape has to survive the trip through the BVH.
 
-static shared::map_t map_with_one_brush(std::vector<linalg::vec3> vertices)
+static shared::map_t map_with_one_mesh(shared::mesh_geometry_t mesh)
 {
-  shared::brush_geometry_t brush;
-  brush.hull_points = std::move(vertices);
-
   shared::map_t map;
-  map.geometry.push_back({1, brush});
+  map.geometry.push_back({1, std::move(mesh)});
   return map;
 }
 
@@ -468,11 +464,10 @@ static void test_bake_respects_extruded_footprint()
 {
   // Right triangle in XZ with the hypotenuse from (0,0,256) to (256,0,0), so
   // the +x/+z corner is outside the solid and the origin corner is inside.
-  const std::vector<linalg::vec3> footprint = {
-      {0.f, 0.f, 0.f}, {256.f, 0.f, 0.f}, {0.f, 0.f, 256.f}};
+  const linalg::vec3 footprint[] = {{0.f, 0.f, 0.f}, {0.f, 0.f, 256.f}, {256.f, 0.f, 0.f}};
 
-  shared::map_t map = map_with_one_brush(
-      shared::extrude_brush_hull(footprint, {0.f, 1.f, 0.f}, 128.f));
+  shared::map_t map =
+      map_with_one_mesh(shared::make_extruded_mesh(footprint, {0.f, 1.f, 0.f}, 128.f));
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
@@ -509,7 +504,7 @@ static void test_bake_follows_ramp_surface()
     if (vertex.y > -1.f)
       vertex.y = vertex.x * (32.f / 256.f); // top face tilts, bottom stays flat
 
-  shared::map_t map = map_with_one_brush(std::move(ramp));
+  shared::map_t map = map_with_one_mesh(*shared::try_make_convex_hull_mesh(ramp));
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
@@ -543,7 +538,7 @@ static void test_bake_rejects_steep_face()
     if (vertex.y > -1.f)
       vertex.y = vertex.x * 2.f;
 
-  shared::map_t map = map_with_one_brush(std::move(steep));
+  shared::map_t map = map_with_one_mesh(*shared::try_make_convex_hull_mesh(steep));
   shared::bake_map(map, 16.f);
 
   assert(!map.navmesh.valid() && "a 63-degree face baked as walkable floor");
@@ -556,8 +551,8 @@ static void test_bake_rejects_steep_face()
 // per column of the lid and nothing underneath it.
 static void test_bake_box_brush_is_one_span_per_column()
 {
-  shared::map_t map = map_with_one_brush(
-      shared::make_box_brush_points({128.f, 0.f, 128.f}, {128.f, 64.f, 128.f}));
+  shared::map_t map =
+      map_with_one_mesh(shared::make_box_mesh({128.f, 0.f, 128.f}, {128.f, 64.f, 128.f}));
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);
@@ -583,18 +578,12 @@ static void test_bake_box_brush_is_one_span_per_column()
 // just hit must not skip the floor beneath it.
 static void test_bake_finds_stacked_floors()
 {
-  shared::brush_geometry_t ground;
-  ground.hull_points = shared::make_box_brush_points({128.f, -32.f, 128.f}, {128.f, 32.f, 128.f});
-
   // A platform over the -x/-z quadrant, its underside 100 units up: clearance
   // over the ground below it beats the 72-unit player height, so BOTH surfaces
   // are walkable and the column carries two spans.
-  shared::brush_geometry_t platform;
-  platform.hull_points = shared::make_box_brush_points({64.f, 114.f, 64.f}, {64.f, 14.f, 64.f});
-
   shared::map_t map;
-  map.geometry.push_back({1, ground});
-  map.geometry.push_back({2, platform});
+  map.geometry.push_back({1, shared::make_box_mesh({128.f, -32.f, 128.f}, {128.f, 32.f, 128.f})});
+  map.geometry.push_back({2, shared::make_box_mesh({64.f, 114.f, 64.f}, {64.f, 14.f, 64.f})});
 
   constexpr float cell_size = 16.f;
   shared::bake_map(map, cell_size);

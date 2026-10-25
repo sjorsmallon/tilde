@@ -33,6 +33,15 @@ inline constexpr int32_t PRIMITIVE_CURVED_SMOOTHING_GROUP = 1;
 // with no vertices.
 mesh_geometry_t make_primitive_mesh(const primitive_recipe_t &recipe);
 
+// A curve wall's COLLISION (geometry_def.md §11.11): one closed convex prism
+// per consecutive pair of the loft's kept sections, two triangular ones where
+// a tight bend folds the section's quad into a dart, wound outward in the same
+// local frame make_primitive_mesh builds the loft in, so the mesh's pose
+// applies to each. The pieces overlap where the curve's arms cross, which the
+// stitched mesh cannot say; their union is the wall as drawn. Empty for fewer
+// than two sections; dies on a recipe that is not a curve.
+std::vector<mesh_geometry_t> make_curve_wall_section_solids(const primitive_recipe_t &recipe);
+
 // `mesh` rebuilt from `recipe`: the pose, surface, flags and owner stay; each
 // stored face's surface rides to the same index of the new faces, taking the
 // builder's smoothing group; faces past the new count are dropped and new

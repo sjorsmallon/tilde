@@ -7,6 +7,7 @@
 #include "map/face_surface.hpp"
 #include "plane.hpp"
 #include "span.hpp"
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -69,6 +70,7 @@ enum class mesh_defect_kind_t
   Face_Is_Bent,
   Edge_Is_Doubled,
   Edge_Is_Unpaired,
+  Face_Crosses_Itself,
 };
 
 struct mesh_defect_t
@@ -79,11 +81,17 @@ struct mesh_defect_t
   uint32_t vertex_b;
 };
 
-// The two invariants of geometry_def.md §11.3, CLOSED and PLANAR, plus the
-// structural checks they rest on; the first defect found, or nothing.
+// The invariants of geometry_def.md §11.3, CLOSED and PLANAR, with every face
+// SIMPLE (no two edges of a ring cross: a bow tie is planar and paired yet no
+// region), plus the structural checks they rest on; the first defect found, or
+// nothing.
 [[nodiscard]] std::optional<mesh_defect_t> find_mesh_defect(const mesh_geometry_t &mesh);
 
 std::string format_mesh_defect(const mesh_defect_t &defect);
+
+// Whether the segments a-b and c-d properly cross; touching at an end is no cross.
+bool segments_cross(const linalg::vec2 &a, const linalg::vec2 &b, const linalg::vec2 &c,
+                    const linalg::vec2 &d);
 
 // Every directed edge paired with its reverse. The one question a skin
 // (an open import) answers no to.
@@ -106,6 +114,14 @@ try_find_mesh_face_walking_edge(Span<const mesh_directed_edge_t> sorted_edges, u
                                 uint32_t b);
 
 float compute_mesh_face_area(const mesh_geometry_t &mesh, uint32_t face_index);
+
+// The face as triangles of RING positions (offsets into vertex_indices), wound as the ring is,
+// by ear clipping in the face's plane: right for any simple ring, concave included, and the fan
+// for a convex one. Every consumer that draws, picks or traces a face reads this, never a fan
+// of its own. A ring no ear can be cut from is a defect the invariants refuse elsewhere; here
+// it is logged and fanned.
+std::vector<std::array<uint32_t, 3>> triangulate_mesh_face(const mesh_geometry_t &mesh,
+                                                           uint32_t face_index);
 
 // Signed, by the divergence theorem over fan triangles; positive for a mesh
 // wound counter-clockwise seen from outside.
@@ -135,11 +151,16 @@ std::vector<mesh_shell_t> separate_mesh_shells_with_sources(const mesh_geometry_
 // which find_mesh_defect refuses first.
 Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index);
 
-// Same normal, same offset, within BRUSH_COPLANAR_EPSILON.
+// Same normal, same offset, within COPLANAR_EPSILON.
 bool planes_coincide(const Plane &a, const Plane &b);
 
 // Pose at the centre, vertices at the half extents.
 mesh_geometry_t make_box_mesh(const linalg::vec3 &center, const linalg::vec3 &half_extents);
+
+// The convex hull of `points`, pose at the centre of its bound. Nothing when the
+// points do not hull into a solid.
+[[nodiscard]] std::optional<mesh_geometry_t>
+try_make_convex_hull_mesh(Span<const linalg::vec3> points);
 
 // Identity pose. The footprint is a planar ring wound counter-clockwise seen
 // from the tip of `direction`; the cap at footprint + direction * depth keeps

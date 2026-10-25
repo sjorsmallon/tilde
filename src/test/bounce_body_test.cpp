@@ -34,13 +34,13 @@ static constexpr float TICK    = 1.f / 60.f;
 static constexpr float GRAVITY = 800.f;
 static constexpr float RADIUS  = 8.f;
 
-static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::geometry_value_t>& boxes)
+static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::mesh_geometry_t>& boxes)
 {
   std::vector<BVH_Input> inputs;
   for (uint32_t index = 0; index < boxes.size(); ++index)
   {
     for (const shared::collision_piece_t& piece :
-         shared::get_collision_pieces(boxes[index], index + 1, {}))
+         shared::get_collision_pieces(boxes[index], index + 1))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -56,8 +56,8 @@ static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared
 // The floor's top is y = 0; a second floor's top is y = -300 below it.
 static Bounding_Volume_Hierarchy two_floors()
 {
-  return build_world_from_boxes({shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
-                   shared::make_box_brush({0.f, -364.f, 0.f}, {2048.f, 64.f, 2048.f})});
+  return build_world_from_boxes({shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f}),
+                   shared::make_box_mesh({0.f, -364.f, 0.f}, {2048.f, 64.f, 2048.f})});
 }
 
 static shared::bounce_body_t dropped_from(float height, float restitution, float friction)
@@ -196,7 +196,7 @@ int main()
     platform.pose_at_tick_start.position = {0.f, 50.f, 0.f};
     platform.pose_at_tick_end.position   = {0.f, 50.f, 0.f};
     platform.pieces = shared::get_collision_pieces(
-        shared::make_box_brush({0.f, 50.f, 0.f}, {32.f, 8.f, 32.f}), platform.uid, {});
+        shared::make_box_mesh({0.f, 50.f, 0.f}, {32.f, 8.f, 32.f}), platform.uid);
     platform.swept_bounds = platform.pieces.front().bounds;
     std::vector<shared::mover_t> movers = {platform};
     shared::predicted_world_t    world{};

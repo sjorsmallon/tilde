@@ -3,11 +3,13 @@
 // decomposes into the pieces the brush era placed one by one; a quarter turn
 // swaps the extents exactly; a regeneration keeps each face's surface by
 // index; a hand edit freezes the recipe; a curve's points rebase to its corner
-// and stay there.
+// and stay there. The one curve, centripetal Catmull-Rom, is pinned here too.
 
+#include "shared/curve.hpp"
 #include "shared/map/mesh/mesh_decomposition.hpp"
 #include "shared/map/mesh/mesh_primitives.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -187,6 +189,26 @@ void test_a_curve_wall_is_one_loft()
     triangles += face.vertex_indices.size() == 3;
   assert(triangles > 0);
 
+  // A zigzag turning tighter than the half width at every point. The inner
+  // side would run backwards there and fold the wall through itself; those
+  // samples are skipped, so the loft is a solid that decomposes.
+  recipe.curve_samples_per_segment = 16;
+  recipe.curve_points = {{0.f, 0.f, 0.f}, {128.f, 0.f, 0.f}, {0.f, 0.f, 64.f}, {128.f, 0.f, 128.f}};
+  shared::rebase_curve_points_to_wall_corner(recipe);
+  const mesh_geometry_t zigzag = shared::make_primitive_mesh(recipe);
+  assert_solid_at_the_corner(zigzag, "zigzag wall");
+  assert(zigzag.vertices.size() < 4 * ((recipe.curve_points.size() - 1) * 16 + 1));
+  for (size_t section = 0; section + 1 < zigzag.vertices.size() / 4; ++section)
+  {
+    const uint32_t b = (uint32_t)section * 4;
+    const uint32_t n = b + 4;
+    const linalg::vec3 advance = (zigzag.vertices[n] + zigzag.vertices[n + 1]) * 0.5f -
+                                 (zigzag.vertices[b] + zigzag.vertices[b + 1]) * 0.5f;
+    assert(linalg::dot(zigzag.vertices[n] - zigzag.vertices[b], advance) > 0.f);
+    assert(linalg::dot(zigzag.vertices[n + 1] - zigzag.vertices[b + 1], advance) > 0.f);
+  }
+  assert(count_pieces(zigzag) > 1);
+
   recipe.curve_points = {{0.f, 0.f, 0.f}, {0.f, 100.f, 0.f}};
   const mesh_geometry_t ladder = shared::make_primitive_mesh(recipe);
   assert(ladder.vertices.empty());
@@ -195,6 +217,104 @@ void test_a_curve_wall_is_one_loft()
   assert(shared::make_primitive_mesh(recipe).vertices.empty());
   std::cout << "  a curve wall: a line is one piece, a bend several, a climb splits its "
                "twisted quads, a ladder is nothing\n";
+}
+
+bool point_is_inside_piece(const shared::collision_piece_t &piece, const linalg::vec3 &point)
+{
+  for (const Plane &plane : piece.planes)
+    if (linalg::dot(plane.normal, point - plane.point) > 1e-3f)
+      return false;
+  return true;
+}
+
+size_t count_pieces_containing(const std::vector<shared::collision_piece_t> &pieces,
+                               const linalg::vec3 &point, size_t first, size_t last)
+{
+  size_t count = 0;
+  for (size_t index = first; index < last; ++index)
+    count += point_is_inside_piece(pieces[index], point);
+  return count;
+}
+
+std::vector<mesh_geometry_t> section_solids_matching_the_loft(const primitive_recipe_t &recipe,
+                                                              const mesh_geometry_t &loft,
+                                                              const char *label)
+{
+  const std::vector<mesh_geometry_t> solids = shared::make_curve_wall_section_solids(recipe);
+  const size_t sections = loft.vertices.size() / 4;
+  assert(solids.size() >= sections - 1 && solids.size() <= 2 * (sections - 1));
+  for (const mesh_geometry_t &solid : solids)
+  {
+    const std::optional<shared::mesh_defect_t> defect = shared::find_mesh_defect(solid);
+    if (defect)
+      std::cout << "  " << label << " section: " << shared::format_mesh_defect(*defect) << "\n";
+    assert(!defect.has_value());
+    assert(shared::mesh_is_convex(solid));
+    assert((solid.vertices.size() == 8 && solid.faces.size() == 6) ||
+           (solid.vertices.size() == 6 && solid.faces.size() == 5));
+  }
+  return solids;
+}
+
+void test_a_curve_wall_collides_as_its_sections()
+{
+  primitive_recipe_t recipe;
+  recipe.kind = primitive_kind_t::Curve;
+  recipe.curve_width = 16.f;
+  recipe.curve_height = 64.f;
+  recipe.curve_samples_per_segment = 4;
+
+  recipe.curve_points = {{0.f, 0.f, 0.f}, {100.f, 0.f, 0.f}, {200.f, 0.f, 0.f}};
+  shared::rebase_curve_points_to_wall_corner(recipe);
+  const mesh_geometry_t straight = shared::make_primitive_mesh(recipe);
+  const std::vector<mesh_geometry_t> straight_solids =
+      section_solids_matching_the_loft(recipe, straight, "straight");
+  assert(straight_solids.size() == straight.vertices.size() / 4 - 1);
+  float sum_of_sections = 0.f;
+  for (const mesh_geometry_t &solid : straight_solids)
+  {
+    assert(solid.vertices.size() == 8);
+    sum_of_sections += shared::compute_mesh_volume(solid);
+  }
+  const float loft_volume = shared::compute_mesh_volume(straight);
+  assert(nearly(sum_of_sections, loft_volume, loft_volume * 1e-2f));
+
+  // Two straight arms through one point, joined by a hairpin: the arms cross
+  // at the second and fifth control points. The sections cover the crossing
+  // twice and the notches beside it not at all.
+  recipe.curve_points = {{0.f, 0.f, 0.f},     {100.f, 0.f, 50.f}, {200.f, 0.f, 100.f},
+                         {200.f, 0.f, 0.f}, {100.f, 0.f, 50.f}, {0.f, 0.f, 100.f}};
+  shared::rebase_curve_points_to_wall_corner(recipe);
+  const mesh_geometry_t crossing = shared::make_primitive_mesh(recipe);
+  assert_solid_at_the_corner(crossing, "crossing wall");
+  const std::vector<mesh_geometry_t> crossing_solids =
+      section_solids_matching_the_loft(recipe, crossing, "crossing");
+  std::vector<shared::collision_piece_t> pieces;
+  for (const mesh_geometry_t &solid : crossing_solids)
+    pieces.push_back(shared::collision_piece_from_convex_mesh(solid));
+
+  const linalg::vec3 cross_point = recipe.curve_points[1];
+  const linalg::vec3 first_arm = linalg::normalize(recipe.curve_points[2] - recipe.curve_points[0]);
+  const linalg::vec3 second_arm = linalg::normalize(recipe.curve_points[5] - recipe.curve_points[3]);
+  const linalg::vec3 half_height{0.f, recipe.curve_height * 0.5f, 0.f};
+  const linalg::vec3 overlap = cross_point + half_height + first_arm * 3.f;
+  const size_t halfway = pieces.size() / 2;
+  assert(count_pieces_containing(pieces, overlap, 0, halfway) >= 1);
+  assert(count_pieces_containing(pieces, overlap, halfway, pieces.size()) >= 1);
+  const linalg::vec3 between_the_arms = linalg::normalize(first_arm + second_arm) * 20.f;
+  assert(count_pieces_containing(pieces, cross_point + half_height + between_the_arms, 0,
+                                 pieces.size()) == 0);
+  assert(count_pieces_containing(pieces, cross_point + half_height - between_the_arms, 0,
+                                 pieces.size()) == 0);
+
+  recipe.curve_samples_per_segment = 16;
+  recipe.curve_points = {{0.f, 0.f, 0.f}, {128.f, 0.f, 0.f}, {0.f, 0.f, 64.f}, {128.f, 0.f, 128.f}};
+  shared::rebase_curve_points_to_wall_corner(recipe);
+  const mesh_geometry_t zigzag = shared::make_primitive_mesh(recipe);
+  (void)section_solids_matching_the_loft(recipe, zigzag, "zigzag");
+
+  std::cout << "  a curve wall collides as its sections: a line's sum to the loft, crossing arms "
+               "overlap and leave the notches empty, the zigzag skips the same samples\n";
 }
 
 void test_a_quarter_turn_swaps_the_extents_exactly()
@@ -274,6 +394,40 @@ void test_curve_points_rebase_to_the_corner_and_stay_there()
   std::cout << "  curve points rebase to the wall's corner, idempotently\n";
 }
 
+void test_catmull_rom_passes_through_its_points_and_a_line_stays_a_line()
+{
+  const std::vector<linalg::vec3> points = {{0.f, 0.f, 0.f}, {100.f, 0.f, 0.f},
+                                            {130.f, 0.f, 0.f}, {400.f, 0.f, 0.f}};
+  const int samples_per_segment = 5;
+  const std::vector<linalg::vec3> samples = shared::sample_catmull_rom(
+      Span<const linalg::vec3>(points.data(), points.size()), samples_per_segment);
+  assert(samples.size() == (points.size() - 1) * (size_t)samples_per_segment + 1);
+  for (size_t i = 0; i < points.size(); ++i)
+    assert(nearly(linalg::length(samples[i * (size_t)samples_per_segment] - points[i]), 0.f, 1e-4f));
+  for (size_t i = 1; i < samples.size(); ++i)
+  {
+    assert(nearly(samples[i].y, 0.f, 1e-4f) && nearly(samples[i].z, 0.f, 1e-4f));
+    assert(samples[i].x > samples[i - 1].x);
+  }
+
+  const std::vector<linalg::vec3> bend = {{0.f, 0.f, 0.f}, {100.f, 0.f, 0.f}, {100.f, 0.f, 100.f}};
+  const std::vector<linalg::vec3> bent =
+      shared::sample_catmull_rom(Span<const linalg::vec3>(bend.data(), bend.size()), 8);
+  float lowest_z = 0.f;
+  float highest_x = 100.f;
+  for (const linalg::vec3 &sample : bent)
+  {
+    assert(nearly(sample.y, 0.f, 1e-4f));
+    assert(sample.x >= -1e-3f && sample.z <= 100.f + 1e-3f);
+    lowest_z = std::min(lowest_z, sample.z);
+    highest_x = std::max(highest_x, sample.x);
+  }
+  std::cout << "catmull-rom corner: dips to z " << lowest_z << ", overshoots to x " << highest_x
+            << std::endl;
+  assert(lowest_z < 0.f && lowest_z > -25.f);
+  assert(highest_x > 100.f && highest_x < 125.f);
+}
+
 } // namespace
 
 int main()
@@ -283,9 +437,11 @@ int main()
   test_a_straight_flight_is_the_profile_extruded_and_decomposes_into_its_steps();
   test_a_spiral_is_one_shell_per_slab();
   test_a_curve_wall_is_one_loft();
+  test_a_curve_wall_collides_as_its_sections();
   test_a_quarter_turn_swaps_the_extents_exactly();
   test_a_regeneration_keeps_surfaces_by_index_and_a_hand_edit_freezes();
   test_curve_points_rebase_to_the_corner_and_stay_there();
+  test_catmull_rom_passes_through_its_points_and_a_line_stays_a_line();
   std::cout << "mesh_primitives_test passed" << std::endl;
   return 0;
 }

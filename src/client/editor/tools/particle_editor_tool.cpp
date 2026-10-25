@@ -81,10 +81,8 @@ void Particle_Editor_Tool::on_draw_overlay(editor_context_t& ctx,
   }
 }
 
-void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
+void Particle_Editor_Tool::on_draw_inspector(editor_context_t& ctx)
 {
-  ImGui::Begin("Particle Editor");
-
   if (ImGui::BeginCombo("Emitter",
                          selected_emitter_uid ? "Selected" : "None"))
   {
@@ -129,7 +127,6 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
   {
     ImGui::Text("No particle emitter selected.");
     ImGui::Text("Click an emitter or create one.");
-    ImGui::End();
     return;
   }
 
@@ -258,8 +255,6 @@ void Particle_Editor_Tool::on_draw_ui(editor_context_t& ctx)
     if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
       *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
-
-  ImGui::End();
 }
 
 } // namespace client

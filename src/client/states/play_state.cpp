@@ -521,7 +521,7 @@ static void update_drawn_carry_shift(client_context_t &ctx)
 
 // The same clock the movers are drawn on, so a wipe and a lift agree about now.
 static renderer::clock_wipe_t compute_drawn_clock_wipe_for_geometry(const client_context_t &ctx, shared::entity_uid_t owner_uid,
-                                            const shared::geometry_value_t &geometry)
+                                            const shared::mesh_geometry_t &geometry)
 {
   const shared::Entity_System &system = ctx.world.session.entity_system;
   const entities::Geometry_Owner_Entity *owner = system.get<entities::Geometry_Owner_Entity>(owner_uid);
@@ -2726,6 +2726,10 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             ctx.prediction.player_position = moved.feet;
             ctx.prediction.player_velocity = moved.velocity;
             ctx.prediction.player_movement = moved.movement;
+
+            // A stair step moves the hull in one go; the view eases over it through the same
+            // offset and decay a reconciliation correction uses.
+            ctx.prediction.visual_error_offset.y -= step_events.stair_rise;
           }
 
           // The one thing a fire press does to our OWN state, so the one thing
@@ -3240,6 +3244,7 @@ void Play_State::draw_imgui_panels()
     ImGui::Checkbox("Show Hitboxes", &ctx.cvars->debug_show_hitboxes);
     ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);
     ImGui::Checkbox("Hide Geometry", &ctx.cvars->debug_hide_geometry);
+    ImGui::Checkbox("Show Wireframe", &ctx.cvars->debug_show_wireframe);
     ImGui::Checkbox("Show Entities", &ctx.cvars->debug_show_entity_counts);
     ImGui::Checkbox("Look Panel", &ctx.cvars->r_look_panel);
   }
@@ -3650,7 +3655,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     draw_player_blob_shadow(drawn_local_feet(ctx));
 
   lap.next("build_frame: geometry loop");
-  if (!ctx.cvars->debug_hide_geometry)
+  if (!ctx.cvars->debug_hide_geometry || ctx.cvars->debug_show_wireframe)
   {
     auto mover_matrices  = std::unordered_map<shared::entity_uid_t, linalg::mat4f>{};
     for (const entities::Mover_Entity &mover : entity_system.entities_of_type<entities::Mover_Entity>())
@@ -3697,12 +3702,15 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       else if (owner != nullptr && owner->revealed_by_lens)
         light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter, owner->solid_only_when_lensed);
 
-      draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
-                    ctx.world.session.lightmap, ctx.world.session.geometry,
-                    moved != mover_matrices.end() ? &moved->second : nullptr,
-                    compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut,
-                    owner != nullptr && owner->casts_dynamic_shadow,
-                    generated_mesh_check_t::Trusted_Since_Load);
+      const linalg::mat4f* moved_by = moved != mover_matrices.end() ? &moved->second : nullptr;
+      if (!ctx.cvars->debug_hide_geometry)
+        draw_geometry(scene, entry.value, entry.uid, ctx.world.session.materials,
+                      ctx.world.session.lightmap, moved_by,
+                      compute_drawn_clock_wipe_for_geometry(ctx, owner_uid, entry.value), team_wall, light_cut,
+                      owner != nullptr && owner->casts_dynamic_shadow,
+                      generated_mesh_check_t::Trusted_Since_Load);
+      if (ctx.cvars->debug_show_wireframe)
+        draw_geometry_wireframe(scene, entry.value, colors::white, -60.0f, moved_by);
     }
   }
 

@@ -42,20 +42,20 @@ struct diff_entity_modified_t
 struct diff_geometry_created_t
 {
   shared::entity_uid_t uid;
-  shared::geometry_value_t value;
+  shared::mesh_geometry_t value;
 };
 
 struct diff_geometry_removed_t
 {
   shared::entity_uid_t uid;
-  shared::geometry_value_t value;
+  shared::mesh_geometry_t value;
 };
 
 struct diff_geometry_modified_t
 {
   shared::entity_uid_t uid;
-  shared::geometry_value_t before;
-  shared::geometry_value_t after;
+  shared::mesh_geometry_t before;
+  shared::mesh_geometry_t after;
 };
 
 struct diff_map_cvars_t
@@ -175,20 +175,20 @@ struct transaction_t
 
   // --- geometry ---
 
-  void add_geometry_created(shared::entity_uid_t uid, shared::geometry_value_t value)
+  void add_geometry_created(shared::entity_uid_t uid, shared::mesh_geometry_t value)
   {
     diffs.push_back(diff_geometry_created_t{uid, std::move(value)});
   }
 
-  void add_geometry_removed(shared::entity_uid_t uid, shared::geometry_value_t value)
+  void add_geometry_removed(shared::entity_uid_t uid, shared::mesh_geometry_t value)
   {
     diffs.push_back(diff_geometry_removed_t{uid, std::move(value)});
   }
 
   // No-op if the value didn't actually change, so a click-without-drag doesn't
   // push an empty transaction the user then has to undo twice.
-  void add_geometry_modified(shared::entity_uid_t uid, shared::geometry_value_t before,
-                             shared::geometry_value_t after)
+  void add_geometry_modified(shared::entity_uid_t uid, shared::mesh_geometry_t before,
+                             shared::mesh_geometry_t after)
   {
     if (geometry_values_equal(before, after))
       return;
@@ -405,7 +405,7 @@ private:
   // Write a whole geometry value back over the object with this uid. The entire
   // apply/revert asymmetry of the entity flavor collapses into this one line.
   static void set_geometry_value(shared::map_t &map, shared::entity_uid_t uid,
-                                 const shared::geometry_value_t &value)
+                                 const shared::mesh_geometry_t &value)
   {
     shared::map_geometry_t *entry = map.find_geometry_by_uid(uid);
     if (!entry)

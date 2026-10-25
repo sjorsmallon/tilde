@@ -1,7 +1,7 @@
 #include "mesh.hpp"
 
 #include "log.hpp"
-#include "map/brush/brush.hpp"
+#include "geometry/convex_hull.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -27,12 +27,46 @@ linalg::vec3 newell_normal(const mesh_geometry_t &mesh, const std::vector<uint32
   return normal;
 }
 
+float orientation(const linalg::vec2 &a, const linalg::vec2 &b, const linalg::vec2 &c)
+{
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
 linalg::vec3 ring_centroid(const mesh_geometry_t &mesh, const std::vector<uint32_t> &ring)
 {
   linalg::vec3 sum{0.f, 0.f, 0.f};
   for (uint32_t index : ring)
     sum = sum + mesh.vertices[index];
   return sum * (1.f / (float)ring.size());
+}
+
+// The ring in the plane of `unit_normal`: the first pair of non-adjacent edges
+// that properly cross, or nothing.
+std::optional<mesh_defect_t> find_ring_crossing(const mesh_geometry_t &mesh,
+                                                const std::vector<uint32_t> &ring,
+                                                uint32_t face_index,
+                                                const linalg::vec3 &unit_normal,
+                                                const linalg::vec3 &centroid)
+{
+  const tangent_basis_t tangents = compute_axis_aligned_tangents(unit_normal);
+  std::vector<linalg::vec2> projected;
+  projected.reserve(ring.size());
+  for (uint32_t index : ring)
+    projected.push_back({linalg::dot(mesh.vertices[index] - centroid, tangents.u),
+                         linalg::dot(mesh.vertices[index] - centroid, tangents.v)});
+  const size_t count = ring.size();
+  for (size_t i = 0; i < count; ++i)
+  {
+    for (size_t j = i + 2; j < count; ++j)
+    {
+      if (i == 0 && j == count - 1)
+        continue;
+      if (segments_cross(projected[i], projected[(i + 1) % count], projected[j],
+                         projected[(j + 1) % count]))
+        return mesh_defect_t{mesh_defect_kind_t::Face_Crosses_Itself, face_index, ring[i], ring[j]};
+    }
+  }
+  return std::nullopt;
 }
 
 std::optional<mesh_defect_t> find_face_defect(const mesh_geometry_t &mesh, uint32_t face_index)
@@ -52,11 +86,27 @@ std::optional<mesh_defect_t> find_face_defect(const mesh_geometry_t &mesh, uint3
 
   const linalg::vec3 normal = newell_normal(mesh, ring);
   const float normal_length = linalg::length(normal);
+  const linalg::vec3 centroid = ring_centroid(mesh, ring);
+
+  // A symmetric bow tie sums to no area at all, so the crossing test has to
+  // find its plane from a corner instead and run before the area verdict.
+  linalg::vec3 basis_normal = normal;
+  if (normal_length <= 1e-6f)
+  {
+    for (size_t i = 0; i < ring.size() && linalg::length(basis_normal) <= 1e-6f; ++i)
+      basis_normal = linalg::cross(mesh.vertices[ring[(i + 1) % ring.size()]] - mesh.vertices[ring[i]],
+                                   mesh.vertices[ring[(i + 2) % ring.size()]] - mesh.vertices[ring[i]]);
+    if (linalg::length(basis_normal) <= 1e-6f)
+      return mesh_defect_t{mesh_defect_kind_t::Face_Is_Degenerate, face_index, 0, 0};
+  }
+
+  if (std::optional<mesh_defect_t> crossing =
+          find_ring_crossing(mesh, ring, face_index, linalg::normalize(basis_normal), centroid))
+    return crossing;
   if (normal_length <= 1e-6f)
     return mesh_defect_t{mesh_defect_kind_t::Face_Is_Degenerate, face_index, 0, 0};
 
   const linalg::vec3 unit_normal = normal * (1.f / normal_length);
-  const linalg::vec3 centroid = ring_centroid(mesh, ring);
   uint32_t furthest_vertex = ring[0];
   float furthest_height = 0.f;
   for (uint32_t index : ring)
@@ -68,7 +118,7 @@ std::optional<mesh_defect_t> find_face_defect(const mesh_geometry_t &mesh, uint3
       furthest_vertex = index;
     }
   }
-  if (furthest_height > BRUSH_COPLANAR_EPSILON)
+  if (furthest_height > COPLANAR_EPSILON)
     return mesh_defect_t{mesh_defect_kind_t::Face_Is_Bent, face_index, furthest_vertex, 0};
   return std::nullopt;
 }
@@ -123,6 +173,13 @@ std::optional<mesh_defect_t> find_mesh_defect(const mesh_geometry_t &mesh)
   return std::nullopt;
 }
 
+bool segments_cross(const linalg::vec2 &a, const linalg::vec2 &b, const linalg::vec2 &c,
+                    const linalg::vec2 &d)
+{
+  return orientation(a, b, c) * orientation(a, b, d) < 0.f &&
+         orientation(c, d, a) * orientation(c, d, b) < 0.f;
+}
+
 std::string format_mesh_defect(const mesh_defect_t &defect)
 {
   switch (defect.kind)
@@ -145,6 +202,9 @@ std::string format_mesh_defect(const mesh_defect_t &defect)
   case mesh_defect_kind_t::Edge_Is_Unpaired:
     return std::format("edge {}->{} of face {} has no face on its other side (the mesh is open)",
                        defect.vertex_a, defect.vertex_b, defect.face_index);
+  case mesh_defect_kind_t::Face_Crosses_Itself:
+    return std::format("face {} crosses itself: the edge from vertex {} cuts the edge from vertex {}",
+                       defect.face_index, defect.vertex_a, defect.vertex_b);
   }
   return "unknown mesh defect";
 }
@@ -163,6 +223,94 @@ float compute_mesh_face_area(const mesh_geometry_t &mesh, uint32_t face_index)
   if (face_index >= mesh.faces.size())
     fatal_error("compute_mesh_face_area: face {} of {}", face_index, mesh.faces.size());
   return 0.5f * linalg::length(newell_normal(mesh, mesh.faces[face_index].vertex_indices));
+}
+
+std::vector<std::array<uint32_t, 3>> triangulate_mesh_face(const mesh_geometry_t &mesh,
+                                                           uint32_t face_index)
+{
+  if (face_index >= mesh.faces.size())
+    fatal_error("triangulate_mesh_face: face {} of {}", face_index, mesh.faces.size());
+  const std::vector<uint32_t> &ring = mesh.faces[face_index].vertex_indices;
+  const uint32_t count = (uint32_t)ring.size();
+  std::vector<std::array<uint32_t, 3>> triangles;
+  if (count < 3)
+    return triangles;
+  triangles.reserve(count - 2);
+
+  const auto fan_the_rest = [&](Span<const uint32_t> remaining)
+  {
+    for (size_t i = 1; i + 1 < remaining.count; ++i)
+      triangles.push_back({remaining[0], remaining[i], remaining[i + 1]});
+  };
+
+  const linalg::vec3 newell = newell_normal(mesh, ring);
+  const float newell_length = linalg::length(newell);
+  std::vector<uint32_t> remaining(count);
+  for (uint32_t i = 0; i < count; ++i)
+    remaining[i] = i;
+  if (newell_length <= 1e-6f)
+  {
+    log_error("triangulate_mesh_face: face {} has no area, fanned", face_index);
+    fan_the_rest(Span<const uint32_t>{remaining});
+    return triangles;
+  }
+
+  const linalg::vec3 normal = newell * (1.f / newell_length);
+  const linalg::vec3 seed = std::fabs(normal.x) < 0.9f ? linalg::vec3{1.f, 0.f, 0.f}
+                                                       : linalg::vec3{0.f, 1.f, 0.f};
+  const linalg::vec3 u = linalg::normalize(linalg::cross(normal, seed));
+  const linalg::vec3 v = linalg::cross(normal, u);
+  std::vector<linalg::vec2> projected(count);
+  for (uint32_t i = 0; i < count; ++i)
+  {
+    const linalg::vec3 &point = mesh.vertices[ring[i]];
+    projected[i] = {linalg::dot(point, u), linalg::dot(point, v)};
+  }
+
+  const auto inside_or_on = [&](const linalg::vec2 &a, const linalg::vec2 &b,
+                                const linalg::vec2 &c, const linalg::vec2 &p)
+  {
+    return orientation(a, b, p) >= 0.f && orientation(b, c, p) >= 0.f &&
+           orientation(c, a, p) >= 0.f;
+  };
+  const auto is_ear = [&](size_t at)
+  {
+    const size_t   size     = remaining.size();
+    const uint32_t previous = remaining[(at + size - 1) % size];
+    const uint32_t current  = remaining[at];
+    const uint32_t next     = remaining[(at + 1) % size];
+    const linalg::vec2 &a = projected[previous];
+    const linalg::vec2 &b = projected[current];
+    const linalg::vec2 &c = projected[next];
+    if (orientation(a, b, c) <= 0.f)
+      return false;
+    for (uint32_t other : remaining)
+      if (other != previous && other != current && other != next &&
+          inside_or_on(a, b, c, projected[other]))
+        return false;
+    return true;
+  };
+
+  while (remaining.size() > 3)
+  {
+    size_t ear = remaining.size();
+    for (size_t at = 0; at < remaining.size() && ear == remaining.size(); ++at)
+      if (is_ear(at))
+        ear = at;
+    if (ear == remaining.size())
+    {
+      log_error("triangulate_mesh_face: face {} has no ear among {} corners, fanned", face_index,
+                remaining.size());
+      fan_the_rest(Span<const uint32_t>{remaining});
+      return triangles;
+    }
+    const size_t size = remaining.size();
+    triangles.push_back(
+        {remaining[(ear + size - 1) % size], remaining[ear], remaining[(ear + 1) % size]});
+    remaining.erase(remaining.begin() + (std::ptrdiff_t)ear);
+  }
+  triangles.push_back({remaining[0], remaining[1], remaining[2]});
+  return triangles;
 }
 
 float compute_mesh_volume(const mesh_geometry_t &mesh)
@@ -279,7 +427,7 @@ Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index)
 bool planes_coincide(const Plane &a, const Plane &b)
 {
   return linalg::dot(a.normal, b.normal) > 0.999f &&
-         std::abs(linalg::dot(a.normal, b.point - a.point)) <= BRUSH_COPLANAR_EPSILON;
+         std::abs(linalg::dot(a.normal, b.point - a.point)) <= COPLANAR_EPSILON;
 }
 
 mesh_geometry_t make_box_mesh(const linalg::vec3 &center, const linalg::vec3 &half_extents)
@@ -297,6 +445,22 @@ mesh_geometry_t make_box_mesh(const linalg::vec3 &center, const linalg::vec3 &ha
   };
   for (const uint32_t(&ring)[4] : rings)
     mesh.faces.push_back({{ring[0], ring[1], ring[2], ring[3]}, {}});
+  return mesh;
+}
+
+std::optional<mesh_geometry_t> try_make_convex_hull_mesh(Span<const linalg::vec3> points)
+{
+  const std::optional<convex_polyhedron_t> hull = try_build_convex_hull(points);
+  if (!hull)
+    return std::nullopt;
+
+  const aabb_bounds_t bounds = compute_point_bounds(hull->vertices);
+  mesh_geometry_t mesh;
+  mesh.position = (bounds.min + bounds.max) * 0.5f;
+  for (const linalg::vec3 &vertex : hull->vertices)
+    mesh.vertices.push_back(vertex - mesh.position);
+  for (const convex_face_t &face : hull->faces)
+    mesh.faces.push_back({face.vertex_indices, {}});
   return mesh;
 }
 

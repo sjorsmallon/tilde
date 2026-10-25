@@ -42,7 +42,7 @@ struct map_entity_t
 struct map_geometry_t
 {
   entity_uid_t uid = 0;
-  geometry_value_t value;
+  mesh_geometry_t value;
 };
 
 struct map_t
@@ -170,14 +170,14 @@ struct map_t
 
   // --- Geometry, mirroring the entity accessors above -----------------------
 
-  entity_uid_t add_geometry(geometry_value_t value)
+  entity_uid_t add_geometry(mesh_geometry_t value)
   {
     entity_uid_t uid = next_uid++;
     geometry.push_back({uid, std::move(value)});
     return uid;
   }
 
-  void add_geometry_with_uid(entity_uid_t uid, geometry_value_t value)
+  void add_geometry_with_uid(entity_uid_t uid, mesh_geometry_t value)
   {
     geometry.push_back({uid, std::move(value)});
     if (uid >= next_uid)

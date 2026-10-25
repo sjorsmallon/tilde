@@ -64,7 +64,7 @@ private:
   std::vector<shared::entity_uid_t> edited_as_selection;
   std::optional<shared::entity_uid_t> hovered_recipe_uid;
   shared::primitive_recipe_t applied_settings;
-  std::optional<shared::geometry_value_t> value_before_edit;
+  std::optional<shared::mesh_geometry_t> value_before_edit;
 
   // The curve wall being drawn: its control points as clicked, in the world.
   std::vector<linalg::vec3> curve_points_in_progress;

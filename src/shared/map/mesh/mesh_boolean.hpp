@@ -34,7 +34,7 @@ struct mesh_subtraction_t
 try_subtract_convex_mesh(const mesh_geometry_t &wall, const mesh_geometry_t &cutter);
 
 // Split every edge at the vertices lying strictly between its ends within
-// BRUSH_WELD_EPSILON of its line: what pairs the directed edges again where one
+// GEOMETRY_WELD_EPSILON of its line: what pairs the directed edges again where one
 // face's cut stopped on a neighbour's edge. The sewing step of the subtraction.
 void split_mesh_edges_at_collinear_vertices(mesh_geometry_t &mesh);
 

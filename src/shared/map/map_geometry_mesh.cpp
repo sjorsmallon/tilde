@@ -39,6 +39,20 @@ aabb_bounds_t compute_mesh_world_bounds(const mesh_geometry_t &mesh)
   return bounds;
 }
 
+aabb_bounds_t compute_mesh_world_bounds_with_grids(const mesh_geometry_t &mesh)
+{
+  aabb_bounds_t bounds = compute_mesh_world_bounds(mesh);
+  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
+  {
+    const mesh_face_t &face = mesh.faces[face_index];
+    if (!face_is_subdivided(face.surface) || face.vertex_indices.size() != 4)
+      continue;
+    for (const linalg::vec3 &vertex : compute_mesh_face_grid_world_vertices(mesh, face_index))
+      expand_aabb_to_include_point(bounds, vertex);
+  }
+  return bounds;
+}
+
 linalg::vec3 compute_mesh_world_half_extents(const mesh_geometry_t &mesh)
 {
   const aabb_bounds_t bounds = compute_mesh_world_bounds(mesh);
@@ -109,11 +123,9 @@ std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry
                 uid);
     else
     {
-      const brush_polyhedron_t polyhedron = compute_mesh_world_polyhedron(mesh);
-      brush_face_grids_t grids;
+      const convex_polyhedron_t polyhedron = compute_mesh_world_polyhedron(mesh);
+      face_grids_t grids;
       grids.grid_vertices.resize(mesh.faces.size());
-      grids.grid_weights.resize(mesh.faces.size());
-      grids.grid_pinned.resize(mesh.faces.size());
       grids.grid_corners.resize(mesh.faces.size());
       for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
       {
@@ -133,6 +145,22 @@ std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry
                 "takes one - its grids collide flat",
                 uid, sculpted_faces);
     }
+  }
+
+  if (const recipe_mesh_source_t *source = std::get_if<recipe_mesh_source_t>(&mesh.source);
+      source && source->recipe.kind == primitive_kind_t::Curve)
+  {
+    std::vector<mesh_geometry_t> solids = make_curve_wall_section_solids(source->recipe);
+    std::vector<collision_piece_t> pieces;
+    pieces.reserve(solids.size());
+    for (mesh_geometry_t &solid : solids)
+    {
+      mesh_geometry_t placed = copy_mesh_pose_and_surface(mesh);
+      placed.vertices = std::move(solid.vertices);
+      placed.faces = std::move(solid.faces);
+      pieces.push_back(collision_piece_from_convex_mesh(placed));
+    }
+    return pieces;
   }
 
   const std::optional<std::vector<mesh_geometry_t>> convex_pieces =
@@ -236,16 +264,16 @@ std::vector<linalg::vec3> compute_mesh_face_grid_world_vertices(const mesh_geome
   return vertices;
 }
 
-brush_polyhedron_t compute_mesh_world_polyhedron(const mesh_geometry_t &mesh)
+convex_polyhedron_t compute_mesh_world_polyhedron(const mesh_geometry_t &mesh)
 {
-  brush_polyhedron_t polyhedron;
+  convex_polyhedron_t polyhedron;
   polyhedron.vertices.reserve(mesh.vertices.size());
   for (const linalg::vec3 &vertex : mesh.vertices)
     polyhedron.vertices.push_back(mesh.position + linalg::rotate(mesh.orientation, vertex));
   polyhedron.faces.reserve(mesh.faces.size());
   for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
   {
-    brush_face_t face;
+    convex_face_t face;
     face.plane = compute_mesh_world_face_plane(mesh, face_index);
     face.vertex_indices = mesh.faces[face_index].vertex_indices;
     polyhedron.faces.push_back(std::move(face));
@@ -327,12 +355,10 @@ std::optional<mesh_face_hit_t> try_pick_mesh_face(const mesh_geometry_t &mesh,
       continue;
     }
 
-    if (face.vertex_indices.size() < 3)
-      continue;
-    const linalg::vec3 origin = world_vertex(face.vertex_indices[0]);
-    for (size_t offset = 1; offset + 1 < face.vertex_indices.size(); ++offset)
-      consider(face_index, origin, world_vertex(face.vertex_indices[offset]),
-               world_vertex(face.vertex_indices[offset + 1]));
+    for (const std::array<uint32_t, 3> &triangle : triangulate_mesh_face(mesh, face_index))
+      consider(face_index, world_vertex(face.vertex_indices[triangle[0]]),
+               world_vertex(face.vertex_indices[triangle[1]]),
+               world_vertex(face.vertex_indices[triangle[2]]));
   }
   return nearest;
 }
@@ -536,11 +562,11 @@ assets::mesh_asset_t generate_mesh_geometry_mesh(const mesh_geometry_t &mesh,
           out.vertices.push_back({position, corner_normal(face_index, vertex),
                                   face_uv_at(surface.uv, position, plane.normal)});
         }
-        for (uint32_t offset = 1; offset + 1 < (uint32_t)face.vertex_indices.size(); ++offset)
+        for (const std::array<uint32_t, 3> &triangle : triangulate_mesh_face(world, face_index))
         {
-          out.indices.push_back(base);
-          out.indices.push_back(base + offset);
-          out.indices.push_back(base + offset + 1);
+          out.indices.push_back(base + triangle[0]);
+          out.indices.push_back(base + triangle[1]);
+          out.indices.push_back(base + triangle[2]);
         }
       }
 
@@ -805,11 +831,15 @@ try_parse_mesh_row(const std::map<std::string, std::string> &properties,
         log_error("mesh: unknown sub-block \"{}\" - skipped", child.keyword);
         continue;
       }
+      // A recipe's face count is derived, and a builder that learned to skip a
+      // fold builds fewer than the row was saved with. The surplus rows are
+      // dropped rather than the object: a resave writes the row as it now builds.
       if (face_index >= mesh.faces.size())
       {
-        log_error("mesh: more face blocks than the {} faces its {} builds - skipping the object",
-                  mesh.faces.size(), to_string(recipe->kind));
-        return std::nullopt;
+        log_error("mesh: {} face blocks for the {} faces its {} builds - the surplus is "
+                  "dropped; resave the map",
+                  children.size() - 1, mesh.faces.size(), to_string(recipe->kind));
+        break;
       }
       mesh.faces[face_index].surface = read_face_surface(child);
       ++face_index;

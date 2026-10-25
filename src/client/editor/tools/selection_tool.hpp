@@ -4,7 +4,6 @@
 #include "../connection_panel.hpp"
 #include "../editor_tool.hpp"
 #include "../transaction_system.hpp"
-#include "../../../shared/map/brush/brush.hpp"
 #include "../../../shared/map/map.hpp"
 #include <optional>
 #include <vector>
@@ -15,7 +14,7 @@ namespace client
 struct object_snapshot_t
 {
   entity_snapshot_t entity{};
-  std::optional<shared::geometry_value_t> geometry{};
+  std::optional<shared::mesh_geometry_t> geometry{};
 };
 
 class Selection_Tool : public Editor_Tool
@@ -140,12 +139,6 @@ shared::entity_uid_t hovered_uid = 0;
     // there was a lot of back-and-forth about what the simplest thing to do is,
     // and it's this.
     std::optional<shared::map_t> piece{};
-
-    // A brush's ghost is its hull, and building one is O(n^4) in the point count.
-    // The clipboard never changes, so the hulls are built once at copy time
-    // rather than per brush per frame for the whole life of a paste. Parallel to
-    // piece->geometry; the entry is empty for anything that is not a brush.
-    std::vector<std::optional<shared::brush_polyhedron_t>> brush_hulls{};
 
     // this mentions the connections that have an endpoint outside the selection.
     size_t outside_end_count = 0;

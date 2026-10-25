@@ -202,7 +202,7 @@ map_t copy_map_piece(const map_t& map, Span<const entity_uid_t> uids)
     if (members.count(entry.uid) == 0)
       continue;
 
-    geometry_value_t value = entry.value;
+    mesh_geometry_t value = entry.value;
     translate_geometry(value, linalg::vec3{0.f, 0.f, 0.f} - anchor);
     piece.add_geometry_with_uid(entry.uid, std::move(value));
     identity[entry.uid] = entry.uid;
@@ -311,24 +311,13 @@ paste_result_t paste_map_piece(map_t& destination, const map_t& source, const li
 
   for (const map_geometry_t& entry : source.geometry)
   {
-    geometry_value_t value = entry.value;
+    mesh_geometry_t value = entry.value;
     translate_geometry(value, position);
 
-    if (brush_geometry_t* brush = std::get_if<brush_geometry_t>(&value))
+    for (mesh_face_t& face : value.faces)
     {
-      for (face_surface_t& face : brush->face_surfaces)
-      {
-        face.material       = adopt_material(face.material);
-        face.blend_material = adopt_material(face.blend_material);
-      }
-    }
-    if (mesh_geometry_t* mesh = std::get_if<mesh_geometry_t>(&value))
-    {
-      for (mesh_face_t& face : mesh->faces)
-      {
-        face.surface.material       = adopt_material(face.surface.material);
-        face.surface.blend_material = adopt_material(face.surface.blend_material);
-      }
+      face.surface.material       = adopt_material(face.surface.material);
+      face.surface.blend_material = adopt_material(face.surface.blend_material);
     }
 
     // The TIE, through the same table everything else goes through. Done here

@@ -116,7 +116,7 @@ void draw_cursor_target_marker(ImDrawList *overlay, ImVec2 mouse,
 std::string describe_hovered_object(const shared::map_t &map, shared::entity_uid_t uid)
 {
   if (const shared::map_geometry_t *geometry = map.find_geometry_by_uid(uid))
-    return std::format("{} uid {}", shared::get_kind_name(shared::get_kind(geometry->value)), uid);
+    return std::format("mesh uid {}", uid);
 
   return shared::describe_map_entity(map, uid);
 }
@@ -613,15 +613,6 @@ void Selection_Tool::adopt_clipboard(shared::map_t piece, size_t outside_end_cou
 {
   clipboard.outside_end_count = outside_end_count;
 
-  clipboard.brush_hulls.clear();
-  clipboard.brush_hulls.reserve(piece.geometry.size());
-  for (const shared::map_geometry_t &entry : piece.geometry)
-  {
-    const shared::brush_geometry_t *brush = std::get_if<shared::brush_geometry_t>(&entry.value);
-    clipboard.brush_hulls.push_back(brush ? shared::try_build_brush_polyhedron(brush->hull_points)
-                                          : std::nullopt);
-  }
-
   // The piece's own low corner, which is already relative to its anchor.
   // Paste puts THAT corner on a grid line, the rule
   // compute_geometry_placement_center already follows for a single object.
@@ -776,7 +767,7 @@ void Selection_Tool::tie_selection_to_owner(editor_context_t& ctx, shared::entit
       continue;
 
     // A brush already tied is RE-tied, not refused, and its old owner is left standing.
-    const shared::geometry_value_t before = entry->value;
+    const shared::mesh_geometry_t before = entry->value;
     shared::set_owner_uid(entry->value, owner_uid);
     transaction.add_geometry_modified(uid, before, entry->value);
     ++tied;
@@ -881,7 +872,7 @@ void Selection_Tool::untie_selection(editor_context_t& ctx)
     if (entry == nullptr || shared::get_owner_uid(entry->value) == shared::null_entity_uid)
       continue;
 
-    const shared::geometry_value_t before = entry->value;
+    const shared::mesh_geometry_t before = entry->value;
     shared::set_owner_uid(entry->value, shared::null_entity_uid);
     transaction.add_geometry_modified(uid, before, entry->value);
     ++untied;
@@ -1532,9 +1523,7 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
     //
     // TODO(inspector-undo): the entity inspector's seed/settle, over a
     // geometry value, so a slider drag commits as one transaction.
-    if (draw_geometry_inspector(geometry->value, geometry->uid, ctx.map->materials,
-                                ctx.map->lightmap, ctx.map->geometry,
-                                ctx.object_collides(geometry->uid)))
+    if (draw_geometry_inspector(geometry->value, ctx.object_collides(geometry->uid)))
     {
       if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
         *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
@@ -2392,7 +2381,7 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
               const shared::map_geometry_t* geometry = ctx.map->find_geometry_by_uid(taken.uid);
               const std::string name =
                   geometry != nullptr
-                      ? std::format("{} uid {}", shared::get_kind_name(shared::get_kind(geometry->value)), taken.uid)
+                      ? std::format("mesh uid {}", taken.uid)
                       : shared::describe_map_entity(*ctx.map, taken.uid);
             }
           }
@@ -2519,7 +2508,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
           for (shared::entity_uid_t owned_uid : owned)
           {
             shared::map_geometry_t* owned_entry = ctx.map->find_geometry_by_uid(owned_uid);
-            const shared::geometry_value_t before = owned_entry->value;
+            const shared::mesh_geometry_t before = owned_entry->value;
             shared::set_owner_uid(owned_entry->value, shared::null_entity_uid);
             transaction.add_geometry_modified(owned_uid, before, owned_entry->value);
           }
@@ -2560,16 +2549,6 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
     for (size_t index = 0; clipboard.piece && index < clipboard.piece->geometry.size(); ++index)
     {
       const shared::map_geometry_t &entry = clipboard.piece->geometry[index];
-
-      if (index < clipboard.brush_hulls.size() && clipboard.brush_hulls[index])
-      {
-        // Traced from the hull captured at copy time. draw_geometry_ghost
-        // would rebuild it every frame.
-        draw_brush_hull_wireframe(draws, *clipboard.brush_hulls[index], *paste.anchor,
-                                  colors::yellow, 0.0f);
-        continue;
-      }
-
       draw_geometry_ghost(entry.value, draws, *paste.anchor + shared::get_position(entry.value));
     }
 
@@ -2632,9 +2611,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
     if (index == SIZE_MAX)
       continue;
     const live_drag_offset_t* dragged = find_live_drag_offset(live_drag_offsets_sorted, entry.uid);
-    draw_geometry_selection_highlight(entry.value, entry.uid, ctx.map->materials,
-                                      ctx.map->lightmap, ctx.map->geometry, draws, ctx.time,
-                                      grid_step, outlined[index] != 0,
+    draw_geometry_selection_highlight(entry.value, draws, ctx.time, outlined[index] != 0,
                                       dragged ? dragged->translation : linalg::vec3{0, 0, 0});
   }
   for (const shared::map_entity_t &entry : ctx.map->entities)

@@ -146,7 +146,7 @@ shared::mesh_geometry_t *Vertex_Tool::try_get_mesh(editor_context_t &ctx, shared
   if (uid == shared::null_entity_uid || !ctx.map)
     return nullptr;
   shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(uid);
-  return entry ? std::get_if<shared::mesh_geometry_t>(&entry->value) : nullptr;
+  return entry ? &entry->value : nullptr;
 }
 
 shared::mesh_geometry_t *Vertex_Tool::try_get_selected_mesh(editor_context_t &ctx)
@@ -454,14 +454,13 @@ void Vertex_Tool::update_move(editor_context_t &ctx, float grid_step)
       mesh->vertices[vertex] = mesh->vertices[vertex] + local_delta;
 
   live_defect = shared::find_mesh_defect(*mesh);
-  refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap,
-                                  ctx.map->geometry);
+  refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap);
 }
 
 void Vertex_Tool::end_move(editor_context_t &ctx)
 {
   shared::mesh_geometry_t *mesh = try_get_selected_mesh(ctx);
-  std::optional<shared::geometry_value_t> start = std::move(drag.move.geometry_at_start);
+  std::optional<shared::mesh_geometry_t> start = std::move(drag.move.geometry_at_start);
   const linalg::vec3 world_delta = drag.move.world_delta;
   drag = {};
   if (!mesh || !start)
@@ -477,10 +476,9 @@ void Vertex_Tool::end_move(editor_context_t &ctx)
       log_error("vertex drag on mesh {} refused: {}", selected_uid, reason);
       hud::set_announcement("vertex drag refused: " + reason);
     }
-    *mesh = std::get<shared::mesh_geometry_t>(*start);
+    *mesh = *start;
     live_defect.reset();
-    refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap,
-                                    ctx.map->geometry);
+    refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap);
     return;
   }
 
@@ -494,14 +492,13 @@ void Vertex_Tool::end_move(editor_context_t &ctx)
 void Vertex_Tool::cancel_move(editor_context_t &ctx)
 {
   shared::mesh_geometry_t *mesh = try_get_selected_mesh(ctx);
-  std::optional<shared::geometry_value_t> start = std::move(drag.move.geometry_at_start);
+  std::optional<shared::mesh_geometry_t> start = std::move(drag.move.geometry_at_start);
   drag = {};
   live_defect.reset();
   if (!mesh || !start)
     return;
-  *mesh = std::get<shared::mesh_geometry_t>(*start);
-  refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap,
-                                  ctx.map->geometry);
+  *mesh = *start;
+  refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap);
 }
 
 void Vertex_Tool::resolve_band_press_as_click()
@@ -627,7 +624,7 @@ void Vertex_Tool::edit_selected_vertices(editor_context_t &ctx, const char *name
   if (!mesh || local_positions.count != selected_vertices.size())
     return;
 
-  const shared::geometry_value_t before = *mesh;
+  const shared::mesh_geometry_t before = *mesh;
   for (size_t i = 0; i < selected_vertices.size(); ++i)
     if (selected_vertices[i] < mesh->vertices.size())
       mesh->vertices[selected_vertices[i]] = local_positions[i];
@@ -635,7 +632,7 @@ void Vertex_Tool::edit_selected_vertices(editor_context_t &ctx, const char *name
 
   if (shared::geometry_values_equal(before, *mesh))
   {
-    *mesh = std::get<shared::mesh_geometry_t>(before);
+    *mesh = before;
     return;
   }
 
@@ -644,12 +641,11 @@ void Vertex_Tool::edit_selected_vertices(editor_context_t &ctx, const char *name
     const std::string reason = shared::format_mesh_defect(*defect);
     log_error("vertex edit on mesh {} refused: {}", selected_uid, reason);
     hud::set_announcement("vertex edit refused: " + reason);
-    *mesh = std::get<shared::mesh_geometry_t>(before);
+    *mesh = before;
     return;
   }
 
-  refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap,
-                                  ctx.map->geometry);
+  refresh_generated_geometry_mesh(*mesh, selected_uid, ctx.map->materials, ctx.map->lightmap);
   transaction_t transaction;
   transaction.add_geometry_modified(selected_uid, before, *mesh);
   ctx.transaction_system.push(name, std::move(transaction));
@@ -757,8 +753,11 @@ void Vertex_Tool::on_draw_ui(editor_context_t &ctx)
       list->AddCircle({projected->x, projected->y}, radius, outline, 0, 1.5f);
     }
   }
+}
 
-  ImGui::Begin("Vertex Tool");
+void Vertex_Tool::on_draw_inspector(editor_context_t &ctx)
+{
+  const shared::mesh_geometry_t *mesh = try_get_selected_mesh(ctx);
 
   constexpr Mode MODE_BUTTONS[] = {Mode::Vertex, Mode::Edge, Mode::Face};
   constexpr const char *MODE_LABELS[] = {"Vertex", "Edge", "Face"};
@@ -821,8 +820,6 @@ void Vertex_Tool::on_draw_ui(editor_context_t &ctx)
   ImGui::TextDisabled("ctrl+A      select every vertex");
   ImGui::TextDisabled("esc         cancel the drag, drop the vertices, then the mesh");
   ImGui::TextDisabled("a move that bends a face is refused on release");
-
-  ImGui::End();
 }
 
 } // namespace client

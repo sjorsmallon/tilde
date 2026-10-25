@@ -372,6 +372,7 @@ struct cvar_state_t
   bool debug_show_navmesh;
   bool debug_show_box_volumes;
   bool debug_hide_geometry;
+  bool debug_show_wireframe;
   float cl_shot_debug_seconds;
   float cl_grab_distance;
   bool cl_shadow_volume_debug;
@@ -618,24 +619,25 @@ enum class cvar_id : uint16_t
   debug_show_navmesh = 218,
   debug_show_box_volumes = 219,
   debug_hide_geometry = 220,
-  cl_shot_debug_seconds = 221,
-  cl_grab_distance = 222,
-  cl_shadow_volume_debug = 223,
-  cl_solid_beam_debug = 224,
-  debug_show_entity_counts = 225,
-  net_snapshot_debug = 226,
-  sv_event_debug = 227,
-  cl_event_debug = 228,
-  sv_reliable_debug = 229,
-  sv_io_debug = 230,
-  replay_keyframe_seconds = 231,
-  sv_replay_auto = 232,
-  sv_ghost_record = 233,
+  debug_show_wireframe = 221,
+  cl_shot_debug_seconds = 222,
+  cl_grab_distance = 223,
+  cl_shadow_volume_debug = 224,
+  cl_solid_beam_debug = 225,
+  debug_show_entity_counts = 226,
+  net_snapshot_debug = 227,
+  sv_event_debug = 228,
+  cl_event_debug = 229,
+  sv_reliable_debug = 230,
+  sv_io_debug = 231,
+  replay_keyframe_seconds = 232,
+  sv_replay_auto = 233,
+  sv_ghost_record = 234,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 234;
+constexpr uint32_t CVAR_COUNT = 235;
 
 enum class command_id : uint16_t
 {

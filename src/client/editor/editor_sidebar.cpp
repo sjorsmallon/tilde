@@ -118,20 +118,24 @@ outliner_result_t draw_editor_sidebar(editor_sidebar_t&                sidebar,
   {
     sidebar.width = ImGui::GetWindowWidth();
 
-    const float available   = ImGui::GetContentRegionAvail().y - SPLITTER_THICKNESS;
-    const float list_height = std::clamp(sidebar.list_fraction * available, MINIMUM_PANE_HEIGHT,
-                                         std::max(MINIMUM_PANE_HEIGHT, available - MINIMUM_PANE_HEIGHT));
-    sidebar.list_fraction = available > 0.0f ? list_height / available : sidebar.list_fraction;
+    const bool show_outliner = active_tool == nullptr || active_tool->edits_map_objects();
+    if (show_outliner)
+    {
+      const float available   = ImGui::GetContentRegionAvail().y - SPLITTER_THICKNESS;
+      const float list_height = std::clamp(sidebar.list_fraction * available, MINIMUM_PANE_HEIGHT,
+                                           std::max(MINIMUM_PANE_HEIGHT, available - MINIMUM_PANE_HEIGHT));
+      sidebar.list_fraction = available > 0.0f ? list_height / available : sidebar.list_fraction;
 
-    if (ImGui::BeginChild("##sidebar_list", ImVec2(0.0f, list_height)))
-      result = draw_entity_outliner(*context.map, visibility, sidebar.outliner, selection);
-    ImGui::EndChild();
+      if (ImGui::BeginChild("##sidebar_list", ImVec2(0.0f, list_height)))
+        result = draw_entity_outliner(*context.map, visibility, sidebar.outliner, selection);
+      ImGui::EndChild();
 
-    draw_splitter(sidebar, available);
+      draw_splitter(sidebar, available);
 
-    draw_selection_header(*context.map, selection);
+      draw_selection_header(*context.map, selection);
+    }
 
-    const bool multi_edit = selection.size() > 1;
+    const bool multi_edit = show_outliner && selection.size() > 1;
     if (multi_edit)
       ImGui::PushStyleColor(ImGuiCol_ChildBg, MULTI_EDIT_TINT);
     if (ImGui::BeginChild("##sidebar_inspector"))

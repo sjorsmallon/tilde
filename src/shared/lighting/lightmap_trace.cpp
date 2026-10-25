@@ -1,6 +1,5 @@
 #include "lightmap_trace.hpp"
 
-#include "map/brush/brush.hpp"
 #include "map/map_geometry.hpp"
 #include "map/map_geometry_mesh.hpp"
 
@@ -23,9 +22,7 @@ constexpr float TWO_PI = 6.28318531f;
 // bounce as well.
 linalg::vec3 cosine_hemisphere_direction(const linalg::vec3 &normal, uint32_t bits)
 {
-  linalg::vec3 tangent_u;
-  linalg::vec3 tangent_v;
-  brush_face_grid_tangents(normal, tangent_u, tangent_v);
+  const tangent_basis_t tangents = compute_axis_aligned_tangents(normal);
 
   const float radius_stratum = unit_float_from(bits);
   const float angle = TWO_PI * unit_float_from(hash_mix(bits, 0x68bc21ebu));
@@ -33,8 +30,8 @@ linalg::vec3 cosine_hemisphere_direction(const linalg::vec3 &normal, uint32_t bi
   const float radius = std::sqrt(radius_stratum);
   const float height = std::sqrt(std::max(0.f, 1.f - radius_stratum));
 
-  return linalg::normalize(tangent_u * (radius * std::cos(angle)) +
-                           tangent_v * (radius * std::sin(angle)) + normal * height);
+  return linalg::normalize(tangents.u * (radius * std::cos(angle)) +
+                           tangents.v * (radius * std::sin(angle)) + normal * height);
 }
 
 // The FIRST leg only, and the difference from the sampler above is the whole of
@@ -47,16 +44,14 @@ linalg::vec3 cosine_hemisphere_direction(const linalg::vec3 &normal, uint32_t bi
 // bounded weight.
 linalg::vec3 uniform_hemisphere_direction(const linalg::vec3 &normal, uint32_t bits)
 {
-  linalg::vec3 tangent_u;
-  linalg::vec3 tangent_v;
-  brush_face_grid_tangents(normal, tangent_u, tangent_v);
+  const tangent_basis_t tangents = compute_axis_aligned_tangents(normal);
 
   const float height = unit_float_from(bits);
   const float radius = std::sqrt(std::max(0.f, 1.f - height * height));
   const float angle = TWO_PI * unit_float_from(hash_mix(bits, 0x68bc21ebu));
 
-  return linalg::normalize(tangent_u * (radius * std::cos(angle)) +
-                           tangent_v * (radius * std::sin(angle)) + normal * height);
+  return linalg::normalize(tangents.u * (radius * std::cos(angle)) +
+                           tangents.v * (radius * std::sin(angle)) + normal * height);
 }
 
 // The whole sphere, for a probe: a point in space has no hemisphere. Uniform, for
@@ -328,8 +323,7 @@ traced_scene_t build_traced_scene(const map_t &map, const Bounding_Volume_Hierar
 
   scene.meshes.reserve(map.geometry.size());
   for (const map_geometry_t &entry : map.geometry)
-    if (const mesh_geometry_t *mesh = std::get_if<mesh_geometry_t>(&entry.value))
-      scene.meshes.push_back({entry.uid, mesh});
+    scene.meshes.push_back({entry.uid, &entry.value});
 
   std::sort(scene.meshes.begin(), scene.meshes.end(),
             [](const std::pair<entity_uid_t, const mesh_geometry_t *> &left,

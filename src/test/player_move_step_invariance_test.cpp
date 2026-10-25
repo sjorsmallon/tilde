@@ -124,11 +124,11 @@ static Bounding_Volume_Hierarchy empty_world()
 // A floor whose top face is y = 0.
 static Bounding_Volume_Hierarchy floor_world()
 {
-  const shared::geometry_value_t geometry =
-      shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
+  const shared::mesh_geometry_t geometry =
+      shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
 
   std::vector<BVH_Input> inputs;
-  for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, 1, {}))
+  for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, 1))
   {
     BVH_Input input;
     input.aabb = piece.bounds;
@@ -361,8 +361,8 @@ static void test_friction_speed_composes(const cvar_state_t& cvars)
 
   const Bounding_Volume_Hierarchy bvh = floor_world();
   const Move_Input input;
-  // Penetrating the floor by a hair: resolve_collisions is a penetration test,
-  // and it pushes back out to a 0.01 skin so contact survives the next step.
+  // Penetrating the floor by a hair: the opening resolve pushes the hull out to the sweep's
+  // skin, and the ground sweep finds the floor from there.
   const vec3 start_position{0.f, -0.02f, 0.f};
   const vec3 start_velocity{300.f, 0.f, 0.f};
 
@@ -857,7 +857,8 @@ static void test_an_inverted_gravity_zone_lifts_a_standing_hull(const cvar_state
   const float expected_rise = 0.5f * settings.shared.gravity * 0.25f;
   const float risen         = height_after_half_a_second(true);
   check(std::fabs(risen - expected_rise) < 1.f, "the hull falls UP along the same parabola");
-  check(std::fabs(height_after_half_a_second(false)) < 0.01f,
+  // A standing hull rests hull_sweep_skin off the floor, where a sweep leaves it.
+  check(std::fabs(height_after_half_a_second(false) - hull_sweep_skin) < 0.01f,
         "a switched-off zone leaves the hull standing");
 }
 
@@ -876,16 +877,16 @@ static void test_an_inverted_gravity_zone_lifts_a_standing_hull(const cvar_state
 // below is that the floor is still there.
 static Bounding_Volume_Hierarchy floor_and_wall_world()
 {
-  const shared::geometry_value_t floor =
-      shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
-  const shared::geometry_value_t wall =
-      shared::make_box_brush({128.f, 512.f, 0.f}, {16.f, 1024.f, 512.f});
+  const shared::mesh_geometry_t floor =
+      shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
+  const shared::mesh_geometry_t wall =
+      shared::make_box_mesh({128.f, 512.f, 0.f}, {16.f, 1024.f, 512.f});
 
   std::vector<BVH_Input> inputs;
   uint32_t               index = 0;
-  for (const shared::geometry_value_t &geometry : {floor, wall})
+  for (const shared::mesh_geometry_t &geometry : {floor, wall})
   {
-    for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, index + 1, {}))
+    for (const shared::collision_piece_t &piece : shared::get_collision_pieces(geometry, index + 1))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -1042,7 +1043,8 @@ static void test_ground_jump_arc_composes(const cvar_state_t& cvars)
   const vec3 start_position{0.f, -0.02f, 0.f};
   const vec3 start_velocity{0.f, 0.f, 0.f};
 
-  const float resting_height = -0.01f;
+  // The opening resolve pushes the penetrating hull out to the sweep's skin, where the jump starts.
+  const float resting_height = hull_sweep_skin;
   const float expected_height = resting_height + cvars.pm_jumpspeed * tick_dt -
                                 0.5f * cvars.g_gravity * tick_dt * tick_dt;
   const float expected_vertical_velocity = cvars.pm_jumpspeed - cvars.g_gravity * tick_dt;
@@ -1274,11 +1276,11 @@ static shared::mover_t platform_at(uint32_t tick)
   mover.pose_at_tick_start.position = platform_center_at(tick - 1);
   mover.pose_at_tick_end.position   = platform_center_at(tick);
   mover.pieces = shared::get_collision_pieces(
-      shared::make_box_brush(platform_center_at(tick), platform_half_extents), platform_uid, {});
+      shared::make_box_mesh(platform_center_at(tick), platform_half_extents), platform_uid);
   mover.swept_bounds = mover.pieces.front().bounds;
   for (const shared::collision_piece_t& piece : shared::get_collision_pieces(
-           shared::make_box_brush(platform_center_at(tick - 1), platform_half_extents),
-           platform_uid, {}))
+           shared::make_box_mesh(platform_center_at(tick - 1), platform_half_extents),
+           platform_uid))
     mover.swept_bounds = shared::union_aabb(mover.swept_bounds, piece.bounds);
   return mover;
 }
@@ -1351,10 +1353,10 @@ static void test_a_mover_crushes_against_a_ceiling(const cvar_state_t& cvars)
   printf("\n[DELIBERATE] mover: a platform rising into a ceiling crushes its rider\n");
 
   const float ceiling_bottom = platform_start.y + platform_half_extents.y + 2.f * half_height + 20.f;
-  const shared::geometry_value_t ceiling = shared::make_box_brush(
+  const shared::mesh_geometry_t ceiling = shared::make_box_mesh(
       {0.f, ceiling_bottom + 64.f, 0.f}, {4096.f, 64.f, 4096.f});
   std::vector<BVH_Input> inputs;
-  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(ceiling, 1, {}))
+  for (const shared::collision_piece_t& piece : shared::get_collision_pieces(ceiling, 1))
   {
     BVH_Input input;
     input.aabb             = piece.bounds;
@@ -2555,17 +2557,18 @@ static const vec3 ramp_normal = normalize(vec3{-std::sin(linalg::to_radians(60.f
 static Bounding_Volume_Hierarchy ramp_and_wall_world()
 {
   const float             rise = 512.f * std::tan(linalg::to_radians(60.f));
-  shared::brush_geometry_t ramp;
-  ramp.hull_points = {{0.f, 0.f, -512.f},    {0.f, 0.f, 512.f},    {512.f, 0.f, -512.f},
-                      {512.f, 0.f, 512.f},   {512.f, rise, -512.f}, {512.f, rise, 512.f}};
-  const shared::geometry_value_t wall =
-      shared::make_box_brush({128.f, 1000.f, -2048.f}, {64.f, 512.f, 512.f});
+  const linalg::vec3      ramp_points[] = {{0.f, 0.f, -512.f},    {0.f, 0.f, 512.f},
+                                           {512.f, 0.f, -512.f},  {512.f, 0.f, 512.f},
+                                           {512.f, rise, -512.f}, {512.f, rise, 512.f}};
+  const shared::mesh_geometry_t ramp = *shared::try_make_convex_hull_mesh(ramp_points);
+  const shared::mesh_geometry_t wall =
+      shared::make_box_mesh({128.f, 1000.f, -2048.f}, {64.f, 512.f, 512.f});
 
   std::vector<BVH_Input> inputs;
   uint32_t               index = 0;
-  for (const shared::geometry_value_t& geometry : {shared::geometry_value_t{ramp}, wall})
+  for (const shared::mesh_geometry_t& geometry : {ramp, wall})
   {
-    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1, {}))
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;
@@ -2686,17 +2689,18 @@ static void test_surf_ramp_projects_the_fall(const cvar_state_t& cvars)
 static Bounding_Volume_Hierarchy floor_and_wedge_world(float degrees)
 {
   const float              rise = 512.f * std::tan(linalg::to_radians(degrees));
-  shared::brush_geometry_t wedge;
-  wedge.hull_points = {{0.f, 0.f, -512.f},    {0.f, 0.f, 512.f},    {512.f, 0.f, -512.f},
-                       {512.f, 0.f, 512.f},   {512.f, rise, -512.f}, {512.f, rise, 512.f}};
-  const shared::geometry_value_t floor =
-      shared::make_box_brush({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
+  const linalg::vec3       wedge_points[] = {{0.f, 0.f, -512.f},    {0.f, 0.f, 512.f},
+                                             {512.f, 0.f, -512.f},  {512.f, 0.f, 512.f},
+                                             {512.f, rise, -512.f}, {512.f, rise, 512.f}};
+  const shared::mesh_geometry_t wedge = *shared::try_make_convex_hull_mesh(wedge_points);
+  const shared::mesh_geometry_t floor =
+      shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
 
   std::vector<BVH_Input> inputs;
   uint32_t               index = 0;
-  for (const shared::geometry_value_t& geometry : {shared::geometry_value_t{wedge}, floor})
+  for (const shared::mesh_geometry_t& geometry : {wedge, floor})
   {
-    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1, {}))
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(geometry, index + 1))
     {
       BVH_Input input;
       input.aabb             = piece.bounds;

@@ -140,9 +140,13 @@ bool intersect_ray_convex_hull(Span<const Plane> planes, const vec3f& origin,
                                             out_normal);
 }
 
-bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& origin,
-                                        const vec3f& dir, float radius, float& out_t,
-                                        float& out_t_exit, vec3f& out_normal)
+namespace
+{
+
+template <typename Grow_T>
+bool intersect_grown_hull_sweep(Span<const Plane> planes, const vec3f& origin, const vec3f& dir,
+                                Grow_T grow, float alongside_tolerance, float& out_t,
+                                float& out_t_exit, vec3f& out_normal)
 {
   if (planes.count == 0)
     return false;
@@ -157,12 +161,12 @@ bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& o
 
   for (const Plane &plane : planes)
   {
-    const float denominator   = linalg::dot(dir, plane.normal);
-    const float signed_distance = linalg::dot(origin - plane.point, plane.normal) - radius;
+    const float denominator     = linalg::dot(dir, plane.normal);
+    const float signed_distance = linalg::dot(origin - plane.point, plane.normal) - grow(plane.normal);
 
     if (std::abs(denominator) < parallel_epsilon)
     {
-      if (signed_distance > 0.f)
+      if (signed_distance > -alongside_tolerance)
         return false; // outside a face the ray runs alongside
       continue;
     }
@@ -202,6 +206,30 @@ bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& o
   out_t_exit = t_exit;
   out_normal = enter_normal;
   return true;
+}
+
+} // namespace
+
+bool intersect_sphere_sweep_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                                        const vec3f& dir, float radius, float& out_t,
+                                        float& out_t_exit, vec3f& out_normal)
+{
+  return intersect_grown_hull_sweep(
+      planes, origin, dir, [radius](const vec3f&) { return radius; }, 0.f, out_t, out_t_exit,
+      out_normal);
+}
+
+bool intersect_box_sweep_convex_hull(Span<const Plane> planes, const vec3f& origin,
+                                     const vec3f& dir, float half_width, float half_height,
+                                     float& out_t, float& out_t_exit, vec3f& out_normal)
+{
+  const auto support_radius = [half_width, half_height](const vec3f& normal)
+  {
+    return half_width * std::abs(normal.x) + half_height * std::abs(normal.y) +
+           half_width * std::abs(normal.z);
+  };
+  return intersect_grown_hull_sweep(planes, origin, dir, support_radius, hull_sweep_skin, out_t,
+                                    out_t_exit, out_normal);
 }
 
 namespace

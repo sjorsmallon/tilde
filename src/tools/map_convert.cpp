@@ -1,9 +1,8 @@
 // Map converter: rewrites a map file into the form the current save path emits.
 //
-// Loading a map already performs every conversion in memory — the geometry exit
-// (convert_legacy_geometry_entity) and the P5 entity-text changes (legacy enum
-// spellings, retired keys) — so converting a file is exactly "load it, save
-// it". This tool exists so that can be done deliberately, to every map at once,
+// Loading a map already performs every conversion in memory — the P5
+// entity-text changes (legacy enum spellings, retired keys) — so converting a
+// file is exactly "load it, save it". This tool exists so that can be done deliberately, to every map at once,
 // with a report of what changed, rather than discovered one map at a time by
 // opening each in the editor.
 //
@@ -32,11 +31,9 @@ namespace
 struct conversion_report_t
 {
   size_t asset_meshes = 0;
-  size_t brushes = 0;
   size_t subdivided_faces = 0;
   size_t meshes = 0;
   size_t entities = 0;
-  bool was_legacy = false;      // the file still held geometry as entity blocks
   bool needs_rewrite = false;   // the file's text is not what save_map writes
 };
 
@@ -46,52 +43,21 @@ conversion_report_t inspect(const shared::map_t &map, const std::string &origina
 
   for (const shared::map_geometry_t &entry : map.geometry)
   {
-    switch (shared::get_kind(entry.value))
-    {
-    case shared::geometry_kind_t::Mesh:
-    {
-      const shared::mesh_geometry_t &mesh = std::get<shared::mesh_geometry_t>(entry.value);
-      ++report.meshes;
-      if (std::holds_alternative<shared::asset_mesh_source_t>(mesh.source))
-        ++report.asset_meshes;
-      for (const shared::mesh_face_t &face : mesh.faces)
-        if (face.surface.subdivision_level > 0)
-          ++report.subdivided_faces;
-      break;
-    }
-    case shared::geometry_kind_t::Brush:
-    {
-      ++report.brushes;
-      // What a displacement became, and the one geometry number worth counting
-      // separately: it is what says the conversion carried the grid over.
-      for (const shared::face_surface_t &face :
-           std::get<shared::brush_geometry_t>(entry.value).face_surfaces)
-        if (face.subdivision_level > 0)
-          ++report.subdivided_faces;
-      break;
-    }
-    }
+    const shared::mesh_geometry_t &mesh = entry.value;
+    ++report.meshes;
+    if (std::holds_alternative<shared::asset_mesh_source_t>(mesh.source))
+      ++report.asset_meshes;
+    for (const shared::mesh_face_t &face : mesh.faces)
+      if (face.surface.subdivision_level > 0)
+        ++report.subdivided_faces;
   }
 
   report.entities = map.entities.size();
 
-  // If the source text mentions any of the retired geometry classnames, this
-  // file was in the pre-exit form and the load just converted it.
-  for (const char *classname : {"\"aabb_entity\"", "\"static_mesh_entity\"",
-                                "\"displacement_entity\"", "\"wedge_entity\""})
-  {
-    if (original_text.find(classname) != std::string::npos)
-    {
-      report.was_legacy = true;
-      break;
-    }
-  }
-
-  // The geometry exit is no longer the only thing a load converts: the P5
-  // cutover also rewrote entity text (legacy numeric/lowercase enum values,
-  // retired keys like entity_id). Rather than enumerate those, ask the real
-  // question — is the text on disk what save_map would write? Anything that
-  // load_map silently fixed up shows as a difference here.
+  // Rather than enumerate what a load converts (legacy numeric/lowercase enum
+  // values, retired keys like entity_id), ask the real question — is the text
+  // on disk what save_map would write? Anything that load_map silently fixed up
+  // shows as a difference here.
   //
   // Compared with line endings normalized: save_map writes through a text-mode
   // ofstream, so on Windows the bytes on disk carry \r\n while
@@ -141,16 +107,11 @@ bool convert_one(const std::string &path, bool check_only)
 
   const conversion_report_t report = inspect(map, original_text);
 
-  const char *status = "  [canonical]";
-  if (report.was_legacy)
-    status = "  [was legacy geometry]";
-  else if (report.needs_rewrite)
-    status = "  [not canonical]";
+  const char *status = report.needs_rewrite ? "  [not canonical]" : "  [canonical]";
 
-  std::printf("%s: %zu mesh (%zu from an asset, %zu subdivided faces), %zu brush, %zu "
-              "entities%s\n",
+  std::printf("%s: %zu mesh (%zu from an asset, %zu subdivided faces), %zu entities%s\n",
               path.c_str(), report.meshes, report.asset_meshes, report.subdivided_faces,
-              report.brushes, report.entities, status);
+              report.entities, status);
 
   if (check_only)
     return true;
@@ -158,13 +119,8 @@ bool convert_one(const std::string &path, bool check_only)
   if (!report.needs_rewrite)
     return true; // nothing to rewrite; leave the file (and its mtime) alone
 
-  // Keep a copy of the pre-conversion file. The conversion is one-way, and the
-  // wedges it drops are real data.
-  //
-  // Never overwrite an existing backup: a map converted once already (the
-  // geometry exit) has a .preconvert.bak holding the ORIGINAL, and clobbering
-  // it with today's content would quietly destroy the only copy of it. Maps are
-  // not in version control, so this is the only safety net there is.
+  // Keep a copy of the pre-conversion file: the conversion is one-way. Never
+  // overwrite an existing backup, which may hold an older original.
   std::string backup_path = path + ".preconvert.bak";
   for (int attempt = 1; std::filesystem::exists(backup_path); ++attempt)
     backup_path = path + ".preconvert." + std::to_string(attempt) + ".bak";
