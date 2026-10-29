@@ -1,7 +1,9 @@
 #include "../../../shared/entities/entity_reflection.hpp"
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"
 #include "particle_editor_tool.hpp"
+#include "../../../shared/log.hpp"
 #include "../entity_inspector.hpp"
+#include "../transaction_system.hpp"
 #include "../../renderer.hpp"
 #include "imgui.h"
 
@@ -108,8 +110,9 @@ void Particle_Editor_Tool::on_draw_inspector(editor_context_t& ctx)
     emitter->position = {viewport.camera.position.x, viewport.camera.position.y,
                          viewport.camera.position.z};
     selected_emitter_uid = ctx.map->add_entity(emitter);
-    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+    transaction_t transaction;
+    transaction.add_created(selected_emitter_uid, snapshot_entity(emitter.get()));
+    ctx.transaction_system.push("New emitter", std::move(transaction));
   }
 
   ImGui::Separator();
@@ -246,14 +249,23 @@ void Particle_Editor_Tool::on_draw_inspector(editor_context_t& ctx)
   ImGui::Separator();
   if (ImGui::Button("Delete Emitter"))
   {
+    const shared::map_entity_t *entry = ctx.map->find_by_uid(selected_emitter_uid);
+    if (entry == nullptr)
+    {
+      log_error("particle editor: emitter {} is not in the map", selected_emitter_uid);
+      selected_emitter_uid = shared::null_entity_uid;
+      return;
+    }
+    transaction_t transaction;
+    std::vector<shared::connection_t> connections_before = ctx.map->connections;
+    transaction.add_removed(selected_emitter_uid, snapshot_entity(entry->entity.get()));
     ctx.map->remove_entity(selected_emitter_uid);
     const shared::entity_uid_t removed[] = {selected_emitter_uid};
     (void)shared::remove_connections_naming(ctx.map->connections, removed);
+    transaction.add_map_connections_modified(std::move(connections_before), ctx.map->connections);
+    ctx.transaction_system.push("Delete emitter", std::move(transaction));
 
     selected_emitter_uid = shared::null_entity_uid;
-    
-    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 }
 

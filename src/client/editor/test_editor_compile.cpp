@@ -58,16 +58,15 @@ int main()
   map.geometry.push_back(
       {map.next_uid++, shared::make_box_mesh({0, -8, 0}, {256, 8, 256})});
 
-  const Bounding_Volume_Hierarchy bvh = client::build_editor_bvh(map).bvh;
+  client::collision_piece_cache_t pieces_cache;
+  const Bounding_Volume_Hierarchy bvh = client::build_editor_bvh(map, pieces_cache).bvh;
   client::Transaction_System      transactions;
   editor::grid_settings_t         grid;
-  bool                            geometry_updated = false;
 
   client::editor_context_t context{transactions};
   context.map                = &map;
   context.bvh                = &bvh;
   context.grid               = &grid;
-  context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated;
 
   client::pass_builder_t draws;
 

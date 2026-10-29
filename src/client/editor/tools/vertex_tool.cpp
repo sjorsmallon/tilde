@@ -485,8 +485,6 @@ void Vertex_Tool::end_move(editor_context_t &ctx)
   transaction_t transaction;
   transaction.add_geometry_modified(selected_uid, std::move(*start), *mesh);
   ctx.transaction_system.push("Move vertices", std::move(transaction));
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Vertex_Tool::cancel_move(editor_context_t &ctx)
@@ -649,8 +647,6 @@ void Vertex_Tool::edit_selected_vertices(editor_context_t &ctx, const char *name
   transaction_t transaction;
   transaction.add_geometry_modified(selected_uid, before, *mesh);
   ctx.transaction_system.push(name, std::move(transaction));
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 // ============================================================================

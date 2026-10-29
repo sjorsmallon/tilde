@@ -269,8 +269,6 @@ void Subtract_Tool::commit(editor_context_t &ctx)
 
   transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   ctx.transaction_system.push("Subtract mesh", std::move(transaction));
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   hud::set_announcement(placed == 0 ? std::string("subtract: both meshes removed")
                                     : std::format("subtract: {} mesh(es) placed", placed));
   clear();

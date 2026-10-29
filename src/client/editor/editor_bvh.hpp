@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <unordered_map>
 
 namespace client
 {
@@ -26,8 +27,56 @@ struct editor_bvh_t
   std::vector<shared::entity_uid_t> objects_without_collision;
 };
 
+// The pieces of every mesh, beside the value they were computed from, so a
+// rebuild decomposes only the object whose geometry differs from the last
+// build. Pieces are computed as if the mesh collides, so a non-colliding mesh
+// still picks by its shape. An entry a build does not visit is dropped.
+struct collision_piece_cache_entry_t
+{
+  shared::mesh_geometry_t                value;
+  std::vector<shared::collision_piece_t> pieces;
+  bool                                   visited = false;
+};
+
+struct collision_piece_cache_t
+{
+  std::unordered_map<shared::entity_uid_t, collision_piece_cache_entry_t> entries;
+};
+
+inline const std::vector<shared::collision_piece_t> &
+get_cached_collision_pieces(collision_piece_cache_t &cache, const shared::map_geometry_t &entry)
+{
+  const auto slot = cache.entries.find(entry.uid);
+  if (slot != cache.entries.end() && shared::mesh_geometries_equal(slot->second.value, entry.value))
+  {
+    slot->second.visited = true;
+    return slot->second.pieces;
+  }
+  shared::mesh_geometry_t as_collider = entry.value;
+  as_collider.collides = true;
+  collision_piece_cache_entry_t &fresh = cache.entries[entry.uid];
+  fresh.value = entry.value;
+  fresh.pieces = shared::compute_mesh_collision_pieces(as_collider, entry.uid);
+  fresh.visited = true;
+  return fresh.pieces;
+}
+
+inline void drop_unvisited_collision_pieces(collision_piece_cache_t &cache)
+{
+  for (auto slot = cache.entries.begin(); slot != cache.entries.end();)
+  {
+    if (slot->second.visited)
+    {
+      slot->second.visited = false;
+      ++slot;
+    }
+    else
+      slot = cache.entries.erase(slot);
+  }
+}
+
 inline editor_bvh_t
-build_editor_bvh(const shared::map_t &map)
+build_editor_bvh(const shared::map_t &map, collision_piece_cache_t &pieces_cache)
 {
   editor_bvh_t result;
 
@@ -53,33 +102,21 @@ build_editor_bvh(const shared::map_t &map)
   {
     // A mesh with its collision switched off is still clicked as the shape it
     // would collide as (an asset-sourced one as its box), and by its bound when
-    // that shape does not decompose. Nothing about it is reported.
-    if (!entry.value.collides)
-    {
-      shared::mesh_geometry_t as_collider = entry.value;
-      as_collider.collides = true;
-      const std::vector<shared::collision_piece_t> pieces =
-          shared::compute_mesh_collision_pieces(as_collider, entry.uid);
-      if (pieces.empty())
-        add_leaf(entry.uid, shared::get_bounds(entry.value));
-      for (const shared::collision_piece_t &piece : pieces)
-        add_leaf(entry.uid, piece.bounds, piece.planes);
-      continue;
-    }
-
-    // A mesh that failed to decompose is reported AND stays clickable by its
+    // that shape does not decompose; nothing about it is reported. A colliding
+    // mesh that failed to decompose is reported AND stays clickable by its
     // bound: the person who fixes it has to be able to select it.
-    const std::vector<shared::collision_piece_t> pieces =
-        shared::get_collision_pieces(entry.value, entry.uid);
+    const std::vector<shared::collision_piece_t> &pieces =
+        get_cached_collision_pieces(pieces_cache, entry);
     if (pieces.empty())
     {
-      result.objects_without_collision.push_back(entry.uid);
+      if (entry.value.collides)
+        result.objects_without_collision.push_back(entry.uid);
       add_leaf(entry.uid, shared::get_bounds(entry.value));
     }
-
     for (const shared::collision_piece_t &piece : pieces)
       add_leaf(entry.uid, piece.bounds, piece.planes);
   }
+  drop_unvisited_collision_pieces(pieces_cache);
 
   for (const shared::map_entity_t &entry : map.entities)
   {

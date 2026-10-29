@@ -2,6 +2,7 @@
 
 #include "../../../shared/map/map_geometry.hpp"
 #include "../../../shared/map/mesh/primitive_recipe.hpp"
+#include "../../states/editor_gizmo.hpp"
 #include "../editor_tool.hpp"
 
 #include <optional>
@@ -45,6 +46,7 @@ public:
   void on_mouse_drag(editor_context_t &ctx, const input::mouse_event_t &e) override;
   void on_mouse_up(editor_context_t &ctx, const input::mouse_event_t &e) override;
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
+  bool try_undo_pending_step(editor_context_t &ctx) override;
 
   void on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws) override;
   void on_draw_inspector(editor_context_t &ctx) override;
@@ -75,6 +77,15 @@ private:
   viewport_state_t cached_view{};
   std::optional<size_t> hovered_curve_point;
   std::optional<size_t> dragged_curve_point;
+
+  // The clicked control point carries the translate gizmo; a press on a
+  // marker drags along the floor as before, the gizmo moves it per axis.
+  std::optional<size_t> selected_curve_point;
+  linalg::vec3 selected_point_at_drag_start{};
+  Editor_Gizmo gizmo{};
+  [[nodiscard]] gizmo_view_t make_gizmo_view() const;
+  void set_curve_point_from_world(const shared::mesh_geometry_t &mesh, size_t index,
+                                  const linalg::vec3 &world);
 
   bool is_drawing_curve() const;
   bool is_editing_curve() const;

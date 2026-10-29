@@ -49,6 +49,11 @@ public:
   // keyboard events
   virtual void on_key_down(editor_context_t& ctx, const key_event_t& e) = 0;
 
+  // Ctrl+Z goes to the tool first: a gesture the map has not seen yet (a curve
+  // being drawn) takes back its last step and returns true; false hands the
+  // undo to the transaction system.
+  virtual bool try_undo_pending_step(editor_context_t& ctx) { return false; }
+
   // overrides for numlock camera locking behavior.
   virtual std::optional<view_focus_t> view_focus() const { return std::nullopt; }
 

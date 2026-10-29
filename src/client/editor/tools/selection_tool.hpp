@@ -179,6 +179,14 @@ shared::entity_uid_t hovered_uid = 0;
   };
   inspector_edit_t inspector_edit{};
 
+  struct geometry_inspector_edit_t
+  {
+    shared::entity_uid_t    uid = shared::null_entity_uid;
+    shared::mesh_geometry_t before{};
+    bool                    pending = false;
+  };
+  geometry_inspector_edit_t geometry_inspector_edit{};
+
   // The inspector's group name field, re-seeded from the map while it is not
   // being typed in.
   struct group_name_edit_t

@@ -252,6 +252,7 @@ public:
     txn.name = std::move(name);
     applied.push_back(std::move(txn));
     undone.clear();
+    ++sequence;
   }
 
   void undo(shared::map_t &map)
@@ -262,6 +263,7 @@ public:
     applied.pop_back();
     revert_transaction(map, t);
     undone.push_back(std::move(t));
+    ++sequence;
   }
 
   void redo(shared::map_t &map)
@@ -272,7 +274,13 @@ public:
     undone.pop_back();
     apply_transaction(map, t);
     applied.push_back(std::move(t));
+    ++sequence;
   }
+
+  // Advances on every push, undo and redo: the COMMIT the editor's derived
+  // data (the pick BVH) is built against. A tool never signals a change; it
+  // pushes a transaction, and a gesture in flight changes nothing here.
+  uint64_t edit_sequence() const { return sequence; }
 
   // Undo or redo until exactly `applied_count` transactions are applied: the
   // History panel's click. 0 is the map as it was loaded.
@@ -294,6 +302,7 @@ public:
 private:
   std::vector<transaction_t> applied;
   std::vector<transaction_t> undone;
+  uint64_t                   sequence = 0;
 
   void apply_transaction(shared::map_t &map, const transaction_t &t)
   {

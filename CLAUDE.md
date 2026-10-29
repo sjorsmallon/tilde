@@ -41,7 +41,7 @@ Other tools:
 # --emit writes generated/ beside each .def; --scaffold writes missing handler files (write-if-absent, never part of a build)
 
 ./cmake_build/bin/asset_pack resources --package cmake_build/assets.pkg   # pkg and embed builds only; loose reads the tree
-./cmake_build/bin/map_convert --check maps/*.source   # legacy map formats; maps/test stays legacy on purpose (a test fixture)
+./cmake_build/bin/map_convert --check maps/*.source   # reports any file the save path would write differently
 ```
 
 `meson.build` is out of date. CMake is primary.
@@ -56,7 +56,8 @@ src/
 │   ├── effects/      effects.def (cosmetic channel), generated/
 │   ├── events/       events.def (gameplay channel), generated/
 │   ├── assets/       the id space (asset_id.hpp), the walk (asset_walk.cpp), decoders, the package
-│   ├── map/          map_t, geometry, brushes, map_piece, connections, groups, game_session
+│   ├── map/          map_t, mesh/ (the one geometry kind), map_piece, connections, groups, game_session
+│   ├── geometry/     convex_hull (the hull of a point set), convex_decomposition (the solid inside a set of planes)
 │   ├── collision/    predicted_world, the sweeps, movers, canopies, platforms, bounce bodies
 │   ├── movement/     player_move, the kernel, locomotion models, overrides, modifiers, volumes
 │   ├── lighting/     lighting model, lightmap bake and sidecar, shadow volumes, beams, reveal, lens
@@ -185,20 +186,21 @@ prediction writes `ctx.prediction`.
   runtime world built fresh by `build_session`. The editor edits `map_t`.
   Anything that rebuilds a `map_t` (`paste_map_piece`) must carry all four and
   remap uids through `remap_connection_uids`.
-- Geometry is two kinds, `Static_Mesh` and `Brush`, plain values with no
-  schema, never networked. A face's identity is its PLANE, never its index;
-  a face's material is a `uint16_t` into `map_t::materials`, never a string;
-  a face may subdivide and be painted; convexity is a bake-time property
-  produced by `get_collision_pieces`. Rejected and not to be revisited: a BSP
-  tree, a second collision regime, triangle-soup collision, displacements,
-  material strings, a third geometry kind.
+- Geometry is ONE kind, `mesh_geometry_t` (`src/shared/map/mesh/`): a closed
+  mesh of planar faces with a pose, inline or sourced from an asset, a plain
+  value with no schema, never networked. A face's identity is its INDEX; a
+  face's material is a `uint16_t` into `map_t::materials`, never a string; a
+  face may subdivide and be painted; convexity is a bake-time property
+  produced by `get_collision_pieces` (reflex-edge decomposition). Rejected and
+  not to be revisited: a BSP tree, a second collision regime, triangle-soup
+  collision, displacements, material strings, a second geometry kind.
 - A prefab IS a map (`prefabs/<name>.prefab`, same reader and writer), the
   clipboard IS a `map_t`, and a placed prefab is a stamp with no link back.
   `src/shared/map/map_piece.{hpp,cpp}` is the whole of copy/paste/save/place.
-- Legacy file keywords (`box`, `displacement`, `brush`, `static_mesh`,
-  three-component `orientation`) are read-only and converted once
-  (`convert_legacy_geometry` runs in the reader and the writer); the writer
-  never emits them.
+- A file's geometry is `mesh` rows only. The legacy keywords (`box`,
+  `displacement`, `brush`, `static_mesh`, a geometry `orientation`) and the
+  pre-exit geometry entities are not read: every map and prefab was resaved
+  once, and brushes do not come back.
 - `map_t::attached_cvars` run through `execute_console_line` on load and are
   reverted on unload as a named subset (`revert_cvars_to_defaults`), never a
   group reset.
@@ -397,6 +399,13 @@ prediction writes `ctx.prediction`.
   `Tool_Editor_State` dispatches. A click in the same place cycles. Every edit
   goes through the transaction system: binary field diffs for entities, whole
   value swaps for geometry, cvars and connections.
+- The transaction IS the commit. An edit is pushed on release: the mouse up,
+  `IsItemDeactivatedAfterEdit` for a drag or slider, the click for a click,
+  never per frame of a gesture. Nothing signals a change: a gesture in flight
+  writes the map and the drawn mesh follows by comparison; the editor BVH
+  rebuilds when `Transaction_System::edit_sequence` has moved (push, undo,
+  redo), from a per-uid cache of collision pieces that recomputes only a
+  changed value. An edit without a transaction is a bug, not a flag.
 - Per-type editor facts are a `constexpr Enum_Array` table; the per-instance
   shape is `editor_shape_at`, which the pick, the ghost, the highlight and box
   select all read. Nothing shown nowhere in the editor: the connection panel

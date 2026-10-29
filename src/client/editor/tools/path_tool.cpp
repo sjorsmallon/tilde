@@ -416,9 +416,6 @@ void Path_Tool::commit_drag(editor_context_t& ctx)
   }
   ctx.transaction_system.push("Move path node", std::move(transaction));
   drag_origins.clear();
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Path_Tool::place_node(editor_context_t& ctx, const linalg::vec3& position)
@@ -468,9 +465,6 @@ void Path_Tool::place_node(editor_context_t& ctx, const linalg::vec3& position)
 
   ctx.transaction_system.push("Place path node", std::move(transaction));
   active_node = uid;
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Path_Tool::delete_active_node(editor_context_t& ctx)
@@ -496,9 +490,6 @@ void Path_Tool::delete_active_node(editor_context_t& ctx)
   ctx.transaction_system.push("Delete path node", std::move(transaction));
 
   active_node = previous != shared::null_entity_uid ? previous : next == removed ? shared::null_entity_uid : next;
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Path_Tool::start_mover_at_active_node(editor_context_t& ctx, shared::entity_uid_t mover)

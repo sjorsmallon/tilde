@@ -488,7 +488,6 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.map_path = get_maps_dir() + map.name;
   context.bvh = &editor_bvh.bvh;
   context.objects_without_collision = editor_bvh.objects_without_collision;
-  context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
   context.entity_draw_settings = {
@@ -576,19 +575,11 @@ void Tool_Editor_State::update(float dt)
         {
           if (mods.shift)
           {
-            if (transaction_system.can_redo())
-            {
-              transaction_system.redo(map);
-              geometry_updated_flag = true;
-            }
+            transaction_system.redo(map);
           }
-          else
+          else if (!(active_tool && tools[*active_tool]->try_undo_pending_step(context)))
           {
-            if (transaction_system.can_undo())
-            {
-              transaction_system.undo(map);
-              geometry_updated_flag = true;
-            }
+            transaction_system.undo(map);
           }
         }
       }
@@ -596,13 +587,7 @@ void Tool_Editor_State::update(float dt)
       if (input::is_key_pressed(input::key_t::Y))
       {
         if (mods.ctrl)
-        {
-          if (transaction_system.can_redo())
-          {
-            transaction_system.redo(map);
-            geometry_updated_flag = true;
-          }
-        }
+          transaction_system.redo(map);
       }
 
       if (input::is_key_pressed(input::key_t::O))
@@ -844,7 +829,6 @@ void Tool_Editor_State::update(float dt)
   context.map_path = get_maps_dir() + map.name;
   context.bvh = &editor_bvh.bvh;
   context.objects_without_collision = editor_bvh.objects_without_collision;
-  context.geometry_updated_so_bvh_rebuild_is_needed = &geometry_updated_flag;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
   context.placement_prefers_surface = input::current_modifiers().shift;
@@ -1139,7 +1123,7 @@ void Tool_Editor_State::draw_imgui_panels()
         map = std::move(*new_map);
         entity_visibility.show_all();
         transaction_system = Transaction_System{};
-        geometry_updated_flag = true;
+        bvh_built_at_edit_sequence.reset();
 
         std::ofstream last_map_f("last_map.txt");
         if (last_map_f.is_open())
@@ -1219,7 +1203,7 @@ void Tool_Editor_State::draw_imgui_panels()
       add_default_warp_trigger(map);
 
       transaction_system = Transaction_System{};
-      geometry_updated_flag = true;
+      bvh_built_at_edit_sequence.reset();
 
       // Clear last_map.txt so the editor doesn't reload the old map on restart
       std::ofstream("last_map.txt");
@@ -1372,8 +1356,8 @@ void Tool_Editor_State::draw_imgui_panels()
   }
 
   lap.next("editor panels: history");
-  if (show_edit_history && draw_edit_history_panel(transaction_system, map, show_edit_history))
-    geometry_updated_flag = true;
+  if (show_edit_history)
+    (void)draw_edit_history_panel(transaction_system, map, show_edit_history);
 
   lap.next("editor panels: icons + connection lines");
   // Icons before the tool's own overlay, and both under the panels: the tool is
@@ -1474,10 +1458,10 @@ void Tool_Editor_State::build_frame(float delta_seconds,
                                     renderer::ui_draw_list_t &ui)
 {
   frame_timing::lap_zone_t lap("editor build_frame: bvh rebuild, validate generated meshes");
-  if (geometry_updated_flag)
+  if (bvh_built_at_edit_sequence != transaction_system.edit_sequence())
   {
     update_bvh();
-    geometry_updated_flag = false;
+    bvh_built_at_edit_sequence = transaction_system.edit_sequence();
     generated_meshes_need_validation = true;
   }
   if (generated_meshes_need_validation ||
@@ -1721,7 +1705,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
 
 void Tool_Editor_State::update_bvh()
 {
-  editor_bvh = build_editor_bvh(map);
+  editor_bvh = build_editor_bvh(map, collision_piece_cache);
 }
 
 } // namespace client

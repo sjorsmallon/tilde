@@ -818,6 +818,12 @@ try_parse_mesh_row(const std::map<std::string, std::string> &properties,
       return std::nullopt;
     }
     const mesh_geometry_t built = make_primitive_mesh(*recipe);
+    if (built.faces.empty())
+    {
+      log_error("mesh: its {} recipe builds no faces - skipping the object",
+                to_string(recipe->kind));
+      return std::nullopt;
+    }
     mesh.vertices = built.vertices;
     mesh.faces = built.faces;
     mesh.source = built.source;

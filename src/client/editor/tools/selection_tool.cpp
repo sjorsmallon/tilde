@@ -290,9 +290,6 @@ void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
   apply_gizmo_drag(ctx, transform);
   settle_live_drag(ctx);
   commit_drag_snapshots(ctx, std::move(name));
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Selection_Tool::snap_selected_entities_onto(editor_context_t& ctx, shared::entity_uid_t target_uid,
@@ -327,8 +324,6 @@ void Selection_Tool::snap_selected_entities_onto(editor_context_t& ctx, shared::
   }
 
   ctx.transaction_system.push("Snap to entity", std::move(transaction));
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   hud::set_announcement(std::format("Snapped {} entit{} onto {}{}", moved, moved == 1 ? "y" : "ies",
                                     shared::describe_map_entity(*ctx.map, target_uid),
                                     with_orientation ? ", orientation too" : ""));
@@ -428,9 +423,6 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
         log_error("selection tool: object {} vanished before it could be snapped", origin.uid);
     }
     commit_drag_snapshots(ctx, "Snap to grid");
-
-    if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-      *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 }
 
@@ -705,9 +697,6 @@ void Selection_Tool::commit_paste(editor_context_t& ctx)
   selected_uids = pasted.uids;
   hovered_uid   = 0;
   cancel_paste();
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
   // A prefab's slots. Every unbound row this stamp placed is queued, in map
   // order, and the first group is armed right away: placing a prefab is paste,
@@ -1516,17 +1505,31 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
   else if (shared::map_geometry_t *geometry =
                selected_uids.size() == 1 ? ctx.map->find_geometry_by_uid(uid) : nullptr)
   {
-    // Editing through the inspector is a series of single-frame edits, and
-    // ImGui reports "changed" per frame of a drag, so pushing a transaction
-    // here would flood the undo stack with one entry per frame. The BVH does
-    // need rebuilding though — bounds just moved.
-    //
-    // TODO(inspector-undo): the entity inspector's seed/settle, over a
-    // geometry value, so a slider drag commits as one transaction.
-    if (draw_geometry_inspector(geometry->value, ctx.object_collides(geometry->uid)))
+    // The inspector reports a COMMITTED edit: a drag when it is let go, a
+    // click when it is made. The drawn mesh follows the live value on its own.
+    // The same seed-and-settle as the entity inspector, over one geometry
+    // value: the value is copied every frame no edit is in flight, the first
+    // frame it differs opens the edit, and the commit pushes the before and
+    // after as one transaction.
+    if (!geometry_inspector_edit.pending)
     {
-      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+      geometry_inspector_edit.uid = geometry->uid;
+      geometry_inspector_edit.before = geometry->value;
+    }
+    const bool committed =
+        draw_geometry_inspector(geometry->value, ctx.object_collides(geometry->uid));
+    if (geometry_inspector_edit.uid != geometry->uid)
+      geometry_inspector_edit.pending = false;
+    else if (!geometry_inspector_edit.pending &&
+             !shared::geometry_values_equal(geometry_inspector_edit.before, geometry->value))
+      geometry_inspector_edit.pending = true;
+    if (committed && geometry_inspector_edit.pending)
+    {
+      transaction_t transaction;
+      transaction.add_geometry_modified(geometry->uid, geometry_inspector_edit.before,
+                                        geometry->value);
+      ctx.transaction_system.push("Edit geometry", std::move(transaction));
+      geometry_inspector_edit.pending = false;
     }
   }
 
@@ -2267,8 +2270,6 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       editor_gizmo.end_drag();
       settle_live_drag(ctx);
       commit_drag_snapshots(ctx, name);
-      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
       return;
     }
 
@@ -2277,8 +2278,6 @@ void Selection_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
       object_drag.active = false;
       settle_live_drag(ctx);
       commit_drag_snapshots(ctx, "Move");
-      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
       // Ctrl+DRAG moves the selection in the view plane; ctrl+CLICK adds to it.
       // The two are one gesture until the mouse moves, so a press that never
@@ -2522,9 +2521,6 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
       (void)shared::dissolve_groups_with_no_live_member(*ctx.map);
       transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
       ctx.transaction_system.push("Delete", std::move(transaction));
-
-      if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-        *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     }
     selected_uids.clear();
     hovered_uid = 0;

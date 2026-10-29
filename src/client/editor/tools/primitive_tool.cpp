@@ -5,7 +5,9 @@
 #include "../../../shared/log.hpp"
 #include "../../../shared/map/map_geometry_mesh.hpp"
 #include "../../../shared/map/mesh/mesh_primitives.hpp"
+#include "../../camera.hpp"
 #include "../../hud.hpp"
+#include "../../input.hpp"
 #include "../geometry_editor.hpp"
 #include "../transaction_system.hpp"
 #include "imgui.h"
@@ -200,12 +202,44 @@ void Primitive_Tool::on_update(editor_context_t &ctx, const viewport_state_t &vi
     hovered_curve_point.reset();
     if (is_editing_curve())
     {
+      const float grid_step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
+      gizmo.snap_step = input::current_modifiers().alt ? 0.f : grid_step;
+      if (gizmo.is_dragging())
+      {
+        if (const std::optional<gizmo_drag_t> drag =
+                gizmo.try_update_drag(view.mouse_ray, make_gizmo_view()))
+          set_curve_point_from_world(*mesh, *selected_curve_point,
+                                     selected_point_at_drag_start + drag->translation);
+        hovered_curve_point = selected_curve_point;
+        hovered_recipe_uid.reset();
+        return;
+      }
+      if (selected_curve_point && *selected_curve_point < settings.curve_points.size())
+      {
+        const linalg::vec3 at = edited_curve_points_in_world(ctx)[*selected_curve_point];
+        const linalg::vec3 reach{CURVE_POINT_RADIUS, CURVE_POINT_RADIUS, CURVE_POINT_RADIUS};
+        gizmo.set_target({at - reach, at + reach}, {}, make_gizmo_view(), at);
+        gizmo.update_hover(view.mouse_ray);
+      }
+      else
+      {
+        selected_curve_point.reset();
+        gizmo.clear_target();
+      }
+
       if (dragged_curve_point)
         hovered_curve_point = dragged_curve_point;
+      else if (gizmo.is_hovered())
+        hovered_curve_point = selected_curve_point;
       else if (const std::optional<linalg::vec2> cursor = try_cursor_screen_position(view))
         hovered_curve_point = try_pick_curve_handle(ctx, *cursor);
       if (hovered_curve_point)
         hovered_recipe_uid.reset();
+    }
+    else
+    {
+      selected_curve_point.reset();
+      gizmo.clear_target();
     }
     return;
   }
@@ -250,6 +284,8 @@ void Primitive_Tool::end_edit(editor_context_t &ctx)
   edited_uid.reset();
   edited_as_selection.clear();
   hovered_curve_point.reset();
+  selected_curve_point.reset();
+  gizmo.clear_target();
 }
 
 std::vector<linalg::vec3>
@@ -310,9 +346,22 @@ void Primitive_Tool::drag_curve_point(const editor_context_t &ctx, const input::
     moved = {editor::snap(moved.x, grid_step), editor::snap(moved.y, grid_step),
              editor::snap(moved.z, grid_step)};
 
+  set_curve_point_from_world(*mesh, index, moved);
+}
+
+void Primitive_Tool::set_curve_point_from_world(const shared::mesh_geometry_t &mesh, size_t index,
+                                                const linalg::vec3 &world)
+{
   const linalg::vec3 local =
-      linalg::rotate(linalg::conjugate(mesh->orientation), moved - mesh->position);
+      linalg::rotate(linalg::conjugate(mesh.orientation), world - mesh.position);
   settings.curve_points[index] = shared::turn_about_up(local, (4 - settings.quarter_turns) % 4);
+}
+
+gizmo_view_t Primitive_Tool::make_gizmo_view() const
+{
+  const camera_t &camera = cached_view.camera;
+  return {camera.position, get_orientation_vectors(camera).forward, camera.orthographic,
+          camera.ortho_height, camera.fov_degrees};
 }
 
 // The release rebases the points to the wall's new corner and moves the pose
@@ -320,9 +369,10 @@ void Primitive_Tool::drag_curve_point(const editor_context_t &ctx, const input::
 // the corner frame again.
 void Primitive_Tool::end_curve_drag(editor_context_t &ctx)
 {
-  if (!dragged_curve_point)
+  if (!dragged_curve_point && !gizmo.is_dragging())
     return;
   dragged_curve_point.reset();
+  gizmo.end_drag();
   if (!ctx.map || !edited_uid)
     return;
   shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(*edited_uid);
@@ -330,20 +380,24 @@ void Primitive_Tool::end_curve_drag(editor_context_t &ctx)
   if (mesh == nullptr)
     return;
 
+  if (settings != applied_settings)
+    regenerate(ctx);
+
   shared::primitive_recipe_t rebased = settings;
   shared::rebase_curve_points_to_wall_corner(rebased);
-  if (rebased.curve_points.empty() || rebased.curve_points == settings.curve_points)
-    return;
-  const linalg::vec3 corner = settings.curve_points[0] - rebased.curve_points[0];
-  settings = rebased;
-  if (!value_before_edit)
-    value_before_edit = entry->value;
-  shared::regenerate_mesh_from_recipe(*mesh, settings);
-  mesh->position = mesh->position + linalg::rotate(mesh->orientation,
-                                                   shared::turn_about_up(corner, settings.quarter_turns));
-  applied_settings = settings;
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
+  if (!rebased.curve_points.empty() && rebased.curve_points != settings.curve_points)
+  {
+    const linalg::vec3 corner = settings.curve_points[0] - rebased.curve_points[0];
+    settings = rebased;
+    if (!value_before_edit)
+      value_before_edit = entry->value;
+    shared::regenerate_mesh_from_recipe(*mesh, settings);
+    mesh->position = mesh->position + linalg::rotate(mesh->orientation,
+                                                     shared::turn_about_up(corner, settings.quarter_turns));
+    applied_settings = settings;
+  }
+  if (value_before_edit)
+    commit_edit(ctx);
 }
 
 void Primitive_Tool::regenerate(editor_context_t &ctx)
@@ -353,12 +407,17 @@ void Primitive_Tool::regenerate(editor_context_t &ctx)
   if (mesh == nullptr)
     return;
   shared::clamp_primitive_recipe(settings);
+  if (shared::make_primitive_mesh(settings).faces.empty())
+  {
+    hud::set_announcement(std::format("{}: builds nothing from these settings, change kept back",
+                                      primitive_kind_label(settings.kind)));
+    settings = applied_settings;
+    return;
+  }
   if (!value_before_edit)
     value_before_edit = entry->value;
   shared::regenerate_mesh_from_recipe(*mesh, settings);
   applied_settings = settings;
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Primitive_Tool::commit_edit(editor_context_t &ctx)
@@ -414,9 +473,15 @@ void Primitive_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_eve
     return;
   if (is_editing_curve())
   {
+    if (selected_curve_point && gizmo.try_begin_drag(cached_view.mouse_ray, make_gizmo_view()))
+    {
+      selected_point_at_drag_start = edited_curve_points_in_world(ctx)[*selected_curve_point];
+      return;
+    }
     const linalg::vec2 screen_position{(float)e.position.x, (float)e.position.y};
     if (const std::optional<size_t> handle = try_pick_curve_handle(ctx, screen_position))
     {
+      selected_curve_point = handle;
       dragged_curve_point = handle;
       return;
     }
@@ -485,6 +550,16 @@ void Primitive_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   settings.quarter_turns = (settings.quarter_turns + direction) % 4;
 }
 
+bool Primitive_Tool::try_undo_pending_step(editor_context_t &ctx)
+{
+  if (!is_drawing_curve() || curve_points_in_progress.empty())
+    return false;
+  remove_last_curve_point();
+  hud::set_announcement(std::format("curve: point taken back, {} left",
+                                    curve_points_in_progress.size()));
+  return true;
+}
+
 void Primitive_Tool::place(editor_context_t &ctx)
 {
   const char *label = primitive_kind_label(settings.kind);
@@ -512,8 +587,6 @@ void Primitive_Tool::place(editor_context_t &ctx)
   transaction_t transaction;
   transaction.add_geometry_created(uid, std::move(mesh));
   ctx.transaction_system.push(std::format("Place {}", label), std::move(transaction));
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   hud::set_announcement(std::format("Placed a {} ({} faces)", label, built_mesh.faces.size()));
   curve_points_in_progress.clear();
 }
@@ -536,12 +609,14 @@ void Primitive_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draw
       const std::vector<linalg::vec3> handles = edited_curve_points_in_world(ctx);
       for (size_t index = 0; index < handles.size(); ++index)
       {
-        const bool lit = hovered_curve_point == index;
-        draws.debug.wire_sphere(handles[index], lit ? CURVE_POINT_RADIUS * 2.f : CURVE_POINT_RADIUS,
-                                lit ? HOVER_EDGE : CURVE_POINT);
+        const bool lit = hovered_curve_point == index || selected_curve_point == index;
+        const float reach = lit ? CURVE_POINT_RADIUS * 2.f : CURVE_POINT_RADIUS;
+        draws.debug.box(handles[index], {reach, reach, reach}, lit ? HOVER_EDGE : CURVE_POINT,
+                        renderer::fill_mode_t::wireframe, 0.f, 0.f, true);
       }
       draw_centre_line(draws, Span<const linalg::vec3>(handles.data(), handles.size()),
                        settings.curve_samples_per_segment);
+      gizmo.draw(draws);
     }
     return;
   }
@@ -577,8 +652,19 @@ void Primitive_Tool::on_draw_inspector(editor_context_t &ctx)
     ImGui::Separator();
   }
 
+  // An edit is committed when its widget is let go: a drag or slider on the
+  // frame it is released after a change, a click the frame it is made.
+  bool widget_committed = false;
+  const auto dragged = [&widget_committed](bool) {
+    widget_committed |= ImGui::IsItemDeactivatedAfterEdit();
+  };
+  const auto clicked = [&widget_committed](bool changed) {
+    widget_committed |= changed;
+    return changed;
+  };
+
   int kind = (int)settings.kind;
-  if (ImGui::Combo("Kind", &kind, "Prism\0Arch\0Straight stairs\0Spiral stairs\0Curve wall\0"))
+  if (clicked(ImGui::Combo("Kind", &kind, "Prism\0Arch\0Straight stairs\0Spiral stairs\0Curve wall\0")))
     settings.kind = (Kind)kind;
 
   if (settings.kind != Kind::Spiral_Stairs && settings.kind != Kind::Curve)
@@ -589,7 +675,7 @@ void Primitive_Tool::on_draw_inspector(editor_context_t &ctx)
       if (settings.kind == Kind::Straight_Stairs && axis == 1)
         continue;
       ImGui::SameLine();
-      ImGui::RadioButton(AXIS_LABELS[axis], &settings.axis_index, axis);
+      clicked(ImGui::RadioButton(AXIS_LABELS[axis], &settings.axis_index, axis));
     }
   }
 
@@ -597,41 +683,42 @@ void Primitive_Tool::on_draw_inspector(editor_context_t &ctx)
   switch (settings.kind)
   {
     case Kind::Prism:
-      ImGui::SliderInt("Sides", &settings.prism_sides, shared::MIN_PRISM_SIDES,
-                       shared::MAX_PRISM_SIDES);
-      ImGui::DragFloat("Radius", &settings.prism_radius, 1.f, 1.f, 4096.f);
-      ImGui::DragFloat("Half length", &settings.prism_half_length, 1.f, 1.f, 4096.f);
+      dragged(ImGui::SliderInt("Sides", &settings.prism_sides, shared::MIN_PRISM_SIDES,
+                               shared::MAX_PRISM_SIDES));
+      dragged(ImGui::DragFloat("Radius", &settings.prism_radius, 1.f, 1.f, 4096.f));
+      dragged(ImGui::DragFloat("Half length", &settings.prism_half_length, 1.f, 1.f, 4096.f));
       break;
     case Kind::Arch:
-      ImGui::SliderInt("Segments", &settings.arch_segments, shared::MIN_ARCH_SEGMENTS,
-                       shared::MAX_ARCH_SEGMENTS);
-      ImGui::DragFloat("Inner radius", &settings.arch_inner_radius, 1.f, 1.f, 4096.f);
-      ImGui::DragFloat("Thickness", &settings.arch_thickness, 1.f, 1.f, 4096.f);
-      ImGui::DragFloat("Half depth", &settings.arch_half_depth, 1.f, 1.f, 4096.f);
+      dragged(ImGui::SliderInt("Segments", &settings.arch_segments, shared::MIN_ARCH_SEGMENTS,
+                               shared::MAX_ARCH_SEGMENTS));
+      dragged(ImGui::DragFloat("Inner radius", &settings.arch_inner_radius, 1.f, 1.f, 4096.f));
+      dragged(ImGui::DragFloat("Thickness", &settings.arch_thickness, 1.f, 1.f, 4096.f));
+      dragged(ImGui::DragFloat("Half depth", &settings.arch_half_depth, 1.f, 1.f, 4096.f));
       break;
     case Kind::Straight_Stairs:
-      ImGui::SliderInt("Steps", &settings.stair_steps, shared::MIN_STAIR_STEPS,
-                       shared::MAX_STAIR_STEPS);
-      ImGui::DragFloat("Rise", &settings.stair_rise, 1.f, 1.f, 256.f);
-      ImGui::DragFloat("Tread depth", &settings.stair_tread_depth, 1.f, 1.f, 1024.f);
-      ImGui::DragFloat("Width", &settings.stair_width, 1.f, 1.f, 4096.f);
+      dragged(ImGui::SliderInt("Steps", &settings.stair_steps, shared::MIN_STAIR_STEPS,
+                               shared::MAX_STAIR_STEPS));
+      dragged(ImGui::DragFloat("Rise", &settings.stair_rise, 1.f, 1.f, 256.f));
+      dragged(ImGui::DragFloat("Tread depth", &settings.stair_tread_depth, 1.f, 1.f, 1024.f));
+      dragged(ImGui::DragFloat("Width", &settings.stair_width, 1.f, 1.f, 4096.f));
       break;
     case Kind::Spiral_Stairs:
-      ImGui::SliderInt("Steps", &settings.stair_steps, shared::MIN_STAIR_STEPS,
-                       shared::MAX_STAIR_STEPS);
-      ImGui::DragFloat("Rise", &settings.stair_rise, 1.f, 1.f, 256.f);
-      ImGui::DragFloat("Inner radius", &settings.spiral_inner_radius, 1.f, 1.f, 4096.f);
-      ImGui::DragFloat("Tread width", &settings.spiral_tread_width, 1.f, 1.f, 4096.f);
-      ImGui::DragFloat("Degrees per step", &settings.spiral_degrees_per_step, 1.f,
-                       shared::MIN_SPIRAL_DEGREES_PER_STEP,
-                       shared::MAX_SPIRAL_DEGREES_PER_STEP);
-      ImGui::Checkbox("Clockwise", &settings.spiral_clockwise);
+      dragged(ImGui::SliderInt("Steps", &settings.stair_steps, shared::MIN_STAIR_STEPS,
+                               shared::MAX_STAIR_STEPS));
+      dragged(ImGui::DragFloat("Rise", &settings.stair_rise, 1.f, 1.f, 256.f));
+      dragged(ImGui::DragFloat("Inner radius", &settings.spiral_inner_radius, 1.f, 1.f, 4096.f));
+      dragged(ImGui::DragFloat("Tread width", &settings.spiral_tread_width, 1.f, 1.f, 4096.f));
+      dragged(ImGui::DragFloat("Degrees per step", &settings.spiral_degrees_per_step, 1.f,
+                               shared::MIN_SPIRAL_DEGREES_PER_STEP,
+                               shared::MAX_SPIRAL_DEGREES_PER_STEP));
+      clicked(ImGui::Checkbox("Clockwise", &settings.spiral_clockwise));
       break;
     case Kind::Curve:
-      ImGui::DragFloat("Width", &settings.curve_width, 1.f, 1.f, 4096.f);
-      ImGui::DragFloat("Height", &settings.curve_height, 1.f, 1.f, 4096.f);
-      ImGui::SliderInt("Samples per segment", &settings.curve_samples_per_segment,
-                       shared::MIN_CURVE_SAMPLES_PER_SEGMENT, shared::MAX_CURVE_SAMPLES_PER_SEGMENT);
+      dragged(ImGui::DragFloat("Width", &settings.curve_width, 1.f, 1.f, 4096.f));
+      dragged(ImGui::DragFloat("Height", &settings.curve_height, 1.f, 1.f, 4096.f));
+      dragged(ImGui::SliderInt("Samples per segment", &settings.curve_samples_per_segment,
+                               shared::MIN_CURVE_SAMPLES_PER_SEGMENT,
+                               shared::MAX_CURVE_SAMPLES_PER_SEGMENT));
       if (is_drawing_curve())
         ImGui::Text("%d control point%s clicked", (int)curve_points_in_progress.size(),
                     curve_points_in_progress.size() == 1 ? "" : "s");
@@ -656,9 +743,13 @@ void Primitive_Tool::on_draw_inspector(editor_context_t &ctx)
   else
     ImGui::TextUnformatted("Click places; a click on a placed primitive edits it");
 
-  if (value_before_edit && !dragged_curve_point && !ImGui::IsAnyItemActive() &&
-      settings == applied_settings)
-    commit_edit(ctx);
+  if (widget_committed && edited_uid)
+  {
+    if (settings != applied_settings)
+      regenerate(ctx);
+    if (value_before_edit)
+      commit_edit(ctx);
+  }
 }
 
 } // namespace client

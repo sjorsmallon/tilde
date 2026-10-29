@@ -111,8 +111,6 @@ void Placement_Tool::on_mouse_down(editor_context_t& ctx,
     transaction_t transaction;
     transaction.add_geometry_created(uid, std::move(placed));
     ctx.transaction_system.push("Place geometry", std::move(transaction));
-
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
     return;
   }
 
@@ -135,8 +133,6 @@ void Placement_Tool::on_mouse_down(editor_context_t& ctx,
       transaction.add_created(uid, snapshot_entity(new_entity.get()));
       ctx.transaction_system.push(std::format("Place {}", entities::entity_info(new_entity->type).classname), std::move(transaction));
     }
-
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   }
 }
 

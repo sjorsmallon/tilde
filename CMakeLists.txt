@@ -448,21 +448,17 @@ add_library(game_shared STATIC
     src/shared/replay/replay_player_view.hpp
     src/shared/replay/replay_player_view.cpp
     src/shared/map/map_group.cpp
-    src/shared/map/brush/brush.cpp
-    src/shared/map/brush/face_neighbour.hpp
-    src/shared/map/brush/face_neighbour.cpp
-    # The brush-era prism (the round hole brush), until the brush goes.
-    # geometry_def.md Track I, superseded by section 11.
-    src/shared/map/brush/brush_primitives.hpp
-    src/shared/map/brush/brush_primitives.cpp
+    # Pure geometry the mesh collision, the lightmap and the shadow volumes read:
+    # the hull of a point set and the convex solid inside a set of planes.
+    # geometry_def.md section 11.9.
+    src/shared/geometry/convex_hull.hpp
+    src/shared/geometry/convex_hull.cpp
+    src/shared/geometry/convex_decomposition.hpp
+    src/shared/geometry/convex_decomposition.cpp
     # The one curve: centripetal Catmull-Rom through clicked points, the curve
-    # brush's spine. Bezier waits for a caller.
+    # wall's spine. Bezier waits for a caller.
     src/shared/curve.hpp
     src/shared/curve.cpp
-    # Convexity is a bake-time property: one brush becomes N convex BVH
-    # primitives sharing an id. See geometry_def.md section 5.
-    src/shared/map/brush/convex_decomposition.hpp
-    src/shared/map/brush/convex_decomposition.cpp
     # The one geometry kind: stored planar faces with a pose, closed and planar
     # checked after every edit. geometry_def.md section 11.
     src/shared/map/mesh/mesh.hpp
@@ -491,9 +487,6 @@ add_library(game_shared STATIC
     # An asset-sourced mesh: the asset placed with a pose, its box and its world triangles.
     src/shared/map/map_geometry_asset.hpp
     src/shared/map/map_geometry_asset.cpp
-    # The legacy reader: brush rows become meshes on read.
-    src/shared/map/map_geometry_legacy.hpp
-    src/shared/map/map_geometry_legacy.cpp
     src/shared/lighting/map_baker.cpp
     src/shared/movement/pathfinding.cpp
     src/shared/lighting/lighting.hpp
@@ -565,6 +558,8 @@ add_library(game_shared STATIC
     # the settings both read. movement_def.md.
     src/shared/movement/movement_settings.cpp
     src/shared/movement/movement_kernel.cpp
+    src/shared/movement/hull_sweep.hpp
+    src/shared/movement/hull_sweep.cpp
     src/shared/movement/ground_contact.hpp
     src/shared/map/surface_kind.hpp
     src/shared/map/surface_kind.cpp
@@ -1215,12 +1210,11 @@ add_game_test(mesh_decomposition_test)
 # decomposes into the pieces the brush era placed; regenerate, freeze, rebase.
 add_game_test(mesh_primitives_test)
 
-# Brush: convex hull, winding, tolerances, text round trip.
-add_game_test(brush_test)
+# The hull: six quads from a cube, winding, tolerances, the axis-aligned tangents.
+add_game_test(convex_hull_test)
 
-# A subdivided face keeps its boundary: weld only with a same-level neighbour,
-# pin everything else. geometry_def.md Track F.
-add_game_test(brush_boundary_test)
+# A face's grid survives a level change; a painted weight set sums to one.
+add_game_test(face_surface_test)
 
 # The boolean: a convex cutter out of any closed mesh, the result closed and
 # planar with the cutter's faces carrying its materials, the volume the wall
@@ -1228,14 +1222,6 @@ add_game_test(brush_boundary_test)
 # shells, a posed wall, and the refusals. geometry_def.md section 11.8 increment 13.
 add_game_test(mesh_boolean_test)
 
-# The brush-era prism (the round hole brush): one convex brush of sides + 2
-# faces with the polygon's volume, lying along its axis; and the one curve.
-# geometry_def.md Track I, superseded by section 11.
-add_game_test(brush_primitives_test)
-
-# Convex decomposition: every piece convex, union bounds match, a
-# non-decomposable brush fails loudly rather than half-colliding.
-add_game_test(convex_decomposition_test)
 add_game_test(surface_lookup_test)
 
 # Prefab: extract a subset, stamp it back, remap every uid the wiring names,
@@ -1428,6 +1414,10 @@ add_game_test(inventory_test
 # nothing else, which is exactly why it can be tested this cheaply.
 add_game_test(player_move_step_invariance_test)
 add_game_test(slope_seam_test)
+# The stair step as three sweeps: a staircase is climbed at speed, a tall riser and a lintel are walls.
+add_game_test(stair_step_test)
+# The hull sweep: the box stops where its feet, side or corner first touch, through the kernel's own candidate set.
+add_game_test(hull_sweep_test)
 add_game_test(projectile_step_test)
 add_game_test(flight_path_test)
 

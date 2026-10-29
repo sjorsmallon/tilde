@@ -294,8 +294,6 @@ void Clip_Tool::commit(editor_context_t &ctx)
 
   transaction.add_map_groups_modified(std::move(groups_before), ctx.map->groups);
   ctx.transaction_system.push("Clip mesh", std::move(transaction));
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
   clear();
 }
 

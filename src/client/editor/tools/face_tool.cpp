@@ -258,7 +258,6 @@ void Face_Tool::edit_face_surface(editor_context_t &ctx, const face_ref_t &targe
 
   const shared::mesh_geometry_t before = *mesh;
   shared::face_surface_t &surface = mesh->faces[*target.face_index].surface;
-  const shared::face_surface_t surface_before = surface;
   edit(surface);
 
   // A no-op edit pushes no transaction, so rebuilding for one is a wasted GPU
@@ -269,9 +268,6 @@ void Face_Tool::edit_face_surface(editor_context_t &ctx, const face_ref_t &targe
   refresh_generated_geometry_mesh(*mesh, target.uid, ctx.map->materials, ctx.map->lightmap);
 
   // The grid is the surface the player stands on; a material is not.
-  if (face_grid_shape_changed(surface_before, surface) &&
-      ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
   transaction_t transaction;
   transaction.add_geometry_modified(target.uid, before, *mesh);
@@ -291,8 +287,6 @@ void Face_Tool::edit_mesh(editor_context_t &ctx, shared::entity_uid_t uid, const
     return;
 
   refresh_generated_geometry_mesh(*mesh, uid, ctx.map->materials, ctx.map->lightmap);
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 
   transaction_t transaction;
   transaction.add_geometry_modified(uid, before, *mesh);
@@ -358,9 +352,6 @@ void Face_Tool::end_grid_stroke(editor_context_t &ctx)
   if (!push_stroke_transaction(ctx, mode == Mode::Sculpt ? "Sculpt face grid" : "Paint face grid",
                                std::move(befores)))
     return;
-
-  if (mode == Mode::Sculpt && ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 // ============================================================================

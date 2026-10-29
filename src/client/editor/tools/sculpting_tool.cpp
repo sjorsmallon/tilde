@@ -240,9 +240,6 @@ void Sculpting_Tool::on_mouse_up(editor_context_t& ctx, const input::mouse_event
 
   dragging = false;
   dragging_uid = 0;
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 // Take the hovered object's half extents, keeping its centre, and push it as
@@ -307,9 +304,6 @@ void Sculpting_Tool::apply_size_clipboard(editor_context_t& ctx,
   }
 
   ctx.transaction_system.push("Paste size", std::move(transaction));
-
-  if (ctx.geometry_updated_so_bvh_rebuild_is_needed)
-    *ctx.geometry_updated_so_bvh_rebuild_is_needed = true;
 }
 
 void Sculpting_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)

@@ -196,6 +196,13 @@ void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
 namespace
 {
 
+// A drag or slider commits on the frame it is let go after a change; its
+// per-frame "changed" is a live value the drawn mesh follows by comparison.
+bool item_committed(bool)
+{
+  return ImGui::IsItemDeactivatedAfterEdit();
+}
+
 // The mesh assets of this build as a combo over `path`; a path no asset carries
 // is said so, not cleared.
 bool draw_mesh_asset_combo(std::string &path)
@@ -256,8 +263,8 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
 
   ImGui::PushID("surface");
 
-  changed |= ImGui::ColorEdit3("color", &surface.color.x);
-  changed |= ImGui::DragFloat("roughness", &surface.roughness, 0.01f, 0.f, 1.f);
+  changed |= item_committed(ImGui::ColorEdit3("color", &surface.color.x));
+  changed |= item_committed(ImGui::DragFloat("roughness", &surface.roughness, 0.01f, 0.f, 1.f));
   changed |= ImGui::Checkbox("visible", &surface.visible);
   ImGui::SameLine();
   changed |= ImGui::Checkbox("wireframe", &surface.is_wireframe);
@@ -275,14 +282,14 @@ bool draw_mesh_inspector(shared::mesh_geometry_t &mesh)
   const linalg::vec3          size   = bounds.max - bounds.min;
   ImGui::Text("size  %.1f  %.1f  %.1f", size.x, size.y, size.z);
 
-  changed |= ImGui::DragFloat3("position", &mesh.position.x, 0.5f);
-  changed |= edit_rotation_as_euler("rotation", mesh.orientation);
+  changed |= item_committed(ImGui::DragFloat3("position", &mesh.position.x, 0.5f));
+  changed |= item_committed(edit_rotation_as_euler("rotation", mesh.orientation));
 
   if (shared::asset_mesh_source_t* asset = std::get_if<shared::asset_mesh_source_t>(&mesh.source))
   {
     ImGui::TextDisabled("source: asset");
     changed |= draw_mesh_asset_combo(asset->path);
-    changed |= ImGui::DragFloat3("scale", &asset->scale.x, 0.01f);
+    changed |= item_committed(ImGui::DragFloat3("scale", &asset->scale.x, 0.01f));
     changed |= ImGui::Checkbox("collides as its box", &mesh.collides);
     if (!mesh.collides)
       ImGui::TextDisabled("no collision of its own: block it out with a clip mesh");

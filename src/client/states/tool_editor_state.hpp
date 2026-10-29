@@ -120,7 +120,9 @@ private:
   void update_bvh();
 
   editor_bvh_t editor_bvh;
-  bool geometry_updated_flag = false;
+  collision_piece_cache_t collision_piece_cache;
+  // The transaction sequence the BVH was built at; empty after a map load.
+  std::optional<uint64_t> bvh_built_at_edit_sequence;
 
   // The bake's counterpart. Two writers, one flag: the Lightmap tool sets it on
   // Apply, and update() sets it when the map's charts change under a load --

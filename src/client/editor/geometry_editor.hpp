@@ -59,8 +59,9 @@ void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
                                        pass_builder_t &draws, float time, bool is_outlined,
                                        const linalg::vec3 &translation);
 
-// ImGui property panel for one geometry object. Returns true if the user changed
-// anything, so the caller can rebuild the BVH and push a value-swap transaction.
+// ImGui property panel for one geometry object. Returns true when an edit is
+// COMMITTED: a drag or slider the frame it is let go, a click the frame it is
+// made. The caller pushes the before and after as one transaction.
 //
 // `collides` false adds a line saying so, for the same reason the contour turns
 // red: the log is not where a level is authored.

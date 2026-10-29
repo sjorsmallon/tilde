@@ -134,9 +134,6 @@ struct editor_context_t
   // their contour red. See build_editor_bvh.
   Span<const shared::entity_uid_t> objects_without_collision;
 
-  // dirty Flag to signal that geometry has been modified and BVH needs rebuild
-  bool *geometry_updated_so_bvh_rebuild_is_needed = nullptr;
-
   // The same shape, for the bake. It cannot be derived from lightmap_t's
   // geometry_id: that id covers the charts and deliberately not the pixels, so a
   // rebake at unchanged settings -- which is every iteration on the lighting --
