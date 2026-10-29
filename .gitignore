@@ -3,6 +3,8 @@ build/
 cmake_build/
 cmake_build_audit/
 cmake_build_embed/
+cmake_build_ship/
+dist/
 cmake_build_verify/
 build_verify/
 build_meson/

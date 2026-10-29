@@ -7,6 +7,7 @@
 #include "mesh/mesh.hpp"
 #include "mesh/mesh_decomposition.hpp"
 #include "mesh/mesh_primitives.hpp"
+#include "parse_number.hpp"
 
 #include <charconv>
 #include <cmath>
@@ -698,7 +699,7 @@ std::optional<std::vector<linalg::vec3>> try_parse_vertex_list(const std::string
     {
       while (cursor < end && (*cursor == ' ' || *cursor == ','))
         ++cursor;
-      const std::from_chars_result parsed = std::from_chars(cursor, end, *component);
+      const std::from_chars_result parsed = try_parse_number(cursor, end, *component);
       if (parsed.ec != std::errc())
         return std::nullopt;
       cursor = parsed.ptr;
@@ -734,7 +735,7 @@ std::optional<std::vector<uint32_t>> try_parse_index_list(const std::string &tex
     if (cursor == end)
       break;
     uint32_t index;
-    const std::from_chars_result parsed = std::from_chars(cursor, end, index);
+    const std::from_chars_result parsed = try_parse_number(cursor, end, index);
     if (parsed.ec != std::errc())
       return std::nullopt;
     cursor = parsed.ptr;

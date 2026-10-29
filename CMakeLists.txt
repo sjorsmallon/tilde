@@ -59,6 +59,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(protobuf)
 
+# Abseil hands its randen HWAES translation units an -Xarch_<arch> pair per
+# architecture flag, and CMake DEDUPLICATES a target's COMPILE_OPTIONS: the
+# second -Xarch_x86_64 is dropped and the bare -msse4.1 behind it reaches an
+# arm64 clang, which refuses it. SHELL: keeps each pair together as one
+# argument group, which is also how upstream abseil now spells it.
+if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    foreach(randen_target IN ITEMS random_internal_randen_hwaes random_internal_randen_hwaes_impl)
+        if(TARGET ${randen_target})
+            get_target_property(randen_compile_options ${randen_target} COMPILE_OPTIONS)
+            if(NOT randen_compile_options)
+                set(randen_compile_options "")
+            endif()
+            list(REMOVE_ITEM randen_compile_options -Xarch_x86_64 -maes -msse4.1 -Xarch_arm64 -march=armv8-a+crypto)
+            list(APPEND randen_compile_options
+                "SHELL:-Xarch_x86_64 -maes"
+                "SHELL:-Xarch_x86_64 -msse4.1"
+                "SHELL:-Xarch_arm64 -march=armv8-a+crypto")
+            set_property(TARGET ${randen_target} PROPERTY COMPILE_OPTIONS ${randen_compile_options})
+        endif()
+    endforeach()
+endif()
+
 # 4. ImGui
 FetchContent_Declare(
     imgui

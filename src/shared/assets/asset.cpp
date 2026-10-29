@@ -476,7 +476,9 @@ bool path_has_extension(const char *path, const char *extension)
 // "resources/models\rig.skeleton" on Windows.
 std::string asset_cache_key(const char *path)
 {
-  return std::filesystem::path(path).lexically_normal().generic_string();
+  std::string forward_slashed(path);
+  std::replace(forward_slashed.begin(), forward_slashed.end(), '\\', '/');
+  return std::filesystem::path(forward_slashed).lexically_normal().generic_string();
 }
 
 bool asset_exists(const char *path)

@@ -1358,7 +1358,8 @@ void test_the_console_parses_a_parameter_tail()
 
   {
     entities::action_data_t data;
-    data.tag = entities::entity_action::Set_Health;
+    data.tag        = entities::entity_action::Set_Health;
+    data.set_health = entities::Set_Health_Data{};
 
     const std::vector<std::string> refusals =
         server::parse_action_parameters(data, "amount=not_a_number");

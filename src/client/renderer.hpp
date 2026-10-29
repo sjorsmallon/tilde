@@ -855,11 +855,19 @@ void                                      request_frame_grab();
 void                                      clear_grabbed_frames();
 [[nodiscard]] Span<const grabbed_frame_t> grabbed_frames();
 
+// Framebuffer pixels per logical window point: 1.0 where SDL coordinates are
+// pixels (Windows, per-monitor-v2 without SDL_WINDOWS_DPI_SCALING), 2.0 on a
+// Retina display where SDL coordinates are points. Anything working in SDL's
+// coordinate space (ImGui, mouse events) is already scaled by this.
+[[nodiscard]] float framebuffer_pixels_per_window_point();
+
 // Pixels per logical UI unit on the display the window is currently on: 1.0 at
-// 96 DPI, 1.5 at Windows' 150%. The ONE owner of that factor -- the process is
-// per-monitor-v2 DPI aware, so nothing upscales the finished frame any more and
-// every fixed pixel size in the UI is now a size in REAL pixels that has to be
-// multiplied by this or it shrinks as the display gets denser.
+// 96 DPI, 1.5 at Windows' 150%, 2.0 on Retina. The ONE owner of that factor --
+// the process is per-monitor-v2 DPI aware, so nothing upscales the finished
+// frame any more and every fixed pixel size in the UI is now a size in REAL
+// pixels that has to be multiplied by this or it shrinks as the display gets
+// denser. Where the platform scales points itself that ratio IS the answer and
+// the display's DPI is only consulted where it is 1.0.
 [[nodiscard]] float display_scale();
 
 // Convert a point in LOGICAL WINDOW POINTS -- what SDL_GetMouseState and every

@@ -8317,12 +8317,30 @@ linalg::vec2 screen_size()
   return {(float)g_swapchain_extent.width, (float)g_swapchain_extent.height};
 }
 
+float framebuffer_pixels_per_window_point()
+{
+  int window_width  = 0;
+  int window_height = 0;
+  SDL_GetWindowSize(g_window, &window_width, &window_height);
+  int drawable_width  = 0;
+  int drawable_height = 0;
+  SDL_Vulkan_GetDrawableSize(g_window, &drawable_width, &drawable_height);
+  if (window_width <= 0 || drawable_width <= 0)
+    return 1.0f;
+  return (float)drawable_width / (float)window_width;
+}
+
 float display_scale()
 {
-  // Derived from the DISPLAY's DPI, not from drawable-vs-window: declaring
-  // per-monitor-v2 awareness without SDL_WINDOWS_DPI_SCALING makes SDL
-  // coordinates equal pixels, so that ratio is now 1.0 on every display and
-  // says nothing.
+  // On macOS SDL coordinates are points and the drawable is pixels, so that
+  // ratio is the whole scale and the display's DPI (223 on a MacBook, 2.33x)
+  // would be applied on top of it. On Windows the process declares
+  // per-monitor-v2 awareness without SDL_WINDOWS_DPI_SCALING, SDL coordinates
+  // equal pixels, the ratio is 1.0 on every display and the DPI is the answer.
+  const float pixels_per_point = framebuffer_pixels_per_window_point();
+  if (pixels_per_point != 1.0f)
+    return pixels_per_point;
+
   const int32_t display_index = SDL_GetWindowDisplayIndex(g_window);
   float         diagonal_dpi  = 0.0f;
   if (display_index < 0 || SDL_GetDisplayDPI(display_index, &diagonal_dpi, nullptr, nullptr) != 0 ||
@@ -9252,9 +9270,13 @@ bool init(SDL_Window *window)
   // BAKED AT THE REAL PIXEL SIZE, not scaled after the fact. io.FontGlobalScale
   // would resample a 13px bitmap atlas and reintroduce exactly the blur the DPI
   // fix just removed; ScaleAllSizes only moves padding and borders, which have
-  // no atlas to go soft.
+  // no atlas to go soft. ImGui lays out in SDL's coordinate space, which the
+  // platform may already scale (Retina: 2 pixels per point, reported to ImGui
+  // as DisplayFramebufferScale), so the atlas is baked at real pixels and the
+  // layout is scaled only by what remains.
   {
-    const float scale = display_scale();
+    const float scale            = display_scale();
+    const float pixels_per_point = framebuffer_pixels_per_window_point();
 
     const Span<const uint8_t> font_bytes =
         assets::read_asset_bytes("resources/fonts/CourierPrime_Regular.ttf");
@@ -9266,8 +9288,9 @@ bool init(SDL_Window *window)
 
     io.Fonts->AddFontFromMemoryTTF((void *)font_bytes.data, (int32_t)font_bytes.count,
                                    std::floor(15.0f * scale), &font_config);
+    io.FontGlobalScale = 1.0f / pixels_per_point;
 
-    ImGui::GetStyle().ScaleAllSizes(scale);
+    ImGui::GetStyle().ScaleAllSizes(scale / pixels_per_point);
   }
 
   ImGui_ImplSDL2_InitForVulkan(g_window);
