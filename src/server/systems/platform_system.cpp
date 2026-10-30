@@ -44,7 +44,7 @@ void update_platforms_of_type(server_context_t& context, const shared::predicted
     const shared::common_platform_fields_t view = shared::get_common_platform_fields(platform);
     platform.position = shared::platform_box_at_tick(view, context.tick_number, flight).center;
 
-    if (shared::platform_has_vanished_at_tick(view, context.tick_number, flight.tick_interval_seconds))
+    if (shared::platform_has_vanished_at_tick(view, context.tick_number, flight.tickrate_hz))
       retired.push_back(platform.entity_id);
   }
 }
@@ -54,7 +54,7 @@ void update_platforms_of_type(server_context_t& context, const shared::predicted
 // movers and passes through bodies: a bridge fired under someone is still a bridge. Too short to be a box
 // and it is gone the tick it was fired.
 void update_extending_platforms(server_context_t& context, const shared::predicted_world_storage_t& world,
-                                float tick_interval_seconds, std::vector<shared::entity_uid_t>& retired)
+                                uint32_t tickrate_hz, std::vector<shared::entity_uid_t>& retired)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
@@ -82,7 +82,7 @@ void update_extending_platforms(server_context_t& context, const shared::predict
       platform.spawned_tick = context.tick_number;
     }
 
-    if (shared::extending_platform_has_vanished_at_tick(platform, context.tick_number, tick_interval_seconds))
+    if (shared::extending_platform_has_vanished_at_tick(platform, context.tick_number, tickrate_hz))
       retired.push_back(platform.entity_id);
   }
 }
@@ -91,14 +91,14 @@ void update_extending_platforms(server_context_t& context, const shared::predict
 
 void update_platforms(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
-  const float tick_interval_seconds = static_cast<float>(get_tick_interval());
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
+  const uint32_t tickrate_hz = context.cvars->sv_tickrate;
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = tickrate_hz,
                                                    .gravity = context.cvars->g_gravity};
 
   std::vector<shared::entity_uid_t> retired;
   update_platforms_of_type<entities::Platform_Entity>(context, world, flight, retired);
   update_platforms_of_type<entities::Shrinking_Platform_Entity>(context, world, flight, retired);
-  update_extending_platforms(context, world, tick_interval_seconds, retired);
+  update_extending_platforms(context, world, tickrate_hz, retired);
 
   std::sort(retired.begin(), retired.end());
   retired.erase(std::unique(retired.begin(), retired.end()), retired.end());

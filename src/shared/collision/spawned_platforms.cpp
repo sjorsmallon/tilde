@@ -10,18 +10,6 @@
 namespace shared
 {
 
-namespace
-{
-
-uint32_t seconds_to_whole_ticks(float seconds, float tick_interval_seconds)
-{
-  if (tick_interval_seconds <= 0.f)
-    return 0u;
-  return static_cast<uint32_t>(std::lround(seconds / tick_interval_seconds));
-}
-
-} // namespace
-
 common_platform_fields_t get_common_platform_fields(const entities::Platform_Entity& platform)
 {
   return {.projectile                  = &platform.projectile,
@@ -44,32 +32,32 @@ common_platform_fields_t get_common_platform_fields(const entities::Shrinking_Pl
           .half_extents_when_vanishing = platform.half_extents_when_vanishing};
 }
 
-uint32_t platform_solid_ticks(const common_platform_fields_t& platform, float tick_interval_seconds)
+uint32_t platform_solid_ticks(const common_platform_fields_t& platform, uint32_t tickrate_hz)
 {
-  return seconds_to_whole_ticks(platform.solid_seconds, tick_interval_seconds);
+  return ticks_from_seconds(platform.solid_seconds, tickrate_hz);
 }
 
 bool platform_has_vanished_at_tick(const common_platform_fields_t& platform, uint32_t tick,
-                                   float tick_interval_seconds)
+                                   uint32_t tickrate_hz)
 {
   return flight_has_landed(*platform.flight, tick) &&
          tick >= platform.flight->launch_tick + platform.flight->flight_ticks +
-                     platform_solid_ticks(platform, tick_interval_seconds);
+                     platform_solid_ticks(platform, tickrate_hz);
 }
 
-bool platform_is_solid_at_tick(const common_platform_fields_t& platform, uint32_t tick, float tick_interval_seconds)
+bool platform_is_solid_at_tick(const common_platform_fields_t& platform, uint32_t tick, uint32_t tickrate_hz)
 {
   return flight_has_landed(*platform.flight, tick) &&
-         !platform_has_vanished_at_tick(platform, tick, tick_interval_seconds);
+         !platform_has_vanished_at_tick(platform, tick, tickrate_hz);
 }
 
 float platform_solid_fraction_elapsed(const common_platform_fields_t& platform, uint32_t tick, float tick_fraction,
-                                      float tick_interval_seconds)
+                                      uint32_t tickrate_hz)
 {
   if (!flight_has_landed(*platform.flight, tick))
     return 0.f;
 
-  const uint32_t solid_ticks = platform_solid_ticks(platform, tick_interval_seconds);
+  const uint32_t solid_ticks = platform_solid_ticks(platform, tickrate_hz);
   if (solid_ticks == 0)
     return 1.f;
 
@@ -91,7 +79,7 @@ float platform_flight_fraction_elapsed(const common_platform_fields_t& platform,
 }
 
 linalg::vec3f platform_half_extents_at(const common_platform_fields_t& platform, uint32_t tick, float tick_fraction,
-                                       float tick_interval_seconds)
+                                       uint32_t tickrate_hz)
 {
   if (!flight_has_landed(*platform.flight, tick))
   {
@@ -100,7 +88,7 @@ linalg::vec3f platform_half_extents_at(const common_platform_fields_t& platform,
     return platform.half_extents_at_launch + (platform.half_extents - platform.half_extents_at_launch) * grown;
   }
 
-  const float elapsed = platform_solid_fraction_elapsed(platform, tick, tick_fraction, tick_interval_seconds);
+  const float elapsed = platform_solid_fraction_elapsed(platform, tick, tick_fraction, tickrate_hz);
   return platform.half_extents + (platform.half_extents_when_vanishing - platform.half_extents) * elapsed;
 }
 
@@ -115,14 +103,14 @@ aabb_t platform_box_at_tick(const common_platform_fields_t& platform, uint32_t t
 {
   aabb_t box;
   box.center       = flight_position_at(*platform.projectile, *platform.flight, platform.position, tick, settings);
-  box.half_extents = platform_half_extents_at(platform, tick, 0.f, settings.tick_interval_seconds);
+  box.half_extents = platform_half_extents_at(platform, tick, 0.f, settings.tickrate_hz);
   return box;
 }
 
 uint32_t extending_platform_extend_ticks(const entities::Extending_Platform_Entity& platform,
-                                         float tick_interval_seconds)
+                                         uint32_t tickrate_hz)
 {
-  const float growth_per_tick = platform.extend_speed * tick_interval_seconds;
+  const float growth_per_tick = platform.extend_speed * tick_interval_seconds(tickrate_hz);
   if (growth_per_tick <= 0.f)
     return 1u;
   return std::max(1u, static_cast<uint32_t>(std::ceil(platform.length / growth_per_tick)));
@@ -142,70 +130,70 @@ std::optional<uint32_t> extending_platform_age_at(const entities::Extending_Plat
 
 // The age at which it is `length` long: one tick's growth on age 0, so one tick fewer than extend_ticks.
 uint32_t extending_platform_grown_age(const entities::Extending_Platform_Entity& platform,
-                                      float tick_interval_seconds)
+                                      uint32_t tickrate_hz)
 {
-  return extending_platform_extend_ticks(platform, tick_interval_seconds) - 1;
+  return extending_platform_extend_ticks(platform, tickrate_hz) - 1;
 }
 
 } // namespace
 
 bool extending_platform_has_vanished_at_tick(const entities::Extending_Platform_Entity& platform,
-                                             uint32_t tick, float tick_interval_seconds)
+                                             uint32_t tick, uint32_t tickrate_hz)
 {
   const std::optional<uint32_t> age = extending_platform_age_at(platform, tick);
   if (!age)
     return false;
-  return *age >= extending_platform_grown_age(platform, tick_interval_seconds) +
-                     seconds_to_whole_ticks(platform.solid_seconds, tick_interval_seconds);
+  return *age >= extending_platform_grown_age(platform, tickrate_hz) +
+                     ticks_from_seconds(platform.solid_seconds, tickrate_hz);
 }
 
 bool extending_platform_exists_at_tick(const entities::Extending_Platform_Entity& platform,
-                                       uint32_t tick, float tick_interval_seconds)
+                                       uint32_t tick, uint32_t tickrate_hz)
 {
   return extending_platform_age_at(platform, tick).has_value() &&
-         !extending_platform_has_vanished_at_tick(platform, tick, tick_interval_seconds);
+         !extending_platform_has_vanished_at_tick(platform, tick, tickrate_hz);
 }
 
 bool extending_platform_is_solid_at_tick(const entities::Extending_Platform_Entity& platform,
-                                         uint32_t tick, float tick_interval_seconds)
+                                         uint32_t tick, uint32_t tickrate_hz)
 {
   const std::optional<uint32_t> age = extending_platform_age_at(platform, tick);
-  return age && *age >= seconds_to_whole_ticks(platform.passable_seconds, tick_interval_seconds) &&
-         !extending_platform_has_vanished_at_tick(platform, tick, tick_interval_seconds);
+  return age && *age >= ticks_from_seconds(platform.passable_seconds, tickrate_hz) &&
+         !extending_platform_has_vanished_at_tick(platform, tick, tickrate_hz);
 }
 
 float extending_platform_length_at(const entities::Extending_Platform_Entity& platform, uint32_t tick,
-                                   float tick_fraction, float tick_interval_seconds)
+                                   float tick_fraction, uint32_t tickrate_hz)
 {
   const std::optional<uint32_t> age = extending_platform_age_at(platform, tick);
   if (!age)
     return 0.f;
-  const float grown = platform.extend_speed * tick_interval_seconds *
+  const float grown = platform.extend_speed * tick_interval_seconds(tickrate_hz) *
                       (static_cast<float>(*age) + 1.f + tick_fraction);
   return std::min(platform.length, grown);
 }
 
 float extending_platform_solid_fraction_elapsed(const entities::Extending_Platform_Entity& platform,
                                                 uint32_t tick, float tick_fraction,
-                                                float tick_interval_seconds)
+                                                uint32_t tickrate_hz)
 {
   const std::optional<uint32_t> age = extending_platform_age_at(platform, tick);
   if (!age)
     return 0.f;
-  const uint32_t solid_ticks = seconds_to_whole_ticks(platform.solid_seconds, tick_interval_seconds);
+  const uint32_t solid_ticks = ticks_from_seconds(platform.solid_seconds, tickrate_hz);
   if (solid_ticks == 0)
     return 1.f;
   const float elapsed = static_cast<float>(*age) -
-                        static_cast<float>(extending_platform_grown_age(platform, tick_interval_seconds)) +
+                        static_cast<float>(extending_platform_grown_age(platform, tickrate_hz)) +
                         tick_fraction;
   return std::clamp(elapsed / static_cast<float>(solid_ticks), 0.f, 1.f);
 }
 
 oriented_box_t extending_platform_box_at(const entities::Extending_Platform_Entity& platform, uint32_t tick,
-                                         float tick_fraction, float tick_interval_seconds)
+                                         float tick_fraction, uint32_t tickrate_hz)
 {
   const float half_length =
-      0.5f * extending_platform_length_at(platform, tick, tick_fraction, tick_interval_seconds);
+      0.5f * extending_platform_length_at(platform, tick, tick_fraction, tickrate_hz);
   return {.center       = platform.position + linalg::forward(platform.orientation) * half_length,
           .half_extents = {half_length, platform.half_thickness, platform.half_width},
           .orientation  = platform.orientation};
@@ -215,12 +203,12 @@ namespace
 {
 
 void append_extending_platform(const entities::Extending_Platform_Entity& platform, uint32_t tick,
-                               float tick_interval_seconds, std::vector<mover_t>& out)
+                               uint32_t tickrate_hz, std::vector<mover_t>& out)
 {
-  if (!extending_platform_is_solid_at_tick(platform, tick, tick_interval_seconds))
+  if (!extending_platform_is_solid_at_tick(platform, tick, tickrate_hz))
     return;
 
-  const oriented_box_t box   = extending_platform_box_at(platform, tick, 0.f, tick_interval_seconds);
+  const oriented_box_t box   = extending_platform_box_at(platform, tick, 0.f, tickrate_hz);
   collision_piece_t    piece = piece_from_oriented_box(box);
 
   mover_t cut;
@@ -236,7 +224,7 @@ void append_extending_platform(const entities::Extending_Platform_Entity& platfo
 void append_landed_platform(const common_platform_fields_t& platform, shared::entity_uid_t uid, uint32_t tick,
                             const fixed_arc_flight_settings_t& settings, std::vector<mover_t>& out)
 {
-  if (!platform_is_solid_at_tick(platform, tick, settings.tick_interval_seconds))
+  if (!platform_is_solid_at_tick(platform, tick, settings.tickrate_hz))
     return;
 
   const aabb_t box = platform_box_at_tick(platform, tick, settings);
@@ -252,7 +240,7 @@ void append_landed_platform(const common_platform_fields_t& platform, shared::en
 
 } // namespace
 
-void collect_spawned_platforms(const Entity_System& system, uint32_t tick,
+void compute_spawned_platforms_at_tick(const Entity_System& system, uint32_t tick,
                                const fixed_arc_flight_settings_t& settings, std::vector<mover_t>& out)
 {
   for (const entities::Platform_Entity& platform : system.entities_of_type<entities::Platform_Entity>())
@@ -264,7 +252,7 @@ void collect_spawned_platforms(const Entity_System& system, uint32_t tick,
 
   for (const entities::Extending_Platform_Entity& platform :
        system.entities_of_type<entities::Extending_Platform_Entity>())
-    append_extending_platform(platform, tick, settings.tick_interval_seconds, out);
+    append_extending_platform(platform, tick, settings.tickrate_hz, out);
 }
 
 } // namespace shared

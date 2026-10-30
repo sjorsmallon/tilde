@@ -83,7 +83,7 @@ std::vector<path_refusal_t> validate_map_paths(const map_t& map)
 
 path_pose_t ridden_pose_at(const Entity_System& system, const path_links_t& links, const mover_rests_t& rests,
                            const path_pose_t& placed, const entities::Rides& rides, uint32_t tick,
-                           float tickrate)
+                           uint32_t tickrate_hz)
 {
   const entities::Mover_Entity* mover = system.get<entities::Mover_Entity>(rides.mover);
   if (mover == nullptr)
@@ -91,7 +91,7 @@ path_pose_t ridden_pose_at(const Entity_System& system, const path_links_t& link
 
   const auto        found = rests.find(mover->entity_id);
   const path_pose_t rest  = found != rests.end() ? found->second.frame : mover_rest_frame(system, *mover);
-  return carry_pose_by_mover(rest, mover_pose_at(system, links, *mover, rest, tick, tickrate), placed);
+  return carry_pose_by_mover(rest, mover_pose_at(system, links, *mover, rest, tick, tickrate_hz), placed);
 }
 
 path_pose_t ridden_pose_in_cut(Span<const mover_t> movers, const mover_rests_t& rests, const path_pose_t& placed,
@@ -115,10 +115,10 @@ path_pose_t mover_rest_frame(const Entity_System& system, const entities::Mover_
 
 path_pose_t mover_pose_at(const Entity_System& system, const path_links_t& links,
                           const entities::Mover_Entity& mover, const path_pose_t& rest,
-                          uint32_t tick, float tickrate)
+                          uint32_t tick, uint32_t tickrate_hz)
 {
   const std::optional<path_pose_t> pose =
-      try_path_pose_at(system, links, mover.follow, tick, tickrate);
+      try_path_pose_at(system, links, mover.follow, tick, tickrate_hz);
   if (pose)
     return *pose;
   return rest;
@@ -156,8 +156,8 @@ linalg::mat4f mover_model_matrix(const path_pose_t& rest, const path_pose_t& pos
                                    rotation, {1.0f, 1.0f, 1.0f});
 }
 
-void collect_movers(const Entity_System& system, const path_links_t& links,
-                    const mover_rests_t& rests, uint32_t tick, float tickrate,
+void compute_path_movers_at_tick(const Entity_System& system, const path_links_t& links,
+                    const mover_rests_t& rests, uint32_t tick, uint32_t tickrate_hz,
                     std::vector<mover_t>& out)
 {
   Span<const entities::Mover_Entity> movers = system.entities_of_type<entities::Mover_Entity>();
@@ -172,8 +172,8 @@ void collect_movers(const Entity_System& system, const path_links_t& links,
     const path_pose_t frame = found != rests.end() ? found->second.frame : mover_rest_frame(system, mover);
 
     cut.uid                = mover.entity_id;
-    cut.pose_at_tick_start = mover_pose_at(system, links, mover, frame, tick > 0 ? tick - 1 : tick, tickrate);
-    cut.pose_at_tick_end   = mover_pose_at(system, links, mover, frame, tick, tickrate);
+    cut.pose_at_tick_start = mover_pose_at(system, links, mover, frame, tick > 0 ? tick - 1 : tick, tickrate_hz);
+    cut.pose_at_tick_end   = mover_pose_at(system, links, mover, frame, tick, tickrate_hz);
     cut.swept_bounds       = {cut.pose_at_tick_end.position, cut.pose_at_tick_end.position};
 
     if (found == rests.end() || found->second.pieces.empty())

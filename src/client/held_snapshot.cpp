@@ -3,6 +3,7 @@
 #include "entities/generated/entities/game_rules_entity_generated.hpp"
 #include "entities/generated/entities/sound_emitter_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "held_snapshot.hpp"
 
@@ -39,12 +40,12 @@ constexpr uint32_t SNAPSHOT_DEBUG_TICK_INTERVAL = 120;
 // tick and a stamp somehow ahead of the snapshot all start at zero; that last
 // case is also what keeps the unsigned subtract from wrapping.
 float death_clip_seconds_elapsed(uint32_t death_tick, uint32_t server_tick,
-                                 float server_tickrate)
+                                 uint32_t server_tickrate_hz)
 {
   if (death_tick == 0 || death_tick >= server_tick)
     return 0.f;
 
-  return static_cast<float>(server_tick - death_tick) / server_tickrate;
+  return static_cast<float>(server_tick - death_tick) * shared::tick_interval_seconds(server_tickrate_hz);
 }
 
 
@@ -88,7 +89,7 @@ void play_gunshots(client_context_t& context, const ::network::snapshot_frame_t&
       continue;
 
     // The muzzle is at the eye, matching where the server casts the shot from.
-    const vec3f muzzle = player.position + vec3f{0.f, shared::player_eye_height, 0.f};
+    const vec3f muzzle = shared::player_eye_position(player.position);
     context.audio.play_3d(*sound, muzzle);
   }
 }
@@ -413,14 +414,6 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
                   return input.input_number() <=
                          context.prediction.latest_input_number_processed_by_server;
                 });
-  for (std::vector<int>* unanswered : {&context.prediction.unanswered_reveal_light_toggles,
-                                       &context.prediction.unanswered_reveal_light_overhead_toggles,
-                                       &context.prediction.unanswered_held_lens_toggles})
-    std::erase_if(*unanswered,
-                  [&](int input_number)
-                  {
-                    return input_number <= context.prediction.latest_input_number_processed_by_server;
-                  });
 
   // --- 5. Seed prediction from our own body; feed the remotes' rings ---
   for (const entities::Player_Entity& player : session.entities_of_type<entities::Player_Entity>())
@@ -431,9 +424,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       context.connection.my_entity_uid = player.entity_id;
 
       context.prediction.local_player_health = player.health.current_health;
-      context.prediction.latest_server_position = player.position;
-      context.prediction.latest_server_velocity = player.velocity;
-      context.prediction.latest_server_movement = player.movement;
+      context.prediction.latest_server_state = shared::read_input_state_from_player(session, player);
       context.prediction.latest_server_tick = server_tick;
       context.prediction.received_server_update = true;
 
@@ -466,8 +457,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
       {
         remote_player.death_tick = player.death_tick;
         remote_player.death_animation_seconds = death_clip_seconds_elapsed(
-            player.death_tick, server_tick,
-            static_cast<float>(context.connection.server_tickrate));
+            player.death_tick, server_tick, context.connection.server_tickrate);
       }
     }
   }

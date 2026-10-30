@@ -8,12 +8,7 @@
 #include "../shared/frame_timing.hpp"
 #include "../shared/replay/ghost.hpp"
 #include "../shared/collision/predicted_world.hpp"
-#include "entities/generated/entities/hook_entity_generated.hpp"
-#include "entities/generated/entities/kooh_entity_generated.hpp"
-#include "entities/generated/entities/modifier_shot_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
-#include "entities/generated/entities/ricochet_entity_generated.hpp"
-#include "entities/generated/entities/rocket_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "entity_io_queue.hpp"
 #include "log.hpp"
@@ -56,7 +51,7 @@ bool Tick()
   // A load frees the world, so it runs before anything holds a pointer into it.
   service_pending_map_change(context);
 
-  const float tick_dt = static_cast<float>(get_tick_interval());
+  const float tick_dt = get_tick_interval_seconds();
 
   // ---------------------------------------------------------------- RECEIVE
   {
@@ -73,7 +68,7 @@ bool Tick()
   //    is paid the tick it arrived.
   {
     FRAME_ZONE("server tick: match transition");
-    update_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate));
+    update_match(context, context.tick_number, context.cvars->sv_tickrate);
   }
 
   // 2. Freeze what the inputs read. Built once, never written again this tick,
@@ -85,13 +80,16 @@ bool Tick()
   auto predicted_world_storage = shared::predicted_world_storage_t{};
   {
     FRAME_ZONE("server tick: freeze the predicted world");
-    shared::build_predicted_world(context.world.session,
+    shared::compute_disabled_geometry_per_team(context.world.session, predicted_world_storage);
+    std::vector<shared::player_sight_t> sights;
+    shared::player_sights_from_entities(context.world.session.entity_system, sights);
+    shared::compute_predicted_world_at_tick(context.world.session,
                                 {.tick        = context.tick_number,
                                  .state_tick  = context.tick_number - 1,
                                  .tickrate_hz = context.cvars->sv_tickrate,
                                  .gravity     = context.cvars->g_gravity,
                                  .reveal_cone = shared::reveal_cone_settings_from_cvars(*context.cvars)},
-                                predicted_world_storage);
+                                sights, context.world.session.solid_beam_cache, predicted_world_storage);
   }
   const shared::predicted_world_storage_t& world = predicted_world_storage;
 
@@ -99,7 +97,7 @@ bool Tick()
     FRAME_ZONE("server tick: carry riders, advance movers");
     push_players_by_movers(context, world);
 
-    // After the build: collect_movers read T-1 and T from the follow as it stood, so a
+    // After the build: compute_path_movers_at_tick read T-1 and T from the follow as it stood, so a
     // segment boundary costs a rider no travel (mover_def.md ss13).
     update_movers(context);
   }
@@ -127,11 +125,7 @@ bool Tick()
   //    other in one tick both succeed.
   {
     FRAME_ZONE("server tick: contacts");
-    update_sweeping_projectiles<entities::Rocket_Entity>(context, world, tick_dt);
-    update_sweeping_projectiles<entities::Hook_Entity>(context, world, tick_dt);
-    update_sweeping_projectiles<entities::Kooh_Entity>(context, world, tick_dt);
-    update_sweeping_projectiles<entities::Ricochet_Entity>(context, world, tick_dt);
-    update_sweeping_projectiles<entities::Modifier_Shot_Entity>(context, world, tick_dt);
+    update_sweeping_projectiles(context, world, tick_dt);
     update_contacts(context, world);
   }
 
@@ -154,7 +148,7 @@ bool Tick()
 
     // respawn runs after death so we can correctly set next ticks etc.
     update_respawns(context, context.tick_number,
-                    static_cast<uint32_t>(context.cvars->sv_tickrate),
+                    context.cvars->sv_tickrate,
                     context.cvars->map_respawn_delay_seconds);
 
     update_bounce_bodies(context, world, tick_dt);

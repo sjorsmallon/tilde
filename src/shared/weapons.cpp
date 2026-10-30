@@ -3,6 +3,13 @@
 namespace shared
 {
 
+// The hook and the kooh fly the same shot off both buttons.
+constexpr shot_t HOOK_SHOT = {.lifetime_seconds = 4.f,
+                              .collision_radius = 25.f,
+                              .mesh             = "hookshot",
+                              .scale            = {0.03f, 0.03f, 0.03f},
+                              .color            = {1.f, 1.f, 1.f}};
+
 // Indexed by entities::Weapon, so entry N is the weapon whose enum value is N
 // and the order here must track the .def's, not Fire_Resolution's.
 constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS = {{
@@ -43,8 +50,13 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 600.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Rocket_Entity,
-                                                .expiry = projectile_expiration_t::Arrives},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .expiry = projectile_expiration_t::Arrives,
+                                                .shot   = {.lifetime_seconds = 5.f,
+                                                          .collision_radius = 12.f,
+                                                          .mesh             = "rocket",
+                                                          .scale            = {1.f, 1.f, 1.f},
+                                                          .color            = {1.f, 1.f, 1.f}}},
                                  .contact    = {.effect  = contact_effect_t::Explode,
                                                 .explode = {.radius = 120.f, .knockback = 600.f}}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
@@ -92,13 +104,15 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Hook_Entity},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .shot   = HOOK_SHOT},
                                  .contact    = {.effect = contact_effect_t::Throw,
                                                 .throw_ = {.subject = contact_subject_t::Target}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Hook_Entity},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .shot   = HOOK_SHOT},
                                  .contact    = {.effect = contact_effect_t::Reel,
                                                 .reel   = {.subject = contact_subject_t::Target,
                                                            .seconds = 1.5f}}},
@@ -129,13 +143,15 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Kooh_Entity},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .shot   = HOOK_SHOT},
                                  .contact    = {.effect = contact_effect_t::Throw,
                                                 .throw_ = {.subject = contact_subject_t::Shooter}}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 850.f,
                                                 .gravity_scale = 0.f,
-                                                .spawns = entities::entity_type::Kooh_Entity},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .shot   = HOOK_SHOT},
                                  .contact    = {.effect = contact_effect_t::Reel,
                                                 .reel   = {.subject = contact_subject_t::Shooter,
                                                            .seconds = 1.5f}}},
@@ -241,7 +257,12 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 900.f,
                                                 .gravity_scale = 1.f,
-                                                .spawns = entities::entity_type::Ricochet_Entity},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .shot   = {.lifetime_seconds = 3.f,
+                                                          .collision_radius = 8.f,
+                                                          .mesh             = "Sphere",
+                                                          .scale            = {16.f, 16.f, 16.f},
+                                                          .color            = {1.f, 0.45f, 0.15f}}},
                                  .contact    = {.effect = contact_effect_t::Land}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
                                  .world_impact = assets::NO_ASSET_NAME}},
@@ -290,7 +311,12 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
      .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 900.f,
                                                 .gravity_scale = 0.5f,
-                                                .spawns = entities::entity_type::Modifier_Shot_Entity},
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .shot   = {.lifetime_seconds = 4.f,
+                                                          .collision_radius = 8.f,
+                                                          .mesh             = "Sphere",
+                                                          .scale            = {16.f, 16.f, 16.f},
+                                                          .color            = {0.5f, 1.f, 0.5f}}},
                                  .contact    = {.effect = contact_effect_t::Leave_Zone}},
      .secondary_fire          = {.resolution = entities::Fire_Resolution::Projectile,
                                  .projectile = {.speed         = 700.f,
@@ -407,13 +433,6 @@ static_assert(rows_in_enum_order<&weapon_definition_t::weapon>(WEAPON_DEFINITION
               "WEAPON_DEFINITIONS rows are not in Weapon enum order: get_weapon_definition "
               "indexes by enum value, so a row out of place returns another weapon's stats.");
 
-constexpr bool fire_passes_through_shot_clocks(const weapon_fire_t& fire)
-{
-  return fire.resolution == entities::Fire_Resolution::Hitscan ||
-         fire.resolution == entities::Fire_Resolution::Projectile ||
-         fire.resolution == entities::Fire_Resolution::Place;
-}
-
 // THE SECOND CHECK: a self-impulse must be gated by exactly one clock.
 //
 // Its gate is Movement::seconds_until_impulse_ready, because that is the only
@@ -436,13 +455,10 @@ constexpr uint32_t first_self_impulse_row_gated_by_more_than_movement()
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
     const uint32_t row = static_cast<uint32_t>(definition.weapon);
-    const bool any_impulse =
-        definition.primary_fire.resolution == entities::Fire_Resolution::Self_Impulse ||
-        definition.secondary_fire.resolution == entities::Fire_Resolution::Self_Impulse ||
-        definition.primary_fire.resolution == entities::Fire_Resolution::Pilot ||
-        definition.secondary_fire.resolution == entities::Fire_Resolution::Pilot;
-    const bool any_shot = fire_passes_through_shot_clocks(definition.primary_fire) ||
-                          fire_passes_through_shot_clocks(definition.secondary_fire);
+    const fire_resolution_traits_t& primary   = get_fire_resolution_traits(definition.primary_fire.resolution);
+    const fire_resolution_traits_t& secondary = get_fire_resolution_traits(definition.secondary_fire.resolution);
+    const bool any_impulse = primary.gated_by_impulse_timer || secondary.gated_by_impulse_timer;
+    const bool any_shot    = primary.runs_shot_clocks || secondary.runs_shot_clocks;
 
     if (any_impulse != (definition.self_impulse_cooldown_seconds > 0.f))
       return row;
@@ -532,7 +548,11 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   const bool hitscan_is_zero    = hitscan.range == 0.f && !hitscan.leaves_bullet_impact;
   const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
                                   projectile.spawns == entities::entity_type::Invalid &&
-                                  projectile.expiry == projectile_expiration_t::Vanishes;
+                                  projectile.expiry == projectile_expiration_t::Vanishes &&
+                                  shot_is_zero(projectile.shot);
+  const bool shot_matches_spawn = projectile.spawns == entities::entity_type::Shot_Entity
+                                      ? shot_is_filled(projectile.shot)
+                                      : shot_is_zero(projectile.shot);
   const bool impulse_is_zero    = impulse.along_aim_speed == 0.f && impulse.upward_speed == 0.f;
   const bool place_is_zero      = place.spawns == entities::entity_type::Invalid;
   const bool pilot_is_zero      = fire.pilot.speed == 0.f && fire.pilot.radius == 0.f &&
@@ -560,6 +580,7 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
            place_is_zero && impulse_is_zero && pilot_is_zero;
   case entities::Fire_Resolution::Projectile:
     return projectile.speed > 0.f && projectile.spawns != entities::entity_type::Invalid &&
+           shot_matches_spawn &&
            (projectile.expiry == projectile_expiration_t::Vanishes || !contact_is_none) &&
            contact_matches && hitscan_is_zero && place_is_zero && impulse_is_zero && pilot_is_zero;
   case entities::Fire_Resolution::Place:
@@ -578,19 +599,14 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   return false;
 }
 
-constexpr bool fire_spawns_an_entity(const weapon_fire_t& fire)
-{
-  return fire.resolution == entities::Fire_Resolution::Projectile ||
-         fire.resolution == entities::Fire_Resolution::Place;
-}
-
 constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
 {
   for (const weapon_definition_t& definition : WEAPON_DEFINITIONS)
   {
     const uint32_t row = static_cast<uint32_t>(definition.weapon);
-    if (definition.primary_fire.resolution == entities::Fire_Resolution::None ||
-        definition.primary_fire.resolution == entities::Fire_Resolution::Zoom)
+    const fire_resolution_traits_t& primary   = get_fire_resolution_traits(definition.primary_fire.resolution);
+    const fire_resolution_traits_t& secondary = get_fire_resolution_traits(definition.secondary_fire.resolution);
+    if (!primary.acts_on_server)
       return row;
     if (!fire_parameters_match_resolution(definition.primary_fire) ||
         !fire_parameters_match_resolution(definition.secondary_fire))
@@ -602,8 +618,7 @@ constexpr uint32_t first_row_whose_parameters_mismatch_its_resolution()
         !(definition.magazine_size > 0 && definition.reload_duration_seconds == 0.f &&
           definition.limit.max_alive == 0))
       return row;
-    const bool spawns_an_entity = fire_spawns_an_entity(definition.primary_fire) ||
-                                  fire_spawns_an_entity(definition.secondary_fire);
+    const bool spawns_an_entity = primary.spawns_an_entity || secondary.spawns_an_entity;
     if (definition.limit.max_alive > 0 && !spawns_an_entity)
       return row;
     if ((definition.primary_fire.resolution == entities::Fire_Resolution::Recall ||
@@ -622,7 +637,7 @@ static_assert(first_row_whose_parameters_mismatch_its_resolution() == entities::
               "THE LEFT NUMBER BELOW IS THE OFFENDING ROW'S Weapon VALUE. "
               "each fire of a WEAPON_DEFINITIONS row fills the parameter struct of its own "
               "Fire_Resolution (hitscan: positive range; projectile: positive speed and a spawned "
-              "entity type, and an Arrives expiry only beside a contact effect; place: a spawned entity type; pilot: positive speed, radius and "
+              "entity type, a filled shot block exactly when that type is Shot_Entity, and an Arrives expiry only beside a contact effect; place: a spawned entity type; pilot: positive speed, radius and "
               "seconds, and path numbers only when it leaves a Path) and leaves the others zero, and the "
               "primary is neither None nor Zoom: resolve_player_shot reads exactly one struct, "
               "so a value in another is a number nothing reads. A Hitscan carries a contact "

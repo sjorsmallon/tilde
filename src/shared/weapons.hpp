@@ -11,6 +11,7 @@
 #include "contact.hpp"
 #include "entities/generated/entities_core_generated.hpp"
 #include "collision/flight_path.hpp"
+#include "movement/movement_override.hpp"
 #include "movement/player_constants.hpp"
 #include "movement/player_move.hpp"
 #include "subtick.hpp"
@@ -41,6 +42,31 @@ enum class projectile_expiration_t : uint8_t
   Arrives
 };
 
+// The sweeping shot a Projectile fire that spawns a Shot_Entity is: how long it flies, the sphere it sweeps and
+// what it looks like. A mesh name rather than an id because this table is constexpr; spawn_projectile resolves
+// it. Zero on a row spawning any other type, which carries its own numbers (static_asserted in weapons.cpp).
+struct shot_t
+{
+  float                lifetime_seconds;
+  float                collision_radius;
+  assets::asset_name_t mesh;
+  vec3f                scale;
+  vec3f                color;
+};
+
+constexpr bool shot_is_zero(const shot_t& shot)
+{
+  return shot.lifetime_seconds == 0.f && shot.collision_radius == 0.f && shot.mesh.empty() &&
+         shot.scale.x == 0.f && shot.scale.y == 0.f && shot.scale.z == 0.f && shot.color.x == 0.f &&
+         shot.color.y == 0.f && shot.color.z == 0.f;
+}
+
+constexpr bool shot_is_filled(const shot_t& shot)
+{
+  return shot.lifetime_seconds > 0.f && shot.collision_radius > 0.f && !shot.mesh.empty() &&
+         shot.scale.x > 0.f && shot.scale.y > 0.f && shot.scale.z > 0.f;
+}
+
 struct projectile_t
 {
   float speed;
@@ -49,6 +75,8 @@ struct projectile_t
   // The entity type a shot becomes; it must carry the Projectile component.
   entities::entity_type spawns;
   projectile_expiration_t   expiry;
+  // Filled exactly when `spawns` is Shot_Entity.
+  shot_t                    shot;
 };
 
 struct projectile_step_t
@@ -176,6 +204,53 @@ struct weapon_fire_t
   // A button that stays down repeats at fire_interval_seconds (try_find_held_fire_time).
   bool                      fires_while_held;
 };
+
+// What a Fire_Resolution IS, answered once per member. A question every member
+// answers goes here as a column; a new member is one row, and rows_in_enum_order
+// refuses a missing or misplaced one.
+struct fire_resolution_traits_t
+{
+  entities::Fire_Resolution resolution;
+  // A press runs through the deploy, interval, reload and ammo gates and charges them.
+  bool                      runs_shot_clocks       = false;
+  // A press is gated by Movement::seconds_until_impulse_ready and by nothing else.
+  bool                      gated_by_impulse_timer = false;
+  // A press puts an entity in the world: counted by the row's alive limit, taken back by a Recall.
+  bool                      spawns_an_entity       = false;
+  // A press does something on the server. None is nothing; Zoom is the client's scope.
+  bool                      acts_on_server         = false;
+};
+
+constexpr Enum_Array<entities::Fire_Resolution, fire_resolution_traits_t> FIRE_RESOLUTION_TRAITS = {{
+    {.resolution = entities::Fire_Resolution::None},
+    {.resolution = entities::Fire_Resolution::Hitscan, .runs_shot_clocks = true, .acts_on_server = true},
+    {.resolution       = entities::Fire_Resolution::Projectile,
+     .runs_shot_clocks = true,
+     .spawns_an_entity = true,
+     .acts_on_server   = true},
+    {.resolution = entities::Fire_Resolution::Self_Impulse, .gated_by_impulse_timer = true, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Zoom},
+    {.resolution       = entities::Fire_Resolution::Place,
+     .runs_shot_clocks = true,
+     .spawns_an_entity = true,
+     .acts_on_server   = true},
+    {.resolution = entities::Fire_Resolution::Canopy, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Pilot, .gated_by_impulse_timer = true, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Recall, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Reveal_Light, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Reveal_Light_Overhead, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Erase_Light, .acts_on_server = true},
+    {.resolution = entities::Fire_Resolution::Lens_View, .acts_on_server = true},
+}};
+static_assert(rows_in_enum_order<&fire_resolution_traits_t::resolution>(FIRE_RESOLUTION_TRAITS),
+              "FIRE_RESOLUTION_TRAITS rows must sit at their own Fire_Resolution index: a new "
+              "member of the enum is a new row here, in the enum's order");
+
+[[nodiscard]] constexpr const fire_resolution_traits_t&
+get_fire_resolution_traits(entities::Fire_Resolution resolution)
+{
+  return FIRE_RESOLUTION_TRAITS[resolution];
+}
 
 struct weapon_definition_t
 {
@@ -424,12 +499,11 @@ inline const projectile_t& get_projectile_parameters(const entities::Projectile&
   if (movement.seconds_until_impulse_ready > 0.f)
     return false;
 
-  movement.active_override            = entities::Movement_Override::Pilot;
-  movement.override_target_uid        = null_entity_uid;
-  movement.override_target_position   = eye;
-  movement.override_seconds_remaining = fire.pilot.seconds;
-  movement.override_speed             = fire.pilot.speed;
-  movement.override_radius            = fire.pilot.radius;
+  attach_override(movement, {.kind            = entities::Movement_Override::Pilot,
+                             .target_position = eye,
+                             .seconds         = fire.pilot.seconds,
+                             .speed           = fire.pilot.speed,
+                             .radius          = fire.pilot.radius});
 
   movement.seconds_until_impulse_ready = weapon.self_impulse_cooldown_seconds;
   return true;

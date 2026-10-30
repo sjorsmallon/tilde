@@ -49,8 +49,8 @@ static void drop_timed_out_clients(server_context_t &context)
   // there's no timeout.
   if (timeout_seconds <= 0.0f) return;
 
-  const uint32_t timeout_in_ticks = std::max(
-      1u, static_cast<uint32_t>(timeout_seconds * context.cvars->sv_tickrate));
+  const uint32_t timeout_in_ticks =
+      shared::ticks_from_seconds(timeout_seconds, context.cvars->sv_tickrate);
 
   for (connected_client_t row : connected_clients(context))
   {
@@ -61,7 +61,7 @@ static void drop_timed_out_clients(server_context_t &context)
 
     log_warning("Slot {} ({}) has been silent for {:.1f}s (sv_timeout {:.1f}s)",
                 row.slot, row.transport.address.to_string(),
-                static_cast<float>(silent_ticks) / context.cvars->sv_tickrate,
+                static_cast<float>(silent_ticks) * shared::tick_interval_seconds(context.cvars->sv_tickrate),
                 timeout_seconds);
     disconnect_client(context, row.slot, "timed out.");
   }

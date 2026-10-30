@@ -1,4 +1,5 @@
 #include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "spawn_projectile.hpp"
 
@@ -89,6 +90,14 @@ shared::entity_uid_t spawn_projectile(server_context_t& context, shared::entity_
   projectile->owner_uid = owner_uid;
   projectile->weapon_id = weapon.weapon;
   projectile->trigger   = trigger;
+
+  if (entities::Shot_Entity* shot = entity_system.get<entities::Shot_Entity>(projectile_uid))
+  {
+    shot->lifetime     = fire.projectile.shot.lifetime_seconds;
+    shot->render.mesh  = assets::mesh_id(fire.projectile.shot.mesh);
+    shot->render.scale = fire.projectile.shot.scale;
+    shot->render.color = fire.projectile.shot.color;
+  }
 
   return projectile_uid;
 }

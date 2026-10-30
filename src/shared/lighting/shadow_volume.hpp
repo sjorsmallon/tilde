@@ -258,7 +258,7 @@ struct shadow_volume_report_t
 // open. The back planes are not drawn: they are the caster's own faces.
 void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std::vector<shadow_volume_edge_t>& out);
 
-shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
+shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               const mover_rests_t& rests, std::vector<shadow_volume_t>& out);
 

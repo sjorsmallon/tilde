@@ -55,7 +55,7 @@ void write_canopy_poses(entities::Canopy_Entity& canopy, const linalg::vec3f& ca
 [[nodiscard]] linalg::vec3f canopy_position_at_tick(const entities::Canopy_Entity& canopy,
                                                     const linalg::vec3f& carrier_velocity,
                                                     uint32_t tick, uint32_t state_tick,
-                                                    float tick_interval_seconds);
+                                                    uint32_t tickrate_hz);
 
 struct canopy_poses_t
 {
@@ -70,11 +70,11 @@ struct canopy_poses_t
 [[nodiscard]] canopy_poses_t canopy_poses_for_tick(const entities::Canopy_Entity& canopy,
                                                    const linalg::vec3f& carrier_velocity,
                                                    uint32_t tick, uint32_t state_tick,
-                                                   float tick_interval_seconds);
+                                                   uint32_t tickrate_hz);
 
-// APPENDS, after collect_movers has sized the list for the map's own movers. A canopy whose
+// APPENDS, after compute_path_movers_at_tick has sized the list for the map's own movers. A canopy whose
 // carrier the system does not hold is skipped with a line: nothing can say where it is.
-void collect_canopies(const Entity_System& system, uint32_t tick, uint32_t state_tick,
-                      float tick_interval_seconds, std::vector<mover_t>& out);
+void compute_canopies_at_tick(const Entity_System& system, uint32_t tick, uint32_t state_tick,
+                      uint32_t tickrate_hz, std::vector<mover_t>& out);
 
 } // namespace shared

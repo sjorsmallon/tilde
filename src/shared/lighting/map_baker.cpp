@@ -1,6 +1,7 @@
 #define ENTITIES_WANT_INCLUDES
 #include "map_baker.hpp"
 #include "collision/collision_detection.hpp"
+#include "movement/player_constants.hpp"
 #include "movement/player_move.hpp"
 #include <cfloat>
 #include <cmath>
@@ -12,9 +13,7 @@ namespace shared
 {
 
 static constexpr float NAVMESH_MIN_CELL_SIZE    = 1.f;
-static constexpr float NAVMESH_WALKABLE_SLOPE   = 0.7f;  // cos(~45°)
 static constexpr float PLAYER_FULL_HEIGHT       = 72.f;
-static constexpr float NAVMESH_STEP_HEIGHT      = 16.f;  // max height diff for adjacent spans
 
 // A single walkable surface sample found during voxelization.
 struct nav_span_t
@@ -470,7 +469,7 @@ void simplify_navmesh(navmesh_t &nav, int max_merges)
 
 // ---------------------------------------------------------------------------
 
-void bake_map(map_t &map, float cell_size)
+void bake_map(map_t &map, float cell_size, float step_height)
 {
   cell_size = std::max(cell_size, NAVMESH_MIN_CELL_SIZE);
 
@@ -581,7 +580,7 @@ void bake_map(map_t &map, float cell_size)
         // Slope check against the face actually hit. This used to take the max
         // normal.y over ALL of the primitive's planes, which every closed solid
         // passes -- a 60-degree brush ramp read as flat walkable floor.
-        if (floor_hit.normal.y >= NAVMESH_WALKABLE_SLOPE)
+        if (floor_hit.normal.y >= GROUND_NORMAL_MINIMUM_Y)
         {
           // Headroom check: must have enough clearance above the floor.
           vec3f ceil_origin = {cx, floor_y + 0.01f, cz};
@@ -612,7 +611,7 @@ void bake_map(map_t &map, float cell_size)
 
   // --- 5. Build span adjacency and connected-component flood fill ---
   // Two spans are adjacent if their columns are 4-connected and
-  // their floor heights differ by at most STEP_HEIGHT.
+  // their floor heights differ by at most step_height.
 
   std::vector<std::vector<int>> span_adj(num_spans);
 
@@ -631,7 +630,7 @@ void bake_map(map_t &map, float cell_size)
 
       for (int t : spans_grid[nz * width + nx])
       {
-        if (std::abs(spans[t].floor_y - span.floor_y) <= NAVMESH_STEP_HEIGHT)
+        if (std::abs(spans[t].floor_y - span.floor_y) <= step_height)
           span_adj[s].push_back(t);
       }
     }
@@ -729,7 +728,7 @@ void bake_map(map_t &map, float cell_size)
       for (int t : spans_grid[nz * width + nx])
       {
         float diff = std::abs(spans[t].floor_y - sp.floor_y);
-        if (diff <= NAVMESH_STEP_HEIGHT && diff < best_diff &&
+        if (diff <= step_height && diff < best_diff &&
             spans[t].island == sp.island)
         {
           best_diff = diff;

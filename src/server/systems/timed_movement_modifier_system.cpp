@@ -15,8 +15,8 @@ namespace server
 
 void update_timed_movement_modifiers(server_context_t& context)
 {
-  const float tick_interval_seconds = static_cast<float>(get_tick_interval());
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
+  const uint32_t tickrate_hz = context.cvars->sv_tickrate;
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = tickrate_hz,
                                                    .gravity = context.cvars->g_gravity};
 
   std::vector<shared::entity_uid_t> expired;
@@ -31,15 +31,14 @@ void update_timed_movement_modifiers(server_context_t& context)
       if (linalg::dot(zone.projectile.velocity, zone.projectile.velocity) > 0.f)
         zone.flight = {.launch_position = zone.position,
                        .launch_tick     = context.tick_number,
-                       .flight_ticks    = static_cast<uint32_t>(
-                           std::lround(zone.flight_seconds / tick_interval_seconds))};
+                       .flight_ticks    = shared::ticks_from_seconds(zone.flight_seconds, tickrate_hz)};
     }
 
     zone.position = shared::flight_position_at(zone.projectile, zone.flight, zone.position,
                                                context.tick_number, flight);
 
     if (context.tick_number > zone.spawned_tick &&
-        !shared::timed_movement_modifier_is_active_at(zone, context.tick_number, tick_interval_seconds))
+        !shared::timed_movement_modifier_is_active_at(zone, context.tick_number, tickrate_hz))
       expired.push_back(zone.entity_id);
   }
 

@@ -52,7 +52,7 @@ struct path_pose_t
                                                                  const path_links_t&  links,
                                                                  entity_uid_t         from,
                                                                  int32_t              direction,
-                                                                 float                tickrate);
+                                                                 uint32_t                tickrate_hz);
 
 [[nodiscard]] path_pose_t transform_at(const path_segment_t& segment, uint32_t segment_start_tick,
                                        uint32_t tick);
@@ -60,12 +60,12 @@ struct path_pose_t
 [[nodiscard]] std::optional<path_pose_t> try_path_pose_at(const Entity_System&          system,
                                                           const path_links_t&           links,
                                                           const entities::Path_Follow& follow,
-                                                          uint32_t tick, float tickrate);
+                                                          uint32_t tick, uint32_t tickrate_hz);
 
 [[nodiscard]] uint32_t path_clock_tick(const entities::Path_Follow& follow, uint32_t tick);
 
 void advance_path_follow(const Entity_System& system, const path_links_t& links,
-                         entities::Path_Follow& follow, uint32_t tick, float tickrate,
+                         entities::Path_Follow& follow, uint32_t tick, uint32_t tickrate_hz,
                          std::vector<entity_uid_t>& out_reached);
 
 void freeze_path_follow(entities::Path_Follow& follow, uint32_t tick);
@@ -74,10 +74,10 @@ void resume_path_follow(entities::Path_Follow& follow, uint32_t tick);
 
 [[nodiscard]] bool try_reverse_path_follow(const Entity_System& system, const path_links_t& links,
                                            entities::Path_Follow& follow, uint32_t tick,
-                                           float tickrate);
+                                           uint32_t tickrate_hz);
 
 [[nodiscard]] bool try_path_follow_go_to(const Entity_System& system, const path_links_t& links,
                                          entities::Path_Follow& follow, entity_uid_t node,
-                                         uint32_t tick, float tickrate);
+                                         uint32_t tick, uint32_t tickrate_hz);
 
 } // namespace shared

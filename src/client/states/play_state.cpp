@@ -94,7 +94,7 @@ static uint32_t get_predicted_server_tick_which_this_input_will_be_simulated_on(
     .uid              = canopy->entity_id,
     .guessed_position = shared::canopy_position_at_tick(
         *canopy, carrier->velocity, tick - 1, ctx.prediction.latest_server_tick,
-        1.0f / static_cast<float>(ctx.connection.server_tickrate))};
+        ctx.connection.server_tickrate)};
 }
 
 
@@ -102,7 +102,7 @@ struct drawn_tick_t
 {
   uint32_t tick{};
   float    fraction{};
-  float    tickrate{};
+  uint32_t tickrate_hz{};
 };
 
 static double get_exact_tick_gap(const client_context_t &ctx)
@@ -132,14 +132,14 @@ static void update_drawn_tick_gap(client_context_t &ctx, float dt)
 
 static drawn_tick_t get_tick_and_fraction_used_for_drawing_this_frame(const client_context_t &ctx)
 {
-  const float tickrate = static_cast<float>(ctx.connection.server_tickrate);
-  const float fraction = ctx.connection.phase == Connection_Phase::Connected ? std::clamp(ctx.prediction.physics_accumulator * tickrate, 0.0f, 1.0f) : 0.0f;
+  const uint32_t tickrate_hz = ctx.connection.server_tickrate;
+  const float fraction = ctx.connection.phase == Connection_Phase::Connected ? std::clamp(ctx.prediction.physics_accumulator * static_cast<float>(tickrate_hz), 0.0f, 1.0f) : 0.0f;
   const double clock   = std::max(0.0, static_cast<double>(ctx.prediction.input_number - 1) + ctx.prediction.drawn_tick_gap + static_cast<double>(fraction));
   const double whole   = std::floor(clock);
   return drawn_tick_t{
     .tick     = static_cast<uint32_t>(whole),
     .fraction = static_cast<float>(clock - whole),
-    .tickrate = tickrate
+    .tickrate_hz = tickrate_hz
   };
 }
 
@@ -178,10 +178,10 @@ static drawn_pose_t get_interpolated_pose_for_entity(const client_context_t &ctx
 // interpolate bubble position according to its fixed arc.
 static vec3f drawn_bubble_position(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
-  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+  const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const shared::fixed_arc_flight_settings_t flight{
-    .tick_interval_seconds = 1.0f / tickrate,
+    .tickrate_hz = tickrate_hz,
     .gravity               = ctx.cvars->g_gravity
   };
 
@@ -201,9 +201,9 @@ struct drawn_bubble_t
 
 static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::Bubble_Entity &bubble)
 {
-  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+  const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
   const auto seconds_since = [&](uint32_t anchor_tick) {
-    return (static_cast<float>(static_cast<int64_t>(tick) - static_cast<int64_t>(anchor_tick)) + fraction) / tickrate;
+    return (static_cast<float>(static_cast<int64_t>(tick) - static_cast<int64_t>(anchor_tick)) + fraction) * shared::tick_interval_seconds(tickrate_hz);
   };
 
   float seconds_to_burst = 0.f;
@@ -215,7 +215,7 @@ static drawn_bubble_t drawn_bubble(const client_context_t &ctx, const entities::
 
   else if (bubble.flight.launch_tick != 0)
   {
-    const uint32_t expiry_tick = bubble.flight.launch_tick + bubble.flight.flight_ticks + static_cast<uint32_t>(std::lround(bubble.rest_seconds * tickrate));
+    const uint32_t expiry_tick = bubble.flight.launch_tick + bubble.flight.flight_ticks + shared::ticks_from_seconds(bubble.rest_seconds, tickrate_hz);
     seconds_to_burst = std::max(0.0f, -seconds_since(expiry_tick));
   }
   else
@@ -257,11 +257,10 @@ struct drawn_platform_t
 
 static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared::common_platform_fields_t &platform)
 {
-  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+  const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
-  const float tick_interval_seconds = 1.0f / tickrate;
   const shared::fixed_arc_flight_settings_t flight{
-    .tick_interval_seconds = tick_interval_seconds,
+    .tickrate_hz = tickrate_hz,
     .gravity = ctx.cvars->g_gravity
   };
 
@@ -270,10 +269,10 @@ static drawn_platform_t drawn_platform(const client_context_t &ctx, const shared
 
   return drawn_platform_t{
     .position = at_tick + (at_next - at_tick) * fraction,
-    .half_extents = shared::platform_half_extents_at(platform, tick, fraction, tick_interval_seconds),
-    .is_solid = shared::platform_is_solid_at_tick(platform, tick, tick_interval_seconds),
-    .has_vanished = shared::platform_has_vanished_at_tick(platform, tick, tick_interval_seconds),
-    .solid_fraction_elapsed = shared::platform_solid_fraction_elapsed(platform, tick, fraction, tick_interval_seconds)
+    .half_extents = shared::platform_half_extents_at(platform, tick, fraction, tickrate_hz),
+    .is_solid = shared::platform_is_solid_at_tick(platform, tick, tickrate_hz),
+    .has_vanished = shared::platform_has_vanished_at_tick(platform, tick, tickrate_hz),
+    .solid_fraction_elapsed = shared::platform_solid_fraction_elapsed(platform, tick, fraction, tickrate_hz)
     };
 }
 
@@ -286,10 +285,10 @@ struct drawn_ping_marker_t
 
 static drawn_ping_marker_t drawn_ping_marker(const client_context_t &ctx, const entities::Ping_Marker_Entity &marker)
 {
-  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+  const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const float age_seconds =
-      (std::max(0.0f, (float)(int32_t)(tick - marker.spawned_tick)) + fraction) / tickrate;
+      (std::max(0.0f, (float)(int32_t)(tick - marker.spawned_tick)) + fraction) * shared::tick_interval_seconds(tickrate_hz);
 
   constexpr shared::tween_t bob = {
     .from = 92.0f,
@@ -321,18 +320,18 @@ static shared::path_pose_t get_rest_pose_for_mover(const client_context_t &ctx, 
 
 static drawn_mover_poses_t drawn_mover_poses(const client_context_t &ctx, const entities::Mover_Entity &mover)
 {
-  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+  const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
 
   const shared::Entity_System& system = ctx.world.session.entity_system;
   const shared::path_links_t& links  = ctx.world.session.path_links;
   const shared::path_pose_t rest = get_rest_pose_for_mover(ctx, mover);
-  const shared::path_pose_t at_tick = shared::mover_pose_at(system, links, mover, rest, tick, tickrate);
-  const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate);
+  const shared::path_pose_t at_tick = shared::mover_pose_at(system, links, mover, rest, tick, tickrate_hz);
+  const shared::path_pose_t next_tick = shared::mover_pose_at(system, links, mover, rest, tick + 1, tickrate_hz);
   // `at_tick` is where the last predicted step stood its rider, on the exact tick and never the eased one.
   const uint32_t stepped_tick =
       get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, ctx.prediction.input_number - 1);
   return drawn_mover_poses_t{
-    .at_tick = shared::mover_pose_at(system, links, mover, rest, stepped_tick, tickrate),
+    .at_tick = shared::mover_pose_at(system, links, mover, rest, stepped_tick, tickrate_hz),
     .drawn = shared::blend_path_poses(at_tick, next_tick, fraction)
   };
 }
@@ -363,9 +362,9 @@ static const Remote_Player_State* try_find_remote_player_by_uid(const client_con
 // The body we ride in as a merged passenger (shared/merge.hpp): the driver's, drawn where it is interpolated.
 static const Remote_Player_State* try_find_remote_driver(const client_context_t &ctx)
 {
-  if (ctx.prediction.player_movement.active_override != entities::Movement_Override::Merged)
+  if (ctx.prediction.state.move.movement.active_override != entities::Movement_Override::Merged)
     return nullptr;
-  return try_find_remote_player_by_uid(ctx, ctx.prediction.player_movement.override_target_uid);
+  return try_find_remote_player_by_uid(ctx, ctx.prediction.state.move.movement.override_target_uid);
 }
 
 // The passenger riding in OUR body: theirs is the aim we are shown and steer along.
@@ -407,18 +406,18 @@ static vec3f drawn_local_feet(const client_context_t &ctx)
 
   const float extrapolation_factor =
       ctx.connection.phase == Connection_Phase::Connected ? ctx.prediction.physics_accumulator : 0.f;
-  vec3f feet = ctx.prediction.player_position +
-               ctx.prediction.player_velocity * extrapolation_factor +
+  vec3f feet = ctx.prediction.state.move.feet +
+               ctx.prediction.state.move.velocity * extrapolation_factor +
                ctx.prediction.visual_error_offset +
                ctx.prediction.drawn_carry_shift;
 
   if (ctx.world.ready)
   {
     if (const entities::Mover_Entity *ridden = ctx.world.session.entity_system.get<entities::Mover_Entity>(
-            ctx.prediction.player_movement.ground_mover_uid))
+            ctx.prediction.state.move.movement.ground_mover_uid))
     {
       const drawn_mover_poses_t poses = drawn_mover_poses(ctx, *ridden);
-      const vec3f at_tick = ctx.prediction.player_position;
+      const vec3f at_tick = ctx.prediction.state.move.feet;
       feet = feet + (shared::carry_point_between_poses(poses.at_tick, poses.drawn, at_tick) - at_tick);
     }
   }
@@ -427,13 +426,13 @@ static vec3f drawn_local_feet(const client_context_t &ctx)
 
 static bool local_player_rides_a_rocket(const client_context_t &ctx)
 {
-  return ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot;
+  return ctx.prediction.state.move.movement.active_override == entities::Movement_Override::Pilot;
 }
 
 // The predicted rocket, carried past the tick along the aim the next step will fly it on.
 static vec3f drawn_piloted_rocket(const client_context_t &ctx)
 {
-  const entities::Movement &movement = ctx.prediction.player_movement;
+  const entities::Movement &movement = ctx.prediction.state.move.movement;
   const float seconds_past_tick =
       ctx.connection.phase == Connection_Phase::Connected ? ctx.prediction.physics_accumulator : 0.f;
   const float seconds_flown =
@@ -459,25 +458,6 @@ static void follow_pilot_flight(client_context_t &ctx)
     prediction.player_pitch = prediction.aim_at_pilot_launch->pitch;
     prediction.aim_at_pilot_launch.reset();
   }
-}
-
-// What a trigger press does to our OWN movement, in the server's order: a pilot lets go, else the row's impulse or launch.
-static void apply_trigger_press_to_own_movement(const shared::movement_settings_t &settings,
-                                                const shared::weapon_definition_t *weapon,
-                                                entities::Fire_Trigger trigger,
-                                                const shared::subtick_view_t &view, const vec3f &feet,
-                                                entities::Movement &movement, vec3f &velocity)
-{
-  if (shared::try_end_pilot_flight(movement))
-    return;
-  if (weapon == nullptr)
-    return;
-
-  (void)shared::try_apply_self_impulse(settings, *weapon, trigger,
-                                       linalg::direction_from_angles(view.yaw, view.pitch), movement,
-                                       velocity);
-  (void)shared::try_begin_pilot_flight(
-      *weapon, trigger, feet + vec3f{0.f, shared::player_eye_height, 0.f}, movement);
 }
 
 // glued to the carrier to relieve snapping.
@@ -538,8 +518,8 @@ static renderer::clock_wipe_t compute_drawn_clock_wipe_for_geometry(const client
   if (timer_state == nullptr)
     return frame;
 
-  const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
-  frame.wiped = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate);
+  const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+  frame.wiped = shared::timer_elapsed_fraction(*timer_state, tick, fraction, tickrate_hz);
   frame.armed = true;
   return frame;
 }
@@ -564,6 +544,46 @@ static bool local_movement_is_allowed(const client_context_t &ctx)
   return match == nullptr || shared::is_movement_allowed(match->phase);
 }
 
+// The gates the server's step loop reads, as this client knows them: the health and the phase
+// are a round trip stale, which is the bound every reconciled value has.
+static shared::input_restrictions_t local_input_restrictions(const client_context_t &ctx)
+{
+  return {.is_dead            = ctx.prediction.local_player_health <= 0,
+          .world_is_frozen    = !local_movement_is_allowed(ctx),
+          .drives_merged_body = local_player_drives_a_merged_body(ctx)};
+}
+
+
+// The ONE key-to-button binding: the edge path and the polled path both read it.
+struct key_button_binding_t
+{
+  input::key_t key;
+  uint64_t     button;
+};
+
+struct mouse_button_binding_t
+{
+  input::mouse_button_t mouse_button;
+  uint64_t              button;
+};
+
+constexpr Array<key_button_binding_t, 17> KEY_BUTTON_BINDINGS = {{
+    {input::key_t::W, Button::Forward},   {input::key_t::S, Button::Backward},
+    {input::key_t::A, Button::Left},      {input::key_t::D, Button::Right},
+    {input::key_t::Space, Button::Jump},  {input::key_t::R, Button::Reload},
+    {input::key_t::G, Button::Throw},     {input::key_t::Num_0, Button::Key0},
+    {input::key_t::Num_1, Button::Key1},  {input::key_t::Num_2, Button::Key2},
+    {input::key_t::Num_3, Button::Key3},  {input::key_t::Num_4, Button::Key4},
+    {input::key_t::Num_5, Button::Key5},  {input::key_t::Num_6, Button::Key6},
+    {input::key_t::Num_7, Button::Key7},  {input::key_t::Num_8, Button::Key8},
+    {input::key_t::Num_9, Button::Key9},
+}};
+
+constexpr Array<mouse_button_binding_t, 3> MOUSE_BUTTON_BINDINGS = {{
+    {input::mouse_button_t::Left, Button::Fire},
+    {input::mouse_button_t::Right, Button::Secondary_Fire},
+    {input::mouse_button_t::Middle, Button::Ping},
+}};
 
 static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge, bool mouse_buttons_allowed)
 {
@@ -574,36 +594,30 @@ static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge, b
   {
     if (!mouse_buttons_allowed)
       return 0;
-    switch (edge.button)
-    {
-    case input::mouse_button_t::Left:   return Button::Fire;
-    case input::mouse_button_t::Middle: return Button::Ping;
-    case input::mouse_button_t::Right:  return Button::Secondary_Fire;
-    default:                            return 0;
-    }
+    for (const mouse_button_binding_t& binding : MOUSE_BUTTON_BINDINGS)
+      if (binding.mouse_button == edge.button)
+        return binding.button;
+    return 0;
   }
 
-  switch (edge.key)
-  {
-  case input::key_t::W:     return Button::Forward;
-  case input::key_t::S:     return Button::Backward;
-  case input::key_t::A:     return Button::Left;
-  case input::key_t::D:     return Button::Right;
-  case input::key_t::Space: return Button::Jump;
-  case input::key_t::R:     return Button::Reload;
-  case input::key_t::G:     return Button::Throw;
-  case input::key_t::Num_0: return Button::Key0;
-  case input::key_t::Num_1: return Button::Key1;
-  case input::key_t::Num_2: return Button::Key2;
-  case input::key_t::Num_3: return Button::Key3;
-  case input::key_t::Num_4: return Button::Key4;
-  case input::key_t::Num_5: return Button::Key5;
-  case input::key_t::Num_6: return Button::Key6;
-  case input::key_t::Num_7: return Button::Key7;
-  case input::key_t::Num_8: return Button::Key8;
-  case input::key_t::Num_9: return Button::Key9;
-  default:                  return 0;
-  }
+  for (const key_button_binding_t& binding : KEY_BUTTON_BINDINGS)
+    if (binding.key == edge.key)
+      return binding.button;
+  return 0;
+}
+
+static uint64_t polled_buttons(bool keys_allowed, bool mouse_buttons_allowed)
+{
+  uint64_t buttons = 0;
+  if (keys_allowed)
+    for (const key_button_binding_t& binding : KEY_BUTTON_BINDINGS)
+      if (input::is_key_down(binding.key))
+        buttons |= binding.button;
+  if (keys_allowed && mouse_buttons_allowed)
+    for (const mouse_button_binding_t& binding : MOUSE_BUTTON_BINDINGS)
+      if (input::is_mouse_down(binding.mouse_button))
+        buttons |= binding.button;
+  return buttons;
 }
 
 
@@ -658,121 +672,17 @@ try_find_local_weapon_definition(const client_context_t &ctx)
   return try_find_weapon_definition_for_active_weapon_held_by_player(ctx, try_find_my_player(ctx));
 }
 
-// The server raises a pickup with no key press to predict the deploy from, so it is read off the replicated hand.
-static void start_deploy_clock_for_weapon_raised_by_pickup(client_context_t &ctx)
+// The toggle flags as the prediction holds them (prediction_t::state.toggles), read with the hand
+// that makes each one mean anything.
+// The channels of the lens our prediction holds to our eye, 0 with none or nobody.
+static uint32_t local_held_lens_channels(const client_context_t &ctx)
 {
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player == nullptr || ctx.prediction.local_player_health <= 0)
-  {
-    ctx.prediction.inventory_at_last_frame.reset();
-    return;
-  }
-
-  const entities::Inventory& inventory = my_player->inventory;
-  if (ctx.prediction.inventory_at_last_frame &&
-      ctx.prediction.inventory_at_last_frame->active_slot != inventory.active_slot)
-  {
-    const uint32_t* held_at_last_frame =
-        ctx.prediction.inventory_at_last_frame->weapons.try_get(inventory.active_slot);
-    const entities::Weapon_Entity* raised = try_find_active_weapon(ctx, *my_player);
-
-    if (held_at_last_frame != nullptr && *held_at_last_frame == shared::null_entity_uid &&
-        raised != nullptr)
-    {
-      ctx.prediction.seconds_until_local_reload_complete = 0.f;
-      ctx.prediction.seconds_until_local_deploy_complete =
-          shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds;
-    }
-  }
-
-  ctx.prediction.inventory_at_last_frame = inventory;
-}
-
-// The server flips Player_Entity::reveal_light_on (primary) or reveal_light_overhead (secondary) at this press,
-// behind the same gates; held_snapshot.cpp forgets it once answered.
-static void predict_local_reveal_light_toggle(client_context_t &ctx, entities::Fire_Trigger trigger)
-{
-  const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player == nullptr || !local_movement_is_allowed(ctx) ||
-      ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot ||
-      local_player_drives_a_merged_body(ctx))
-    return;
-
-  if (!shared::reveal_light_is_in_hand(ctx.world.session.entity_system, *my_player))
-    return;
-
-  std::vector<int> &unanswered = trigger == entities::Fire_Trigger::Primary
-                                     ? ctx.prediction.unanswered_reveal_light_toggles
-                                     : ctx.prediction.unanswered_reveal_light_overhead_toggles;
-  unanswered.push_back(ctx.prediction.input_number);
-}
-
-// A server flag as it stands when the server opens `input_number`: flipped once per unanswered press before that input.
-static bool flag_after_unanswered_presses(bool server_flag, const std::vector<int> &unanswered,
-                                          int input_number)
-{
-  const auto earlier_presses =
-      std::count_if(unanswered.begin(), unanswered.end(),
-                    [input_number](int pressed_in) { return pressed_in < input_number; });
-  return server_flag != (earlier_presses % 2 == 1);
-}
-
-static bool local_reveal_light_is_on_entering(const client_context_t &ctx,
-                                              const entities::Player_Entity &my_player, int input_number)
-{
-  return flag_after_unanswered_presses(my_player.reveal_light_on,
-                                       ctx.prediction.unanswered_reveal_light_toggles, input_number) &&
-         shared::reveal_light_is_in_hand(ctx.world.session.entity_system, my_player);
-}
-
-static bool local_reveal_light_is_on(const client_context_t &ctx, const entities::Player_Entity &my_player)
-{
-  return local_reveal_light_is_on_entering(ctx, my_player, std::numeric_limits<int>::max());
-}
-
-// The server flips Player_Entity::held_lens_on at a Red Lens press, behind the same gates; held_snapshot.cpp
-// forgets it once answered.
-static void predict_local_held_lens_toggle(client_context_t &ctx)
-{
-  const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player == nullptr || !local_movement_is_allowed(ctx) ||
-      ctx.prediction.player_movement.active_override == entities::Movement_Override::Pilot ||
-      local_player_drives_a_merged_body(ctx))
-    return;
-
-  if (!shared::try_get_held_lens_filter(ctx.world.session.entity_system, *my_player).has_value())
-    return;
-
-  ctx.prediction.unanswered_held_lens_toggles.push_back(ctx.prediction.input_number);
-}
-
-static uint32_t local_held_lens_channels_entering(const client_context_t &ctx,
-                                                  const entities::Player_Entity &my_player, int input_number)
-{
-  return shared::compute_held_lens_channels(
-      ctx.world.session.entity_system, my_player,
-      flag_after_unanswered_presses(my_player.held_lens_on, ctx.prediction.unanswered_held_lens_toggles,
-                                    input_number));
-}
-
-static uint32_t local_held_lens_channels(const client_context_t &ctx, const entities::Player_Entity &my_player)
-{
-  return local_held_lens_channels_entering(ctx, my_player, std::numeric_limits<int>::max());
-}
-
-static bool local_reveal_light_is_overhead_entering(const client_context_t &ctx,
-                                                    const entities::Player_Entity &my_player,
-                                                    int input_number)
-{
-  return flag_after_unanswered_presses(my_player.reveal_light_overhead,
-                                       ctx.prediction.unanswered_reveal_light_overhead_toggles,
-                                       input_number);
-}
-
-static bool local_reveal_light_is_overhead(const client_context_t &ctx,
-                                           const entities::Player_Entity &my_player)
-{
-  return local_reveal_light_is_overhead_entering(ctx, my_player, std::numeric_limits<int>::max());
+  if (my_player == nullptr)
+    return 0;
+  shared::player_sight_t own = shared::player_sight_from_entity(ctx.world.session.entity_system, *my_player);
+  own.toggles                = ctx.prediction.state.toggles;
+  return shared::held_lens_channels(own);
 }
 
 // The aim the server holds for us when it opens `input_number`: where the input before it ended.
@@ -791,29 +701,19 @@ static shared::subtick_view_t local_view_entering(const client_context_t &ctx,
   return {.yaw = my_player.view_angle_yaw, .pitch = my_player.view_angle_pitch};
 }
 
-static void play_predicted_local_gunshot(
-  client_context_t &ctx,
-  entities::Fire_Trigger trigger,
-  bool button_was_already_down)
+// The sound of a fire the input step reported due on this button (input_step_outcome_t::fire_due):
+// every gate has passed and the clocks are charged, so what is left is which rows make a noise.
+// Read off the PREDICTED hand, which may have switched this very tick.
+static void play_predicted_local_gunshot(client_context_t &ctx, entities::Fire_Trigger trigger)
 {
-  const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player == nullptr) return;
-
-  if (local_player_drives_a_merged_body(ctx)) return;
-
-  const entities::Weapon_Entity *held = try_find_active_weapon(ctx, *my_player);
+  const shared::inventory_state_t &inventory = ctx.prediction.state.inventory;
+  const shared::weapon_definition_t *held = shared::try_find_weapon_row(inventory.slots[inventory.active_slot]);
   if (held == nullptr) return;
 
-  const entities::Weapon my_weapon = held->weapon_id;
-  const std::optional<assets::sound_asset> sound = try_fire_sound_for(my_weapon);
+  const std::optional<assets::sound_asset> sound = try_fire_sound_for(held->weapon);
   if (!sound) return;
 
-  const shared::weapon_definition_t &weapon = shared::get_weapon_definition(my_weapon);
-  const shared::weapon_fire_t& fire = shared::get_weapon_fire_for_button(weapon, trigger);
-
-  if (button_was_already_down && !fire.fires_while_held) return;
-
-  switch (fire.resolution)
+  switch (shared::get_weapon_fire_for_button(*held, trigger).resolution)
   {
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
@@ -822,56 +722,17 @@ static void play_predicted_local_gunshot(
     case entities::Fire_Resolution::Reveal_Light:
     case entities::Fire_Resolution::Reveal_Light_Overhead:
     case entities::Fire_Resolution::Erase_Light:
-    case entities::Fire_Resolution::Recall: // nothing to do. no effect.
+    case entities::Fire_Resolution::Recall:
       return;
-
 
     case entities::Fire_Resolution::Self_Impulse:
-    {
-      if (ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
-      return;
-
-      ctx.audio.play_2d(*sound);
-      return;
-    }
-
     case entities::Fire_Resolution::Pilot:
-    {
-      if (ctx.prediction.player_movement.active_override != entities::Movement_Override::None ||
-          ctx.prediction.player_movement.seconds_until_impulse_ready > 0.f)
-        return;
-
-      ctx.audio.play_2d(*sound);
-      return;
-    }
-
-    // for these : something needs to happen.
     case entities::Fire_Resolution::Hitscan:
     case entities::Fire_Resolution::Projectile:
-    case entities::Fire_Resolution::Place: 
+    case entities::Fire_Resolution::Place:
       break;
   }
 
-  // if we can't even fire, return.
-  const float* seconds_since_this_weapon_fired =
-      ctx.prediction.seconds_since_local_fire.try_get(my_weapon);
-  if (seconds_since_this_weapon_fired == nullptr ||
-      *seconds_since_this_weapon_fired < weapon.fire_interval_seconds)
-    return;
-
-  // if we're mid deploy: also return.
-  if (ctx.prediction.seconds_until_local_deploy_complete > 0.f)
-    return;
-
-  // if the weapon is out of ammo, return.
-  if (!shared::ammo_allows_a_shot(held->ammo))
-    return;
-
-  // if we're actively reloading: return.
-  if (ctx.prediction.seconds_until_local_reload_complete > 0.f)
-    return;
-
-  ctx.prediction.seconds_since_local_fire[my_weapon] = 0.f;
   ctx.audio.play_2d(*sound);
 }
 
@@ -996,23 +857,21 @@ void Play_State::set_provisional_player_pose_for_new_map(client_context_t &ctx)
       ctx.world.session.entity_system.entities_of_type<entities::Player_Spawn_Entity>();
   if (!spawns.empty())
   {
-    ctx.prediction.player_position = spawns.front().position;
+    ctx.prediction.state.move.feet = spawns.front().position;
     snap_local_aim_to(ctx.prediction, spawns.front().orientation);
     camera.yaw   = ctx.prediction.player_yaw;
     camera.pitch = ctx.prediction.player_pitch;
     log_terminal("[CLIENT] Spawn from map: ({:.1f}, {:.1f}, {:.1f})",
-                 ctx.prediction.player_position.x, ctx.prediction.player_position.y, ctx.prediction.player_position.z);
+                 ctx.prediction.state.move.feet.x, ctx.prediction.state.move.feet.y, ctx.prediction.state.move.feet.z);
   }
   else
   {
     log_error("had no spawn markers in map '{}'; placing camera at default (0, 36, 0)",
               ctx.world.session.map_name);
-    ctx.prediction.player_position = {0, 36, 0};
+    ctx.prediction.state.move.feet = {0, 36, 0};
   }
 
-  camera.position.x = ctx.prediction.player_position.x;
-  camera.position.y = ctx.prediction.player_position.y + shared::player_eye_height;
-  camera.position.z = ctx.prediction.player_position.z;
+  camera.position = shared::player_eye_position(ctx.prediction.state.move.feet);
 }
 
 
@@ -1218,7 +1077,7 @@ struct play_frame_t
   float world_dt = 0.f;
 
   bool body_input_allowed = false;
-  bool noclip_active = false;
+  bool free_camera_active = false;
   bool mouse_look_allowed = false;
 
   float fov_degrees = 0.f;
@@ -1236,9 +1095,9 @@ struct play_frame_t
 };
 
 // collected once per frame.
-static void collect_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
+static void compute_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
 {
-  shared::collect_disabled_geometry_for_every_team(ctx.world.session, frame.predicted_world_storage);
+  shared::compute_disabled_geometry_per_team(ctx.world.session, frame.predicted_world_storage);
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   frame.team = my_player != nullptr ? my_player->team_allegiance : entities::Team_Allegiance::Free_For_All;
 
@@ -1246,67 +1105,46 @@ static void collect_disabled_geometry_for_frame(client_context_t& ctx, play_fram
 }
 
 
-static void build_predicted_world_for_input(
+static void compute_predicted_world_for_input(
   client_context_t& ctx,
   play_frame_t& frame,
   int32_t input_number,
   const vec3f& own_feet,
+  const shared::held_toggles_t& own_toggles,
   const shared::lens_watch_screen_t& own_screen)
 {
+  const shared::game_session_t& session = ctx.world.session;
   const shared::predicted_world_settings_t settings{
       .tick = get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, input_number),
       // The session's entities are the newest snapshot's, so that is the tick their state describes.
       .state_tick = ctx.prediction.latest_server_tick,
-      .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
+      .tickrate_hz = ctx.connection.server_tickrate,
       .gravity = ctx.cvars->g_gravity,
       .reveal_cone = shared::reveal_cone_settings_from_cvars(*ctx.cvars),
       .beams_carved = shared::beam_carve_scope_t::Every_Beam
   };
 
-  shared::build_movement_volumes(ctx.world.session, settings, frame.predicted_world_storage);
-  shared::build_movers(ctx.world.session, settings, frame.predicted_world_storage);
-  ctx.visuals.drawn_shadow_volume_report =
-      shared::build_shadow_volumes(ctx.world.session, frame.predicted_world_storage);
-  {
-    FRAME_ZONE("build_solid_beams");
-    shared::build_solid_beams(ctx.world.session, settings.beams_carved, frame.predicted_world_storage);
-  }
+  // Every row from the snapshot but our own, which is where our prediction has us, not where the server last saw us.
+  std::vector<shared::player_sight_t> sights;
+  shared::player_sights_from_entities(session.entity_system, sights);
+  if (const entities::Player_Entity* my_player = try_find_my_player(ctx); my_player != nullptr)
+    for (shared::player_sight_t& sight : sights)
+      if (sight.uid == my_player->entity_id)
+      {
+        sight.feet               = own_feet;
+        sight.view_entering_tick = local_view_entering(ctx, *my_player, input_number);
+        sight.toggles            = own_toggles;
+        sight.screen             = own_screen;
+      }
 
-  const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  shared::collect_reveal_cones(ctx.world.session.entity_system, ctx.world.session.path_links,
-                               ctx.world.session.mover_rests, settings.reveal_cone, settings.tick,
-                               settings.tickrate_hz,
-                               my_player != nullptr ? my_player->entity_id : shared::null_entity_uid,
-                               frame.predicted_world_storage.reveal_cones);
-  if (my_player != nullptr && local_reveal_light_is_on_entering(ctx, *my_player, input_number))
-  {
-    const shared::subtick_view_t view = local_view_entering(ctx, *my_player, input_number);
-    frame.predicted_world_storage.reveal_cones.push_back(shared::planes_of_reveal_cone(
-        shared::compute_player_reveal_cone(own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw,
-                               view.pitch,
-                               local_reveal_light_is_overhead_entering(ctx, *my_player, input_number),
-                               *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(ctx.world.session.entity_system, *my_player),
-                               settings.reveal_cone)));
-  }
-
-  shared::collect_lenses(ctx.world.session.entity_system, frame.predicted_world_storage.lenses);
-  shared::collect_lens_watchers(ctx.world.session.entity_system,
-                                my_player != nullptr ? my_player->entity_id : shared::null_entity_uid,
-                                frame.predicted_world_storage.lens_watchers);
-  if (my_player != nullptr && shared::player_watches_lenses(*my_player))
-  {
-    const shared::subtick_view_t view = local_view_entering(ctx, *my_player, input_number);
-    frame.predicted_world_storage.lens_watchers.push_back(shared::compute_lens_watcher(
-        own_feet + vec3f{0.f, shared::player_eye_height, 0.f}, view.yaw, view.pitch, own_screen,
-        local_held_lens_channels_entering(ctx, *my_player, input_number)));
-  }
-
+  ctx.visuals.drawn_shadow_volume_report = shared::compute_predicted_world_at_tick(
+      session, settings, sights, ctx.world.session.solid_beam_cache, frame.predicted_world_storage);
   frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
 }
 
 
 // RECEIVE, first half: the keyboard as a SHELL rather than as gameplay -- bound
-// keys, the pause menu, the console, noclip's free camera and the pointer
+// keys, the pause menu, the console, the free camera and the pointer
 // capture. Returns true when it switched state, in which case this Play_State is
 // gone and the caller must return without touching it.
 bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
@@ -1383,24 +1221,25 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   const bool gameplay_input_allowed =
       !console_open && !connection_ui.show_pause_menu;
 
-  // Noclip takes the keyboard and the mouse the way the console does, and the
-  // body idles under it: no buttons, no aim, no zoom. What it does NOT take is
-  // the pointer -- that stays captured on gameplay_input_allowed below. The
-  // camera it flies is seeded from last frame's resolved view and read back by
-  // the resolve at the bottom.
-  const bool noclip_active = ctx.cvars->cl_noclip;
-  if (noclip_active && !noclip_was_active)
-    noclip_camera = camera;
+  // The free camera takes the keyboard and the mouse the way the console does,
+  // and the body idles under it: no buttons, no aim, no zoom, and it stays
+  // where it stood when the camera comes back. What it does NOT take is the
+  // pointer -- that stays captured on gameplay_input_allowed below. The camera
+  // it flies is seeded from last frame's resolved view and read back by the
+  // resolve at the bottom. Flying the BODY is the `noclip` override.
+  const bool free_camera_active = ctx.cvars->cl_free_camera;
+  if (free_camera_active && !free_camera_was_active)
+    free_camera = camera;
 
   const entities::Player_Entity* spawned_player = try_find_my_player(ctx);
   if (pending_spawn_view && spawned_player != nullptr &&
-      spawned_player->health.current_health > 0 && !noclip_active)
+      spawned_player->health.current_health > 0 && !free_camera_active)
   {
-    const vec3f feet = pending_spawn_view->position - vec3f{0.f, shared::player_eye_height, 0.f};
+    const vec3f feet = shared::player_feet_from_eye(pending_spawn_view->position);
     ctx.prediction.player_yaw           = pending_spawn_view->yaw;
     ctx.prediction.player_pitch         = pending_spawn_view->pitch;
-    ctx.prediction.player_position      = feet;
-    ctx.prediction.player_velocity      = {};
+    ctx.prediction.state.move.feet      = feet;
+    ctx.prediction.state.move.velocity      = {};
     ctx.prediction.visual_error_offset  = {};
     ctx.prediction.ridden_canopy        = {};
     ctx.prediction.drawn_carry_shift    = {};
@@ -1410,30 +1249,11 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
     pending_spawn_view.reset();
   }
 
-  if (!noclip_active && noclip_was_active)
-  {
-    // The body catches up with the camera: the aim is ours to write, the
-    // position is the server's, so that one goes as a `setpos` line through
-    // the forwarder. The predicted body moves now so the view does not pop
-    // back for the round trip; the server's answer is what reconciliation
-    // then adopts.
-    const vec3f feet = noclip_camera.position - vec3f{0.f, shared::player_eye_height, 0.f};
-    ctx.prediction.player_yaw           = noclip_camera.yaw;
-    ctx.prediction.player_pitch         = noclip_camera.pitch;
-    ctx.prediction.player_position      = feet;
-    ctx.prediction.player_velocity      = {};
-    ctx.prediction.visual_error_offset  = {};
-    ctx.prediction.ridden_canopy        = {};
-    ctx.prediction.drawn_carry_shift    = {};
-    ctx.prediction.drawn_carry_uid      = shared::null_entity_uid;
-    const std::string setpos_line = std::format("setpos {} {} {}", feet.x, feet.y, feet.z);
-    console::get().execute_command(setpos_line.c_str());
-  }
-  noclip_was_active = noclip_active;
+  free_camera_was_active = free_camera_active;
 
-  const bool body_input_allowed = gameplay_input_allowed && !noclip_active;
+  const bool body_input_allowed = gameplay_input_allowed && !free_camera_active;
 
-  if (noclip_active && gameplay_input_allowed)
+  if (free_camera_active && gameplay_input_allowed)
   {
     step_fly_speed_from_keypad(ctx.cvars->editor_speed);
     fly_camera_input_t fly_input = read_fly_camera_keys();
@@ -1449,7 +1269,7 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
     }
     fly_camera_settings_t fly_settings;
     fly_settings.units_per_second = ctx.cvars->editor_speed;
-    fly_camera(noclip_camera, fly_input, fly_settings, dt);
+    fly_camera(free_camera, fly_input, fly_settings, dt);
   }
 
   if (connection_ui.console_was_open && !console_open)
@@ -1464,7 +1284,7 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   input::set_relative_mouse_mode(connection_ui.mouse_captured && gameplay_input_allowed);
 
   frame.body_input_allowed = body_input_allowed;
-  frame.noclip_active      = noclip_active;
+  frame.free_camera_active      = free_camera_active;
   return false;
 }
 
@@ -1818,112 +1638,70 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
     // reset.
     ctx.prediction.received_server_update = false;
 
-    // intiialize from the server's authoritative state, then replay every command the server has not acked yet.
-    vec3f reconciled_position = ctx.prediction.latest_server_position;
-    vec3f reconciled_velocity = ctx.prediction.latest_server_velocity;
+    // Restart from the server's word on us -- the whole state, not just the hull -- and replay
+    // every input the server has not acked through the same function the live prediction ran
+    // them through. The weapon an input is replayed under is the one the replayed state holds
+    // at that step, and a replayed press flips its toggle again; the server's value wins when
+    // it arrives.
+    shared::player_input_state_t reconciled = ctx.prediction.latest_server_state;
 
-    // movement here means any auxiliary stuff. is_grounded, is_jumping, _being_carried, whatever.
-    entities::Movement reconciled_movement = ctx.prediction.latest_server_movement;
-
-
-    const bool movement_allowed = local_movement_is_allowed(ctx);
-    const bool drives_a_merged_body = local_player_drives_a_merged_body(ctx);
-
-    const shared::weapon_definition_t* replayed_weapon = try_find_local_weapon_definition(ctx);
-
-    float prediction_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
-
-    const shared::movement_settings_t move_settings = shared::movement_settings_from_cvars(*ctx.cvars);
+    const shared::input_restrictions_t restrictions  = local_input_restrictions(ctx);
+    const float                        prediction_dt = shared::tick_interval_seconds(ctx.connection.server_tickrate);
+    const shared::movement_settings_t  move_settings = shared::movement_settings_from_cvars(*ctx.cvars);
     int last_replayed_input = ctx.prediction.latest_input_number_processed_by_server;
 
     for (int replayed = ctx.prediction.latest_input_number_processed_by_server + 1;
          replayed < ctx.prediction.input_number;
          ++replayed)
     {
-      int idx = replayed % (int)ctx.prediction.pending_inputs.size();
-      const auto& pending_input = ctx.prediction.pending_inputs[idx];
-      
+      const int          idx           = replayed % (int)ctx.prediction.pending_inputs.size();
+      const Saved_Input &pending_input = ctx.prediction.pending_inputs[idx];
       if (pending_input.input_number != replayed) break;
       last_replayed_input = replayed;
 
-      // reconstruct the sub-tick input from the stored per-tick input.
-      const shared::subtick_steps_t subtick_steps = shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
-
+      // The SAME split the live prediction ran: the clamps fire where the steps are cut.
+      const shared::subtick_steps_t subtick_steps =
+          shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
       uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
 
-      build_predicted_world_for_input(ctx, frame, replayed, reconciled_position, local_watch_screen(ctx));
-
-      reconciled_position = predict_mover_push(ctx, frame.predicted_world, reconciled_movement, reconciled_position);
+      compute_predicted_world_for_input(ctx, frame, replayed, reconciled.move.feet, reconciled.toggles,
+                                      local_watch_screen(ctx));
+      reconciled.move.feet =
+          predict_mover_push(ctx, frame.predicted_world, reconciled.move.movement, reconciled.move.feet);
 
       for (const shared::subtick_step_t& step : subtick_steps)
       {
-        const uint64_t replay_pressed_in_this_step = step.buttons & ~replay_previous_buttons;
+        const shared::subtick_time_t step_start = shared::subtick_time(
+            get_predicted_server_tick_which_this_input_will_be_simulated_on(ctx, replayed), step.start_slot);
+        (void)shared::apply_input_step_to_player(move_settings, ctx.world.session.bvh, frame.predicted_world,
+                                                 restrictions, step, replay_previous_buttons, step_start,
+                                                 prediction_dt, reconciled, &ctx.visuals.debug_collision_faces);
         replay_previous_buttons = step.buttons;
-
-        if (!movement_allowed)
-        {
-          reconciled_velocity = {0.f, 0.f, 0.f};
-          continue;
-        }
-
-        // per-step aim because that's just correct.
-        const shared::move_state_t replayed_state = player_move(
-            move_settings,
-            ctx.world.session.bvh,
-            frame.predicted_world,
-            {.feet     = reconciled_position,
-             .velocity = reconciled_velocity,
-             .movement = reconciled_movement},
-            shared::move_input_from_subtick_step(step),
-            nullptr,
-            &ctx.visuals.debug_collision_faces);
-
-        reconciled_position = replayed_state.feet;
-        reconciled_velocity = replayed_state.velocity;
-        reconciled_movement = replayed_state.movement;
-
-        // AFTER the move, exactly where the server applies it: the impulse
-        // steers the steps that follow the press, not the one it opened. The
-        // gate lives in reconciled_movement, which was seeded from the server
-        // a few lines up -- so a dash the server has already applied is not
-        // applied twice, and one it has not seen yet is applied here on the
-        // same cooldown the server will charge.
-        if (drives_a_merged_body)
-          continue;
-        if (replay_pressed_in_this_step & Button::Fire)
-          apply_trigger_press_to_own_movement(move_settings, replayed_weapon,
-                                              entities::Fire_Trigger::Primary, step.view,
-                                              reconciled_position, reconciled_movement,
-                                              reconciled_velocity);
-        if (replay_pressed_in_this_step & Button::Secondary_Fire)
-          apply_trigger_press_to_own_movement(move_settings, replayed_weapon,
-                                              entities::Fire_Trigger::Secondary, step.view,
-                                              reconciled_position, reconciled_movement,
-                                              reconciled_velocity);
       }
     }
-    
 
-    // ADOPTED UNCONDITIONALLY, and deliberately not put through the error
-    // thresholds below. Those exist because a position is a float and the last
-    // bits of it are quantization noise worth ignoring; a jump budget is a
-    // count and a ground flag is a bool, and neither has a noise floor. Half-
-    // applying a correction here would leave the predicted charge count
-    // disagreeing with the server's for as long as the player stayed airborne.
-    ctx.prediction.player_movement = reconciled_movement;
+    // ADOPTED UNCONDITIONALLY, everything but the place, and deliberately not put through the
+    // error thresholds below. Those exist because a position is a float and the last bits of it
+    // are quantization noise worth ignoring; a jump budget is a count, a clock is a moment and a
+    // ground flag is a bool, and none has a noise floor. Half-applying a correction here would
+    // leave the predicted charge count disagreeing with the server's for as long as the player
+    // stayed airborne.
+    const vec3f predicted_position = ctx.prediction.state.move.feet;
+    const vec3f predicted_velocity = ctx.prediction.state.move.velocity;
+    ctx.prediction.state           = reconciled;
 
     // On the same canopy before and after, the error is measured on the canopy: the guess of where it is moves both.
     const std::optional<prediction_t::ridden_canopy_t> predicted_canopy = ctx.prediction.ridden_canopy;
     const std::optional<prediction_t::ridden_canopy_t> reconciled_canopy =
-        try_find_ridden_canopy(ctx, reconciled_movement, last_replayed_input);
+        try_find_ridden_canopy(ctx, reconciled.move.movement, last_replayed_input);
     ctx.prediction.ridden_canopy = reconciled_canopy;
 
     const bool on_the_same_canopy =
         predicted_canopy && reconciled_canopy && predicted_canopy->uid == reconciled_canopy->uid;
     const vec3f predicted_frame  = on_the_same_canopy ? predicted_canopy->guessed_position : vec3f{0, 0, 0};
     const vec3f reconciled_frame = on_the_same_canopy ? reconciled_canopy->guessed_position : vec3f{0, 0, 0};
-    const vec3f predicted_place  = ctx.prediction.player_position - predicted_frame;
-    const vec3f reconciled_place = reconciled_position - reconciled_frame;
+    const vec3f predicted_place  = predicted_position - predicted_frame;
+    const vec3f reconciled_place = reconciled.move.feet - reconciled_frame;
 
     vec3f error = reconciled_place - predicted_place;
     float error_magnitude = linalg::length(error);
@@ -1939,19 +1717,17 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
     if (error_magnitude > SNAP_THRESHOLD)
     {
       ctx.prediction.visual_error_offset = {0, 0, 0};
-      ctx.prediction.player_position = reconciled_position;
-      ctx.prediction.player_velocity = reconciled_velocity;
     }
     else if (error_magnitude > QUANTIZATION_DEADZONE)
     {
       ctx.prediction.visual_error_offset = ctx.prediction.visual_error_offset - error;
-      ctx.prediction.player_position = reconciled_position;
-      ctx.prediction.player_velocity = reconciled_velocity;
     }
     else
     {
-      // Below quantization noise: the place is kept, on the canopy where the replay now guesses it.
-      ctx.prediction.player_position = reconciled_frame + predicted_place;
+      // Below quantization noise: the place and the velocity are kept, on the canopy where the
+      // replay now guesses it.
+      ctx.prediction.state.move.feet     = reconciled_frame + predicted_place;
+      ctx.prediction.state.move.velocity = predicted_velocity;
     }
   }
 }
@@ -2021,8 +1797,7 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   // The lens view is the Red Lens's held_lens_on as the prediction holds it; the tonemap's page fades
   // after it over r_lens_view_seconds, in the colour of the lens that was held.
   const entities::Player_Entity* lens_holder  = try_find_my_player(ctx);
-  const bool                     lens_view_on = lens_holder != nullptr &&
-                                                local_held_lens_channels(ctx, *lens_holder) != 0;
+  const bool                     lens_view_on = local_held_lens_channels(ctx) != 0;
   if (lens_view_on)
     ctx.visuals.lens_view_filter =
         *shared::try_get_held_lens_filter(ctx.world.session.entity_system, *lens_holder);
@@ -2053,75 +1828,15 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
 
   // this _evaluates_ the input that was already gathered. it's not a live call.
   // although it reflects the most up-to-date stuff, I guess.
-  uint64_t buttons = 0;
-  if (body_input_allowed)
-  {
-    if (input::is_key_down(input::key_t::W))     buttons |= Button::Forward;
-    if (input::is_key_down(input::key_t::S))     buttons |= Button::Backward;
-    if (input::is_key_down(input::key_t::A))     buttons |= Button::Left;
-    if (input::is_key_down(input::key_t::D))     buttons |= Button::Right;
-    if (input::is_key_down(input::key_t::Space)) buttons |= Button::Jump;
-    if (input::is_key_down(input::key_t::Num_1)) buttons |= Button::Key1;
-    if (input::is_key_down(input::key_t::Num_2)) buttons |= Button::Key2;
-    if (input::is_key_down(input::key_t::Num_3)) buttons |= Button::Key3;
-    if (input::is_key_down(input::key_t::Num_4)) buttons |= Button::Key4;
-    if (input::is_key_down(input::key_t::Num_5)) buttons |= Button::Key5;
-    if (input::is_key_down(input::key_t::Num_6)) buttons |= Button::Key6;
-    if (input::is_key_down(input::key_t::Num_7)) buttons |= Button::Key7;
-    if (input::is_key_down(input::key_t::Num_8)) buttons |= Button::Key8;
-    if (input::is_key_down(input::key_t::Num_9)) buttons |= Button::Key9;
-    if (input::is_key_down(input::key_t::Num_0)) buttons |= Button::Key0;
-    if (input::is_key_down(input::key_t::R))     buttons |= Button::Reload;
-    if (input::is_key_down(input::key_t::G))     buttons |= Button::Throw;
-
-
-    if (mouse_look_allowed)
-    {
-      if (input::is_mouse_down(input::mouse_button_t::Left))
-        buttons |= Button::Fire;
-      if (input::is_mouse_down(input::mouse_button_t::Right))
-        buttons |= Button::Secondary_Fire;
-      if (input::is_mouse_down(input::mouse_button_t::Middle))
-        buttons |= Button::Ping;
-    }
-
-    // Sent even though zoom is drawn client-side: the server needs it the
-    // moment scoping costs movement speed or accuracy, and it has to arrive
-    // through the predicted button bitfield to do so. It is the zoom STATE,
-    // not the click — the toggle edge never leaves this machine.
-    if (ctx.prediction.zoom_active) buttons |= Button::Zoom;
-  }
+  uint64_t buttons = polled_buttons(body_input_allowed, mouse_look_allowed);
+  // Zoom rides the button bitfield as STATE, not the click: the toggle edge never leaves this machine.
+  if (body_input_allowed && ctx.prediction.zoom_active) buttons |= Button::Zoom;
 
   if (ctx.cvars->cl_auto_equip_weapon_on_pickup) buttons |= Button::Equip_On_Pickup;
 
   // Read once for the frame; the tick loop below gates both the predicted shot
   // and the predicted move on it.
   const bool local_player_is_dead = ctx.prediction.local_player_health <= 0;
-
-  // Every weapon's clock, held or not: the server's per-weapon deadlines run
-  // while holstered, so a clock that only advanced for the weapon in hand would
-  // report a Scout still recovering after a minute of knife.
-  for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
-    ctx.prediction.seconds_since_local_fire[(entities::Weapon)index] += dt;
-
-  // A corpse has no reload and no switch in flight. The server clears both in
-  // place_player_at_spawn (the deploy gate through refill_inventory), so a
-  // client that kept its clocks running through a death would come back silent
-  // for the remainder of a reload the server has already thrown away, and would
-  // draw a deploy countdown for a switch that died with the body.
-  const bool local_player_is_a_corpse = ctx.prediction.local_player_health <= 0;
-
-  ctx.prediction.seconds_until_local_reload_complete =
-      local_player_is_a_corpse
-          ? 0.f
-          : std::max(0.f, ctx.prediction.seconds_until_local_reload_complete - dt);
-
-  ctx.prediction.seconds_until_local_deploy_complete =
-      local_player_is_a_corpse
-          ? 0.f
-          : std::max(0.f, ctx.prediction.seconds_until_local_deploy_complete - dt);
-
-  start_deploy_clock_for_weapon_raised_by_pickup(ctx);
 
   frame.fov_degrees          = fov_degrees;
   frame.mouse_sensitivity    = mouse_sensitivity;
@@ -2164,7 +1879,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
       return;
     ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
     ctx.prediction.player_pitch -= motion.y * mouse_sensitivity;
-    shared::clamp_this(ctx.prediction.player_pitch, -89.0f, 89.0f);
+    ctx.prediction.player_pitch = linalg::clamp_view_pitch(ctx.prediction.player_pitch);
   };
 
   auto current_view = [&]() -> shared::subtick_view_t {
@@ -2367,7 +2082,6 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
 {
   const float    dt                   = frame.dt;
   const uint64_t buttons              = frame.buttons;
-  const bool     local_player_is_dead = frame.local_player_is_dead;
   network::Client_Transport_Layer &transport = ctx.transport_layer;
 
   // --- Client-side prediction ---
@@ -2379,7 +2093,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
   // here plays offline, the integrated build connects over loopback too).
   if (ctx.connection.phase == Connection_Phase::Connected)
   {
-    float tick_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
+    float tick_dt = shared::tick_interval_seconds(ctx.connection.server_tickrate);
     ctx.prediction.physics_accumulator += dt;
 
     // whatever inputs we make here, send them to the server. this could be batched but is not at this moment.
@@ -2508,11 +2222,6 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
       // of the press. All three go with it.
       //
       // With no press this is "what is on screen now", which nothing consumes.
-      const uint32_t fire_slot = shared::subtick_slot_of_press(
-          subtick_input, buttons_before_tick, Button::Fire);
-      const uint32_t secondary_fire_slot = shared::subtick_slot_of_press(
-          subtick_input, buttons_before_tick, Button::Secondary_Fire);
-
       // Present-to-photons: the frame was handed to the presenter, and the
       // player saw it some milliseconds later. Only the MACHINE's share of that
       // is compensated -- see cl_display_latency_ms for why human reaction time
@@ -2574,59 +2283,25 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
 
       network::send_protobuf_message(transport, input_batch);
 
-      // --- Predicted local gunshot ---
-      // Here rather than out at frame scope so it reads the SAME fire_slot the
-      // command above carries: one place decides the trigger went down this
-      // tick, and the sound and the bracket sent to the server cannot disagree
-      // about it. The gates match the server's -- a corpse and a spectator both
-      // have their shots refused there.
-      if (!local_player_is_dead && !ctx.connection.spectating)
-      {
-        const uint64_t buttons_down_across_tick =
-            subtick_input.buttons_at_start & subtick_input.buttons_at_end();
-
-        if (fire_slot < shared::SUBTICK_SLOT_COUNT)
-        {
-          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, false);
-          predict_local_reveal_light_toggle(ctx, entities::Fire_Trigger::Primary);
-          predict_local_held_lens_toggle(ctx);
-        }
-        else if ((buttons_down_across_tick & Button::Fire) != 0)
-          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Primary, true);
-
-        if (secondary_fire_slot < shared::SUBTICK_SLOT_COUNT)
-        {
-          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Secondary, false);
-          predict_local_reveal_light_toggle(ctx, entities::Fire_Trigger::Secondary);
-        }
-        else if ((buttons_down_across_tick & Button::Secondary_Fire) != 0)
-          play_predicted_local_gunshot(ctx, entities::Fire_Trigger::Secondary, true);
-      }
-
-      // What the prediction actually runs. A dead player steers nothing -- the
-      // server stops feeding input into player_move for a corpse, so a client
-      // that kept its own would predict a walk that never happened and spend the
-      // respawn being reconciled backwards. Zeroed here rather than in the
-      // command, because the command still has to carry the weapon keys.
-      const shared::subtick_input_t predicted_input =
-          local_player_is_dead ? shared::subtick_input_t{} : subtick_input;
-
       Move_Events tick_events{};
 
       if (!ctx.connection.spectating)
       {
-        // One movement step per interval between edges. With no edges this is
-        // the single tick_dt step it has always been.
+        // One step per interval between edges. With no edges this is the single
+        // tick_dt step it has always been.
         const shared::subtick_steps_t steps =
-            shared::split_input_per_tick_into_subtick_steps(predicted_input, tick_dt);
+            shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
 
+        shared::player_input_state_t &state = ctx.prediction.state;
         uint64_t buttons_entering_step = buttons_before_tick;
 
-        build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number,
-                                        ctx.prediction.player_position, local_watch_screen(ctx));
-        ctx.prediction.player_position =
-            predict_mover_push(ctx, frame.predicted_world, ctx.prediction.player_movement,
-                               ctx.prediction.player_position);
+        compute_predicted_world_for_input(ctx, frame, ctx.prediction.input_number, state.move.feet,
+                                        state.toggles, local_watch_screen(ctx));
+        state.move.feet =
+            predict_mover_push(ctx, frame.predicted_world, state.move.movement, state.move.feet);
+
+        const shared::input_restrictions_t restrictions  = local_input_restrictions(ctx);
+        const shared::movement_settings_t  move_settings = shared::movement_settings_from_cvars(*ctx.cvars);
 
         for (const shared::subtick_step_t& step : steps)
         {
@@ -2634,132 +2309,31 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
           const bool fire_pressed_in_this_step = (pressed_in_this_step & Button::Fire) != 0;
           const bool secondary_fire_pressed_in_this_step =
               (pressed_in_this_step & Button::Secondary_Fire) != 0;
+
+          // The step's moment in the server's sub-tick time, the tick this input is predicted
+          // to run in: what the clocks in `state` hold and what the snapshot's are.
+          const shared::subtick_time_t step_start = shared::subtick_time(
+              get_predicted_server_tick_which_this_input_will_be_simulated_on(
+                  ctx, ctx.prediction.input_number),
+              step.start_slot);
+
+          // The step itself is the function the server runs and the replay reruns
+          // (input_step_plan.md): the switch, the reload, the move, the triggers
+          // and the toggles, each behind the server's gate. What follows is the
+          // client's half of what it reported: a sound and a debug record.
+          const shared::input_step_outcome_t outcome = shared::apply_input_step_to_player(
+              move_settings, ctx.world.session.bvh, frame.predicted_world, restrictions, step,
+              buttons_entering_step, step_start, tick_dt, state, &ctx.visuals.debug_collision_faces);
           buttons_entering_step = step.buttons;
 
-          // The predicted reload, started and cancelled on the SAME conditions
-          // the server uses -- see the step loop in server_impl.cpp. This
-          // predicts nothing but a sound, so the cost of the two sides
-          // disagreeing is one wrong bang; the cost of not predicting it at all
-          // is a bang on every trigger pull for the whole reload.
-          //
-          // Looked up once for both blocks below. Absent means we have no body
-          // this frame -- a spectator, or a connect not yet answered -- and
-          // neither a reload nor a switch means anything then.
-          const entities::Player_Entity* my_player = try_find_my_player(ctx);
-          const bool have_own_body = my_player != nullptr;
+          // A stair step moves the hull in one go; the view eases over it through the same
+          // offset and decay a reconciliation correction uses.
+          ctx.prediction.visual_error_offset.y -= outcome.move_events.stair_rise;
 
-          // A SWITCH, predicted off the same edge and the same table the server
-          // applies it from (shared::try_slot_selected_by), which is why an
-          // unbound number key does nothing here rather than cancelling a
-          // reload the server keeps running.
-          //
-          // The deploy duration comes from whatever is in the slot the key
-          // SELECTS, not from the active slot -- that still holds the outgoing
-          // weapon, and the incoming one is what the server charges too. An
-          // empty target slot deploys instantly, which is the same answer the
-          // server reaches from the same two facts.
-          //
-          // Compared against the replicated active_slot, which is a round trip
-          // stale: re-pressing the key for the slot in hand is a no-op on the
-          // server, and this reproduces that except across a switch faster than
-          // a round trip, where it can charge a deploy the server does not.
-          // Audio and a countdown, so the cost of being wrong is a number on
-          // screen; the fix is a predicted copy of active_slot, which is a
-          // second answer worth more than it buys today.
-          if (have_own_body)
-          {
-            const std::optional<entities::Inventory_Slot> selected =
-                shared::try_slot_selected_by(pressed_in_this_step);
-            if (selected && *selected != my_player->inventory.active_slot)
-            {
-              const entities::Weapon_Entity *raised =
-                  try_find_weapon_in_slot(ctx, *my_player, *selected);
-
-              ctx.prediction.seconds_until_local_reload_complete = 0.f;
-              ctx.prediction.seconds_until_local_deploy_complete =
-                  raised != nullptr
-                      ? shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds
-                      : 0.f;
-            }
-          }
-
-          if ((pressed_in_this_step & Button::Reload) && have_own_body)
-          {
-            const entities::Weapon_Entity *held_entity =
-                try_find_active_weapon(ctx, *my_player);
-            if (held_entity != nullptr)
-            {
-              const shared::weapon_definition_t &held =
-                  shared::get_weapon_definition(held_entity->weapon_id);
-              if (ctx.prediction.seconds_until_local_reload_complete <= 0.f &&
-                  shared::reload_may_start(held, shared::get_magazine(*held_entity)))
-                ctx.prediction.seconds_until_local_reload_complete =
-                    held.reload_duration_seconds;
-            }
-          }
-
-          // The freeze SUPPRESSES THE MOVE and lets the rest of the step run,
-          // exactly as the server's world_is_frozen does: a weapon switch during
-          // the freeze is legal on both sides, and it lives in this loop now.
-          // Zeroing velocity matches the server so nothing accumulates across
-          // the freeze and lurches when it lifts.
-          Move_Events step_events{};
-          if (!local_movement_is_allowed(ctx))
-          {
-            ctx.prediction.player_velocity = {0.f, 0.f, 0.f};
-          }
-          else
-          {
-            // The basis is PER STEP, from the aim in effect when the step
-            // opened. One basis for the whole tick meant every step of it steered
-            // along wherever the mouse finished the frame -- the aim half of the
-            // quantization sub-tick already fixed for the buttons.
-            const shared::move_state_t moved = player_move(
-                shared::movement_settings_from_cvars(*ctx.cvars), ctx.world.session.bvh,
-                frame.predicted_world,
-                {.feet     = ctx.prediction.player_position,
-                 .velocity = ctx.prediction.player_velocity,
-                 .movement = ctx.prediction.player_movement},
-                shared::move_input_from_subtick_step(step), &step_events,
-                &ctx.visuals.debug_collision_faces);
-
-            ctx.prediction.player_position = moved.feet;
-            ctx.prediction.player_velocity = moved.velocity;
-            ctx.prediction.player_movement = moved.movement;
-
-            // A stair step moves the hull in one go; the view eases over it through the same
-            // offset and decay a reconciliation correction uses.
-            ctx.prediction.visual_error_offset.y -= step_events.stair_rise;
-          }
-
-          // The one thing a fire press does to our OWN state, so the one thing
-          // this loop simulates about firing (generalization_def.md §4).
-          // Everything else a shot does lands on somebody else and correctly
-          // waits for the server.
-          //
-          // After the move and behind the same movement gate the server reads,
-          // off the same table row and the same arithmetic -- and the
-          // reconciliation replay above runs the identical call, which is what
-          // stops an unacked dash being undone for a round trip.
-          if ((fire_pressed_in_this_step || secondary_fire_pressed_in_this_step) &&
-              have_own_body && local_movement_is_allowed(ctx) &&
-              !local_player_drives_a_merged_body(ctx))
-          {
-            const shared::weapon_definition_t *held_definition =
-                try_find_local_weapon_definition(ctx);
-            const shared::movement_settings_t move_settings =
-                shared::movement_settings_from_cvars(*ctx.cvars);
-            if (fire_pressed_in_this_step)
-              apply_trigger_press_to_own_movement(
-                  move_settings, held_definition, entities::Fire_Trigger::Primary, step.view,
-                  ctx.prediction.player_position, ctx.prediction.player_movement,
-                  ctx.prediction.player_velocity);
-            if (secondary_fire_pressed_in_this_step)
-              apply_trigger_press_to_own_movement(
-                  move_settings, held_definition, entities::Fire_Trigger::Secondary, step.view,
-                  ctx.prediction.player_position, ctx.prediction.player_movement,
-                  ctx.prediction.player_velocity);
-          }
+          for (const entities::Fire_Trigger trigger :
+               {entities::Fire_Trigger::Primary, entities::Fire_Trigger::Secondary})
+            if (outcome.fire_due[trigger])
+              play_predicted_local_gunshot(ctx, trigger);
 
           // Stashed HERE, and here specifically: after the step the press
           // opened, so the eye is the post-move eye the server's fire path
@@ -2771,8 +2345,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
           {
             client::shot_debug_local_t stashed{};
             stashed.input_number = ctx.prediction.input_number;
-            stashed.eye = ctx.prediction.player_position +
-                          vec3f{0.f, shared::player_eye_height, 0.f};
+            stashed.eye = shared::player_eye_position(state.move.feet);
             stashed.direction =
                 linalg::direction_from_angles(step.view.yaw, step.view.pitch);
             stashed.reported_bracket = drawn_bracket;
@@ -2796,19 +2369,19 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
             shot_debug_history.record(std::move(stashed));
           }
 
-          shared::accumulate_move_events(tick_events, step_events);
+          shared::accumulate_move_events(tick_events, outcome.move_events);
         }
 
         ctx.prediction.ridden_canopy =
-            try_find_ridden_canopy(ctx, ctx.prediction.player_movement, ctx.prediction.input_number);
+            try_find_ridden_canopy(ctx, state.move.movement, ctx.prediction.input_number);
       }
 
       shared::accumulate_move_events(frame.move_events, tick_events);
 
       int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
-      ctx.prediction.pending_inputs[idx] = {ctx.prediction.input_number, predicted_input,
-                                            ctx.prediction.player_position,
-                                            ctx.prediction.player_velocity};
+      ctx.prediction.pending_inputs[idx] = {ctx.prediction.input_number, subtick_input,
+                                            ctx.prediction.state.move.feet,
+                                            ctx.prediction.state.move.velocity};
       ctx.prediction.input_number++;
     }
 
@@ -2844,7 +2417,7 @@ void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t 
                           : assets::sound_id("twang"),
                       shared::movement_volume_origin(frame.predicted_world.movement_volumes,
                                                      frame.move_events.pad_uid,
-                                                     ctx.prediction.player_position));
+                                                     ctx.prediction.state.move.feet));
 }
 
 // RENDER: the visual error decaying away, the interpolation cursor moving, and
@@ -2858,14 +2431,13 @@ void Play_State::play_local_movement_sounds(client_context_t &ctx, play_frame_t 
 void Play_State::ripple_team_walls(client_context_t &ctx, play_frame_t &frame)
 {
   (void)frame;
-  const vec3f hull_centre_above_feet = {0.f, shared::player_half_height, 0.f};
 
   std::vector<shared::wall_crosser_t> crossers;
   if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
       my_player != nullptr && !frame.local_player_is_dead)
     crossers.push_back({.uid    = my_player->entity_id,
                         .team   = my_player->team_allegiance,
-                        .center = ctx.prediction.player_position + hull_centre_above_feet});
+                        .center = shared::player_hull_center(ctx.prediction.state.move.feet)});
 
   for (const auto& [slot, remote_player] : ctx.replication.remote_players)
   {
@@ -2876,7 +2448,7 @@ void Play_State::ripple_team_walls(client_context_t &ctx, play_frame_t &frame)
       continue;
     crossers.push_back({.uid    = player->entity_id,
                         .team   = player->team_allegiance,
-                        .center = remote_player.render_position + hull_centre_above_feet});
+                        .center = shared::player_hull_center(remote_player.render_position)});
   }
 
   shared::detect_team_wall_crossings(ctx.world.session.entity_system, ctx.world.session.geometry,
@@ -2891,8 +2463,8 @@ void Play_State::ripple_solid_beams(client_context_t &ctx, play_frame_t &frame)
   if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
       my_player != nullptr && !frame.local_player_is_dead)
     standers.push_back({.uid              = my_player->entity_id,
-                        .ground_mover_uid = ctx.prediction.player_movement.ground_mover_uid,
-                        .feet             = ctx.prediction.player_position});
+                        .ground_mover_uid = ctx.prediction.state.move.movement.ground_mover_uid,
+                        .feet             = ctx.prediction.state.move.feet});
 
   for (const auto& [slot, remote_player] : ctx.replication.remote_players)
   {
@@ -2930,7 +2502,7 @@ void Play_State::advance_render_state(client_context_t &ctx, play_frame_t &frame
 
   // move the cursor between frames ahead by dt so we know where to interpolate to / where our input is coming from.
   client::advance_interpolation_cursor(
-      ctx.replication.interpolation_cursor, world_dt, static_cast<float>(ctx.connection.server_tickrate),
+      ctx.replication.interpolation_cursor, world_dt, ctx.connection.server_tickrate,
       client::interpolation_delay_in_ticks_from_cvar(ctx.cvars->cl_interpolation_delay_ticks));
 
   // replay_def.md §6: the spectated player at the cursor, everyone else where that player saw them.
@@ -3019,7 +2591,7 @@ void Play_State::leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &
 
   if (const entities::Player_Entity *my_player = try_find_my_player(ctx))
     observe(*my_player, drawn_local_feet(ctx), ctx.prediction.player_yaw, ctx.prediction.player_pitch,
-            my_player->body_yaw, !frame.noclip_active && ctx.cvars->cl_spectate_slot < 0);
+            my_player->body_yaw, !frame.free_camera_active && ctx.cvars->cl_spectate_slot < 0);
 
   for (const auto &[slot, remote_player] : ctx.replication.remote_players)
   {
@@ -3064,14 +2636,14 @@ void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
 
   camera.position = local_player_rides_a_rocket(ctx)
                         ? drawn_piloted_rocket(ctx)
-                        : drawn_local_feet(ctx) + vec3f{0.f, shared::player_eye_height, 0.f};
+                        : shared::player_eye_position(drawn_local_feet(ctx));
 
-  if (frame.noclip_active)
+  if (frame.free_camera_active)
   {
     // The free camera outranks every other arm: it is the one you asked for.
-    camera.position = noclip_camera.position;
-    camera.yaw      = noclip_camera.yaw;
-    camera.pitch    = noclip_camera.pitch;
+    camera.position = free_camera.position;
+    camera.yaw      = free_camera.yaw;
+    camera.pitch    = free_camera.pitch;
   }
   else if (ctx.cvars->cl_spectate_slot >= 0)
   {
@@ -3080,8 +2652,7 @@ void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
     if (spectated_it != ctx.replication.remote_players.end() && spectated_it->second.active)
     {
       const Remote_Player_State &spectated = spectated_it->second;
-      camera.position = spectated.render_position +
-                        vec3f{0.f, shared::player_eye_height, 0.f};
+      camera.position = shared::player_eye_position(spectated.render_position);
       camera.yaw   = spectated.render_yaw;
       camera.pitch = spectated.render_pitch;
       if (frame.first_person_view)
@@ -3141,9 +2712,9 @@ void Play_State::update(float dt)
     return;
 
   // ----------------------------------------------------------------- SIMULATE
-  collect_disabled_geometry_for_frame(ctx, frame);
-  build_predicted_world_for_input(ctx, frame, ctx.prediction.input_number,
-                                  ctx.prediction.player_position, local_watch_screen(ctx));
+  compute_disabled_geometry_for_frame(ctx, frame);
+  compute_predicted_world_for_input(ctx, frame, ctx.prediction.input_number, ctx.prediction.state.move.feet,
+                                  ctx.prediction.state.toggles, local_watch_screen(ctx));
 
   reconcile_with_server(ctx, frame);
   resolve_aim_and_buttons(ctx, frame);
@@ -3196,11 +2767,11 @@ void Play_State::draw_imgui_panels()
   {
     ImGui::Text("PLAY MODE  [ESC] to return to editor");
     ImGui::Text("Uncapture mouse [U]");
-    ImGui::Text("position: %.1f, %.1f, %.1f", ctx.prediction.player_position.x, ctx.prediction.player_position.y,
-                ctx.prediction.player_position.z);
-    ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.prediction.player_velocity.x, ctx.prediction.player_velocity.y,
-                ctx.prediction.player_velocity.z);
-    ImGui::Text("speed: %.1f ", length(ctx.prediction.player_velocity));
+    ImGui::Text("position: %.1f, %.1f, %.1f", ctx.prediction.state.move.feet.x, ctx.prediction.state.move.feet.y,
+                ctx.prediction.state.move.feet.z);
+    ImGui::Text("vel: %.1f, %.1f, %.1f", ctx.prediction.state.move.velocity.x, ctx.prediction.state.move.velocity.y,
+                ctx.prediction.state.move.velocity.z);
+    ImGui::Text("speed: %.1f ", length(ctx.prediction.state.move.velocity));
 
     float avg_dt = 0.f;
     for (int i = 0; i < dt_history_count; i++)
@@ -3287,9 +2858,9 @@ void Play_State::draw_imgui_panels()
       if (remote_count > 0)
         ImGui::Text("%-20s %d", "remote players", remote_count);
 
-      int rocket_count = (int)ctx.world.session.entity_system.entities_of_type<entities::Rocket_Entity>().size();
-      if (rocket_count > 0)
-        ImGui::Text("%-20s %d", "remote rockets", rocket_count);
+      int shot_count = (int)ctx.world.session.entity_system.entities_of_type<entities::Shot_Entity>().size();
+      if (shot_count > 0)
+        ImGui::Text("%-20s %d", "remote shots", shot_count);
 
       int fx_count = (int)ctx.visuals.explosion_effects.size();
       if (fx_count > 0)
@@ -3425,7 +2996,7 @@ afterimage_dust_parameters(const afterimage_t& afterimage, float lifetime_second
 
   renderer::particle_emitter_parameters_t parameters{};
   parameters.entity_id          = 0xC000000000000000ULL | afterimage.index;
-  parameters.position           = afterimage.feet + vec3f{0.f, shared::player_half_height, 0.f};
+  parameters.position           = shared::player_hull_center(afterimage.feet);
   parameters.delta_time         = delta_seconds;
   parameters.emit_rate          = life < 0.35f ? 160.0f : 0.0f;
   parameters.max_particles      = 64;
@@ -3456,23 +3027,28 @@ struct flashlight_settings_t
 
 // Whose lights reveal for THIS viewer: everyone's and the map's. Only-your-own is this function without its remote loop.
 // Past the shader's cap the nearest to the camera are the ones drawn. A held light is lit by `held`, a placed one by its own fields.
-void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& camera,
+void compute_drawn_reveal_cones(const client_context_t& ctx, const camera_t& camera,
                                 bool camera_is_my_eye, const flashlight_settings_t& held,
                                 std::vector<lit_reveal_cone_t>& out)
 {
   const shared::Entity_System& system = ctx.world.session.entity_system;
-  const vec3f eye_above_feet = {0.f, shared::player_eye_height, 0.f};
   const shared::reveal_cone_settings_t settings = shared::reveal_cone_settings_from_cvars(*ctx.cvars);
 
-  if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
-      my_player != nullptr && local_reveal_light_is_on(ctx, *my_player))
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  shared::player_sight_t         own       = {};
+  if (my_player != nullptr)
   {
-    const bool                       overhead = local_reveal_light_is_overhead(ctx, *my_player);
-    const entities::Reveal_Cone_Kind kind     = *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, *my_player);
+    own         = shared::player_sight_from_entity(system, *my_player);
+    own.toggles = ctx.prediction.state.toggles;
+  }
+  if (my_player != nullptr && shared::reveal_light_is_on(own))
+  {
+    const bool                       overhead = own.toggles.reveal_light_overhead;
+    const entities::Reveal_Cone_Kind kind     = *own.wielded_reveal_kind;
     out.push_back({camera_is_my_eye
                        ? shared::compute_player_reveal_cone(camera.position, camera.yaw, camera.pitch, overhead,
                                                 kind, settings)
-                       : shared::compute_player_reveal_cone(drawn_local_feet(ctx) + eye_above_feet,
+                       : shared::compute_player_reveal_cone(shared::player_eye_position(drawn_local_feet(ctx)),
                                                 my_player->view_angle_yaw,
                                                 my_player->view_angle_pitch, overhead, kind, settings),
                    held.color, held.intensity});
@@ -3483,12 +3059,15 @@ void collect_drawn_reveal_cones(const client_context_t& ctx, const camera_t& cam
     if (!remote_player.active || slot == ctx.connection.my_slot)
       continue;
     const entities::Player_Entity* player = try_find_player_in_slot(ctx, slot);
-    if (player == nullptr || !shared::reveal_light_is_on(system, *player))
+    if (player == nullptr)
       continue;
-    out.push_back({shared::compute_player_reveal_cone(remote_player.render_position + eye_above_feet,
-                                          remote_player.render_yaw, remote_player.render_pitch,
-                                          player->reveal_light_overhead,
-                                          *shared::try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, *player), settings),
+    const shared::player_sight_t sight = shared::player_sight_from_entity(system, *player);
+    if (!shared::reveal_light_is_on(sight))
+      continue;
+    out.push_back({shared::compute_player_reveal_cone(shared::player_eye_position(remote_player.render_position),
+                                                      remote_player.render_yaw, remote_player.render_pitch,
+                                                      sight.toggles.reveal_light_overhead, *sight.wielded_reveal_kind,
+                                                      settings),
                    held.color, held.intensity});
   }
 
@@ -3634,7 +3213,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   frame_timing::lap_zone_t lap("build_frame: hidden set, blob shadow, geometry");
 
   shared::disabled_geometry_t hidden;
-  shared::collect_hidden_geometry(ctx.world.session.entity_system,
+  shared::compute_hidden_geometry(ctx.world.session.entity_system,
                                   ctx.world.session.owner_of, hidden);
 
   const blob_shadow_settings_t blob_shadow_settings = {
@@ -3649,7 +3228,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   };
 
   const bool camera_is_my_eye = ctx.connection.phase == Connection_Phase::Connected &&
-                                !ctx.connection.spectating && !ctx.cvars->cl_noclip &&
+                                !ctx.connection.spectating && !ctx.cvars->cl_free_camera &&
                                 ctx.cvars->cl_spectate_slot < 0;
   if (camera_is_my_eye)
     draw_player_blob_shadow(drawn_local_feet(ctx));
@@ -3809,17 +3388,14 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                          ctx.cvars->r_flashlight_blue},
       .intensity      = ctx.cvars->r_flashlight_intensity,
       .inner_fraction = ctx.cvars->r_flashlight_inner};
-  collect_drawn_reveal_cones(ctx, camera, camera_is_my_eye, held_flashlight, scene.lit_reveal_cones);
+  compute_drawn_reveal_cones(ctx, camera, camera_is_my_eye, held_flashlight, scene.lit_reveal_cones);
   for (const lit_reveal_cone_t& lit : scene.lit_reveal_cones)
     scene.reveal_cones.push_back(lit.cone);
 
   for (const entities::Fog_Volume_Entity& fog : entity_system.entities_of_type<entities::Fog_Volume_Entity>())
     add_fog_volume(scene, fog);
-  shared::collect_lenses(entity_system, scene.lenses);
-  const entities::Player_Entity* lens_holder = try_find_my_player(ctx);
-  scene.held_lens_channels = camera_is_my_eye && lens_holder != nullptr
-                                 ? local_held_lens_channels(ctx, *lens_holder)
-                                 : 0;
+  shared::compute_lenses(entity_system, scene.lenses);
+  scene.held_lens_channels = camera_is_my_eye ? local_held_lens_channels(ctx) : 0;
   scene.lens_watchers = ctx.visuals.drawn_lens_watchers;
 
   lap.next("build_frame: lights + beams");
@@ -3866,10 +3442,12 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       continue;
 
     // The same sphere update_sweeping_projectiles sweeps the flight path with.
-    if (entity.type == entities::entity_type::Rocket_Entity && ctx.cvars->debug_show_hitboxes)
-      scene.debug.wire_sphere(entity.position,
-                              static_cast<const entities::Rocket_Entity&>(entity).collision_radius,
-                              colors::green);
+    if (entity.type == entities::entity_type::Shot_Entity && ctx.cvars->debug_show_hitboxes)
+      scene.debug.wire_sphere(
+          entity.position,
+          shared::get_projectile_parameters(static_cast<const entities::Shot_Entity&>(entity).projectile)
+              .shot.collision_radius,
+          colors::green);
 
     // ALONGSIDE the model and ahead of every skip below: a hit volume is not an
     // alternative to the mesh, and an entity whose mesh is hidden or unresolved
@@ -3938,19 +3516,18 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Extending_Platform_Entity* platform =
             entities::entity_as<entities::Extending_Platform_Entity>(&entity))
     {
-      const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
-      const float tick_interval_seconds = 1.0f / tickrate;
-      if (!shared::extending_platform_exists_at_tick(*platform, tick, tick_interval_seconds))
+      const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+          if (!shared::extending_platform_exists_at_tick(*platform, tick, tickrate_hz))
         continue;
 
       const shared::oriented_box_t box =
-          shared::extending_platform_box_at(*platform, tick, fraction, tick_interval_seconds);
+          shared::extending_platform_box_at(*platform, tick, fraction, tickrate_hz);
       drawn_position    = box.center;
       drawn_orientation = box.orientation;
       drawn_scale       = box.half_extents * 2.0f;
-      if (shared::extending_platform_is_solid_at_tick(*platform, tick, tick_interval_seconds))
+      if (shared::extending_platform_is_solid_at_tick(*platform, tick, tickrate_hz))
         dissolve = shared::platform_dissolve_fraction(shared::extending_platform_solid_fraction_elapsed(
-            *platform, tick, fraction, tick_interval_seconds));
+            *platform, tick, fraction, tickrate_hz));
       else
         drawn_as_ghost = true;
     }
@@ -3966,10 +3543,10 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Timed_Movement_Modifier_Entity* zone =
             entities::entity_as<entities::Timed_Movement_Modifier_Entity>(&entity))
     {
-      const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
-      if (!shared::timed_movement_modifier_is_active_at(*zone, tick, 1.0f / tickrate))
+      const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+      if (!shared::timed_movement_modifier_is_active_at(*zone, tick, tickrate_hz))
         continue;
-      const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.0f / tickrate,
+      const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = tickrate_hz,
                                                        .gravity               = ctx.cvars->g_gravity};
       const vec3f at_tick = shared::flight_position_at(zone->projectile, zone->flight, zone->position, tick, flight);
       const vec3f at_next = shared::flight_position_at(zone->projectile, zone->flight, zone->position, tick + 1, flight);
@@ -4004,9 +3581,9 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
     if (const entities::Emancipated_Weapon_Entity* fizzled =
             entities::entity_as<entities::Emancipated_Weapon_Entity>(&entity))
     {
-      const auto [tick, fraction, tickrate] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
+      const auto [tick, fraction, tickrate_hz] = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
       const float elapsed_seconds =
-          (static_cast<float>(tick) - static_cast<float>(fizzled->spawned_tick) + fraction) / tickrate;
+          (static_cast<float>(tick) - static_cast<float>(fizzled->spawned_tick) + fraction) * shared::tick_interval_seconds(tickrate_hz);
       if (fizzled->lifetime_seconds <= 0.0f || elapsed_seconds >= fizzled->lifetime_seconds)
         continue;
       const float elapsed = std::max(elapsed_seconds, 0.0f);
@@ -4497,8 +4074,19 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   if (ctx.cvars->cl_show_deploy_timer && !connection_ui.show_pause_menu)
   {
     if (const ui::ui_font_t *font = ctx.font)
+    {
+      // Now: the tick the next input is predicted to run in, plus the part of it drawn so far.
+      const float tick_dt = shared::tick_interval_seconds(ctx.connection.server_tickrate);
+      const shared::subtick_time_t now =
+          shared::subtick_time(get_predicted_server_tick_which_this_input_will_be_simulated_on(
+                                   ctx, ctx.prediction.input_number),
+                               0) +
+          static_cast<shared::subtick_time_t>(ctx.prediction.physics_accumulator / tick_dt *
+                                              static_cast<float>(shared::SUBTICK_SLOT_COUNT));
       hud::draw_deploy_timer(ui, *font, renderer::screen_size(), renderer::display_scale(),
-                             ctx.prediction.seconds_until_local_deploy_complete);
+                             shared::subtick_seconds_between(now, ctx.prediction.state.inventory.deploy_complete_time,
+                                                             tick_dt));
+    }
     else
       log_error("[hud] no UI font registered; cl_show_deploy_timer cannot draw");
   }
@@ -4527,7 +4115,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
   {
     if (const ui::ui_font_t* font = ctx.font)
     {
-      const float tick_dt = 1.0f / static_cast<float>(ctx.connection.server_tickrate);
+      const float tick_dt = shared::tick_interval_seconds(ctx.connection.server_tickrate);
       const int64_t ticks_elapsed = static_cast<int64_t>(ctx.replication.latest_processed_tick) -
                                     static_cast<int64_t>(match->phase_start_tick);
       hud::draw_run_timer(ui, *font, renderer::screen_size(), renderer::display_scale(),
@@ -4561,8 +4149,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
                                              : std::string{"SPACE to skip"};
 
       hud::draw_freeze_countdown(ui, *font, renderer::screen_size(), renderer::display_scale(),
-                                 static_cast<float>(ticks_left) /
-                                     static_cast<float>(ctx.connection.server_tickrate),
+                                 static_cast<float>(ticks_left) * shared::tick_interval_seconds(ctx.connection.server_tickrate),
                                  caption);
     }
     else
@@ -4581,8 +4168,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
       const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -
                                  static_cast<int64_t>(ctx.replication.latest_processed_tick);
       hud::draw_freeze_countdown(ui, *font, renderer::screen_size(), renderer::display_scale(),
-                                 static_cast<float>(ticks_left) /
-                                     static_cast<float>(ctx.connection.server_tickrate),
+                                 static_cast<float>(ticks_left) * shared::tick_interval_seconds(ctx.connection.server_tickrate),
                                  "NEXT LEVEL  (R to restart)");
     }
     else
@@ -4602,7 +4188,7 @@ void Play_State::build_frame(float delta_seconds, std::vector<renderer::view_pas
         const int64_t ticks_left = static_cast<int64_t>(match->phase_end_tick) -
                                    static_cast<int64_t>(ctx.replication.latest_processed_tick);
         vote.seconds_until_start =
-            static_cast<float>(ticks_left) / static_cast<float>(ctx.connection.server_tickrate);
+            static_cast<float>(ticks_left) * shared::tick_interval_seconds(ctx.connection.server_tickrate);
       }
       for (const entities::Player_Entity& player :
            ctx.world.session.entity_system.entities_of_type<entities::Player_Entity>())

@@ -38,7 +38,7 @@
 static int failure_count = 0;
 
 static constexpr shared::movement_volume_settings_t SIXTY_HERTZ_AT_TICK_ONE{
-    .tick = 1, .tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+    .tick = 1, .tickrate_hz = 60, .gravity = 800.f};
 
 static void check(bool condition, const char* what)
 {
@@ -122,7 +122,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
     player.movement.active_override = entities::Movement_Override::Stasis;
 
   std::vector<shared::movement_volume_t> volumes;
-  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
+  shared::compute_movement_volumes_at_tick(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
 
   std::set<entities::entity_type> types_that_produced_a_volume;
   for (const shared::movement_volume_t& volume : volumes)
@@ -137,18 +137,18 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   // keyed by geometry index and resolves the owner, so an owner_of naming every
   // candidate in turn is the whole map this pin needs -- no map_t, no BVH.
   shared::disabled_geometry_t disabled;
-  shared::collect_disabled_geometry(system, spawned_uids, entities::Team_Allegiance::Free_For_All,
+  shared::compute_disabled_geometry(system, spawned_uids, entities::Team_Allegiance::Free_For_All,
                                     disabled);
 
   std::vector<shared::mover_t> movers;
   shared::solid_beam_cache_t     solid_beam_cache;
-  shared::collect_movers(system, {}, {}, 1, 60.0f, movers);
-  shared::collect_canopies(system, 1, 0, 1.f / 60.f, movers);
-  shared::collect_spawned_platforms(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+  shared::compute_path_movers_at_tick(system, {}, {}, 1, 60.0f, movers);
+  shared::compute_canopies_at_tick(system, 1, 0, 1.f / 60.f, movers);
+  shared::compute_spawned_platforms_at_tick(system, 1, {.tickrate_hz = 60, .gravity = 800.f},
                                     movers);
-  shared::collect_statues(system, movers);
-  shared::collect_lens_panes(system, movers);
-  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_statue_movers(system, movers);
+  shared::compute_lens_panes(system, movers);
+  shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -161,7 +161,7 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "the bitset is sized to the geometry list it was cut for");
 
   std::vector<shared::movement_modifier_t> modifiers;
-  shared::collect_movement_modifiers(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+  shared::compute_movement_modifiers_at_tick(system, 1, {.tickrate_hz = 60, .gravity = 800.f},
                                      modifiers);
   std::set<entities::entity_type> types_that_produced_a_modifier;
   for (const shared::movement_modifier_t& modifier : modifiers)
@@ -237,7 +237,7 @@ static void test_a_pad_is_flattened_into_what_the_step_reads()
   pad->switch_state.value = true;
 
   std::vector<shared::movement_volume_t> volumes;
-  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
+  shared::compute_movement_volumes_at_tick(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
   check(volumes.size() == 1, "one pad, one volume");
 
   const shared::movement_volume_t& volume = volumes[0];
@@ -259,7 +259,7 @@ static void test_a_pad_is_flattened_into_what_the_step_reads()
   // The switch is replicated state, so it has to survive the flattening rather
   // than being filtered out: the step is what honours it.
   pad->switch_state.value = false;
-  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
+  shared::compute_movement_volumes_at_tick(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
   check(volumes.size() == 1 && !volumes[0].enabled,
         "a disabled pad is still collected, and says so");
 }
@@ -279,7 +279,7 @@ static void test_a_modifier_scales_the_settings_of_a_hull_inside_it()
   zone->run_speed_scale     = 2.f;
 
   std::vector<shared::movement_modifier_t> modifiers;
-  shared::collect_movement_modifiers(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+  shared::compute_movement_modifiers_at_tick(system, 1, {.tickrate_hz = 60, .gravity = 800.f},
                                      modifiers);
   check(modifiers.size() == 1, "one zone, one modifier");
 
@@ -302,7 +302,7 @@ static void test_a_modifier_scales_the_settings_of_a_hull_inside_it()
         "a hull outside the box runs under the settings it came with");
 
   zone->switch_state.value = false;
-  shared::collect_movement_modifiers(system, 1, {.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f},
+  shared::compute_movement_modifiers_at_tick(system, 1, {.tickrate_hz = 60, .gravity = 800.f},
                                      modifiers);
   const shared::movement_settings_t switched_off =
       shared::modified_movement_settings(base, modifiers, inside);
@@ -324,15 +324,14 @@ static void test_a_timed_modifier_is_live_for_exactly_its_lifetime()
   zone->gravity_scale    = 0.5f;
   zone->lifetime_seconds = 1.f;
 
-  const float tick_interval = 1.f / 60.f;
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval, .gravity = 800.f};
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = 60, .gravity = 800.f};
   const shared::movement_settings_t base{};
   const shared::aabb_bounds_t       inside{.min = {-16.f, 0.f, -16.f}, .max = {16.f, 72.f, 16.f}};
 
   std::vector<shared::movement_modifier_t> modifiers;
   const auto gravity_at = [&](uint32_t tick)
   {
-    shared::collect_movement_modifiers(system, tick, flight, modifiers);
+    shared::compute_movement_modifiers_at_tick(system, tick, flight, modifiers);
     check(modifiers.size() == 1, "an unstamped or expired zone is still collected, as disabled");
     return shared::modified_movement_settings(base, modifiers, inside).shared.gravity;
   };
@@ -344,8 +343,8 @@ static void test_a_timed_modifier_is_live_for_exactly_its_lifetime()
   check(gravity_at(101) == 0.5f * base.shared.gravity, "live from the next tick");
   check(gravity_at(160) == 0.5f * base.shared.gravity, "live through the last tick of its lifetime");
   check(gravity_at(161) == base.shared.gravity, "and gone the tick after");
-  check(!shared::timed_movement_modifier_is_active_at(*zone, 161, tick_interval) &&
-            shared::timed_movement_modifier_is_active_at(*zone, 160, tick_interval),
+  check(!shared::timed_movement_modifier_is_active_at(*zone, 161, flight.tickrate_hz) &&
+            shared::timed_movement_modifier_is_active_at(*zone, 160, flight.tickrate_hz),
         "the reap asks the same predicate the cut does");
 
   // A fired zone's box is wherever its arc puts it at the tick, and it is live in flight.
@@ -353,7 +352,7 @@ static void test_a_timed_modifier_is_live_for_exactly_its_lifetime()
   zone->projectile.trigger   = entities::Fire_Trigger::Secondary;
   zone->projectile.velocity  = {700.f, 0.f, 0.f};
   zone->flight = {.launch_position = {0.f, 0.f, 0.f}, .launch_tick = 100, .flight_ticks = 60};
-  shared::collect_movement_modifiers(system, 130, flight, modifiers);
+  shared::compute_movement_modifiers_at_tick(system, 130, flight, modifiers);
   const shared::aabb_bounds_t at_launch = inside;
   const shared::aabb_bounds_t along_the_arc{.min = {500.f, 0.f, -16.f}, .max = {532.f, 72.f, 16.f}};
   check(shared::modified_movement_settings(base, modifiers, at_launch).shared.gravity == base.shared.gravity,
@@ -377,16 +376,16 @@ static void test_a_switch_reaches_the_geometry_it_owns()
   const entities::Team_Allegiance no_team = entities::Team_Allegiance::Free_For_All;
 
   shared::disabled_geometry_t disabled;
-  shared::collect_disabled_geometry(system, owner_of, no_team, disabled);
+  shared::compute_disabled_geometry(system, owner_of, no_team, disabled);
   check(disabled.size() == 3 && !disabled[0] && !disabled[1] && !disabled[2],
         "an enabled owner disables nothing");
 
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
-  shared::collect_disabled_geometry(system, owner_of, no_team, disabled);
+  shared::compute_disabled_geometry(system, owner_of, no_team, disabled);
   check(disabled.size() == 3 && !disabled[0] && disabled[1] && disabled[2],
         "switching the owner off takes out every object tied to it and nothing else");
 
-  shared::collect_hidden_geometry(system, owner_of, disabled);
+  shared::compute_hidden_geometry(system, owner_of, disabled);
   check(disabled.size() == 3 && !disabled[0] && disabled[1] && disabled[2],
         "the hidden set follows the switch too");
 
@@ -394,7 +393,7 @@ static void test_a_switch_reaches_the_geometry_it_owns()
   // which is the safe direction -- a wall you cannot see is worse than one you
   // can walk through.
   (void)system.destroy(owner);
-  shared::collect_disabled_geometry(system, owner_of, no_team, disabled);
+  shared::compute_disabled_geometry(system, owner_of, no_team, disabled);
   check(disabled.size() == 3 && !disabled[0] && !disabled[1] && !disabled[2],
         "a destroyed owner leaves its geometry solid");
 }
@@ -410,34 +409,34 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
   const shared::entity_uid_t owner_of[] = {shared::null_entity_uid, owner};
 
   shared::disabled_geometry_t disabled;
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
   check(disabled.size() == 2 && !disabled[0] && disabled[1],
         "the wall is not there for the team it is passable by");
 
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled.size() == 2 && !disabled[0] && !disabled[1], "the wall is solid for the other team");
 
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Free_For_All,
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Free_For_All,
                                     disabled);
   check(disabled.size() == 2 && !disabled[0] && !disabled[1],
         "a mover with no team passes no team wall");
 
   // The draw asks a different question: a team wall is in nobody's hidden set.
-  shared::collect_hidden_geometry(system, owner_of, disabled);
+  shared::compute_hidden_geometry(system, owner_of, disabled);
   check(disabled.size() == 2 && !disabled[0] && !disabled[1], "a team wall is visible to everyone");
 
   // Off is off for everyone, its team included.
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled.size() == 2 && disabled[1], "a switched-off team wall is gone for the other team too");
-  shared::collect_hidden_geometry(system, owner_of, disabled);
+  shared::compute_hidden_geometry(system, owner_of, disabled);
   check(disabled.size() == 2 && disabled[1], "and hidden, like any switched-off brush");
 
   // The storage cuts every team's set at once and the view picks one.
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = true;
   shared::predicted_world_storage_t storage;
   for (uint32_t team = 0; team < storage.disabled_geometry.count; ++team)
-    shared::collect_disabled_geometry(system, owner_of, static_cast<entities::Team_Allegiance>(team),
+    shared::compute_disabled_geometry(system, owner_of, static_cast<entities::Team_Allegiance>(team),
                                       storage.disabled_geometry.values[team]);
   check(shared::get_predicted_world_for_team(storage, entities::Team_Allegiance::Red).disabled_geometry[1] != 0 &&
             shared::get_predicted_world_for_team(storage, entities::Team_Allegiance::Blu).disabled_geometry[1] == 0,
@@ -448,33 +447,33 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
 
   // Solid only where lit is a third value, and only for a mover the owner would block at all.
   system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_revealed = true;
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled[0] == GEOMETRY_SOLID && disabled[1] == GEOMETRY_SOLID_WHERE_LIT,
         "a lit-only owner's geometry is solid where lit for a mover it blocks");
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
   check(disabled[1] == GEOMETRY_NOT_THERE, "and not there, lit or dark, for the team that passes it");
-  shared::collect_hidden_geometry(system, owner_of, disabled);
+  shared::compute_hidden_geometry(system, owner_of, disabled);
   check(disabled[1] == GEOMETRY_SOLID, "the draw's set does not know about the light");
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value = false;
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled[1] == GEOMETRY_NOT_THERE, "switched off, a lit-only owner's geometry is not there");
 
   system.get<entities::Geometry_Owner_Entity>(owner)->switch_state.value       = true;
   system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_revealed = false;
   system.get<entities::Geometry_Owner_Entity>(owner)->erased_by_light          = true;
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled[1] == GEOMETRY_SOLID_UNLESS_ERASED,
         "an erasable owner's geometry is solid unless erased for a mover it blocks");
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Red, disabled);
   check(disabled[1] == GEOMETRY_NOT_THERE, "and not there for the team that passes it");
 
   system.get<entities::Geometry_Owner_Entity>(owner)->erased_by_light        = false;
   system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_lensed = true;
   system.get<entities::Geometry_Owner_Entity>(owner)->lens_filter            = entities::Lens_Filter::Blue;
-  shared::collect_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
+  shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled[1] == get_geometry_state_solid_where_lensed(entities::Lens_Filter::Blue),
         "a lensed-only owner's geometry is solid where lensed, in its colour, for a mover it blocks");
-  shared::collect_hidden_geometry(system, owner_of, disabled);
+  shared::compute_hidden_geometry(system, owner_of, disabled);
   check(disabled[1] == GEOMETRY_SOLID, "the draw's set does not know about the watcher");
 }
 
@@ -509,7 +508,7 @@ static void test_a_bubble_is_placed_by_the_tick_it_is_cut_for()
   entities::Bubble_Entity*   bubble = system.get<entities::Bubble_Entity>(uid);
 
   std::vector<shared::movement_volume_t> volumes;
-  shared::collect_movement_volumes(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
+  shared::compute_movement_volumes_at_tick(system, SIXTY_HERTZ_AT_TICK_ONE, volumes);
   check(volumes.size() == 1 && !volumes[0].enabled,
         "a bubble whose launch is not latched yet bounces nobody");
 
@@ -520,7 +519,7 @@ static void test_a_bubble_is_placed_by_the_tick_it_is_cut_for()
   {
     shared::movement_volume_settings_t settings = SIXTY_HERTZ_AT_TICK_ONE;
     settings.tick                               = tick;
-    shared::collect_movement_volumes(system, settings, volumes);
+    shared::compute_movement_volumes_at_tick(system, settings, volumes);
     return volumes[0];
   };
   const auto center_x = [](const shared::movement_volume_t& volume)
@@ -557,14 +556,14 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
   const shared::entity_uid_t   uid      = system.spawn(entities::entity_type::Platform_Entity);
   entities::Platform_Entity*   platform = system.get<entities::Platform_Entity>(uid);
 
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = 60, .gravity = 800.f};
 
   std::vector<shared::mover_t> movers;
   shared::solid_beam_cache_t     solid_beam_cache;
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
   {
     movers.clear();
-    shared::collect_spawned_platforms(system, tick, flight, movers);
+    shared::compute_spawned_platforms_at_tick(system, tick, flight, movers);
     return movers;
   };
 
@@ -580,8 +579,8 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
   check(cut_at(10 + 30 + 119).size() == 1, "the last tick of its rest is still solid");
   check(cut_at(10 + 30 + 120).empty(), "two seconds at sixty hertz is 120 ticks of rest, and then it is gone");
   const shared::common_platform_fields_t view = shared::get_common_platform_fields(*platform);
-  check(shared::platform_has_vanished_at_tick(view, 10 + 30 + 120, flight.tick_interval_seconds) &&
-            !shared::platform_has_vanished_at_tick(view, 10 + 30 + 119, flight.tick_interval_seconds),
+  check(shared::platform_has_vanished_at_tick(view, 10 + 30 + 120, flight.tickrate_hz) &&
+            !shared::platform_has_vanished_at_tick(view, 10 + 30 + 119, flight.tickrate_hz),
         "the server reaps it on the tick the cut drops it");
 
   const shared::mover_t& rested = cut_at(10 + 60)[0];
@@ -594,9 +593,9 @@ static void test_a_platform_is_solid_from_the_tick_it_lands_until_its_rest_runs_
             std::fabs(rested.swept_bounds.max.y - 104.f) < 0.01f,
         "the box sits where half a second at 600 units a second left it");
 
-  check(shared::platform_solid_fraction_elapsed(view, 10 + 30, 0.f, flight.tick_interval_seconds) == 0.f &&
+  check(shared::platform_solid_fraction_elapsed(view, 10 + 30, 0.f, flight.tickrate_hz) == 0.f &&
             std::fabs(shared::platform_solid_fraction_elapsed(view, 10 + 30 + 60, 0.f,
-                                                              flight.tick_interval_seconds) - 0.5f) < 1e-4f,
+                                                              flight.tickrate_hz) - 0.5f) < 1e-4f,
         "the wipe runs from landing to vanishing");
   check(std::fabs(shared::platform_dissolve_fraction(0.8f)) < 1e-4f &&
             std::fabs(shared::platform_dissolve_fraction(0.9f) - 0.5f) < 1e-4f &&
@@ -612,7 +611,7 @@ static void test_a_platform_grows_over_its_flight_and_lands_at_half_extents()
   const shared::entity_uid_t uid      = system.spawn(entities::entity_type::Platform_Entity);
   entities::Platform_Entity* platform = system.get<entities::Platform_Entity>(uid);
 
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = 60, .gravity = 800.f};
 
   platform->flight                 = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 40};
   platform->projectile.velocity    = {0.f, 0.f, 0.f};
@@ -621,27 +620,26 @@ static void test_a_platform_grows_over_its_flight_and_lands_at_half_extents()
   platform->half_extents_at_launch = {8.f, 8.f, 8.f};
 
   const shared::common_platform_fields_t view = shared::get_common_platform_fields(*platform);
-  const float                   dt   = flight.tick_interval_seconds;
 
-  const linalg::vec3f at_launch = shared::platform_half_extents_at(view, 10, 0.f, dt);
+  const linalg::vec3f at_launch = shared::platform_half_extents_at(view, 10, 0.f, flight.tickrate_hz);
   check(std::fabs(at_launch.x - 8.f) < 1e-4f && std::fabs(at_launch.y - 8.f) < 1e-4f,
         "it leaves at half_extents_at_launch");
 
-  const linalg::vec3f halfway = shared::platform_half_extents_at(view, 30, 0.f, dt);
+  const linalg::vec3f halfway = shared::platform_half_extents_at(view, 30, 0.f, flight.tickrate_hz);
   check(std::fabs(halfway.x - (8.f + 120.f * 0.875f)) < 1e-3f && std::fabs(halfway.y - (8.f - 4.f * 0.875f)) < 1e-3f,
         "halfway through the flight it is 7/8 grown: a cubic ease out");
 
-  const linalg::vec3f drawn = shared::platform_half_extents_at(view, 30, 0.5f, dt);
+  const linalg::vec3f drawn = shared::platform_half_extents_at(view, 30, 0.5f, flight.tickrate_hz);
   check(drawn.x > halfway.x, "the draw's sub-tick fraction grows it between ticks");
 
-  const linalg::vec3f landed = shared::platform_half_extents_at(view, 50, 0.f, dt);
+  const linalg::vec3f landed = shared::platform_half_extents_at(view, 50, 0.f, flight.tickrate_hz);
   check(std::fabs(landed.x - 128.f) < 1e-4f && std::fabs(landed.y - 4.f) < 1e-4f, "it lands at half_extents");
 
   std::vector<shared::mover_t> movers;
   shared::solid_beam_cache_t     solid_beam_cache;
-  shared::collect_spawned_platforms(system, 49, flight, movers);
+  shared::compute_spawned_platforms_at_tick(system, 49, flight, movers);
   check(movers.empty(), "the cut has no box for it while it flies");
-  shared::collect_spawned_platforms(system, 50, flight, movers);
+  shared::compute_spawned_platforms_at_tick(system, 50, flight, movers);
   check(movers.size() == 1 && std::fabs(movers[0].swept_bounds.max.x - 128.f) < 1e-4f,
         "and the first box the cut sweeps is the full one");
 }
@@ -654,7 +652,7 @@ static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
   const shared::entity_uid_t          uid      = system.spawn(entities::entity_type::Shrinking_Platform_Entity);
   entities::Shrinking_Platform_Entity* platform = system.get<entities::Shrinking_Platform_Entity>(uid);
 
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = 60, .gravity = 800.f};
 
   platform->flight                      = {.launch_position = {0.f, 100.f, 0.f}, .launch_tick = 10, .flight_ticks = 0};
   platform->projectile.velocity         = {0.f, 0.f, 0.f};
@@ -669,7 +667,7 @@ static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
   {
     movers.clear();
-    shared::collect_spawned_platforms(system, tick, flight, movers);
+    shared::compute_spawned_platforms_at_tick(system, tick, flight, movers);
     return movers;
   };
 
@@ -679,7 +677,7 @@ static void test_a_shrinking_platform_shrinks_on_the_ticks_the_cut_sweeps()
   check(std::fabs(cut_at(10 + 119)[0].swept_bounds.max.y - 104.f) < 1e-4f, "y is held, so the top does not drop");
   check(cut_at(10 + 120).empty(), "and it vanishes on the same tick a plain platform would");
 
-  const linalg::vec3f drawn = shared::platform_half_extents_at(view, 10 + 60, 0.5f, flight.tick_interval_seconds);
+  const linalg::vec3f drawn = shared::platform_half_extents_at(view, 10 + 60, 0.5f, flight.tickrate_hz);
   check(std::fabs(drawn.x - (64.f - 56.f * (60.5f / 120.f))) < 1e-4f,
         "the draw reads the same lerp with the sub-tick fraction");
 }
@@ -692,15 +690,14 @@ static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_
   const shared::entity_uid_t           uid      = system.spawn(entities::entity_type::Extending_Platform_Entity);
   entities::Extending_Platform_Entity* platform = system.get<entities::Extending_Platform_Entity>(uid);
 
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = 1.f / 60.f, .gravity = 800.f};
-  const float                               dt = flight.tick_interval_seconds;
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = 60, .gravity = 800.f};
 
   std::vector<shared::mover_t> movers;
   shared::solid_beam_cache_t     solid_beam_cache;
   const auto cut_at = [&](uint32_t tick) -> const std::vector<shared::mover_t>&
   {
     movers.clear();
-    shared::collect_spawned_platforms(system, tick, flight, movers);
+    shared::compute_spawned_platforms_at_tick(system, tick, flight, movers);
     return movers;
   };
 
@@ -720,14 +717,14 @@ static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_
         "a set-down platform is passable for its first half second");
   platform->passable_seconds = 0.5f;
   check(cut_at(10).empty() && cut_at(10 + 29).empty() &&
-            shared::extending_platform_exists_at_tick(*platform, 10, dt) &&
-            !shared::extending_platform_is_solid_at_tick(*platform, 10 + 29, dt),
+            shared::extending_platform_exists_at_tick(*platform, 10, flight.tickrate_hz) &&
+            !shared::extending_platform_is_solid_at_tick(*platform, 10 + 29, flight.tickrate_hz),
         "while it is passable it is drawn and is in nobody's way");
-  check(cut_at(10 + 30).size() == 1 && shared::extending_platform_is_solid_at_tick(*platform, 10 + 30, dt),
+  check(cut_at(10 + 30).size() == 1 && shared::extending_platform_is_solid_at_tick(*platform, 10 + 30, flight.tickrate_hz),
         "thirty ticks after it was set down it is solid");
   platform->passable_seconds = 0.f;
 
-  check(shared::extending_platform_extend_ticks(*platform, dt) == 15, "three hundred at twenty a tick is fifteen ticks");
+  check(shared::extending_platform_extend_ticks(*platform, flight.tickrate_hz) == 15, "three hundred at twenty a tick is fifteen ticks");
   check(cut_at(9).empty(), "the tick before it was set down it is not there");
   check(cut_at(10).size() == 1 && std::fabs(cut_at(10)[0].swept_bounds.max.x - 20.f) < 1e-3f &&
             std::fabs(cut_at(10)[0].swept_bounds.min.x) < 1e-3f,
@@ -748,16 +745,16 @@ static void test_an_extending_platform_grows_along_its_forward_and_is_solid_the_
 
   check(cut_at(10 + 14 + 119).size() == 1, "the last tick of its solid time it is still there");
   check(cut_at(10 + 14 + 120).empty(), "two seconds after it is grown it is gone");
-  check(shared::extending_platform_has_vanished_at_tick(*platform, 10 + 14 + 120, dt) &&
-            !shared::extending_platform_has_vanished_at_tick(*platform, 10 + 14 + 119, dt),
+  check(shared::extending_platform_has_vanished_at_tick(*platform, 10 + 14 + 120, flight.tickrate_hz) &&
+            !shared::extending_platform_has_vanished_at_tick(*platform, 10 + 14 + 119, flight.tickrate_hz),
         "the server reaps it on the tick the cut drops it");
 
-  check(std::fabs(shared::extending_platform_length_at(*platform, 10 + 2, 0.5f, dt) - 70.f) < 1e-3f &&
-            std::fabs(shared::extending_platform_box_at(*platform, 10 + 2, 0.5f, dt).center.x - 35.f) < 1e-3f,
+  check(std::fabs(shared::extending_platform_length_at(*platform, 10 + 2, 0.5f, flight.tickrate_hz) - 70.f) < 1e-3f &&
+            std::fabs(shared::extending_platform_box_at(*platform, 10 + 2, 0.5f, flight.tickrate_hz).center.x - 35.f) < 1e-3f,
         "the draw reads the same growth with the sub-tick fraction");
-  check(shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 5, 0.f, dt) == 0.f &&
-            shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 14, 0.f, dt) == 0.f &&
-            std::fabs(shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 14 + 60, 0.f, dt) - 0.5f) <
+  check(shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 5, 0.f, flight.tickrate_hz) == 0.f &&
+            shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 14, 0.f, flight.tickrate_hz) == 0.f &&
+            std::fabs(shared::extending_platform_solid_fraction_elapsed(*platform, 10 + 14 + 60, 0.f, flight.tickrate_hz) - 0.5f) <
                 1e-4f,
         "the dissolve clock starts when it is grown");
 
@@ -791,7 +788,7 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
 
   std::vector<shared::mover_t> movers;
   shared::solid_beam_cache_t     solid_beam_cache;
-  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.size() == 1 && movers[0].uid == uid, "one switched-on solid beam is one mover");
   if (movers.size() != 1)
     return;
@@ -823,21 +820,21 @@ static void test_a_solid_beam_is_its_cone_from_the_fixture_to_its_range()
 
   spot->switch_state.value = false;
   movers.clear();
-  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.empty(), "switched off it is not there");
 
   spot->switch_state.value = true;
   spot->solid_beam         = false;
   spot->beam               = true;
-  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.empty(), "a spot without solid_beam is not there");
 
   shared::solid_beam_cache_t client_cache;
-  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Every_Beam, client_cache, movers);
+  shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Every_Beam, client_cache, movers);
   check(movers.empty(), "under Every_Beam a beam of light is still no mover");
   check(shared::try_find_beam_carve(client_cache, uid).has_value(), "but it is carved, for the picture");
   shared::solid_beam_cache_t server_cache;
-  shared::collect_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, server_cache, movers);
+  shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, server_cache, movers);
   check(!shared::try_find_beam_carve(server_cache, uid).has_value(), "under Solid a beam of light is not carved");
 }
 
@@ -881,7 +878,7 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
 
   std::vector<shared::mover_t> movers;
   shared::solid_beam_cache_t     solid_beam_cache;
-  shared::collect_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.size() == 1 && movers[0].uid == uid, "still one mover");
   if (movers.size() != 1)
     return;
@@ -902,7 +899,7 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
 
   const std::vector<shared::collision_piece_t> first_carve = beam.pieces;
   movers.clear();
-  shared::collect_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.size() == 1 && movers[0].pieces.size() == first_carve.size(), "the same inputs are the cached carve");
   const std::optional<shared::beam_carve_t> draw = shared::try_find_beam_carve(solid_beam_cache, uid);
   check(draw.has_value() && draw->piece_first.count == first_carve.size() + 1,
@@ -926,7 +923,7 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
 
   spot->position.y += 1.f;
   movers.clear();
-  shared::collect_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  shared::compute_solid_beams(system, {}, volumes, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   check(movers.size() == 1 && any_piece_contains_point(movers[0], apex + axis * 100.f + linalg::vec3f{0.f, 1.f, 0.f}),
         "a moved light is carved again at its new pose");
 }

@@ -253,9 +253,9 @@ int main()
       // spawn() hands back the uid, and get<T>() is how the fields get written.
       // The pointer is used and dropped inside this iteration: the next loop
       // iteration spawns into the same pool and would invalidate it.
-      rocket_uids[index] = entity_system.spawn<entities::Rocket_Entity>();
-      entities::Rocket_Entity *rocket =
-          entity_system.get<entities::Rocket_Entity>(rocket_uids[index]);
+      rocket_uids[index] = entity_system.spawn<entities::Shot_Entity>();
+      entities::Shot_Entity *rocket =
+          entity_system.get<entities::Shot_Entity>(rocket_uids[index]);
       if (!rocket)
       {
         log_error("Could not spawn rocket {}", index);
@@ -276,7 +276,7 @@ int main()
       return 1;
     }
 
-    if (entity_system.get<entities::Rocket_Entity>(rocket_uids[1]) != nullptr)
+    if (entity_system.get<entities::Shot_Entity>(rocket_uids[1]) != nullptr)
     {
       log_error("uid {} still resolves after being destroyed", rocket_uids[1]);
       return 1;
@@ -290,8 +290,8 @@ int main()
       if (index == 1)
         continue;
 
-      entities::Rocket_Entity *rocket =
-          entity_system.get<entities::Rocket_Entity>(rocket_uids[index]);
+      entities::Shot_Entity *rocket =
+          entity_system.get<entities::Shot_Entity>(rocket_uids[index]);
       if (!rocket)
       {
         log_error("Rocket uid {} (spawn #{}) stopped resolving after an unrelated removal",
@@ -323,7 +323,7 @@ int main()
     // reset() has to clear the index too, or every stale uid keeps resolving
     // into a pool that no longer holds it.
     entity_system.reset();
-    if (entity_system.get<entities::Rocket_Entity>(rocket_uids[0]) != nullptr ||
+    if (entity_system.get<entities::Shot_Entity>(rocket_uids[0]) != nullptr ||
         entity_system.get<entities::Player_Spawn_Entity>(spawn_uid) != nullptr)
     {
       log_error("A uid still resolves after Entity_System::reset()");
@@ -351,10 +351,10 @@ int main()
     // more than once, so the inner slot walk has somewhere to go), one carrying
     // Box_Volume alone, one carrying BOTH, and two carrying neither — the pools
     // that must be skipped.
-    entity_system.spawn<entities::Rocket_Entity>();
-    entity_system.spawn<entities::Rocket_Entity>();
-    entity_system.spawn<entities::Rocket_Entity>();
-    entity_system.spawn<entities::Hook_Entity>();
+    entity_system.spawn<entities::Shot_Entity>();
+    entity_system.spawn<entities::Shot_Entity>();
+    entity_system.spawn<entities::Shot_Entity>();
+    entity_system.spawn<entities::Remnant_Entity>();
     entity_system.spawn<entities::Trigger_Volume_Entity>();
     entity_system.spawn<entities::Spot_Light_Entity>();
     entity_system.spawn<entities::Player_Spectate_Entity>();
@@ -483,7 +483,7 @@ int main()
     entity_system.spawn<entities::Trigger_Volume_Entity>();
     entity_system.spawn<entities::Jump_Pad_Entity>();
     entity_system.spawn<entities::Game_Rules_Entity>();
-    entity_system.spawn<entities::Rocket_Entity>();
+    entity_system.spawn<entities::Shot_Entity>();
 
     // What `for (pool) for (slot) if (is<Mortal>(entity))` produces.
     std::vector<std::pair<entity_uid_t, const void *>> expected_mortal;
@@ -640,7 +640,7 @@ int main()
     const vec3f forward{1.f, 0.f, 0.f};
 
     disabled_geometry_t disabled;
-    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of,
+    compute_disabled_geometry(tie_session.entity_system, tie_session.owner_of,
                               entities::Team_Allegiance::Free_For_All, disabled);
     if (disabled.size() != 2 || disabled[0] != 0 || disabled[1] != 0)
     {
@@ -657,7 +657,7 @@ int main()
     }
 
     tie_session.entity_system.get<entities::Geometry_Owner_Entity>(owner_uid)->switch_state.value = false;
-    collect_disabled_geometry(tie_session.entity_system, tie_session.owner_of,
+    compute_disabled_geometry(tie_session.entity_system, tie_session.owner_of,
                               entities::Team_Allegiance::Free_For_All, disabled);
     if (disabled.size() != 2 || disabled[0] == 0 || disabled[1] != 0)
     {
@@ -756,11 +756,11 @@ int main()
     }
 
     std::vector<mover_t> movers;
-    collect_movers(mover_session.entity_system, mover_session.path_links, mover_session.mover_rests,
+    compute_path_movers_at_tick(mover_session.entity_system, mover_session.path_links, mover_session.mover_rests,
                    31, 60.0f, movers);
     if (movers.size() != 1 || movers[0].uid != mover_uid || movers[0].pieces.size() != rest->second.pieces.size())
     {
-      log_error("collect_movers did not cut the mover with its pieces");
+      log_error("compute_path_movers_at_tick did not cut the mover with its pieces");
       return 1;
     }
     const aabb_bounds_t moved = movers[0].pieces[0].bounds;
@@ -842,7 +842,8 @@ int main()
         spot->range = 2000.f;
       game_session_t          shadow_session = build_session(shadow_map);
       predicted_world_storage_t storage;
-      return build_shadow_volumes(shadow_session, storage);
+      return compute_shadow_volumes(shadow_session.entity_system, shadow_session.bvh, shadow_session.owner_of,
+                                    storage.movers, shadow_session.mover_rests, storage.shadow_volumes);
     };
 
     const shadow_volume_report_t crate =
@@ -894,7 +895,9 @@ int main()
       const entity_uid_t cutting   = spawn_spot(true);
       game_session_t            ordered_session = build_session(ordered_map);
       predicted_world_storage_t storage;
-      const shadow_volume_report_t report = build_shadow_volumes(ordered_session, storage);
+      const shadow_volume_report_t report =
+          compute_shadow_volumes(ordered_session.entity_system, ordered_session.bvh, ordered_session.owner_of,
+                                 storage.movers, ordered_session.mover_rests, storage.shadow_volumes);
       bool     ordered          = report.kept >= 2 && storage.shadow_volumes[0].light == cutting &&
                      storage.shadow_volumes[0].cuts_geometry && storage.shadow_volumes[0].reaches_receiver;
       uint32_t reaching_first   = 0;

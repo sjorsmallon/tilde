@@ -797,7 +797,7 @@ map_block_out_t write_primitive_recipe_block(const primitive_recipe_t &recipe)
   map_block_out_t block;
   block.keyword = "primitive";
   block.properties.emplace_back("kind", to_string(recipe.kind));
-  if (recipe.kind != primitive_kind_t::Spiral_Stairs && recipe.kind != primitive_kind_t::Curve)
+  if (primitive_kind_has_axis(recipe.kind))
     block.properties.emplace_back("axis", AXIS_TEXT[recipe.axis_index]);
   block.properties.emplace_back("turns", std::to_string(recipe.quarter_turns));
   const auto put = [&block](const char *key, float value) {

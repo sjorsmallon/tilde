@@ -16,30 +16,11 @@ namespace shared
 
 move_input_t move_input_from_subtick_step(const shared::subtick_step_t& step)
 {
-  const float yaw_radians   = linalg::to_radians(step.view.yaw);
-  const float pitch_radians = linalg::to_radians(step.view.pitch);
-  const float cos_yaw       = std::cos(yaw_radians);
-  const float sin_yaw       = std::sin(yaw_radians);
-  const float cos_pitch     = std::cos(pitch_radians);
-  const float sin_pitch     = std::sin(pitch_radians);
-
-  const vec3 front = {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
-  //@FIXME(SJM): up vector global?
-  vec3        right        = linalg::cross(front, vec3{0.f, 1.f, 0.f});
-  const float right_length = linalg::length(right);
-  if (right_length > 0.001f)
-  {
-    right = right * (1.0f / right_length);
-  }
-  else
-  {
-    log_warning("arbitrarily deciding that right is {{1, 0, 0}} because the vector length was too small.");
-    right = {1.f, 0.f, 0.f};
-  }
+  const vec3 front = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
 
   return {.buttons   = move_input_from_buttons(step.buttons),
           .front     = front,
-          .right     = right,
+          .right     = linalg::right_from_forward(front),
           .aim_turn_across_step = compute_aim_turn_across_step(step),
           .dt        = step.dt};
 }
@@ -121,7 +102,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   // rubber-bands them for a round trip, which is the problem prediction_def.md
   // §1 solved for pads.
   const shared::override_step_t over =
-      shared::step_override(settings, bvh, world, state, input.front, dt);
+      shared::step_override(settings, bvh, world, state, input, dt);
 
   shared::settled_move_t settled;
   float                  stair_rise = 0.f;
@@ -131,6 +112,11 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
                .velocity         = state.velocity,
                .grounded         = grounded,
                .ground_mover_uid = movement.ground_mover_uid};
+  }
+  else if (over.passes_through)
+  {
+    const vec3 flown = {over.wanted.velocity.x, over.wanted.vertical_velocity, over.wanted.velocity.z};
+    settled = {.hull_center = state.feet + hull_center_offset + flown * dt, .velocity = flown};
   }
   else
   {
@@ -259,7 +245,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   // already latched to, which is what makes stepping from one pad straight onto
   // another fire twice while standing on one fires once.
   const shared::volume_touch_t touch =
-      over.holds ? shared::volume_touch_t{}
+      over.holds || over.passes_through ? shared::volume_touch_t{}
                  : shared::touch_movement_volumes(settings, world.movement_volumes, state);
 
   if (out_events)
@@ -321,8 +307,9 @@ mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
   const vec3 hull_center_offset{0.f, half_height, 0.f};
   mover_push_t result{.feet = feet};
 
-  // Its own statue is in the list, and a frozen hull is carried by nothing.
-  if (shared::override_freezes(movement.active_override))
+  // Its own statue is in the list, and a frozen hull is carried by nothing; a noclip hull is pushed by nothing.
+  if (shared::override_freezes(movement.active_override) ||
+      shared::override_passes_through(movement.active_override))
     return result;
   std::vector<const shared::mover_t*> pushers;
 

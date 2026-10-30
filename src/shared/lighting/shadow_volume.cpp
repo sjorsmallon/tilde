@@ -779,7 +779,7 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
 
 } // namespace
 
-shadow_volume_report_t collect_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
+shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               const mover_rests_t& rests, std::vector<shadow_volume_t>& out)
 {

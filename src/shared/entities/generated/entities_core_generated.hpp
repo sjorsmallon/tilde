@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The entity family's CORE: the declared enums, the components and
 // the base every entity derives from. Everything ONE entity's struct
@@ -274,9 +274,10 @@ enum class Movement_Override : uint8_t
   Statue = 3,
   Pilot = 4,
   Merged = 5,
+  Noclip = 6,
 };
 
-constexpr uint32_t Movement_Override_COUNT = 6;
+constexpr uint32_t Movement_Override_COUNT = 7;
 
 const char* to_string(Movement_Override value);
 template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text);
@@ -316,48 +317,44 @@ enum class entity_type : uint16_t
   Player_Spectate_Entity = 2,
   Player_Entity = 3,
   Weapon_Entity = 4,
-  Rocket_Entity = 5,
-  Hook_Entity = 6,
-  Kooh_Entity = 7,
-  Ricochet_Entity = 8,
-  Platform_Entity = 9,
-  Shrinking_Platform_Entity = 10,
-  Extending_Platform_Entity = 11,
-  Guided_Rocket_Entity = 12,
-  Canopy_Entity = 13,
-  Bubble_Entity = 14,
-  Damageable_Entity = 15,
-  Particle_Emitter_Entity = 16,
-  Sound_Emitter_Entity = 17,
-  Point_Light_Entity = 18,
-  Spot_Light_Entity = 19,
-  Directional_Light_Entity = 20,
-  Trigger_Volume_Entity = 21,
-  Jump_Pad_Entity = 22,
-  Reflection_Volume_Entity = 23,
-  Game_Rules_Entity = 24,
-  Logic_Counter_Entity = 25,
-  Geometry_Owner_Entity = 26,
-  Ping_Marker_Entity = 27,
-  Logic_Timer_Entity = 28,
-  Path_Node_Entity = 29,
-  Mover_Entity = 30,
-  Launcher_Entity = 31,
-  Movement_Modifier_Entity = 32,
-  Remnant_Entity = 33,
-  Modifier_Shot_Entity = 34,
-  Timed_Movement_Modifier_Entity = 35,
-  Weapon_Emancipation_Grill_Entity = 36,
-  Emancipated_Weapon_Entity = 37,
-  Void_Entity = 38,
-  Reveal_Light_Entity = 39,
-  Fog_Volume_Entity = 40,
-  Lens_Entity = 41,
+  Shot_Entity = 5,
+  Platform_Entity = 6,
+  Shrinking_Platform_Entity = 7,
+  Extending_Platform_Entity = 8,
+  Guided_Rocket_Entity = 9,
+  Canopy_Entity = 10,
+  Bubble_Entity = 11,
+  Damageable_Entity = 12,
+  Particle_Emitter_Entity = 13,
+  Sound_Emitter_Entity = 14,
+  Point_Light_Entity = 15,
+  Spot_Light_Entity = 16,
+  Directional_Light_Entity = 17,
+  Trigger_Volume_Entity = 18,
+  Jump_Pad_Entity = 19,
+  Reflection_Volume_Entity = 20,
+  Game_Rules_Entity = 21,
+  Logic_Counter_Entity = 22,
+  Geometry_Owner_Entity = 23,
+  Ping_Marker_Entity = 24,
+  Logic_Timer_Entity = 25,
+  Path_Node_Entity = 26,
+  Mover_Entity = 27,
+  Launcher_Entity = 28,
+  Movement_Modifier_Entity = 29,
+  Remnant_Entity = 30,
+  Timed_Movement_Modifier_Entity = 31,
+  Weapon_Emancipation_Grill_Entity = 32,
+  Emancipated_Weapon_Entity = 33,
+  Void_Entity = 34,
+  Reveal_Light_Entity = 35,
+  Fog_Volume_Entity = 36,
+  Lens_Entity = 37,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 42;
+constexpr uint32_t ENTITY_TYPE_COUNT = 38;
 
 enum class component_type : uint16_t
 {

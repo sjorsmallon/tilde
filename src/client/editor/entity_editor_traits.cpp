@@ -38,10 +38,9 @@ void draw_player_spawn_shape(pass_builder_t& draws, const linalg::vec3& position
   const linalg::vec3 hull{shared::player_half_width,
                           shared::player_half_height,
                           shared::player_half_width};
-  draws.debug.box(position + linalg::vec3{0, shared::player_half_height, 0},
-                         hull, color);
+  draws.debug.box(shared::player_hull_center(position), hull, color);
 
-  const linalg::vec3 eye = position + linalg::vec3{0, shared::player_eye_height, 0};
+  const linalg::vec3 eye = shared::player_eye_position(position);
   const linalg::basis_t basis = linalg::basis_from(orientation);
   draws.debug.arrow(eye, eye + basis.forward * SPAWN_SIGHTLINE_LENGTH, color);
 
@@ -495,10 +494,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .draw_stand_in = &pyramid_marker_stand_in},
 
     {.type = entity_type::Weapon_Entity, .draw_diagram = &box_volume_diagram},
-    {.type = entity_type::Rocket_Entity}, // runtime only
-    {.type = entity_type::Hook_Entity}, // runtime only
-    {.type = entity_type::Kooh_Entity}, // runtime only
-    {.type = entity_type::Ricochet_Entity}, // runtime only
+    {.type = entity_type::Shot_Entity}, // runtime only
     {.type = entity_type::Platform_Entity}, // runtime only
     {.type = entity_type::Shrinking_Platform_Entity}, // runtime only
     {.type = entity_type::Extending_Platform_Entity}, // runtime only
@@ -551,7 +547,6 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
     {.type = entity_type::Launcher_Entity, .color = colors::orange, .draw_diagram = &aim_arrow_diagram},
     {.type = entity_type::Movement_Modifier_Entity, .color = colors::green, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Remnant_Entity}, // runtime only
-    {.type = entity_type::Modifier_Shot_Entity}, // runtime only
     {.type = entity_type::Timed_Movement_Modifier_Entity}, // runtime only
     {.type = entity_type::Weapon_Emancipation_Grill_Entity, .color = colors::red, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Emancipated_Weapon_Entity}, // runtime only

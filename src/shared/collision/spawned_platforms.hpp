@@ -38,18 +38,18 @@ struct common_platform_fields_t
 [[nodiscard]] common_platform_fields_t get_common_platform_fields(const entities::Shrinking_Platform_Entity& platform);
 
 // Whole ticks, so both sides round one number once.
-[[nodiscard]] uint32_t platform_solid_ticks(const common_platform_fields_t& platform, float tick_interval_seconds);
+[[nodiscard]] uint32_t platform_solid_ticks(const common_platform_fields_t& platform, uint32_t tickrate_hz);
 
 // Solid from the tick it lands until its solid time runs out: a function of the tick and replicated state alone.
 [[nodiscard]] bool platform_is_solid_at_tick(const common_platform_fields_t& platform, uint32_t tick,
-                                             float tick_interval_seconds);
+                                             uint32_t tickrate_hz);
 
 [[nodiscard]] bool platform_has_vanished_at_tick(const common_platform_fields_t& platform, uint32_t tick,
-                                                 float tick_interval_seconds);
+                                                 uint32_t tickrate_hz);
 
 // 0 when it lands, 1 when it vanishes; `tick_fraction` is how far into `tick` the draw is.
 [[nodiscard]] float platform_solid_fraction_elapsed(const common_platform_fields_t& platform, uint32_t tick,
-                                                    float tick_fraction, float tick_interval_seconds);
+                                                    float tick_fraction, uint32_t tickrate_hz);
 
 // 0 at launch, 1 as it lands; `tick_fraction` is how far into `tick` the draw is.
 [[nodiscard]] float platform_flight_fraction_elapsed(const common_platform_fields_t& platform, uint32_t tick,
@@ -58,7 +58,7 @@ struct common_platform_fields_t
 // half_extents_at_launch growing to half_extents over the flight (cubic ease out), then shrinking toward
 // half_extents_when_vanishing as the solid time elapses.
 [[nodiscard]] linalg::vec3f platform_half_extents_at(const common_platform_fields_t& platform, uint32_t tick,
-                                                     float tick_fraction, float tick_interval_seconds);
+                                                     float tick_fraction, uint32_t tickrate_hz);
 
 // The draw's dissolve threshold: 0 until the last PLATFORM_DISSOLVE_OVER_LAST_FRACTION of the solid time,
 // 1 as it vanishes.
@@ -75,36 +75,36 @@ constexpr float PLATFORM_DISSOLVE_OVER_LAST_FRACTION = 0.2f;
 // grows THROUGH a hull in its path: its cut never crushes.
 // Whole ticks from spawned_tick until it is grown, at least one.
 [[nodiscard]] uint32_t extending_platform_extend_ticks(const entities::Extending_Platform_Entity& platform,
-                                                       float tick_interval_seconds);
+                                                       uint32_t tickrate_hz);
 
 // Set down and not yet gone: the ticks it is drawn.
 [[nodiscard]] bool extending_platform_exists_at_tick(const entities::Extending_Platform_Entity& platform,
-                                                     uint32_t tick, float tick_interval_seconds);
+                                                     uint32_t tick, uint32_t tickrate_hz);
 
 // The ticks it is in the cut: those it exists, less its first passable_seconds.
 [[nodiscard]] bool extending_platform_is_solid_at_tick(const entities::Extending_Platform_Entity& platform,
-                                                       uint32_t tick, float tick_interval_seconds);
+                                                       uint32_t tick, uint32_t tickrate_hz);
 
 [[nodiscard]] bool extending_platform_has_vanished_at_tick(
-    const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_interval_seconds);
+    const entities::Extending_Platform_Entity& platform, uint32_t tick, uint32_t tickrate_hz);
 
 // How far along its forward it reaches at `tick`; `tick_fraction` is how far into the tick the draw is.
 [[nodiscard]] float extending_platform_length_at(const entities::Extending_Platform_Entity& platform,
                                                  uint32_t tick, float tick_fraction,
-                                                 float tick_interval_seconds);
+                                                 uint32_t tickrate_hz);
 
 // 0 until it is grown, 1 as it vanishes: the dissolve's clock.
 [[nodiscard]] float extending_platform_solid_fraction_elapsed(
     const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_fraction,
-    float tick_interval_seconds);
+    uint32_t tickrate_hz);
 
 // The box it is at `tick`, from its set-down point along its forward; the cut reads it at fraction 0.
 [[nodiscard]] oriented_box_t extending_platform_box_at(
     const entities::Extending_Platform_Entity& platform, uint32_t tick, float tick_fraction,
-    float tick_interval_seconds);
+    uint32_t tickrate_hz);
 
-// APPENDS, after collect_movers has sized the list for the map's own movers. All three platform types.
-void collect_spawned_platforms(const Entity_System& system, uint32_t tick,
+// APPENDS, after compute_path_movers_at_tick has sized the list for the map's own movers. All three platform types.
+void compute_spawned_platforms_at_tick(const Entity_System& system, uint32_t tick,
                                const fixed_arc_flight_settings_t& settings, std::vector<mover_t>& out);
 
 } // namespace shared

@@ -18,7 +18,7 @@ namespace shared
 
 struct Entity_System;
 
-// APPENDS, after collect_movers has sized the list for the map's own movers.
-void collect_lens_panes(const Entity_System& system, std::vector<mover_t>& out);
+// APPENDS, after compute_path_movers_at_tick has sized the list for the map's own movers.
+void compute_lens_panes(const Entity_System& system, std::vector<mover_t>& out);
 
 } // namespace shared

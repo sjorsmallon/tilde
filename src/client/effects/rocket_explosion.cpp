@@ -43,7 +43,7 @@ void on_rocket_explosion(client_context_t &context,
     const vec3f     probe_from     = data.origin + surface_normal * probe_step;
 
     shared::disabled_geometry_t hidden;
-    shared::collect_hidden_geometry(context.world.session.entity_system,
+    shared::compute_hidden_geometry(context.world.session.entity_system,
                                     context.world.session.owner_of, hidden);
 
     ray_hit_result_t hit;

@@ -37,11 +37,11 @@ struct movement_modifier_t
 // has not stamped yet. Both sides ask this, so the client predicts the expiry as it predicts a platform's.
 [[nodiscard]] bool timed_movement_modifier_is_active_at(
     const entities::Timed_Movement_Modifier_Entity& modifier, uint32_t tick,
-    float tick_interval_seconds);
+    uint32_t tickrate_hz);
 
 // Every map-placed Movement_Modifier_Entity, then every Timed_Movement_Modifier_Entity, the latter enabled
 // only while active at `tick` and centred where its flight puts it at `tick`.
-void collect_movement_modifiers(Entity_System& system, uint32_t tick,
+void compute_movement_modifiers_at_tick(const Entity_System& system, uint32_t tick,
                                 const fixed_arc_flight_settings_t& flight,
                                 std::vector<movement_modifier_t>& out);
 

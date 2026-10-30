@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
 //
 // Binds every @Server command. Each slot gets the command's generated ARGUMENT
 // BINDER, which parses the console tokens against the declared signature
@@ -368,6 +368,20 @@ bool invoke_sv_replay_stop(Span<std::string_view> args, const command_context_t&
   return true;
 }
 
+// noclip
+bool invoke_noclip(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 0u)
+  {
+    usage_error(out_reply, command_id::noclip, args.size());
+    return false;
+  }
+
+  commands::noclip(context);
+  return true;
+}
+
 } // namespace
 
 void bind_server_commands(command_table_t& table)
@@ -388,6 +402,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::ready] = &invoke_ready;
   table.binders[(uint32_t)command_id::sv_replay_record] = &invoke_sv_replay_record;
   table.binders[(uint32_t)command_id::sv_replay_stop] = &invoke_sv_replay_stop;
+  table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;
 }
 
 } // namespace cvars

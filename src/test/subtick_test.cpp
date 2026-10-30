@@ -646,12 +646,12 @@ static void test_a_tick_count_is_never_shorter_than_the_duration()
 {
   printf("a duration rounds UP into a tick count, and a positive one is never zero\n");
 
-  check_equal(ticks_from_seconds(2.0f, 60.f), 120, "an exact duration is exact");
-  check_equal(ticks_from_seconds(0.1f, 60.f), 6, "float noise does not round 6 down to 5");
-  check_equal(ticks_from_seconds(0.3333f, 60.f), 20, "an awkward one rounds up");
-  check_equal(ticks_from_seconds(0.001f, 60.f), 1, "under a tick is still a whole tick");
-  check_equal(ticks_from_seconds(0.f, 60.f), 0, "zero is now");
-  check_equal(ticks_from_seconds(-1.f, 60.f), 0, "backwards is now, not a wrap");
+  check_equal(ticks_from_seconds(2.0f, 60u), 120, "an exact duration is exact");
+  check_equal(ticks_from_seconds(0.1f, 60u), 6, "float noise does not round 6 down to 5");
+  check_equal(ticks_from_seconds(0.3333f, 60u), 20, "an awkward one rounds up");
+  check_equal(ticks_from_seconds(0.001f, 60u), 1, "under a tick is still a whole tick");
+  check_equal(ticks_from_seconds(0.f, 60u), 0, "zero is now");
+  check_equal(ticks_from_seconds(-1.f, 60u), 0, "backwards is now, not a wrap");
 }
 
 static void test_the_step_a_press_opens_carries_its_slot()

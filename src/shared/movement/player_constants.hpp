@@ -15,6 +15,9 @@ namespace shared
 constexpr float player_half_width  = 16.f;
 constexpr float player_half_height = 36.f;
 
+// A face is ground when it leans no further than 45 degrees from up; the navmesh baker walks the same faces.
+constexpr float GROUND_NORMAL_MINIMUM_Y = 0.707f;
+
 // Eye offset above the player's origin, which sits at the FEET.
 //
 // This is Source's VEC_VIEW and it must be ONE constant: the client draws the
@@ -35,6 +38,26 @@ constexpr float player_eye_height = 64.f;
 
 // Where a placed thing that reaches along the aim starts (place_anchor_t::Waist), above the FEET.
 constexpr float player_waist_height = 32.f;
+
+[[nodiscard]] inline linalg::vec3f player_eye_position(const linalg::vec3f& feet)
+{
+  return {feet.x, feet.y + player_eye_height, feet.z};
+}
+
+[[nodiscard]] inline linalg::vec3f player_feet_from_eye(const linalg::vec3f& eye)
+{
+  return {eye.x, eye.y - player_eye_height, eye.z};
+}
+
+[[nodiscard]] inline linalg::vec3f player_hull_center(const linalg::vec3f& feet)
+{
+  return {feet.x, feet.y + player_half_height, feet.z};
+}
+
+[[nodiscard]] inline linalg::vec3f player_feet_from_hull_center(const linalg::vec3f& center)
+{
+  return {center.x, center.y - player_half_height, center.z};
+}
 
 // The standing hull as world bounds, from a position at the FEET.
 //

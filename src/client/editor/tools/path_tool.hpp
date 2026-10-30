@@ -85,7 +85,7 @@ private:
   void end_field_edit(editor_context_t& ctx);
 
   [[nodiscard]] float chain_cycle_seconds(const std::vector<shared::entity_uid_t>& walk,
-                                          float tickrate) const;
+                                          uint32_t tickrate_hz) const;
   void draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws);
 };
 

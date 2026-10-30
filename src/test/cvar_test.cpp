@@ -20,7 +20,7 @@
 //      direct field write replicates -- there is no Set() to forget.
 //
 // What this cannot reach is the server_impl / play_state wiring (who sends
-// when); that is exercised by running MyGame_Client against MyGame_Server.
+// when); that is exercised by running MVMT_Client against MVMT_Server.
 
 #include "cvars/cvar_console.hpp"
 #include "cvars/generated/cvars_generated.hpp"
@@ -577,7 +577,7 @@ void test_console_missing_handlers()
 
   // A @Client command reaching a dedicated server, which never called
   // bind_client_commands.
-  check(run(state, table, "bind x noclip", &reply) ==
+  check(run(state, table, "bind x grab_frame", &reply) ==
             cvars::console_result_t::no_handler,
         "a @Client command with no handler is no_handler");
 }

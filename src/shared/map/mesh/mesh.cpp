@@ -13,31 +13,27 @@ namespace shared
 namespace
 {
 
-linalg::vec3 newell_normal(const mesh_geometry_t &mesh, const std::vector<uint32_t> &ring)
-{
-  linalg::vec3 normal{0.f, 0.f, 0.f};
-  for (size_t i = 0; i < ring.size(); ++i)
-  {
-    const linalg::vec3 &current = mesh.vertices[ring[i]];
-    const linalg::vec3 &next = mesh.vertices[ring[(i + 1) % ring.size()]];
-    normal.x += (current.y - next.y) * (current.z + next.z);
-    normal.y += (current.z - next.z) * (current.x + next.x);
-    normal.z += (current.x - next.x) * (current.y + next.y);
-  }
-  return normal;
-}
-
 float orientation(const linalg::vec2 &a, const linalg::vec2 &b, const linalg::vec2 &c)
 {
   return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
-linalg::vec3 ring_centroid(const mesh_geometry_t &mesh, const std::vector<uint32_t> &ring)
+// The ring in the plane of `unit_normal`, relative to its first vertex, wound
+// as in space: counter-clockwise about the normal comes out counter-clockwise.
+std::vector<linalg::vec2> project_ring_into_plane(const mesh_geometry_t &mesh,
+                                                  Span<const uint32_t> ring,
+                                                  const linalg::vec3 &unit_normal)
 {
-  linalg::vec3 sum{0.f, 0.f, 0.f};
+  tangent_basis_t tangents = compute_axis_aligned_tangents(unit_normal);
+  if (linalg::dot(linalg::cross(tangents.u, tangents.v), unit_normal) < 0.f)
+    tangents.v = tangents.v * -1.f;
+  const linalg::vec3 origin = mesh.vertices[ring[0]];
+  std::vector<linalg::vec2> projected;
+  projected.reserve(ring.count);
   for (uint32_t index : ring)
-    sum = sum + mesh.vertices[index];
-  return sum * (1.f / (float)ring.size());
+    projected.push_back({linalg::dot(mesh.vertices[index] - origin, tangents.u),
+                         linalg::dot(mesh.vertices[index] - origin, tangents.v)});
+  return projected;
 }
 
 // The ring in the plane of `unit_normal`: the first pair of non-adjacent edges
@@ -45,15 +41,9 @@ linalg::vec3 ring_centroid(const mesh_geometry_t &mesh, const std::vector<uint32
 std::optional<mesh_defect_t> find_ring_crossing(const mesh_geometry_t &mesh,
                                                 const std::vector<uint32_t> &ring,
                                                 uint32_t face_index,
-                                                const linalg::vec3 &unit_normal,
-                                                const linalg::vec3 &centroid)
+                                                const linalg::vec3 &unit_normal)
 {
-  const tangent_basis_t tangents = compute_axis_aligned_tangents(unit_normal);
-  std::vector<linalg::vec2> projected;
-  projected.reserve(ring.size());
-  for (uint32_t index : ring)
-    projected.push_back({linalg::dot(mesh.vertices[index] - centroid, tangents.u),
-                         linalg::dot(mesh.vertices[index] - centroid, tangents.v)});
+  const std::vector<linalg::vec2> projected = project_ring_into_plane(mesh, ring, unit_normal);
   const size_t count = ring.size();
   for (size_t i = 0; i < count; ++i)
   {
@@ -84,9 +74,9 @@ std::optional<mesh_defect_t> find_face_defect(const mesh_geometry_t &mesh, uint3
         return mesh_defect_t{mesh_defect_kind_t::Face_Repeats_A_Vertex, face_index, ring[i], 0};
   }
 
-  const linalg::vec3 normal = newell_normal(mesh, ring);
+  const linalg::vec3 normal = compute_ring_normal(mesh, ring);
   const float normal_length = linalg::length(normal);
-  const linalg::vec3 centroid = ring_centroid(mesh, ring);
+  const linalg::vec3 centroid = compute_ring_centroid(mesh, ring);
 
   // A symmetric bow tie sums to no area at all, so the crossing test has to
   // find its plane from a corner instead and run before the area verdict.
@@ -101,7 +91,7 @@ std::optional<mesh_defect_t> find_face_defect(const mesh_geometry_t &mesh, uint3
   }
 
   if (std::optional<mesh_defect_t> crossing =
-          find_ring_crossing(mesh, ring, face_index, linalg::normalize(basis_normal), centroid))
+          find_ring_crossing(mesh, ring, face_index, linalg::normalize(basis_normal)))
     return crossing;
   if (normal_length <= 1e-6f)
     return mesh_defect_t{mesh_defect_kind_t::Face_Is_Degenerate, face_index, 0, 0};
@@ -222,7 +212,7 @@ float compute_mesh_face_area(const mesh_geometry_t &mesh, uint32_t face_index)
 {
   if (face_index >= mesh.faces.size())
     fatal_error("compute_mesh_face_area: face {} of {}", face_index, mesh.faces.size());
-  return 0.5f * linalg::length(newell_normal(mesh, mesh.faces[face_index].vertex_indices));
+  return 0.5f * linalg::length(compute_ring_normal(mesh, mesh.faces[face_index].vertex_indices));
 }
 
 std::vector<std::array<uint32_t, 3>> triangulate_mesh_face(const mesh_geometry_t &mesh,
@@ -243,7 +233,7 @@ std::vector<std::array<uint32_t, 3>> triangulate_mesh_face(const mesh_geometry_t
       triangles.push_back({remaining[0], remaining[i], remaining[i + 1]});
   };
 
-  const linalg::vec3 newell = newell_normal(mesh, ring);
+  const linalg::vec3 newell = compute_ring_normal(mesh, ring);
   const float newell_length = linalg::length(newell);
   std::vector<uint32_t> remaining(count);
   for (uint32_t i = 0; i < count; ++i)
@@ -255,17 +245,8 @@ std::vector<std::array<uint32_t, 3>> triangulate_mesh_face(const mesh_geometry_t
     return triangles;
   }
 
-  const linalg::vec3 normal = newell * (1.f / newell_length);
-  const linalg::vec3 seed = std::fabs(normal.x) < 0.9f ? linalg::vec3{1.f, 0.f, 0.f}
-                                                       : linalg::vec3{0.f, 1.f, 0.f};
-  const linalg::vec3 u = linalg::normalize(linalg::cross(normal, seed));
-  const linalg::vec3 v = linalg::cross(normal, u);
-  std::vector<linalg::vec2> projected(count);
-  for (uint32_t i = 0; i < count; ++i)
-  {
-    const linalg::vec3 &point = mesh.vertices[ring[i]];
-    projected[i] = {linalg::dot(point, u), linalg::dot(point, v)};
-  }
+  const std::vector<linalg::vec2> projected =
+      project_ring_into_plane(mesh, ring, newell * (1.f / newell_length));
 
   const auto inside_or_on = [&](const linalg::vec2 &a, const linalg::vec2 &b,
                                 const linalg::vec2 &c, const linalg::vec2 &p)
@@ -391,25 +372,38 @@ std::vector<mesh_shell_t> separate_mesh_shells_with_sources(const mesh_geometry_
     std::sort(shell_faces.begin(), shell_faces.end());
 
     mesh_shell_t shell{copy_mesh_pose_and_surface(mesh), {}};
-    std::vector<uint32_t> new_index(mesh.vertices.size(), UINT32_MAX);
+    shell.mesh.vertices = mesh.vertices;
     for (uint32_t face_index : shell_faces)
     {
-      mesh_face_t face = mesh.faces[face_index];
-      for (uint32_t &index : face.vertex_indices)
-      {
-        if (new_index[index] == UINT32_MAX)
-        {
-          new_index[index] = (uint32_t)shell.mesh.vertices.size();
-          shell.mesh.vertices.push_back(mesh.vertices[index]);
-        }
-        index = new_index[index];
-      }
-      shell.mesh.faces.push_back(std::move(face));
+      shell.mesh.faces.push_back(mesh.faces[face_index]);
       shell.source_faces.push_back(face_index);
     }
+    drop_unused_mesh_vertices(shell.mesh);
     shells.push_back(std::move(shell));
   }
   return shells;
+}
+
+linalg::vec3 compute_ring_normal(const mesh_geometry_t &mesh, Span<const uint32_t> ring)
+{
+  linalg::vec3 normal{0.f, 0.f, 0.f};
+  for (uint32_t i = 0; i < ring.count; ++i)
+  {
+    const linalg::vec3 &current = mesh.vertices[ring[i]];
+    const linalg::vec3 &next = mesh.vertices[ring[(i + 1) % ring.count]];
+    normal.x += (current.y - next.y) * (current.z + next.z);
+    normal.y += (current.z - next.z) * (current.x + next.x);
+    normal.z += (current.x - next.x) * (current.y + next.y);
+  }
+  return normal;
+}
+
+linalg::vec3 compute_ring_centroid(const mesh_geometry_t &mesh, Span<const uint32_t> ring)
+{
+  linalg::vec3 sum{0.f, 0.f, 0.f};
+  for (uint32_t index : ring)
+    sum = sum + mesh.vertices[index];
+  return sum * (1.f / (float)ring.count);
 }
 
 Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index)
@@ -417,11 +411,39 @@ Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index)
   if (face_index >= mesh.faces.size())
     fatal_error("compute_mesh_face_plane: face {} of {}", face_index, mesh.faces.size());
   const std::vector<uint32_t> &ring = mesh.faces[face_index].vertex_indices;
-  const linalg::vec3 normal = newell_normal(mesh, ring);
+  const linalg::vec3 normal = compute_ring_normal(mesh, ring);
   const float normal_length = linalg::length(normal);
   if (normal_length <= 1e-6f)
     fatal_error("compute_mesh_face_plane: face {} is degenerate", face_index);
-  return Plane{.point = ring_centroid(mesh, ring), .normal = normal * (1.f / normal_length)};
+  return Plane{.point = compute_ring_centroid(mesh, ring), .normal = normal * (1.f / normal_length)};
+}
+
+std::vector<Plane> compute_mesh_face_planes(const mesh_geometry_t &mesh)
+{
+  std::vector<Plane> planes;
+  planes.reserve(mesh.faces.size());
+  for (uint32_t face_index = 0; face_index < mesh.faces.size(); ++face_index)
+    planes.push_back(compute_mesh_face_plane(mesh, face_index));
+  return planes;
+}
+
+void drop_unused_mesh_vertices(mesh_geometry_t &mesh)
+{
+  std::vector<uint32_t> new_index(mesh.vertices.size(), UINT32_MAX);
+  std::vector<linalg::vec3> kept;
+  for (mesh_face_t &face : mesh.faces)
+  {
+    for (uint32_t &index : face.vertex_indices)
+    {
+      if (new_index[index] == UINT32_MAX)
+      {
+        new_index[index] = (uint32_t)kept.size();
+        kept.push_back(mesh.vertices[index]);
+      }
+      index = new_index[index];
+    }
+  }
+  mesh.vertices = std::move(kept);
 }
 
 bool planes_coincide(const Plane &a, const Plane &b)

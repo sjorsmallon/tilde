@@ -138,12 +138,12 @@ void Path_Tool::refresh(editor_context_t& ctx)
   cycle_seconds = 0.0f;
   for (const entities::Mover_Entity& each : scratch.system.entities_of_type<entities::Mover_Entity>())
     cycle_seconds = std::max(cycle_seconds,
-                             chain_cycle_seconds(chain_through(scratch, each.follow.from), ctx.tickrate));
+                             chain_cycle_seconds(chain_through(scratch, each.follow.from), ctx.tickrate_hz));
 }
 
-float Path_Tool::chain_cycle_seconds(const std::vector<shared::entity_uid_t>& walk, float tickrate) const
+float Path_Tool::chain_cycle_seconds(const std::vector<shared::entity_uid_t>& walk, uint32_t tickrate_hz) const
 {
-  if (walk.size() < 2 || tickrate <= 0.0f)
+  if (walk.size() < 2 || tickrate_hz == 0)
     return 0.0f;
 
   const bool closed = chain_is_closed(scratch, walk);
@@ -153,11 +153,11 @@ float Path_Tool::chain_cycle_seconds(const std::vector<shared::entity_uid_t>& wa
   for (size_t index = 0; index < segment_count; ++index)
   {
     const std::optional<shared::path_segment_t> segment =
-        shared::try_cut_path_segment(scratch.system, scratch.links, walk[index], 1, tickrate);
+        shared::try_cut_path_segment(scratch.system, scratch.links, walk[index], 1, tickrate_hz);
     if (segment)
       ticks += std::max(1u, segment->traversal_ticks + segment->wait_ticks);
   }
-  return (float)(closed ? ticks : ticks * 2) / tickrate;
+  return static_cast<float>(closed ? ticks : ticks * 2) * shared::tick_interval_seconds(tickrate_hz);
 }
 
 gizmo_view_t Path_Tool::make_gizmo_view() const
@@ -528,8 +528,7 @@ void Path_Tool::end_field_edit(editor_context_t& ctx)
 
 void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
 {
-  const float tickrate = ctx.tickrate;
-  const float preview_ticks = std::max(0.0f, preview_seconds * tickrate);
+  const float preview_ticks = std::max(0.0f, preview_seconds * static_cast<float>(ctx.tickrate_hz));
   const uint32_t tick = (uint32_t)preview_ticks;
   const float fraction = preview_ticks - (float)tick;
 
@@ -541,8 +540,8 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
 
     const shared::path_pose_t rest_frame = shared::mover_rest_frame(scratch.system, mover);
     const shared::path_pose_t pose = shared::blend_path_poses(
-        shared::mover_pose_at(scratch.system, scratch.links, previewed, rest_frame, tick, tickrate),
-        shared::mover_pose_at(scratch.system, scratch.links, previewed, rest_frame, tick + 1, tickrate),
+        shared::mover_pose_at(scratch.system, scratch.links, previewed, rest_frame, tick, ctx.tickrate_hz),
+        shared::mover_pose_at(scratch.system, scratch.links, previewed, rest_frame, tick + 1, ctx.tickrate_hz),
         fraction);
 
     const std::vector<shared::entity_uid_t> owned = geometry_owned_by(*ctx.map, mover.entity_id);

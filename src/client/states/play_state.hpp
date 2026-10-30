@@ -80,10 +80,9 @@ private:
 
   camera_t camera;
 
-  // there's some awkwardness with noclip camera that we don't really move
-  // but snap to a new position.
-  camera_t noclip_camera;
-  bool noclip_was_active = false;
+  // Seeded from the resolved view when cl_free_camera goes on, flown while it is on.
+  camera_t free_camera;
+  bool free_camera_was_active = false;
 
   pass_builder_t scene;
 

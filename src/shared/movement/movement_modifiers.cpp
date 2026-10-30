@@ -11,20 +11,18 @@ namespace shared
 {
 
 bool timed_movement_modifier_is_active_at(const entities::Timed_Movement_Modifier_Entity& modifier,
-                                          uint32_t tick, float tick_interval_seconds)
+                                          uint32_t tick, uint32_t tickrate_hz)
 {
-  if (modifier.spawned_tick == 0 || tick_interval_seconds <= 0.f)
+  if (modifier.spawned_tick == 0)
     return false;
-  const uint32_t lifetime_ticks =
-      static_cast<uint32_t>(std::lround(modifier.lifetime_seconds / tick_interval_seconds));
+  const uint32_t lifetime_ticks = ticks_from_seconds(modifier.lifetime_seconds, tickrate_hz);
   return tick > modifier.spawned_tick && tick <= modifier.spawned_tick + lifetime_ticks;
 }
 
-void collect_movement_modifiers(Entity_System& system, uint32_t tick,
+void compute_movement_modifiers_at_tick(const Entity_System& system, uint32_t tick,
                                 const fixed_arc_flight_settings_t& flight,
                                 std::vector<movement_modifier_t>& out)
 {
-  const float tick_interval_seconds = flight.tick_interval_seconds;
   out.clear();
 
   for (const entities::Movement_Modifier_Entity& modifier :
@@ -51,7 +49,7 @@ void collect_movement_modifiers(Entity_System& system, uint32_t tick,
     out.push_back({
         .uid     = modifier.entity_id,
         .bounds  = {.min = center - modifier.half_extents, .max = center + modifier.half_extents},
-        .enabled = timed_movement_modifier_is_active_at(modifier, tick, tick_interval_seconds),
+        .enabled = timed_movement_modifier_is_active_at(modifier, tick, flight.tickrate_hz),
         .gravity_scale    = modifier.gravity_scale,
         .run_speed_scale  = modifier.run_speed_scale,
         .jump_speed_scale = modifier.jump_speed_scale,

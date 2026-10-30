@@ -21,8 +21,8 @@ void launch_fixed_arc_flight(server_context_t& context, const entities::Projecti
                                                          : entities::Team_Allegiance::Free_For_All)
           .disabled_geometry;
 
-  const uint32_t wanted_flight_ticks = static_cast<uint32_t>(
-      std::lround(launch.flight_seconds / flight_settings.tick_interval_seconds));
+  const uint32_t wanted_flight_ticks =
+      shared::ticks_from_seconds(launch.flight_seconds, flight_settings.tickrate_hz);
 
   out_flight.launch_position = spawn_position;
   out_flight.launch_tick     = context.tick_number;

@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Every entity's defaults, as the constructor its header declares. They are
 // out of line so that tuning a value is a change to this one TU rather than
@@ -73,40 +73,12 @@ Weapon_Entity::Weapon_Entity()
   type = entity_type::Weapon_Entity;
 }
 
-Rocket_Entity::Rocket_Entity()
-  : projectile({.weapon_id = Weapon::Rocket_Launcher}),
-    lifetime(5.0f),
-    collision_radius(12.0f),
-    render({.mesh = assets::mesh_id("rocket")})
+Shot_Entity::Shot_Entity()
+  : projectile{},
+    lifetime{},
+    render{}
 {
-  type = entity_type::Rocket_Entity;
-}
-
-Hook_Entity::Hook_Entity()
-  : projectile({.weapon_id = Weapon::Hook}),
-    lifetime(4.0f),
-    collision_radius(25.0f),
-    render({.mesh = assets::mesh_id("hookshot"), .scale = {0.03f, 0.03f, 0.03f}})
-{
-  type = entity_type::Hook_Entity;
-}
-
-Kooh_Entity::Kooh_Entity()
-  : projectile({.weapon_id = Weapon::Kooh}),
-    lifetime(4.0f),
-    collision_radius(25.0f),
-    render({.mesh = assets::mesh_id("hookshot"), .scale = {0.03f, 0.03f, 0.03f}})
-{
-  type = entity_type::Kooh_Entity;
-}
-
-Ricochet_Entity::Ricochet_Entity()
-  : projectile({.weapon_id = Weapon::Ricochet}),
-    lifetime(3.0f),
-    collision_radius(8.0f),
-    render({.mesh = assets::mesh_id("Sphere"), .color = {1.0f, 0.45f, 0.15f}, .scale = {16.0f, 16.0f, 16.0f}})
-{
-  type = entity_type::Ricochet_Entity;
+  type = entity_type::Shot_Entity;
 }
 
 Platform_Entity::Platform_Entity()
@@ -376,15 +348,6 @@ Remnant_Entity::Remnant_Entity()
     render({.mesh = assets::mesh_id("Duck")})
 {
   type = entity_type::Remnant_Entity;
-}
-
-Modifier_Shot_Entity::Modifier_Shot_Entity()
-  : projectile({.weapon_id = Weapon::Modifier_Gun}),
-    lifetime(4.0f),
-    collision_radius(8.0f),
-    render({.mesh = assets::mesh_id("Sphere"), .color = {0.5f, 1.0f, 0.5f}, .scale = {16.0f, 16.0f, 16.0f}})
-{
-  type = entity_type::Modifier_Shot_Entity;
 }
 
 Timed_Movement_Modifier_Entity::Timed_Movement_Modifier_Entity()

@@ -9,12 +9,6 @@
 namespace shared
 {
 
-namespace
-{
-// A face is ground when it leans no further than 45 degrees from up.
-constexpr float GROUND_NORMAL_MINIMUM_Y = 0.707f;
-} // namespace
-
 vec3 clip_vector(vec3 in, vec3 normal, const float overbounce)
 {
   // how strong is the incoming vector in the direction of the face normal?

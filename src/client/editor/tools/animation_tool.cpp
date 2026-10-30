@@ -349,7 +349,7 @@ std::optional<view_focus_t> Animation_Tool::view_focus() const
 
   // if there's nothing just take the canonical player height as a signal.
   if (!model.posed || model.posed_skeleton.model_space.empty())
-    return view_focus_t{.center = {0.0f, shared::player_half_height, 0.0f},
+    return view_focus_t{.center = shared::player_hull_center({}),
                         .radius = shared::player_half_height};
 
   // otherwise, try to calculate the bounds of the to-animate object from the bones. 
@@ -479,7 +479,7 @@ void Animation_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draw
   // the hull that player_move uses. not authorable here, but just for reference.
   if (display.movement_hull)
   {
-    draws.debug.box({0, shared::player_half_height, 0},
+    draws.debug.box(shared::player_hull_center({}),
                     {shared::player_half_width, shared::player_half_height,
                      shared::player_half_width},
                     colors::white);

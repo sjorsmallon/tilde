@@ -3,7 +3,7 @@
 
 #include "assets/asset_state.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
-#include "entities/generated/entities/rocket_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
 #include "shared/network/cvar_mirror.hpp"
 #include "shared/network/entity_snapshot.hpp"
@@ -224,7 +224,7 @@ void build_world(Entity_System& world, uint32_t tick)
   }
   if (tick >= 50 && tick < 180)
   {
-    entities::Rocket_Entity rocket;
+    entities::Shot_Entity rocket;
     rocket.entity_id = 77;
     rocket.position  = {(float)tick * 30.0f, 10.0f, 0.0f};
     world.add_entity(rocket.entity_id, &rocket);

@@ -4,6 +4,7 @@
 
 #include "entities/generated/entities_core_generated.hpp"
 #include "linalg.hpp"
+#include "tick_clock.hpp"
 #include "weapons.hpp"
 
 #include <algorithm>
@@ -14,8 +15,8 @@ namespace shared
 
 struct fixed_arc_flight_settings_t
 {
-  float tick_interval_seconds = 0.f;
-  float gravity               = 0.f;
+  uint32_t tickrate_hz = 0;
+  float    gravity     = 0.f;
 };
 
 [[nodiscard]] inline linalg::vec3f flight_position_after(const entities::Projectile&      projectile,
@@ -27,7 +28,7 @@ struct fixed_arc_flight_settings_t
     return flight.launch_position;
 
   // Quadratic ease-out along the ballistic arc: same path and endpoint, leaves at twice the speed and arrives at rest.
-  const float flight_seconds = static_cast<float>(flight.flight_ticks) * settings.tick_interval_seconds;
+  const float flight_seconds = static_cast<float>(flight.flight_ticks) * tick_interval_seconds(settings.tickrate_hz);
   const float progress       = static_cast<float>(std::min(ticks_since_launch, flight.flight_ticks)) /
                                static_cast<float>(flight.flight_ticks);
   const float remaining      = 1.f - progress;

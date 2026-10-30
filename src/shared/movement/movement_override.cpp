@@ -7,6 +7,23 @@
 namespace shared
 {
 
+void attach_override(entities::Movement& movement, const override_attach_t& attach)
+{
+  movement.active_override            = attach.kind;
+  movement.override_target_uid        = attach.target_uid;
+  movement.override_target_position   = attach.target_position;
+  movement.override_seconds_remaining = attach.seconds;
+  movement.override_speed             = attach.speed;
+  movement.override_radius            = attach.radius;
+}
+
+void clear_override(entities::Movement& movement)
+{
+  movement.active_override            = entities::Movement_Override::None;
+  movement.override_target_uid        = null_entity_uid;
+  movement.override_seconds_remaining = 0.f;
+}
+
 namespace
 {
 
@@ -23,9 +40,7 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   out.ended        = movement.active_override;
   out.end_velocity = exit_velocity;
 
-  movement.active_override            = entities::Movement_Override::None;
-  movement.override_target_uid        = shared::null_entity_uid;
-  movement.override_seconds_remaining = 0.f;
+  clear_override(movement);
 
   apply_impulse(settings, state,
                 {.horizontal = impulse_mode_t::Set,
@@ -180,11 +195,44 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   return result;
 }
 
+// A noclip flies the hull by the keys, along the aim at override_speed and up on jump, through
+// everything: the step translates it and sweeps nothing. The clock is its exit: the command that
+// attached it zeroes override_seconds_remaining, and the step ends it still, through the one door.
+[[nodiscard]] override_step_t step_noclip(const movement_settings_t& settings, move_state_t& state,
+                                          const move_input_t& input)
+{
+  entities::Movement& movement = state.movement;
+
+  override_step_t result{};
+  if (movement.override_seconds_remaining <= 0.f)
+  {
+    end_override(settings, state, vec3{}, result);
+    return result;
+  }
+
+  vec3 direction{};
+  if (input.buttons.forward_pressed)  direction = direction + input.front;
+  if (input.buttons.backward_pressed) direction = direction - input.front;
+  if (input.buttons.right_pressed)    direction = direction + input.right;
+  if (input.buttons.left_pressed)     direction = direction - input.right;
+  if (input.buttons.jump_pressed)     direction = direction + vec3{0.f, 1.f, 0.f};
+
+  const float direction_length = length(direction);
+  const vec3  velocity =
+      direction_length > 0.f ? direction * (movement.override_speed / direction_length) : vec3{};
+
+  result.moves          = true;
+  result.passes_through = true;
+  result.wanted         = {.velocity          = {velocity.x, 0.f, velocity.z},
+                           .vertical_velocity = velocity.y};
+  return result;
+}
+
 } // namespace
 
 override_step_t step_override(const movement_settings_t& settings,
                               const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
-                              move_state_t& state, const vec3& aim_direction, float dt)
+                              move_state_t& state, const move_input_t& input, float dt)
 {
   switch (state.movement.active_override)
   {
@@ -197,9 +245,11 @@ override_step_t step_override(const movement_settings_t& settings,
     case entities::Movement_Override::Statue:
       return step_statue(settings, state, dt);
     case entities::Movement_Override::Pilot:
-      return step_pilot(settings, bvh, world, state, aim_direction, dt);
+      return step_pilot(settings, bvh, world, state, input.front, dt);
     case entities::Movement_Override::Merged:
       return step_merged(settings, state, dt);
+    case entities::Movement_Override::Noclip:
+      return step_noclip(settings, state, input);
   }
   fatal_error("step_override: no arm for movement override {}",
               (int)state.movement.active_override);

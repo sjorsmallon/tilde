@@ -9,7 +9,7 @@
 namespace shared
 {
 
-void collect_statues(const Entity_System& system, std::vector<mover_t>& out)
+void compute_statue_movers(const Entity_System& system, std::vector<mover_t>& out)
 {
   for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
   {

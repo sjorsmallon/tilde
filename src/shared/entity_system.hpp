@@ -186,8 +186,8 @@ struct Entity_System
   std::array<Entity_Pool, entities::ENTITY_TYPE_COUNT> pools;
 
   // uid -> where it lives. This is the P7 handle mechanism: `entity_uid_t` is
-  // the handle the rest of the codebase already passes around (Rocket_Entity::
-  // owner_id, projectile_hit_t, snapshot_frame_t's keys), and this table is
+  // the handle the rest of the codebase already passes around (Projectile::
+  // owner_uid, projectile_hit_t, snapshot_frame_t's keys), and this table is
   // what finally makes it resolvable in one step
   // instead of a linear scan per system.
   std::unordered_map<entity_uid_t, entity_location_t> locations;

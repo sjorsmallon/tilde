@@ -14,6 +14,7 @@
 #include "../shared/round_phase_rules.hpp"
 #include "systems/game_rules_system.hpp"
 #include "../shared/subtick.hpp"
+#include "../shared/input_step.hpp"
 #include "map/surface_lookup.hpp"
 #include "../shared/weapon_instance.hpp"
 #include "../shared/weapons.hpp"
@@ -32,6 +33,31 @@
 
 namespace server
 {
+
+// The empty-magazine warning is rate limited per player; the clock refusals are terminal noise.
+static void log_refused_shot(server_context_t& context, int32_t client_slot,
+                             entities::Player_Entity& player, shared::shot_refusal_t refusal)
+{
+  const shared::weapon_definition_t* held =
+      shared::try_find_held_weapon_definition(context.world.session.entity_system, player);
+  const char* weapon_name = held != nullptr ? held->display_name : "an empty hand";
+
+  if (refusal != shared::shot_refusal_t::Empty)
+  {
+    log_terminal("slot {}: {} trigger refused, {}", client_slot, weapon_name,
+                 shared::to_string(refusal));
+    return;
+  }
+
+  const uint32_t warning_interval =
+      std::max(1u, context.cvars->sv_tickrate);
+  if (context.tick_number - player.last_empty_fire_warning_tick >= warning_interval)
+  {
+    player.last_empty_fire_warning_tick = context.tick_number;
+    log_warning("slot {}: trigger pulled on an empty {} — no shot resolved", client_slot,
+                weapon_name);
+  }
+}
 
 void update_player_inputs(server_context_t& context, const shared::predicted_world_storage_t& world_storage)
 {
@@ -81,7 +107,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     if (!try_spend_move_credit(client.move_credits))
     {
       const uint32_t warning_interval =
-          static_cast<uint32_t>(std::max(1.f, context.cvars->sv_tickrate));
+          std::max(1u, context.cvars->sv_tickrate);
       if (context.tick_number - client.last_move_throttle_warning_tick >=
           warning_interval)
       {
@@ -136,15 +162,10 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     const float yaw = subtick_input.view_at_end.yaw;
     const float pitch = subtick_input.view_at_end.pitch;
 
-    float tick_dt = static_cast<float>(get_tick_interval());
+    const float tick_dt = get_tick_interval_seconds();
 
     const bool world_is_frozen = !is_movement_allowed(context);
     const bool in_freeze = get_match(context).phase == entities::Round_Phase::Freeze;
-    if (world_is_frozen)
-    {
-      // zero out velocity so nothing builds up.
-      player->velocity = {0.f, 0.f, 0.f};
-    }
 
     const shared::subtick_steps_t steps =
         shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
@@ -152,90 +173,51 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     const shared::movement_settings_t move_settings =
         shared::movement_settings_from_cvars(*context.cvars);
 
+    const shared::input_restrictions_t restrictions{
+        .is_dead            = is_dead,
+        .world_is_frozen    = world_is_frozen,
+        // A driver walks the merged body and the passenger fires from it.
+        .drives_merged_body = shared::try_find_passenger_by_driver_uid(
+                                  context.world.session.entity_system, player->entity_id) != nullptr};
+
     auto move_events = Move_Events{};
     uint64_t buttons_entering_step = buttons_before_tick;
 
     for (const shared::subtick_step_t& step : steps)
     {
       const uint64_t pressed_in_this_step = step.buttons & ~buttons_entering_step;
-      buttons_entering_step = step.buttons;
 
       const shared::subtick_time_t step_time =
           shared::subtick_time(context.tick_number, step.start_slot);
 
-      const entities::Inventory_Slot slot_before_switch = player->inventory.active_slot;
-      if (const std::optional<entities::Inventory_Slot> selected =
-              shared::try_slot_selected_by(pressed_in_this_step))
-        switch_active_slot(context.world.session, *player, *selected, step_time, tick_dt);
+      // The step itself is the shared function: switch, reload, move, triggers, toggles. What
+      // follows is the server's half of what it reported.
+      shared::player_input_state_t state =
+          shared::read_input_state_from_player(context.world.session.entity_system, *player);
+      const shared::input_step_outcome_t outcome = shared::apply_input_step_to_player(
+          move_settings, context.world.session.bvh, world, restrictions, step, buttons_entering_step,
+          step_time, tick_dt, state);
+      write_input_state_to_player(context.world.session, *player, state);
+      buttons_entering_step = step.buttons;
 
-      if (player->inventory.active_slot != slot_before_switch)
+      if (outcome.switched_to)
       {
         const entities::Weapon_Entity* raised =
             try_find_active_weapon(context.world.session, *player);
-
-        // debug
-
-        {
-          broadcast_server_text_message(
+        broadcast_server_text_message(
             context,
             std::format("Slot {} equipped {} ({})", client_slot,
-                          raised != nullptr
-                              ? shared::get_weapon_definition(raised->weapon_id).display_name
-                              : "an empty hand",
-                          to_string(player->inventory.active_slot)));
-        }
-
+                        raised != nullptr
+                            ? shared::get_weapon_definition(raised->weapon_id).display_name
+                            : "an empty hand",
+                        to_string(player->inventory.active_slot)));
       }
 
       if ((pressed_in_this_step & Button::Jump) && in_freeze)
         player->wants_to_skip_freeze = true;
 
-      // did we press reload?
-      if (pressed_in_this_step & Button::Reload)
-      {
-        const entities::Weapon_Entity *held_entity =
-            try_find_active_weapon(context.world.session, *player);
-        if (held_entity != nullptr)
-        {
-          const shared::weapon_definition_t &held =
-              shared::get_weapon_definition(held_entity->weapon_id);
-          if (!is_reloading(*player) &&
-              shared::reload_may_start(held, shared::get_magazine(*held_entity)))
-          {
-            player->reload_complete_time = shared::subtick_time_after(
-                step_time, held.reload_duration_seconds, tick_dt);
-          }
-        }
-      }
-
-      const bool fire_pressed_in_this_step = (pressed_in_this_step & Button::Fire) != 0;
-      const bool secondary_fire_pressed_in_this_step =
-          (pressed_in_this_step & Button::Secondary_Fire) != 0;
-
-      // process movement and fire stuff only if the world is not frozen.
-      if (!world_is_frozen)
-      {
-        auto step_events = Move_Events{};
-
-        shared::move_input_t move_input = shared::move_input_from_subtick_step(step);
-        if (!allowed_to_move)
-          move_input.buttons = Move_Input{};
-
-        // canonical move.
-        const shared::move_state_t moved = player_move(
-            move_settings, context.world.session.bvh, world,
-            {.feet = player->position, .velocity = player->velocity, .movement = player->movement},
-            move_input, &step_events);
-
-        player->position = moved.feet;
-        player->velocity = moved.velocity;
-        player->movement = moved.movement;
-
-        if (!is_dead)
-          refill_magazines_on_ground(context.world.session, *player);
-
-        shared::accumulate_move_events(move_events, step_events);
-      }
+      if (!world_is_frozen && !is_dead)
+        refill_magazines_on_ground(context.world.session, *player);
 
       // if we tried to throw the weapon: repair the player weapon state.
       if ((pressed_in_this_step & Button::Throw) && !is_dead &&
@@ -248,58 +230,22 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
       if ((pressed_in_this_step & Button::Ping) && !is_dead && allowed_to_move &&
           !world_is_frozen)
         (void)try_place_ping(context, *player,
-                             player->position + vec3f{0.f, shared::player_eye_height, 0.f},
+                             shared::player_eye_position(player->position),
                              linalg::direction_from_angles(step.view.yaw, step.view.pitch),
                              world.disabled_geometry);
-      // if we tried to fire.
-      // Both buttons resolve the same way, each through its own half of the row.
-      // Zoom is the client's (it arrives as Button::Zoom state) and resolves to
-      // nothing here.
-      // A press fires at the step it opened; a button already down fires when its row says a held one is due.
-      const shared::subtick_time_t step_end_time =
-          shared::subtick_time(context.tick_number, step.start_slot + step.slot_count);
 
-      struct trigger_button_t
+      for (const entities::Fire_Trigger trigger :
+           {entities::Fire_Trigger::Primary, entities::Fire_Trigger::Secondary})
       {
-        entities::Fire_Trigger trigger;
-        uint64_t               button;
-        bool                   pressed_in_this_step;
-      };
-      const Array<trigger_button_t, 2> trigger_buttons = {{
-          {entities::Fire_Trigger::Primary, Button::Fire, fire_pressed_in_this_step},
-          {entities::Fire_Trigger::Secondary, Button::Secondary_Fire,
-           secondary_fire_pressed_in_this_step},
-      }};
+        if (outcome.refused[trigger] != shared::shot_refusal_t::None)
+          log_refused_shot(context, client_slot, *player, outcome.refused[trigger]);
 
-      for (const trigger_button_t& trigger_button : trigger_buttons)
-      {
-        if (!allowed_to_move || world_is_frozen)
-          continue;
-
-        // A driver walks the merged body and the passenger fires from it.
-        if (shared::try_find_passenger_by_driver_uid(context.world.session.entity_system,
-                                                     player->entity_id) != nullptr)
-          continue;
-
-        // A pilot's hands are on the rocket: a press lets go of it and nothing fires.
-        if (player->movement.active_override == entities::Movement_Override::Pilot)
-        {
-          if (trigger_button.pressed_in_this_step)
-            (void)shared::try_end_pilot_flight(player->movement);
-          continue;
-        }
-
-        std::optional<shared::subtick_time_t> fire_time;
-        if (trigger_button.pressed_in_this_step)
-          fire_time = step_time;
-        else if ((step.buttons & trigger_button.button) != 0)
-          fire_time = try_find_held_fire_time(context.world.session, *player,
-                                              trigger_button.trigger, step_time, step_end_time);
-
-        if (fire_time)
+        if (outcome.fire_due[trigger])
           resolve_player_shot(context, client_slot, input, world, player, step.view.yaw,
-                              step.view.pitch, *fire_time, trigger_button.trigger);
+                              step.view.pitch, *outcome.fire_due[trigger], trigger);
       }
+
+      shared::accumulate_move_events(move_events, outcome.move_events);
     }
 
     if (allowed_to_move && !world_is_frozen)

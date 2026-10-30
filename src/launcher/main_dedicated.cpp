@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
   // console::SpawnNew();
   timed_function();
 
-  log_terminal("=== Starting MyGame SERVER (Dedicated) ===");
+  log_terminal("=== Starting MVMT SERVER (Dedicated) ===");
 
 #if TILDE_MEMORY_AUDIT
   memory_audit::set_state(&g_memory_audit_state);
@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
     if (frame_time > 0.25)
       frame_time = 0.25;
 
-    double tick_interval = server::get_tick_interval();
+    const double tick_interval = server::get_tick_interval_seconds();
     accumulator += frame_time;
 
     while (accumulator >= tick_interval)

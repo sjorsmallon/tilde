@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../shared/entity_uid.hpp"
+#include "../../shared/input_step.hpp"
 #include "../../shared/map/game_session.hpp"
 #include "../../shared/subtick.hpp"
 #include "../server_context.hpp"
@@ -108,7 +109,13 @@ try_find_active_weapon(shared::game_session_t& session, const entities::Player_E
 [[nodiscard]] bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity& player,
                                            vec3f aim_direction, float tick_dt);
 
-// The one switch: the hand moves to the slot, a reload dies and the deploy gate runs from switch_time. Nothing for the slot already held.
+// The one writer of what shared::apply_input_step_to_player changed, the inverse of
+// shared::read_input_state_from_player: the hull, the hand, each carried weapon's magazine and
+// clock, and the three toggle flags.
+void write_input_state_to_player(shared::game_session_t& session, entities::Player_Entity& player,
+                                 const shared::player_input_state_t& state);
+
+// shared::switch_active_slot on the player's entities, for a switch no input step made: a pickup raised.
 void switch_active_slot(shared::game_session_t& session, entities::Player_Entity& player,
                         entities::Inventory_Slot slot, shared::subtick_time_t switch_time,
                         float tick_dt);

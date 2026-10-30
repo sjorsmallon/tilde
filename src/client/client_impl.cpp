@@ -509,7 +509,7 @@ bool init(cvars::cvar_state_t *cvar_state, cvars::command_table_t *command_table
   // these numbers: renderer::init asks SDL_Vulkan_GetDrawableSize for the extent.
   const window_placement_t placement = compute_window_placement(*cvar_state);
   g_window =
-      SDL_CreateWindow("MyGame Client", placement.x, placement.y, placement.width,
+      SDL_CreateWindow("MVMT Client", placement.x, placement.y, placement.width,
                        placement.height,
                        SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
                            SDL_WINDOW_ALLOW_HIGHDPI |

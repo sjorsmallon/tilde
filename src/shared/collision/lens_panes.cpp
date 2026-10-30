@@ -8,7 +8,7 @@
 namespace shared
 {
 
-void collect_lens_panes(const Entity_System& system, std::vector<mover_t>& out)
+void compute_lens_panes(const Entity_System& system, std::vector<mover_t>& out)
 {
   for (const entities::Lens_Entity& lens : system.entities_of_type<entities::Lens_Entity>())
   {

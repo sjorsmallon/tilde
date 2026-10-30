@@ -36,52 +36,17 @@ struct camera_t
       : position{.x = in_x, .y = in_y, . z = in_z}, yaw(0.0f), pitch(0.0f)
   {
   }
-
-  // Construct from position vector and look direction vector
-  // view_x, view_y, view_z should be a normalized direction vector
-  static camera_t from_view_vector(float px, float py, float pz, float vx,
-                                   float vy, float vz)
-  {
-    camera_t cam;
-    cam.position.x = px;
-    cam.position.y = py;
-    cam.position.z = pz;
-
-    // Pitch from Y component
-    // Y up. sin(pitch) = y.
-    cam.pitch = std::asin(vy) * 57.2957795f; // to degrees
-
-    // Yaw from X/Z components
-    // yaw 0 -> +X (1,0)
-    // yaw 90 -> +Z (0,1)
-    // atan2(z, x) gives angle from +X axis towards +Y (here +Z).
-    cam.yaw = std::atan2(vz, vx) * 57.2957795f; // to degrees
-
-    return cam;
-  }
 };
 
 inline void look_at(camera_t &cam, const linalg::vec3 &target)
 {
-  float dx = target.x - cam.position.x;
-  float dy = target.y - cam.position.y;
-  float dz = target.z - cam.position.z;
+  const linalg::vec3 to_target = target - cam.position;
+  if (linalg::length(to_target) <= 1e-6f)
+    return;
 
-  // Normalize
-  float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-  if (len > 1e-6f)
-  {
-    dx /= len;
-    dy /= len;
-    dz /= len;
-  }
-  else
-  {
-    return; // maintain current look if target is same as eye
-  }
-
-  cam.pitch = std::asin(dy) * 57.2957795f;
-  cam.yaw = std::atan2(dz, dx) * 57.2957795f;
+  const linalg::view_angles_t facing = linalg::view_angles_from_direction(to_target);
+  cam.yaw   = facing.yaw_degrees;
+  cam.pitch = facing.pitch_degrees;
 }
 
 struct camera_basis_t
@@ -91,34 +56,11 @@ struct camera_basis_t
   linalg::vec3 up;
 };
 
-inline camera_basis_t get_orientation_vectors(const camera_t &cam,
-                                              const linalg::vec3 &world_up = {
-                                                  {0, 1, 0}})
+inline camera_basis_t get_orientation_vectors(const camera_t &cam)
 {
-  float yaw_in_radians = linalg::to_radians(cam.yaw);
-  float pitch_in_radians = linalg::to_radians(cam.pitch);
-
-  float cY = std::cos(yaw_in_radians);
-  float sY = std::sin(yaw_in_radians);
-  float cP = std::cos(pitch_in_radians);
-  float sP = std::sin(pitch_in_radians);
-
-  linalg::vec3 forward = {cY * cP, sP, sY * cP};
-  linalg::vec3 right = linalg::cross(forward, world_up);
-
-  float lenR = linalg::length(right);
-  if (lenR < 0.001f)
-  {
-    right = {{1, 0, 0}};
-  }
-  else
-  {
-    right = right * (1.0f / lenR);
-  }
-
-  linalg::vec3 up = linalg::cross(right, forward);
-
-  return camera_basis_t{forward, right, up};
+  const linalg::vec3 forward = linalg::direction_from_angles(cam.yaw, cam.pitch);
+  const linalg::vec3 right   = linalg::right_from_forward(forward);
+  return camera_basis_t{forward, right, linalg::cross(right, forward)};
 }
 
 // --- Orbit mode helpers ---
@@ -127,14 +69,7 @@ inline camera_basis_t get_orientation_vectors(const camera_t &cam,
 // Call after changing yaw/pitch/distance/target in orbit mode.
 inline void update_orbit(camera_t &cam)
 {
-  float yaw_rad = linalg::to_radians(cam.yaw);
-  float pitch_rad = linalg::to_radians(cam.pitch);
-  float cos_pitch = std::cos(pitch_rad);
-  linalg::vec3f offset = {
-      cos_pitch * std::cos(yaw_rad),
-      std::sin(pitch_rad),
-      cos_pitch * std::sin(yaw_rad)};
-  cam.position = cam.orbit_target + offset * cam.orbit_distance;
+  cam.position = cam.orbit_target + linalg::direction_from_angles(cam.yaw, cam.pitch) * cam.orbit_distance;
 }
 
 // Rotate around target
@@ -143,7 +78,7 @@ inline void orbit_rotate(camera_t &cam, float delta_x, float delta_y,
 {
   cam.yaw += delta_x * sensitivity;
   cam.pitch -= delta_y * sensitivity;
-  cam.pitch = linalg::clamp(cam.pitch, -89.0f, 89.0f);
+  cam.pitch = linalg::clamp_view_pitch(cam.pitch);
   update_orbit(cam);
 }
 

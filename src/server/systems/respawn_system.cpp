@@ -44,7 +44,7 @@ void place_player_at(shared::game_session_t &session, entities::Player_Entity &p
   const linalg::view_angles_t facing = linalg::view_angles_from_direction(
       linalg::forward(orientation));
   player.view_angle_yaw   = facing.yaw_degrees;
-  player.view_angle_pitch = facing.pitch_degrees;
+  player.view_angle_pitch = linalg::clamp_view_pitch(facing.pitch_degrees);
   // The feet are an accumulator, so they have to be PLACED, not left: a corpse
   // froze them wherever it died, and a spawn that only writes the view yaw
   // makes the fresh player spin their legs around to catch up while the server
@@ -192,11 +192,7 @@ void update_respawns(server_context_t &context,
   if (context.world.death_tick_by_player_uid.empty())
     return;
 
-  // Clamped because the value comes from a cvar, and a map or a console can
-  // hand us a negative one: a negative delay means "as soon as possible", and
-  // casting it to uint32_t would mean the opposite by a wide margin.
-  const uint32_t delay_ticks = static_cast<uint32_t>(
-      std::max(0.f, respawn_delay_seconds) * static_cast<float>(tickrate_hz));
+  const uint32_t delay_ticks = shared::ticks_from_seconds(respawn_delay_seconds, tickrate_hz);
 
   // Collect uids to respawn this tick. Two-pass so we can erase from the
   // map without invalidating the iteration over it.

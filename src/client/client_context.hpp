@@ -18,6 +18,7 @@
 #include "../shared/replay/replay_recorder.hpp"
 #include "../shared/movement/player_move.hpp"
 #include "../shared/round_phase_rules.hpp"
+#include "../shared/input_step.hpp"
 #include "../shared/subtick.hpp"
 #include "../shared/beam_ripples.hpp"
 #include "../shared/team_wall_ripples.hpp"
@@ -93,7 +94,7 @@ struct Saved_Input
   // per-tick record of what we predicted is a comparison nobody makes.
   //
   // This is why Movement has no third field here. The state player_move now
-  // carries is reseeded from prediction_t::latest_server_movement at the top of
+  // carries is reseeded from prediction_t::latest_server_state at the top of
   // the replay, on the same footing as these two, and a per-tick copy of it
   // would be a third write-only field -- a second answer that can disagree with
   // the replay, which is the shape this codebase keeps deleting.
@@ -229,14 +230,12 @@ struct connection_t
 // which is what makes it a group.
 struct prediction_t
 {
-  vec3f player_position = {0, 36, 0};
-  vec3f player_velocity = {0, 0, 0};
-
-  // Our predicted copy of Player_Entity::movement, advanced by the same
-  // player_move the server runs. The server's copy is @Networked and is what
-  // reconciliation snaps this back to; between corrections this is what the
-  // local player's abilities are actually spending.
-  entities::Movement player_movement = {};
+  // The local player as this client predicts them: the hull, the hand with its clocks and
+  // magazines, and the three toggle flags, advanced by the same apply_input_step_to_player
+  // the server runs (input_step_plan.md). Reconciliation snaps the whole of it back to
+  // latest_server_state and replays the unacked inputs through the same function; between
+  // corrections this is what the local player's abilities are actually spending.
+  shared::player_input_state_t state = {.move = {.feet = {0.f, 36.f, 0.f}}};
 
   float player_yaw = 0.0f;
   float player_pitch = 0.0f;
@@ -258,61 +257,6 @@ struct prediction_t
   // it here rather than beside the eased zoom_fraction on Play_State -- as a
   // state member it survived a disconnect, so you rejoined still zoomed.
   bool zoom_active = false;
-
-  // The inputs carrying a Flashlight press the server has not answered; our light is its flag flipped once per entry.
-  std::vector<int> unanswered_reveal_light_toggles;
-  // The same for its secondary press and Player_Entity::reveal_light_overhead.
-  std::vector<int> unanswered_reveal_light_overhead_toggles;
-  // The same for a Red Lens press and Player_Entity::held_lens_on.
-  std::vector<int> unanswered_held_lens_toggles;
-
-  // Real seconds since our own last predicted gunshot, PER WEAPON, for
-  // re-running the server's fire-rate gate locally (weapons.hpp is shared, so
-  // it is the same number). Audio only -- the authoritative limit is the
-  // server's -- but it is per-connection like the health above it.
-  //
-  // Keyed by weapon because the SERVER's clock is: Weapon_Entity::next_fire_time
-  // is per weapon and runs while holstered. One float here was the client half
-  // of exactly the bug the inventory work fixed on the server, and it would now
-  // be a second answer that disagrees -- swinging a Knife would silence a Scout
-  // the server is perfectly willing to fire.
-  //
-  // Starts at zero, which reads as "fired just now" for one interval after a
-  // connect. That is the safe direction: this gate can only suppress a sound,
-  // never invent one, and the first shot of a session is the server's answer
-  // anyway.
-  Enum_Array<entities::Weapon, float> seconds_since_local_fire = {};
-
-  // Real seconds left on our own predicted weapon switch, or 0 when none is
-  // running -- the client half of Inventory::deploy_complete_time.
-  //
-  // PREDICTED rather than replicated for the same reason the reload clock below
-  // is: the deadline is a sub-tick value on a wire with no grid finer than a
-  // tick, and the reader wants "how long left", which a client that pressed the
-  // key already knows a round trip sooner than the server can say it.
-  //
-  // Unlike the two clocks around it this one is also DRAWN -- see
-  // cl_show_deploy_timer and hud/deploy_timer.hpp -- so a disagreement with the
-  // server is visible rather than merely audible. It is still not simulation:
-  // being wrong costs a wrong number on screen and a wrong bang, never a desync.
-  float seconds_until_local_deploy_complete = 0.f;
-
-  // Our replicated hand as of last frame: a switch into a slot that was empty then is the server raising a pickup.
-  std::optional<entities::Inventory> inventory_at_last_frame;
-
-  // Real seconds left on our own predicted reload, or 0 when none is running.
-  //
-  // PREDICTED, not replicated, for exactly the reason the fire clock above is:
-  // the gunshot is gated at the press and the server's answer is a round trip
-  // behind. Player_Entity::reload_complete_time is deliberately server-only and
-  // stays that way -- it is a sub-tick value on a wire with no grid finer than a
-  // tick, and replicating it would buy a reader that only needs "am I reloading"
-  // eight bytes it cannot use.
-  //
-  // Started, cancelled and cleared on the same conditions the server uses, off
-  // this client's own key presses. Audio only: nothing simulates on it, so a
-  // disagreement costs a sound and never a desync.
-  float seconds_until_local_reload_complete = 0.f;
 
   int input_number = 0;
   Array<Saved_Input, MAX_PENDING_INPUTS> pending_inputs = {};
@@ -380,19 +324,16 @@ struct prediction_t
   std::vector<game::C2S_ClientInput> unacked_inputs;
 
   // --- Server reconciliation ---
-  vec3f latest_server_position = {0, 0, 0};
-  vec3f latest_server_velocity = {0, 0, 0};
-  // The server's word on our movement state, and the third thing a replay
-  // restarts from. Position and velocity alone are not the state player_move
-  // reads any more.
-  entities::Movement latest_server_movement = {};
+  // The server's word on us, read off the newest snapshot by the builder the server reads a
+  // step's state with; what a replay restarts from.
+  shared::player_input_state_t latest_server_state = {};
   // Our copy of the server's high-water mark over our own input stream. Spelled
   // out to the last word because both halves are load-bearing: it is a NUMBER,
   // not an input, and the processing is the SERVER'S -- we process our own
   // inputs too, every tick, as prediction. Everything at or below it is done, so
   // it both trims unacked_inputs and is where reconciliation starts replaying.
   int latest_input_number_processed_by_server = -1;
-  // The tick of the snapshot that carried latest_server_position. Input N is
+  // The tick of the snapshot that carried latest_server_state. Input N is
   // predicted to run at latest_server_tick + (N - the processed number above),
   // which is where a mover is for it (mover_def.md ss12).
   uint32_t latest_server_tick = 0;
@@ -400,7 +341,7 @@ struct prediction_t
   double drawn_tick_gap = 0.0;
   bool received_server_update = false;
 
-  // The canopy player_position stands on and where the step that put it there guessed that canopy to be.
+  // The canopy state.move.feet stands on and where the step that put it there guessed that canopy to be.
   struct ridden_canopy_t
   {
     shared::entity_uid_t uid              = shared::null_entity_uid;

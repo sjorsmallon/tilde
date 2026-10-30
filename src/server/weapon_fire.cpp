@@ -106,7 +106,7 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
       break;
   }
 
-  const float milliseconds_per_tick = 1000.f * static_cast<float>(get_tick_interval());
+  const float milliseconds_per_tick = 1000.f * get_tick_interval_seconds();
 
   // how far back in time did we actually go? 
   const uint32_t bracket_span_ticks = verdict.bracket.towards_tick - verdict.bracket.from_tick;
@@ -130,7 +130,7 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
   {
     
     const uint32_t warning_interval_ticks =
-        std::max(1u, static_cast<uint32_t>(context.cvars->sv_tickrate));
+        std::max(1u, context.cvars->sv_tickrate);
     if (client.last_rewind_warning_tick == 0 ||
         context.tick_number - client.last_rewind_warning_tick >= warning_interval_ticks)
     {
@@ -232,87 +232,11 @@ static void send_shot_debug(
   network::send_protobuf_message(context.transport_layer, context.socket, client_slot, message);
 }
 
-[[nodiscard]] static bool try_begin_shot(server_context_t &context, int32_t client_slot,
-                                         entities::Player_Entity &player,
-                                         entities::Weapon_Entity &active_weapon,
-                                         const shared::weapon_definition_t &weapon,
-                                         shared::subtick_time_t fire_time)
-{
-  const float seconds_per_subtick_slot =
-      static_cast<float>(get_tick_interval()) / static_cast<float>(shared::SUBTICK_SLOT_COUNT);
-
-  // can't fire because it's not time yet.
-  if (fire_time < active_weapon.next_fire_time)
-  {
-    log_terminal("slot {}: {} trigger refused, fire interval has {:.3f}s left", client_slot,
-                 weapon.display_name,
-                 static_cast<float>(active_weapon.next_fire_time - fire_time) * seconds_per_subtick_slot);
-    return false;
-  }
-
-  // can't fire because weapon is still deploying.
-  if (fire_time < player.inventory.deploy_complete_time)
-  {
-    log_terminal("slot {}: {} trigger refused, still deploying for {:.3f}s", client_slot,
-                 weapon.display_name,
-                 static_cast<float>(player.inventory.deploy_complete_time - fire_time) *
-                     seconds_per_subtick_slot);
-    return false;
-  }
-
-  // we're reloading.
-  if (is_reloading(player))
-  {
-    // can't fire because we're not done reloading.
-    if (fire_time < player.reload_complete_time) return false;
-
-
-    finish_reload(context.world.session, player);
-  }
-
-  // can't fire because we're out of ammo.
-  if (!shared::ammo_allows_a_shot(active_weapon.ammo))
-  {
-    const uint32_t warning_interval =
-        std::max(1u, static_cast<uint32_t>(context.cvars->sv_tickrate));
-    if (context.tick_number - player.last_empty_fire_warning_tick >= warning_interval)
-    {
-      player.last_empty_fire_warning_tick = context.tick_number;
-      log_warning("slot {}: trigger pulled on an empty {} — no shot resolved",
-                  client_slot, weapon.display_name);
-    }
-    return false;
-  }
-
-  if (active_weapon.ammo > 0)
-    --active_weapon.ammo;
-
-  active_weapon.next_fire_time = shared::subtick_time_after(
-      fire_time, weapon.fire_interval_seconds, static_cast<float>(get_tick_interval()));
-  return true;
-}
-
-
 void mark_shot_fired(const server_context_t &context, entities::Player_Entity &player,
                             entities::Weapon weapon_id)
 {
   player.last_fire_tick   = context.tick_number;
   player.last_fire_weapon = weapon_id;
-}
-
-std::optional<shared::subtick_time_t>
-try_find_held_fire_time(shared::game_session_t& session, const entities::Player_Entity& player,
-                        entities::Fire_Trigger trigger, shared::subtick_time_t step_start,
-                        shared::subtick_time_t step_end)
-{
-  const entities::Weapon_Entity* active_weapon = try_find_active_weapon(session, player);
-  if (active_weapon == nullptr)
-    return std::nullopt;
-
-  const shared::weapon_definition_t& weapon = shared::get_weapon_definition(active_weapon->weapon_id);
-  return shared::try_find_held_fire_time(shared::get_weapon_fire_for_button(weapon, trigger),
-                                         active_weapon->next_fire_time,
-                                         player.inventory.deploy_complete_time, step_start, step_end);
 }
 
 // The volumes and targets a shot at the shooter's own remnants is tested against. The targets
@@ -378,7 +302,7 @@ void resolve_player_shot(
   // pre-move would reconstruct a view nobody saw.
 
   const vec3f direction = linalg::direction_from_angles(yaw, pitch);
-  const vec3f eye = player->position + vec3f{0.f, shared::player_eye_height, 0.f};
+  const vec3f eye = shared::player_eye_position(player->position);
 
   entities::Weapon_Entity* active_weapon = try_find_active_weapon(context.world.session, *player);
 
@@ -389,26 +313,20 @@ void resolve_player_shot(
 
   switch (fire.resolution)
   {
-    // Nothing on this button, or the client's scope: no shot and no fire mark.
+    // The input step reports no fire for these: nothing, the client's scope, or a toggle it
+    // flipped itself. Arriving here is the two drifting apart.
     case entities::Fire_Resolution::None:
     case entities::Fire_Resolution::Zoom:
-      return;
-
     case entities::Fire_Resolution::Lens_View:
-      player->held_lens_on = !player->held_lens_on;
-      return;
+    case entities::Fire_Resolution::Reveal_Light:
+    case entities::Fire_Resolution::Erase_Light:
+    case entities::Fire_Resolution::Reveal_Light_Overhead:
+      fatal_error("resolve_player_shot: slot {} reports {} due on {}, which the input step never "
+                  "reports; apply_input_step_to_player and this switch drifted",
+                  client_slot, to_string(fire.resolution), weapon.display_name);
 
     case entities::Fire_Resolution::Canopy:
       toggle_canopy(context, *player);
-      return;
-
-    case entities::Fire_Resolution::Reveal_Light:
-    case entities::Fire_Resolution::Erase_Light:
-      player->reveal_light_on = !player->reveal_light_on;
-      return;
-
-    case entities::Fire_Resolution::Reveal_Light_Overhead:
-      player->reveal_light_overhead = !player->reveal_light_overhead;
       return;
 
     // No clocks and no ammo: an empty magazine is exactly when this is pressed.
@@ -418,9 +336,6 @@ void resolve_player_shot(
 
     case entities::Fire_Resolution::Hitscan:
     {
-      if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
-        return;
-
       // The world test is the one question every flying thing asks, at radius zero: the
       // shooter's team view of the map AND the movers, so a raised platform stops a round
       // and a lift takes the impact. The world hit clips the range; nothing past it can be hit.
@@ -544,20 +459,12 @@ void resolve_player_shot(
     }
     case entities::Fire_Resolution::Projectile:
     {
-      log_terminal("trying to fire a projectile.");
-
-      if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
-        return;
-
       spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger,
                        shared::get_concurrent_projectiles_alive_limit(*active_weapon));
       break;
     }
     case entities::Fire_Resolution::Place:
     {
-      if (!try_begin_shot(context, client_slot, *player, *active_weapon, weapon, fire_time))
-        return;
-
       vec3f placed_position    = player->position;
       quatf placed_orientation = linalg::from_view_angles(yaw, 0.f);
       switch (fire.place.anchor)
@@ -581,20 +488,10 @@ void resolve_player_shot(
         claim_remnant(context, placed_uid, player->entity_id);
       break;
     }
+    // The impulse and the launch are the input step's; what is left is the fire mark.
     case entities::Fire_Resolution::Self_Impulse:
-    {
-      if (!shared::try_apply_self_impulse(shared::movement_settings_from_cvars(*context.cvars), weapon,
-                                          trigger, direction, player->movement,
-                                          player->velocity))
-        return;
-      break;
-    }
     case entities::Fire_Resolution::Pilot:
-    {
-      if (!shared::try_begin_pilot_flight(weapon, trigger, eye, player->movement))
-        return;
       break;
-    }
   }
 
   // set some fields in player to indicate that we fired a shot.

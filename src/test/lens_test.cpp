@@ -102,7 +102,7 @@ int main()
     off->switch_state.value              = false;
 
     std::vector<shared::lens_t> lenses;
-    shared::collect_lenses(system, lenses);
+    shared::compute_lenses(system, lenses);
     check(lenses.size() == 1, "one of the two lenses is on");
     check(lenses.size() == 1 && lenses[0].box.center.x == 11.f && lenses[0].box.center.y == 22.f &&
               lenses[0].box.center.z == 33.f,
@@ -112,7 +112,7 @@ int main()
     check(lenses.size() == 1 && lenses[0].filter == entities::Lens_Filter::Blue, "and carries its filter");
 
     std::vector<shared::mover_t> panes;
-    shared::collect_lens_panes(system, panes);
+    shared::compute_lens_panes(system, panes);
     check(panes.size() == 1 && panes[0].uid == on_uid, "the switched-on lens is a pane, a mover named after it");
     check(panes.size() == 1 && linalg::length(panes[0].pose_at_tick_start.position - panes[0].pose_at_tick_end.position) == 0.f &&
               !panes[0].crushes,
@@ -203,7 +203,7 @@ int main()
           "but not a green one");
   }
 
-  printf("[pin] every alive player watches, but the one the caller predicts\n");
+  printf("[pin] every alive sight watches, and a client's own row is what its prediction says\n");
   {
     shared::Entity_System      system;
     const shared::entity_uid_t alive_uid     = system.spawn(entities::entity_type::Player_Entity);
@@ -218,7 +218,10 @@ int main()
     system.get<entities::Player_Entity>(dead_uid)->health.current_health = 0;
 
     std::vector<shared::lens_watcher_t> watchers;
-    shared::collect_lens_watchers(system, predicted_uid, watchers);
+    std::vector<shared::player_sight_t> sights;
+    shared::player_sights_from_entities(system, sights);
+    sights[2].alive = false;
+    shared::compute_lens_watchers(sights, watchers);
     check(watchers.size() == 1, "one of the three players watches");
     check(watchers.size() == 1 && watchers[0].eye.x == 10.f && watchers[0].eye.y == shared::player_eye_height &&
               watchers[0].eye.z == 20.f,
@@ -231,8 +234,14 @@ int main()
               !shared::lens_watcher_faces_point(watchers[0], watchers[0].eye + linalg::direction_from_angles(30.f, 25.f) * 100.f) &&
               shared::lens_watcher_faces_point(watchers[0], watchers[0].eye + linalg::direction_from_angles(30.f, 15.f) * 100.f),
           "through the screen it reports");
-    shared::collect_lens_watchers(system, shared::null_entity_uid, watchers);
+    shared::player_sights_from_entities(system, sights);
+    shared::compute_lens_watchers(sights, watchers);
     check(watchers.size() == 2, "the server leaves nobody out");
+    sights[2].feet = {1.f, 0.f, 2.f};
+    shared::compute_lens_watchers(sights, watchers);
+    check(watchers.size() == 2 && watchers[1].eye.x == 1.f && watchers[1].eye.z == 2.f,
+          "a row a client overwrites from its prediction watches from there");
+    (void)predicted_uid;
     check(watchers.size() == 2 && watchers[0].held_channels == 0 && watchers[1].held_channels == 0,
           "and nobody holds a lens");
 
@@ -240,11 +249,13 @@ int main()
     system.get<entities::Weapon_Entity>(lens_uid)->weapon_id = entities::Weapon::Red_Lens;
     alive                                                    = system.get<entities::Player_Entity>(alive_uid);
     alive->held_lens_on                                      = true;
-    shared::collect_lens_watchers(system, shared::null_entity_uid, watchers);
+    shared::player_sights_from_entities(system, sights);
+    shared::compute_lens_watchers(sights, watchers);
     check(watchers.size() == 2 && watchers[0].held_channels == 0, "the flag with nothing in hand holds no lens");
     alive->inventory.weapons[entities::Inventory_Slot::Utility_1] = lens_uid;
     alive->inventory.active_slot                                  = entities::Inventory_Slot::Utility_1;
-    shared::collect_lens_watchers(system, shared::null_entity_uid, watchers);
+    shared::player_sights_from_entities(system, sights);
+    shared::compute_lens_watchers(sights, watchers);
     check(watchers.size() == 2 && watchers[0].held_channels == LENS_CHANNEL_RED,
           "the Red Lens in hand with the flag set holds red");
   }

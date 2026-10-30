@@ -667,7 +667,7 @@ void Primitive_Tool::on_draw_inspector(editor_context_t &ctx)
   if (clicked(ImGui::Combo("Kind", &kind, "Prism\0Arch\0Straight stairs\0Spiral stairs\0Curve wall\0")))
     settings.kind = (Kind)kind;
 
-  if (settings.kind != Kind::Spiral_Stairs && settings.kind != Kind::Curve)
+  if (shared::primitive_kind_has_axis(settings.kind))
   {
     ImGui::TextUnformatted(settings.kind == Kind::Straight_Stairs ? "Climbs along" : "Axis");
     for (int axis = 0; axis < 3; ++axis)

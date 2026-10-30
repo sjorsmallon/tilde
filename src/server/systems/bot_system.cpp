@@ -97,9 +97,7 @@ static void apply_bot_movement(server_context_t &context,
                                entities::Player_Entity &bot_ent, const vec3f& front,
                                const Move_Input &input, float half_width, float dt)
 {
-  vec3f right = linalg::cross(front, vec3f{0.f, 1.f, 0.f});
-  float rlen  = linalg::length(right);
-  if (rlen > 0.001f) right = right * (1.f / rlen);
+  const vec3f right = linalg::right_from_forward(front);
 
   Move_Events move_events{};
   shared::movement_settings_t settings = shared::movement_settings_from_cvars(*context.cvars);
@@ -189,7 +187,7 @@ void update_bots(server_context_t &context,
   {
     // ---- find this bot's entity ----
     // One uid-index lookup. Safe to hold for the rest of the body: the only
-    // spawn below is a Rocket_Entity, which is a different pool, and nothing
+    // spawn below is a Shot_Entity, which is a different pool, and nothing
     // here destroys a player.
     entities::Player_Entity *bot_ent =
         session.entity_system.get<entities::Player_Entity>(bot.entity_uid);
@@ -353,16 +351,14 @@ void update_bots(server_context_t &context,
           bot_ent->last_fire_tick   = current_tick;
           bot_ent->last_fire_weapon = entities::Weapon::Rocket_Launcher;
 
-          vec3f eye = {bot_ent->position.x,
-                       bot_ent->position.y + shared::player_eye_height,
-                       bot_ent->position.z};
+          const vec3f eye = shared::player_eye_position(bot_ent->position);
           vec3f target_center = {target->position.x,
                                  target->position.y + 36.f,
                                  target->position.z};
           vec3f aim_dir = linalg::normalize(target_center - eye);
 
           // bot_ent and target stay valid across this spawn: it lands in the
-          // Rocket_Entity pool, not the Player_Entity one they point into.
+          // Shot_Entity pool, not the Player_Entity one they point into.
           spawn_projectile(context, bot_ent->entity_id,
                            shared::get_weapon_definition(entities::Weapon::Rocket_Launcher), eye,
                            aim_dir, entities::Fire_Trigger::Primary, NO_ALIVE_LIMIT);
@@ -403,12 +399,7 @@ void update_bots(server_context_t &context,
     apply_bot_movement(context, session, world, *bot_ent, front, input,
                        bot.personality.move_speed, dt);
 
-    // Update facing direction so the client can visualise it. DEGREES, in
-    // direction_from_angles' convention (yaw sweeps +X toward +Z) -- this is
-    // the same field the remote-player renderer and the aim poses read, and it
-    // used to be written as a raw atan2(x, z) radian value.
-    bot_ent->view_angle_yaw =
-        linalg::wrap_degrees(linalg::to_degrees(std::atan2(front.z, front.x)));
+    bot_ent->view_angle_yaw = linalg::view_angles_from_direction(front).yaw_degrees;
   }
 }
 

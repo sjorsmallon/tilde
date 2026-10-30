@@ -502,7 +502,7 @@ void write_entry_from_arena(solid_beam_cache_entry_t& entry, const solid_beam_ar
 
 } // namespace
 
-void collect_solid_beams(const Entity_System& system, const mover_rests_t& rests,
+void compute_solid_beams(const Entity_System& system, const mover_rests_t& rests,
                          Span<const shadow_volume_t> shadow_volumes, beam_carve_scope_t scope,
                          solid_beam_cache_t& cache, std::vector<mover_t>& out)
 {

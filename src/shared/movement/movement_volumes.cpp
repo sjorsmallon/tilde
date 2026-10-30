@@ -11,23 +11,19 @@
 namespace shared
 {
 
-void collect_movement_volumes(Entity_System& system, const movement_volume_settings_t& settings,
+void compute_movement_volumes_at_tick(const Entity_System& system, const movement_volume_settings_t& settings,
                               std::vector<movement_volume_t>& out)
 {
   out.clear();
 
   // Bubbles before pads, the order the volumes have always had. Which collect a @predicted type feeds is pinned by movement_volumes_test.
   const fixed_arc_flight_settings_t flight{
-      .tick_interval_seconds = settings.tick_interval_seconds,
-      .gravity               = settings.gravity};
+      .tickrate_hz = settings.tickrate_hz,
+      .gravity     = settings.gravity};
 
   for (const entities::Bubble_Entity& bubble : system.entities_of_type<entities::Bubble_Entity>())
   {
-    const uint32_t arm_ticks =
-        settings.tick_interval_seconds > 0.f
-            ? static_cast<uint32_t>(
-                  std::lround(bubble.arm_seconds / settings.tick_interval_seconds))
-            : 0u;
+    const uint32_t arm_ticks = ticks_from_seconds(bubble.arm_seconds, settings.tickrate_hz);
     const linalg::vec3f center = flight_position_at(bubble.projectile, bubble.flight,
                                                     bubble.position, settings.tick, flight);
     const linalg::vec3f reach  = {bubble.radius, bubble.radius, bubble.radius};

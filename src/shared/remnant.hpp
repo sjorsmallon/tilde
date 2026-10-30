@@ -13,7 +13,7 @@ namespace shared
 inline assets::posed_hitbox_t remnant_hit_volume(const entities::Remnant_Entity& remnant)
 {
   return assets::make_sphere_hit_volume(
-      remnant.position + linalg::vec3f{0.f, player_half_height, 0.f}, remnant.hit_radius,
+      shared::player_hull_center(remnant.position), remnant.hit_radius,
       hit_region_t::Torso);
 }
 

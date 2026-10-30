@@ -10,6 +10,7 @@
 #include "linalg.hpp"
 #include "collision/movers.hpp"
 #include "plane.hpp"
+#include "player_sight.hpp"
 
 #include "span.hpp"
 
@@ -133,21 +134,11 @@ struct reveal_cone_planes_t
 [[nodiscard]] bool any_erase_cone_contains_box(Span<const reveal_cone_planes_t> cones,
                                                const aabb_bounds_t&             box);
 
-// The cones collision reads, of both kinds: every player's whose light is on, from the eye it stands at,
-// then every switched-on Reveal_Light_Entity's, where its mover has it at `tick`.
-// `predicted_by_caller` is the one player left out, whose cone a client adds from its own prediction; null on the server.
-void collect_reveal_cones(const Entity_System& system, const path_links_t& links,
-                          const mover_rests_t& rests, const reveal_cone_settings_t& settings,
-                          uint32_t tick, float tickrate,
-                          entity_uid_t predicted_by_caller, std::vector<reveal_cone_planes_t>& out);
-
-// The player is alive and the weapon in hand is a Flashlight or an Eraser, and which: a press toggles it, and only then can it be on.
-[[nodiscard]] std::optional<entities::Reveal_Cone_Kind> try_checking_whether_player_is_wielding_either_revealer_or_eraser(
-    const Entity_System& system, const entities::Player_Entity& player);
-
-[[nodiscard]] bool reveal_light_is_in_hand(const Entity_System& system, const entities::Player_Entity& player);
-
-// The one rule for whose light is on: in hand, and the player's toggle is set.
-[[nodiscard]] bool reveal_light_is_on(const Entity_System& system, const entities::Player_Entity& player);
+// The cones collision reads, of both kinds: every lit sight's, from the eye it stands at, then every
+// switched-on Reveal_Light_Entity's, where its mover has it at `tick`.
+void compute_reveal_cones_at_tick(Span<const player_sight_t> sights, const Entity_System& system,
+                                  const path_links_t& links, const mover_rests_t& rests,
+                                  const reveal_cone_settings_t& settings, uint32_t tick, uint32_t tickrate_hz,
+                                  std::vector<reveal_cone_planes_t>& out);
 
 } // namespace shared

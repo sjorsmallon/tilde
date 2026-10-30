@@ -45,8 +45,8 @@ linalg::vec3f compute_bubble_peel_direction(const server_context_t& context, con
 
 void update_bubbles(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
-  const float tick_interval_seconds = static_cast<float>(get_tick_interval());
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_interval_seconds,
+  const uint32_t tickrate_hz = context.cvars->sv_tickrate;
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = tickrate_hz,
                                                    .gravity = context.cvars->g_gravity};
 
   std::vector<shared::entity_uid_t> expired;
@@ -64,15 +64,13 @@ void update_bubbles(server_context_t& context, const shared::predicted_world_sto
 
     if (bubble.popped_tick != 0)
     {
-      const uint32_t linger_ticks =
-          static_cast<uint32_t>(std::lround(bubble.linger_seconds / tick_interval_seconds));
+      const uint32_t linger_ticks = shared::ticks_from_seconds(bubble.linger_seconds, tickrate_hz);
       if (context.tick_number >= bubble.popped_tick + linger_ticks)
         expired.push_back(bubble.entity_id);
       continue;
     }
 
-    const uint32_t rest_ticks =
-        static_cast<uint32_t>(std::lround(bubble.rest_seconds / tick_interval_seconds));
+    const uint32_t rest_ticks = shared::ticks_from_seconds(bubble.rest_seconds, tickrate_hz);
     if (context.tick_number >= bubble.flight.launch_tick + bubble.flight.flight_ticks + rest_ticks)
       pop_bubble(context, bubble.entity_id, shared::null_entity_uid);
   }

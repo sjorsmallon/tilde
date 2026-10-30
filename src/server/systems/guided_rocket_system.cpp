@@ -55,7 +55,7 @@ const shared::pilot_t* try_find_path_laying_pilot_by_weapon_id(entities::Weapon 
 // One path per pilot and weapon: the older one goes, then each edge is an extending platform that starts
 // growing the tick the one before it is grown, so the path draws itself outward from the pilot.
 void solidify_flight_path(server_context_t& context, const ended_flight_t& flight,
-                          float tick_interval_seconds)
+                          uint32_t tickrate_hz)
 {
   const shared::pilot_t* pilot = try_find_path_laying_pilot_by_weapon_id(flight.weapon_id);
   if (pilot == nullptr)
@@ -99,13 +99,13 @@ void solidify_flight_path(server_context_t& context, const ended_flight_t& fligh
     platform->projectile.owner_uid  = flight.pilot_uid;
     platform->projectile.weapon_id  = flight.weapon_id;
 
-    spawned_tick += shared::extending_platform_extend_ticks(*platform, tick_interval_seconds);
+    spawned_tick += shared::extending_platform_extend_ticks(*platform, tickrate_hz);
   }
 }
 
 } // namespace
 
-void update_guided_rockets(server_context_t& context, float tick_interval_seconds)
+void update_guided_rockets(server_context_t& context, uint32_t tickrate_hz)
 {
   shared::Entity_System& system = context.world.session.entity_system;
   std::unordered_map<shared::entity_uid_t, shared::flight_path_t>& paths =
@@ -186,14 +186,14 @@ void update_guided_rockets(server_context_t& context, float tick_interval_second
     if (const shared::pilot_t* row = try_find_path_laying_pilot_by_weapon_id(rocket->weapon_id))
     {
       shared::flight_path_t path = shared::begin_flight_path(
-          pilot->position + vec3f{0.f, shared::player_eye_height, 0.f}, compute_pilot_heading(*pilot));
+          shared::player_eye_position(pilot->position), compute_pilot_heading(*pilot));
       shared::record_flight_path(path, row->path, rocket->position, compute_pilot_heading(*pilot));
       paths[uid] = std::move(path);
     }
   }
 
   for (const ended_flight_t& flight : ended)
-    solidify_flight_path(context, flight, tick_interval_seconds);
+    solidify_flight_path(context, flight, tickrate_hz);
 
   for (const shared::entity_uid_t uid : spent)
     destroy_entity(context, uid);

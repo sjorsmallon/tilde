@@ -70,7 +70,7 @@ void record_run(const Match& match, server::input_context_t& context, shared::Ob
 
   shared::run_time_record_t record;
   record.ticks       = run_ticks;
-  record.tickrate_hz = std::max(1u, static_cast<uint32_t>(server.cvars->sv_tickrate));
+  record.tickrate_hz = std::max(1u, server.cvars->sv_tickrate);
   record.date        = shared::current_date_text();
   record.name        = shared::ghost_party_name(*ghost);
 
@@ -90,8 +90,7 @@ void record_run(const Match& match, server::input_context_t& context, shared::Ob
   reached.best_ticks =
       best_before.empty()
           ? 0
-          : static_cast<uint32_t>(std::lround(shared::run_time_seconds(best_before.front()) *
-                                              static_cast<float>(record.tickrate_hz)));
+          : shared::ticks_from_seconds(shared::run_time_seconds(best_before.front()), record.tickrate_hz);
 
   write_ghost_if_fastest(server, *ghost);
 

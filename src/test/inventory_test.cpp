@@ -9,7 +9,7 @@
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/extending_platform_entity_generated.hpp"
 #include "entities/generated/entities/guided_rocket_entity_generated.hpp"
-#include "entities/generated/entities/modifier_shot_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
 #include "entity_lifecycle.hpp"
@@ -104,6 +104,75 @@ static void grant_test_loadout(shared::game_session_t& session, shared::entity_u
   }
 }
 
+// The input step's state round-trips through the one reader and the one writer
+// (input_step_plan.md). The two are hand-written field lists over three entities,
+// and nothing but this ties them to the struct: every field the step can change is
+// given a value the entities do not hold, written, read back and compared, and
+// the size pin below fires the day a field is added so this list grows with it.
+static constexpr size_t PLAYER_INPUT_STATE_SIZE = 256;
+static_assert(sizeof(shared::player_input_state_t) == PLAYER_INPUT_STATE_SIZE,
+              "player_input_state_t grew: add the field to read_input_state_from_player, "
+              "write_input_state_to_player and check_input_state_round_trip, then re-pin the size");
+
+static void check_input_state_round_trip(shared::game_session_t& session, entities::Player_Entity& player)
+{
+  const shared::player_input_state_t original =
+      shared::read_input_state_from_player(session.entity_system, player);
+
+  shared::player_input_state_t changed = original;
+  changed.move.feet                       = {11.f, 22.f, 33.f};
+  changed.move.velocity                   = {-4.f, 5.f, -6.f};
+  changed.move.movement.is_grounded       = !original.move.movement.is_grounded;
+  changed.move.movement.active_override   = entities::Movement_Override::Pilot;
+  changed.move.movement.seconds_until_impulse_ready = 0.75f;
+  changed.inventory.active_slot           = SCOUT.slot;
+  changed.inventory.deploy_complete_time  = shared::subtick_time(100, 7);
+  changed.inventory.reload_complete_time  = shared::subtick_time(101, 9);
+  changed.toggles                         = {.reveal_light_on = true, .reveal_light_overhead = true, .held_lens_on = true};
+  for (uint32_t index = 0; index < enum_traits<entities::Inventory_Slot>::count; ++index)
+  {
+    shared::inventory_slot_state_t& slot = changed.inventory.slots[(entities::Inventory_Slot)index];
+    if (!slot.weapon)
+      continue;
+    slot.magazine.ammo         = 3 + (int32_t)index;
+    slot.magazine.reserve_ammo = 40 + (int32_t)index;
+    slot.next_fire_time        = shared::subtick_time(200 + index, index);
+  }
+
+  server::write_input_state_to_player(session, player, changed);
+  const shared::player_input_state_t read_back =
+      shared::read_input_state_from_player(session.entity_system, player);
+
+  check(read_back.move.feet.y == 22.f && read_back.move.velocity.z == -6.f, "the hull round-trips");
+  check(read_back.move.movement.is_grounded == changed.move.movement.is_grounded &&
+            read_back.move.movement.active_override == entities::Movement_Override::Pilot &&
+            read_back.move.movement.seconds_until_impulse_ready == 0.75f,
+        "the movement round-trips");
+  check(read_back.inventory.active_slot == SCOUT.slot, "the active slot round-trips");
+  check(read_back.inventory.deploy_complete_time == shared::subtick_time(100, 7) &&
+            read_back.inventory.reload_complete_time == shared::subtick_time(101, 9),
+        "the two player clocks round-trip");
+  check(read_back.toggles.reveal_light_on && read_back.toggles.reveal_light_overhead &&
+            read_back.toggles.held_lens_on,
+        "the toggles round-trip");
+
+  bool every_slot_round_trips = true;
+  for (uint32_t index = 0; index < enum_traits<entities::Inventory_Slot>::count; ++index)
+  {
+    const entities::Inventory_Slot        slot    = (entities::Inventory_Slot)index;
+    const shared::inventory_slot_state_t& written = changed.inventory.slots[slot];
+    const shared::inventory_slot_state_t& read    = read_back.inventory.slots[slot];
+    every_slot_round_trips = every_slot_round_trips && read.weapon == written.weapon &&
+                             read.magazine.size == written.magazine.size &&
+                             read.magazine.ammo == written.magazine.ammo &&
+                             read.magazine.reserve_ammo == written.magazine.reserve_ammo &&
+                             read.next_fire_time == written.next_fire_time;
+  }
+  check(every_slot_round_trips, "every carried weapon's magazine and clock round-trip");
+
+  server::write_input_state_to_player(session, player, original);
+}
+
 // What resolve_player_shot's gate does, in the two clocks it is: the weapon's
 // own interval, which runs while holstered, and the PLAYER's deploy deadline,
 // which blocks every weapon at once. Both, because the whole point is that they
@@ -185,6 +254,8 @@ int main()
     printf("FAILED could not resolve the spawned player\n");
     return 1;
   }
+
+  check_input_state_round_trip(session, *player);
 
   // --- the inventory itself ---
   {
@@ -641,7 +712,7 @@ int main()
                                                entities::Fire_Trigger::Primary, limit));
 
     uint32_t alive = 0;
-    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of_type<entities::Modifier_Shot_Entity>())
+    for (const entities::Shot_Entity& shot : entity_system.entities_of_type<entities::Shot_Entity>())
       if (shot.projectile.owner_uid == owner_uid)
         ++alive;
     check(alive == max_alive, "firing past the limit keeps max_alive shots alive");
@@ -655,7 +726,7 @@ int main()
       server::spawn_projectile(context, owner_uid, modifier_gun, origin, direction,
                                entities::Fire_Trigger::Primary, shared::get_concurrent_projectiles_alive_limit(held));
     alive = 0;
-    for (const entities::Modifier_Shot_Entity& shot : entity_system.entities_of_type<entities::Modifier_Shot_Entity>())
+    for (const entities::Shot_Entity& shot : entity_system.entities_of_type<entities::Shot_Entity>())
       if (shot.projectile.owner_uid == owner_uid)
         ++alive;
     check(alive == max_alive + 3, "a weapon written to 0 has no limit");
@@ -701,7 +772,7 @@ int main()
     server::server_context_t context;
     shared::Entity_System& entity_system = context.world.session.entity_system;
 
-    const float tick_interval_seconds = 1.f / 60.f;
+    constexpr uint32_t tickrate_hz = 60;
     const shared::weapon_definition_t& guided_rocket =
         shared::get_weapon_definition(entities::Weapon::Guided_Rocket);
     const shared::pilot_t& row = guided_rocket.primary_fire.pilot;
@@ -730,7 +801,7 @@ int main()
         pilot()->movement.override_target_position =
             eye + vec3f{10.f * static_cast<float>(tick + 1), 0.f, 0.f};
         context.tick_number = first_tick + tick;
-        server::update_guided_rockets(context, tick_interval_seconds);
+        server::update_guided_rockets(context, tickrate_hz);
       }
     };
 
@@ -745,7 +816,7 @@ int main()
 
     pilot()->movement.active_override = entities::Movement_Override::None;
     context.tick_number               = 160;
-    server::update_guided_rockets(context, tick_interval_seconds);
+    server::update_guided_rockets(context, tickrate_hz);
 
     check(entity_system.entities_of_type<entities::Guided_Rocket_Entity>().empty(),
           "the rocket goes the tick the flight has ended");
@@ -767,20 +838,20 @@ int main()
     }
     const uint32_t extend_ticks = static_cast<uint32_t>(
         std::ceil((200.f + row.path.joint_overlap) /
-                  (entities::Extending_Platform_Entity{}.extend_speed * tick_interval_seconds)));
+                  (entities::Extending_Platform_Entity{}.extend_speed * shared::tick_interval_seconds(tickrate_hz))));
     check(earliest == 160, "the first segment starts growing the tick the flight ended");
     check(latest == 160 + 2 * extend_ticks, "and each next one the tick the one before it is grown");
 
     fly(300, 30);
     pilot()->movement.active_override = entities::Movement_Override::None;
     context.tick_number               = 330;
-    server::update_guided_rockets(context, tick_interval_seconds);
+    server::update_guided_rockets(context, tickrate_hz);
     check(count_segments() == 2, "a second flight replaces the path the first one left");
 
     fly(400, 30);
     pilot()->health.current_health = 0;
     context.tick_number            = 430;
-    server::update_guided_rockets(context, tick_interval_seconds);
+    server::update_guided_rockets(context, tickrate_hz);
     check(pilot()->movement.override_seconds_remaining == 0.f, "a dead pilot's flight is let go");
     check(entity_system.entities_of_type<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
     check(count_segments() == 2, "and it leaves no path of its own");
@@ -804,31 +875,36 @@ int main()
         shared::get_weapon_definition(entities::Weapon::Flashlight).slot;
 
     carrier->inventory.active_slot = flashlight_slot;
-    check(!shared::reveal_light_is_on(entity_system, *carrier), "a Flashlight in hand starts dark");
+    check(!shared::reveal_light_is_on(shared::player_sight_from_entity(entity_system, *carrier)), "a Flashlight in hand starts dark");
 
     carrier->reveal_light_on = true;
-    check(shared::reveal_light_is_on(entity_system, *carrier), "the toggle lights it");
+    check(shared::reveal_light_is_on(shared::player_sight_from_entity(entity_system, *carrier)), "the toggle lights it");
 
     carrier->inventory.active_slot = entities::Inventory_Slot::Melee;
-    check(!shared::reveal_light_is_on(entity_system, *carrier), "switching to another weapon puts it out");
+    check(!shared::reveal_light_is_on(shared::player_sight_from_entity(entity_system, *carrier)), "switching to another weapon puts it out");
 
     carrier->inventory.active_slot = flashlight_slot;
-    check(shared::reveal_light_is_on(entity_system, *carrier), "and switching back finds it still on");
+    check(shared::reveal_light_is_on(shared::player_sight_from_entity(entity_system, *carrier)), "and switching back finds it still on");
 
     const shared::reveal_cone_settings_t cone_settings = {
         .range = 1024.f, .half_angle_degrees = 25.f, .overhead_height = 128.f};
     std::vector<shared::reveal_cone_planes_t> cones;
+    std::vector<shared::player_sight_t>       sights;
     carrier->position = {100.f, 0.f, 0.f};
-    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, shared::null_entity_uid, cones);
+    shared::player_sights_from_entities(entity_system, sights);
+    shared::compute_reveal_cones_at_tick(sights, entity_system, {}, {}, cone_settings, 1, 60, cones);
     check(cones.size() == 1 &&
               linalg::length(cones[0].apex -
                              linalg::vec3f{100.f, shared::player_eye_height, 0.f}) < 1e-4f,
           "a lit Flashlight is one solid-making cone from its carrier's eye");
-    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, carrier_uid, cones);
-    check(cones.empty(), "the player a client predicts for itself is left out of the cut");
+    sights[0].feet = {200.f, 0.f, 0.f};
+    shared::compute_reveal_cones_at_tick(sights, entity_system, {}, {}, cone_settings, 1, 60, cones);
+    check(cones.size() == 1 && std::fabs(cones[0].apex.x - 200.f) < 1e-4f,
+          "a row a client overwrites from its prediction is where the cone stands, not the entity");
 
     carrier->reveal_light_overhead = true;
-    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, shared::null_entity_uid, cones);
+    shared::player_sights_from_entities(entity_system, sights);
+    shared::compute_reveal_cones_at_tick(sights, entity_system, {}, {}, cone_settings, 1, 60, cones);
     check(cones.size() == 1 &&
               linalg::length(cones[0].apex -
                              linalg::vec3f{100.f, shared::player_eye_height + 128.f, 0.f}) < 1e-4f,
@@ -838,8 +914,9 @@ int main()
           "and the Flashlight's secondary press is what flips it");
 
     carrier->health.current_health = 0;
-    check(!shared::reveal_light_is_on(entity_system, *carrier), "a dead carrier lights nothing");
-    shared::collect_reveal_cones(entity_system, {}, {}, cone_settings, 1, 60.f, shared::null_entity_uid, cones);
+    check(!shared::reveal_light_is_on(shared::player_sight_from_entity(entity_system, *carrier)), "a dead carrier lights nothing");
+    shared::player_sights_from_entities(entity_system, sights);
+    shared::compute_reveal_cones_at_tick(sights, entity_system, {}, {}, cone_settings, 1, 60, cones);
     check(cones.empty(), "and makes nothing solid");
   }
 

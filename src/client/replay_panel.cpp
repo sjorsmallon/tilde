@@ -196,13 +196,13 @@ void draw_replay_panel(client_context_t& context)
 
     ImGui::Separator();
 
-    // The camera's arms are noclip, then the spectated slot, then the predicted
+    // The camera's arms are the free camera, then the spectated slot, then the predicted
     // eye -- and a replay has no local body, so that last one parks the view
     // wherever prediction left it. So a row here writes BOTH cvars: the free
-    // camera IS cl_noclip, and picking a player has to clear it or the arm above
+    // camera IS cl_free_camera, and picking a player has to clear it or the arm above
     // keeps winning and the pick does nothing.
     const std::vector<replay_pov_row_t> rows       = collect_pov_rows(context);
-    const bool                          flying     = context.cvars->cl_noclip;
+    const bool                          flying     = context.cvars->cl_free_camera;
     char                                preview[96] = "Free camera";
     if (!flying)
       for (const replay_pov_row_t& row : rows)
@@ -214,7 +214,7 @@ void draw_replay_panel(client_context_t& context)
     {
       if (ImGui::Selectable("Free camera", flying))
       {
-        context.cvars->cl_noclip        = true;
+        context.cvars->cl_free_camera        = true;
         context.cvars->cl_spectate_slot = -1;
       }
       for (const replay_pov_row_t& row : rows)
@@ -224,7 +224,7 @@ void draw_replay_panel(client_context_t& context)
         ImGui::PushID(row.slot);
         if (ImGui::Selectable(label, !flying && row.slot == context.cvars->cl_spectate_slot))
         {
-          context.cvars->cl_noclip        = false;
+          context.cvars->cl_free_camera        = false;
           context.cvars->cl_spectate_slot = row.slot;
         }
         ImGui::PopID();

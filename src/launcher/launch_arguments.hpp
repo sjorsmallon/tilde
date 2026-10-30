@@ -18,7 +18,7 @@
 //   option       := "-w" NUMBER | "-h" NUMBER | "-x" NUMBER | "-y" NUMBER
 //   console_line := "+" NAME TOKEN*
 //
-//   MyGame_Client -w 0.5 -h 0.5 -x 0.5 -y 0 +cl_auto_join 1 +connect 127.0.0.1
+//   MVMT_Client -w 0.5 -h 0.5 -x 0.5 -y 0 +cl_auto_join 1 +connect 127.0.0.1
 namespace launch_arguments {
 
 struct option_t

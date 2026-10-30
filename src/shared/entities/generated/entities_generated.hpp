@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Every entity type, on top of the tables that span the set. Include
 // this ONLY to switch over the closed set; include
@@ -15,10 +15,7 @@
 #include "entities/player_spectate_entity_generated.hpp"
 #include "entities/player_entity_generated.hpp"
 #include "entities/weapon_entity_generated.hpp"
-#include "entities/rocket_entity_generated.hpp"
-#include "entities/hook_entity_generated.hpp"
-#include "entities/kooh_entity_generated.hpp"
-#include "entities/ricochet_entity_generated.hpp"
+#include "entities/shot_entity_generated.hpp"
 #include "entities/platform_entity_generated.hpp"
 #include "entities/shrinking_platform_entity_generated.hpp"
 #include "entities/extending_platform_entity_generated.hpp"
@@ -44,7 +41,6 @@
 #include "entities/launcher_entity_generated.hpp"
 #include "entities/movement_modifier_entity_generated.hpp"
 #include "entities/remnant_entity_generated.hpp"
-#include "entities/modifier_shot_entity_generated.hpp"
 #include "entities/timed_movement_modifier_entity_generated.hpp"
 #include "entities/weapon_emancipation_grill_entity_generated.hpp"
 #include "entities/emancipated_weapon_entity_generated.hpp"

@@ -40,7 +40,7 @@ GAME_SERVER_API bool init(cvars::cvar_state_t *cvar_state,
                           assets::asset_state_t *asset_state);
 GAME_SERVER_API bool Tick();
 GAME_SERVER_API void shutdown();
-GAME_SERVER_API double get_tick_interval();
+GAME_SERVER_API float get_tick_interval_seconds();
 GAME_SERVER_API uint32_t get_tick_number();
 
 // Integrated-mode only: returns a pointer to the server's authoritative session

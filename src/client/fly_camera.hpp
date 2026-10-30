@@ -8,7 +8,7 @@ namespace client
 {
 
 // The editor's free-fly controls, as one function both the editor and
-// Play_State's noclip drive: WASD along the view, Space/C up and down the world
+// Play_State's free camera drive: WASD along the view, Space/C up and down the world
 // axis, shift for speed, and a mouse delta on yaw and pitch. Perspective only
 // -- the editor's orthographic arms are the editor's.
 struct fly_camera_input_t

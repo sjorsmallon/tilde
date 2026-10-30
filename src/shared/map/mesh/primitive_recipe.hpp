@@ -95,6 +95,10 @@ primitive_frame_t make_primitive_frame(const linalg::vec3 &axis);
 // prism's length, the arch's depth, the flight's climb, world up for a spiral.
 linalg::vec3 primitive_recipe_axis(const primitive_recipe_t &recipe);
 
+// Whether the kind is laid out along a chosen axis; a spiral and a curve wall
+// stand on world up and have none.
+bool primitive_kind_has_axis(primitive_kind_t kind);
+
 // A quarter turn about world up is a component swap, so a turned primitive
 // stays exactly on the grid.
 linalg::vec3 turn_about_up(const linalg::vec3 &point, int quarter_turns);

@@ -4,7 +4,6 @@
 #include "../shared/memory_audit.hpp"
 #include "../shared/network/network_types.hpp"
 #include "../shared/network/udp_socket.hpp"
-#include "hud.hpp"
 #include "input.hpp"
 #include "key_names.hpp"
 #include "log.hpp"
@@ -354,13 +353,6 @@ void connect(std::string_view address, const command_context_t &)
   client::state_manager::switch_to(client::game_state::play);
 }
 
-void noclip(const command_context_t &)
-{
-  cvars::cvar_state_t& cvars = *client::state_manager::get_client_context().cvars;
-  cvars.cl_noclip = !cvars.cl_noclip;
-  client::hud::set_announcement(cvars.cl_noclip ? "Noclip ON" : "Noclip OFF");
-}
-
 void grab_frame(const command_context_t &)
 {
   client::renderer::request_frame_grab();
@@ -404,13 +396,15 @@ void shadow_volume_report(const command_context_t &)
     return;
   }
   shared::predicted_world_storage_t storage;
-  shared::build_movers(ctx.world.session,
+  shared::compute_movers_at_tick(ctx.world.session,
                        {.tick        = ctx.prediction.latest_server_tick,
                         .state_tick  = ctx.prediction.latest_server_tick,
-                        .tickrate_hz = static_cast<float>(ctx.connection.server_tickrate),
+                        .tickrate_hz = ctx.connection.server_tickrate,
                         .gravity     = ctx.cvars->g_gravity},
                        storage);
-  const shared::shadow_volume_report_t counts = shared::build_shadow_volumes(ctx.world.session, storage);
+  const shared::shadow_volume_report_t counts = shared::compute_shadow_volumes(
+      ctx.world.session.entity_system, ctx.world.session.bvh, ctx.world.session.owner_of, storage.movers,
+      ctx.world.session.mover_rests, storage.shadow_volumes);
   client::console::get().print_line(shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 

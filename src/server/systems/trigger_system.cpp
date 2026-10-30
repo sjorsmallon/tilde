@@ -82,7 +82,7 @@ void collect_overlaps(server_context_t& context, Span<const toucher_t> touchers,
     if (!switch_state.value)
       continue;
 
-    // The ONE bounds function, shared with collect_movement_volumes: a pad's
+    // The ONE bounds function, shared with compute_movement_volumes_at_tick: a pad's
     // Touched and a pad's launch must agree about who is inside it.
     const shared::aabb_bounds_t volume_bounds = shared::get_bounds(box, volume.position);
 

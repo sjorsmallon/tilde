@@ -12,7 +12,7 @@ namespace client::game_events
 
 void on_objective_reached(client_context_t &context, const shared::Objective_Reached &value)
 {
-  const float tick_dt = 1.0f / static_cast<float>(context.connection.server_tickrate);
+  const float tick_dt = shared::tick_interval_seconds(context.connection.server_tickrate);
   const bool  timed   = value.attempt_ticks > 0;
   // No best on file is a record too: the first finish is the fastest one.
   const bool is_record = timed && (value.best_ticks == 0 || value.attempt_ticks < value.best_ticks);

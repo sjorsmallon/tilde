@@ -85,10 +85,21 @@ linalg::vec3 primitive_recipe_axis(const primitive_recipe_t &unclamped)
   constexpr linalg::vec3 AXES[3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
   primitive_recipe_t recipe = unclamped;
   clamp_primitive_recipe(recipe);
-  const bool stands_on_world_up =
-      recipe.kind == primitive_kind_t::Spiral_Stairs || recipe.kind == primitive_kind_t::Curve;
-  const linalg::vec3 axis = stands_on_world_up ? AXES[1] : AXES[recipe.axis_index];
+  const linalg::vec3 axis = primitive_kind_has_axis(recipe.kind) ? AXES[recipe.axis_index] : AXES[1];
   return turn_about_up(axis, recipe.quarter_turns);
+}
+
+bool primitive_kind_has_axis(primitive_kind_t kind)
+{
+  switch (kind)
+  {
+    case primitive_kind_t::Prism:
+    case primitive_kind_t::Arch:
+    case primitive_kind_t::Straight_Stairs: return true;
+    case primitive_kind_t::Spiral_Stairs:
+    case primitive_kind_t::Curve: return false;
+  }
+  fatal_error("primitive_kind_has_axis: unknown kind {}", (int)kind);
 }
 
 } // namespace shared

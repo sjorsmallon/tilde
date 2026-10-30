@@ -46,6 +46,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <cstdio>
 #include <tuple>
 #include <vector>
@@ -1388,7 +1390,7 @@ static platform_drop_result_t drop_onto_spawned_platform(const cvar_state_t& cva
                                                         shared::entity_uid_t& out_platform_uid)
 {
   const Bounding_Volume_Hierarchy bvh = empty_world();
-  const shared::fixed_arc_flight_settings_t flight{.tick_interval_seconds = tick_dt, .gravity = 800.f};
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = 60, .gravity = 800.f};
 
   shared::Entity_System system;
   out_platform_uid = system.spawn(entities::entity_type::Platform_Entity);
@@ -1405,7 +1407,7 @@ static platform_drop_result_t drop_onto_spawned_platform(const cvar_state_t& cva
   for (uint32_t tick = 1; tick <= ticks; ++tick)
   {
     movers.clear();
-    shared::collect_spawned_platforms(system, tick, flight, movers);
+    shared::compute_spawned_platforms_at_tick(system, tick, flight, movers);
     const shared::predicted_world_t world{.movers = movers};
 
     const mover_push_t push = push_player_by_movers(bvh, world, movement, feet, half_width, half_height);
@@ -1493,7 +1495,7 @@ static canopy_ride_result_t ride_canopy(const cvar_state_t& cvars, const Boundin
   for (uint32_t tick = 2; tick < 2 + ticks; ++tick)
   {
     movers.clear();
-    shared::collect_canopies(system, tick, tick - 1, tick_dt, movers);
+    shared::compute_canopies_at_tick(system, tick, tick - 1, tick_dt, movers);
     const shared::predicted_world_t world{.movers = movers};
 
     const mover_push_t push = push_player_by_movers(bvh, world, movement, feet, half_width, half_height);
@@ -1581,7 +1583,7 @@ static void test_a_rider_keeps_its_place_on_a_canopy(const cvar_state_t& cvars)
   {
     const uint32_t tick = 2 + index;
     movers.clear();
-    shared::collect_canopies(system, tick, tick - 1, tick_dt, movers);
+    shared::compute_canopies_at_tick(system, tick, tick - 1, tick_dt, movers);
     const shared::predicted_world_t world{.movers = movers};
 
     feet = push_player_by_movers(bvh, world, movement, feet, half_width, half_height).feet;
@@ -1611,7 +1613,7 @@ static void test_a_rider_keeps_its_place_on_a_canopy(const cvar_state_t& cvars)
   for (uint32_t tick = state_tick + 1; tick <= state_tick + 8; ++tick)
   {
     movers.clear();
-    shared::collect_canopies(system, tick, state_tick, tick_dt, movers);
+    shared::compute_canopies_at_tick(system, tick, state_tick, tick_dt, movers);
     const shared::predicted_world_t world{.movers = movers};
 
     feet = push_player_by_movers(bvh, world, movement, feet, half_width, half_height).feet;
@@ -1716,7 +1718,7 @@ static void test_a_frozen_player_is_a_statue(const cvar_state_t& cvars)
   frozen->movement.override_seconds_remaining = 10.f;
 
   std::vector<shared::mover_t> movers;
-  shared::collect_statues(system, movers);
+  shared::compute_statue_movers(system, movers);
   check(movers.size() == 1, "a frozen player is one mover");
   check(!movers.empty() && movers[0].uid == frozen_uid, "whose uid is the player's");
 
@@ -1796,7 +1798,7 @@ static void test_a_merged_passenger_holds_inside_its_driver(const cvar_state_t& 
   check(shared::get_body_uid_for_player_uid(system, driver_uid) == driver_uid, "a driver's through their own");
 
   std::vector<shared::mover_t> movers;
-  shared::collect_statues(system, movers);
+  shared::compute_statue_movers(system, movers);
   check(movers.empty(), "a passenger is not a statue: nobody stands on one");
 
   std::vector<shared::projectile_target_t> targets;
@@ -2745,6 +2747,67 @@ static climb_t hold_forward(const cvar_state_t& cvars, const Bounding_Volume_Hie
   return climb;
 }
 
+
+// --- noclip: the hull is translated through the map, and lands still -----------
+//
+// Swept against nothing, so the floor is no floor; the clock is the exit, so
+// zeroing it ends the flight through the one door with no velocity left.
+static void test_noclip_passes_through_the_floor_and_ends_still(const cvar_state_t& cvars)
+{
+  printf("\n[noclip] through the floor, step-invariant, still at the end\n");
+
+  const Bounding_Volume_Hierarchy bvh      = floor_world();
+  const shared::predicted_world_t world{};
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(cvars);
+
+  const float diagonal = std::sqrt(0.5f);
+  const vec3  front_pitched_down{diagonal, -diagonal, 0.f};
+  const vec3  start{0.f, 100.f, 0.f};
+  const float speed = 1000.f;
+  Move_Input  forward{};
+  forward.forward_pressed = true;
+
+  std::optional<vec3> first_end;
+  for (int sub_steps : {1, 2, 8})
+  {
+    entities::Movement movement{};
+    movement.active_override            = entities::Movement_Override::Noclip;
+    movement.override_seconds_remaining = std::numeric_limits<float>::infinity();
+    movement.override_speed             = speed;
+
+    shared::move_state_t state{.feet = start, .velocity = {}, .movement = movement};
+    const float          step_dt = (0.5f) / (float)sub_steps;
+    for (int tick = 0; tick < 2 * sub_steps; ++tick)
+      state = player_move(settings, bvh, world, state,
+                          {.buttons = forward, .front = front_pitched_down, .right = look_right,
+                           .dt = step_dt},
+                          nullptr);
+
+    printf("    N=%-2d  feet.y = %.3f\n", sub_steps, state.feet.y);
+    check(state.feet.y < -600.f, "a noclip hull flies through the floor");
+    check(!state.movement.is_grounded, "and is never grounded");
+    check_near(state.velocity.x, front_pitched_down.x * speed, 1e-2f, "at override_speed along the aim");
+    check_near(state.velocity.y, front_pitched_down.y * speed, 1e-2f, "down as much as along");
+    if (!first_end)
+      first_end = state.feet;
+    else
+    {
+      check_near(first_end->x, state.feet.x, 1e-2f, "the same place however the tick is cut");
+      check_near(first_end->y, state.feet.y, 1e-2f, "in height too");
+    }
+
+    state.movement.override_seconds_remaining = 0.f;
+    Move_Events events{};
+    state = player_move(settings, bvh, world, state,
+                        {.buttons = forward, .front = front_pitched_down, .right = look_right,
+                         .dt = step_dt},
+                        &events);
+    check(events.override_ended.kind == entities::Movement_Override::Noclip, "a zeroed clock ends it");
+    check(same_vec3(events.override_ended.velocity, vec3{}), "with no velocity");
+    check(state.movement.active_override == entities::Movement_Override::None, "and clears it");
+  }
+}
+
 static void test_a_steep_face_is_a_wall_under_the_instant_models(const cvar_state_t& cvars)
 {
   printf("\n[DELIBERATE] a face past 45 degrees: the instant models cannot push up it\n");
@@ -2854,6 +2917,7 @@ int main()
   test_hook_reel_timeout_is_step_invariant(cvars);
   test_surf_ramp_projects_the_fall(cvars);
   test_a_steep_face_is_a_wall_under_the_instant_models(cvars);
+  test_noclip_passes_through_the_floor_and_ends_still(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

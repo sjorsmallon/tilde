@@ -117,6 +117,12 @@ Hook :: cvars {
     sv_hook_arrive_radius:    f32 = 48.0   @Server  "Distance from the anchor the reel lets go at"
 }
 
+// Noclip is an override too, and the same rule holds: the `noclip` command writes
+// this into Movement at attach, and player_move reads the replicated copy.
+Noclip :: cvars {
+    sv_noclip_speed:          f32 = 1600.0 @Server  "Speed a noclipping body flies at, along the aim and up on jump"
+}
+
 Gameplay :: cvars {
 }
 
@@ -238,7 +244,7 @@ Server :: cvars {
     // NOT @Mirrored: the
     // client learns the tickrate once from CmdAccept at handshake time, which
     // is a handshake fact, not a live-synced value.
-    sv_tickrate:            f32 = 60.0      @Server    "Server tick rate in Hz"
+    sv_tickrate:            u32 = 60        @Server    "Server tick rate in Hz"
 
     sv_timeout:             f32 = 60.0      @Server    "Seconds of silence before a client is dropped (0 = never)"
 
@@ -399,10 +405,10 @@ Client :: cvars {
 
     // A free camera flown with the editor's controls, and NOTHING moves the
     // body: it stays where it stood, still simulated and still shootable, and
-    // the view returns to its own aim when this goes off. A cvar rather than a
-    // bare command because it has a current value; `noclip` is the toggle over
-    // it.
-    cl_noclip:              bool = false     @Client    "Detach the camera from the body and fly it with the editor's controls"
+    // the view returns to its own aim when this goes off. The replay viewer's
+    // free view and a spectator's. Flying the BODY is `noclip`, a
+    // Movement_Override the server attaches.
+    cl_free_camera:         bool = false     @Client    "Detach the camera from the body and fly it with the editor's controls"
 
     // The aim pose EXTENTS moved to the @Mirrored `Aim` block above when the
     // server started posing hit volumes with them. What is left here is the
@@ -746,8 +752,8 @@ Server_Commands :: commands {
     map(path: string)                  @Server  "Switch the server to a new map"
 
     // Source's setpos: moves the CALLER's body, feet at the point, velocity
-    // zeroed. The client fires it when cl_noclip goes off so the body catches
-    // up with the camera; three floats because a command parameter has no v3.
+    // zeroed. The client fires it to place a body spawned from the editor at
+    // the editor's camera; three floats because a command parameter has no v3.
     setpos(x: f32, y: f32, z: f32)     @Server  "Move the calling player's body to a position"
 
     // A client connects as a SPECTATOR -- it holds a slot with no player
@@ -821,8 +827,11 @@ Client_Commands :: commands {
     // alone.
     announce(text: string...)              @Client  "Show a banner on screen for a few seconds"
 
-    // The toggle over cl_noclip, so one bound key does both directions.
-    noclip()                               @Client  "Toggle the free camera (cl_noclip)"
+    // Attaches Movement_Override::Noclip to the caller's body, or ends it: the
+    // server flies the hull and the client predicts the same flight, so there is
+    // no teleport when it goes off. One verb for both directions so one bound
+    // key toggles.
+    noclip()                               @Server  "Fly the body through the map; again to land it where it is"
 
     // Allocation attribution (vector_def.md, Track A). COMMANDS rather than
     // cvars for the same reason `map` is one: each is a verb that prints

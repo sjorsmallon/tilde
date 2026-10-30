@@ -89,7 +89,7 @@ uint32_t compute_channels_seen_through_lenses(Span<const lens_t> lenses, const l
   return seen ? channels : 0;
 }
 
-void collect_lenses(const Entity_System& system, std::vector<lens_t>& out)
+void compute_lenses(const Entity_System& system, std::vector<lens_t>& out)
 {
   out.clear();
   for (const entities::Lens_Entity& lens : system.entities_of_type<entities::Lens_Entity>())
@@ -106,15 +106,6 @@ std::optional<entities::Lens_Filter> try_get_held_lens_filter(const Entity_Syste
   return held->primary_fire.lens_view.filter;
 }
 
-uint32_t compute_held_lens_channels(const Entity_System& system, const entities::Player_Entity& player,
-                                    bool held_lens_on)
-{
-  if (!held_lens_on || !player_watches_lenses(player))
-    return 0;
-  const std::optional<entities::Lens_Filter> filter = try_get_held_lens_filter(system, player);
-  return filter.has_value() ? get_channel_bits_for_lens_filter(*filter) : 0;
-}
-
 lens_watch_screen_t clamp_lens_watch_screen(const lens_watch_screen_t& view)
 {
   return {.fov_degrees = std::clamp(view.fov_degrees, LENS_WATCH_SCREEN_FOV_DEGREES_MIN, LENS_WATCH_SCREEN_FOV_DEGREES_MAX),
@@ -124,13 +115,9 @@ lens_watch_screen_t clamp_lens_watch_screen(const lens_watch_screen_t& view)
 lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
                                     const lens_watch_screen_t& view, uint32_t held_channels)
 {
-  constexpr linalg::vec3f WORLD_UP = {0.f, 1.f, 0.f};
-  constexpr float         LEVEL    = 1e-3f;
-
   const linalg::vec3f forward = linalg::direction_from_angles(yaw_degrees, pitch_degrees);
-  linalg::vec3f       right   = linalg::cross(forward, WORLD_UP);
-  right = linalg::length(right) < LEVEL ? linalg::vec3f{1.f, 0.f, 0.f} : linalg::normalize(right);
-  const linalg::vec3f up = linalg::cross(right, forward);
+  const linalg::vec3f right   = linalg::right_from_forward(forward);
+  const linalg::vec3f up      = linalg::cross(right, forward);
 
   const lens_watch_screen_t bounded    = clamp_lens_watch_screen(view);
   const float       vertical   = linalg::to_radians(bounded.fov_degrees) * 0.5f;
@@ -168,23 +155,15 @@ bool any_lens_watcher_sees_point(Span<const lens_watcher_t> watchers, Span<const
   return false;
 }
 
-bool player_watches_lenses(const entities::Player_Entity& player)
-{
-  return player.health.current_health > 0;
-}
-
-void collect_lens_watchers(const Entity_System& system, entity_uid_t predicted_by_caller,
-                           std::vector<lens_watcher_t>& out)
+void compute_lens_watchers(Span<const player_sight_t> sights, std::vector<lens_watcher_t>& out)
 {
   out.clear();
-  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
+  for (const player_sight_t& sight : sights)
   {
-    if (player.entity_id == predicted_by_caller || !player_watches_lenses(player))
+    if (!sight.alive)
       continue;
-    out.push_back(compute_lens_watcher(player.position + linalg::vec3f{0.f, player_eye_height, 0.f},
-                                       player.view_angle_yaw, player.view_angle_pitch,
-                                       {.fov_degrees = player.view_fov_degrees, .aspect = player.view_aspect},
-                                       compute_held_lens_channels(system, player, player.held_lens_on)));
+    out.push_back(compute_lens_watcher(player_eye_position(sight.feet), sight.view_entering_tick.yaw,
+                                       sight.view_entering_tick.pitch, sight.screen, held_lens_channels(sight)));
   }
 }
 

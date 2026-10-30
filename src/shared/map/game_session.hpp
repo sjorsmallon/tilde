@@ -66,7 +66,7 @@ struct game_session_t
   path_links_t path_links;
 
   // A mover's geometry is not in `bvh`: its rest frame, latched from the authored start node before
-  // anything advances, and its pieces at that pose, keyed by mover, cut per tick by collect_movers.
+  // anything advances, and its pieces at that pose, keyed by mover, cut per tick by compute_path_movers_at_tick.
   mover_rests_t mover_rests;
 
   // Each solid beam's last carve with what it was carved from, so a tick that changes nothing in a beam

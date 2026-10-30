@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The TYPE layer of entity I/O: what an entity can be TOLD and what it
 // ANNOUNCES. entity_io_def.md is the design; the per-INSTANCE half is a
@@ -168,10 +168,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Player_Spectate_Entity
   trait_bit(entity_trait::Mortal) | trait_bit(entity_trait::Mobile) | trait_bit(entity_trait::Armable) | trait_bit(entity_trait::Respawnable),   // Player_Entity
   0u,   // Weapon_Entity
-  0u,   // Rocket_Entity
-  0u,   // Hook_Entity
-  0u,   // Kooh_Entity
-  0u,   // Ricochet_Entity
+  0u,   // Shot_Entity
   0u,   // Platform_Entity
   0u,   // Shrinking_Platform_Entity
   0u,   // Extending_Platform_Entity
@@ -197,7 +194,6 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Firing),   // Launcher_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Movement_Modifier_Entity
   0u,   // Remnant_Entity
-  0u,   // Modifier_Shot_Entity
   0u,   // Timed_Movement_Modifier_Entity
   trait_bit(entity_trait::Switchable) | trait_bit(entity_trait::Touchable),   // Weapon_Emancipation_Grill_Entity
   0u,   // Emancipated_Weapon_Entity
@@ -238,10 +234,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Player_Spectate_Entity
   action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Take_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
   0u,   // Weapon_Entity
-  0u,   // Rocket_Entity
-  0u,   // Hook_Entity
-  0u,   // Kooh_Entity
-  0u,   // Ricochet_Entity
+  0u,   // Shot_Entity
   0u,   // Platform_Entity
   0u,   // Shrinking_Platform_Entity
   0u,   // Extending_Platform_Entity
@@ -267,7 +260,6 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Fire),   // Launcher_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Movement_Modifier_Entity
   0u,   // Remnant_Entity
-  0u,   // Modifier_Shot_Entity
   0u,   // Timed_Movement_Modifier_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Weapon_Emancipation_Grill_Entity
   0u,   // Emancipated_Weapon_Entity
@@ -300,10 +292,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Player_Spectate_Entity
   signal_bit(entity_signal::Died) | signal_bit(entity_signal::Health_Changed),   // Player_Entity
   0u,   // Weapon_Entity
-  0u,   // Rocket_Entity
-  0u,   // Hook_Entity
-  0u,   // Kooh_Entity
-  0u,   // Ricochet_Entity
+  0u,   // Shot_Entity
   0u,   // Platform_Entity
   0u,   // Shrinking_Platform_Entity
   0u,   // Extending_Platform_Entity
@@ -329,7 +318,6 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Launcher_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Movement_Modifier_Entity
   0u,   // Remnant_Entity
-  0u,   // Modifier_Shot_Entity
   0u,   // Timed_Movement_Modifier_Entity
   signal_bit(entity_signal::Touched) | signal_bit(entity_signal::Left),   // Weapon_Emancipation_Grill_Entity
   0u,   // Emancipated_Weapon_Entity

@@ -55,7 +55,7 @@ struct path_refusal_t
 
 [[nodiscard]] path_pose_t mover_pose_at(const Entity_System& system, const path_links_t& links,
                                         const entities::Mover_Entity& mover, const path_pose_t& rest,
-                                        uint32_t tick, float tickrate);
+                                        uint32_t tick, uint32_t tickrate_hz);
 
 [[nodiscard]] linalg::vec3f apply_mover_pose(const path_pose_t& rest, const path_pose_t& pose,
                                              const linalg::vec3f& point);
@@ -67,9 +67,9 @@ struct path_refusal_t
 // Where a Rides entity is at `tick`: carried by the mover it rides, where it was placed otherwise. mover_def.md ss17.
 [[nodiscard]] path_pose_t ridden_pose_at(const Entity_System& system, const path_links_t& links,
                                          const mover_rests_t& rests, const path_pose_t& placed,
-                                         const entities::Rides& rides, uint32_t tick, float tickrate);
+                                         const entities::Rides& rides, uint32_t tick, uint32_t tickrate_hz);
 
-// The same answer read off an already cut tick (collect_movers' end pose), for what runs after build_movers.
+// The same answer read off an already cut tick (compute_path_movers_at_tick' end pose), for what runs after compute_movers_at_tick.
 [[nodiscard]] path_pose_t ridden_pose_in_cut(Span<const mover_t> movers, const mover_rests_t& rests,
                                              const path_pose_t& placed, const entities::Rides& rides);
 
@@ -81,8 +81,8 @@ struct path_refusal_t
 
 [[nodiscard]] linalg::mat4f mover_model_matrix(const path_pose_t& rest, const path_pose_t& pose);
 
-void collect_movers(const Entity_System& system, const path_links_t& links,
-                    const mover_rests_t& rests, uint32_t tick, float tickrate,
+void compute_path_movers_at_tick(const Entity_System& system, const path_links_t& links,
+                    const mover_rests_t& rests, uint32_t tick, uint32_t tickrate_hz,
                     std::vector<mover_t>& out);
 
 } // namespace shared

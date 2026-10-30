@@ -382,11 +382,6 @@ void Tool_Editor_State::on_exit()
 
 void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
 {
-  // Pitch stops short of straight down. At exactly +-90 the forward vector is
-  // parallel to world up, the right vector collapses, and get_orientation_vectors
-  // falls back to an arbitrary one -- so the view spins depending on nothing.
-  constexpr float VERTICAL_PITCH = 89.0f;
-
   float       yaw          = 0.0f;
   float       pitch        = 0.0f;
   const char *announcement = "";
@@ -397,8 +392,8 @@ void Tool_Editor_State::snap_to_axis_view(ViewMode mode)
     case ViewMode::Back:    yaw = 180.0f; pitch = 0.0f;             announcement = "Back (-X)";    break;
     case ViewMode::Side:    yaw = 90.0f;  pitch = 0.0f;             announcement = "Right (+Z)";   break;
     case ViewMode::Left:    yaw = 270.0f; pitch = 0.0f;             announcement = "Left (-Z)";    break;
-    case ViewMode::TopDown: yaw = 0.0f;   pitch = -VERTICAL_PITCH;  announcement = "Top (-Y)";     break;
-    case ViewMode::Bottom:  yaw = 0.0f;   pitch = VERTICAL_PITCH;   announcement = "Bottom (+Y)";  break;
+    case ViewMode::TopDown: yaw = 0.0f;   pitch = -linalg::VIEW_PITCH_LIMIT_DEGREES;  announcement = "Top (-Y)";     break;
+    case ViewMode::Bottom:  yaw = 0.0f;   pitch = linalg::VIEW_PITCH_LIMIT_DEGREES;  announcement = "Bottom (+Y)";  break;
 
     // Not an axis view; nothing to snap to. Reached only if a caller passes it,
     // which no keypad binding does.
@@ -460,7 +455,7 @@ void Tool_Editor_State::orbit_camera_around_pivot(float yaw_delta_degrees, float
   offset = linalg::rotate(linalg::from_axis_angle({0.0f, 1.0f, 0.0f}, -yaw_delta_degrees), offset);
   camera.yaw += yaw_delta_degrees;
 
-  const float          new_pitch = std::clamp(camera.pitch + pitch_delta_degrees, -89.0f, 89.0f);
+  const float          new_pitch = linalg::clamp_view_pitch(camera.pitch + pitch_delta_degrees);
   const camera_basis_t basis     = get_orientation_vectors(camera);
   offset = linalg::rotate(linalg::from_axis_angle(basis.right, new_pitch - camera.pitch), offset);
   camera.pitch = new_pitch;
@@ -492,7 +487,7 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.grid = &grid_settings;
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
-  context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
+  context.tickrate_hz = state_manager::get_client_context().cvars->sv_tickrate;
   entity_visibility.refresh(map);
   context.hidden_objects = entity_visibility.hidden_this_frame;
   // context.time is NOT reset here -- it is seconds since the editor opened,
@@ -613,7 +608,7 @@ void Tool_Editor_State::update(float dt)
           view_mode = ViewMode::TopDown;
           camera.orthographic = true;
           camera.yaw = 0.0f;
-          camera.pitch = -89.0f;
+          camera.pitch = -linalg::VIEW_PITCH_LIMIT_DEGREES;
           camera.position.y = 1500.f;
           hud::set_announcement("Top Down (-Y)");
           break;
@@ -834,7 +829,7 @@ void Tool_Editor_State::update(float dt)
   context.placement_prefers_surface = input::current_modifiers().shift;
   context.entity_draw_settings = {
       .gravity = state_manager::get_client_context().cvars->g_gravity};
-  context.tickrate = state_manager::get_client_context().cvars->sv_tickrate;
+  context.tickrate_hz = state_manager::get_client_context().cvars->sv_tickrate;
 
   // Flattened out of the one pass that knows both the per-entity set and the
   // per-type mask, the way objects_without_collision is.
@@ -1006,7 +1001,7 @@ void Tool_Editor_State::draw_imgui_panels()
       {
         std::string full_path = get_maps_dir() + map.name;
         map.navmesh = {};
-        shared::bake_map(map, navmesh_cell_size);  // raw triangles only
+        shared::bake_map(map, navmesh_cell_size, state_manager::get_client_context().cvars->pm_step_height);  // raw triangles only
         m_raw_navmesh = map.navmesh;               // save before simplification
         m_simplify_steps = 0;
         shared::simplify_navmesh(map.navmesh);     // full simplify

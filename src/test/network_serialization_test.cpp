@@ -16,7 +16,7 @@
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
-#include "entities/generated/entities/rocket_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -108,16 +108,16 @@ int main()
     // rather than a literal so that editing the default in entities.def cannot
     // make this test wrong again (it asserted == 0.0f while the .def said
     // = 50.0, so it failed on the default rather than on the wire behaviour).
-    const entities::Rocket_Entity pristine_rocket;
+    const entities::Shot_Entity pristine_rocket;
 
-    entities::Rocket_Entity server_rocket;
+    entities::Shot_Entity server_rocket;
     server_rocket.lifetime = pristine_rocket.lifetime + 73.0f;
     server_rocket.position      = {1.0f, 2.0f, 3.0f};
 
     network::Bit_Writer writer;
     network::serialize_entity(writer, server_rocket, nullptr);
 
-    entities::Rocket_Entity client_rocket;
+    entities::Shot_Entity client_rocket;
     network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
     network::deserialize_entity(reader, client_rocket);
 

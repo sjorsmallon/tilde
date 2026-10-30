@@ -46,7 +46,7 @@ void fly_camera(camera_t& camera, const fly_camera_input_t& input,
 {
   camera.yaw += input.look_delta.x * settings.degrees_per_pixel;
   camera.pitch -= input.look_delta.y * settings.degrees_per_pixel;
-  shared::clamp_this(camera.pitch, -89.0f, 89.0f);
+  camera.pitch = linalg::clamp_view_pitch(camera.pitch);
 
   float speed = settings.units_per_second * dt;
   if (input.fast)

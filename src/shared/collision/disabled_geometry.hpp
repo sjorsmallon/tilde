@@ -21,7 +21,7 @@
 // a sweep reads is a function of WHO is moving -- and the team is the only input,
 // so it is one set per team rather than one per player. What the DRAW reads is a
 // different question: a team wall is visible to everyone, so the draw asks for
-// the switch alone (collect_hidden_geometry) and never for a team's set.
+// the switch alone (compute_hidden_geometry) and never for a team's set.
 
 #include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entity_uid.hpp"
@@ -72,13 +72,13 @@ using disabled_geometry_t = std::vector<uint8_t>;
 // The set for a MOVER of `mover_team`: the switch, and the team walls it passes.
 // A shot reads the shooter's set, a projectile its owner's -- you shoot through
 // what you can walk through.
-void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
+void compute_disabled_geometry(const Entity_System& system, Span<const entity_uid_t> owner_of,
                                entities::Team_Allegiance mover_team, disabled_geometry_t& out);
 
 // The set for the DRAW and for anything with no team: the switch alone. A team
 // wall is in nobody's hidden set, which is what keeps it visible to the team
 // that walks through it.
-void collect_hidden_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
+void compute_hidden_geometry(const Entity_System& system, Span<const entity_uid_t> owner_of,
                              disabled_geometry_t& out);
 
 } // namespace shared

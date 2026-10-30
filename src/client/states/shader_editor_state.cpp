@@ -859,7 +859,7 @@ void Shader_Editor_State::draw_imgui_panels()
         update_orbit(camera);
       if (ImGui::DragFloat("Yaw", &camera.yaw, 0.5f))
         update_orbit(camera);
-      if (ImGui::DragFloat("Pitch", &camera.pitch, 0.5f, -89.0f, 89.0f))
+      if (ImGui::DragFloat("Pitch", &camera.pitch, 0.5f, -linalg::VIEW_PITCH_LIMIT_DEGREES, linalg::VIEW_PITCH_LIMIT_DEGREES))
         update_orbit(camera);
     }
   }

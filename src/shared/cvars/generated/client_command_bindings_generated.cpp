@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
 //
 // Binds every @Client command. Each slot gets the command's generated ARGUMENT
 // BINDER, which parses the console tokens against the declared signature
@@ -166,20 +166,6 @@ bool invoke_announce(Span<std::string_view> args, const command_context_t& conte
                args[0].data()));
 
   commands::announce(text, context);
-  return true;
-}
-
-// noclip
-bool invoke_noclip(Span<std::string_view> args, const command_context_t& context,
-     std::string* out_reply)
-{
-  if (args.size() != 0u)
-  {
-    usage_error(out_reply, command_id::noclip, args.size());
-    return false;
-  }
-
-  commands::noclip(context);
   return true;
 }
 
@@ -488,7 +474,6 @@ void bind_client_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::grab_clear] = &invoke_grab_clear;
   table.binders[(uint32_t)command_id::connect] = &invoke_connect;
   table.binders[(uint32_t)command_id::announce] = &invoke_announce;
-  table.binders[(uint32_t)command_id::noclip] = &invoke_noclip;
   table.binders[(uint32_t)command_id::mem_report] = &invoke_mem_report;
   table.binders[(uint32_t)command_id::mem_frame] = &invoke_mem_frame;
   table.binders[(uint32_t)command_id::mem_stacks] = &invoke_mem_stacks;

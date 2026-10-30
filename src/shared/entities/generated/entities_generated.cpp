@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 #include "entities_generated.hpp"
 #include <cassert>
 #include <cstddef>
@@ -158,6 +158,7 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
   "Statue",
   "Pilot",
   "Merged",
+  "Noclip",
 };
 
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
@@ -177,7 +178,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Easing", {Easing_VALUE_NAMES, 5}},
   {"Reveal_Cone_Kind", {Reveal_Cone_Kind_VALUE_NAMES, 2}},
   {"Lens_Filter", {Lens_Filter_VALUE_NAMES, 3}},
-  {"Movement_Override", {Movement_Override_VALUE_NAMES, 6}},
+  {"Movement_Override", {Movement_Override_VALUE_NAMES, 7}},
 };
 
 namespace
@@ -734,7 +735,7 @@ constexpr field_info_t Inventory_FIELDS[] = {
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Inventory, deploy_complete_time),
    .size_in_bytes = (uint32_t)sizeof(Inventory::deploy_complete_time),
-   .flags = 0u,
+   .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -1187,7 +1188,7 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Player_Entity, reload_complete_time),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::reload_complete_time),
-   .flags = 0u,
+   .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -1424,7 +1425,7 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Weapon_Entity, next_fire_time),
    .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::next_fire_time),
-   .flags = 0u,
+   .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
@@ -1476,11 +1477,11 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
-constexpr field_info_t Rocket_Entity_FIELDS[] = {
+constexpr field_info_t Shot_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Rocket_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::entity_id),
+   .offset = (uint32_t)offsetof(Shot_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::entity_id),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1488,8 +1489,8 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "position",
    .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Rocket_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::position),
+   .offset = (uint32_t)offsetof(Shot_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::position),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1497,8 +1498,8 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "orientation",
    .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Rocket_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::orientation),
+   .offset = (uint32_t)offsetof(Shot_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::orientation),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1506,8 +1507,8 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "name",
    .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Rocket_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::name),
+   .offset = (uint32_t)offsetof(Shot_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::name),
    .flags = 2u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 32,
@@ -1515,8 +1516,8 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "projectile",
    .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Rocket_Entity, projectile),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::projectile),
+   .offset = (uint32_t)offsetof(Shot_Entity, projectile),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::projectile),
    .flags = 0u,
    .component_id = 3,
    .string_capacity = NOT_A_STRING,
@@ -1524,92 +1525,8 @@ constexpr field_info_t Rocket_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "lifetime",
    .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Rocket_Entity, lifetime),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::lifetime),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "collision_radius",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Rocket_Entity, collision_radius),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::collision_radius),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "render",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Rocket_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Rocket_Entity::render),
-   .flags = 0u,
-   .component_id = 8,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-};
-
-constexpr field_info_t Hook_Entity_FIELDS[] = {
-  {.name = "entity_id",
-   .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Hook_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::entity_id),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "position",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Hook_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::position),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "orientation",
-   .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Hook_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::orientation),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "name",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Hook_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::name),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 32,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "projectile",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Hook_Entity, projectile),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::projectile),
-   .flags = 0u,
-   .component_id = 3,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "lifetime",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Hook_Entity, lifetime),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::lifetime),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "collision_radius",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Hook_Entity, collision_radius),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::collision_radius),
+   .offset = (uint32_t)offsetof(Shot_Entity, lifetime),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::lifetime),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -1617,158 +1534,8 @@ constexpr field_info_t Hook_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Hook_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Hook_Entity::render),
-   .flags = 0u,
-   .component_id = 8,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-};
-
-constexpr field_info_t Kooh_Entity_FIELDS[] = {
-  {.name = "entity_id",
-   .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Kooh_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::entity_id),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "position",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Kooh_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::position),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "orientation",
-   .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Kooh_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::orientation),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "name",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Kooh_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::name),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 32,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "projectile",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Kooh_Entity, projectile),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::projectile),
-   .flags = 0u,
-   .component_id = 3,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "lifetime",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Kooh_Entity, lifetime),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::lifetime),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "collision_radius",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Kooh_Entity, collision_radius),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::collision_radius),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "render",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Kooh_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Kooh_Entity::render),
-   .flags = 0u,
-   .component_id = 8,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-};
-
-constexpr field_info_t Ricochet_Entity_FIELDS[] = {
-  {.name = "entity_id",
-   .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::entity_id),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "position",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::position),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "orientation",
-   .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::orientation),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "name",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::name),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 32,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "projectile",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, projectile),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::projectile),
-   .flags = 0u,
-   .component_id = 3,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "lifetime",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, lifetime),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::lifetime),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "collision_radius",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, collision_radius),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::collision_radius),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "render",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Ricochet_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Ricochet_Entity::render),
+   .offset = (uint32_t)offsetof(Shot_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Shot_Entity::render),
    .flags = 0u,
    .component_id = 8,
    .string_capacity = NOT_A_STRING,
@@ -4047,81 +3814,6 @@ constexpr field_info_t Remnant_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
-constexpr field_info_t Modifier_Shot_Entity_FIELDS[] = {
-  {.name = "entity_id",
-   .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::entity_id),
-   .flags = 1u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "position",
-   .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::position),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "orientation",
-   .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::orientation),
-   .flags = 3u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "name",
-   .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::name),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = 32,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "projectile",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, projectile),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::projectile),
-   .flags = 0u,
-   .component_id = 3,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "lifetime",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, lifetime),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::lifetime),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "collision_radius",
-   .type = FIELD_TYPE_F32,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, collision_radius),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::collision_radius),
-   .flags = 0u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "render",
-   .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Modifier_Shot_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Modifier_Shot_Entity::render),
-   .flags = 0u,
-   .component_id = 8,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-};
-
 constexpr field_info_t Timed_Movement_Modifier_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
@@ -4769,10 +4461,7 @@ Entity* construct_Player_Spawn_Entity(void* memory) { return new (memory) Player
 Entity* construct_Player_Spectate_Entity(void* memory) { return new (memory) Player_Spectate_Entity(); }
 Entity* construct_Player_Entity(void* memory) { return new (memory) Player_Entity(); }
 Entity* construct_Weapon_Entity(void* memory) { return new (memory) Weapon_Entity(); }
-Entity* construct_Rocket_Entity(void* memory) { return new (memory) Rocket_Entity(); }
-Entity* construct_Hook_Entity(void* memory) { return new (memory) Hook_Entity(); }
-Entity* construct_Kooh_Entity(void* memory) { return new (memory) Kooh_Entity(); }
-Entity* construct_Ricochet_Entity(void* memory) { return new (memory) Ricochet_Entity(); }
+Entity* construct_Shot_Entity(void* memory) { return new (memory) Shot_Entity(); }
 Entity* construct_Platform_Entity(void* memory) { return new (memory) Platform_Entity(); }
 Entity* construct_Shrinking_Platform_Entity(void* memory) { return new (memory) Shrinking_Platform_Entity(); }
 Entity* construct_Extending_Platform_Entity(void* memory) { return new (memory) Extending_Platform_Entity(); }
@@ -4798,7 +4487,6 @@ Entity* construct_Mover_Entity(void* memory) { return new (memory) Mover_Entity(
 Entity* construct_Launcher_Entity(void* memory) { return new (memory) Launcher_Entity(); }
 Entity* construct_Movement_Modifier_Entity(void* memory) { return new (memory) Movement_Modifier_Entity(); }
 Entity* construct_Remnant_Entity(void* memory) { return new (memory) Remnant_Entity(); }
-Entity* construct_Modifier_Shot_Entity(void* memory) { return new (memory) Modifier_Shot_Entity(); }
 Entity* construct_Timed_Movement_Modifier_Entity(void* memory) { return new (memory) Timed_Movement_Modifier_Entity(); }
 Entity* construct_Weapon_Emancipation_Grill_Entity(void* memory) { return new (memory) Weapon_Emancipation_Grill_Entity(); }
 Entity* construct_Emancipated_Weapon_Entity(void* memory) { return new (memory) Emancipated_Weapon_Entity(); }
@@ -4811,10 +4499,7 @@ Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>(
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
 Entity* as_base_Player_Entity(void* memory) { return static_cast<Entity*>((Player_Entity*)memory); }
 Entity* as_base_Weapon_Entity(void* memory) { return static_cast<Entity*>((Weapon_Entity*)memory); }
-Entity* as_base_Rocket_Entity(void* memory) { return static_cast<Entity*>((Rocket_Entity*)memory); }
-Entity* as_base_Hook_Entity(void* memory) { return static_cast<Entity*>((Hook_Entity*)memory); }
-Entity* as_base_Kooh_Entity(void* memory) { return static_cast<Entity*>((Kooh_Entity*)memory); }
-Entity* as_base_Ricochet_Entity(void* memory) { return static_cast<Entity*>((Ricochet_Entity*)memory); }
+Entity* as_base_Shot_Entity(void* memory) { return static_cast<Entity*>((Shot_Entity*)memory); }
 Entity* as_base_Platform_Entity(void* memory) { return static_cast<Entity*>((Platform_Entity*)memory); }
 Entity* as_base_Shrinking_Platform_Entity(void* memory) { return static_cast<Entity*>((Shrinking_Platform_Entity*)memory); }
 Entity* as_base_Extending_Platform_Entity(void* memory) { return static_cast<Entity*>((Extending_Platform_Entity*)memory); }
@@ -4840,7 +4525,6 @@ Entity* as_base_Mover_Entity(void* memory) { return static_cast<Entity*>((Mover_
 Entity* as_base_Launcher_Entity(void* memory) { return static_cast<Entity*>((Launcher_Entity*)memory); }
 Entity* as_base_Movement_Modifier_Entity(void* memory) { return static_cast<Entity*>((Movement_Modifier_Entity*)memory); }
 Entity* as_base_Remnant_Entity(void* memory) { return static_cast<Entity*>((Remnant_Entity*)memory); }
-Entity* as_base_Modifier_Shot_Entity(void* memory) { return static_cast<Entity*>((Modifier_Shot_Entity*)memory); }
 Entity* as_base_Timed_Movement_Modifier_Entity(void* memory) { return static_cast<Entity*>((Timed_Movement_Modifier_Entity*)memory); }
 Entity* as_base_Weapon_Emancipation_Grill_Entity(void* memory) { return static_cast<Entity*>((Weapon_Emancipation_Grill_Entity*)memory); }
 Entity* as_base_Emancipated_Weapon_Entity(void* memory) { return static_cast<Entity*>((Emancipated_Weapon_Entity*)memory); }
@@ -4855,10 +4539,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 33}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 3392u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 16}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 289u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
-  {"rocket_entity", "Rocket", {Rocket_Entity_FIELDS, 8}, (uint32_t)sizeof(Rocket_Entity), (uint32_t)alignof(Rocket_Entity), 264u, true, true, false, construct_Rocket_Entity, as_base_Rocket_Entity},
-  {"hook_entity", "Hook", {Hook_Entity_FIELDS, 8}, (uint32_t)sizeof(Hook_Entity), (uint32_t)alignof(Hook_Entity), 264u, true, true, false, construct_Hook_Entity, as_base_Hook_Entity},
-  {"kooh_entity", "Kooh", {Kooh_Entity_FIELDS, 8}, (uint32_t)sizeof(Kooh_Entity), (uint32_t)alignof(Kooh_Entity), 264u, true, true, false, construct_Kooh_Entity, as_base_Kooh_Entity},
-  {"ricochet_entity", "Ricochet", {Ricochet_Entity_FIELDS, 8}, (uint32_t)sizeof(Ricochet_Entity), (uint32_t)alignof(Ricochet_Entity), 264u, true, true, false, construct_Ricochet_Entity, as_base_Ricochet_Entity},
+  {"shot_entity", "Shot", {Shot_Entity_FIELDS, 7}, (uint32_t)sizeof(Shot_Entity), (uint32_t)alignof(Shot_Entity), 264u, true, true, false, construct_Shot_Entity, as_base_Shot_Entity},
   {"platform_entity", "Platform", {Platform_Entity_FIELDS, 11}, (uint32_t)sizeof(Platform_Entity), (uint32_t)alignof(Platform_Entity), 280u, true, true, true, construct_Platform_Entity, as_base_Platform_Entity},
   {"shrinking_platform_entity", "Shrinking Platform", {Shrinking_Platform_Entity_FIELDS, 12}, (uint32_t)sizeof(Shrinking_Platform_Entity), (uint32_t)alignof(Shrinking_Platform_Entity), 280u, true, true, true, construct_Shrinking_Platform_Entity, as_base_Shrinking_Platform_Entity},
   {"extending_platform_entity", "Extending Platform", {Extending_Platform_Entity_FIELDS, 14}, (uint32_t)sizeof(Extending_Platform_Entity), (uint32_t)alignof(Extending_Platform_Entity), 264u, true, true, true, construct_Extending_Platform_Entity, as_base_Extending_Platform_Entity},
@@ -4884,7 +4565,6 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"launcher_entity", "Launcher", {Launcher_Entity_FIELDS, 16}, (uint32_t)sizeof(Launcher_Entity), (uint32_t)alignof(Launcher_Entity), 258u, false, true, false, construct_Launcher_Entity, as_base_Launcher_Entity},
   {"movement_modifier_entity", "Movement Modifier", {Movement_Modifier_Entity_FIELDS, 11}, (uint32_t)sizeof(Movement_Modifier_Entity), (uint32_t)alignof(Movement_Modifier_Entity), 3u, false, true, true, construct_Movement_Modifier_Entity, as_base_Movement_Modifier_Entity},
   {"remnant_entity", "Remnant", {Remnant_Entity_FIELDS, 7}, (uint32_t)sizeof(Remnant_Entity), (uint32_t)alignof(Remnant_Entity), 256u, true, true, false, construct_Remnant_Entity, as_base_Remnant_Entity},
-  {"modifier_shot_entity", "Modifier Shot", {Modifier_Shot_Entity_FIELDS, 8}, (uint32_t)sizeof(Modifier_Shot_Entity), (uint32_t)alignof(Modifier_Shot_Entity), 264u, true, true, false, construct_Modifier_Shot_Entity, as_base_Modifier_Shot_Entity},
   {"timed_movement_modifier_entity", "Timed Movement Modifier", {Timed_Movement_Modifier_Entity_FIELDS, 16}, (uint32_t)sizeof(Timed_Movement_Modifier_Entity), (uint32_t)alignof(Timed_Movement_Modifier_Entity), 280u, true, true, true, construct_Timed_Movement_Modifier_Entity, as_base_Timed_Movement_Modifier_Entity},
   {"weapon_emancipation_grill_entity", "Weapon Emancipation Grill", {Weapon_Emancipation_Grill_Entity_FIELDS, 7}, (uint32_t)sizeof(Weapon_Emancipation_Grill_Entity), (uint32_t)alignof(Weapon_Emancipation_Grill_Entity), 259u, false, true, false, construct_Weapon_Emancipation_Grill_Entity, as_base_Weapon_Emancipation_Grill_Entity},
   {"emancipated_weapon_entity", "Emancipated Weapon", {Emancipated_Weapon_Entity_FIELDS, 9}, (uint32_t)sizeof(Emancipated_Weapon_Entity), (uint32_t)alignof(Emancipated_Weapon_Entity), 256u, true, true, false, construct_Emancipated_Weapon_Entity, as_base_Emancipated_Weapon_Entity},
@@ -4900,10 +4580,7 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Player_Spectate_Entity
   {-1, -1, -1, -1, -1, -1, (int32_t)offsetof(Player_Entity, health), -1, (int32_t)offsetof(Player_Entity, render), -1, (int32_t)offsetof(Player_Entity, movement), (int32_t)offsetof(Player_Entity, inventory), -1, -1, -1, -1}, // Player_Entity
   {(int32_t)offsetof(Weapon_Entity, volume), -1, -1, -1, -1, (int32_t)offsetof(Weapon_Entity, bounce), -1, -1, (int32_t)offsetof(Weapon_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Weapon_Entity
-  {-1, -1, -1, (int32_t)offsetof(Rocket_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Rocket_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Rocket_Entity
-  {-1, -1, -1, (int32_t)offsetof(Hook_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Hook_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Hook_Entity
-  {-1, -1, -1, (int32_t)offsetof(Kooh_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Kooh_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Kooh_Entity
-  {-1, -1, -1, (int32_t)offsetof(Ricochet_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Ricochet_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Ricochet_Entity
+  {-1, -1, -1, (int32_t)offsetof(Shot_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Shot_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Shot_Entity
   {-1, -1, -1, (int32_t)offsetof(Platform_Entity, projectile), (int32_t)offsetof(Platform_Entity, flight), -1, -1, -1, (int32_t)offsetof(Platform_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Platform_Entity
   {-1, -1, -1, (int32_t)offsetof(Shrinking_Platform_Entity, projectile), (int32_t)offsetof(Shrinking_Platform_Entity, flight), -1, -1, -1, (int32_t)offsetof(Shrinking_Platform_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Shrinking_Platform_Entity
   {-1, -1, -1, (int32_t)offsetof(Extending_Platform_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Extending_Platform_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Extending_Platform_Entity
@@ -4929,7 +4606,6 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {-1, (int32_t)offsetof(Launcher_Entity, switch_state), -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Launcher_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Launcher_Entity
   {(int32_t)offsetof(Movement_Modifier_Entity, volume), (int32_t)offsetof(Movement_Modifier_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Movement_Modifier_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Remnant_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Remnant_Entity
-  {-1, -1, -1, (int32_t)offsetof(Modifier_Shot_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Modifier_Shot_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Modifier_Shot_Entity
   {-1, -1, -1, (int32_t)offsetof(Timed_Movement_Modifier_Entity, projectile), (int32_t)offsetof(Timed_Movement_Modifier_Entity, flight), -1, -1, -1, (int32_t)offsetof(Timed_Movement_Modifier_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Timed_Movement_Modifier_Entity
   {(int32_t)offsetof(Weapon_Emancipation_Grill_Entity, volume), (int32_t)offsetof(Weapon_Emancipation_Grill_Entity, switch_state), -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Weapon_Emancipation_Grill_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Weapon_Emancipation_Grill_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Emancipated_Weapon_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Emancipated_Weapon_Entity
@@ -4968,14 +4644,11 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Lens_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 35;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 31;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
-  entity_type::Rocket_Entity,
-  entity_type::Hook_Entity,
-  entity_type::Kooh_Entity,
-  entity_type::Ricochet_Entity,
+  entity_type::Shot_Entity,
   entity_type::Platform_Entity,
   entity_type::Shrinking_Platform_Entity,
   entity_type::Extending_Platform_Entity,
@@ -4997,7 +4670,6 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Launcher_Entity,
   entity_type::Movement_Modifier_Entity,
   entity_type::Remnant_Entity,
-  entity_type::Modifier_Shot_Entity,
   entity_type::Timed_Movement_Modifier_Entity,
   entity_type::Weapon_Emancipation_Grill_Entity,
   entity_type::Emancipated_Weapon_Entity,
@@ -5421,6 +5093,7 @@ const char* to_string(Movement_Override value)
     case Movement_Override::Statue: return "Statue";
     case Movement_Override::Pilot: return "Pilot";
     case Movement_Override::Merged: return "Merged";
+    case Movement_Override::Noclip: return "Noclip";
   }
   assert(false && "invalid Movement_Override");
   return "";
@@ -5434,6 +5107,7 @@ template <> std::optional<Movement_Override> try_from_string<Movement_Override>(
   if (text == "Statue") return Movement_Override::Statue;
   if (text == "Pilot") return Movement_Override::Pilot;
   if (text == "Merged") return Movement_Override::Merged;
+  if (text == "Noclip") return Movement_Override::Noclip;
   return std::nullopt;
 }
 
@@ -5486,10 +5160,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Player_Spectate_Entity: return new Player_Spectate_Entity();
     case entity_type::Player_Entity: return new Player_Entity();
     case entity_type::Weapon_Entity: return new Weapon_Entity();
-    case entity_type::Rocket_Entity: return new Rocket_Entity();
-    case entity_type::Hook_Entity: return new Hook_Entity();
-    case entity_type::Kooh_Entity: return new Kooh_Entity();
-    case entity_type::Ricochet_Entity: return new Ricochet_Entity();
+    case entity_type::Shot_Entity: return new Shot_Entity();
     case entity_type::Platform_Entity: return new Platform_Entity();
     case entity_type::Shrinking_Platform_Entity: return new Shrinking_Platform_Entity();
     case entity_type::Extending_Platform_Entity: return new Extending_Platform_Entity();
@@ -5515,7 +5186,6 @@ Entity* create_entity(entity_type type)
     case entity_type::Launcher_Entity: return new Launcher_Entity();
     case entity_type::Movement_Modifier_Entity: return new Movement_Modifier_Entity();
     case entity_type::Remnant_Entity: return new Remnant_Entity();
-    case entity_type::Modifier_Shot_Entity: return new Modifier_Shot_Entity();
     case entity_type::Timed_Movement_Modifier_Entity: return new Timed_Movement_Modifier_Entity();
     case entity_type::Weapon_Emancipation_Grill_Entity: return new Weapon_Emancipation_Grill_Entity();
     case entity_type::Emancipated_Weapon_Entity: return new Emancipated_Weapon_Entity();
@@ -5548,10 +5218,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Player_Spectate_Entity: delete static_cast<Player_Spectate_Entity*>(entity); return;
     case entity_type::Player_Entity: delete static_cast<Player_Entity*>(entity); return;
     case entity_type::Weapon_Entity: delete static_cast<Weapon_Entity*>(entity); return;
-    case entity_type::Rocket_Entity: delete static_cast<Rocket_Entity*>(entity); return;
-    case entity_type::Hook_Entity: delete static_cast<Hook_Entity*>(entity); return;
-    case entity_type::Kooh_Entity: delete static_cast<Kooh_Entity*>(entity); return;
-    case entity_type::Ricochet_Entity: delete static_cast<Ricochet_Entity*>(entity); return;
+    case entity_type::Shot_Entity: delete static_cast<Shot_Entity*>(entity); return;
     case entity_type::Platform_Entity: delete static_cast<Platform_Entity*>(entity); return;
     case entity_type::Shrinking_Platform_Entity: delete static_cast<Shrinking_Platform_Entity*>(entity); return;
     case entity_type::Extending_Platform_Entity: delete static_cast<Extending_Platform_Entity*>(entity); return;
@@ -5577,7 +5244,6 @@ void destroy_entity(Entity* entity)
     case entity_type::Launcher_Entity: delete static_cast<Launcher_Entity*>(entity); return;
     case entity_type::Movement_Modifier_Entity: delete static_cast<Movement_Modifier_Entity*>(entity); return;
     case entity_type::Remnant_Entity: delete static_cast<Remnant_Entity*>(entity); return;
-    case entity_type::Modifier_Shot_Entity: delete static_cast<Modifier_Shot_Entity*>(entity); return;
     case entity_type::Timed_Movement_Modifier_Entity: delete static_cast<Timed_Movement_Modifier_Entity*>(entity); return;
     case entity_type::Weapon_Emancipation_Grill_Entity: delete static_cast<Weapon_Emancipation_Grill_Entity*>(entity); return;
     case entity_type::Emancipated_Weapon_Entity: delete static_cast<Emancipated_Weapon_Entity*>(entity); return;
@@ -5599,6 +5265,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x2caf72b2u;
+const uint32_t SCHEMA_HASH = 0x243fe1ceu;
 
 } // namespace entities

@@ -385,7 +385,7 @@ void test_deleting_an_entity_drops_the_rows_naming_it()
 void install(server_context_t& context, cvars::cvar_state_t& cvar_state, const shared::map_t& map)
 {
   context.cvars               = &cvar_state;
-  context.cvars->sv_tickrate  = (float)tickrate;
+  context.cvars->sv_tickrate  = tickrate;
   context.tick_number         = 1;
   context.world.current_map   = map;
   context.world.session       = shared::build_session(map);
@@ -933,8 +933,8 @@ std::vector<linalg::vec3f> launcher_shot_directions(uint32_t shot_count)
     run_one_tick(context);
   }
 
-  for (const entities::Rocket_Entity& rocket :
-       context.world.session.entity_system.entities_of_type<entities::Rocket_Entity>())
+  for (const entities::Shot_Entity& rocket :
+       context.world.session.entity_system.entities_of_type<entities::Shot_Entity>())
     directions.push_back(linalg::normalize(rocket.projectile.velocity));
   return directions;
 }
@@ -984,7 +984,7 @@ void test_a_launcher_with_an_interval_fires_on_its_own_clock()
   server_context_t    context;
   install(context, cvar_state, map);
 
-  const uint32_t interval_ticks = shared::ticks_from_seconds(0.5f, (float)tickrate);
+  const uint32_t interval_ticks = shared::ticks_from_seconds(0.5f, tickrate);
   constexpr uint32_t SHOT_COUNT = 4;
   for (uint32_t tick = 0; tick < interval_ticks * SHOT_COUNT; ++tick)
   {
@@ -994,14 +994,14 @@ void test_a_launcher_with_an_interval_fires_on_its_own_clock()
 
   const auto count_rockets_by_owner = [&](shared::entity_uid_t owner_uid) {
     uint32_t count = 0;
-    for (const entities::Rocket_Entity& rocket :
-         context.world.session.entity_system.entities_of_type<entities::Rocket_Entity>())
+    for (const entities::Shot_Entity& rocket :
+         context.world.session.entity_system.entities_of_type<entities::Shot_Entity>())
       if (rocket.projectile.owner_uid == owner_uid)
         ++count;
     return count;
   };
   check(count_rockets_by_owner(clocked_uid) == SHOT_COUNT, "one rocket per interval, the first on the first tick");
-  check(context.world.session.entity_system.entities_of_type<entities::Rocket_Entity>().size() == SHOT_COUNT,
+  check(context.world.session.entity_system.entities_of_type<entities::Shot_Entity>().size() == SHOT_COUNT,
         "a launcher with no interval fires nothing on its own");
 
   context.world.session.entity_system.get<entities::Launcher_Entity>(clocked_uid)->switch_state.value = false;

@@ -147,7 +147,7 @@ struct editor_context_t
 
   entity_draw_settings_t entity_draw_settings;
 
-  float tickrate = 60.0f;
+  uint32_t tickrate_hz = 60;
 
   // What the tool being left had selected, so the next one can start from it.
   std::vector<shared::entity_uid_t> selection_handed_over;

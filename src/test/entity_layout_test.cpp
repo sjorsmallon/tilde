@@ -6,7 +6,7 @@
 #include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/particle_emitter_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
-#include "entities/generated/entities/rocket_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entities/generated/entities/trigger_volume_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
@@ -111,11 +111,6 @@ int main()
             player.render.scale.z == 1.0f,
         "and leaves Render's own defaults alone around it");
 
-  // The scalar that replaced the Hitbox component on the rocket.
-  Rocket_Entity rocket;
-  check(rocket.collision_radius == 12.0f, "a rocket knows its own sweep radius");
-  check(rocket.lifetime == 5.0f, "one lifetime, not one per spawn site");
-
   check(entity_type_from_classname("spot_light_entity") == entity_type::Spot_Light_Entity,
         "classname lookup round trip");
   check(entity_type_from_classname("no_such_entity") == entity_type::Invalid,
@@ -160,16 +155,16 @@ int main()
   // that means something is therefore a runtime one: the table's answer must be
   // the pointer the language itself produces.
   {
-    Rocket_Entity rocket;
+    Shot_Entity rocket;
     rocket.position = {4.0f, 5.0f, 6.0f};
 
-    const entity_type_info_t& rocket_info = entity_info(entity_type::Rocket_Entity);
+    const entity_type_info_t& rocket_info = entity_info(entity_type::Shot_Entity);
     Entity* through_the_table    = rocket_info.as_base(&rocket);
     Entity* through_the_language = &rocket;
 
     check(through_the_table == through_the_language,
           "as_base agrees with a real derived-to-base conversion");
-    check(through_the_table->type == entity_type::Rocket_Entity &&
+    check(through_the_table->type == entity_type::Shot_Entity &&
               through_the_table->position.x == 4.0f,
           "the entity is readable through the base pointer as_base returned");
 
@@ -188,8 +183,8 @@ int main()
   // Heap factory over the same switch. The map loader and the editor both want
   // an instance rather than a tag.
   {
-    Entity* created = create_entity(entity_type::Rocket_Entity);
-    check(created != nullptr && created->type == entity_type::Rocket_Entity,
+    Entity* created = create_entity(entity_type::Shot_Entity);
+    check(created != nullptr && created->type == entity_type::Shot_Entity,
           "create_entity returns an instance carrying its own tag");
     destroy_entity(created);
 
@@ -218,10 +213,7 @@ int main()
     const entity_type expected_replicated[] = {
         entity_type::Player_Entity,
         entity_type::Weapon_Entity,
-        entity_type::Rocket_Entity,
-        entity_type::Hook_Entity,
-        entity_type::Kooh_Entity,
-        entity_type::Ricochet_Entity,
+        entity_type::Shot_Entity,
         entity_type::Platform_Entity,
         entity_type::Shrinking_Platform_Entity,
         entity_type::Extending_Platform_Entity,
@@ -252,8 +244,6 @@ int main()
         entity_type::Movement_Modifier_Entity,
         // Through Render alone, like the ping marker.
         entity_type::Remnant_Entity,
-        // Through Projectile and Render, like the ricochet.
-        entity_type::Modifier_Shot_Entity,
         // Every field of its own: a spawned zone has no map for the client to have read it from.
         entity_type::Timed_Movement_Modifier_Entity,
         entity_type::Weapon_Emancipation_Grill_Entity,
@@ -555,7 +545,7 @@ int main()
   {
     Trigger_Volume_Entity trigger;
     Damageable_Entity     crate;
-    Rocket_Entity         rocket;
+    Shot_Entity         rocket;
 
     // A trait is asked of an Entity&, never of the concrete type: that is what
     // a use key or a ray cast has in hand.
@@ -628,7 +618,7 @@ int main()
     check(type_accepts_action(entity_type::Point_Light_Entity, entity_action::Set_Color) &&
               type_accepts_action(entity_type::Point_Light_Entity, entity_action::Enable),
           "two traits on one type union their actions");
-    check(!type_accepts_action(entity_type::Rocket_Entity, entity_action::Enable),
+    check(!type_accepts_action(entity_type::Shot_Entity, entity_action::Enable),
           "a type with no traits accepts nothing");
     check(!type_accepts_action(entity_type::Invalid, entity_action::Enable),
           "Invalid accepts nothing");

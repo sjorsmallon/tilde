@@ -19,7 +19,7 @@
 #include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/player_spawn_entity_generated.hpp"
-#include "entities/generated/entities/rocket_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 
 #include "../shared/entity_system.hpp"
 
@@ -355,12 +355,12 @@ static void test_entity_rings()
 
   {
     shared::Entity_System frame;
-    const shared::entity_uid_t rocket = frame.spawn<entities::Rocket_Entity>();
+    const shared::entity_uid_t rocket = frame.spawn<entities::Shot_Entity>();
     const shared::entity_uid_t crate  = frame.spawn<entities::Damageable_Entity>();
     const shared::entity_uid_t me     = frame.spawn<entities::Player_Entity>();
     const shared::entity_uid_t other  = frame.spawn<entities::Player_Entity>();
     const shared::entity_uid_t spawn  = frame.spawn<entities::Player_Spawn_Entity>();
-    frame.get<entities::Rocket_Entity>(rocket)->position = {1.f, 2.f, 3.f};
+    frame.get<entities::Shot_Entity>(rocket)->position = {1.f, 2.f, 3.f};
     frame.get<entities::Player_Entity>(other)->view_angle_yaw = 90.f;
     frame.get<entities::Player_Entity>(other)->body_yaw       = 45.f;
 

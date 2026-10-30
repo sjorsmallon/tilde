@@ -70,7 +70,7 @@ static frame_timing::frame_timing_state_t g_frame_timing_state{};
 int main(int argc, char *argv[])
 {
   // Change working directory to the project root (parent of cmake_build/).
-  // Executable lives at cmake_build/bin/MyGame.exe, so go up three levels.
+  // Executable lives at cmake_build/bin/MVMT.exe, so go up three levels.
   // We use absolute() first so this works regardless of where the game is launched from.
   {
     auto exe_abs    = std::filesystem::absolute(argv[0]);
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
   const launch_arguments::launch_arguments_t launch =
       launch_arguments::parse_launch_arguments(argc, argv, g_cvar_state);
 
-  log_terminal("=== Starting MyGame (Integrated) ===");
+  log_terminal("=== Starting MVMT (Integrated) ===");
 
 #if TILDE_MEMORY_AUDIT
   // Before anything else this main() does. Each module replaces operator new
@@ -206,7 +206,7 @@ int main(int argc, char *argv[])
     }
 
     // Server ticks at fixed rate
-    double tick_interval = server::get_tick_interval();
+    const double tick_interval = server::get_tick_interval_seconds();
     server_accumulator += frame_time;
     while (server_accumulator >= tick_interval)
     {

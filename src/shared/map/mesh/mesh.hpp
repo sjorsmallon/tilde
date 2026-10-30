@@ -146,10 +146,21 @@ struct mesh_shell_t
 
 std::vector<mesh_shell_t> separate_mesh_shells_with_sources(const mesh_geometry_t &mesh);
 
+// Newell's method over a ring of vertex indices, unnormalised: the direction is
+// the normal of a counter-clockwise ring and the length twice its area.
+linalg::vec3 compute_ring_normal(const mesh_geometry_t &mesh, Span<const uint32_t> ring);
+
+linalg::vec3 compute_ring_centroid(const mesh_geometry_t &mesh, Span<const uint32_t> ring);
+
 // Newell's method over the ring, in the mesh's local space; the normal points
 // out of the solid for a counter-clockwise ring. Dies on a degenerate face,
 // which find_mesh_defect refuses first.
 Plane compute_mesh_face_plane(const mesh_geometry_t &mesh, uint32_t face_index);
+
+std::vector<Plane> compute_mesh_face_planes(const mesh_geometry_t &mesh);
+
+// Keep only the vertices some face names, renumbered in first-use order.
+void drop_unused_mesh_vertices(mesh_geometry_t &mesh);
 
 // Same normal, same offset, within COPLANAR_EPSILON.
 bool planes_coincide(const Plane &a, const Plane &b);

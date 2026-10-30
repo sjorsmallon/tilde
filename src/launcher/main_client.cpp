@@ -17,10 +17,10 @@
 
 // Networked client build: runs ONLY the client and connects to a separate
 // server over UDP (127.0.0.1 today — see the "configurable server address" TODO).
-// Unlike MyGame (integrated), there is no in-process server and no integrated
+// Unlike MVMT (integrated), there is no in-process server and no integrated
 // session pointer, so the client goes fully through the snapshot/streaming
 // pipeline. This is the target to use for testing map streaming: launch
-// MyGame_Server first, then this against it. To exercise the no-local-map /
+// MVMT_Server first, then this against it. To exercise the no-local-map /
 // mismatch path, remove or point last_map.txt at a map this client lacks — it
 // will download the compiled package from the server.
 
@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
   const launch_arguments::launch_arguments_t launch =
       launch_arguments::parse_launch_arguments(argc, argv, g_cvar_state);
 
-  log_terminal("=== Starting MyGame (Networked Client) ===");
+  log_terminal("=== Starting MVMT (Networked Client) ===");
 
 #if TILDE_MEMORY_AUDIT
   memory_audit::set_state(&g_memory_audit_state);

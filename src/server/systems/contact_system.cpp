@@ -99,7 +99,7 @@ static void impact_or_refuse(server_context_t& context, const pending_contact_t&
 // player_move works on the hull CENTRE, so a reel aims at the anchor's, not at their feet.
 static vec3f compute_reel_anchor_for_player(const entities::Player_Entity& anchor)
 {
-  return anchor.position + vec3f{0.f, shared::player_half_height, 0.f};
+  return shared::player_hull_center(anchor.position);
 }
 
 // An override's numbers are written AT ATTACH and are replicated from there, which is what lets
@@ -107,12 +107,12 @@ static vec3f compute_reel_anchor_for_player(const entities::Player_Entity& ancho
 static void attach_reel(server_context_t& context, entities::Player_Entity& reeled,
                         const entities::Player_Entity& anchor, float seconds)
 {
-  reeled.movement.active_override            = entities::Movement_Override::Reel;
-  reeled.movement.override_target_uid        = anchor.entity_id;
-  reeled.movement.override_target_position   = compute_reel_anchor_for_player(anchor);
-  reeled.movement.override_seconds_remaining = seconds;
-  reeled.movement.override_speed             = context.cvars->sv_hook_pull_speed;
-  reeled.movement.override_radius     = context.cvars->sv_hook_arrive_radius;
+  shared::attach_override(reeled.movement, {.kind            = entities::Movement_Override::Reel,
+                                            .target_uid      = anchor.entity_id,
+                                            .target_position = compute_reel_anchor_for_player(anchor),
+                                            .seconds         = seconds,
+                                            .speed           = context.cvars->sv_hook_pull_speed,
+                                            .radius          = context.cvars->sv_hook_arrive_radius});
 }
 
 // The arc that lands `thrown` on `destination` after the flight time, gravity included.
@@ -163,7 +163,7 @@ static float hull_support_along(const vec3f& normal)
                                       shared::player_half_width, shared::player_half_height));
 
     if (deepest <= 0.f)
-      return center - vec3f{0.f, shared::player_half_height, 0.f};
+      return shared::player_feet_from_hull_center(center);
 
     center = center + normal * (deepest + LANDING_CLEARANCE);
   }
@@ -204,7 +204,7 @@ static void apply_damage_contact(server_context_t& context, const pending_contac
   hit.info.weapon_id       = static_cast<uint16_t>(contact.weapon);
   hit.info.amount          = rule.amount * (was_headshot ? rule.headshot_multiplier : 1.f);
   hit.info.source_position = shooter != nullptr
-                                 ? shooter->position + vec3f{0.f, shared::player_eye_height, 0.f}
+                                 ? shared::player_eye_position(shooter->position)
                                  : contact.point;
   hit.info.type            = contact.damage_type;
   hit.info.was_headshot    = was_headshot;
@@ -386,9 +386,9 @@ static void apply_freeze(server_context_t& context, const pending_contact_t& con
     return;
   }
 
-  target->movement.active_override            = rule.kind;
-  target->movement.override_target_uid        = contact.shooter_uid;
-  target->movement.override_seconds_remaining = rule.seconds;
+  shared::attach_override(target->movement, {.kind       = rule.kind,
+                                             .target_uid = contact.shooter_uid,
+                                             .seconds    = rule.seconds});
 
   if (rule.kind == entities::Movement_Override::Statue)
     shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), target->velocity,
@@ -438,11 +438,11 @@ static void apply_merge(server_context_t& context, const pending_contact_t& cont
     }
   }
 
-  passenger->movement.active_override            = entities::Movement_Override::Merged;
-  passenger->movement.override_target_uid        = driver->entity_id;
-  passenger->movement.override_seconds_remaining = rule.seconds;
-  passenger->position                            = driver->position;
-  passenger->velocity                            = driver->velocity;
+  shared::attach_override(passenger->movement, {.kind       = entities::Movement_Override::Merged,
+                                                .target_uid = driver->entity_id,
+                                                .seconds    = rule.seconds});
+  passenger->position = driver->position;
+  passenger->velocity = driver->velocity;
 }
 
 // Positional: the splash pushes everything a projectile can land on within the radius, measured
@@ -627,9 +627,7 @@ static void finish_reloads_that_came_due(server_context_t& context)
 
 static void detach_override(server_context_t& context, entities::Player_Entity& player)
 {
-  player.movement.active_override            = entities::Movement_Override::None;
-  player.movement.override_target_uid        = shared::null_entity_uid;
-  player.movement.override_seconds_remaining = 0.f;
+  shared::clear_override(player.movement);
   shared::apply_impulse(shared::movement_settings_from_cvars(*context.cvars), player.velocity,
                         player.movement, {.velocity = player.velocity});
 }

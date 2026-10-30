@@ -12,6 +12,7 @@
 #include "../shared/collision/collision_detection.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/frame_timing.hpp"
+#include "../shared/movement/movement_override.hpp"
 #include "../shared/movement/movement_settings.hpp"
 #include "../shared/memory_audit.hpp"
 #include "../shared/network/packet.hpp"
@@ -37,6 +38,7 @@
 #include <print>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -158,7 +160,7 @@ static std::optional<std::string> start_server_replay_recording(server_context_t
   world_t& world = context.world;
   std::optional<std::string> path = shared::try_start_replay_recording_of_map(
       world.replay_recorder, world.current_map, world.session.map_name,
-      static_cast<uint32_t>(context.cvars->sv_tickrate), context.cvars->replay_keyframe_seconds, name);
+      context.cvars->sv_tickrate, context.cvars->replay_keyframe_seconds, name);
   if (path)
     log_terminal("replay: recording '{}' to '{}'", world.session.map_name, *path);
   return path;
@@ -224,7 +226,7 @@ static bool load_map_file_into_context(server_context_t &context,
     if (context.world.current_map_path.empty())
     {
       reset_state_in_preparation_for_new_map_load(context);
-      install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate),
+      install_match(context, context.tick_number, context.cvars->sv_tickrate,
                     false);
     }
     return false;
@@ -244,7 +246,7 @@ static bool load_map_file_into_context(server_context_t &context,
   world.session = shared::build_session(server_map);
   world.current_map_path  = map_path;
   world.map_content_hash = shared::compute_map_content_hash(server_map);
-  install_match(context, context.tick_number, static_cast<uint32_t>(context.cvars->sv_tickrate),
+  install_match(context, context.tick_number, context.cvars->sv_tickrate,
                 replaces_a_started_match);
   install_movers(context);
 
@@ -416,12 +418,11 @@ void shutdown()
   log_terminal("--- Shutting down Server ---");
 }
 
-double get_tick_interval()
+float get_tick_interval_seconds()
 {
-  const float tickrate = g_server_context.cvars
-                             ? g_server_context.cvars->sv_tickrate
-                             : cvars::cvar_state_t{}.sv_tickrate;
-  return 1.0 / static_cast<double>(tickrate);
+  const uint32_t tickrate_hz = g_server_context.cvars ? g_server_context.cvars->sv_tickrate
+                                                      : cvars::cvar_state_t{}.sv_tickrate;
+  return shared::tick_interval_seconds(tickrate_hz);
 }
 
 uint32_t get_tick_number() { return g_server_context.tick_number; }
@@ -558,6 +559,39 @@ void setpos(float x, float y, float z, const command_context_t &command_context)
   player->velocity = {};
 }
 
+void noclip(const command_context_t &command_context)
+{
+  using namespace server;
+  server_context_t &server_context = g_server_context;
+
+  entities::Player_Entity *player = nullptr;
+  if (is_valid_client_slot(command_context.caller_slot))
+    player = server_context.world.session.entity_system.get<entities::Player_Entity>(
+        server_context.clients[command_context.caller_slot].player_uid);
+  if (!player)
+  {
+    log_error("noclip: no Player_Entity for caller_slot {}", command_context.caller_slot);
+    return;
+  }
+
+  entities::Movement &movement = player->movement;
+  if (movement.active_override == entities::Movement_Override::Noclip)
+  {
+    movement.override_seconds_remaining = 0.f;
+    return;
+  }
+  if (movement.active_override != entities::Movement_Override::None)
+  {
+    log_error("noclip: slot {} has a {} override live; not attaching", command_context.caller_slot,
+              entities::to_string(movement.active_override));
+    return;
+  }
+
+  shared::attach_override(movement, {.kind    = entities::Movement_Override::Noclip,
+                                     .seconds = std::numeric_limits<float>::infinity(),
+                                     .speed   = server_context.cvars->sv_noclip_speed});
+}
+
 void map(std::string_view requested_name, const command_context_t &)
 {
   using namespace server;
@@ -614,13 +648,15 @@ void sv_shadow_volume_report(const command_context_t &)
 {
   server::server_context_t& context = server::g_server_context;
   shared::predicted_world_storage_t storage;
-  shared::build_movers(context.world.session,
+  shared::compute_movers_at_tick(context.world.session,
                        {.tick        = context.tick_number,
                         .state_tick  = context.tick_number > 0 ? context.tick_number - 1 : 0,
                         .tickrate_hz = context.cvars->sv_tickrate,
                         .gravity     = context.cvars->g_gravity},
                        storage);
-  const shared::shadow_volume_report_t counts = shared::build_shadow_volumes(context.world.session, storage);
+  const shared::shadow_volume_report_t counts = shared::compute_shadow_volumes(
+      context.world.session.entity_system, context.world.session.bvh, context.world.session.owner_of,
+      storage.movers, context.world.session.mover_rests, storage.shadow_volumes);
   std::println("{}", shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 

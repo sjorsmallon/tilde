@@ -10,10 +10,10 @@ namespace shared
 
 // 0 when idle, 1 at the deadline. `tick_fraction` is how far past `tick` the caller is drawing.
 inline float timer_elapsed_fraction(const entities::Timer_State& timer_state, uint32_t tick,
-                                    float tick_fraction, float tickrate)
+                                    float tick_fraction, uint32_t tickrate_hz)
 {
   const float duration_ticks =
-      static_cast<float>(ticks_from_seconds(timer_state.duration_seconds, tickrate));
+      static_cast<float>(ticks_from_seconds(timer_state.duration_seconds, tickrate_hz));
   if (duration_ticks <= 0.0f)
     return 0.0f;
 

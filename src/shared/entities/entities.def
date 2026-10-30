@@ -78,7 +78,8 @@ Lens_Filter :: enum { Red, Green, Blue }
 // a Movement_Override so the frozen player predicts their own hold (shared/movement_override.hpp).
 // Pilot holds the hull while a rocket flies along the player's aim: override_target_position is the rocket.
 // Merged holds the hull inside another player's: override_target_uid is the driver, who walks for both (shared/merge.hpp).
-Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot, Merged }
+// Noclip flies the hull along the aim at override_speed, swept against nothing; the `noclip` command attaches it and ends it through its clock.
+Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot, Merged, Noclip }
 
 // ---------------------------------------------------------------------------
 // COMPONENTS
@@ -204,7 +205,8 @@ Movement :: component {
 Inventory :: component {
     weapons:              u32[Inventory_Slot]      @Networked
     active_slot:          Inventory_Slot = .Melee  @Networked
-    deploy_complete_time: u64
+    // WHEN the raised weapon is up, in sub-tick time (input_step_plan.md). The client predicts it on its own input axis.
+    deploy_complete_time: u64                      @Networked
 }
 
 Timer_State :: component {
@@ -395,10 +397,11 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     // duration applies" to be re-decided every tick against a weapon that is no
     // longer the one being reloaded; storing the deadline settles it at the
     // moment the input arrived, which is the only moment that knows.
-    reload_complete_time: u64
+    // Networked so the client's predicted gate reads the same number (input_step_plan.md).
+    reload_complete_time: u64          @Networked
 
-    // Rate limit for the empty-magazine warning. Server-only, like the two
-    // above: a log cadence is not something a client has any use for.
+    // Rate limit for the empty-magazine warning. Server-only: a log cadence is
+    // not something a client has any use for.
     last_empty_fire_warning_tick: u32
 
     // Where a death respawn puts you, from Set_Respawn_Point; 0 for none.
@@ -436,7 +439,8 @@ Weapon_Entity :: entity {
     max_alive:        i32 = -1          @Editable
     // Null owner means the weapon lies in the world as a bounce body, waiting to be picked up.
     owner_uid:        entity            @Networked
-    next_fire_time:   u64
+    // WHEN this weapon may fire again, in sub-tick time; runs while holstered. The client predicts it per slot.
+    next_fire_time:   u64               @Networked
     pickup_allowed_tick: u32
     damage_type: Damage_Type = .Normal  @Editable
     // The pickup reach and the thrown body's radius (its largest half extent).
@@ -445,35 +449,15 @@ Weapon_Entity :: entity {
     render:           Render = { mesh = .Error }
 }
 
-// The splash is the row's Explode contact (shared/weapons.hpp); the rocket is the flight alone.
-Rocket_Entity :: entity @runtime_only {
-    projectile: Projectile = { weapon_id = .Rocket_Launcher }
-    lifetime: f32 = 5.0
-    collision_radius: f32 = 12.0        @Networked
-    render:          Render = { mesh = .rocket}
-}
-
-// Which button fired it is Projectile::trigger; what it does on contact is that button's contact_t.
-Hook_Entity :: entity @runtime_only {
-    projectile:      Projectile = { weapon_id = .Hook }
-    lifetime:         f32 = 4
-    collision_radius: f32 = 25.0
-    render:           Render = { mesh = .hookshot, scale = {0.03, 0.03, 0.03} }
-}
-
-Kooh_Entity:: entity @runtime_only {
-    projectile:       Projectile = { weapon_id = .Kooh }
-    lifetime: f32 = 4.0
-    collision_radius: f32 = 25.0
-    render:           Render = { mesh = .hookshot, scale = {0.03,0.03,0.03}}
-}
-
-// Flies an arc; wherever it FIRST touches, its owner is sent (server/systems/ricochet_system.cpp). One that touches nothing sends nobody.
-Ricochet_Entity :: entity @runtime_only {
-    projectile:       Projectile = { weapon_id = .Ricochet }
-    lifetime:         f32 = 3.0
-    collision_radius: f32 = 8.0
-    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, color = {1, 0.45, 0.15} }
+// The one entity a sweeping shot is (server/systems/sweeping_projectile_system.cpp): a rocket, a hook, a magnet
+// ball, a modifier shot. The row's shot_t says how long it flies, the sphere it sweeps and what it looks like,
+// written by spawn_projectile; which button fired it is Projectile::trigger and what it does on contact is that
+// button's contact_t. Nothing reads its type: a weapon whose shot flies straight and arrives somewhere is a row.
+Shot_Entity :: entity @runtime_only {
+    projectile: Projectile
+    // Seconds of flight left, the row's lifetime_seconds at spawn.
+    lifetime:   f32
+    render:     Render
 }
 
 // A ghost while it flies, growing from half_extents_at_launch to half_extents over the flight with an ease out;
@@ -783,15 +767,6 @@ Remnant_Entity :: entity @runtime_only {
     // The sphere the owner's teleport shot has to cross, centred on the hull it stood in. Generous on purpose.
     hit_radius: f32 = 48.0
     render:     Render = { mesh = .Duck }
-}
-
-// The Modifier_Gun's LMB: flies an arc and, wherever it FIRST touches, leaves a Timed_Movement_Modifier_Entity
-// at construction (server/systems/modifier_shot_system.cpp). The zone's numbers are the zone's own defaults.
-Modifier_Shot_Entity :: entity @runtime_only {
-    projectile:       Projectile = { weapon_id = .Modifier_Gun }
-    lifetime:         f32 = 4.0
-    collision_radius: f32 = 8.0
-    render:           Render = { mesh = .Sphere, scale = {16, 16, 16}, color = {0.5, 1, 0.5} }
 }
 
 // A Movement_Modifier_Entity a shot left behind, or the Modifier_Gun's RMB fired directly: live from the tick

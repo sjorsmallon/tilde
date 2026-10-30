@@ -5,6 +5,7 @@
 #include "log.hpp"
 #include "map/map_geometry.hpp"
 #include "movement/player_constants.hpp"
+#include "tick_clock.hpp"
 
 namespace shared
 {
@@ -25,19 +26,19 @@ void write_canopy_poses(entities::Canopy_Entity& canopy, const linalg::vec3f& ca
 
 linalg::vec3f canopy_position_at_tick(const entities::Canopy_Entity& canopy,
                                       const linalg::vec3f& carrier_velocity, uint32_t tick,
-                                      uint32_t state_tick, float tick_interval_seconds)
+                                      uint32_t state_tick, uint32_t tickrate_hz)
 {
   if (tick + 1 <= state_tick)
     return canopy.position_at_previous_tick;
   if (tick == state_tick)
     return canopy.position;
   return canopy.position +
-         carrier_velocity * (tick_interval_seconds * static_cast<float>(tick - state_tick));
+         carrier_velocity * (tick_interval_seconds(tickrate_hz) * static_cast<float>(tick - state_tick));
 }
 
 canopy_poses_t canopy_poses_for_tick(const entities::Canopy_Entity& canopy,
                                      const linalg::vec3f& carrier_velocity, uint32_t tick,
-                                     uint32_t state_tick, float tick_interval_seconds)
+                                     uint32_t state_tick, uint32_t tickrate_hz)
 {
   if (tick <= state_tick)
     fatal_error("canopy_poses_for_tick: a cut for tick {} against state written at tick {}; the "
@@ -45,13 +46,13 @@ canopy_poses_t canopy_poses_for_tick(const entities::Canopy_Entity& canopy,
                 tick, state_tick);
 
   return {.start = canopy_position_at_tick(canopy, carrier_velocity, tick - 2, state_tick,
-                                           tick_interval_seconds),
+                                           tickrate_hz),
           .end   = canopy_position_at_tick(canopy, carrier_velocity, tick - 1, state_tick,
-                                           tick_interval_seconds)};
+                                           tickrate_hz)};
 }
 
-void collect_canopies(const Entity_System& system, uint32_t tick, uint32_t state_tick,
-                      float tick_interval_seconds, std::vector<mover_t>& out)
+void compute_canopies_at_tick(const Entity_System& system, uint32_t tick, uint32_t state_tick,
+                      uint32_t tickrate_hz, std::vector<mover_t>& out)
 {
   for (const entities::Canopy_Entity& canopy : system.entities_of_type<entities::Canopy_Entity>())
   {
@@ -64,7 +65,7 @@ void collect_canopies(const Entity_System& system, uint32_t tick, uint32_t state
     }
 
     const canopy_poses_t poses =
-        canopy_poses_for_tick(canopy, carrier->velocity, tick, state_tick, tick_interval_seconds);
+        canopy_poses_for_tick(canopy, carrier->velocity, tick, state_tick, tickrate_hz);
 
     aabb_t box;
     box.center       = poses.end;

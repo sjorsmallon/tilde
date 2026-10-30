@@ -144,7 +144,7 @@ void stand_up(test_world_t& world, entities::Game_Mode mode)
   world.context.cvars       = &world.cvars;
   world.context.tick_number = 1000;
 
-  world.cvars.sv_tickrate          = (float)tickrate;
+  world.cvars.sv_tickrate          = tickrate;
   world.cvars.mp_warmup_seconds    = 0.f; // ends on a request, never on a clock
   world.cvars.mp_players_to_start  = 0;
   world.cvars.mp_freeze_seconds    = 1.f;
@@ -647,7 +647,7 @@ void test_restart_round_resets_the_level()
       spawn_test_player(world.context, entities::Team_Allegiance::Red, 100);
   const shared::entity_uid_t carried_uid = entity_system.spawn<entities::Weapon_Entity>();
   const shared::entity_uid_t loose_uid   = entity_system.spawn<entities::Weapon_Entity>();
-  const shared::entity_uid_t rocket_uid  = entity_system.spawn<entities::Rocket_Entity>();
+  const shared::entity_uid_t rocket_uid  = entity_system.spawn<entities::Shot_Entity>();
   get_player_by_uid(world.context, player_uid).inventory.weapons[entities::Inventory_Slot::Primary] = carried_uid;
 
   start_the_match(world.context);

@@ -91,7 +91,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
                                         cvars::cvar_id::pm_maxspeed};
 
   // An operator setting, claimed by no map: the revert must leave it alone.
-  cvar_state.sv_tickrate = 30.f;
+  cvar_state.sv_tickrate = 30;
 
   for (int32_t slot = 0; slot < network::sv_max_client_count; ++slot)
   {
@@ -163,7 +163,7 @@ void test_reset_state_in_preparation_for_new_map_load()
   // Survives: a cvar NO map claimed. The revert is a named subset, not a group
   // reset -- an operator's console and config settings are not the map's to
   // undo.
-  assert(cvar_state.sv_tickrate == 30.f);
+  assert(cvar_state.sv_tickrate == 30);
 
   assert(context.incoming.developer_console_entries.empty());
   assert(context.incoming.map_data_requests.empty());

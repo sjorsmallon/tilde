@@ -1,5 +1,6 @@
 #include "shared/map/map.hpp"
 #include "shared/lighting/map_baker.hpp"
+#include "shared/movement/movement_settings.hpp"
 #include "shared/movement/navmesh.hpp"
 #include <cassert>
 #include <cmath>
@@ -470,7 +471,7 @@ static void test_bake_respects_extruded_footprint()
       map_with_one_mesh(shared::make_extruded_mesh(footprint, {0.f, 1.f, 0.f}, 128.f));
 
   constexpr float cell_size = 16.f;
-  shared::bake_map(map, cell_size);
+  shared::bake_map(map, cell_size, shared::shared_movement_settings_t{}.step_height);
   const shared::navmesh_t &nav = map.navmesh;
 
   assert(nav.valid() && "extruded prism produced no navmesh at all");
@@ -507,7 +508,7 @@ static void test_bake_follows_ramp_surface()
   shared::map_t map = map_with_one_mesh(*shared::try_make_convex_hull_mesh(ramp));
 
   constexpr float cell_size = 16.f;
-  shared::bake_map(map, cell_size);
+  shared::bake_map(map, cell_size, shared::shared_movement_settings_t{}.step_height);
   const shared::navmesh_t &nav = map.navmesh;
 
   assert(nav.valid() && "ramp produced no navmesh");
@@ -539,7 +540,7 @@ static void test_bake_rejects_steep_face()
       vertex.y = vertex.x * 2.f;
 
   shared::map_t map = map_with_one_mesh(*shared::try_make_convex_hull_mesh(steep));
-  shared::bake_map(map, 16.f);
+  shared::bake_map(map, 16.f, shared::shared_movement_settings_t{}.step_height);
 
   assert(!map.navmesh.valid() && "a 63-degree face baked as walkable floor");
 
@@ -555,7 +556,7 @@ static void test_bake_box_brush_is_one_span_per_column()
       map_with_one_mesh(shared::make_box_mesh({128.f, 0.f, 128.f}, {128.f, 64.f, 128.f}));
 
   constexpr float cell_size = 16.f;
-  shared::bake_map(map, cell_size);
+  shared::bake_map(map, cell_size, shared::shared_movement_settings_t{}.step_height);
   const shared::navmesh_t &nav = map.navmesh;
 
   // 256 wide / 16 = a 16x16 grid, every column standing on the lid.
@@ -586,7 +587,7 @@ static void test_bake_finds_stacked_floors()
   map.geometry.push_back({2, shared::make_box_mesh({64.f, 114.f, 64.f}, {64.f, 14.f, 64.f})});
 
   constexpr float cell_size = 16.f;
-  shared::bake_map(map, cell_size);
+  shared::bake_map(map, cell_size, shared::shared_movement_settings_t{}.step_height);
   const shared::navmesh_t &nav = map.navmesh;
 
   // 16x16 columns of ground, plus 8x8 of platform stacked on top of them.

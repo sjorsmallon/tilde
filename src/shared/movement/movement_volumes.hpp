@@ -36,9 +36,9 @@ enum class movement_volume_kind_t : uint8_t
 // The tick the list is cut FOR: a bubble's bounds are a function of it.
 struct movement_volume_settings_t
 {
-  uint32_t tick                  = 0;
-  float    tick_interval_seconds = 0.f;
-  float    gravity               = 0.f;
+  uint32_t tick        = 0;
+  uint32_t tickrate_hz = 0;
+  float    gravity     = 0.f;
 };
 
 struct movement_volume_t
@@ -56,7 +56,7 @@ struct movement_volume_t
 };
 
 // One loop per type that IS a volume. That every @predicted type feeds exactly one collect is pinned by movement_volumes_test.
-void collect_movement_volumes(Entity_System&                    system,
+void compute_movement_volumes_at_tick(const Entity_System&                    system,
                               const movement_volume_settings_t& settings,
                               std::vector<movement_volume_t>&   out);
 

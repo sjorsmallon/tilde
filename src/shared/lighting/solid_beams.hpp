@@ -15,7 +15,7 @@
 //
 // A spot with `solid_beam` set is the same pieces made SOLID, cut as a mover whose two poses are equal,
 // as a landed platform is: the pyramid less the volumes contains the cone less the volumes, so what is
-// drawn is solid everywhere. A beam casts no shadow and stops none (collect_shadow_volumes skips it). It
+// drawn is solid everywhere. A beam casts no shadow and stops none (compute_shadow_volumes skips it). It
 // carries nobody and crushes nobody.
 
 #include "collision/movers.hpp"
@@ -123,10 +123,10 @@ enum class beam_carve_scope_t : uint8_t
   Every_Beam
 };
 
-// APPENDS the solid beams as movers, after collect_movers and collect_shadow_volumes: a riding light is
+// APPENDS the solid beams as movers, after compute_path_movers_at_tick and compute_shadow_volumes: a riding light is
 // read at the pose of the movers already in `out`, and the volumes are those the beam's own light threw
 // this tick. Under Every_Beam a `beam` spot is carved too and pushes no mover.
-void collect_solid_beams(const Entity_System& system, const mover_rests_t& rests,
+void compute_solid_beams(const Entity_System& system, const mover_rests_t& rests,
                          Span<const shadow_volume_t> shadow_volumes, beam_carve_scope_t scope,
                          solid_beam_cache_t& cache, std::vector<mover_t>& out);
 

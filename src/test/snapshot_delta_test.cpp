@@ -9,8 +9,8 @@
 // Everything here drives the real shared pieces: network::Snapshot_History,
 // serialize_entity / deserialize_entity, and the frame, which is an
 // Entity_System. What it cannot reach is the wiring in server_impl.cpp and
-// held_snapshot.cpp -- that is exercised by running a MyGame_Client against a
-// MyGame_Server.
+// held_snapshot.cpp -- that is exercised by running a MVMT_Client against a
+// MVMT_Server.
 
 #include "../shared/assets/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
@@ -132,9 +132,9 @@ const Entity_T& held(const network::snapshot_frame_t& frame, shared::entity_uid_
   return *entity;
 }
 
-entities::Rocket_Entity make_rocket(shared::entity_uid_t uid, float x)
+entities::Shot_Entity make_rocket(shared::entity_uid_t uid, float x)
 {
-  entities::Rocket_Entity rocket;
+  entities::Shot_Entity rocket;
   rocket.entity_id = uid;
   rocket.position  = {x, 0.f, 0.f};
   return rocket;
@@ -218,6 +218,38 @@ int main()
 
     // A position is drawn and corrected against a tolerance, so it still rounds to 1/32.
     assert(client_state.position.x == 10.f);
+
+    std::cout << "    -> Success!" << std::endl;
+  }
+
+  {
+    std::cout << "  [Subtest] A weapon clock rides exactly, and only when it moved..." << std::endl;
+
+    // The three deadlines a predicted shot is gated on (input_step_plan.md) are
+    // u64 sub-tick moments: a var-uint on the wire, never rounded.
+    entities::Player_Entity server_state;
+    server_state.reload_complete_time           = shared::subtick_time(1000, 37);
+    server_state.inventory.deploy_complete_time = shared::subtick_time(999, 63);
+
+    entities::Player_Entity client_state;
+    transmit(server_state, nullptr, client_state);
+    assert(client_state.reload_complete_time == shared::subtick_time(1000, 37));
+    assert(client_state.inventory.deploy_complete_time == shared::subtick_time(999, 63));
+
+    entities::Player_Entity acked_baseline = client_state;
+    network::changed_fields_t changed_by_an_unmoved_clock;
+    transmit(server_state, &acked_baseline, client_state, &changed_by_an_unmoved_clock);
+    assert(!changed_by_an_unmoved_clock.is_set(
+               find_leaf_index_by_name(entities::entity_type::Player_Entity, "reload_complete_time")) &&
+           "an unchanged deadline does not ride");
+
+    server_state.reload_complete_time = shared::subtick_time(1002, 4);
+    network::changed_fields_t changed_by_a_reload;
+    transmit(server_state, &acked_baseline, client_state, &changed_by_a_reload);
+    assert(changed_by_a_reload.is_set(
+               find_leaf_index_by_name(entities::entity_type::Player_Entity, "reload_complete_time")) &&
+           "a changed deadline rides");
+    assert(client_state.reload_complete_time == shared::subtick_time(1002, 4));
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -343,22 +375,22 @@ int main()
     const size_t full_size = transmit_snapshot(server_frame, nullptr, client_frame,
                                                &record_count);
     assert(record_count == 3); // no baseline: every entity is a full record
-    assert(count_entities_of_type<entities::Rocket_Entity>(client_frame) == 3);
+    assert(count_entities_of_type<entities::Shot_Entity>(client_frame) == 3);
 
     network::snapshot_frame_t acked = client_frame;
 
     server_frame.tick = 2;
-    server_frame.entities.get<entities::Rocket_Entity>(11)->position.x = 140.f;
+    server_frame.entities.get<entities::Shot_Entity>(11)->position.x = 140.f;
 
     network::snapshot_frame_t next_client_frame;
     const size_t delta_size = transmit_snapshot(server_frame, &acked, next_client_frame,
                                                 &record_count);
 
     assert(record_count == 1); // only the rocket that moved
-    assert(count_entities_of_type<entities::Rocket_Entity>(next_client_frame) == 3);
-    assert(held<entities::Rocket_Entity>(next_client_frame, 11).position.x == 140.f);
-    assert(held<entities::Rocket_Entity>(next_client_frame, 10).position.x == 0.f);   // carried over
-    assert(held<entities::Rocket_Entity>(next_client_frame, 12).position.x == 200.f); // carried over
+    assert(count_entities_of_type<entities::Shot_Entity>(next_client_frame) == 3);
+    assert(held<entities::Shot_Entity>(next_client_frame, 11).position.x == 140.f);
+    assert(held<entities::Shot_Entity>(next_client_frame, 10).position.x == 0.f);   // carried over
+    assert(held<entities::Shot_Entity>(next_client_frame, 12).position.x == 200.f); // carried over
 
     std::cout << "    Full update: " << full_size << " bytes / 3 records, delta: "
               << delta_size << " bytes / 1 record" << std::endl;
@@ -369,7 +401,7 @@ int main()
     network::snapshot_frame_t idle_baseline = next_client_frame;
     transmit_snapshot(server_frame, &idle_baseline, idle_client_frame, &record_count);
     assert(record_count == 0);
-    assert(count_entities_of_type<entities::Rocket_Entity>(idle_client_frame) == 3);
+    assert(count_entities_of_type<entities::Shot_Entity>(idle_client_frame) == 3);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -477,7 +509,7 @@ int main()
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(count_entities_of_type<entities::Rocket_Entity>(client_frame) == 2);
+    assert(count_entities_of_type<entities::Shot_Entity>(client_frame) == 2);
 
     network::snapshot_frame_t acked = client_frame;
 
@@ -493,9 +525,9 @@ int main()
     transmit_snapshot(server_frame, &acked, next_client_frame, &record_count);
 
     assert(record_count == 2);
-    assert(next_client_frame.entities.get<entities::Rocket_Entity>(10) == nullptr); // gone, and said so
-    assert(next_client_frame.entities.get<entities::Rocket_Entity>(11) != nullptr); // unchanged, carried over
-    assert(held<entities::Rocket_Entity>(next_client_frame, 12).position.x == 300.f);
+    assert(next_client_frame.entities.get<entities::Shot_Entity>(10) == nullptr); // gone, and said so
+    assert(next_client_frame.entities.get<entities::Shot_Entity>(11) != nullptr); // unchanged, carried over
+    assert(held<entities::Shot_Entity>(next_client_frame, 12).position.x == 300.f);
 
     std::cout << "    -> Success!" << std::endl;
   }
@@ -515,7 +547,7 @@ int main()
 
     network::snapshot_frame_t client_frame;
     transmit_snapshot(server_frame, nullptr, client_frame);
-    assert(client_frame.entities.get<entities::Rocket_Entity>(10) != nullptr);
+    assert(client_frame.entities.get<entities::Shot_Entity>(10) != nullptr);
 
     // Tick 1 is the newest thing the client reconstructed, so it is what it
     // acks -- and it keeps acking it, because tick 2 never arrives.
@@ -526,7 +558,7 @@ int main()
     {
       network::snapshot_frame_t discarded_by_packet_loss;
       transmit_snapshot(server_frame, &acked_tick_1, discarded_by_packet_loss);
-      assert(discarded_by_packet_loss.entities.get<entities::Rocket_Entity>(10) ==
+      assert(discarded_by_packet_loss.entities.get<entities::Shot_Entity>(10) ==
              nullptr); // it was in there
     }
 
@@ -538,7 +570,7 @@ int main()
     transmit_snapshot(server_frame, &acked_tick_1, recovered, &record_count);
 
     assert(record_count == 1);
-    assert(recovered.entities.get<entities::Rocket_Entity>(10) == nullptr);
+    assert(recovered.entities.get<entities::Shot_Entity>(10) == nullptr);
 
     std::cout << "    -> Success (removal survived the loss)!" << std::endl;
   }
@@ -642,7 +674,7 @@ int main()
     assert(held<entities::Player_Entity>(client_frame, 1).health.current_health == 100);
     assert(held<entities::Player_Entity>(client_frame, 1).client_slot_index == 0);
     assert(held<entities::Damageable_Entity>(client_frame, 20).position.y == 6.f);
-    assert(held<entities::Rocket_Entity>(client_frame, 30).position.x == 42.f);
+    assert(held<entities::Shot_Entity>(client_frame, 30).position.x == 42.f);
 
     // The player leaves; the other two types must be untouched by that.
     network::snapshot_frame_t acked = client_frame;
@@ -655,7 +687,7 @@ int main()
     assert(record_count == 1);
     assert(count_entities_of_type<entities::Player_Entity>(next_client_frame) == 0);
     assert(count_entities_of_type<entities::Damageable_Entity>(next_client_frame) == 1);
-    assert(count_entities_of_type<entities::Rocket_Entity>(next_client_frame) == 1);
+    assert(count_entities_of_type<entities::Shot_Entity>(next_client_frame) == 1);
 
     std::cout << "    -> Success!" << std::endl;
   }

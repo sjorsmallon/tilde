@@ -39,7 +39,7 @@ void record_snapshot_tick(interpolation_cursor_t& cursor, uint32_t server_tick, 
 }
 
 void advance_interpolation_cursor(interpolation_cursor_t& cursor, float dt,
-                                 float server_tickrate, float delay_ticks)
+                                 uint32_t server_tickrate_hz, float delay_ticks)
 {
   if (!cursor.started)
     return;
@@ -60,7 +60,7 @@ void advance_interpolation_cursor(interpolation_cursor_t& cursor, float dt,
                              1.f - INTERPOLATION_MAX_RATE_TRIM,
                              1.f + INTERPOLATION_MAX_RATE_TRIM);
 
-  cursor.tick += static_cast<double>(dt) * static_cast<double>(server_tickrate) *
+  cursor.tick += static_cast<double>(dt) * static_cast<double>(server_tickrate_hz) *
                        static_cast<double>(cursor.rate);
 }
 

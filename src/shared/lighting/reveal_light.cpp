@@ -19,34 +19,6 @@ reveal_cone_settings_t reveal_cone_settings_from_cvars(const cvars::cvar_state_t
           .overhead_height    = cvars.sv_reveal_light_overhead_height};
 }
 
-std::optional<entities::Reveal_Cone_Kind> try_checking_whether_player_is_wielding_either_revealer_or_eraser(const Entity_System&           system,
-                                                                    const entities::Player_Entity& player)
-{
-  if (player.health.current_health <= 0)
-    return std::nullopt;
-
-  const weapon_definition_t* held = try_find_held_weapon_definition(system, player);
-  if (held == nullptr)
-    return std::nullopt;
-
-  const entities::Fire_Resolution primary = held->primary_fire.resolution;
-  if (primary == entities::Fire_Resolution::Reveal_Light)
-    return entities::Reveal_Cone_Kind::Reveals;
-  if (primary == entities::Fire_Resolution::Erase_Light)
-    return entities::Reveal_Cone_Kind::Erases;
-  return std::nullopt;
-}
-
-bool reveal_light_is_in_hand(const Entity_System& system, const entities::Player_Entity& player)
-{
-  return try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, player).has_value();
-}
-
-bool reveal_light_is_on(const Entity_System& system, const entities::Player_Entity& player)
-{
-  return player.reveal_light_on && reveal_light_is_in_hand(system, player);
-}
-
 reveal_cone_t compute_light_reveal_cone(const entities::Reveal_Light_Entity& light, const path_pose_t& pose)
 {
   return {.apex                 = pose.position,
@@ -140,33 +112,23 @@ bool any_erase_cone_contains_box(Span<const reveal_cone_planes_t> cones, const a
   return false;
 }
 
-void collect_reveal_cones(
-  const Entity_System& system,
-  const path_links_t& links,
-  const mover_rests_t& rests,
-  const reveal_cone_settings_t& settings,
-  uint32_t tick,
-  float tickrate,
-  entity_uid_t predicted_by_caller,
-  std::vector<reveal_cone_planes_t>& out)
+void compute_reveal_cones_at_tick(Span<const player_sight_t> sights, const Entity_System& system,
+                                  const path_links_t& links, const mover_rests_t& rests,
+                                  const reveal_cone_settings_t& settings, uint32_t tick, uint32_t tickrate_hz,
+                                  std::vector<reveal_cone_planes_t>& out)
 {
   out.clear();
-  for (const entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
-  {
-    const std::optional<entities::Reveal_Cone_Kind> kind = try_checking_whether_player_is_wielding_either_revealer_or_eraser(system, player);
-    if (player.entity_id == predicted_by_caller || !player.reveal_light_on || !kind)
-      continue;
-    out.push_back(planes_of_reveal_cone(
-        compute_player_reveal_cone(player.position + linalg::vec3f{0.f, player_eye_height, 0.f},
-                       player.view_angle_yaw, player.view_angle_pitch,
-                       player.reveal_light_overhead, *kind, settings)));
-  }
+  for (const player_sight_t& sight : sights)
+    if (reveal_light_is_on(sight))
+      out.push_back(planes_of_reveal_cone(compute_player_reveal_cone(
+          player_eye_position(sight.feet), sight.view_entering_tick.yaw, sight.view_entering_tick.pitch,
+          sight.toggles.reveal_light_overhead, *sight.wielded_reveal_kind, settings)));
 
   for (const entities::Reveal_Light_Entity& light : system.entities_of_type<entities::Reveal_Light_Entity>())
     if (light.switch_state.value)
       out.push_back(planes_of_reveal_cone(compute_light_reveal_cone(
           light, ridden_pose_at(system, links, rests, get_placed_pose_for_entity(light), light.rides, tick,
-                                tickrate))));
+                                tickrate_hz))));
 }
 
 } // namespace shared

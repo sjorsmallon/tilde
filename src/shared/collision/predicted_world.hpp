@@ -113,10 +113,7 @@ struct predicted_world_storage_t
           .lens_watchers      = storage.lens_watchers};
 }
 
-// The tick a build is FOR. `tick_interval_seconds` is DERIVED from the tickrate
-// rather than carried beside it: two spellings of one fact are two things that
-// can disagree, and the sides were spelling it differently -- the server cast a
-// double division to float, the client divided in float.
+// The tick a build is FOR. The interval is derived from `tickrate_hz` through tick_interval_seconds, never carried beside it.
 struct predicted_world_settings_t
 {
   uint32_t tick        = 0;
@@ -124,13 +121,11 @@ struct predicted_world_settings_t
   // state another player's input wrote rather than of the tick (canopy.hpp): the server's is
   // tick - 1, the client's is its newest snapshot. Always older than `tick`.
   uint32_t state_tick  = 0;
-  float    tickrate_hz = 0.f;
+  uint32_t tickrate_hz = 0;
   float    gravity     = 0.f;
   reveal_cone_settings_t reveal_cone = {};
   // The server carves the solid beams it needs for collision; the client every beam, which it draws.
   beam_carve_scope_t     beams_carved = beam_carve_scope_t::Solid;
-
-  [[nodiscard]] float tick_interval_seconds() const { return 1.0f / tickrate_hz; }
 };
 
 // The three parts, and the one that runs all three. They are split because the
@@ -139,20 +134,17 @@ struct predicted_world_settings_t
 // volumes and the movers are functions of the TICK and its replay rebuilds them
 // per input. The server runs one tick at a time and builds all three.
 // Picking one team's set out of every team's is the view's job.
-void collect_disabled_geometry_for_every_team(game_session_t& session, predicted_world_storage_t& out);
-void build_movement_volumes(game_session_t& session, const predicted_world_settings_t& settings,
-                          predicted_world_storage_t& out);
-void build_movers(game_session_t& session, const predicted_world_settings_t& settings,
-                predicted_world_storage_t& out);
-void build_reveal_cones(game_session_t& session, const predicted_world_settings_t& settings,
-                        predicted_world_storage_t& out);
-// Every switched-on lens and every alive player's eye (lens.hpp); a client adds its own eye from its prediction.
-void build_lens_watchers(game_session_t& session, predicted_world_storage_t& out);
-// After build_movers: a moving caster's pieces are the movers'. The report is for the two report commands.
-shadow_volume_report_t build_shadow_volumes(game_session_t& session, predicted_world_storage_t& out);
-// After build_shadow_volumes: a solid beam is a mover carved by the volumes its own light threw (solid_beams.hpp).
-void build_solid_beams(game_session_t& session, beam_carve_scope_t scope, predicted_world_storage_t& out);
-void build_predicted_world(game_session_t& session, const predicted_world_settings_t& settings,
-                         predicted_world_storage_t& out);
+void compute_disabled_geometry_per_team(const game_session_t& session, predicted_world_storage_t& out);
+// Every mover kind at one tick: path movers, spawned platforms, canopies, statues and lens panes.
+void compute_movers_at_tick(const game_session_t& session, const predicted_world_settings_t& settings,
+                            predicted_world_storage_t& out);
+// The whole per-tick cut, in the one order: the solid beams are carved by the shadow volumes, which the movers
+// throw. The disabled set is not in it: it depends on switches alone, so a client takes it once per frame.
+// `sights` are the players as the cones and watchers see them; a client overwrites its own row before calling.
+shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& session,
+                                                       const predicted_world_settings_t& settings,
+                                                       Span<const player_sight_t> sights,
+                                                       solid_beam_cache_t& solid_beam_cache,
+                                                       predicted_world_storage_t& out);
 
 } // namespace shared

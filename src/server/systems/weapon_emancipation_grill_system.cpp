@@ -90,7 +90,7 @@ void update_weapon_emancipation_grills(server_context_t& context)
         continue;
 
       const quatf aim  = linalg::from_view_angles(player.view_angle_yaw, player.view_angle_pitch);
-      const vec3f hand = player.position + vec3f{0.f, shared::player_eye_height, 0.f} +
+      const vec3f hand = shared::player_eye_position(player.position) +
                          linalg::forward(aim) * HAND_DISTANCE;
 
       bool carries_anything = false;
@@ -132,14 +132,13 @@ void update_weapon_emancipation_grills(server_context_t& context)
     if (entity_system.try_find(taken.uid) != nullptr)
       destroy_entity(context, taken.uid);
 
-  const float tick_interval_seconds = static_cast<float>(get_tick_interval());
+  const uint32_t tickrate_hz = context.cvars->sv_tickrate;
   std::vector<shared::entity_uid_t> expired;
   for (const entities::Emancipated_Weapon_Entity& fizzled :
        entity_system.entities_of_type<entities::Emancipated_Weapon_Entity>())
   {
-    const float elapsed_seconds =
-        static_cast<float>(context.tick_number - fizzled.spawned_tick) * tick_interval_seconds;
-    if (elapsed_seconds >= fizzled.lifetime_seconds)
+    if (context.tick_number - fizzled.spawned_tick >=
+        shared::ticks_from_seconds(fizzled.lifetime_seconds, tickrate_hz))
       expired.push_back(fizzled.entity_id);
   }
   for (const shared::entity_uid_t uid : expired)

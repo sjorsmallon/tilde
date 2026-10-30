@@ -20,7 +20,7 @@ namespace
 
 // ONE walk for both sets, the byte an owner's geometry gets being the only thing they disagree on.
 template <typename State_Of_T>
-void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owner_of,
+void compute_disabled_geometry_where(const Entity_System& system, Span<const entity_uid_t> owner_of,
                             disabled_geometry_t& out, State_Of_T&& state_of_owner)
 {
   out.assign(owner_of.size(), 0);
@@ -42,10 +42,10 @@ void collect_geometry_where(Entity_System& system, Span<const entity_uid_t> owne
 
 } // namespace
 
-void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
+void compute_disabled_geometry(const Entity_System& system, Span<const entity_uid_t> owner_of,
                                entities::Team_Allegiance mover_team, disabled_geometry_t& out)
 {
-  collect_geometry_where(system, owner_of, out,
+  compute_disabled_geometry_where(system, owner_of, out,
                          [mover_team](const entities::Geometry_Owner_Entity& owner) -> uint8_t
                          {
                            if (!geometry_owner_blocks(owner, mover_team))
@@ -63,10 +63,10 @@ void collect_disabled_geometry(Entity_System& system, Span<const entity_uid_t> o
                          });
 }
 
-void collect_hidden_geometry(Entity_System& system, Span<const entity_uid_t> owner_of,
+void compute_hidden_geometry(const Entity_System& system, Span<const entity_uid_t> owner_of,
                              disabled_geometry_t& out)
 {
-  collect_geometry_where(system, owner_of, out,
+  compute_disabled_geometry_where(system, owner_of, out,
                          [](const entities::Geometry_Owner_Entity& owner) -> uint8_t
                          { return owner.switch_state.value ? GEOMETRY_SOLID : GEOMETRY_NOT_THERE; });
 }

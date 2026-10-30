@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <numeric>
 #include <utility>
 
 namespace shared
@@ -110,14 +111,6 @@ mesh_geometry_t cutter_in_wall_space(const mesh_geometry_t &wall, const mesh_geo
   return local;
 }
 
-linalg::vec3 average_of(const mesh_geometry_t &mesh, Span<const uint32_t> indices)
-{
-  linalg::vec3 sum{0.f, 0.f, 0.f};
-  for (uint32_t index : indices)
-    sum = sum + mesh.vertices[index];
-  return sum * (1.f / (float)indices.count);
-}
-
 mesh_subtraction_t wall_untouched(const mesh_geometry_t &wall, bool missed)
 {
   mesh_subtraction_t out;
@@ -170,8 +163,7 @@ try_fan_convex_piece(const tagged_mesh_t &piece, const mesh_geometry_t &local_cu
       return std::nullopt;
 
     const std::vector<uint32_t> &ring = local_cutter.faces[face_index].vertex_indices;
-    const linalg::vec3 face_centre =
-        average_of(local_cutter, Span<const uint32_t>(ring.data(), (uint32_t)ring.size()));
+    const linalg::vec3 face_centre = compute_ring_centroid(local_cutter, ring);
     for (size_t corner = 0; corner < ring.size() && !part->mesh.faces.empty(); ++corner)
     {
       const linalg::vec3 &start = local_cutter.vertices[ring[corner]];
@@ -329,11 +321,7 @@ std::optional<std::vector<uint32_t>> try_merge_rings(const mesh_geometry_t &mesh
 bool try_merge_one_pair(mesh_geometry_t &mesh, std::vector<uint32_t> &cutter_faces)
 {
   const std::vector<mesh_directed_edge_t> edges = collect_mesh_directed_edges(mesh);
-  const Span<const mesh_directed_edge_t> edge_span(edges.data(), (uint32_t)edges.size());
-  std::vector<Plane> planes;
-  planes.reserve(mesh.faces.size());
-  for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
-    planes.push_back(compute_mesh_face_plane(mesh, face_index));
+  const std::vector<Plane> planes = compute_mesh_face_planes(mesh);
 
   for (uint32_t a = 0; a < (uint32_t)mesh.faces.size(); ++a)
   {
@@ -341,14 +329,14 @@ bool try_merge_one_pair(mesh_geometry_t &mesh, std::vector<uint32_t> &cutter_fac
     for (size_t i = 0; i < ring.size(); ++i)
     {
       const std::optional<uint32_t> b =
-          try_find_mesh_face_walking_edge(edge_span, ring[(i + 1) % ring.size()], ring[i]);
+          try_find_mesh_face_walking_edge(edges, ring[(i + 1) % ring.size()], ring[i]);
       if (!b || *b <= a)
         continue;
       if (cutter_faces[a] != cutter_faces[*b] || !planes_coincide(planes[a], planes[*b]) ||
           !face_surfaces_identical(mesh.faces[a].surface, mesh.faces[*b].surface))
         continue;
       std::optional<std::vector<uint32_t>> merged =
-          try_merge_rings(mesh, a, *b, edge_span, planes[a].normal);
+          try_merge_rings(mesh, a, *b, edges, planes[a].normal);
       if (!merged)
         continue;
       mesh.faces[a].vertex_indices = std::move(*merged);
@@ -358,25 +346,6 @@ bool try_merge_one_pair(mesh_geometry_t &mesh, std::vector<uint32_t> &cutter_fac
     }
   }
   return false;
-}
-
-void drop_unused_vertices(mesh_geometry_t &mesh)
-{
-  std::vector<uint32_t> new_index(mesh.vertices.size(), UINT32_MAX);
-  std::vector<linalg::vec3> kept;
-  for (mesh_face_t &face : mesh.faces)
-  {
-    for (uint32_t &index : face.vertex_indices)
-    {
-      if (new_index[index] == UINT32_MAX)
-      {
-        new_index[index] = (uint32_t)kept.size();
-        kept.push_back(mesh.vertices[index]);
-      }
-      index = new_index[index];
-    }
-  }
-  mesh.vertices = std::move(kept);
 }
 
 uint32_t count_subdivided_faces(const mesh_geometry_t &mesh)
@@ -461,17 +430,12 @@ std::optional<mesh_subtraction_t> try_subtract_convex_mesh(const mesh_geometry_t
   }
 
   const mesh_geometry_t local_cutter = cutter_in_wall_space(wall, cutter);
-  std::vector<Plane> cutter_planes;
-  cutter_planes.reserve(local_cutter.faces.size());
-  for (uint32_t face_index = 0; face_index < (uint32_t)local_cutter.faces.size(); ++face_index)
-    cutter_planes.push_back(compute_mesh_face_plane(local_cutter, face_index));
-  const Span<const Plane> planes(cutter_planes.data(), (uint32_t)cutter_planes.size());
+  const std::vector<Plane> planes = compute_mesh_face_planes(local_cutter);
 
   // The fan's apex: the cutter's vertex average, interior since it is convex.
-  linalg::vec3 centre{0.f, 0.f, 0.f};
-  for (const linalg::vec3 &vertex : local_cutter.vertices)
-    centre = centre + vertex;
-  centre = centre * (1.f / (float)local_cutter.vertices.size());
+  std::vector<uint32_t> every_vertex(local_cutter.vertices.size());
+  std::iota(every_vertex.begin(), every_vertex.end(), 0u);
+  const linalg::vec3 centre = compute_ring_centroid(local_cutter, every_vertex);
 
   {
     const std::optional<bool> misses = try_mesh_misses_cutter(wall, planes);
@@ -517,8 +481,7 @@ std::optional<mesh_subtraction_t> try_subtract_convex_mesh(const mesh_geometry_t
       fragments.push_back(std::move(part));
   }
 
-  mesh_subtraction_t out =
-      sew_fragments(wall, Span<const tagged_mesh_t>(fragments.data(), (uint32_t)fragments.size()));
+  mesh_subtraction_t out = sew_fragments(wall, fragments);
   if (out.result.faces.empty())
     return out;
 
@@ -526,7 +489,7 @@ std::optional<mesh_subtraction_t> try_subtract_convex_mesh(const mesh_geometry_t
   while (try_merge_one_pair(out.result, out.cutter_faces))
   {
   }
-  drop_unused_vertices(out.result);
+  drop_unused_mesh_vertices(out.result);
 
   const uint32_t subdivided_before = count_subdivided_faces(wall);
   const uint32_t subdivided_after = count_subdivided_faces(out.result);

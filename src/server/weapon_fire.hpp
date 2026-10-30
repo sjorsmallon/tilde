@@ -19,15 +19,11 @@ namespace server
 void mark_shot_fired(const server_context_t& context, entities::Player_Entity& player,
                      entities::Weapon weapon_id);
 
-// shared::try_find_held_fire_time for the weapon in the player's hand; empty for an empty hand.
-[[nodiscard]] std::optional<shared::subtick_time_t>
-try_find_held_fire_time(shared::game_session_t& session, const entities::Player_Entity& player,
-                        entities::Fire_Trigger trigger, shared::subtick_time_t step_start,
-                        shared::subtick_time_t step_end);
-
-// Either button, through the one switch over its Fire_Resolution. `world` is the shooter's
-// team view: a hitscan asks it the one question every flying thing asks, at radius zero, and
-// pushes what it arrived at as a pending_contact_t for update_contacts.
+// The server's half of a trigger the input step reported due (input_step_outcome_t::fire_due):
+// the clocks, the ammo, an impulse and a launch are already applied to the player. Either
+// button, through the one switch over its Fire_Resolution. `world` is the shooter's team
+// view: a hitscan asks it the one question every flying thing asks, at radius zero, and pushes
+// what it arrived at as a pending_contact_t for update_contacts.
 void resolve_player_shot(server_context_t& context, int32_t client_slot,
                          const game::C2S_ClientInput& input, const shared::predicted_world_t& world,
                          entities::Player_Entity* player, float yaw, float pitch,

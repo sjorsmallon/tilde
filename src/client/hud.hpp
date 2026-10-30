@@ -83,18 +83,17 @@ void draw_crosshair(renderer::ui_draw_list_t &list, linalg::vec2 screen, float d
 // the announcement above. An announcement is a discrete occurrence with a
 // lifetime of its own -- it is set once, it counts itself down, and its model
 // is what gets drawn. A deploy countdown is a continuous read of a clock that
-// already exists (prediction_t::seconds_until_local_deploy_complete), so
-// pushing it into a banner would be a second copy of that clock, free to
-// disagree with the gate the shot is actually judged against. See the
-// "continuous values are polled from the truth" rule in CLAUDE.md.
+// already exists (prediction_t::deploy_complete_time, converted to seconds
+// once at the call site), so pushing it into a banner would be a second copy
+// of that clock, free to disagree with the gate the shot is actually judged
+// against. See the "continuous values are polled from the truth" rule in
+// CLAUDE.md.
 //
 // So there is no state here and nothing to advance: the caller hands over the
 // seconds it already holds, and zero draws nothing.
 //
-// It reads the CLIENT's predicted clock rather than the server's
-// Inventory::deploy_complete_time, which is deliberate and is the only honest
-// option: that deadline is sub-tick and server-only, and a replicated copy
-// would be a round trip behind the keypress the player is watching the number
+// It reads the CLIENT's predicted deadline rather than the replicated one,
+// which is a round trip behind the keypress the player is watching the number
 // for.
 
 // Nothing is drawn while `seconds_remaining` is at or below zero. Debug-shaped

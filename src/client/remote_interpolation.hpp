@@ -107,7 +107,7 @@ inline float interpolation_delay_in_ticks_from_cvar(float configured)
 // only place the cursor is ever positioned other than by advancing it.
 void record_snapshot_tick(interpolation_cursor_t& cursor, uint32_t server_tick, float delay_ticks);
 void advance_interpolation_cursor(interpolation_cursor_t& cursor, float dt,
-                                 float server_tickrate, float delay_ticks);
+                                 uint32_t server_tickrate_hz, float delay_ticks);
 
 struct interpolated_pose_t
 {

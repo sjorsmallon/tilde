@@ -7,7 +7,7 @@ namespace shared
 
 // cell_size controls the navmesh grid resolution in world units.
 // Generates raw triangle soup; does NOT run simplify_navmesh.
-void bake_map(map_t &map, float cell_size = 8.f);
+void bake_map(map_t &map, float cell_size, float step_height);
 
 // Dedup vertices and greedily merge coplanar convex polygons.
 // max_merges limits the number of pairwise merges performed (INT_MAX = unlimited).

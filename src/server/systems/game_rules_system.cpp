@@ -147,7 +147,7 @@ static void enter_phase(server_context_t &context,
   match.phase_start_tick = current_tick;
   match.phase_end_tick =
       duration > 0.f
-          ? current_tick + static_cast<uint32_t>(duration * static_cast<float>(tickrate_hz))
+          ? current_tick + shared::ticks_from_seconds(duration, tickrate_hz)
           : 0;
 
   // The round boundary is element 0 of the mode's cycle, not the literal

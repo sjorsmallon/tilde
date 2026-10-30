@@ -246,7 +246,7 @@ int main()
 
     const shared::reveal_cone_settings_t player_settings = {.range = 1024.f, .half_angle_degrees = 25.f};
     std::vector<shared::reveal_cone_planes_t> collected;
-    shared::collect_reveal_cones(system, {}, {}, player_settings, 1, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, {}, {}, player_settings, 1, 60, collected);
     check(collected.size() == 1, "a switched-on light is one cone");
     check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-4f &&
               linalg::length(collected[0].axis - linalg::forward(light->orientation)) < 1e-4f,
@@ -257,7 +257,7 @@ int main()
           "with its own kind, range and half-angle, not the players' settings");
 
     light->switch_state.value = false;
-    shared::collect_reveal_cones(system, {}, {}, player_settings, 1, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, {}, {}, player_settings, 1, 60, collected);
     check(collected.empty(), "a switched-off light is no cone");
   }
 
@@ -289,28 +289,28 @@ int main()
     const shared::reveal_cone_settings_t player_settings = {.range = 1024.f, .half_angle_degrees = 25.f};
     std::vector<shared::reveal_cone_planes_t> collected;
 
-    shared::collect_reveal_cones(system, links, {}, player_settings, 1, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, links, {}, player_settings, 1, 60, collected);
     check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-3f,
           "with its mover at rest it is where it was placed");
 
-    shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, links, {}, player_settings, 31, 60, collected);
     check(collected.size() == 1 &&
               linalg::length(collected[0].apex - linalg::vec3f{100.f, 150.f, 0.f}) < 1e-3f,
           "halfway through the segment it has moved half the segment, keeping its offset");
 
-    shared::collect_reveal_cones(system, links, {}, player_settings, 61, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, links, {}, player_settings, 61, 60, collected);
     check(collected.size() == 1 &&
               linalg::length(collected[0].apex - linalg::vec3f{200.f, 150.f, 0.f}) < 1e-3f &&
               linalg::length(collected[0].axis - linalg::forward(turned * light->orientation)) < 1e-3f,
           "at the far node it has turned as the mover has");
 
     light->switch_state.value = false;
-    shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, links, {}, player_settings, 31, 60, collected);
     check(collected.empty(), "switched off it is no cone, wherever its mover has it");
 
     light->switch_state.value = true;
     light->rides.mover        = first_uid;
-    shared::collect_reveal_cones(system, links, {}, player_settings, 31, 60.f, shared::null_entity_uid, collected);
+    shared::compute_reveal_cones_at_tick({}, system, links, {}, player_settings, 31, 60, collected);
     check(collected.size() == 1 && linalg::length(collected[0].apex - light->position) < 1e-3f,
           "riding something that is not a mover, it stays where it was placed");
   }

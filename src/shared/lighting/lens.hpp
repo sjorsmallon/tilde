@@ -14,6 +14,7 @@
 #include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "plane.hpp"
+#include "player_sight.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -62,13 +63,8 @@ inline constexpr uint32_t LENS_CHANNEL_ALL   = LENS_CHANNEL_RED | LENS_CHANNEL_G
 [[nodiscard]] std::optional<entities::Lens_Filter> try_get_held_lens_filter(const Entity_System&           system,
                                                                              const entities::Player_Entity& player);
 
-// The channel bits a player's held lens passes: those of the Lens_View weapon in hand while `held_lens_on` (the
-// server's flag, or the client's prediction of it) and the player watches; 0 otherwise.
-[[nodiscard]] uint32_t compute_held_lens_channels(const Entity_System& system, const entities::Player_Entity& player,
-                                                  bool held_lens_on);
-
 // Every switched-on Lens_Entity's box.
-void collect_lenses(const Entity_System& system, std::vector<lens_t>& out);
+void compute_lenses(const Entity_System& system, std::vector<lens_t>& out);
 
 // A watcher: an eye and the frustum it sees. Geometry whose owner is `solid_only_when_lensed` is solid, for
 // everyone, where some watcher sees it through a lens that passes its colour
@@ -76,12 +72,6 @@ void collect_lenses(const Entity_System& system, std::vector<lens_t>& out);
 // player's own screen (Player_Entity::view_fov_degrees and view_aspect, restated on every input), clamped
 // on arrival: the server cannot verify what a client claims to see, only bound it.
 inline constexpr uint32_t LENS_WATCH_SIDE_COUNT = 4;
-
-struct lens_watch_screen_t
-{
-  float fov_degrees = 90.f;
-  float aspect      = 16.f / 9.f;
-};
 
 inline constexpr float LENS_WATCH_SCREEN_FOV_DEGREES_MIN = 20.f;
 inline constexpr float LENS_WATCH_SCREEN_FOV_DEGREES_MAX = 120.f;
@@ -107,10 +97,7 @@ struct lens_watcher_t
 [[nodiscard]] bool any_lens_watcher_sees_point(Span<const lens_watcher_t> watchers, Span<const lens_t> lenses,
                                                entities::Lens_Filter filter, const linalg::vec3f& point);
 
-// The one rule for who watches: alive. `predicted_by_caller` is the one player left out, whose eye a
-// client adds from its own prediction; null on the server.
-[[nodiscard]] bool player_watches_lenses(const entities::Player_Entity& player);
-void collect_lens_watchers(const Entity_System& system, entity_uid_t predicted_by_caller,
-                           std::vector<lens_watcher_t>& out);
+// Every alive sight watches, from its eye, through its screen, with the lens it holds.
+void compute_lens_watchers(Span<const player_sight_t> sights, std::vector<lens_watcher_t>& out);
 
 } // namespace shared

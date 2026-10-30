@@ -282,7 +282,7 @@ bool try_throw_active_weapon(server_context_t& context, entities::Player_Entity&
     return false;
   }
 
-  const vec3f eye      = player.position + vec3f{0.f, shared::player_eye_height, 0.f};
+  const vec3f eye      = shared::player_eye_position(player.position);
   const vec3f position = eye + aim_direction * THROW_SPAWN_DISTANCE;
   const vec3f velocity =
       player.velocity + aim_direction * THROW_SPEED + vec3f{0.f, THROW_UPWARD_SPEED, 0.f};
@@ -312,23 +312,46 @@ static shared::aabb_bounds_t compute_pickup_bounds(const entities::Weapon_Entity
   return shared::get_bounds(cube, weapon.position);
 }
 
+void write_input_state_to_player(shared::game_session_t& session, entities::Player_Entity& player,
+                                 const shared::player_input_state_t& state)
+{
+  player.position = state.move.feet;
+  player.velocity = state.move.velocity;
+  player.movement = state.move.movement;
+
+  player.inventory.active_slot          = state.inventory.active_slot;
+  player.inventory.deploy_complete_time = state.inventory.deploy_complete_time;
+  player.reload_complete_time           = state.inventory.reload_complete_time;
+
+  for (uint32_t index = 0; index < enum_traits<entities::Inventory_Slot>::count; ++index)
+  {
+    const entities::Inventory_Slot        slot       = (entities::Inventory_Slot)index;
+    const shared::inventory_slot_state_t& slot_state = state.inventory.slots[slot];
+    if (!slot_state.weapon)
+      continue;
+
+    entities::Weapon_Entity* weapon =
+        session.entity_system.get<entities::Weapon_Entity>(player.inventory.weapons[slot]);
+    if (weapon == nullptr)
+      continue;
+
+    weapon->ammo           = slot_state.magazine.ammo;
+    weapon->reserve_ammo   = slot_state.magazine.reserve_ammo;
+    weapon->next_fire_time = slot_state.next_fire_time;
+  }
+
+  player.reveal_light_on       = state.toggles.reveal_light_on;
+  player.reveal_light_overhead = state.toggles.reveal_light_overhead;
+  player.held_lens_on          = state.toggles.held_lens_on;
+}
+
 void switch_active_slot(shared::game_session_t& session, entities::Player_Entity& player,
                         entities::Inventory_Slot slot, shared::subtick_time_t switch_time,
                         float tick_dt)
 {
-  if (player.inventory.active_slot == slot)
-    return;
-
-  player.inventory.active_slot = slot;
-  cancel_reload(player);
-
-  const entities::Weapon_Entity* raised = try_find_active_weapon(session, player);
-  const float deploy_seconds =
-      raised != nullptr ? shared::get_weapon_definition(raised->weapon_id).deploy_duration_seconds
-                        : 0.f;
-
-  player.inventory.deploy_complete_time =
-      shared::subtick_time_after(switch_time, deploy_seconds, tick_dt);
+  shared::player_input_state_t state = shared::read_input_state_from_player(session.entity_system, player);
+  if (shared::switch_active_slot(state.inventory, slot, switch_time, tick_dt))
+    write_input_state_to_player(session, player, state);
 }
 
 static bool input_asks_to_equip_on_pickup(server_context_t& context, shared::entity_uid_t player_uid)

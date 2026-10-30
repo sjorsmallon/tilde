@@ -1,4 +1,4 @@
-// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The dispatch table and its shims. A shim is the ONLY code that names a
 // union member or downcasts an entity: it adapts the table's uniform call
@@ -496,10 +496,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Fire
   },
   {},   // Weapon_Entity
-  {},   // Rocket_Entity
-  {},   // Hook_Entity
-  {},   // Kooh_Entity
-  {},   // Ricochet_Entity
+  {},   // Shot_Entity
   {},   // Platform_Entity
   {},   // Shrinking_Platform_Entity
   {},   // Extending_Platform_Entity
@@ -928,7 +925,6 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Fire
   },
   {},   // Remnant_Entity
-  {},   // Modifier_Shot_Entity
   {},   // Timed_Movement_Modifier_Entity
   {   // Weapon_Emancipation_Grill_Entity
     shim_weapon_emancipation_grill_entity_enable,

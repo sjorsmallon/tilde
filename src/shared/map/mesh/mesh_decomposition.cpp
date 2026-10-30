@@ -10,15 +10,6 @@ namespace shared
 namespace
 {
 
-std::vector<Plane> compute_all_face_planes(const mesh_geometry_t &mesh)
-{
-  std::vector<Plane> planes;
-  planes.reserve(mesh.faces.size());
-  for (uint32_t face_index = 0; face_index < mesh.faces.size(); ++face_index)
-    planes.push_back(compute_mesh_face_plane(mesh, face_index));
-  return planes;
-}
-
 float cap_area_of_split(const mesh_split_t &split)
 {
   float area = 0.f;
@@ -65,7 +56,7 @@ std::optional<mesh_split_t> try_split_at_reflex_edge(const mesh_geometry_t &mesh
 
 std::optional<reflex_edge_t> find_reflex_edge(const mesh_geometry_t &mesh)
 {
-  const std::vector<Plane> planes = compute_all_face_planes(mesh);
+  const std::vector<Plane> planes = compute_mesh_face_planes(mesh);
   const std::vector<mesh_directed_edge_t> edges = collect_mesh_directed_edges(mesh);
   for (uint32_t face_index = 0; face_index < mesh.faces.size(); ++face_index)
   {
@@ -88,7 +79,7 @@ std::optional<reflex_edge_t> find_reflex_edge(const mesh_geometry_t &mesh)
 
 bool mesh_is_convex(const mesh_geometry_t &mesh)
 {
-  const std::vector<Plane> planes = compute_all_face_planes(mesh);
+  const std::vector<Plane> planes = compute_mesh_face_planes(mesh);
   for (const Plane &plane : planes)
     for (const linalg::vec3 &vertex : mesh.vertices)
       if (linalg::dot(plane.normal, vertex - plane.point) > COPLANAR_EPSILON)
@@ -182,16 +173,10 @@ try_decompose_mesh_into_tagged_convex_pieces(const mesh_geometry_t &mesh)
                 reflex->other_face_index);
       return std::nullopt;
     }
-    const Span<const uint32_t> parent_sources(current.source_faces.data(),
-                                              (uint32_t)current.source_faces.size());
-    push_shells_with_sources(pending, split->front,
-                             Span<const uint32_t>(split->front_source_faces.data(),
-                                                  (uint32_t)split->front_source_faces.size()),
-                             parent_sources);
-    push_shells_with_sources(pending, split->back,
-                             Span<const uint32_t>(split->back_source_faces.data(),
-                                                  (uint32_t)split->back_source_faces.size()),
-                             parent_sources);
+    push_shells_with_sources(pending, split->front, split->front_source_faces,
+                             current.source_faces);
+    push_shells_with_sources(pending, split->back, split->back_source_faces,
+                             current.source_faces);
   }
   return pieces;
 }

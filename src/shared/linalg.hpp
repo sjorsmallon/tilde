@@ -636,6 +636,14 @@ inline vec3f direction_from_angles(float yaw_degrees, float pitch_degrees)
   return {cos_yaw * cos_pitch, sin_pitch, sin_yaw * cos_pitch};
 }
 
+// The unit right of a forward on the Y-up ground plane; straight up or down has no right, so it is +X.
+[[nodiscard]] inline vec3f right_from_forward(const vec3f& forward)
+{
+  const vec3f right        = cross(forward, vec3f{0.f, 1.f, 0.f});
+  const float right_length = length(right);
+  return right_length < 1e-3f ? vec3f{1.f, 0.f, 0.f} : right * (1.f / right_length);
+}
+
 // The same yaw as the euler Y of a MODEL matrix, which is not the same number.
 // `rotation_from_euler_degrees` sweeps +X toward -Z; a view yaw sweeps +X toward
 // +Z (above). So the conversion is a NEGATION, and passing a yaw straight
@@ -675,6 +683,14 @@ template <typename T> inline T mix(T a, T b, float t)
 template <typename T> inline T clamp(T v, T min, T max)
 {
   return (v < min) ? min : (v > max) ? max : v;
+}
+
+// A view pitch stops short of straight up and down: at 90 the forward IS world up and the right vector collapses.
+inline constexpr float VIEW_PITCH_LIMIT_DEGREES = 89.f;
+
+[[nodiscard]] inline float clamp_view_pitch(float pitch_degrees)
+{
+  return clamp(pitch_degrees, -VIEW_PITCH_LIMIT_DEGREES, VIEW_PITCH_LIMIT_DEGREES);
 }
 
 // --- Geometry & Intersection ---

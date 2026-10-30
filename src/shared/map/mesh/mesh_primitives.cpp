@@ -153,15 +153,7 @@ mesh_geometry_t build_spiral_stairs(const primitive_recipe_t &recipe)
 
 bool ring_is_planar(const mesh_geometry_t &mesh, const std::vector<uint32_t> &ring)
 {
-  linalg::vec3 normal{0.f, 0.f, 0.f};
-  for (size_t i = 0; i < ring.size(); ++i)
-  {
-    const linalg::vec3 &current = mesh.vertices[ring[i]];
-    const linalg::vec3 &next = mesh.vertices[ring[(i + 1) % ring.size()]];
-    normal.x += (current.y - next.y) * (current.z + next.z);
-    normal.y += (current.z - next.z) * (current.x + next.x);
-    normal.z += (current.x - next.x) * (current.y + next.y);
-  }
+  linalg::vec3 normal = compute_ring_normal(mesh, ring);
   if (linalg::length_squared(normal) < 1e-12f)
     return true;
   normal = linalg::normalize(normal);
@@ -200,9 +192,8 @@ std::vector<curve_wall_section_t> compute_curve_wall_sections(const primitive_re
   if (recipe.curve_points.size() < 2)
     return sections;
 
-  const std::vector<linalg::vec3> samples = sample_catmull_rom(
-      Span<const linalg::vec3>(recipe.curve_points.data(), recipe.curve_points.size()),
-      recipe.curve_samples_per_segment);
+  const std::vector<linalg::vec3> samples =
+      sample_catmull_rom(recipe.curve_points, recipe.curve_samples_per_segment);
   const float half_width = recipe.curve_width * 0.5f;
 
   std::optional<linalg::vec3> last_kept;
@@ -332,7 +323,7 @@ void append_curve_wall_section_solids(std::vector<mesh_geometry_t> &solids,
   }
   if (negative_turns != 1 && negative_turns != 3)
   {
-    solids.push_back(build_prism_over_bottom_ring(Span<const linalg::vec3>(quad, 4), height));
+    solids.push_back(build_prism_over_bottom_ring(quad, height));
     return;
   }
 
@@ -342,8 +333,8 @@ void append_curve_wall_section_solids(std::vector<mesh_geometry_t> &solids,
       reflex = i;
   const linalg::vec3 first[3] = {quad[reflex], quad[(reflex + 1) % 4], quad[(reflex + 2) % 4]};
   const linalg::vec3 second[3] = {quad[reflex], quad[(reflex + 2) % 4], quad[(reflex + 3) % 4]};
-  solids.push_back(build_prism_over_bottom_ring(Span<const linalg::vec3>(first, 3), height));
-  solids.push_back(build_prism_over_bottom_ring(Span<const linalg::vec3>(second, 3), height));
+  solids.push_back(build_prism_over_bottom_ring(first, height));
+  solids.push_back(build_prism_over_bottom_ring(second, height));
 }
 
 std::vector<mesh_geometry_t> build_curve_wall_section_solids(const primitive_recipe_t &recipe)

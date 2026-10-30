@@ -26,15 +26,15 @@ uint32_t segment_duration_ticks(const path_segment_t& segment)
 }
 
 void advance(const Entity_System& system, const path_links_t& links, entities::Path_Follow& follow,
-             uint32_t tick, float tickrate, std::vector<entity_uid_t>* out_reached)
+             uint32_t tick, uint32_t tickrate_hz, std::vector<entity_uid_t>* out_reached)
 {
   for (;;)
   {
     std::optional<path_segment_t> segment =
-        try_cut_path_segment(system, links, follow.from, follow.direction, tickrate);
+        try_cut_path_segment(system, links, follow.from, follow.direction, tickrate_hz);
     if (!segment)
     {
-      segment = try_cut_path_segment(system, links, follow.from, -follow.direction, tickrate);
+      segment = try_cut_path_segment(system, links, follow.from, -follow.direction, tickrate_hz);
       if (!segment)
         return;
       follow.direction = -follow.direction;
@@ -90,7 +90,7 @@ entity_uid_t find_previous_node(const path_links_t& links, entity_uid_t node)
 
 std::optional<path_segment_t> try_cut_path_segment(const Entity_System& system,
                                                    const path_links_t& links, entity_uid_t from,
-                                                   int32_t direction, float tickrate)
+                                                   int32_t direction, uint32_t tickrate_hz)
 {
   const entities::Path_Node_Entity* from_node = system.get<entities::Path_Node_Entity>(from);
   if (from_node == nullptr)
@@ -110,8 +110,8 @@ std::optional<path_segment_t> try_cut_path_segment(const Entity_System& system,
       .from_orientation = from_node->orientation,
       .to_position      = to_node->position,
       .to_orientation   = to_node->orientation,
-      .traversal_ticks  = ticks_from_seconds(owner.traversal_seconds, tickrate),
-      .wait_ticks       = ticks_from_seconds(owner.wait_seconds, tickrate),
+      .traversal_ticks  = ticks_from_seconds(owner.traversal_seconds, tickrate_hz),
+      .wait_ticks       = ticks_from_seconds(owner.wait_seconds, tickrate_hz),
       .easing           = owner.easing,
   };
 }
@@ -138,14 +138,14 @@ uint32_t path_clock_tick(const entities::Path_Follow& follow, uint32_t tick)
 
 std::optional<path_pose_t> try_path_pose_at(const Entity_System& system, const path_links_t& links,
                                             const entities::Path_Follow& written_follow,
-                                            uint32_t tick, float tickrate)
+                                            uint32_t tick, uint32_t tickrate_hz)
 {
   const uint32_t clock_tick = path_clock_tick(written_follow, tick);
   entities::Path_Follow follow = written_follow;
-  advance(system, links, follow, clock_tick, tickrate, nullptr);
+  advance(system, links, follow, clock_tick, tickrate_hz, nullptr);
 
   const std::optional<path_segment_t> segment =
-      try_cut_path_segment(system, links, follow.from, follow.direction, tickrate);
+      try_cut_path_segment(system, links, follow.from, follow.direction, tickrate_hz);
   if (segment)
     return transform_at(*segment, follow.segment_start_tick, clock_tick);
 
@@ -156,10 +156,10 @@ std::optional<path_pose_t> try_path_pose_at(const Entity_System& system, const p
 }
 
 void advance_path_follow(const Entity_System& system, const path_links_t& links,
-                         entities::Path_Follow& follow, uint32_t tick, float tickrate,
+                         entities::Path_Follow& follow, uint32_t tick, uint32_t tickrate_hz,
                          std::vector<entity_uid_t>& out_reached)
 {
-  advance(system, links, follow, path_clock_tick(follow, tick), tickrate, &out_reached);
+  advance(system, links, follow, path_clock_tick(follow, tick), tickrate_hz, &out_reached);
 }
 
 void freeze_path_follow(entities::Path_Follow& follow, uint32_t tick)
@@ -178,13 +178,13 @@ void resume_path_follow(entities::Path_Follow& follow, uint32_t tick)
 
 
 bool try_reverse_path_follow(const Entity_System& system, const path_links_t& links,
-                             entities::Path_Follow& follow, uint32_t tick, float tickrate)
+                             entities::Path_Follow& follow, uint32_t tick, uint32_t tickrate_hz)
 {
   const std::optional<path_segment_t> segment =
-      try_cut_path_segment(system, links, follow.from, follow.direction, tickrate);
+      try_cut_path_segment(system, links, follow.from, follow.direction, tickrate_hz);
   if (!segment)
   {
-    if (!try_cut_path_segment(system, links, follow.from, -follow.direction, tickrate))
+    if (!try_cut_path_segment(system, links, follow.from, -follow.direction, tickrate_hz))
       return false;
     follow.direction          = -follow.direction;
     follow.segment_start_tick = tick;
@@ -192,7 +192,7 @@ bool try_reverse_path_follow(const Entity_System& system, const path_links_t& li
   }
 
   const std::optional<path_segment_t> retrace =
-      try_cut_path_segment(system, links, segment->to_uid, -follow.direction, tickrate);
+      try_cut_path_segment(system, links, segment->to_uid, -follow.direction, tickrate_hz);
   if (!retrace || retrace->to_uid != segment->from_uid)
     return false;
 
@@ -206,16 +206,16 @@ bool try_reverse_path_follow(const Entity_System& system, const path_links_t& li
 
 bool try_path_follow_go_to(const Entity_System& system, const path_links_t& links,
                            entities::Path_Follow& follow, entity_uid_t node, uint32_t tick,
-                           float tickrate)
+                           uint32_t tickrate_hz)
 {
   const std::optional<path_segment_t> segment =
-      try_cut_path_segment(system, links, follow.from, follow.direction, tickrate);
+      try_cut_path_segment(system, links, follow.from, follow.direction, tickrate_hz);
   if (segment)
   {
     if (segment->to_uid == node)
       return true;
     if (segment->from_uid == node)
-      return try_reverse_path_follow(system, links, follow, tick, tickrate);
+      return try_reverse_path_follow(system, links, follow, tick, tickrate_hz);
     return false;
   }
 
@@ -223,7 +223,7 @@ bool try_path_follow_go_to(const Entity_System& system, const path_links_t& link
     return true;
 
   const std::optional<path_segment_t> other_way =
-      try_cut_path_segment(system, links, follow.from, -follow.direction, tickrate);
+      try_cut_path_segment(system, links, follow.from, -follow.direction, tickrate_hz);
   if (!other_way || other_way->to_uid != node)
     return false;
   follow.direction          = -follow.direction;
