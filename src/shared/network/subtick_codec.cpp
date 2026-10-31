@@ -14,8 +14,8 @@ void write_view_angle(game::ViewAngle& out, const shared::subtick_view_t& view)
 
 } // namespace
 
-void write_subtick_input(game::C2S_ClientInput& out_message,
-                         const shared::subtick_input_t& input)
+void write_tick_input(game::C2S_ClientInput& out_message,
+                         const shared::tick_input_t& input)
 {
   out_message.set_buttons_bitfield(input.buttons_at_start);
   write_view_angle(*out_message.mutable_viewangles_at_start(), input.view_at_start);
@@ -31,10 +31,10 @@ void write_subtick_input(game::C2S_ClientInput& out_message,
   }
 }
 
-std::optional<shared::subtick_input_t>
-try_read_subtick_input(const game::C2S_ClientInput& message)
+std::optional<shared::tick_input_t>
+try_read_tick_input(const game::C2S_ClientInput& message)
 {
-  shared::subtick_input_t input{};
+  shared::tick_input_t input{};
   input.buttons_at_start = message.buttons_bitfield();
 
   // A single-angle tick is still a whole tick, not a malformed one: a bot, a

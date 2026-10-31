@@ -5,6 +5,18 @@ Phase order and rationale live in `todo.md`; design rationale in
 `entity_system_def.md` (pool retirement) and `cvar_def.md` (cvars). This file
 keeps the finished work so `todo.md` stays a work list.
 
+- **NAMING: `subtick_input_t` -> `tick_input_t` (2026-10-31)** -- there is no
+  such thing as a sub-tick input. One input IS one tick, sent once per tick and
+  numbered by `input_number`; the sub-tick button changes are payload inside it
+  and never advance that counter, and a tick with none still splits into one
+  `tick_dt` step. Plain `tick_input` now means the tick unit and `subtick_`
+  always means inside one: button change, step, slot. Fallout:
+  `split_input_per_tick_into_subtick_steps` -> `split_tick_input_into_subtick_steps`,
+  `write_subtick_input` / `try_read_subtick_input` -> `write_tick_input` /
+  `try_read_tick_input`, `Saved_Input::input` -> `tick_input`, and the client's
+  wrapper of the tick input beside the fire press's wall-clock arrival is
+  `tick_input_with_fire_press_arrival_t`.
+
 - **MOVE BUDGET + COMMAND REDUNDANCY (2026-08-19)** — the successor
   `lag_compensation_def.md` §3 named as out of its scope. A client's movement is
   now bounded by a RATE, not by a per-tick count: one credit granted per tick,

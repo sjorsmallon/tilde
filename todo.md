@@ -2137,16 +2137,3 @@ Swept 2026-10-05: no function of ours ends in `_of` any more, except
 `get_position_in_front_of`, which reads as English and stays. Standard library
 spellings (`find_first_of`, `all_of`) are not ours to rename. Not swept: names
 with `_of_` in the middle (`planes_of_reveal_cone`, `seconds_of_tick`).
-
-## Naming: `subtick_input_t` -> `tick_input_t`
-
-There is no such thing as a sub-tick input. One input IS one tick, sent once per
-tick and numbered by `input_number`; sub-tick button changes are payload inside it and
-never advance that counter. The current name says the opposite, and
-`split_input_per_tick_into_subtick_steps` (the one place that states the taxonomy
-correctly) has to compensate with `_per_tick_`.
-
-After the rename, plain `input` always means the tick unit and `subtick_` always
-means inside one: button change, step, slot. Fallout:
-`split_input_per_tick_into_subtick_steps` -> `split_tick_input_into_subtick_steps`,
-`Saved_Input::input` -> `tick_input`. 60 occurrences over 10 files.

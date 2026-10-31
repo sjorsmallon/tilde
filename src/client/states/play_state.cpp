@@ -512,7 +512,7 @@ static shared::subtick_view_t local_view_entering(const client_context_t &ctx,
     const Saved_Input &saved =
         ctx.prediction.pending_inputs[previous % (int)ctx.prediction.pending_inputs.size()];
     if (saved.input_number == previous)
-      return saved.input.view_at_end;
+      return saved.tick_input.view_at_end;
   }
   return {.yaw = my_player.view_angle_yaw, .pitch = my_player.view_angle_pitch};
 }
@@ -1476,8 +1476,8 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
 
       // The SAME split the live prediction ran: the clamps fire where the steps are cut.
       const shared::subtick_steps_t subtick_steps =
-          shared::split_input_per_tick_into_subtick_steps(pending_input.input, prediction_dt);
-      uint64_t replay_previous_buttons = pending_input.input.buttons_at_start;
+          shared::split_tick_input_into_subtick_steps(pending_input.tick_input, prediction_dt);
+      uint64_t replay_previous_buttons = pending_input.tick_input.buttons_at_start;
 
       compute_predicted_world_for_input(ctx, frame, replayed, reconciled.move.feet, reconciled.toggles,
                                       local_watch_screen(ctx));
@@ -1888,10 +1888,10 @@ void Play_State::place_button_changes_on_the_tick_timeline(client_context_t &ctx
 // clock, zero with no press. Those are different questions: the slot says which sub-step a shot is
 // taken from, the arrival says which drawn frame was in front of the player, and the drawn frames
 // are stamped on the input clock. Neither derives from the other.
-struct tick_input_t
+struct tick_input_with_fire_press_arrival_t
 {
-  shared::subtick_input_t subtick_input                = {};
-  uint64_t                fire_press_arrival_qpc_ticks = 0;
+  shared::tick_input_t tick_input                   = {};
+  uint64_t             fire_press_arrival_qpc_ticks = 0;
 };
 
 // buttons_at_start is the state the LAST tick left behind, not a fresh poll: a press that happened
@@ -1899,13 +1899,13 @@ struct tick_input_t
 // exactly the quantization this replaces. The untracked bits (weapon keys, zoom) are polled and
 // ride along whole; they are tick-granular by choice. The leftovers are rebased onto the next tick
 // by the same subtraction the accumulator itself just took.
-static tick_input_t tick_input_from_pending_button_changes(client_context_t &ctx, uint64_t buttons, float tick_dt)
+static tick_input_with_fire_press_arrival_t tick_input_from_pending_button_changes(client_context_t &ctx, uint64_t buttons, float tick_dt)
 {
-  tick_input_t             tick_input{};
-  shared::subtick_input_t &subtick_input = tick_input.subtick_input;
-  subtick_input.buttons_at_start = ctx.prediction.tracked_buttons_at_tick_start | (buttons & ~Button::Subtick_Tracked);
-  subtick_input.view_at_start    = ctx.prediction.view_at_tick_start;
-  subtick_input.view_at_end      = ctx.prediction.view_at_tick_start;
+  tick_input_with_fire_press_arrival_t tick_input_with_arrival{};
+  shared::tick_input_t &tick_input = tick_input_with_arrival.tick_input;
+  tick_input.buttons_at_start = ctx.prediction.tracked_buttons_at_tick_start | (buttons & ~Button::Subtick_Tracked);
+  tick_input.view_at_start    = ctx.prediction.view_at_tick_start;
+  tick_input.view_at_end      = ctx.prediction.view_at_tick_start;
 
   uint64_t tracked_buttons_walked = ctx.prediction.tracked_buttons_at_tick_start;
   size_t   button_changes_consumed         = 0;
@@ -1918,14 +1918,14 @@ static tick_input_t tick_input_from_pending_button_changes(client_context_t &ctx
     const uint64_t buttons_after = pending.buttons_after | (buttons & ~Button::Subtick_Tracked);
 
     if ((pending.buttons_after & ~tracked_buttons_walked & (Button::Fire | Button::Secondary_Fire)) != 0)
-      tick_input.fire_press_arrival_qpc_ticks = pending.arrival_qpc_ticks;
+      tick_input_with_arrival.fire_press_arrival_qpc_ticks = pending.arrival_qpc_ticks;
     tracked_buttons_walked = pending.buttons_after;
 
     // A travel-only sample records no button change and is not an overflow when the list is full; only a
     // real transition that cannot be placed is input being abandoned.
-    const bool changes_buttons = buttons_after != subtick_input.buttons_at_end();
+    const bool changes_buttons = buttons_after != tick_input.buttons_at_end();
     if (changes_buttons &&
-        !shared::try_record_subtick_state(subtick_input, slot, buttons_after, pending.view_after))
+        !shared::try_record_subtick_state(tick_input, slot, buttons_after, pending.view_after))
     {
       log_warning("losing the TIMING of a button transition at slot {}: command "
                   "{} already carries {} sub-tick button changes, the most one tick can "
@@ -1936,19 +1936,19 @@ static tick_input_t tick_input_from_pending_button_changes(client_context_t &ctx
 
     // Every sample moves the aim, transition or not. The last one before the boundary IS the aim
     // at the boundary: what the next tick starts from and what everyone else draws us looking at.
-    subtick_input.view_at_end                    = pending.view_after;
+    tick_input.view_at_end                    = pending.view_after;
     ctx.prediction.tracked_buttons_at_tick_start = pending.buttons_after;
     ++button_changes_consumed;
   }
 
-  ctx.prediction.view_at_tick_start = subtick_input.view_at_end;
+  ctx.prediction.view_at_tick_start = tick_input.view_at_end;
 
   ctx.prediction.pending_button_changes.erase(ctx.prediction.pending_button_changes.begin(),
                                            ctx.prediction.pending_button_changes.begin() + button_changes_consumed);
   for (prediction_t::pending_button_change_t &pending : ctx.prediction.pending_button_changes)
     pending.accumulator_seconds -= tick_dt;
 
-  return tick_input;
+  return tick_input_with_arrival;
 }
 
 // What was on the player's screen when the trigger went down: remote players are drawn interpolated
@@ -1989,12 +1989,12 @@ static shared::interpolation_bracket_t bracket_drawn_at_press(const client_conte
 // what the server has not confirmed, so a lost packet costs no input; the server's high-water
 // check drops the duplicates. Held as the BUILT messages because a resend has to carry the
 // snapshot tick and the bracket the command was issued with, not the moment it is re-sent.
-void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const shared::subtick_input_t &subtick_input,
+void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const shared::tick_input_t &tick_input,
                                               const shared::interpolation_bracket_t &drawn_bracket) const
 {
   game::C2S_ClientInput input_message;
   input_message.set_input_number(ctx.prediction.input_number);
-  network::write_subtick_input(input_message, subtick_input);
+  network::write_tick_input(input_message, tick_input);
   input_message.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
   input_message.set_map_content_hash(ctx.world.map_content_hash);
 
@@ -2039,7 +2039,7 @@ void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const share
 // toggles, each behind the server's gate. What follows a step is the client's half of what it
 // reported: the view easing over a stair, a sound, a shot-debug record.
 void Play_State::predict_own_body_for_input(client_context_t &ctx, play_frame_t &frame,
-                                            const shared::subtick_input_t &subtick_input, float tick_dt,
+                                            const shared::tick_input_t &tick_input, float tick_dt,
                                             const shared::interpolation_bracket_t &drawn_bracket)
 {
   const int                     input_number = ctx.prediction.input_number;
@@ -2050,9 +2050,9 @@ void Play_State::predict_own_body_for_input(client_context_t &ctx, play_frame_t 
 
   const shared::input_restrictions_t restrictions  = local_input_restrictions(ctx);
   const shared::movement_settings_t  move_settings = shared::movement_settings_from_cvars(*ctx.cvars);
-  const shared::subtick_steps_t      steps = shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
+  const shared::subtick_steps_t      steps = shared::split_tick_input_into_subtick_steps(tick_input, tick_dt);
 
-  uint64_t buttons_entering_step = subtick_input.buttons_at_start;
+  uint64_t buttons_entering_step = tick_input.buttons_at_start;
   for (const shared::subtick_step_t &step : steps)
   {
     const shared::input_step_outcome_t outcome = shared::apply_input_step_to_player(
@@ -2117,15 +2117,15 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
   {
     ctx.prediction.physics_accumulator -= tick_dt;
 
-    const tick_input_t                    tick_input    = tick_input_from_pending_button_changes(ctx, frame.buttons, tick_dt);
-    const shared::interpolation_bracket_t drawn_bracket = bracket_drawn_at_press(ctx, tick_input.fire_press_arrival_qpc_ticks);
-    send_input_with_unacked_tail(ctx, tick_input.subtick_input, drawn_bracket);
+    const tick_input_with_fire_press_arrival_t tick_input_with_arrival = tick_input_from_pending_button_changes(ctx, frame.buttons, tick_dt);
+    const shared::interpolation_bracket_t drawn_bracket = bracket_drawn_at_press(ctx, tick_input_with_arrival.fire_press_arrival_qpc_ticks);
+    send_input_with_unacked_tail(ctx, tick_input_with_arrival.tick_input, drawn_bracket);
 
     if (!ctx.connection.spectating)
-      predict_own_body_for_input(ctx, frame, tick_input.subtick_input, tick_dt, drawn_bracket);
+      predict_own_body_for_input(ctx, frame, tick_input_with_arrival.tick_input, tick_dt, drawn_bracket);
 
     const int idx = ctx.prediction.input_number % (int)ctx.prediction.pending_inputs.size();
-    ctx.prediction.pending_inputs[idx] = {ctx.prediction.input_number, tick_input.subtick_input};
+    ctx.prediction.pending_inputs[idx] = {ctx.prediction.input_number, tick_input_with_arrival.tick_input};
     ctx.prediction.input_number++;
   }
 }

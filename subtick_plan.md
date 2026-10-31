@@ -245,7 +245,7 @@ ever addressed the remote half.
 part: the wire's is **strict** (a button change that breaks it is a client we did not
 ship, so the command is refused rather than simulated), the client's recorder
 **folds** (it is fed raw SDL transitions, whose resolution is coarser than a slot
-and whose order is whatever the queue handed us). `split_input_per_tick_into_subtick_steps` is what both sides
+and whose order is whatever the queue handed us). `split_tick_input_into_subtick_steps` is what both sides
 run, and a command with no button changes splits into exactly the one `tick_dt` step it
 replaced — which is what let bots, `server_loop_test` and every other caller go
 untouched.

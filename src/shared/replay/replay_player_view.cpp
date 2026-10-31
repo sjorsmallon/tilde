@@ -104,7 +104,7 @@ struct view_cursor_t
 } // namespace
 
 replay_player_view_t replay_player_view_from_input(uint8_t client_slot, const interpolation_bracket_t& bracket,
-                                                   const subtick_input_t& input)
+                                                   const tick_input_t& input)
 {
   replay_player_view_t view;
   view.client_slot   = client_slot;

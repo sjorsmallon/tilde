@@ -48,7 +48,7 @@ struct replay_player_view_t
 
 [[nodiscard]] replay_player_view_t replay_player_view_from_input(uint8_t                        client_slot,
                                                                  const interpolation_bracket_t& bracket,
-                                                                 const subtick_input_t&         input);
+                                                                 const tick_input_t&         input);
 
 void append_replay_player_view(std::vector<uint8_t>& out, const replay_player_view_t& view);
 

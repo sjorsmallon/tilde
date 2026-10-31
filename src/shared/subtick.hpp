@@ -142,7 +142,7 @@ struct subtick_button_change_t
   subtick_view_t view_after    = {};
 };
 
-struct subtick_input_t
+struct tick_input_t
 {
   uint64_t       buttons_at_start = 0;
   subtick_view_t view_at_start    = {};
@@ -212,7 +212,7 @@ struct subtick_steps_t
 // produce bit-identical dts. They sum to `tick_dt` only up to float rounding
 // (~1e-9s at 60Hz); the last step is deliberately NOT made the remainder, which
 // would make its duration depend on every step before it.
-subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& input,
+subtick_steps_t split_tick_input_into_subtick_steps(const tick_input_t& input,
                                                         float tick_dt);
 
 // Every button that went DOWN at any point in the tick, against the state the
@@ -220,7 +220,7 @@ subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& i
 // counts, which is the point: at tick granularity that press was invisible, and
 // a trigger pull that lands entirely between two boundaries is exactly the input
 // sub-tick exists to stop dropping.
-uint64_t subtick_presses(const subtick_input_t& input, uint64_t buttons_before);
+uint64_t subtick_presses(const tick_input_t& input, uint64_t buttons_before);
 
 // The slot a button went DOWN in, or SUBTICK_SLOT_COUNT if it did not go down
 // at all this tick. Slot 0 means it was already down when the tick began.
@@ -229,7 +229,7 @@ uint64_t subtick_presses(const subtick_input_t& input, uint64_t buttons_before);
 // is consumed by something other than the movement step it splits: the world the
 // shooter was drawing at the press is a fraction of a tick older than the one
 // they were drawing when the command was built, and that fraction is this.
-uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_before,
+uint32_t subtick_slot_of_press(const tick_input_t& input, uint64_t buttons_before,
                                uint64_t button);
 
 // The strict grammar append, for input that arrived over the wire. Refuses a
@@ -240,7 +240,7 @@ uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_be
 // `view_after` defaults to the zero angle, which is honest for the callers that
 // have none: a bot, a replay and every test about the button grammar itself
 // simulate under the input's own view_at_start and never look at a button change's.
-[[nodiscard]] bool try_append_subtick_button_change(subtick_input_t& input, uint32_t slot,
+[[nodiscard]] bool try_append_subtick_button_change(tick_input_t& input, uint32_t slot,
                                            uint64_t buttons_after,
                                            subtick_view_t view_after = {});
 
@@ -255,7 +255,7 @@ uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_be
 //
 // False means the button-change list is full and this transition is being DROPPED, which
 // is input loss and the caller must say so.
-[[nodiscard]] bool try_record_subtick_state(subtick_input_t& input, uint32_t slot,
+[[nodiscard]] bool try_record_subtick_state(tick_input_t& input, uint32_t slot,
                                             uint64_t buttons, subtick_view_t view = {});
 
 // Where in the tick a moment fell, as a slot. Clamped rather than checked: the

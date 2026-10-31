@@ -69,10 +69,10 @@ private:
   [[nodiscard]] shared::lens_watch_screen_t local_watch_screen(const client_context_t &ctx) const;
   void place_button_changes_on_the_tick_timeline(client_context_t &ctx, play_frame_t &frame);
   void run_predicted_ticks(client_context_t &ctx, play_frame_t &frame);
-  void send_input_with_unacked_tail(client_context_t &ctx, const shared::subtick_input_t &subtick_input,
+  void send_input_with_unacked_tail(client_context_t &ctx, const shared::tick_input_t &tick_input,
                                     const shared::interpolation_bracket_t &drawn_bracket) const;
   void predict_own_body_for_input(client_context_t &ctx, play_frame_t &frame,
-                                  const shared::subtick_input_t &subtick_input, float tick_dt,
+                                  const shared::tick_input_t &tick_input, float tick_dt,
                                   const shared::interpolation_bracket_t &drawn_bracket);
   void play_local_movement_sounds(client_context_t &ctx, play_frame_t &frame);
   void advance_render_state(client_context_t &ctx, play_frame_t &frame);

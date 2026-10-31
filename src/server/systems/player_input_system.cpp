@@ -61,7 +61,7 @@ static void log_refused_shot(server_context_t& context, int32_t client_slot,
 struct accepted_client_input_t
 {
   entities::Player_Entity* player;
-  shared::subtick_input_t  subtick_input;
+  shared::tick_input_t  tick_input;
 };
 
 // Everything that drops or acks an input before it moves anyone. The high-water mark means "I have
@@ -107,7 +107,7 @@ struct accepted_client_input_t
 
   client.latest_processed_input_number = input.input_number();
 
-  const std::optional<shared::subtick_input_t> decoded_input = network::try_read_subtick_input(input);
+  const std::optional<shared::tick_input_t> decoded_input = network::try_read_tick_input(input);
   if (!decoded_input)
   {
     log_error("slot {}: input {} carries sub-tick button changes that break the grammar "
@@ -118,7 +118,7 @@ struct accepted_client_input_t
     return std::nullopt;
   }
 
-  return accepted_client_input_t{.player = player, .subtick_input = *decoded_input};
+  return accepted_client_input_t{.player = player, .tick_input = *decoded_input};
 }
 
 // The sounds of a tick's movement, fired once per input off the accumulated events. The launch pad
@@ -201,7 +201,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     client_slot_t&                 client        = context.clients[client_slot];
     entities::Player_Entity&       player        = *accepted->player;
-    const shared::subtick_input_t& subtick_input = accepted->subtick_input;
+    const shared::tick_input_t& tick_input = accepted->tick_input;
 
     shared::queue_replay_player_view(
         context.world.replay_recorder,
@@ -209,10 +209,10 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                                               {.from_tick    = input.interpolated_from_tick(),
                                                .towards_tick = input.interpolated_towards_tick(),
                                                .fraction     = input.interpolation_fraction()},
-                                              subtick_input));
+                                              tick_input));
 
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
-    client.latest_buttons_bitmap       = subtick_input.buttons_at_end();
+    client.latest_buttons_bitmap       = tick_input.buttons_at_end();
 
     if (input.has_view_fov_degrees() && input.has_view_aspect())
     {
@@ -236,7 +236,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                                   context.world.session.entity_system, player.entity_id) != nullptr};
 
     const shared::subtick_steps_t steps =
-        shared::split_input_per_tick_into_subtick_steps(subtick_input, tick_dt);
+        shared::split_tick_input_into_subtick_steps(tick_input, tick_dt);
 
     Move_Events move_events{};
     uint64_t    buttons_entering_step = buttons_before_tick;
@@ -297,8 +297,8 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     if (!is_dead && !world_is_frozen)
     {
-      player.view_angle_yaw   = subtick_input.view_at_end.yaw;
-      player.view_angle_pitch = subtick_input.view_at_end.pitch;
+      player.view_angle_yaw   = tick_input.view_at_end.yaw;
+      player.view_angle_pitch = tick_input.view_at_end.pitch;
     }
 
     fire_move_event_effects(context, player, world, move_events);

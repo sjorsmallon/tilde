@@ -77,16 +77,16 @@ struct Saved_Input
 {
   int input_number = -1;
   // The whole tick's input, button changes and all, not the Move_Input it decodes to.
-  // Reconciliation replays this through the SAME split_input_per_tick_into_subtick_steps the live prediction
+  // Reconciliation replays this through the SAME split_tick_input_into_subtick_steps the live prediction
   // ran it through, so a replay reproduces the sub-steps rather than averaging
   // them into one -- and it has to, because the split is where the clamps fire.
   // A replay that split differently would be rubber-banding, not rounding.
-  // The aim rides INSIDE `input`, per step, which is why there is no yaw/pitch
+  // The aim rides INSIDE `tick_input`, per step, which is why there is no yaw/pitch
   // pair beside it any more. There used to be one, and reconciliation replayed
   // every step of a tick through it while the live prediction had already moved
   // on -- two spellings of the same thing, free to disagree. A replay now runs
   // the identical basis the live step did because it reads the identical field.
-  shared::subtick_input_t input = {};
+  shared::tick_input_t tick_input = {};
 };
 static constexpr uint32_t MAX_PENDING_INPUTS = 128;
 
@@ -252,7 +252,7 @@ struct prediction_t
   //
   // The tracked buttons (Button::Subtick_Tracked) as of the last tick boundary,
   // and every transition since it that no tick has consumed yet. Together they
-  // are what the next command's subtick_input_t is built from.
+  // are what the next command's tick_input_t is built from.
   //
   // `accumulator_seconds` is measured in the SAME timeline the ticks are cut
   // from -- seconds past the last tick boundary, in physics_accumulator space --

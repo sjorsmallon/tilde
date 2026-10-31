@@ -14,7 +14,7 @@ float duration_of_slots(float tick_dt, uint32_t from_slot, uint32_t to_slot)
 
 } // namespace
 
-subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& input,
+subtick_steps_t split_tick_input_into_subtick_steps(const tick_input_t& input,
                                                         float tick_dt)
 {
   subtick_steps_t result{};
@@ -48,7 +48,7 @@ subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& i
   return result;
 }
 
-uint64_t subtick_presses(const subtick_input_t& input, uint64_t buttons_before)
+uint64_t subtick_presses(const tick_input_t& input, uint64_t buttons_before)
 {
   uint64_t rising   = input.buttons_at_start & ~buttons_before;
   uint64_t previous = input.buttons_at_start;
@@ -63,7 +63,7 @@ uint64_t subtick_presses(const subtick_input_t& input, uint64_t buttons_before)
   return rising;
 }
 
-uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_before,
+uint32_t subtick_slot_of_press(const tick_input_t& input, uint64_t buttons_before,
                                uint64_t button)
 {
   if ((input.buttons_at_start & ~buttons_before & button) != 0)
@@ -81,7 +81,7 @@ uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_be
   return SUBTICK_SLOT_COUNT;
 }
 
-bool try_append_subtick_button_change(subtick_input_t& input, uint32_t slot, uint64_t buttons_after,
+bool try_append_subtick_button_change(tick_input_t& input, uint32_t slot, uint64_t buttons_after,
                              subtick_view_t view_after)
 {
   if (slot == 0 || slot >= SUBTICK_SLOT_COUNT)
@@ -97,7 +97,7 @@ bool try_append_subtick_button_change(subtick_input_t& input, uint32_t slot, uin
   return true;
 }
 
-bool try_record_subtick_state(subtick_input_t& input, uint32_t slot, uint64_t buttons,
+bool try_record_subtick_state(tick_input_t& input, uint32_t slot, uint64_t buttons,
                               subtick_view_t view)
 {
   if (slot >= SUBTICK_SLOT_COUNT)

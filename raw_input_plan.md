@@ -407,7 +407,7 @@ the project is Windows-only; note it rather than build a Linux path speculativel
 
 ## 6. What this does not change
 
-The 64-slot grid, `subtick_input_t`, `try_record_subtick_state`'s fold, the wire
+The 64-slot grid, `tick_input_t`, `try_record_subtick_state`'s fold, the wire
 encoding in `subtick_codec`, the server's step loop, lag compensation. All of it
 was already correct and already finer than the data feeding it — which is why the
 fix is confined to where timestamps come from.
