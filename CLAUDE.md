@@ -9,7 +9,7 @@ the rules and the commands.
 ```bash
 cmake -S . -B cmake_build                 # first run downloads SDL2 and Protobuf
 cmake --build cmake_build -j32
-./cmake_build/bin/MyGame
+./cmake_build/bin/MVMT
 
 # Ship builds: where the game reads asset bytes from (default: loose)
 cmake -S . -B cmake_build_pkg   -DTILDE_ASSET_SOURCE=pkg    # one assets.pkg beside the exe
@@ -28,10 +28,10 @@ ctest registration (written out, not globbed). `ctest` pins the working
 directory to the project root; running a test binary directly must also happen
 from the root.
 
-Three executables: `MyGame` (in-process client + server), `MyGame_Server`
-(dedicated), `MyGame_Client` (networked client only, exercises the full
+Three executables: `MVMT` (in-process client + server), `MVMT_Server`
+(dedicated), `MVMT_Client` (networked client only, exercises the full
 snapshot and map streaming path). To test streaming on one machine run
-`scripts/run_client_cold.cmd` against a running `MyGame_Server`.
+`scripts/run_client_cold.cmd` against a running `MVMT_Server`.
 
 Other tools:
 
@@ -99,6 +99,7 @@ file only states them.
 | Movers, platforms, canopy | `mover_def.md` |
 | Collision world, projectile sweep, bounce bodies | `collision_world_plan.md` |
 | Sub-tick input, raw input thread | `subtick_plan.md`, `raw_input_plan.md` |
+| The input step: weapon clocks on both ends, the shared per-step loop | `input_step_plan.md` |
 | Hitscan, lag compensation | `hitscan_plan.md`, `lag_compensation_def.md` |
 | Weapons, inventory, contact effects | `weapon_inventory_plan.md`, `contact_effect_plan.md` |
 | Guided rocket, the path it leaves | `guided_rocket_plan.md` |
@@ -127,7 +128,7 @@ file only states them.
   map I/O). `Fully_Serializable :: [@Networked, @Editable]` at the top of
   `entities.def` is a flag alias. A type replicates when one of its own fields
   is `@Networked`; there is no `@replicated`. `@predicted` marks a type
-  one of the `collect_*` cuts answers for, pinned by `movement_volumes_test`
+  one of the `compute_*_at_tick` pieces of the predicted world answers for, pinned by `movement_volumes_test`
   (the only guard: run `ctest`). Cvar flags are `@Client`,
   `@Server`, `@Mirrored`; none means both sides hold their own copy.
 - Missing handlers are **link errors naming the symbol**: command handlers,
@@ -212,7 +213,7 @@ prediction writes `ctx.prediction`.
   disabled set per team, the movement volumes, the modifiers, the movers:
   lifts, landed platforms, canopies, frozen players) is cut into a
   `shared::predicted_world_t` and passed as a parameter. The client cuts the
-  same value through the same `cut_*` functions, which is what "predicted"
+  same value through the same `compute_*` functions, which is what "predicted"
   means. Nothing but the bounce body simulates; everything queries.
 - Movers follow paths; everything else RIDES a mover. `Path_Follow` is a
   trajectory and `Mover_Entity` is its only owner; a placed entity (a light)
@@ -234,6 +235,9 @@ prediction writes `ctx.prediction`.
 - Anything that writes a player velocity from outside `player_move` goes
   through `apply_impulse`; under the instant model that borrows speed for a
   timer, and a writer that forgets is erased next step.
+- Noclip is a `Movement_Override` flown inside `player_move` (`passes_through`:
+  translated, swept against nothing), attached and ended by the `noclip`
+  command on the server. `cl_free_camera` detaches only the camera.
 - Jolt was removed and not replaced. box3d is the door for stacking or
   ragdolls, and it stays shut until one is asked for.
 
@@ -346,6 +350,17 @@ prediction writes `ctx.prediction`.
   pipelines write it (`scene_blend_attachments`); every pipeline built for the
   scene pass declares `SCENE_COLOR_ATTACHMENT_COUNT` blend states, and a new
   opaque scene shader writes `store_surface_normal`.
+- A session entity drawn between ticks has two sources of pose and no third:
+  replicated state interpolated through the ring (players, bounce bodies,
+  anything the server integrates), or LAUNCH state evaluated by a shared
+  `*_at_tick` function both ends call (platforms, bubbles, fizzling weapons,
+  anything the server could derive). `try_compute_drawn_entity_at_tick`
+  (`client/drawn_entity.cpp`) is the one exhaustive switch over `entity_type`
+  that says which an entity is and how it looks; a type's lifecycle rule (when
+  a bubble bursts, when a dropped weapon is gone) lives in `shared/` beside its
+  other `_at_tick` functions and is read by the server system, the volume and
+  the draw alike. A position the server could write from a closed form is a
+  cache, not state: it is written once at spawn and never per tick.
 - A post pass is a `screen_target_t` it writes and a `fullscreen_draw_t` that
   reads one; `render_frame` stays the hand-written ORDER. No pass list, no
   render graph.

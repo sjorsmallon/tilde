@@ -160,7 +160,7 @@ void relink_paths_around_removed_nodes(shared::map_t& map, Span<const shared::en
                   { static_cast<entities::Mover_Entity&>(entity).follow.from = start; });
 }
 
-void draw_path_links(const shared::map_t& map, const editor_context_t& ctx, pass_builder_t& draws)
+void draw_path_links(const shared::map_t& map, const editor_context_t& ctx, draw_lists_t& draws)
 {
   for (const auto [uid, node] : map.entities_of_type<entities::Path_Node_Entity>())
   {

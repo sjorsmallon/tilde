@@ -25,7 +25,7 @@ public:
   void on_key_down(editor_context_t& ctx, const key_event_t &e) override;
 
   void on_draw_overlay(editor_context_t& ctx,
-                       pass_builder_t &draws) override;
+                       draw_lists_t &draws) override;
   void on_draw_inspector(editor_context_t& ctx) override;
 
   // Prefab files on disk, refreshed on demand rather than per frame: a

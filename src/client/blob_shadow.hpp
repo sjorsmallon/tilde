@@ -2,7 +2,7 @@
 
 #include "../shared/collision/collision_detection.hpp"
 #include "../shared/span.hpp"
-#include "frame_builder.hpp"
+#include "draw_lists.hpp"
 
 namespace client
 {
@@ -15,7 +15,7 @@ struct blob_shadow_settings_t
 };
 
 void draw_blob_shadow(
-  pass_builder_t& scene,
+  draw_lists_t& scene,
   const Bounding_Volume_Hierarchy& bvh,
   Span<const uint8_t> disabled_geometry,
   const vec3f& feet,

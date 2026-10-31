@@ -12,7 +12,7 @@
 #include "map/game_session.hpp"
 #include "../shared/network/client_transport_layer.hpp"
 #include "../shared/network/network_types.hpp"
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "../skybox_selection.hpp"
 #include "../state_manager.hpp"
 #include "imgui.h"
@@ -34,6 +34,9 @@ namespace client
 // survives a frame.
 struct play_frame_t;
 
+// What one draw reads, handed from step to step down Play_State::draw. Defined in play_state_draw.cpp.
+struct draw_inputs_t;
+
 class Play_State : public Game_State
 {
 public:
@@ -41,7 +44,7 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void draw_imgui_panels() override;
-  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+  void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                    renderer::ui_draw_list_t &ui) override;
 
 private:
@@ -66,6 +69,11 @@ private:
   [[nodiscard]] shared::lens_watch_screen_t local_watch_screen(const client_context_t &ctx) const;
   void place_input_edges_on_the_tick_timeline(client_context_t &ctx, play_frame_t &frame);
   void run_predicted_ticks(client_context_t &ctx, play_frame_t &frame);
+  void send_input_with_unacked_tail(client_context_t &ctx, const shared::subtick_input_t &subtick_input,
+                                    const shared::interpolation_bracket_t &drawn_bracket) const;
+  void predict_own_body_for_input(client_context_t &ctx, play_frame_t &frame,
+                                  const shared::subtick_input_t &subtick_input, float tick_dt,
+                                  const shared::interpolation_bracket_t &drawn_bracket);
   void play_local_movement_sounds(client_context_t &ctx, play_frame_t &frame);
   void advance_render_state(client_context_t &ctx, play_frame_t &frame);
   void ripple_team_walls(client_context_t &ctx, play_frame_t &frame);
@@ -73,6 +81,20 @@ private:
   void resolve_camera(client_context_t &ctx, play_frame_t &frame);
   void leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &frame);
   void update_audio_listener(client_context_t &ctx, play_frame_t &frame);
+
+  // The steps of `draw`, in the order it runs them. Each appends to `scene`
+  // and reads the frame; try_compute_drawn_entity_at_tick (drawn_entity.hpp) is
+  // where a Render entity's pose and look come from.
+  void draw_player_blob_shadow(const client_context_t &ctx, const draw_inputs_t &frame, const vec3f &feet);
+  void draw_map_geometry(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_shadow_debug_and_volumes(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_lights_and_beams(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_rendered_entities(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_afterimages_and_ghosts(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_remote_players(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_debug_overlays(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_particles(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_hud(client_context_t &ctx, renderer::ui_draw_list_t &ui);
 
 
   void enter_connected_phase();
@@ -84,7 +106,7 @@ private:
   camera_t free_camera;
   bool free_camera_was_active = false;
 
-  pass_builder_t scene;
+  draw_lists_t scene;
 
   // A grabbed frame placed in the world: a quad ahead of where the camera stood when the
   // grab landed, facing it, with the frame as its albedo. One material per texture slot,

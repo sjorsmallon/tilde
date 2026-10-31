@@ -51,7 +51,7 @@ static void claim_remnant(server_context_t& context, shared::entity_uid_t remnan
   remnant->owner_uid = owner_uid;
 }
 
-//@NOTE(SJM what the  fuck does this mean
+// The targets past the posed players are the damageables, which no rewind moves: carried over whole.
 static void append_static_targets(const shared::posed_players_t &present,
                                   shared::posed_players_t       &rewound)
 {
@@ -59,8 +59,7 @@ static void append_static_targets(const shared::posed_players_t &present,
     rewound.targets.push_back(present.targets[index]);
 }
 
-// what was the situation at the client's location (what view were they aiming through.) and was it valid? not cheated?
-
+// The blend the shooter aimed through, judged against what this slot holds and how far back the server allows.
 static shared::bracket_verdict_t get_interpolation_bracket_for_input(
     server_context_t &context, int32_t client_slot,
     const game::C2S_ClientInput &input)
@@ -72,13 +71,11 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
       .towards_tick = input.interpolated_towards_tick(),
       .fraction     = input.interpolation_fraction()};
 
-  // check if the requested brakcet is not accidentally outside of the ring bucket already.
   const int32_t configured_max_rewind_ticks = context.cvars->sv_max_rewind_ticks;
   const uint32_t max_rewind =
       std::min<uint32_t>(configured_max_rewind_ticks < 0 ? 0u : (uint32_t)configured_max_rewind_ticks,
                          network::Snapshot_History<network::snapshot_frame_t>::CAPACITY - 1);
 
-  // check validity.
   const shared::bracket_verdict_t verdict = shared::classify_bracket(
       requested, client.held_snapshot_tick, context.tick_number, max_rewind);
 
@@ -108,27 +105,21 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
 
   const float milliseconds_per_tick = 1000.f * get_tick_interval_seconds();
 
-  // how far back in time did we actually go? 
   const uint32_t bracket_span_ticks = verdict.bracket.towards_tick - verdict.bracket.from_tick;
   const float rewind_tick_count =
       static_cast<float>(context.tick_number - verdict.bracket.towards_tick) +
       (1.f - verdict.bracket.fraction) * static_cast<float>(bracket_span_ticks);
 
-  // debug
-  {
-    if (context.cvars->sv_lag_compensation_debug)
-        log_terminal("[rewind] slot {}: asked {} -> {} at {:.3f}, using {} -> {}, reaching "
-                     "back {:.2f} ticks ({:.1f} ms)",
-                     client_slot, requested.from_tick, requested.towards_tick, requested.fraction,
-                     verdict.bracket.from_tick, verdict.bracket.towards_tick, rewind_tick_count,
-                     rewind_tick_count * milliseconds_per_tick);
+  if (context.cvars->sv_lag_compensation_debug)
+    log_terminal("[rewind] slot {}: asked {} -> {} at {:.3f}, using {} -> {}, reaching "
+                 "back {:.2f} ticks ({:.1f} ms)",
+                 client_slot, requested.from_tick, requested.towards_tick, requested.fraction,
+                 verdict.bracket.from_tick, verdict.bracket.towards_tick, rewind_tick_count,
+                 rewind_tick_count * milliseconds_per_tick);
 
-  }
-  
-  //@NOTE(SJM): what does clamped mean actually -> clamped means that you could start from a thing that's already out of range. you can then clamp to the oldest thing that the server has. Now i'm not sure if that is even valid or just stupid but it's what we are doing.
+  // Clamped: the bracket reached past sv_max_rewind_ticks and was pulled to the oldest tick allowed.
   if (verdict.status == shared::bracket_status_t::Clamped)
   {
-    
     const uint32_t warning_interval_ticks =
         std::max(1u, context.cvars->sv_tickrate);
     if (client.last_rewind_warning_tick == 0 ||
@@ -147,7 +138,7 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
   return verdict;
 }
 
-// helper to do some debug drawing for if you shoot near a target. otherwise only registered hits would show shots. it's nice to see why something missed too.
+// For the shot debug: a miss reports how far it passed from the nearest target, so a near miss reads as one.
 static float distance_to_nearest_target(const vec3f& eye, const vec3f& direction,
                                         Span<const shared::hitscan_target_t> targets,
                                         shared::entity_uid_t shooter_uid)
@@ -155,10 +146,8 @@ static float distance_to_nearest_target(const vec3f& eye, const vec3f& direction
   float nearest = std::numeric_limits<float>::infinity();
   for (const shared::hitscan_target_t& target : targets)
   {
-    // ignore the client.
     if (target.uid == shooter_uid) continue;
 
-    // clamp at 0 so anyone behind you does not show up as the closest.
     const vec3f to_center     = target.bounds.center - eye;
     const float along_ray     = std::max(0.f, linalg::dot(to_center, direction));
     const vec3f closest_point = eye + direction * along_ray;
@@ -283,219 +272,207 @@ static Span<const shared::hitscan_target_t> collect_hitscan_targets(server_conte
   return {};
 }
 
-void resolve_player_shot(
-  server_context_t &context, int32_t client_slot,
-  const game::C2S_ClientInput &input,
-  const shared::predicted_world_t& world,
-  entities::Player_Entity* player,
-  float yaw, float pitch,
-  shared::subtick_time_t fire_time,
-  entities::Fire_Trigger trigger)
+// POST-move eye, against start-of-tick or rewound victims. The asymmetry is what the client's
+// screen looks like: prediction runs this same move before the frame is drawn, so the camera sits at
+// the post-move position, while remote players are drawn interpolated in the PAST. The world test is
+// the one question every flying thing asks, at radius zero, through the shooter's team view of the
+// map AND the movers; the world hit clips the range. Tested here, acted on in update_contacts.
+static void resolve_hitscan_shot(server_context_t& context, int32_t client_slot,
+                                 const game::C2S_ClientInput& input,
+                                 const shared::predicted_world_t& world,
+                                 const entities::Player_Entity& player,
+                                 const entities::Weapon_Entity& active_weapon,
+                                 const shared::weapon_fire_t& fire, const vec3f& eye,
+                                 const vec3f& direction, shared::subtick_time_t fire_time,
+                                 entities::Fire_Trigger trigger)
 {
+  const float range = fire.hitscan.range;
+  const std::optional<shared::projectile_hit_t> world_hit =
+      shared::sweep_projectile(context.world.session.bvh, world, eye, eye + direction * range, 0.f);
+  const float world_distance = world_hit ? world_hit->t * range : range;
 
-  // this tripped me up 15 different times, so here we go again.
-  // POST-move eye, against start-of-tick or rewound victims. The asymmetry
-  // is deliberate and it is what the client's screen looks like: prediction
-  // runs this same move before the frame is drawn, so the camera sits at the
-  // post-move position (play_state.cpp, prediction.player_position), while
-  // remote players are drawn interpolated in the PAST. Sampling the shooter
-  // pre-move would reconstruct a view nobody saw.
+  if (context.posed_players.built_for_tick != context.tick_number)
+    fatal_error("hit volumes were posed for tick {} but this is tick {}; "
+                "pose_all_targets must run before the input loop",
+                context.posed_players.built_for_tick, context.tick_number);
+
+  const shared::Entity_System& entity_system = context.world.session.entity_system;
+
+  // A frozen player is a mover the sweep stops at AND a body the hitboxes describe. Their box clips
+  // a shot at anyone behind them; their own hitboxes are read past it, so a statue still takes a
+  // headshot.
+  const bool surface_is_a_body = world_hit && fire.contact.targets == shared::contact_targets_t::Bodies &&
+                                 entity_system.get<entities::Player_Entity>(world_hit->entity_uid) != nullptr;
+  const float body_range = surface_is_a_body ? range : world_distance;
+
+  remnant_targets_t                    remnants;
+  Span<const shared::hitscan_target_t> targets = collect_hitscan_targets(context, fire.contact, player, remnants);
+  shared::bracket_verdict_t            verdict{};
+  bool                                 used_rewind = false;
+
+  // Lag compensation: the targets rewound to where the shooter saw them. The present-tick set is
+  // the fallback: a spectator, a client's first shots before it holds two snapshots, a refused
+  // bracket, or an endpoint that has aged out of the ring all land there.
+  if (context.cvars->sv_lag_compensation && fire.contact.targets == shared::contact_targets_t::Bodies)
+  {
+    verdict = get_interpolation_bracket_for_input(context, client_slot, input);
+
+    const bool bracket_is_usable = verdict.status == shared::bracket_status_t::Ok ||
+                                   verdict.status == shared::bracket_status_t::Clamped;
+
+    if (bracket_is_usable &&
+        shared::try_pose_players_across_bracket(context.replication.snapshot_history, shared::player_rig(),
+                                                aim_settings_from_cvars(*context.cvars), verdict.bracket,
+                                                context.rewind_scratch))
+    {
+      // The rewound set is PLAYERS ONLY; a damageable did not move, so its present-tick pose IS
+      // what the shooter saw. The spans point into context.posed_players.volumes, which nothing
+      // touches again until the next tick.
+      append_static_targets(context.posed_players, context.rewind_scratch);
+
+      targets     = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
+      used_rewind = true;
+    }
+  }
+
+  // A merged passenger is inside their driver's body: no shot lands on one, and their own leaves
+  // from the driver's, so that is the body it passes through.
+  std::vector<shared::hitscan_target_t> targets_without_passengers;
+  targets_without_passengers.reserve(targets.size());
+  for (const shared::hitscan_target_t& target : targets)
+  {
+    const entities::Player_Entity* target_player = entity_system.get<entities::Player_Entity>(target.uid);
+    if (target_player == nullptr || !shared::player_is_merged_passenger(*target_player))
+      targets_without_passengers.push_back(target);
+  }
+  targets = Span<const shared::hitscan_target_t>{targets_without_passengers};
+
+  const shared::hitscan_result_t hit = shared::resolve_hitscan(
+      eye, direction, body_range, targets, shared::get_body_uid_for_player_uid(entity_system, player.entity_id));
+
+  if (context.cvars->sv_shot_debug)
+    send_shot_debug(context, client_slot, input, shared::subtick_time_to_slot(fire_time), eye, direction,
+                    verdict, used_rewind, used_rewind ? context.rewind_scratch : context.posed_players,
+                    targets, hit, player.entity_id);
+
+  // A body inside the clipped range, or the frozen player whose own box clipped it.
+  const bool hit_a_body = hit.hit_uid != shared::null_entity_uid &&
+                          (hit.distance <= world_distance || (world_hit && hit.hit_uid == world_hit->entity_uid));
+
+  // What arrived, and where; the arm in update_contacts asks what the target is. A shot into the
+  // void arrives nowhere and pushes nothing.
+  pending_contact_t contact{.shooter_uid = player.entity_id,
+                            .weapon      = active_weapon.weapon_id,
+                            .trigger     = trigger,
+                            .damage_type = active_weapon.damage_type};
+  if (hit_a_body)
+  {
+    contact.target_uid = hit.hit_uid;
+    contact.point      = hit.impact_point;
+    contact.normal     = hit.impact_normal;
+    contact.region     = hit.region;
+  }
+  else if (world_hit)
+  {
+    contact.target_uid = world_hit->entity_uid;
+    contact.point      = world_hit->position;
+    contact.normal     = world_hit->normal;
+  }
+  else
+    return;
+
+  context.outgoing.pending_contacts.push_back(contact);
+}
+
+// The row's anchor says where on the body the placed thing appears and whether it takes the pitch.
+static void resolve_placed_shot(server_context_t& context, const entities::Player_Entity& player,
+                                const shared::weapon_definition_t& weapon,
+                                const entities::Weapon_Entity& active_weapon,
+                                const shared::weapon_fire_t& fire, const vec3f& eye, float yaw,
+                                float pitch, entities::Fire_Trigger trigger)
+{
+  vec3f placed_position    = player.position;
+  quatf placed_orientation = linalg::from_view_angles(yaw, 0.f);
+  switch (fire.place.anchor)
+  {
+  case shared::place_anchor_t::Feet:
+    break;
+  case shared::place_anchor_t::Waist:
+    placed_position    = player.position + vec3f{0.f, shared::player_waist_height, 0.f};
+    placed_orientation = linalg::from_view_angles(yaw, pitch);
+    break;
+  case shared::place_anchor_t::Eye:
+    placed_position    = eye;
+    placed_orientation = linalg::from_view_angles(yaw, pitch);
+    break;
+  }
+
+  const shared::entity_uid_t placed_uid =
+      spawn_placed_entity(context, player.entity_id, weapon, placed_position, placed_orientation, trigger,
+                          shared::get_concurrent_projectiles_alive_limit(active_weapon));
+  if (context.world.session.entity_system.get<entities::Remnant_Entity>(placed_uid) != nullptr)
+    claim_remnant(context, placed_uid, player.entity_id);
+}
+
+void resolve_player_shot(server_context_t& context, int32_t client_slot,
+                         const game::C2S_ClientInput& input, const shared::predicted_world_t& world,
+                         entities::Player_Entity& player, float yaw, float pitch,
+                         shared::subtick_time_t fire_time, entities::Fire_Trigger trigger)
+{
+  const entities::Weapon_Entity* active_weapon = try_find_active_weapon(context.world.session, player);
+  if (active_weapon == nullptr)
+    return;
 
   const vec3f direction = linalg::direction_from_angles(yaw, pitch);
-  const vec3f eye = shared::player_eye_position(player->position);
-
-  entities::Weapon_Entity* active_weapon = try_find_active_weapon(context.world.session, *player);
-
-  if (active_weapon == nullptr) return;
+  const vec3f eye       = shared::player_eye_position(player.position);
 
   const shared::weapon_definition_t& weapon = shared::get_weapon_definition(active_weapon->weapon_id);
   const shared::weapon_fire_t&       fire   = shared::get_weapon_fire_for_button(weapon, trigger);
 
   switch (fire.resolution)
   {
-    // The input step reports no fire for these: nothing, the client's scope, or a toggle it
-    // flipped itself. Arriving here is the two drifting apart.
-    case entities::Fire_Resolution::None:
-    case entities::Fire_Resolution::Zoom:
-    case entities::Fire_Resolution::Lens_View:
-    case entities::Fire_Resolution::Reveal_Light:
-    case entities::Fire_Resolution::Erase_Light:
-    case entities::Fire_Resolution::Reveal_Light_Overhead:
-      fatal_error("resolve_player_shot: slot {} reports {} due on {}, which the input step never "
-                  "reports; apply_input_step_to_player and this switch drifted",
-                  client_slot, to_string(fire.resolution), weapon.display_name);
+  // The input step reports no fire for these: nothing, the client's scope, or a toggle it
+  // flipped itself. Arriving here is the two drifting apart.
+  case entities::Fire_Resolution::None:
+  case entities::Fire_Resolution::Zoom:
+  case entities::Fire_Resolution::Lens_View:
+  case entities::Fire_Resolution::Reveal_Light:
+  case entities::Fire_Resolution::Erase_Light:
+  case entities::Fire_Resolution::Reveal_Light_Overhead:
+    fatal_error("resolve_player_shot: slot {} reports {} due on {}, which the input step never "
+                "reports; apply_input_step_to_player and this switch drifted",
+                client_slot, to_string(fire.resolution), weapon.display_name);
 
-    case entities::Fire_Resolution::Canopy:
-      toggle_canopy(context, *player);
-      return;
+  case entities::Fire_Resolution::Canopy:
+    toggle_canopy(context, player);
+    return;
 
-    // No clocks and no ammo: an empty magazine is exactly when this is pressed.
-    case entities::Fire_Resolution::Recall:
-      recall_shots(context, player->entity_id, active_weapon->weapon_id);
-      return;
+  // No clocks and no ammo: an empty magazine is exactly when this is pressed.
+  case entities::Fire_Resolution::Recall:
+    recall_shots(context, player.entity_id, active_weapon->weapon_id);
+    return;
 
-    case entities::Fire_Resolution::Hitscan:
-    {
-      // The world test is the one question every flying thing asks, at radius zero: the
-      // shooter's team view of the map AND the movers, so a raised platform stops a round
-      // and a lift takes the impact. The world hit clips the range; nothing past it can be hit.
-      const float range = fire.hitscan.range;
-      const std::optional<shared::projectile_hit_t> world_hit = shared::sweep_projectile(
-          context.world.session.bvh, world, eye, eye + direction * range, 0.f);
-      const float world_distance = world_hit ? world_hit->t * range : range;
+  case entities::Fire_Resolution::Hitscan:
+    resolve_hitscan_shot(context, client_slot, input, world, player, *active_weapon, fire, eye, direction,
+                         fire_time, trigger);
+    break;
 
-      if (context.posed_players.built_for_tick != context.tick_number)
-        fatal_error("hit volumes were posed for tick {} but this is tick {}; "
-                    "pose_all_targets must run before the input loop",
-                    context.posed_players.built_for_tick, context.tick_number);
+  case entities::Fire_Resolution::Projectile:
+    spawn_projectile(context, player.entity_id, weapon, eye, direction, trigger,
+                     shared::get_concurrent_projectiles_alive_limit(*active_weapon));
+    break;
 
-      // A frozen player is a mover the sweep stops at AND a body the hitboxes describe. Their
-      // box clips a shot at anyone behind them; their own hitboxes are read past it, so a
-      // statue still takes a headshot.
-      const bool surface_is_a_body =
-          world_hit && fire.contact.targets == shared::contact_targets_t::Bodies &&
-          context.world.session.entity_system.get<entities::Player_Entity>(world_hit->entity_uid) !=
-              nullptr;
-      const float body_range = surface_is_a_body ? range : world_distance;
+  case entities::Fire_Resolution::Place:
+    resolve_placed_shot(context, player, weapon, *active_weapon, fire, eye, yaw, pitch, trigger);
+    break;
 
-      remnant_targets_t remnants;
-      Span<const shared::hitscan_target_t> targets =
-          collect_hitscan_targets(context, fire.contact, *player, remnants);
-      auto verdict     = shared::bracket_verdict_t{};
-      bool used_rewind = false;
-
-      // --- Lag compensation ---
-      // rewind the targets to the position that the shooter saw when they fired.
-      // The present-tick set is the fallback.
-      // spectator, a client's first shots before it holds two snapshots, a
-      // refused bracket, or an endpoint that has aged out of the ring all
-      // land there.
-      if (context.cvars->sv_lag_compensation &&
-          fire.contact.targets == shared::contact_targets_t::Bodies)
-      {
-
-        verdict = get_interpolation_bracket_for_input(context, client_slot, input);
-
-        const bool bracket_is_usable =
-            verdict.status == shared::bracket_status_t::Ok ||
-            verdict.status == shared::bracket_status_t::Clamped;
-
-        if (bracket_is_usable &&
-            shared::try_pose_players_across_bracket(
-                context.replication.snapshot_history, shared::player_rig(),
-                aim_settings_from_cvars(*context.cvars), verdict.bracket, context.rewind_scratch))
-        {
-          // The rewound set is PLAYERS ONLY, so the static targets are appended
-          // rather than lost. A rewind exists because a target moved between
-          // the tick the shooter saw and the tick we are on; a damageable did
-          // not move, so its present-tick pose is not an approximation of what
-          // the shooter saw, it IS what the shooter saw.
-          //
-          // The spans these carry point into context.posed_players.volumes,
-          // which pose_all_targets sized in step 2 of the tick and nothing
-          // touches again until the next one -- so copying the target values is safe
-          // for exactly as long as this shot needs them.
-          append_static_targets(context.posed_players, context.rewind_scratch);
-
-          targets     = Span<const shared::hitscan_target_t>{context.rewind_scratch.targets};
-          used_rewind = true;
-        }
-      }
-
-      // A merged passenger is inside their driver's body: no shot lands on one, and their own
-      // leaves from the driver's, so that is the body it passes through.
-      const shared::Entity_System& entity_system = context.world.session.entity_system;
-      std::vector<shared::hitscan_target_t> targets_without_passengers;
-      targets_without_passengers.reserve(targets.size());
-      for (const shared::hitscan_target_t& target : targets)
-      {
-        const entities::Player_Entity* target_player =
-            entity_system.get<entities::Player_Entity>(target.uid);
-        if (target_player == nullptr || !shared::player_is_merged_passenger(*target_player))
-          targets_without_passengers.push_back(target);
-      }
-      targets = Span<const shared::hitscan_target_t>{targets_without_passengers};
-
-      const shared::hitscan_result_t hit = shared::resolve_hitscan(
-          eye, direction, body_range, targets,
-          shared::get_body_uid_for_player_uid(entity_system, player->entity_id));
-
-      if (context.cvars->sv_shot_debug)
-        send_shot_debug(context, client_slot, input, shared::subtick_time_to_slot(fire_time), eye,
-                        direction, verdict,
-                        used_rewind,
-                        used_rewind ? context.rewind_scratch : context.posed_players, targets,
-                        hit, player->entity_id);
-
-      // A body inside the clipped range, or the frozen player whose own box clipped it.
-      const bool hit_a_body =
-          hit.hit_uid != shared::null_entity_uid &&
-          (hit.distance <= world_distance || (world_hit && hit.hit_uid == world_hit->entity_uid));
-
-      // What arrived, and where. Tested here, acted on in update_contacts; the arm there
-      // asks what the target is. A shot into the void arrives nowhere and pushes nothing.
-      pending_contact_t contact{.shooter_uid = player->entity_id,
-                                .weapon      = active_weapon->weapon_id,
-                                .trigger     = trigger,
-                                .damage_type = active_weapon->damage_type};
-      if (hit_a_body)
-      {
-        contact.target_uid = hit.hit_uid;
-        contact.point      = hit.impact_point;
-        contact.normal     = hit.impact_normal;
-        contact.region     = hit.region;
-      }
-      else if (world_hit)
-      {
-        contact.target_uid = world_hit->entity_uid;
-        contact.point      = world_hit->position;
-        contact.normal     = world_hit->normal;
-      }
-      else
-        break;
-
-      context.outgoing.pending_contacts.push_back(contact);
-      break;
-    }
-    case entities::Fire_Resolution::Projectile:
-    {
-      spawn_projectile(context, player->entity_id, weapon, eye, direction, trigger,
-                       shared::get_concurrent_projectiles_alive_limit(*active_weapon));
-      break;
-    }
-    case entities::Fire_Resolution::Place:
-    {
-      vec3f placed_position    = player->position;
-      quatf placed_orientation = linalg::from_view_angles(yaw, 0.f);
-      switch (fire.place.anchor)
-      {
-      case shared::place_anchor_t::Feet:
-        break;
-      case shared::place_anchor_t::Waist:
-        placed_position    = player->position + vec3f{0.f, shared::player_waist_height, 0.f};
-        placed_orientation = linalg::from_view_angles(yaw, pitch);
-        break;
-      case shared::place_anchor_t::Eye:
-        placed_position    = eye;
-        placed_orientation = linalg::from_view_angles(yaw, pitch);
-        break;
-      }
-
-      const shared::entity_uid_t placed_uid = spawn_placed_entity(
-          context, player->entity_id, weapon, placed_position, placed_orientation, trigger,
-          shared::get_concurrent_projectiles_alive_limit(*active_weapon));
-      if (context.world.session.entity_system.get<entities::Remnant_Entity>(placed_uid) != nullptr)
-        claim_remnant(context, placed_uid, player->entity_id);
-      break;
-    }
-    // The impulse and the launch are the input step's; what is left is the fire mark.
-    case entities::Fire_Resolution::Self_Impulse:
-    case entities::Fire_Resolution::Pilot:
-      break;
+  // The impulse and the launch are the input step's; what is left is the fire mark.
+  case entities::Fire_Resolution::Self_Impulse:
+  case entities::Fire_Resolution::Pilot:
+    break;
   }
 
-  // set some fields in player to indicate that we fired a shot.
-  mark_shot_fired(context, *player, active_weapon->weapon_id);
+  mark_shot_fired(context, player, active_weapon->weapon_id);
 }
 
 } // namespace server

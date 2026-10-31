@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "../game_state.hpp"
 #include "../shader_tool_runtime.hpp"
 #include "../../shared/file_watcher.hpp"
@@ -53,7 +53,7 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void draw_imgui_panels() override;
-  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+  void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                    renderer::ui_draw_list_t &ui) override;
 
 private:
@@ -63,7 +63,7 @@ private:
   static void record_preview_draw(VkCommandBuffer cmd, void *user);
 
   // This frame's view pass and the buffers the custom draw reads.
-  pass_builder_t            scene;
+  draw_lists_t            scene;
   renderer::mesh_gpu_info_t preview_mesh{};
 
 

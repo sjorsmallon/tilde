@@ -15,7 +15,7 @@ namespace server
 bool try_place_ping(server_context_t& context, entities::Player_Entity& player, vec3f eye,
                     vec3f aim_direction, Span<const uint8_t> disabled_geometry);
 
-// Count every marker down and remove the ones that ran out.
-void update_ping_markers(server_context_t& context, float dt);
+// Remove every marker whose lifetime has passed since the tick it was placed.
+void update_ping_markers(server_context_t& context);
 
 } // namespace server

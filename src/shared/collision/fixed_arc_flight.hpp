@@ -53,6 +53,19 @@ struct fixed_arc_flight_settings_t
   return flight_position_after(projectile, flight, ticks_since_launch, settings);
 }
 
+// Between two whole ticks, for the draw: `tick_fraction` of the way from `tick` to the next.
+[[nodiscard]] inline linalg::vec3f flight_position_at(const entities::Projectile&      projectile,
+                                                      const entities::Fixed_Arc_Flight&  flight,
+                                                      const linalg::vec3f&             spawn_position,
+                                                      uint32_t                         tick,
+                                                      float                            tick_fraction,
+                                                      const fixed_arc_flight_settings_t& settings)
+{
+  const linalg::vec3f at_tick = flight_position_at(projectile, flight, spawn_position, tick, settings);
+  const linalg::vec3f at_next = flight_position_at(projectile, flight, spawn_position, tick + 1, settings);
+  return at_tick + (at_next - at_tick) * tick_fraction;
+}
+
 [[nodiscard]] inline bool flight_has_landed(const entities::Fixed_Arc_Flight& flight, uint32_t tick)
 {
   return flight.launch_tick != 0 && tick >= flight.launch_tick + flight.flight_ticks;

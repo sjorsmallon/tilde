@@ -9,7 +9,7 @@
 #include "../editor/editor_tool.hpp"
 #include "../editor/editor_types.hpp"
 #include "../editor/transaction_system.hpp"
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "../skybox_selection.hpp"
 #include "../game_state.hpp"
 #include "collision/collision_detection.hpp"
@@ -72,7 +72,7 @@ public:
   void on_exit() override;
   void update(float dt) override;
   void draw_imgui_panels() override;
-  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+  void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                    renderer::ui_draw_list_t &ui) override;
 
 private:
@@ -93,7 +93,7 @@ private:
   // The editor's one view pass and the storage its spans point into. A member
   // so the vectors keep their capacity and so the debug list can hold entries
   // that outlive a frame.
-  pass_builder_t scene;
+  draw_lists_t scene;
 
   // The editor previews the OPEN MAP's sky, read straight out of its own cvars
   // block -- apply_map_cvars_that_were_supplied_from_the_editor runs on the server, and the editor has none, so
@@ -132,7 +132,7 @@ private:
   uint32_t uploaded_lightmap_geometry_id = 0;
 
   // The generated meshes follow the same flag the BVH does: validated whole in
-  // build_frame when it fires, trusted otherwise. A drag is the one edit that
+  // draw when it fires, trusted otherwise. A drag is the one edit that
   // never raises it until it ends, so what it drags is compared every frame.
   bool     generated_meshes_need_validation = true;
   uint32_t validated_lightmap_geometry_id   = 0;

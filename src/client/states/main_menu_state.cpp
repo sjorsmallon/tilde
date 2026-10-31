@@ -125,7 +125,7 @@ void Main_Menu_State::update(float delta_seconds)
     state_manager::request_exit();
 }
 
-void Main_Menu_State::build_frame(float, std::vector<renderer::view_pass_t> &,
+void Main_Menu_State::draw(float, std::vector<renderer::view_pass_t> &,
                                   renderer::ui_draw_list_t &ui_list)
 {
   ui_list.background(background_seconds);

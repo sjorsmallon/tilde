@@ -2528,7 +2528,7 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 }
 
 void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
-                                     pass_builder_t &draws)
+                                     draw_lists_t &draws)
 {
   if (!ctx.map)
     return;
@@ -2590,7 +2590,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
 
   // One walk of this frame's draw ranges: outline every selected object's meshes.
   std::vector<uint8_t> outlined(sorted_selection.size(), 0);
-  for (const pass_builder_t::object_meshes_t &range : draws.object_meshes)
+  for (const draw_lists_t::object_meshes_t &range : draws.object_meshes)
   {
     const size_t index = selection_index(range.uid);
     if (index == SIZE_MAX)

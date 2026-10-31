@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MyGame VERSION 0.1.0 LANGUAGES CXX C)
+project(MVMT VERSION 0.1.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -613,11 +613,16 @@ add_library(game_shared STATIC
     src/shared/collision/bounce_body.hpp
     src/shared/collision/bounce_body.cpp
     src/shared/collision/spawned_platforms.cpp
+    # A spawned thing's life as a function of the tick: the server pops and reaps, the volume places and the
+    # client draws through the same functions, so its position is written once at spawn and never per tick.
+    src/shared/movement/bubble.cpp
+    src/shared/emancipated_weapon.cpp
     src/shared/color_map.hpp
     src/shared/collision/flight_path.hpp
     src/shared/collision/flight_path.cpp
     src/shared/collision/canopy.cpp
     src/shared/lighting/reveal_light.cpp
+    src/shared/player_sight.cpp
     src/shared/lighting/lens.cpp
     src/shared/lighting/shadow_volume.cpp
     src/shared/collision/statues.cpp
@@ -636,6 +641,8 @@ add_library(game_shared STATIC
     src/shared/event_stream.cpp
     src/shared/weapons.hpp
     src/shared/weapons.cpp
+    src/shared/input_step.hpp
+    src/shared/input_step.cpp
     src/shared/hit_region.hpp
     src/shared/hitscan.hpp
     src/shared/hitscan.cpp
@@ -932,7 +939,11 @@ add_library(game_client SHARED
     src/client/state_manager.cpp
     src/client/states/main_menu_state.cpp
     src/client/states/pause_menu.cpp
+    # The update half and the draw half of Play_State; play_state_internal.hpp is what they share.
     src/client/states/play_state.cpp
+    src/client/states/play_state_draw.cpp
+    # The one switch over entity_type that says where and how a Render entity is drawn at the drawn tick.
+    src/client/drawn_entity.cpp
     src/client/states/editor_gizmo.cpp
     src/client/states/tool_editor_state.cpp
     src/client/states/shader_editor_state.cpp
@@ -1072,6 +1083,7 @@ add_library(game_server SHARED
     src/server/systems/fixed_arc_flight_launch.cpp
     src/server/systems/timed_movement_modifier_system.cpp
     src/server/systems/projectile_flight.cpp
+    src/server/systems/sweeping_projectile_system.cpp
     src/server/systems/ping_system.cpp
     src/server/systems/player_input_system.cpp
     src/server/systems/contact_system.cpp
@@ -1097,22 +1109,22 @@ endif()
 # --- Executables ---
 
 # 4. Integrated Game (Client + Server)
-add_executable(MyGame src/launcher/main_integrated.cpp ${MEMORY_AUDIT_HOOK})
-target_include_directories(MyGame PRIVATE src)
-target_link_libraries(MyGame PRIVATE game_client game_server game_shared SDL2::SDL2main)
+add_executable(MVMT src/launcher/main_integrated.cpp ${MEMORY_AUDIT_HOOK})
+target_include_directories(MVMT PRIVATE src)
+target_link_libraries(MVMT PRIVATE game_client game_server game_shared SDL2::SDL2main)
 # For macOS app bundle (optional, keeping as console app for now since detached_console used)
 
 
 # 5. Dedicated Server (Server only)
-add_executable(MyGame_Server src/launcher/main_dedicated.cpp ${MEMORY_AUDIT_HOOK})
-target_include_directories(MyGame_Server PRIVATE src)
-target_link_libraries(MyGame_Server PRIVATE game_server game_shared)
+add_executable(MVMT_Server src/launcher/main_dedicated.cpp ${MEMORY_AUDIT_HOOK})
+target_include_directories(MVMT_Server PRIVATE src)
+target_link_libraries(MVMT_Server PRIVATE game_server game_shared)
 
 
-# 5b. Networked Client (Client only, connects to a separate MyGame_Server)
-add_executable(MyGame_Client src/launcher/main_client.cpp ${MEMORY_AUDIT_HOOK})
-target_include_directories(MyGame_Client PRIVATE src)
-target_link_libraries(MyGame_Client PRIVATE game_client game_shared SDL2::SDL2main)
+# 5b. Networked Client (Client only, connects to a separate MVMT_Server)
+add_executable(MVMT_Client src/launcher/main_client.cpp ${MEMORY_AUDIT_HOOK})
+target_include_directories(MVMT_Client PRIVATE src)
+target_link_libraries(MVMT_Client PRIVATE game_client game_shared SDL2::SDL2main)
 
 # --- The test suite ----------------------------------------------------------
 #
@@ -1120,7 +1132,7 @@ target_link_libraries(MyGame_Client PRIVATE game_client game_shared SDL2::SDL2ma
 # the project root; map_migration_test loads `maps/test` by a path relative to
 # it, so WORKING_DIRECTORY is the load-bearing part. The call below is the one
 # registration: the target and the ctest entry come from the same name, so the
-# suite cannot forget a test, and nothing is globbed, so MyGame, def_gen,
+# suite cannot forget a test, and nothing is globbed, so MVMT, def_gen,
 # asset_pack and map_convert cannot be swept in.
 #
 #   add_game_test(<name>
@@ -1442,6 +1454,9 @@ add_game_test(stair_step_test)
 add_game_test(hull_sweep_test)
 add_game_test(projectile_step_test)
 add_game_test(flight_path_test)
+# The clocks a bubble and a fizzling weapon live on, as the server reaps and the client draws them.
+add_game_test(bubble_state_test)
+add_game_test(emancipated_weapon_test)
 
 # Remote interpolation: the render clock and the sample rings
 # (src/client/remote_interpolation.{hpp,cpp}). Compiles the module directly
@@ -1461,6 +1476,8 @@ add_game_test(remote_interpolation_test SOURCES src/client/remote_interpolation.
 # cases reach through game_shared for the generated protobuf, since what they
 # guard is the client's write and the server's read agreeing.
 add_game_test(subtick_test)
+# The shared input step: feed steps, assert the outcome and the state, no server (input_step_plan.md).
+add_game_test(input_step_test)
 
 # Move budget: the per-client movement rate bound (src/server/move_budget.hpp).
 # Header-only, so it links nothing. The cases are multi-tick SIMULATIONS rather

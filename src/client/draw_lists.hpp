@@ -41,7 +41,7 @@ struct lit_reveal_cone_t
   return spot;
 }
 
-struct pass_builder_t
+struct draw_lists_t
 {
   renderer::render_view_t                              view;
   std::vector<renderer::mesh_draw_t>                   meshes;
@@ -168,7 +168,7 @@ struct pass_builder_t
   }
 };
 
-inline void add_fog_volume(pass_builder_t& pass, const entities::Fog_Volume_Entity& fog)
+inline void add_fog_volume(draw_lists_t& pass, const entities::Fog_Volume_Entity& fog)
 {
   if (!fog.switch_state.value || fog.density <= 0.0f)
     return;

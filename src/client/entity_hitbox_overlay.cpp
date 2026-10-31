@@ -1,20 +1,31 @@
 #include "entities/generated/entities/damageable_entity_generated.hpp"
 #include "entities/generated/entities/remnant_entity_generated.hpp"
+#include "entities/generated/entities/shot_entity_generated.hpp"
 #include "entity_hitbox_overlay.hpp"
 
 #include "../shared/damageable.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/animation/hitbox_rig.hpp"
 #include "../shared/remnant.hpp"
+#include "../shared/weapons.hpp"
 #include "hitbox_debug_draw.hpp"
 
 namespace client
 {
 
-bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &draws)
+bool draw_entity_hitbox_overlay(const entities::Entity *entity, draw_lists_t &draws)
 {
   if (!entity)
     return false;
+
+  // The same sphere update_sweeping_projectiles sweeps the flight path with.
+  if (const entities::Shot_Entity* shot = entities::entity_as<entities::Shot_Entity>(entity))
+  {
+    draws.debug.wire_sphere(shot->position,
+                            shared::get_projectile_parameters(shot->projectile).shot.collision_radius,
+                            colors::green);
+    return true;
+  }
 
   // Each volume comes through the spelling the server's fire path tests, so the box you see is the box that gets hit.
   assets::posed_hitbox_t volume{};

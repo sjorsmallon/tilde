@@ -22,7 +22,7 @@ namespace
 
 // A wireframe preview of a mesh. False means the mesh did not resolve and the
 // caller should fall back to a box.
-bool push_wireframe_mesh(pass_builder_t &draws,
+bool push_wireframe_mesh(draw_lists_t &draws,
                          assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
                          const linalg::vec3f& position, const linalg::quatf& rotation,
                          const linalg::vec3f& scale, color_t color)
@@ -55,7 +55,7 @@ constexpr color_t ASSET_MESH_NO_COLLISION_BOX_COLOR{120, 120, 120};
 
 } // namespace
 
-void draw_mesh_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+void draw_mesh_wireframe(draw_lists_t &draws, const shared::mesh_geometry_t &mesh,
                          color_t color, float depth_bias, const linalg::vec3 &translation)
 {
   draw_mesh_edges(draws, mesh, color, depth_bias,
@@ -93,7 +93,7 @@ linalg::vec3 compute_geometry_placement_center(const shared::mesh_geometry_t &ge
 }
 
 void draw_geometry_ghost(const shared::mesh_geometry_t &geometry,
-                         pass_builder_t &draws, const linalg::vec3 &center)
+                         draw_lists_t &draws, const linalg::vec3 &center)
 {
   // An asset-sourced mesh previews as its own wireframe mesh when the asset
   // resolves — placing a prop by its bounding box tells you nothing about its
@@ -117,7 +117,7 @@ void draw_geometry_ghost(const shared::mesh_geometry_t &geometry,
 // Viewport drawing
 // ============================================================================
 
-void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, pass_builder_t &draws,
+void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, draw_lists_t &draws,
                              shared::entity_uid_t uid, bool solid,
                              Span<const std::string> materials,
                              const shared::lightmap_t &lightmap, bool collides,
@@ -148,7 +148,7 @@ void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, pass_builder_t
 // ============================================================================
 
 void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
-                                       pass_builder_t &draws, float time, bool is_outlined,
+                                       draw_lists_t &draws, float time, bool is_outlined,
                                        const linalg::vec3 &translation)
 {
   if (is_outlined)

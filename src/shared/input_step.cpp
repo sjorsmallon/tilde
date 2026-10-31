@@ -107,6 +107,99 @@ static uint64_t button_for_trigger(entities::Fire_Trigger trigger)
   return Button::Fire;
 }
 
+// One trigger. A pilot's hands are on the rocket: a press lets go of it and nothing fires. Else
+// the row on the button acts at the press, or at the held repeat, behind its own gates.
+static void apply_trigger_to_player(const movement_settings_t& settings, const subtick_step_t& step,
+                                    uint64_t pressed, subtick_time_t step_start,
+                                    subtick_time_t step_end, float tick_dt,
+                                    entities::Fire_Trigger trigger, player_input_state_t& state,
+                                    input_step_outcome_t& outcome)
+{
+  const uint64_t button               = button_for_trigger(trigger);
+  const bool     pressed_in_this_step = (pressed & button) != 0;
+  const bool     down                 = (step.buttons & button) != 0;
+
+  if (state.move.movement.active_override == entities::Movement_Override::Pilot)
+  {
+    if (pressed_in_this_step && try_end_pilot_flight(state.move.movement))
+      outcome.pilot_released = true;
+    return;
+  }
+
+  inventory_state_t&         inventory = state.inventory;
+  inventory_slot_state_t&    held      = inventory.slots[inventory.active_slot];
+  const weapon_definition_t* held_row  = try_find_weapon_row(held);
+  if (held_row == nullptr)
+    return;
+
+  const weapon_fire_t& fire = get_weapon_fire_for_button(*held_row, trigger);
+
+  std::optional<subtick_time_t> fire_time;
+  if (pressed_in_this_step)
+    fire_time = step_start;
+  else if (down)
+    fire_time = try_find_held_fire_time(fire, held.next_fire_time, inventory.deploy_complete_time,
+                                        step_start, step_end);
+  if (!fire_time)
+    return;
+
+  switch (fire.resolution)
+  {
+  case entities::Fire_Resolution::None:
+  case entities::Fire_Resolution::Zoom:
+    break;
+
+  case entities::Fire_Resolution::Lens_View:
+    state.toggles.held_lens_on = !state.toggles.held_lens_on;
+    break;
+
+  case entities::Fire_Resolution::Reveal_Light:
+  case entities::Fire_Resolution::Erase_Light:
+    state.toggles.reveal_light_on = !state.toggles.reveal_light_on;
+    break;
+
+  case entities::Fire_Resolution::Reveal_Light_Overhead:
+    state.toggles.reveal_light_overhead = !state.toggles.reveal_light_overhead;
+    break;
+
+  // No clocks and no ammo: the world half is the whole of these.
+  case entities::Fire_Resolution::Canopy:
+  case entities::Fire_Resolution::Recall:
+    outcome.fire_due[trigger] = fire_time;
+    break;
+
+  case entities::Fire_Resolution::Hitscan:
+  case entities::Fire_Resolution::Projectile:
+  case entities::Fire_Resolution::Place:
+  {
+    const shot_refusal_t refusal =
+        charge_shot_clocks(inventory, held, *held_row, *fire_time, tick_dt, outcome);
+    if (refusal == shot_refusal_t::None)
+      outcome.fire_due[trigger] = fire_time;
+    else
+      outcome.refused[trigger] = refusal;
+    break;
+  }
+
+  case entities::Fire_Resolution::Self_Impulse:
+  {
+    const vec3f direction = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
+    if (try_apply_self_impulse(settings, *held_row, trigger, direction, state.move.movement,
+                               state.move.velocity))
+      outcome.fire_due[trigger] = fire_time;
+    break;
+  }
+
+  case entities::Fire_Resolution::Pilot:
+  {
+    const vec3f eye = shared::player_eye_position(state.move.feet);
+    if (try_begin_pilot_flight(*held_row, trigger, eye, state.move.movement))
+      outcome.fire_due[trigger] = fire_time;
+    break;
+  }
+  }
+}
+
 input_step_outcome_t apply_input_step_to_player(
     const movement_settings_t& settings, const Bounding_Volume_Hierarchy& bvh,
     const predicted_world_t& world, const input_restrictions_t& restrictions,
@@ -124,10 +217,9 @@ input_step_outcome_t apply_input_step_to_player(
       selected && switch_active_slot(inventory, *selected, step_start, tick_dt))
     outcome.switched_to = *selected;
 
+  // 2. The reload, on the slot in hand and not already reloading.
   inventory_slot_state_t&    held     = inventory.slots[inventory.active_slot];
   const weapon_definition_t* held_row = try_find_weapon_row(held);
-
-  // 2. The reload, on the slot in hand and not already reloading.
   if ((pressed & Button::Reload) != 0 && held_row != nullptr && inventory.reload_complete_time == 0 &&
       reload_may_start(*held_row, held.magazine))
   {
@@ -151,96 +243,14 @@ input_step_outcome_t apply_input_step_to_player(
                              debug_faces);
   }
 
-  // 4. The triggers, Primary then Secondary.
+  // 4. The triggers, Primary then Secondary. 5. The toggles, flipped by a press under the same gates.
   const bool may_fire =
       !restrictions.is_dead && !restrictions.world_is_frozen && !restrictions.drives_merged_body;
-
-  for (const entities::Fire_Trigger trigger :
-       {entities::Fire_Trigger::Primary, entities::Fire_Trigger::Secondary})
-  {
-    if (!may_fire)
-      break;
-
-    const uint64_t button               = button_for_trigger(trigger);
-    const bool     pressed_in_this_step = (pressed & button) != 0;
-    const bool     down                 = (step.buttons & button) != 0;
-
-    // A pilot's hands are on the rocket: a press lets go of it and nothing fires.
-    if (state.move.movement.active_override == entities::Movement_Override::Pilot)
-    {
-      if (pressed_in_this_step && try_end_pilot_flight(state.move.movement))
-        outcome.pilot_released = true;
-      continue;
-    }
-
-    if (held_row == nullptr)
-      continue;
-
-    const weapon_fire_t& fire = get_weapon_fire_for_button(*held_row, trigger);
-
-    std::optional<subtick_time_t> fire_time;
-    if (pressed_in_this_step)
-      fire_time = step_start;
-    else if (down)
-      fire_time = try_find_held_fire_time(fire, held.next_fire_time, inventory.deploy_complete_time,
-                                          step_start, step_end);
-    if (!fire_time)
-      continue;
-
-    const vec3f direction = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
-    const vec3f eye       = shared::player_eye_position(state.move.feet);
-
-    switch (fire.resolution)
-    {
-    case entities::Fire_Resolution::None:
-    case entities::Fire_Resolution::Zoom:
-      break;
-
-    // 5. The toggles: the press flips the flag, under the gates a shot's press has.
-    case entities::Fire_Resolution::Lens_View:
-      state.toggles.held_lens_on = !state.toggles.held_lens_on;
-      break;
-
-    case entities::Fire_Resolution::Reveal_Light:
-    case entities::Fire_Resolution::Erase_Light:
-      state.toggles.reveal_light_on = !state.toggles.reveal_light_on;
-      break;
-
-    case entities::Fire_Resolution::Reveal_Light_Overhead:
-      state.toggles.reveal_light_overhead = !state.toggles.reveal_light_overhead;
-      break;
-
-    // No clocks and no ammo: the world half is the whole of these.
-    case entities::Fire_Resolution::Canopy:
-    case entities::Fire_Resolution::Recall:
-      outcome.fire_due[trigger] = fire_time;
-      break;
-
-    case entities::Fire_Resolution::Hitscan:
-    case entities::Fire_Resolution::Projectile:
-    case entities::Fire_Resolution::Place:
-    {
-      const shot_refusal_t refusal =
-          charge_shot_clocks(inventory, held, *held_row, *fire_time, tick_dt, outcome);
-      if (refusal == shot_refusal_t::None)
-        outcome.fire_due[trigger] = fire_time;
-      else
-        outcome.refused[trigger] = refusal;
-      break;
-    }
-
-    case entities::Fire_Resolution::Self_Impulse:
-      if (try_apply_self_impulse(settings, *held_row, trigger, direction, state.move.movement,
-                                 state.move.velocity))
-        outcome.fire_due[trigger] = fire_time;
-      break;
-
-    case entities::Fire_Resolution::Pilot:
-      if (try_begin_pilot_flight(*held_row, trigger, eye, state.move.movement))
-        outcome.fire_due[trigger] = fire_time;
-      break;
-    }
-  }
+  if (may_fire)
+    for (const entities::Fire_Trigger trigger :
+         {entities::Fire_Trigger::Primary, entities::Fire_Trigger::Secondary})
+      apply_trigger_to_player(settings, step, pressed, step_start, step_end, tick_dt, trigger, state,
+                              outcome);
 
   return outcome;
 }

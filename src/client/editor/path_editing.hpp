@@ -4,7 +4,7 @@
 
 #include "../../shared/entity_system.hpp"
 #include "../../shared/collision/mover_path.hpp"
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "editor_types.hpp"
 #include "transaction_system.hpp"
 
@@ -34,6 +34,6 @@ void relink_paths_around_removed_nodes(shared::map_t& map,
                                        Span<const shared::entity_uid_t> removed,
                                        transaction_t& transaction);
 
-void draw_path_links(const shared::map_t& map, const editor_context_t& ctx, pass_builder_t& draws);
+void draw_path_links(const shared::map_t& map, const editor_context_t& ctx, draw_lists_t& draws);
 
 } // namespace client

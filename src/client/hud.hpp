@@ -73,7 +73,7 @@ struct crosshair_settings_t
   color_t color      = colors::green;
 };
 
-// Call from a state's build_frame().
+// Call from a state's draw().
 void draw_crosshair(renderer::ui_draw_list_t &list, linalg::vec2 screen, float display_scale,
                     const crosshair_settings_t &settings);
 

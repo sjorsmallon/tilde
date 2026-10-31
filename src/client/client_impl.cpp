@@ -614,7 +614,7 @@ bool Tick()
 
   // Render. The two-phase shape is ImGui's doing and nothing else's: the UI is
   // built imperatively between the calls. Everything the 3D scene needs is a
-  // value collected in build_frame, and render_frame runs EXACTLY ONCE.
+  // value collected in draw, and render_frame runs EXACTLY ONCE.
   {
     // Where a GPU stall shows up: this acquires a swapchain image and waits on
     // the in-flight fence, and it is what rebuilds the swapchain on a resize.
@@ -635,8 +635,8 @@ bool Tick()
   frame_passes.clear();
   frame_ui.clear();
   {
-    FRAME_ZONE("state_manager::build_frame");
-    state_manager::build_frame(dt, frame_passes, frame_ui);
+    FRAME_ZONE("state_manager::draw");
+    state_manager::draw(dt, frame_passes, frame_ui);
   }
 
   // Appended after the state's own UI so a banner draws over it, and appended

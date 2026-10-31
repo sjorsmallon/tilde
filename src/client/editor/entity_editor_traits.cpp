@@ -32,7 +32,7 @@ constexpr float SPAWN_WEDGE_LENGTH       = 48.f;
 constexpr float SPAWN_WEDGE_HALF_WIDTH   = 14.f;
 constexpr float SPAWN_WEDGE_GROUND_LIFT  = 1.f;
 
-void draw_player_spawn_shape(pass_builder_t& draws, const linalg::vec3& position,
+void draw_player_spawn_shape(draw_lists_t& draws, const linalg::vec3& position,
                              const linalg::quatf& orientation, color_t color)
 {
   const linalg::vec3 hull{shared::player_half_width,
@@ -61,7 +61,7 @@ void draw_player_spawn_shape(pass_builder_t& draws, const linalg::vec3& position
   draws.debug.filled_polygon(wedge, with_alpha(color, 150));
 }
 
-void draw_spectate_camera_shape(pass_builder_t& draws, const linalg::vec3& position,
+void draw_spectate_camera_shape(draw_lists_t& draws, const linalg::vec3& position,
                                 const linalg::quatf& orientation, color_t color)
 {
   // shapes.hpp owns the frustum, because compute_entity_bounds picks with the
@@ -81,7 +81,7 @@ void draw_spectate_camera_shape(pass_builder_t& draws, const linalg::vec3& posit
   draws.debug.line(frustum.far_corners[1], frustum.up_tick, color);
 }
 
-void draw_particle_emitter_shape(pass_builder_t& draws,
+void draw_particle_emitter_shape(draw_lists_t& draws,
                                  const linalg::vec3& position, color_t color)
 {
   constexpr float r = 16.f;
@@ -98,7 +98,7 @@ constexpr int   JUMP_PAD_ARC_SEGMENTS  = 48;
 
 // The launch as an arrow whose length is the speed over a tenth of a second: a
 // pad is aimed with the rotate gizmo, so the arrow is the thing being edited.
-void draw_jump_pad_shape(pass_builder_t& draws, const entities::Jump_Pad_Entity* pad,
+void draw_jump_pad_shape(draw_lists_t& draws, const entities::Jump_Pad_Entity* pad,
                          const linalg::vec3& position, color_t color)
 {
   draws.debug.box(position + pad->volume.position, pad->volume.half_extents, color);
@@ -108,7 +108,7 @@ void draw_jump_pad_shape(pass_builder_t& draws, const entities::Jump_Pad_Entity*
 
 // Where a launched player lands: the ballistic arc under `gravity`, cut where
 // it drops below the pad.
-void draw_jump_pad_arc(pass_builder_t& draws, const entities::Jump_Pad_Entity* pad,
+void draw_jump_pad_arc(draw_lists_t& draws, const entities::Jump_Pad_Entity* pad,
                        const linalg::vec3& position, color_t color, float gravity)
 {
   const linalg::vec3 velocity = linalg::forward(pad->orientation) * pad->launch_speed;
@@ -136,7 +136,7 @@ constexpr uint8_t LIGHT_VOLUME_ALPHA    = 110;
 // thing casting the penumbra, and it is usually small enough beside `range` that a
 // dimmed one would not be visible at all. Nothing to draw at zero, which is a
 // punctual light and has no size to show.
-void draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
+void draw_source_sphere(draw_lists_t& draws, const entities::Light& light,
                         const linalg::vec3& position, color_t color)
 {
   if (light.source_radius > 0.f)
@@ -144,7 +144,7 @@ void draw_source_sphere(pass_builder_t& draws, const entities::Light& light,
 }
 
 
-void draw_light_direction_stub(pass_builder_t& draws, const linalg::quatf& orientation,
+void draw_light_direction_stub(draw_lists_t& draws, const linalg::quatf& orientation,
                                const linalg::vec3& position, color_t color)
 {
   const linalg::basis_t basis = linalg::basis_from(orientation);
@@ -152,27 +152,27 @@ void draw_light_direction_stub(pass_builder_t& draws, const linalg::quatf& orien
 }
 
 
-void draw_point_light_shape(pass_builder_t& draws, const entities::Point_Light_Entity* light,
+void draw_point_light_shape(draw_lists_t& draws, const entities::Point_Light_Entity* light,
                             const linalg::vec3& position, color_t color)
 {
   draw_source_sphere(draws, light->light, position, color);
 }
 
-void draw_point_light_reach(pass_builder_t& draws, const entities::Point_Light_Entity* light,
+void draw_point_light_reach(draw_lists_t& draws, const entities::Point_Light_Entity* light,
                             const linalg::vec3& position, color_t color)
 {
   if (light->range > 0.f)
     draws.debug.wire_sphere(position, light->range, with_alpha(color, LIGHT_VOLUME_ALPHA));
 }
 
-void draw_spot_light_shape(pass_builder_t& draws, const entities::Spot_Light_Entity* light,
+void draw_spot_light_shape(draw_lists_t& draws, const entities::Spot_Light_Entity* light,
                            const linalg::vec3& position, color_t color)
 {
   draw_source_sphere(draws, light->light, position, color);
   draw_light_direction_stub(draws, light->orientation, position, color);
 }
 
-void draw_spot_light_reach(pass_builder_t& draws, const entities::Spot_Light_Entity* light,
+void draw_spot_light_reach(draw_lists_t& draws, const entities::Spot_Light_Entity* light,
                            const linalg::vec3& position, color_t color)
 {
   if (light->range <= 0.f)
@@ -208,7 +208,7 @@ void draw_spot_light_reach(pass_builder_t& draws, const entities::Spot_Light_Ent
   draws.debug.line(position, cone_end, dim);
 }
 
-void draw_reveal_light_reach(pass_builder_t& draws, const entities::Reveal_Light_Entity* light,
+void draw_reveal_light_reach(draw_lists_t& draws, const entities::Reveal_Light_Entity* light,
                              const linalg::vec3& position, color_t color)
 {
   if (light->range <= 0.f)
@@ -236,14 +236,14 @@ void draw_reveal_light_reach(pass_builder_t& draws, const entities::Reveal_Light
 // reads. So the gizmo says the one thing that IS true of it: parallel rays, all
 // the same length, pointing the way the rotate gizmo put them. The middle ray
 // is always on, since direction is all a directional light HAS.
-void draw_directional_light_shape(pass_builder_t& draws,
+void draw_directional_light_shape(draw_lists_t& draws,
                                   const entities::Directional_Light_Entity* light,
                                   const linalg::vec3& position, color_t color)
 {
   draw_light_direction_stub(draws, light->orientation, position, color);
 }
 
-void draw_directional_light_reach(pass_builder_t& draws,
+void draw_directional_light_reach(draw_lists_t& draws,
                                   const entities::Directional_Light_Entity* light,
                                   const linalg::vec3& position, color_t color)
 {
@@ -264,7 +264,7 @@ void draw_directional_light_reach(pass_builder_t& draws,
 }
 
 
-bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
+bool push_mesh(draw_lists_t& draws, assets::asset_handle_t<assets::mesh_asset_t> mesh_asset,
                const linalg::vec3f& position, const linalg::quatf& rotation,
                const linalg::vec3f& scale, color_t tint, renderer::fill_mode_t fill,
                assets::material_asset material = assets::material_asset::Missing)
@@ -287,7 +287,7 @@ bool push_mesh(pass_builder_t& draws, assets::asset_handle_t<assets::mesh_asset_
   return true;
 }
 
-using draw_function_t = void (*)(const entities::Entity*, pass_builder_t&,
+using draw_function_t = void (*)(const entities::Entity*, draw_lists_t&,
                                  const linalg::vec3&, color_t,
                                  const entity_draw_settings_t&);
 
@@ -320,21 +320,21 @@ struct editor_data_per_entity_type_t
 
 // ---- stand-ins ----------------------------------------------------------
 
-void player_spawn_stand_in(const entities::Entity* e, pass_builder_t& draws,
+void player_spawn_stand_in(const entities::Entity* e, draw_lists_t& draws,
                            const linalg::vec3& position, color_t color,
                            const entity_draw_settings_t&)
 {
   draw_player_spawn_shape(draws, position, e->orientation, color);
 }
 
-void spectate_camera_stand_in(const entities::Entity* e, pass_builder_t& draws,
+void spectate_camera_stand_in(const entities::Entity* e, draw_lists_t& draws,
                               const linalg::vec3& position, color_t color,
                               const entity_draw_settings_t&)
 {
   draw_spectate_camera_shape(draws, position, e->orientation, color);
 }
 
-void particle_emitter_stand_in(const entities::Entity*, pass_builder_t& draws,
+void particle_emitter_stand_in(const entities::Entity*, draw_lists_t& draws,
                                const linalg::vec3& position, color_t color,
                                const entity_draw_settings_t&)
 {
@@ -343,7 +343,7 @@ void particle_emitter_stand_in(const entities::Entity*, pass_builder_t& draws,
 
 // Player_Entity is runtime-spawned and has no placeable representation of its
 // own; the marker is the pyramid, by id.
-void pyramid_marker_stand_in(const entities::Entity* e, pass_builder_t& draws,
+void pyramid_marker_stand_in(const entities::Entity* e, draw_lists_t& draws,
                              const linalg::vec3& position, color_t color,
                              const entity_draw_settings_t&)
 {
@@ -355,7 +355,7 @@ void pyramid_marker_stand_in(const entities::Entity* e, pass_builder_t& draws,
 
 // Every Box_Volume owner draws its box the same way: a trigger, a reflection
 // volume, a damageable's hitbox.
-void box_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
+void box_volume_diagram(const entities::Entity* e, draw_lists_t& draws,
                         const linalg::vec3& position, color_t color,
                         const entity_draw_settings_t&)
 {
@@ -369,7 +369,7 @@ void box_volume_diagram(const entities::Entity* e, pass_builder_t& draws,
   draws.debug.box(position + volume->position, volume->half_extents, color);
 }
 
-void lens_diagram(const entities::Entity* e, pass_builder_t& draws, const linalg::vec3& position,
+void lens_diagram(const entities::Entity* e, draw_lists_t& draws, const linalg::vec3& position,
                   color_t color, const entity_draw_settings_t&)
 {
   shared::lens_t lens = shared::compute_lens_box(*static_cast<const entities::Lens_Entity*>(e));
@@ -377,14 +377,14 @@ void lens_diagram(const entities::Entity* e, pass_builder_t& draws, const linalg
   draws.debug.oriented_box(lens.box, color);
 }
 
-void jump_pad_diagram(const entities::Entity* e, pass_builder_t& draws,
+void jump_pad_diagram(const entities::Entity* e, draw_lists_t& draws,
                       const linalg::vec3& position, color_t color,
                       const entity_draw_settings_t&)
 {
   draw_jump_pad_shape(draws, static_cast<const entities::Jump_Pad_Entity*>(e), position, color);
 }
 
-void jump_pad_reach(const entities::Entity* e, pass_builder_t& draws,
+void jump_pad_reach(const entities::Entity* e, draw_lists_t& draws,
                     const linalg::vec3& position, color_t color,
                     const entity_draw_settings_t& settings)
 {
@@ -392,7 +392,7 @@ void jump_pad_reach(const entities::Entity* e, pass_builder_t& draws,
                     settings.gravity);
 }
 
-void aim_arrow_diagram(const entities::Entity* e, pass_builder_t& draws,
+void aim_arrow_diagram(const entities::Entity* e, draw_lists_t& draws,
                       const linalg::vec3& position, color_t color,
                       const entity_draw_settings_t&)
 {
@@ -400,7 +400,7 @@ void aim_arrow_diagram(const entities::Entity* e, pass_builder_t& draws,
   draws.debug.arrow(position, position + linalg::forward(e->orientation) * AIM_ARROW_LENGTH, color);
 }
 
-void point_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+void point_light_diagram(const entities::Entity* e, draw_lists_t& draws,
                          const linalg::vec3& position, color_t color,
                          const entity_draw_settings_t&)
 {
@@ -408,7 +408,7 @@ void point_light_diagram(const entities::Entity* e, pass_builder_t& draws,
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
 }
 
-void spot_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+void spot_light_diagram(const entities::Entity* e, draw_lists_t& draws,
                         const linalg::vec3& position, color_t color,
                         const entity_draw_settings_t&)
 {
@@ -416,7 +416,7 @@ void spot_light_diagram(const entities::Entity* e, pass_builder_t& draws,
       draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
 }
 
-void directional_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+void directional_light_diagram(const entities::Entity* e, draw_lists_t& draws,
                                const linalg::vec3& position, color_t color,
                                const entity_draw_settings_t&)
 {
@@ -424,14 +424,14 @@ void directional_light_diagram(const entities::Entity* e, pass_builder_t& draws,
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
 }
 
-void reveal_light_diagram(const entities::Entity* e, pass_builder_t& draws,
+void reveal_light_diagram(const entities::Entity* e, draw_lists_t& draws,
                           const linalg::vec3& position, color_t color,
                           const entity_draw_settings_t&)
 {
   draw_light_direction_stub(draws, e->orientation, position, color);
 }
 
-void reveal_light_reach(const entities::Entity* e, pass_builder_t& draws,
+void reveal_light_reach(const entities::Entity* e, draw_lists_t& draws,
                         const linalg::vec3& position, color_t color,
                         const entity_draw_settings_t&)
 {
@@ -439,7 +439,7 @@ void reveal_light_reach(const entities::Entity* e, pass_builder_t& draws,
       draws, static_cast<const entities::Reveal_Light_Entity*>(e), position, color);
 }
 
-void point_light_reach(const entities::Entity* e, pass_builder_t& draws,
+void point_light_reach(const entities::Entity* e, draw_lists_t& draws,
                        const linalg::vec3& position, color_t color,
                        const entity_draw_settings_t&)
 {
@@ -447,7 +447,7 @@ void point_light_reach(const entities::Entity* e, pass_builder_t& draws,
       draws, static_cast<const entities::Point_Light_Entity*>(e), position, color);
 }
 
-void spot_light_reach(const entities::Entity* e, pass_builder_t& draws,
+void spot_light_reach(const entities::Entity* e, draw_lists_t& draws,
                       const linalg::vec3& position, color_t color,
                       const entity_draw_settings_t&)
 {
@@ -455,7 +455,7 @@ void spot_light_reach(const entities::Entity* e, pass_builder_t& draws,
       draws, static_cast<const entities::Spot_Light_Entity*>(e), position, color);
 }
 
-void directional_light_reach(const entities::Entity* e, pass_builder_t& draws,
+void directional_light_reach(const entities::Entity* e, draw_lists_t& draws,
                              const linalg::vec3& position, color_t color,
                              const entity_draw_settings_t&)
 {
@@ -679,7 +679,7 @@ std::vector<Plane> get_editor_collision_planes(const entities::Entity* e)
 namespace
 {
 
-bool try_draw_render_component(const entities::Entity* e, pass_builder_t& draws,
+bool try_draw_render_component(const entities::Entity* e, draw_lists_t& draws,
                                const linalg::vec3& position, color_t color,
                                renderer::fill_mode_t fill)
 {
@@ -698,7 +698,7 @@ bool try_draw_render_component(const entities::Entity* e, pass_builder_t& draws,
 
 // The shape as a wire box: the same bounds the pick uses, so what is drawn for
 // a bare entity is exactly what a click hits.
-void draw_shape_wire_box(const entities::Entity* e, pass_builder_t& draws,
+void draw_shape_wire_box(const entities::Entity* e, draw_lists_t& draws,
                          const linalg::vec3& origin, color_t color, float depth_bias)
 {
   const shared::aabb_bounds_t bounds = bounds_of_shape(editor_shape_at(e, origin));
@@ -709,7 +709,7 @@ void draw_shape_wire_box(const entities::Entity* e, pass_builder_t& draws,
 // The art ladder. `box_when_bare` is false in the editor pass only for a type
 // the icon pass or a diagram already shows.
 void draw_art(const entities::Entity* e, const editor_data_per_entity_type_t& row,
-              pass_builder_t& draws, const linalg::vec3& origin, color_t color,
+              draw_lists_t& draws, const linalg::vec3& origin, color_t color,
               renderer::fill_mode_t fill, bool box_when_bare,
               const entity_draw_settings_t& settings, float depth_bias = 0.f)
 {
@@ -731,7 +731,7 @@ entity_icon_t get_entity_icon(const entities::Entity* e)
   return {.texture = assets::texture_id(row.icon), .fallback_color = row.color};
 }
 
-void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
+void draw_entity_ghost(const entities::Entity* e, draw_lists_t& draws,
                        const linalg::vec3& origin, const entity_draw_settings_t& settings)
 {
   const editor_data_per_entity_type_t& row = editor_data_for(e);
@@ -745,7 +745,7 @@ void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
     row.draw_reach(e, draws, origin, row.color, settings);
 }
 
-void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws,
+void draw_entity_in_editor(const entities::Entity* e, draw_lists_t& draws,
                            const entity_draw_settings_t& settings)
 {
   const editor_data_per_entity_type_t& row = editor_data_for(e);
@@ -776,7 +776,7 @@ color_t compute_selection_pulse_color(float time)
                  lerp_byte(from.b, to.b, t), 255};
 }
 
-void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, float time,
+void draw_selection_highlight(const entities::Entity* e, draw_lists_t& draws, float time,
                               float, const entity_draw_settings_t& settings,
                               bool art_is_outlined)
 {

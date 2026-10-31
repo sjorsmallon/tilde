@@ -59,7 +59,7 @@ public:
 
   // overlay (not ui).
   virtual void on_draw_overlay(editor_context_t& ctx,
-                               pass_builder_t &draws) = 0;
+                               draw_lists_t &draws) = 0;
 
   // UI (2D)
   virtual void on_draw_ui(editor_context_t& ctx) {}

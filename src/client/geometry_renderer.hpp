@@ -4,7 +4,7 @@
 
 #include "../shared/entity_uid.hpp"
 #include "../shared/map/map_geometry.hpp"
-#include "frame_builder.hpp"
+#include "draw_lists.hpp"
 
 #include <string>
 
@@ -59,7 +59,7 @@ enum class generated_mesh_check_t
   Trusted_Since_Load,
 };
 
-void draw_geometry(pass_builder_t &draws, const shared::mesh_geometry_t &geometry,
+void draw_geometry(draw_lists_t &draws, const shared::mesh_geometry_t &geometry,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap,
                    const linalg::mat4f* moved_by = nullptr,
@@ -71,12 +71,12 @@ void draw_geometry(pass_builder_t &draws, const shared::mesh_geometry_t &geometr
 
 // Every edge of a mesh once as a line, through its pose and then `world`: a ring edge whose
 // reverse a later vertex walks is skipped, an edge a skin leaves unpaired is kept.
-void draw_mesh_edges(pass_builder_t &draws, const shared::mesh_geometry_t &mesh, color_t color,
+void draw_mesh_edges(draw_lists_t &draws, const shared::mesh_geometry_t &mesh, color_t color,
                      float depth_bias, const linalg::mat4f &world);
 
 // The wireframe of one piece of map geometry where it is drawn: its edges for an inline mesh, the
 // render mesh as lines for an asset-sourced one, which stores no edges of its own.
-void draw_geometry_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+void draw_geometry_wireframe(draw_lists_t &draws, const shared::mesh_geometry_t &mesh,
                              color_t color, float depth_bias, const linalg::mat4f* moved_by);
 
 // The one compare a frozen list gets: every entry that draws from a generated

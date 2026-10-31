@@ -107,7 +107,7 @@ void Pathfinding_Test_Tool::on_key_down(editor_context_t& ctx,
 
 
 void Pathfinding_Test_Tool::on_draw_overlay(editor_context_t& ctx,
-                                           pass_builder_t& draw_passes)
+                                           draw_lists_t& draw_passes)
 {
   const shared::navmesh_t& navmesh = ctx.map->navmesh;
   if (!navmesh.valid()) return;

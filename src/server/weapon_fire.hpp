@@ -26,7 +26,7 @@ void mark_shot_fired(const server_context_t& context, entities::Player_Entity& p
 // what it arrived at as a pending_contact_t for update_contacts.
 void resolve_player_shot(server_context_t& context, int32_t client_slot,
                          const game::C2S_ClientInput& input, const shared::predicted_world_t& world,
-                         entities::Player_Entity* player, float yaw, float pitch,
+                         entities::Player_Entity& player, float yaw, float pitch,
                          shared::subtick_time_t fire_time, entities::Fire_Trigger trigger);
 
 } // namespace server

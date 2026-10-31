@@ -4,6 +4,7 @@
 #include "entities/generated/entities_tables_generated.hpp"
 
 #include "../../shared/collision/fixed_arc_flight.hpp"
+#include "../../shared/movement/bubble.hpp"
 #include "../entity_lifecycle.hpp"
 #include "../server_api.hpp"
 #include "fixed_arc_flight_launch.hpp"
@@ -35,7 +36,9 @@ linalg::vec3f compute_bubble_peel_direction(const server_context_t& context, con
       context.world.session.entity_system.get<entities::Player_Entity>(popped_by);
   if (popper == nullptr)
     return hashed_unit_vector(bubble.entity_id);
-  const linalg::vec3f offset = popper->position - bubble.position;
+  const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = context.cvars->sv_tickrate,
+                                                   .gravity     = context.cvars->g_gravity};
+  const linalg::vec3f offset = popper->position - shared::bubble_position_at_tick(bubble, context.tick_number, flight);
   if (linalg::length(offset) < 1e-3f)
     return {0.0f, 1.0f, 0.0f};
   return linalg::normalize(offset);
@@ -59,19 +62,14 @@ void update_bubbles(server_context_t& context, const shared::predicted_world_sto
                               {.flight_seconds = bubble.flight_seconds, .clearance = bubble.radius},
                               flight, world, bubble.flight);
 
-    bubble.position = shared::flight_position_at(bubble.projectile, bubble.flight, bubble.position,
-                                                 context.tick_number, flight);
-
     if (bubble.popped_tick != 0)
     {
-      const uint32_t linger_ticks = shared::ticks_from_seconds(bubble.linger_seconds, tickrate_hz);
-      if (context.tick_number >= bubble.popped_tick + linger_ticks)
+      if (shared::bubble_has_expired_at_tick(bubble, context.tick_number, tickrate_hz))
         expired.push_back(bubble.entity_id);
       continue;
     }
 
-    const uint32_t rest_ticks = shared::ticks_from_seconds(bubble.rest_seconds, tickrate_hz);
-    if (context.tick_number >= bubble.flight.launch_tick + bubble.flight.flight_ticks + rest_ticks)
+    if (context.tick_number >= shared::bubble_timed_pop_tick(bubble, tickrate_hz))
       pop_bubble(context, bubble.entity_id, shared::null_entity_uid);
   }
 

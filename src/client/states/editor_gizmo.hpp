@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "../shared/aabb.hpp"
 #include "map/editor_grid.hpp"
 #include "linalg.hpp"
@@ -113,7 +113,7 @@ public:
 
   void end_drag();
 
-  void draw(pass_builder_t &draws) const;
+  void draw(draw_lists_t &draws) const;
 
 private:
   bool                        targeted = false;

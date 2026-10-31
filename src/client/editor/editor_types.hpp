@@ -6,7 +6,7 @@
 #include "../../shared/linalg.hpp"
 #include "../../shared/map/map.hpp" // For map_t
 #include "../camera.hpp"        // For camera_t
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "../input.hpp"
 
 #include <cmath>

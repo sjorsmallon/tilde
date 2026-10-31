@@ -72,7 +72,7 @@ void Particle_Editor_Tool::on_mouse_up(editor_context_t&, const input::mouse_eve
 void Particle_Editor_Tool::on_key_down(editor_context_t&, const key_event_t&) {}
 
 void Particle_Editor_Tool::on_draw_overlay(editor_context_t& ctx,
-                                          pass_builder_t& draw_passes)
+                                          draw_lists_t& draw_passes)
 {
   // Highlight all particle emitters with a circle, selected one brighter
   for (auto [uid, emitter] : ctx.map->entities_of_type<entities::Particle_Emitter_Entity>())

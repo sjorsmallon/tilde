@@ -23,7 +23,7 @@ public:
   void on_mouse_up(editor_context_t& ctx, const input::mouse_event_t& e) override;
   void on_key_down(editor_context_t& ctx, const key_event_t& e) override;
 
-  void on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws) override;
+  void on_draw_overlay(editor_context_t& ctx, draw_lists_t& draws) override;
   void on_draw_inspector(editor_context_t& ctx) override;
 
   std::optional<view_focus_t> view_focus() const override;
@@ -86,7 +86,7 @@ private:
 
   [[nodiscard]] float chain_cycle_seconds(const std::vector<shared::entity_uid_t>& walk,
                                           uint32_t tickrate_hz) const;
-  void draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws);
+  void draw_mover_preview(editor_context_t& ctx, draw_lists_t& draws);
 };
 
 } // namespace client

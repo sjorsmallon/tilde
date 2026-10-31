@@ -398,7 +398,7 @@ void Shader_Editor_State::record_preview_draw(VkCommandBuffer cmd, void *user)
   vkCmdDrawIndexed(cmd, self.preview_mesh.index_count, 1, 0, 0, 0);
 }
 
-void Shader_Editor_State::build_frame(float delta_seconds,
+void Shader_Editor_State::draw(float delta_seconds,
                                       std::vector<renderer::view_pass_t> &passes,
                                       renderer::ui_draw_list_t &ui)
 {

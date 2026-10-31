@@ -83,7 +83,7 @@ const blob_shadow_resources_t& blob_shadow_resources()
 
 } // namespace
 
-void draw_blob_shadow(pass_builder_t& scene, const Bounding_Volume_Hierarchy& bvh,
+void draw_blob_shadow(draw_lists_t& scene, const Bounding_Volume_Hierarchy& bvh,
                       Span<const uint8_t> disabled_geometry, const vec3f& feet,
                       const blob_shadow_settings_t& settings)
 {

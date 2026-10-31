@@ -7,7 +7,7 @@
 # Homebrew paths), and the Vulkan loader plus MoltenVK ride along with an ICD
 # manifest pointed at by VK_DRIVER_FILES -- the recipient installs nothing.
 #
-# MyGame chdirs to three levels above its own path and spells every data path
+# MVMT chdirs to three levels above its own path and spells every data path
 # from there, so the exe sits two directories deep (bin/macos/) and maps/ and
 # assets.pkg sit at the staged root.
 set -eu
@@ -22,14 +22,14 @@ cmake -S "$project_root" -B "$build_directory" \
     -DCMAKE_BUILD_TYPE=Release \
     -DTILDE_ASSET_SOURCE=pkg > /dev/null
 cmake --build "$build_directory" -j"$(sysctl -n hw.ncpu)" \
-    --target MyGame MyGame_Server asset_package
+    --target MVMT MVMT_Server asset_package
 
 echo "==> staging $stage_directory"
 rm -rf "$stage_directory"
 mkdir -p "$binary_directory" "$stage_directory/maps"
 
-cp "$build_directory/bin/MyGame" \
-   "$build_directory/bin/MyGame_Server" \
+cp "$build_directory/bin/MVMT" \
+   "$build_directory/bin/MVMT_Server" \
    "$build_directory/bin/libgame_client.dylib" \
    "$build_directory/bin/libgame_server.dylib" \
    "$binary_directory/"
@@ -47,7 +47,7 @@ cp -R "$project_root/prefabs" "$stage_directory/prefabs"
 echo "==> bundling the Vulkan loader and MoltenVK"
 # Taken from what the binary actually links against rather than a guessed
 # Homebrew prefix, so this follows the machine that built it.
-loader_link=$(otool -L "$binary_directory/MyGame" | awk '/libvulkan/ {print $1; exit}')
+loader_link=$(otool -L "$binary_directory/MVMT" | awk '/libvulkan/ {print $1; exit}')
 loader_path=$(cd -- "$(dirname -- "$loader_link")" && pwd)/$(basename -- "$loader_link")
 while [ -L "$loader_path" ]; do
     loader_path=$(cd -- "$(dirname -- "$loader_path")" && pwd)/$(readlink "$loader_path")
@@ -80,10 +80,10 @@ cat > "$binary_directory/vulkan/icd.d/MoltenVK_icd.json" <<'JSON'
 JSON
 
 echo "==> rewriting dylib references to @loader_path"
-chmod u+w "$binary_directory"/*.dylib "$binary_directory"/MyGame*
+chmod u+w "$binary_directory"/*.dylib "$binary_directory"/MVMT*
 install_name_tool -id @loader_path/libvulkan.1.dylib "$binary_directory/libvulkan.1.dylib"
 install_name_tool -id @loader_path/libMoltenVK.dylib "$binary_directory/libMoltenVK.dylib"
-for binary in MyGame MyGame_Server libgame_client.dylib libgame_server.dylib; do
+for binary in MVMT MVMT_Server libgame_client.dylib libgame_server.dylib; do
     for reference in $(otool -L "$binary_directory/$binary" | awk '/^\t\/(opt|usr\/local)\// {print $1}'); do
         install_name_tool -change "$reference" "@loader_path/$(basename -- "$reference")" \
             "$binary_directory/$binary"
@@ -104,7 +104,7 @@ done
 # one will not start at all. Ad-hoc is enough to launch; see the note in the
 # launcher about Gatekeeper on the receiving machine.
 for binary in libvulkan.1.dylib libMoltenVK.dylib libgame_client.dylib libgame_server.dylib \
-              MyGame MyGame_Server; do
+              MVMT MVMT_Server; do
     codesign --force --sign - --timestamp=none "$binary_directory/$binary" 2>/dev/null
 done
 
@@ -118,22 +118,22 @@ VK_DRIVER_FILES="$here/bin/macos/vulkan/icd.d/MoltenVK_icd.json"
 VK_ICD_FILENAMES="$VK_DRIVER_FILES"
 export VK_DRIVER_FILES VK_ICD_FILENAMES
 cd "$here"
-exec "$here/bin/macos/MyGame" "$@"
+exec "$here/bin/macos/MVMT" "$@"
 LAUNCHER
 chmod +x "$stage_directory/Tilde.command"
 
-# The dedicated server does not chdir the way MyGame does, so its launcher is
+# The dedicated server does not chdir the way MVMT does, so its launcher is
 # what puts it at the payload root.
 cat > "$stage_directory/Tilde_Server.command" <<'SERVER_LAUNCHER'
 #!/bin/sh
 set -eu
 cd -- "$(cd -- "$(dirname -- "$0")" && pwd)"
-exec ./bin/macos/MyGame_Server "$@"
+exec ./bin/macos/MVMT_Server "$@"
 SERVER_LAUNCHER
 chmod +x "$stage_directory/Tilde_Server.command"
 
 echo "==> checking nothing outside the payload is still referenced"
-leftover=$(find "$binary_directory" -type f \( -name 'MyGame*' -o -name '*.dylib' \) \
+leftover=$(find "$binary_directory" -type f \( -name 'MVMT*' -o -name '*.dylib' \) \
            -exec otool -L {} \; | awk '/^\t\/(opt|usr\/local)\//' || true)
 if [ -n "$leftover" ]; then
     echo "package_mac: unbundled references remain:" >&2

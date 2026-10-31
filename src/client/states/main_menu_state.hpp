@@ -39,7 +39,7 @@ public:
   void on_enter() override;
   void update(float delta_seconds) override;
 
-  void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+  void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                    renderer::ui_draw_list_t &ui) override;
 
 private:

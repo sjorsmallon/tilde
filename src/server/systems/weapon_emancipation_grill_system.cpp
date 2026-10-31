@@ -8,6 +8,7 @@
 #include "../../shared/entities/generated/entities/emancipated_weapon_entity_generated.hpp"
 #include "../../shared/entities/generated/entities/weapon_emancipation_grill_entity_generated.hpp"
 #include "../../shared/entities/generated/entities/weapon_entity_generated.hpp"
+#include "../../shared/emancipated_weapon.hpp"
 #include "../../shared/entity_system.hpp"
 #include "../../shared/map/game_session.hpp"
 #include "../../shared/linalg.hpp"
@@ -137,8 +138,7 @@ void update_weapon_emancipation_grills(server_context_t& context)
   for (const entities::Emancipated_Weapon_Entity& fizzled :
        entity_system.entities_of_type<entities::Emancipated_Weapon_Entity>())
   {
-    if (context.tick_number - fizzled.spawned_tick >=
-        shared::ticks_from_seconds(fizzled.lifetime_seconds, tickrate_hz))
+    if (shared::emancipated_weapon_has_vanished_at_tick(fizzled, context.tick_number, tickrate_hz))
       expired.push_back(fizzled.entity_id);
   }
   for (const shared::entity_uid_t uid : expired)

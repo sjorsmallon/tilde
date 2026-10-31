@@ -49,7 +49,7 @@ public:
 
   virtual void draw_imgui_panels() {}
 
-  virtual void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+  virtual void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                            renderer::ui_draw_list_t &ui)
   {
   }

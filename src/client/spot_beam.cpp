@@ -28,7 +28,7 @@ spot_beam_t build_spot_beam_for_spot_light(const entities::Spot_Light_Entity& sp
                      .light         = spot.entity_id};
 }
 
-void draw_spot_beam(pass_builder_t& scene, const spot_beam_t& beam)
+void draw_spot_beam(draw_lists_t& scene, const spot_beam_t& beam)
 {
   if (beam.range <= 0.f)
     return;

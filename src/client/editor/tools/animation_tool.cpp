@@ -374,7 +374,7 @@ std::optional<view_focus_t> Animation_Tool::view_focus() const
   return view_focus_t{.center = center, .radius = radius};
 }
 
-void Animation_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t &draws)
+void Animation_Tool::on_draw_overlay(editor_context_t& ctx, draw_lists_t &draws)
 {
   // the model is placed at the origin, but the orientation needs to be correct.
   const shared::model_to_world_t to_world =

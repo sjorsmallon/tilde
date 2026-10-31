@@ -66,10 +66,10 @@ std::vector<Plane>    get_editor_collision_planes(const entities::Entity* e);
 
 // Placement preview at `origin` -- the entity's position, NOT necessarily the
 // center of the drawn shape.
-void draw_entity_ghost(const entities::Entity* e, pass_builder_t& draws,
+void draw_entity_ghost(const entities::Entity* e, draw_lists_t& draws,
                        const linalg::vec3& origin, const entity_draw_settings_t& settings);
 
-void draw_entity_in_editor(const entities::Entity* e, pass_builder_t& draws,
+void draw_entity_in_editor(const entities::Entity* e, draw_lists_t& draws,
                            const entity_draw_settings_t& settings);
 
 // Surface point under the cursor -> where entity->position goes, lifted so the
@@ -84,7 +84,7 @@ linalg::vec3 compute_placement_origin(const entities::Entity* e,
 color_t compute_selection_pulse_color(float time);
 
 // The three layers in the pulse colour; the art is skipped when the outline already traces it.
-void draw_selection_highlight(const entities::Entity* e, pass_builder_t& draws, float time,
+void draw_selection_highlight(const entities::Entity* e, draw_lists_t& draws, float time,
                               float grid_step, const entity_draw_settings_t& settings,
                               bool art_is_outlined);
 

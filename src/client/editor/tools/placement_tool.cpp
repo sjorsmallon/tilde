@@ -281,7 +281,7 @@ void Placement_Tool::rescan_prefabs()
 }
 
 void Placement_Tool::on_draw_overlay(editor_context_t& ctx,
-                                     pass_builder_t &draws)
+                                     draw_lists_t &draws)
 {
   if (!cursor_is_currently_over_surface)
     return;

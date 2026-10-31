@@ -267,7 +267,7 @@ void light_cut_draw(renderer::mesh_draw_t& draw, renderer::light_cut_t light_cut
     draw.shadow_caster = renderer::shadow_caster_t::none;
 }
 
-bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &surface,
+bool draw_surface_mesh(draw_lists_t &draws, const shared::geometry_surface_t &surface,
                        renderer::mesh_handle_t mesh, const linalg::mat4f &transform,
                        const linalg::mat4f* moved_by, const renderer::clock_wipe_t& clock_wipe,
                        std::optional<team_wall_tint_t> team_wall, renderer::light_cut_t light_cut,
@@ -306,7 +306,7 @@ bool draw_surface_mesh(pass_builder_t &draws, const shared::geometry_surface_t &
 
 // A mesh through the generated cache. The generated mesh is baked through its
 // pose into WORLD space, so the transform is identity.
-void draw_generated_geometry(pass_builder_t &draws, const shared::mesh_geometry_t &geometry,
+void draw_generated_geometry(draw_lists_t &draws, const shared::mesh_geometry_t &geometry,
                              shared::entity_uid_t uid, Span<const std::string> materials,
                              const shared::lightmap_t &lightmap,
                              const linalg::mat4f* moved_by, const renderer::clock_wipe_t& clock_wipe,
@@ -364,7 +364,7 @@ renderer::clock_wipe_t geometry_wipe_frame(const shared::mesh_geometry_t& geomet
                                 .armed  = false};
 }
 
-void draw_geometry(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+void draw_geometry(draw_lists_t &draws, const shared::mesh_geometry_t &mesh,
                    shared::entity_uid_t uid, Span<const std::string> materials,
                    const shared::lightmap_t &lightmap, const linalg::mat4f* moved_by,
                    const renderer::clock_wipe_t& clock_wipe,
@@ -415,7 +415,7 @@ void draw_geometry(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
   draws.debug.aabb(bounds.min, bounds.max, colors::yellow);
 }
 
-void draw_mesh_edges(pass_builder_t &draws, const shared::mesh_geometry_t &mesh, color_t color,
+void draw_mesh_edges(draw_lists_t &draws, const shared::mesh_geometry_t &mesh, color_t color,
                      float depth_bias, const linalg::mat4f &world)
 {
   const std::vector<shared::mesh_directed_edge_t> edges = shared::collect_mesh_directed_edges(mesh);
@@ -433,7 +433,7 @@ void draw_mesh_edges(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
   }
 }
 
-void draw_geometry_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+void draw_geometry_wireframe(draw_lists_t &draws, const shared::mesh_geometry_t &mesh,
                              color_t color, float depth_bias, const linalg::mat4f* moved_by)
 {
   const linalg::mat4f world = moved_by != nullptr ? *moved_by : linalg::mat4f::identity();

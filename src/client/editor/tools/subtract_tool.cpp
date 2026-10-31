@@ -52,7 +52,7 @@ const shared::mesh_geometry_t *try_find_mesh(const editor_context_t &ctx,
   return entry ? &entry->value : nullptr;
 }
 
-void draw_face_tinted(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+void draw_face_tinted(draw_lists_t &draws, const shared::mesh_geometry_t &mesh,
                       uint32_t face_index, color_t fill, const color_t *outline)
 {
   const shared::mesh_face_t &face = mesh.faces[face_index];
@@ -67,7 +67,7 @@ void draw_face_tinted(pass_builder_t &draws, const shared::mesh_geometry_t &mesh
     draws.debug.line(polygon[i], polygon[(i + 1) % polygon.size()], *outline);
 }
 
-void draw_mesh_tinted(pass_builder_t &draws, const shared::mesh_geometry_t &mesh, color_t fill,
+void draw_mesh_tinted(draw_lists_t &draws, const shared::mesh_geometry_t &mesh, color_t fill,
                       const color_t *outline)
 {
   for (uint32_t face_index = 0; face_index < (uint32_t)mesh.faces.size(); ++face_index)
@@ -274,7 +274,7 @@ void Subtract_Tool::commit(editor_context_t &ctx)
   clear();
 }
 
-void Subtract_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Subtract_Tool::on_draw_overlay(editor_context_t &ctx, draw_lists_t &draws)
 {
   const shared::mesh_geometry_t *wall = try_find_mesh(ctx, wall_uid);
   const shared::mesh_geometry_t *cutter = try_find_mesh(ctx, cutter_uid);

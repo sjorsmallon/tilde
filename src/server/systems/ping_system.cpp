@@ -5,6 +5,7 @@
 #include "../../shared/collision/collision_detection.hpp"
 #include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/log.hpp"
+#include "../../shared/tick_clock.hpp"
 #include "../entity_lifecycle.hpp"
 
 #include <cmath>
@@ -88,10 +89,11 @@ bool try_place_ping(server_context_t& context, entities::Player_Entity& player, 
   return true;
 }
 
-void update_ping_markers(server_context_t& context, float dt)
+void update_ping_markers(server_context_t& context)
 {
+  const uint32_t                    tickrate_hz = context.cvars->sv_tickrate;
   std::vector<shared::entity_uid_t> expired;
-  for (entities::Ping_Marker_Entity& marker :
+  for (const entities::Ping_Marker_Entity& marker :
        context.world.session.entity_system.entities_of_type<entities::Ping_Marker_Entity>())
   {
     // Zero is FOREVER, and it is checked against the field rather than against
@@ -100,8 +102,7 @@ void update_ping_markers(server_context_t& context, float dt)
     if (marker.lifetime <= 0.f)
       continue;
 
-    marker.lifetime -= dt;
-    if (marker.lifetime <= 0.f)
+    if (shared::seconds_since_tick(marker.spawned_tick, context.tick_number, 0.f, tickrate_hz) >= marker.lifetime)
       expired.push_back(marker.entity_id);
   }
 

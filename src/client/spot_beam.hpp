@@ -3,7 +3,7 @@
 #include "../shared/linalg.hpp"
 #include "../shared/collision/mover_path.hpp"
 #include "../shared/lighting/solid_beams.hpp"
-#include "frame_builder.hpp"
+#include "draw_lists.hpp"
 
 namespace entities
 {
@@ -33,6 +33,6 @@ struct spot_beam_t
                                                          const shared::path_pose_t& pose);
 
 // Adds the beam to the pass's beam list; the beam pass fills it and draws its outline after the scene is drawn.
-void draw_spot_beam(pass_builder_t& scene, const spot_beam_t& beam);
+void draw_spot_beam(draw_lists_t& scene, const spot_beam_t& beam);
 
 } // namespace client

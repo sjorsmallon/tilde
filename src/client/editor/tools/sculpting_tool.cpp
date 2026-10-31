@@ -344,7 +344,7 @@ void Sculpting_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 }
 
 void Sculpting_Tool::on_draw_overlay(editor_context_t& ctx,
-                                     pass_builder_t &draws)
+                                     draw_lists_t &draws)
 {
   if (hovered_uid != 0 && !dragging)
   {

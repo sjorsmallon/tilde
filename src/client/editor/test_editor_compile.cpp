@@ -1,4 +1,4 @@
-// The editor tools must compile and LINK against pass_builder_t with no GPU.
+// The editor tools must compile and LINK against draw_lists_t with no GPU.
 //
 // BUILD-ONLY: this target is built by the normal build but is not registered
 // with ctest, so the check is the compile and the link. Running it across the
@@ -12,7 +12,7 @@
 //
 // That used to need a MockRenderer implementing a five-method virtual
 // interface. It needs nothing now: a tool draws by appending to a
-// pass_builder_t, and filling vectors needs no device, no swapchain and no
+// draw_lists_t, and filling vectors needs no device, no swapchain and no
 // command buffer. The mock is gone because the thing it was mocking is gone.
 //
 // Scope, deliberately: construction and on_draw_overlay, which is the seam this
@@ -27,7 +27,7 @@
 #define SDL_MAIN_HANDLED
 
 #include "../../shared/map/editor_grid.hpp"
-#include "../frame_builder.hpp"
+#include "../draw_lists.hpp"
 #include "editor_tool.hpp"
 #include "editor_bvh.hpp"
 #include "editor_types.hpp"
@@ -68,7 +68,7 @@ int main()
   context.bvh                = &bvh;
   context.grid               = &grid;
 
-  client::pass_builder_t draws;
+  client::draw_lists_t draws;
 
   std::vector<std::unique_ptr<client::Editor_Tool>> tools;
   tools.push_back(std::make_unique<client::Selection_Tool>());

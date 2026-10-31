@@ -695,7 +695,7 @@ void Face_Tool::on_draw_inspector(editor_context_t &ctx)
 // Overlay
 // ============================================================================
 
-void Face_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Face_Tool::on_draw_overlay(editor_context_t &ctx, draw_lists_t &draws)
 {
   // The stroke cursor: a ring lying on the DRAWN surface, where the stroke
   // measures its radius from.

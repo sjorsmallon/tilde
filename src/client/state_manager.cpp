@@ -86,12 +86,12 @@ void draw_imgui_panels()
   }
 }
 
-void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                  renderer::ui_draw_list_t &ui)
 {
   if (g_active_state)
   {
-    g_active_state->build_frame(delta_seconds, passes, ui);
+    g_active_state->draw(delta_seconds, passes, ui);
   }
 }
 

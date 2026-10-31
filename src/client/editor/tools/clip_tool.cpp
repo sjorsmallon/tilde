@@ -87,7 +87,7 @@ const shared::mesh_geometry_t *try_find_mesh(const editor_context_t &ctx,
 }
 
 // Every face through the pose, the caps (the last `cap_face_count`) outlined.
-void draw_half_tinted(pass_builder_t &draws, const shared::mesh_geometry_t &half, color_t fill,
+void draw_half_tinted(draw_lists_t &draws, const shared::mesh_geometry_t &half, color_t fill,
                       uint32_t cap_face_count)
 {
   const size_t first_cap = half.faces.size() - std::min<size_t>(cap_face_count, half.faces.size());
@@ -297,7 +297,7 @@ void Clip_Tool::commit(editor_context_t &ctx)
   clear();
 }
 
-void Clip_Tool::on_draw_overlay(editor_context_t &, pass_builder_t &draws)
+void Clip_Tool::on_draw_overlay(editor_context_t &, draw_lists_t &draws)
 {
   const bool refused = cut_plane && !preview;
   for (const linalg::vec3 &point : points)

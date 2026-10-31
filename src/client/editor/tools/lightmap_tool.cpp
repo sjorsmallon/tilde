@@ -145,7 +145,7 @@ void Lightmap_Tool::rebuild_probe_preview(editor_context_t& ctx)
 // CAMERA's position blends -- exactly the four a surface under the eye reads --
 // so what is on screen and what is drawn agree; every box at once is a mess of
 // overlapping rooms and is opt-in.
-void Lightmap_Tool::draw_capture_preview(pass_builder_t& draws)
+void Lightmap_Tool::draw_capture_preview(draw_lists_t& draws)
 {
   capture_preview_boxes_drawn = 0;
   const bool draw_baked = !baked.reflections.empty();
@@ -645,7 +645,7 @@ void Lightmap_Tool::compare_gpu_captures(editor_context_t& ctx)
   }
 }
 
-void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
+void Lightmap_Tool::on_draw_overlay(editor_context_t& ctx, draw_lists_t& draws)
 {
   if (show_capture_preview) draw_capture_preview(draws);
   if (!show_probe_preview) return;

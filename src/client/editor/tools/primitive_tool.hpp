@@ -48,7 +48,7 @@ public:
   void on_key_down(editor_context_t &ctx, const key_event_t &e) override;
   bool try_undo_pending_step(editor_context_t &ctx) override;
 
-  void on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws) override;
+  void on_draw_overlay(editor_context_t &ctx, draw_lists_t &draws) override;
   void on_draw_inspector(editor_context_t &ctx) override;
 
   Span<const shared::entity_uid_t> selected_objects() const override;

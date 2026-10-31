@@ -2,7 +2,7 @@
 #include "entities/generated/entities/jump_pad_entity_generated.hpp"
 #include "movement_volumes.hpp"
 
-#include "collision/fixed_arc_flight.hpp"
+#include "bubble.hpp"
 #include "entity_system.hpp"
 #include "shapes.hpp"
 
@@ -24,8 +24,7 @@ void compute_movement_volumes_at_tick(const Entity_System& system, const movemen
   for (const entities::Bubble_Entity& bubble : system.entities_of_type<entities::Bubble_Entity>())
   {
     const uint32_t arm_ticks = ticks_from_seconds(bubble.arm_seconds, settings.tickrate_hz);
-    const linalg::vec3f center = flight_position_at(bubble.projectile, bubble.flight,
-                                                    bubble.position, settings.tick, flight);
+    const linalg::vec3f center = bubble_position_at_tick(bubble, settings.tick, flight);
     const linalg::vec3f reach  = {bubble.radius, bubble.radius, bubble.radius};
     out.push_back({
         .uid             = bubble.entity_id,

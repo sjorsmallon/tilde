@@ -143,7 +143,7 @@ bool Tick()
     update_canopies(context);
     // After the inputs, so the rocket is where its pilot's last step flew it.
     update_guided_rockets(context, tick_dt);
-    update_ping_markers(context, tick_dt);
+    update_ping_markers(context);
     update_launchers(context);
 
     // respawn runs after death so we can correctly set next ticks etc.

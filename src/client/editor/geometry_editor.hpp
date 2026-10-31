@@ -27,13 +27,13 @@ linalg::vec3 compute_geometry_placement_center(const shared::mesh_geometry_t &ge
 
 // Placement preview at `center`.
 void draw_geometry_ghost(const shared::mesh_geometry_t &geometry,
-                         pass_builder_t &draws, const linalg::vec3 &center);
+                         draw_lists_t &draws, const linalg::vec3 &center);
 
 // Every edge of a mesh once, through its pose and `translation`: a ring edge
 // whose reverse a later vertex walks is skipped, an edge a skin leaves
 // unpaired is kept. The contour, the ghost and the highlight of a mesh, and a
 // tool's preview of one it is about to place.
-void draw_mesh_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &mesh,
+void draw_mesh_wireframe(draw_lists_t &draws, const shared::mesh_geometry_t &mesh,
                          color_t color, float depth_bias,
                          const linalg::vec3 &translation = {0, 0, 0});
 
@@ -45,7 +45,7 @@ void draw_mesh_wireframe(pass_builder_t &draws, const shared::mesh_geometry_t &m
 // works until somebody walks through it, and the author is standing right here.
 //
 // `translation` is where a live drag holds the object ahead of the map (zero otherwise).
-void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, pass_builder_t &draws,
+void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, draw_lists_t &draws,
                              shared::entity_uid_t uid, bool solid,
                              Span<const std::string> materials,
                              const shared::lightmap_t &lightmap, bool collides,
@@ -56,7 +56,7 @@ void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, pass_builder_t
 // its stored edges; an asset-sourced mesh its collision box. Nothing is drawn
 // when the outline already traces the shape.
 void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
-                                       pass_builder_t &draws, float time, bool is_outlined,
+                                       draw_lists_t &draws, float time, bool is_outlined,
                                        const linalg::vec3 &translation);
 
 // ImGui property panel for one geometry object. Returns true when an edit is

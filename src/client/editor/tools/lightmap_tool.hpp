@@ -37,7 +37,7 @@ public:
   void on_mouse_up(editor_context_t& ctx, const input::mouse_event_t& e) override;
   void on_key_down(editor_context_t& ctx, const key_event_t& e) override;
 
-  void on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws) override;
+  void on_draw_overlay(editor_context_t& ctx, draw_lists_t& draws) override;
   void on_draw_inspector(editor_context_t& ctx) override;
   bool edits_map_objects() const override { return false; }
 
@@ -83,7 +83,7 @@ private:
   size_t capture_preview_open_count = 0;
   size_t capture_preview_overridden_count = 0;
   uint32_t capture_preview_boxes_drawn = 0;
-  void draw_capture_preview(pass_builder_t& draws);
+  void draw_capture_preview(draw_lists_t& draws);
 
 
   std::optional<shared::probe_ray_report_t> probe_ray_report;

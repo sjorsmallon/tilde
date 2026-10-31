@@ -1448,11 +1448,11 @@ void Tool_Editor_State::go_to_object(shared::entity_uid_t uid, float height)
   view_mode = ViewMode::FreeCam;
 }
 
-void Tool_Editor_State::build_frame(float delta_seconds,
+void Tool_Editor_State::draw(float delta_seconds,
                                     std::vector<renderer::view_pass_t> &passes,
                                     renderer::ui_draw_list_t &ui)
 {
-  frame_timing::lap_zone_t lap("editor build_frame: bvh rebuild, validate generated meshes");
+  frame_timing::lap_zone_t lap("editor draw: bvh rebuild, validate generated meshes");
   if (bvh_built_at_edit_sequence != transaction_system.edit_sequence())
   {
     update_bvh();
@@ -1477,7 +1477,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
     live_drag_offsets = tools[*active_tool]->live_drag_offsets();
   }
 
-  lap.next("editor build_frame: begin + lights");
+  lap.next("editor draw: begin + lights");
   scene.begin_frame(delta_seconds);
   scene.view.viewport = {{0, 0}, {1, 1}};
   scene.view.camera   = camera;
@@ -1493,7 +1493,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   // below can write into it.
   shared::begin_frame_lights(scene.lights, map.lightmap);
 
-  lap.next("editor build_frame: grid");
+  lap.next("editor draw: grid");
   // Draw Grid
   if (show_grid)
   {
@@ -1565,7 +1565,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       scene.debug.line({0, -extent, 0}, {0, extent, 0}, axis_color_y);
   }
 
-  lap.next("editor build_frame: geometry");
+  lap.next("editor draw: geometry");
   // Draw map elements: geometry through geometry_editor, entities through
   // entity_editor_traits.
   if (!hide_geometry)
@@ -1587,7 +1587,7 @@ void Tool_Editor_State::build_frame(float delta_seconds,
       scene.record_object_meshes(entry.uid, first_mesh);
     }
 
-    lap.next("editor build_frame: entities + lights");
+    lap.next("editor draw: entities + lights");
     const bool show_hitboxes =
         state_manager::get_client_context().cvars->debug_show_hitboxes;
 
@@ -1634,11 +1634,11 @@ void Tool_Editor_State::build_frame(float delta_seconds,
         draw_entity_hitbox_overlay(entry.entity.get(), scene);
     }
 
-    lap.next("editor build_frame: path links");
+    lap.next("editor draw: path links");
     draw_path_links(map, context, scene);
   }
 
-  lap.next("editor build_frame: navmesh + particles");
+  lap.next("editor draw: navmesh + particles");
   // Draw navmesh triangle wireframes, colored by island ID.
   // Suppressed when the pathfinding tool is active — it draws the navmesh itself.
   if (state_manager::get_client_context().cvars->debug_show_navmesh &&
@@ -1685,14 +1685,14 @@ void Tool_Editor_State::build_frame(float delta_seconds,
   for (auto [uid, pe] : map.entities_of_type<entities::Particle_Emitter_Entity>())
     scene.particles.push_back(emitter_parameters(*pe, last_dt));
 
-  lap.next("editor build_frame: tool overlay");
+  lap.next("editor draw: tool overlay");
   // Draw Tool Overlay
   if (active_tool)
   {
     tools[*active_tool]->on_draw_overlay(context, scene);
   }
 
-  lap.next("editor build_frame: sky + to_pass");
+  lap.next("editor draw: sky + to_pass");
   scene.sky = skybox.resolve(get_skybox_name(map));
 
   passes.push_back(scene.to_pass());

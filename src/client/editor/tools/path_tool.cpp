@@ -59,7 +59,7 @@ std::optional<shared::aabb_bounds_t> rest_bounds_of_owned(const shared::map_t& m
   return bounds;
 }
 
-void draw_posed_box(pass_builder_t& draws, const shared::path_pose_t& rest_frame,
+void draw_posed_box(draw_lists_t& draws, const shared::path_pose_t& rest_frame,
                     const shared::path_pose_t& pose, const shared::aabb_bounds_t& rest, color_t color)
 {
   linalg::vec3 corners[8];
@@ -526,7 +526,7 @@ void Path_Tool::end_field_edit(editor_context_t& ctx)
   field_edit.reset();
 }
 
-void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
+void Path_Tool::draw_mover_preview(editor_context_t& ctx, draw_lists_t& draws)
 {
   const float preview_ticks = std::max(0.0f, preview_seconds * static_cast<float>(ctx.tickrate_hz));
   const uint32_t tick = (uint32_t)preview_ticks;
@@ -587,7 +587,7 @@ void Path_Tool::draw_mover_preview(editor_context_t& ctx, pass_builder_t& draws)
   }
 }
 
-void Path_Tool::on_draw_overlay(editor_context_t& ctx, pass_builder_t& draws)
+void Path_Tool::on_draw_overlay(editor_context_t& ctx, draw_lists_t& draws)
 {
   if (!ctx.map)
     return;

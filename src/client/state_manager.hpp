@@ -36,7 +36,7 @@ void request_exit();
 void draw_imgui_panels();
 
 // Append the current state's view passes and screen-space UI to the frame
-void build_frame(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
+void draw(float delta_seconds, std::vector<renderer::view_pass_t> &passes,
                  renderer::ui_draw_list_t &ui);
 
 // Get access to the full client context

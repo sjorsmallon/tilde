@@ -10,6 +10,7 @@
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entity_uid.hpp"
 #include "../shared/log.hpp"
+#include "../shared/movement/bubble.hpp"
 #include "audio/audio_system.hpp"
 #include "client_context.hpp"
 #include "remote_interpolation.hpp"
@@ -165,7 +166,10 @@ void play_bubble_pops(client_context_t& context, const ::network::snapshot_frame
     if (bubble.popped_by == context.connection.my_entity_uid)
       continue;
 
-    context.audio.play_3d(assets::sound_id("bubble_pop"), bubble.position);
+    const shared::fixed_arc_flight_settings_t flight{.tickrate_hz = context.connection.server_tickrate,
+                                                     .gravity     = context.cvars->g_gravity};
+    context.audio.play_3d(assets::sound_id("bubble_pop"),
+                          shared::bubble_position_at_tick(bubble, current.tick, flight));
   }
 }
 

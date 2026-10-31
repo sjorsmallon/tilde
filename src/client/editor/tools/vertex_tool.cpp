@@ -654,7 +654,7 @@ void Vertex_Tool::edit_selected_vertices(editor_context_t &ctx, const char *name
 // UI pass (draw_handles_ui), since the debug list draws in world space.
 // ============================================================================
 
-void Vertex_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Vertex_Tool::on_draw_overlay(editor_context_t &ctx, draw_lists_t &draws)
 {
   if (hover.uid != shared::null_entity_uid && hover.uid != selected_uid)
     if (const shared::mesh_geometry_t *hovered = try_get_mesh(ctx, hover.uid))

@@ -22,4 +22,13 @@ namespace shared
   return whole_ticks + (static_cast<float>(whole_ticks) < ticks ? 1 : 0);
 }
 
+// The ONE "how long since that tick" rule: signed, so it is negative while `anchor_tick` is still ahead, and
+// `tick_fraction` is how far into `tick` the clock is (0 on a whole tick, the draw's fraction between two).
+[[nodiscard]] constexpr float seconds_since_tick(uint32_t anchor_tick, uint32_t tick, float tick_fraction,
+                                                 uint32_t tickrate_hz)
+{
+  const float whole_ticks = static_cast<float>(static_cast<int64_t>(tick) - static_cast<int64_t>(anchor_tick));
+  return (whole_ticks + tick_fraction) * tick_interval_seconds(tickrate_hz);
+}
+
 } // namespace shared

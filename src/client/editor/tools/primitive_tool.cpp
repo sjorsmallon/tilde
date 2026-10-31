@@ -55,7 +55,7 @@ const shared::mesh_geometry_t *try_recipe_mesh_by_uid(const shared::map_t &map,
 }
 
 // A ghost's faces filled, through its pose.
-void draw_mesh_fill(pass_builder_t &draws, const shared::mesh_geometry_t &mesh, color_t color)
+void draw_mesh_fill(draw_lists_t &draws, const shared::mesh_geometry_t &mesh, color_t color)
 {
   std::vector<linalg::vec3> polygon;
   for (const shared::mesh_face_t &face : mesh.faces)
@@ -68,7 +68,7 @@ void draw_mesh_fill(pass_builder_t &draws, const shared::mesh_geometry_t &mesh, 
   }
 }
 
-void draw_centre_line(pass_builder_t &draws, Span<const linalg::vec3> points,
+void draw_centre_line(draw_lists_t &draws, Span<const linalg::vec3> points,
                       int samples_per_segment)
 {
   if (points.size() < 2)
@@ -591,7 +591,7 @@ void Primitive_Tool::place(editor_context_t &ctx)
   curve_points_in_progress.clear();
 }
 
-void Primitive_Tool::on_draw_overlay(editor_context_t &ctx, pass_builder_t &draws)
+void Primitive_Tool::on_draw_overlay(editor_context_t &ctx, draw_lists_t &draws)
 {
   if (hovered_recipe_uid && ctx.map && hovered_recipe_uid != edited_uid)
   {

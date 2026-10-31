@@ -492,7 +492,7 @@ void Editor_Gizmo::end_drag()
   total_angle    = 0.f;
 }
 
-void Editor_Gizmo::draw(pass_builder_t &draws) const
+void Editor_Gizmo::draw(draw_lists_t &draws) const
 {
   if (!targeted)
     return;

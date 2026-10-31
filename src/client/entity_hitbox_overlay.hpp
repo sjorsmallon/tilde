@@ -14,7 +14,7 @@
 // half, and the two meet at hitbox_debug_draw.hpp, which knows neither.
 
 #include "entities/generated/entities_core_generated.hpp"
-#include "frame_builder.hpp"
+#include "draw_lists.hpp"
 
 namespace client
 {
@@ -23,6 +23,6 @@ namespace client
 // overlay is wanted is the call site's question (debug_show_hitboxes in game,
 // the same cvar in the editor), and passing the answer keeps this a function of
 // the entity alone.
-bool draw_entity_hitbox_overlay(const entities::Entity *entity, pass_builder_t &draws);
+bool draw_entity_hitbox_overlay(const entities::Entity *entity, draw_lists_t &draws);
 
 } // namespace client

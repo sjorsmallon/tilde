@@ -87,19 +87,6 @@ struct Saved_Input
   // on -- two spellings of the same thing, free to disagree. A replay now runs
   // the identical basis the live step did because it reads the identical field.
   shared::subtick_input_t input = {};
-
-  // WRITE-ONLY as of today: both are filled when the input is banked and
-  // nothing reads either. Reconciliation does not need them -- it restarts from
-  // the SERVER's position and velocity and re-runs the inputs forward, so a
-  // per-tick record of what we predicted is a comparison nobody makes.
-  //
-  // This is why Movement has no third field here. The state player_move now
-  // carries is reseeded from prediction_t::latest_server_state at the top of
-  // the replay, on the same footing as these two, and a per-tick copy of it
-  // would be a third write-only field -- a second answer that can disagree with
-  // the replay, which is the shape this codebase keeps deleting.
-  vec3f predicted_position = {0, 0, 0};
-  vec3f predicted_velocity = {0, 0, 0};
 };
 static constexpr uint32_t MAX_PENDING_INPUTS = 128;
 
@@ -116,9 +103,9 @@ struct Remote_Player_State
   // the death timer below must not carry across that.
   shared::entity_uid_t entity_uid = shared::null_entity_uid;
   bool active = false;
-  vec3f render_position = {0, 0, 0};
-  float render_yaw = 0.f;
-  float render_pitch = 0.f;
+  vec3f drawn_position = {0, 0, 0};
+  float drawn_yaw = 0.f;
+  float drawn_pitch = 0.f;
   // Where the FEET point, which lags the view yaw. The difference between the
   // two is the torso twist, and it is what drives the left/right aim poses --
   // drawing the body at the view yaw would make that difference zero forever
@@ -317,7 +304,7 @@ struct prediction_t
   // pending_inputs above: a resend has to carry the held_snapshot_tick and the
   // interpolation bracket the command was issued with, and those describe the
   // moment it was made, not the moment it is re-sent. Saved_Input has neither
-  // -- it exists for reconciliation, which replays movement and nothing else.
+  // -- it exists for reconciliation, which replays the input and nothing else.
   //
   // Trimmed by latest_input_number_processed_by_server, which is a high-water
   // mark, so this needs no per-input acking. Capped by cl_max_unacked_inputs.
@@ -485,7 +472,7 @@ struct visual_effects_t
   entities::Lens_Filter lens_view_filter   = entities::Lens_Filter::Red;
 
   // Client only, since the server cannot visualize. Filled by player_move
-  // during prediction, drawn and cleared in build_frame.
+  // during prediction, drawn and cleared in draw.
   debug_collision::Face_Bucket debug_collision_faces;
 
   // Where players came through a team wall lately, and who is inside one now.
