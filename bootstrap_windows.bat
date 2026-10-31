@@ -131,5 +131,5 @@ if %errorlevel% neq 0 (
 )
 
 echo --- Build Complete ---
-echo Run with: .\Debug\MyGame.exe
+echo Run with: .\Debug\MVMT.exe
 pause

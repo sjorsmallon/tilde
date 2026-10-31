@@ -374,15 +374,15 @@ void test_keyframe_interval_and_path()
   std::printf("  keyframe interval and path: ok\n");
 }
 
-replay_player_view_t make_player_view(uint8_t client_slot, uint32_t edge_count, float base)
+replay_player_view_t make_player_view(uint8_t client_slot, uint32_t button_change_count, float base)
 {
   replay_player_view_t view;
   view.client_slot   = client_slot;
   view.bracket       = {.from_tick = 40, .towards_tick = 41, .fraction = 0.25f};
   view.view_at_start = {base, -10.0f};
-  for (uint32_t edge_index = 0; edge_index < edge_count; ++edge_index)
-    view.edges[edge_index] = {(uint8_t)(3 + edge_index * 7), {base + 11.0f * (float)(edge_index + 1), 5.0f + (float)edge_index}};
-  view.edge_count  = edge_count;
+  for (uint32_t change_index = 0; change_index < button_change_count; ++change_index)
+    view.view_changes[change_index] = {(uint8_t)(3 + change_index * 7), {base + 11.0f * (float)(change_index + 1), 5.0f + (float)change_index}};
+  view.button_change_count  = button_change_count;
   view.view_at_end = {base + 120.0f, 20.0f};
   return view;
 }
@@ -392,26 +392,26 @@ bool views_equal(const subtick_view_t& a, const subtick_view_t& b)
   return a.yaw == b.yaw && a.pitch == b.pitch;
 }
 
-void test_player_view_round_trip_and_edge_aims()
+void test_player_view_round_trip_and_button_change_aims()
 {
-  for (uint32_t edge_count : {0u, MAX_SUBTICK_EDGES})
+  for (uint32_t button_change_count : {0u, MAX_SUBTICK_BUTTON_CHANGES})
   {
-    const replay_player_view_t view = make_player_view(3, edge_count, 30.0f);
+    const replay_player_view_t view = make_player_view(3, button_change_count, 30.0f);
     std::vector<uint8_t>       bytes;
     append_replay_player_view(bytes, view);
-    assert(bytes.size() == 30 + 9 * edge_count);
+    assert(bytes.size() == 30 + 9 * button_change_count);
 
     std::optional<replay_player_view_t> parsed = try_parse_replay_player_view(Span<const uint8_t>(bytes));
     assert(parsed);
-    assert(parsed->client_slot == 3 && parsed->edge_count == edge_count);
+    assert(parsed->client_slot == 3 && parsed->button_change_count == button_change_count);
     assert(parsed->bracket.from_tick == 40 && parsed->bracket.towards_tick == 41 && parsed->bracket.fraction == 0.25f);
     assert(views_equal(parsed->view_at_start, view.view_at_start) && views_equal(parsed->view_at_end, view.view_at_end));
-    for (uint32_t edge_index = 0; edge_index < edge_count; ++edge_index)
+    for (uint32_t change_index = 0; change_index < button_change_count; ++change_index)
     {
-      assert(parsed->edges[edge_index].slot == view.edges[edge_index].slot);
-      assert(views_equal(parsed->edges[edge_index].view_after, view.edges[edge_index].view_after));
-      assert(views_equal(replay_view_at_slot(*parsed, (float)view.edges[edge_index].slot),
-                         view.edges[edge_index].view_after));
+      assert(parsed->view_changes[change_index].slot == view.view_changes[change_index].slot);
+      assert(views_equal(parsed->view_changes[change_index].view_after, view.view_changes[change_index].view_after));
+      assert(views_equal(replay_view_at_slot(*parsed, (float)view.view_changes[change_index].slot),
+                         view.view_changes[change_index].view_after));
     }
     assert(views_equal(replay_view_at_slot(*parsed, 0.0f), view.view_at_start));
     assert(views_equal(replay_view_at_slot(*parsed, (float)SUBTICK_SLOT_COUNT), view.view_at_end));
@@ -422,18 +422,18 @@ void test_player_view_round_trip_and_edge_aims()
   }
 
   replay_player_view_t unordered = make_player_view(0, 2, 0.0f);
-  unordered.edges[1].slot        = unordered.edges[0].slot;
+  unordered.view_changes[1].slot        = unordered.view_changes[0].slot;
   std::vector<uint8_t> bytes;
   append_replay_player_view(bytes, unordered);
   assert(!try_parse_replay_player_view(Span<const uint8_t>(bytes)));
 
-  replay_player_view_t one_edge = make_player_view(0, 1, 0.0f);
-  one_edge.edges[0].slot        = 32;
-  const subtick_view_t halfway  = replay_view_at_slot(one_edge, 16.0f);
+  replay_player_view_t one_change = make_player_view(0, 1, 0.0f);
+  one_change.view_changes[0].slot        = 32;
+  const subtick_view_t halfway  = replay_view_at_slot(one_change, 16.0f);
   assert(halfway.yaw == 5.5f && halfway.pitch == -2.5f);
 
-  std::printf("  player view: 0 and %u edges round trip, the aim at an edge's slot is its view_after: ok\n",
-              MAX_SUBTICK_EDGES);
+  std::printf("  player view: 0 and %u button changes round trip, the aim at a button change's slot is its view_after: ok\n",
+              MAX_SUBTICK_BUTTON_CHANGES);
 }
 
 void test_player_view_tracks_sample_the_recorded_aim()
@@ -445,7 +445,7 @@ void test_player_view_tracks_sample_the_recorded_aim()
   assert(try_start_replay_recording(recorder, path, make_header(), Span<const uint8_t>(MAP_PACKAGE), 30));
 
   replay_player_view_t tick_ten = make_player_view(2, 1, 0.0f);
-  tick_ten.edges[0].slot        = 32;
+  tick_ten.view_changes[0].slot        = 32;
   replay_player_view_t first_of_eleven  = make_player_view(2, 0, 200.0f);
   replay_player_view_t second_of_eleven = make_player_view(2, 0, 400.0f);
   second_of_eleven.bracket              = {.from_tick = 42, .towards_tick = 43, .fraction = 0.0f};
@@ -483,8 +483,8 @@ void test_player_view_tracks_sample_the_recorded_aim()
   assert(at_start && views_equal(at_start->view, tick_ten.view_at_start));
   assert(at_start->seen_cursor_tick && *at_start->seen_cursor_tick == 9.0 - (10.0 - 40.25));
 
-  std::optional<replay_view_sample_t> at_edge = try_sample_replay_view(*replay, tracks, 2, 9.5);
-  assert(at_edge && views_equal(at_edge->view, tick_ten.edges[0].view_after));
+  std::optional<replay_view_sample_t> at_change = try_sample_replay_view(*replay, tracks, 2, 9.5);
+  assert(at_change && views_equal(at_change->view, tick_ten.view_changes[0].view_after));
 
   std::optional<replay_view_sample_t> second_half = try_sample_replay_view(*replay, tracks, 2, 10.5);
   assert(second_half && views_equal(second_half->view, second_of_eleven.view_at_start));
@@ -512,7 +512,7 @@ int main()
   test_refusals_are_named();
   test_recorder_frames_decode_bit_exact_across_a_gap();
   test_keyframe_interval_and_path();
-  test_player_view_round_trip_and_edge_aims();
+  test_player_view_round_trip_and_button_change_aims();
   test_player_view_tracks_sample_the_recorded_aim();
 
   std::printf("[TEST] replay_test passed\n");

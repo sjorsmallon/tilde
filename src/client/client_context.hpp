@@ -56,7 +56,7 @@ static constexpr int32_t invalid_slot_idx = -1;
 //           ──S2C_MapData arrives & verifies────▶ Connected
 //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
 //
-// Nothing is SENT on the two Loading -> Connected edges, and that is the point:
+// Nothing is SENT on the two Loading -> Connected transitions, and that is the point:
 // the map we hold rides every C2S_ClientInput as `map_content_hash`, so the
 // server derives client_slot_t::map_ready by comparing it rather than waiting
 // for an ack it could lose. Entering Connected starts the input flow, and
@@ -76,7 +76,7 @@ enum class Connection_Phase { Disconnected, Connecting, Loading, Connected, Repl
 struct Saved_Input
 {
   int input_number = -1;
-  // The whole tick's input, edges and all, not the Move_Input it decodes to.
+  // The whole tick's input, button changes and all, not the Move_Input it decodes to.
   // Reconciliation replays this through the SAME split_input_per_tick_into_subtick_steps the live prediction
   // ran it through, so a replay reproduces the sub-steps rather than averaging
   // them into one -- and it has to, because the split is where the clamps fire.
@@ -248,7 +248,7 @@ struct prediction_t
   int input_number = 0;
   Array<Saved_Input, MAX_PENDING_INPUTS> pending_inputs = {};
 
-  // --- Sub-tick input edges ---
+  // --- Sub-tick input button changes ---
   //
   // The tracked buttons (Button::Subtick_Tracked) as of the last tick boundary,
   // and every transition since it that no tick has consumed yet. Together they
@@ -257,15 +257,15 @@ struct prediction_t
   // `accumulator_seconds` is measured in the SAME timeline the ticks are cut
   // from -- seconds past the last tick boundary, in physics_accumulator space --
   // and not in wall-clock. That is deliberate: the accumulator is what decides
-  // where a tick boundary lands, so placing an edge anywhere else means the two
+  // where a tick boundary lands, so placing a button change anywhere else means the two
   // can disagree about which side of the boundary a press fell on, which is the
   // one thing sub-tick exists to get right. Every tick consumed rebases the
   // leftovers by tick_dt, exactly as the accumulator itself is rebased.
   //
   // A frame can produce more transitions than one tick can carry
-  // (MAX_SUBTICK_EDGES); the overflow is logged where it is dropped, because
+  // (MAX_SUBTICK_BUTTON_CHANGES); the overflow is logged where it is dropped, because
   // that is input being abandoned.
-  struct pending_input_edge_t
+  struct pending_button_change_t
   {
     float                  accumulator_seconds = 0.f;
     uint64_t               buttons_after       = 0; // tracked bits only; the rest are polled
@@ -280,24 +280,24 @@ struct prediction_t
     // read at different points in the frame.
     uint64_t arrival_qpc_ticks = 0;
   };
-  std::vector<pending_input_edge_t> pending_input_edges;
+  std::vector<pending_button_change_t> pending_button_changes;
   uint64_t tracked_buttons_at_tick_start = 0;
 
   // Where the aim was at that same boundary, and it cannot be derived from the
-  // edges: a tick whose mouse moved and whose buttons did not carries no edge
+  // button changes: a tick whose mouse moved and whose buttons did not carries no button change
   // at all, and that is the common tick. Carried across from the last sample
   // the previous tick consumed, which is by construction the last travel before
   // the boundary.
   shared::subtick_view_t view_at_tick_start = {};
 
-  // Whether the edges above are a current account of what is held. False while
+  // Whether the button changes above are a current account of what is held. False while
   // anything stops them being read -- the console owning the keyboard, or not
   // being Connected, so no tick loop is draining them -- and resuming from that
   // resamples the keyboard SILENTLY, because the transitions that happened while
   // parked were genuinely never seen. It is the difference between "we missed
   // these on purpose" and a lost event, and only the second one is worth a log
   // line.
-  bool input_edges_are_live = false;
+  bool button_changes_are_live = false;
 
   // Every move built but not yet acked by the server, oldest first, resent whole
   // in each move datagram. Held as the BUILT messages rather than rebuilt from
@@ -410,7 +410,7 @@ struct replication_t
   // applied INTO world.session.entity_system, which is the client's ONE world:
   // every replicated entity, map-placed or spawned by the server, is read from
   // there by uid. A frame in this ring is the delta baseline and the previous
-  // state the edge watchers compare against, and nothing else reads one.
+  // state the change watchers compare against, and nothing else reads one.
   ::network::Snapshot_History<::network::snapshot_frame_t> snapshot_history;
   uint32_t latest_processed_tick = 0;
 

@@ -16,7 +16,7 @@ namespace
 
 constexpr size_t VIEW_SIZE    = 2 * sizeof(float);
 constexpr size_t BRACKET_SIZE = 2 * sizeof(uint32_t) + sizeof(float);
-constexpr size_t EDGE_SIZE    = 1 + VIEW_SIZE;
+constexpr size_t BUTTON_CHANGE_SIZE    = 1 + VIEW_SIZE;
 constexpr size_t FIXED_SIZE   = 1 + BRACKET_SIZE + VIEW_SIZE + 1 + VIEW_SIZE;
 
 void append_pod(std::vector<uint8_t>& out, const auto& value)
@@ -111,9 +111,9 @@ replay_player_view_t replay_player_view_from_input(uint8_t client_slot, const in
   view.bracket       = bracket;
   view.view_at_start = input.view_at_start;
   view.view_at_end   = input.view_at_end;
-  view.edge_count    = std::min(input.edge_count, MAX_SUBTICK_EDGES);
-  for (uint32_t edge_index = 0; edge_index < view.edge_count; ++edge_index)
-    view.edges[edge_index] = {input.edges[edge_index].slot, input.edges[edge_index].view_after};
+  view.button_change_count    = std::min(input.button_change_count, MAX_SUBTICK_BUTTON_CHANGES);
+  for (uint32_t change_index = 0; change_index < view.button_change_count; ++change_index)
+    view.view_changes[change_index] = {input.button_changes[change_index].slot, input.button_changes[change_index].view_after};
   return view;
 }
 
@@ -124,11 +124,11 @@ void append_replay_player_view(std::vector<uint8_t>& out, const replay_player_vi
   append_pod(out, view.bracket.towards_tick);
   append_pod(out, view.bracket.fraction);
   append_view(out, view.view_at_start);
-  append_pod(out, static_cast<uint8_t>(view.edge_count));
-  for (uint32_t edge_index = 0; edge_index < view.edge_count; ++edge_index)
+  append_pod(out, static_cast<uint8_t>(view.button_change_count));
+  for (uint32_t change_index = 0; change_index < view.button_change_count; ++change_index)
   {
-    append_pod(out, view.edges[edge_index].slot);
-    append_view(out, view.edges[edge_index].view_after);
+    append_pod(out, view.view_changes[change_index].slot);
+    append_view(out, view.view_changes[change_index].view_after);
   }
   append_view(out, view.view_at_end);
 }
@@ -145,20 +145,20 @@ std::optional<replay_player_view_t> try_parse_replay_player_view(Span<const uint
   view.bracket.towards_tick = cursor.read<uint32_t>();
   view.bracket.fraction     = cursor.read<float>();
   view.view_at_start        = cursor.read_view();
-  view.edge_count           = cursor.read<uint8_t>();
+  view.button_change_count           = cursor.read<uint8_t>();
 
-  if (view.edge_count > MAX_SUBTICK_EDGES || payload.size() != FIXED_SIZE + view.edge_count * EDGE_SIZE)
+  if (view.button_change_count > MAX_SUBTICK_BUTTON_CHANGES || payload.size() != FIXED_SIZE + view.button_change_count * BUTTON_CHANGE_SIZE)
     return std::nullopt;
 
   uint32_t previous_slot = 0;
-  for (uint32_t edge_index = 0; edge_index < view.edge_count; ++edge_index)
+  for (uint32_t change_index = 0; change_index < view.button_change_count; ++change_index)
   {
-    replay_view_edge_t& edge = view.edges[edge_index];
-    edge.slot                = cursor.read<uint8_t>();
-    edge.view_after          = cursor.read_view();
-    if (edge.slot <= previous_slot || edge.slot >= SUBTICK_SLOT_COUNT || !is_finite_view(edge.view_after))
+    replay_view_change_t& change = view.view_changes[change_index];
+    change.slot                = cursor.read<uint8_t>();
+    change.view_after          = cursor.read_view();
+    if (change.slot <= previous_slot || change.slot >= SUBTICK_SLOT_COUNT || !is_finite_view(change.view_after))
       return std::nullopt;
-    previous_slot = edge.slot;
+    previous_slot = change.slot;
   }
   view.view_at_end = cursor.read_view();
 
@@ -175,17 +175,17 @@ subtick_view_t replay_view_at_slot(const replay_player_view_t& view, float slot_
   if (slot_position <= from_slot)
     return from_view;
 
-  for (uint32_t edge_index = 0; edge_index < view.edge_count; ++edge_index)
+  for (uint32_t change_index = 0; change_index < view.button_change_count; ++change_index)
   {
-    const replay_view_edge_t& edge      = view.edges[edge_index];
-    const float               edge_slot = static_cast<float>(edge.slot);
-    if (slot_position >= edge_slot)
+    const replay_view_change_t& change      = view.view_changes[change_index];
+    const float               change_slot = static_cast<float>(change.slot);
+    if (slot_position >= change_slot)
     {
-      from_view = edge.view_after;
-      from_slot = edge_slot;
+      from_view = change.view_after;
+      from_slot = change_slot;
       continue;
     }
-    return lerp_view(from_view, edge.view_after, (slot_position - from_slot) / (edge_slot - from_slot));
+    return lerp_view(from_view, change.view_after, (slot_position - from_slot) / (change_slot - from_slot));
   }
 
   const float end_slot = static_cast<float>(SUBTICK_SLOT_COUNT);

@@ -209,9 +209,9 @@ off it* rather than recomputed. That also retires both "accepted inaccuracies"
 listed at `play_state.cpp:1092-1099`: the fraction stops being last frame's, and
 it stops being global.
 
-### 5. Only then, sub-tick's edge-sampled fraction
+### 5. Only then, sub-tick's event-sampled fraction
 
-`subtick_plan.md` step 3 wants the fraction sampled at the input edge rather
+`subtick_plan.md` step 3 wants the fraction sampled at the input event rather
 than at command-build time. That is a sub-millisecond refinement and worth
 having — but worth having *after* the number it refines is continuous. Doing it
 first would be polishing jitter.

@@ -231,7 +231,7 @@ void play_emitters(client_context_t& context, const ::network::snapshot_frame_t&
 
 // The phase banner. Silent on a round the objective or a request ended:
 // Objective_Reached already said it, or the player asked.
-void announce_match_edges(const ::network::snapshot_frame_t& previous,
+void announce_match_phase_changes(const ::network::snapshot_frame_t& previous,
                           const ::network::snapshot_frame_t& current)
 {
   Span<const entities::Game_Rules_Entity> before =
@@ -258,7 +258,7 @@ void announce_match_edges(const ::network::snapshot_frame_t& previous,
     hud::set_announcement(text);
 }
 
-// The one-shot sounds and the match banner derived from replicated STATE crossing an edge between
+// The one-shot sounds and the match banner derived from replicated STATE changing between
 // the previous held frame and the one just applied: a gunshot when a player's
 // last_fire_tick advances, our own hitmarker when last_hit_tick does, a break
 // when a damageable's health crosses zero, a clip when an emitter's play_count
@@ -272,14 +272,14 @@ void announce_match_edges(const ::network::snapshot_frame_t& previous,
 // with no seeding flag and no retained stamp to clear. Call once per applied
 // snapshot, after the frame is in the session (the session copy is what has
 // the map's position, sound and reach).
-void apply_snapshot_edges(client_context_t& context,
+void react_to_snapshot_changes(client_context_t& context,
                           const ::network::snapshot_frame_t* previous,
                           const ::network::snapshot_frame_t& current)
 {
   if (previous == nullptr)
     return;
 
-  announce_match_edges(*previous, current);
+  announce_match_phase_changes(*previous, current);
 
   play_gunshots(context, *previous, current);
   play_hitmarker(context, *previous, current);
@@ -403,8 +403,8 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
     context.connection.my_entity_uid = shared::null_entity_uid;
   }
 
-  // --- 3. The edge watchers: previous frame against this one ---
-  apply_snapshot_edges(context, previous, decoded.frame);
+  // --- 3. The change watchers: previous frame against this one ---
+  react_to_snapshot_changes(context, previous, decoded.frame);
 
   // --- 4. The server's word on our input stream ---
   if (decoded.latest_processed_input_number.has_value())
@@ -472,7 +472,7 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   client::feed_interpolation_rings(context.replication.interpolated_entities, decoded.frame.entities,
                                    server_tick, context.connection.my_entity_uid);
 
-  // record the live edge tick (as like a horizon to interpolate against)
+  // record the live horizon tick (as like a horizon to interpolate against)
   client::record_snapshot_tick(
       context.replication.interpolation_cursor, server_tick,
       client::interpolation_delay_in_ticks_from_cvar(context.cvars->cl_interpolation_delay_ticks));

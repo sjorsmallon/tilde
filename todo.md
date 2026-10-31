@@ -131,15 +131,14 @@ tool action (`lightmap_pack`, `lightmap_compare direct|indirect|rays`), so a
 launch-and-drive script is keystrokes into the console. Raised 2026-09-06 off
 step 6 of the GPU bake.
 
-**Noclip exit is a console line, and that is the wrong shape.** `cl_noclip`
-going off puts the body under the camera by having the client EXECUTE
-`setpos x y z` through the console, so every exit leaves a line in the console
-scrollback beside the cvars the author actually typed, and the seam is a
-formatted string rather than a call. Not fixing now. The right shape is the
-one everything else on the C2S side uses: the position rides an existing
-message (a rider on `C2S_ClientInput`, or a dedicated message on the reliable
-stream) and the server applies it without a console in between; `setpos`
-itself can stay as the hand-typed verb. Raised 2026-09-12 off the first noclip.
+**The editor's spawn view is a console line, and that is the wrong shape.**
+`Play_State` places a body spawned from the editor at the editor's camera by
+having the client EXECUTE `setpos x y z` through the console, so every such
+spawn leaves a line in the scrollback and the seam is a formatted string rather
+than a call. Noclip used to do the same on exit and no longer does (it is a
+`Movement_Override` the server flies, 2026-10-29). The right shape here is for
+`join_game` to carry the point, or a rider on `C2S_ClientInput`; `setpos` stays
+as the hand-typed verb. Raised 2026-09-12 off the first noclip.
 
 **Pack ORM inside `asset_pack`, and delete `src/tools/orm_pack.py`.** A
 material folder exported with `ao.png` / `roughness.png` / `metallic.png` and
@@ -737,7 +736,7 @@ audited in this pass except where a def pointed into one (`timer_def.md`,
 - [ ] Steps 1-4: the finish as a SLOT (goal volumes tested in the step loop,
       `input_context_t` gains `slot`, the file's rate becomes slots/s,
       `attempt_ticks` -> `attempt_slots`, a `subtick_test` case); the start as
-      the first movement edge (`attempt_start` per player, server-only); the
+      the first movement press (`attempt_start` per player, server-only); the
       client's predicted running clock. None started.
 
 ### game_modes_def.md / generalization_def.md
@@ -815,7 +814,7 @@ audited in this pass except where a def pointed into one (`timer_def.md`,
       ping/loss diagnostics (the net graph), when one is wanted.
 - [ ] robustness.md's closing note: C2S fragmentation is bounded only by
       `cl_max_unacked_inputs` (8), a CLIENT cvar, and the comment pricing it
-      predates sub-tick edges widening each input. Re-measure an input's size.
+      predates sub-tick button changes widening each input. Re-measure an input's size.
 
 ### ui_def.md "Deferred"
 - [ ] The HUD proper: kill feed rows (`hud/kill_feed.cpp` still
@@ -1543,7 +1542,7 @@ did not fix.
 - [x] **The rules system reads as a band-aid across modes, and the round
       banner is where it shows** (noted 2026-09-09). DONE 2026-09-16 by
       `match_def.md`: the match is the `Game_Rules_Entity`, transitions are
-      requests, the banner is a snapshot edge worded by reason, speedrun's
+      requests, the banner is a snapshot change worded by reason, speedrun's
       cycle is `{Live, Round_End}` with R on `restart_round`. Not yet looked at
       in game. A speedrun finishing a level
       runs through the deathmatch's shape: `end_round` -> Game_Over -> a 10 s
@@ -1597,7 +1596,7 @@ did not fix.
       item. Original note: Yes,
       needed -- a speedrun restart on a key press cannot be `change_map_to`,
       which is parse + `build_session` + BVH + lightmap on the server and a
-      `Loading` edge plus an excluded frame on every client. The server still
+      `Loading` transition plus an excluded frame on every client. The server still
       HOLDS the `map_t` (`world.current_map`) and map uids are stable, so a
       reset is "rebuild the session's ENTITY half from the retained map, keep
       the geometry, the BVH, the materials and the lightmap" -- the snapshot
@@ -1620,7 +1619,7 @@ did not fix.
       16.7 ms at 60 Hz, while the movement that reached the volume was resolved
       to 0.26 ms. Neon White times to the millisecond; a 16.7 ms quantum is the
       whole problem. Both ends of the clock want a `subtick_time_t`: the start
-      is the first movement edge of the attempt and the finish is the sub-step
+      is the first movement press of the attempt and the finish is the sub-step
       in which the player entered the goal, which means the overlap test (or
       just the goal's) runs inside the step loop at `step.start_slot`, and
       `input_context_t` / the `Touched` emit carry a slot beside the tick.
@@ -1735,8 +1734,8 @@ did not fix.
       * **Physics bodies** are the reason to do it, and integrated mode is why
         nobody has noticed: it reads `server_session` directly and never
         touches a snapshot, so the stutter exists only in the networked build
-        (`client_context.hpp:152-156`). Reproduce with `MyGame_Client` against
-        `MyGame_Server` before writing anything. `Physics_Body_Entity.velocity`
+        (`client_context.hpp:152-156`). Reproduce with `MVMT_Client` against
+        `MVMT_Server` before writing anything. `Physics_Body_Entity.velocity`
         is `@Networked` solely for this and stays.
       * **Rockets** travel straight at 600 u/s, so extrapolate along `velocity`
         rather than lerp — two snapshots are ~75 units apart.
@@ -1904,9 +1903,9 @@ did not fix.
         wire resolved by `try_get`.
       - **Delivery.** The effect channel is unreliable, which is right for an
         impact and wrong for anything that MUST be heard. A sound that must
-        arrive is still a STATE EDGE on the snapshot (`popped_tick`,
-        `play_count`, `last_fire_tick`), and the edge watcher plays through the
-        same table. The generic message does not replace the edges.
+        arrive is still a STATE CHANGE on the snapshot (`popped_tick`,
+        `play_count`, `last_fire_tick`), and the change watcher plays through the
+        same table. The generic message does not replace the changes.
       - **What stays a named effect.** Anything with more than one consumer:
         `Shot_Impact` drives the sound, the decal and the particles from one
         fire. A sound-only event has one consumer, so the server would fire the
@@ -2052,7 +2051,7 @@ behavior-preserving; only 3 art meshes are loaded today.
   runs in ONE module, so they never cross the exe↔DLL boundary where the
   duplication lives. All of them passed for as long as the asset registry was
   broken. The same shape bit the CVAR TRACK from the other side: an
-  out-of-process probe against `MyGame_Server.exe` passed while the integrated
+  out-of-process probe against `MVMT_Server.exe` passed while the integrated
   build had an infinite console forward loop, because a dedicated server has no
   forwarder and the loop could not form there.
   * The check that actually works is running the **integrated** build and
@@ -2142,12 +2141,12 @@ with `_of_` in the middle (`planes_of_reveal_cone`, `seconds_of_tick`).
 ## Naming: `subtick_input_t` -> `tick_input_t`
 
 There is no such thing as a sub-tick input. One input IS one tick, sent once per
-tick and numbered by `input_number`; sub-tick edges are payload inside it and
+tick and numbered by `input_number`; sub-tick button changes are payload inside it and
 never advance that counter. The current name says the opposite, and
 `split_input_per_tick_into_subtick_steps` (the one place that states the taxonomy
 correctly) has to compensate with `_per_tick_`.
 
 After the rename, plain `input` always means the tick unit and `subtick_` always
-means inside one: edge, step, slot. Fallout:
+means inside one: button change, step, slot. Fallout:
 `split_input_per_tick_into_subtick_steps` -> `split_tick_input_into_subtick_steps`,
 `Saved_Input::input` -> `tick_input`. 60 occurrences over 10 files.

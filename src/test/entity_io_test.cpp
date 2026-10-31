@@ -708,7 +708,7 @@ void move_player(server_context_t& context, shared::entity_uid_t uid, const vec3
   context.world.session.entity_system.get<entities::Player_Entity>(uid)->position = position;
 }
 
-void test_the_trigger_system_emits_edges()
+void test_the_trigger_system_emits_touched_and_left()
 {
   std::printf("connections: a trigger emits Touched on entry and Left on exit\n");
 
@@ -1398,7 +1398,7 @@ int main()
   test_a_target_that_dies_during_the_delay_is_dropped();
   test_a_zero_delay_chain_settles_in_one_drain();
   test_a_wiring_loop_is_capped_and_dropped();
-  test_the_trigger_system_emits_edges();
+  test_the_trigger_system_emits_touched_and_left();
   test_a_disabled_trigger_releases_whoever_is_inside();
   test_a_platform_crumbles_under_one_and_holds_under_two();
   test_a_launcher_fires_its_weapon_row_along_its_aim();

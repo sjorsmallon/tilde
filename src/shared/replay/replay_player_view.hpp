@@ -4,16 +4,16 @@
 //
 // GRAMMAR (little-endian), the payload of a Player_View record
 //
-//   player_view -> client_slot:u8 bracket view_at_start:view edge_count:u8 edge{edge_count} view_at_end:view
+//   player_view -> client_slot:u8 bracket view_at_start:view button_change_count:u8 button_change{button_change_count} view_at_end:view
 //   bracket     -> from_tick:u32 towards_tick:u32 fraction:f32
 //   view        -> yaw:f32 pitch:f32
-//   edge        -> subtick_slot:u8 view_after:view
+//   button_change -> subtick_slot:u8 view_after:view
 //
-//   edge_count  -> 0 .. MAX_SUBTICK_EDGES
+//   button_change_count  -> 0 .. MAX_SUBTICK_BUTTON_CHANGES
 //   subtick_slot-> 1 .. SUBTICK_SLOT_COUNT-1, strictly ascending
 //
 // TIMING. The input consumed at tick T is what moved the world from frame T-1 to
-// frame T, so its aim spans cursor ticks [T-1, T]: view_at_start at T-1, an edge
+// frame T, so its aim spans cursor ticks [T-1, T]: view_at_start at T-1, a button change
 // at T-1 + slot/64, view_at_end at T. K inputs consumed in one tick share that
 // span in K equal parts, in file order.
 
@@ -30,7 +30,7 @@
 namespace shared
 {
 
-struct replay_view_edge_t
+struct replay_view_change_t
 {
   uint8_t        slot       = 0;
   subtick_view_t view_after = {};
@@ -41,8 +41,8 @@ struct replay_player_view_t
   uint8_t                                      client_slot   = 0;
   interpolation_bracket_t                      bracket       = {};
   subtick_view_t                               view_at_start = {};
-  Array<replay_view_edge_t, MAX_SUBTICK_EDGES> edges         = {};
-  uint32_t                                     edge_count    = 0;
+  Array<replay_view_change_t, MAX_SUBTICK_BUTTON_CHANGES> view_changes         = {};
+  uint32_t                                     button_change_count    = 0;
   subtick_view_t                               view_at_end   = {};
 };
 
@@ -54,7 +54,7 @@ void append_replay_player_view(std::vector<uint8_t>& out, const replay_player_vi
 
 [[nodiscard]] std::optional<replay_player_view_t> try_parse_replay_player_view(Span<const uint8_t> payload);
 
-// The aim at a fractional slot in [0, SUBTICK_SLOT_COUNT]: exact at every edge, a lerp between them.
+// The aim at a fractional slot in [0, SUBTICK_SLOT_COUNT]: exact at every button change, a lerp between them.
 [[nodiscard]] subtick_view_t replay_view_at_slot(const replay_player_view_t& view, float slot_position);
 
 // The cursor tick the player drew the others at, or nothing when the input named no bracket.

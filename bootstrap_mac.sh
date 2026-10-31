@@ -38,4 +38,4 @@ cmake ..
 cmake --build .
 
 echo "--- Build Complete ---"
-echo "Run with: ./build/MyGame"
+echo "Run with: ./build/MVMT"

@@ -127,7 +127,7 @@ enum class input_device_t : uint8_t
   Mouse_Motion
 };
 
-struct input_edge_t
+struct timed_input_event_t
 {
   input_device_t device = input_device_t::Key;
   key_t          key    = key_t::Unknown;        // device == Key
@@ -137,9 +137,9 @@ struct input_edge_t
   uint64_t       arrival_qpc_ticks = 0;
 };
 
-// The window this frame's edges arrived in: the previous drain to this one.
+// The window this frame's input events arrived in: the previous drain to this one.
 // Both endpoints are read at the same point in the frame, so the span is what
-// the accumulator's dt advance represents and an edge's position inside it is
+// the accumulator's dt advance represents and an input event's position inside it is
 // (arrival - start) / (end - start) -- in range by construction, with no clamp.
 struct input_frame_span_t
 {
@@ -160,8 +160,8 @@ struct mouse_event_t
 
 // --- Lifecycle ---------------------------------------------------------------
 
-// Starts the raw-input thread that stamps edges. Never fatal: on failure (or on
-// a platform without one) the edge queue falls back to SDL's transitions,
+// Starts the raw-input thread that stamps input events. Never fatal: on failure (or on
+// a platform without one) the event queue falls back to SDL's transitions,
 // stamped at the frame boundary -- one frame coarser, still playable, and
 // logged rather than silent.
 void init();
@@ -181,11 +181,11 @@ void process_sdl_event(const void *sdl_event);
 // a pump and there is exactly one pump per frame, so a "live" read was never
 // `now`, it was the same snapshot taken one frame later. Having two of these on
 // different instants cost a real bug: a caller folding is_key_down and a live
-// is_mouse_down into one bitfield and checking it against edge-derived state
+// is_mouse_down into one bitfield and checking it against event-derived state
 // saw every click as a lost transition.
 //
 // The instant is BEFORE the pump on purpose. That is what makes these
-// comparable with frame_input_edges() -- see the bracket check in
+// comparable with frame_timed_input_events() -- see the bracket check in
 // play_state.cpp.
 
 bool is_key_down(key_t key);
@@ -214,11 +214,11 @@ Span<const mouse_button_event_t> frame_mouse_button_events();
 
 // Every key and mouse-button transition this frame, plus the mouse travel
 // between them, in arrival order with a time on each. Releases included -- see
-// input_edge_t.
-Span<const input_edge_t> frame_input_edges();
+// timed_input_event_t.
+Span<const timed_input_event_t> frame_timed_input_events();
 
 
-// The span the edges above arrived in, and the counter frequency to divide by.
+// The span the input events above arrived in, and the counter frequency to divide by.
 // Nothing else in the client keeps time in this domain.
 input_frame_span_t frame_arrival_span();
 uint64_t           arrival_clock_frequency();
@@ -230,7 +230,7 @@ uint64_t           arrival_clock_frequency();
 // one here would stamp the frame roughly a whole frame before it existed.
 uint64_t arrival_clock_now();
 
-// Whether edges are coming from the raw-input thread. False means the SDL
+// Whether input events are coming from the raw-input thread. False means the SDL
 // fallback, whose stamps are frame-granular -- the sub-tick fold is still
 // correct, just no finer than it was before raw input existed.
 

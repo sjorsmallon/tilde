@@ -370,7 +370,7 @@ static shared::input_restrictions_t local_input_restrictions(const client_contex
 }
 
 
-// The ONE key-to-button binding: the edge path and the polled path both read it.
+// The ONE key-to-button binding: the event path and the polled path both read it.
 struct key_button_binding_t
 {
   input::key_t key;
@@ -401,23 +401,23 @@ constexpr Array<mouse_button_binding_t, 3> MOUSE_BUTTON_BINDINGS = {{
     {input::mouse_button_t::Middle, Button::Ping},
 }};
 
-static uint64_t subtick_button_for_input_edge(const input::input_edge_t& edge, bool mouse_buttons_allowed)
+static uint64_t subtick_button_for_input_event(const input::timed_input_event_t& input_event, bool mouse_buttons_allowed)
 {
-  if (edge.device == input::input_device_t::Mouse_Motion)
+  if (input_event.device == input::input_device_t::Mouse_Motion)
     return 0; // travel, not a transition -- it steers, it does not cut a step
 
-  if (edge.device == input::input_device_t::Mouse_Button)
+  if (input_event.device == input::input_device_t::Mouse_Button)
   {
     if (!mouse_buttons_allowed)
       return 0;
     for (const mouse_button_binding_t& binding : MOUSE_BUTTON_BINDINGS)
-      if (binding.mouse_button == edge.button)
+      if (binding.mouse_button == input_event.button)
         return binding.button;
     return 0;
   }
 
   for (const key_button_binding_t& binding : KEY_BUTTON_BINDINGS)
-    if (binding.key == edge.key)
+    if (binding.key == input_event.key)
       return binding.button;
   return 0;
 }
@@ -883,7 +883,7 @@ void Play_State::on_exit()
 
 // to reiterate: input can be understood as a reaction on the previously presented frame.
 // input is gathered by a thread from hardware reads before entering this function, with the most precision that we can.
-// all edges (meaning: press / release) are recorded temporally.
+// every press and release is recorded with its time.
 // the rest in this thing should only survive to the end of this fame.
 struct play_frame_t
 {
@@ -1074,12 +1074,12 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
     fly_camera_input_t fly_input = read_fly_camera_keys();
     if (connection_ui.mouse_captured)
     {
-      for (const input::input_edge_t& edge : input::frame_input_edges())
+      for (const input::timed_input_event_t& input_event : input::frame_timed_input_events())
       {
-        if (edge.device != input::input_device_t::Mouse_Motion)
+        if (input_event.device != input::input_device_t::Mouse_Motion)
           continue;
-        fly_input.look_delta.x += edge.motion.x;
-        fly_input.look_delta.y += edge.motion.y;
+        fly_input.look_delta.x += input_event.motion.x;
+        fly_input.look_delta.y += input_event.motion.y;
       }
     }
     fly_camera_settings_t fly_settings;
@@ -1585,14 +1585,14 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   }
   else
   {
-    // The EDGE, not is_mouse_pressed's frame-start level compare: a click that
+    // The timed input event, not is_mouse_pressed's frame-start level compare: a click that
     // both presses and releases inside one frame is invisible to the levels and
     // used to toggle nothing. What stays tick-granular is the resulting STATE
     // going to the server (Button::Zoom, raw_input_plan.md D1) -- the toggle
     // itself is derived here and never leaves this machine.
-    for (const input::input_edge_t& edge : input::frame_input_edges())
-      if (edge.device == input::input_device_t::Mouse_Button &&
-          edge.button == input::mouse_button_t::Right && edge.down)
+    for (const input::timed_input_event_t& input_event : input::frame_timed_input_events())
+      if (input_event.device == input::input_device_t::Mouse_Button &&
+          input_event.button == input::mouse_button_t::Right && input_event.down)
         ctx.prediction.zoom_active = !ctx.prediction.zoom_active;
   }
 
@@ -1644,7 +1644,7 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   // this _evaluates_ the input that was already gathered. it's not a live call.
   // although it reflects the most up-to-date stuff, I guess.
   uint64_t buttons = polled_buttons(body_input_allowed, mouse_look_allowed);
-  // Zoom rides the button bitfield as STATE, not the click: the toggle edge never leaves this machine.
+  // Zoom rides the button bitfield as STATE, not the click: the toggle press never leaves this machine.
   if (body_input_allowed && ctx.prediction.zoom_active) buttons |= Button::Zoom;
 
   if (ctx.cvars->cl_auto_equip_weapon_on_pickup) buttons |= Button::Equip_On_Pickup;
@@ -1659,7 +1659,7 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
 // and SIMULATE by position: it needs this frame's sensitivity and button poll,
 // which need the world to be ready, and the ready test sits above the build. See
 // tick_def.md's client section.
-void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
+void Play_State::place_button_changes_on_the_tick_timeline(client_context_t &ctx,
                                                         play_frame_t &frame)
 {
   const float    dt                 = frame.dt;
@@ -1698,14 +1698,14 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
 
   // --- Place this frame's button transitions on the tick timeline ---
   //
-  // The EDGE is where the information is: a held button has no interesting
+  // The button change is where the information is: a held button has no interesting
   // timestamp, and sampling state once per tick is what quantizes a press to the
   // 16.7ms grid. So transitions are stamped as they arrive and accumulated into
   // whichever tick actually contains them (subtick_plan.md, step 3).
   //
   // Position comes from a real SPAN. The input layer reads its arrival clock at
   // the same point in every frame, so [previous read, this read] is the window
-  // this frame's edges arrived in and an edge's place inside it is a plain
+  // this frame's events arrived in and an event's place inside it is a plain
   // ratio -- unitless, which is what lets it be multiplied by the accumulator's
   // dt with no calibration between the two clocks and no cl_timescale
   // correction. This replaces an AGE measured against the frame's duration,
@@ -1719,21 +1719,21 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
     const float accumulator_at_frame_start = ctx.prediction.physics_accumulator;
 
     uint64_t live_tracked_buttons =
-        ctx.prediction.pending_input_edges.empty()
+        ctx.prediction.pending_button_changes.empty()
             ? ctx.prediction.tracked_buttons_at_tick_start
-            : ctx.prediction.pending_input_edges.back().buttons_after;
+            : ctx.prediction.pending_button_changes.back().buttons_after;
 
     // A SAMPLE, not only a transition: the aim moves continuously and the
     // buttons do not, so travel is recorded here too, with the buttons simply
     // repeated. The tick loop below folds a sample whose buttons did not change
-    // into no edge at all (try_record_subtick_state), so this costs the wire
+    // into no button change at all (try_record_subtick_state), so this costs the wire
     // nothing -- what it buys is the aim at every tick boundary, which is the
-    // one thing no button edge can carry: the common tick is one where the
+    // one thing no button button change can carry: the common tick is one where the
     // mouse moved and nothing was pressed.
     auto record_sample = [&](uint64_t tracked_buttons, float seconds_into_frame,
                              uint64_t arrival_qpc_ticks) {
       live_tracked_buttons = tracked_buttons;
-      ctx.prediction.pending_input_edges.push_back({accumulator_at_frame_start + seconds_into_frame,
+      ctx.prediction.pending_button_changes.push_back({accumulator_at_frame_start + seconds_into_frame,
                                                     tracked_buttons, current_view(),
                                                     arrival_qpc_ticks});
     };
@@ -1749,7 +1749,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
       if (arrival_qpc_ticks < arrival_span.start_qpc_ticks ||
           arrival_qpc_ticks > arrival_span.end_qpc_ticks)
       {
-        log_warning("an input edge arrived outside the frame span it was "
+        log_warning("an input event arrived outside the frame span it was "
                     "drained in (arrival {}, span [{}, {}]); placing it at "
                     "the end of the frame",
                     arrival_qpc_ticks, arrival_span.start_qpc_ticks, arrival_span.end_qpc_ticks);
@@ -1759,7 +1759,7 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
              static_cast<float>(arrival_span_ticks);
     };
 
-    // Nothing is draining edges while there is no tick loop: prediction only
+    // Nothing is draining button changes while there is no tick loop: prediction only
     // runs Connected. Park rather than accumulate -- a pending list nothing
     // consumes is a leak, and a stale one arrives as a burst of ancient presses
     // on the tick after connecting.
@@ -1768,53 +1768,53 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
       // Steering still has to work while connecting -- the view is drawn -- but
       // there is no tick loop to consume samples, so the travel is applied and
       // nothing is retained.
-      for (const input::input_edge_t& edge : input::frame_input_edges())
-        if (edge.device == input::input_device_t::Mouse_Motion)
-          apply_mouse_travel(edge.motion);
+      for (const input::timed_input_event_t& input_event : input::frame_timed_input_events())
+        if (input_event.device == input::input_device_t::Mouse_Motion)
+          apply_mouse_travel(input_event.motion);
 
-      ctx.prediction.pending_input_edges.clear();
+      ctx.prediction.pending_button_changes.clear();
       ctx.prediction.tracked_buttons_at_tick_start = 0;
       ctx.prediction.view_at_tick_start   = current_view();
-      ctx.prediction.input_edges_are_live = false;
+      ctx.prediction.button_changes_are_live = false;
     }
     else if (!body_input_allowed)
     {
       // Something else taking the keyboard releases everything, and that is an
-      // edge like any other: the keys stop being movement at the moment it
+      // button change like any other: the keys stop being movement at the moment it
       // opened, not at the next tick boundary. Its own transitions are then
-      // ignored -- which is what makes the edge state stale, and why this is not
+      // ignored -- which is what makes the button-change state stale, and why this is not
       // live. The pause menu belongs here alongside the console now that the
       // tick loop keeps running underneath it; before, the menu returned out of
       // update and the buttons simply froze mid-press.
       if (live_tracked_buttons != 0)
         record_transition(0, 0.f);
-      ctx.prediction.input_edges_are_live = false;
+      ctx.prediction.button_changes_are_live = false;
     }
     else
     {
-      if (!ctx.prediction.input_edges_are_live)
+      if (!ctx.prediction.button_changes_are_live)
       {
         // Resuming from a park. Resample silently: the transitions that happened
         // while parked were never read, so a disagreement here is expected
         // rather than a lost event.
-        ctx.prediction.pending_input_edges.clear();
+        ctx.prediction.pending_button_changes.clear();
         live_tracked_buttons = buttons & Button::Subtick_Tracked;
         ctx.prediction.tracked_buttons_at_tick_start = live_tracked_buttons;
         ctx.prediction.view_at_tick_start            = current_view();
-        ctx.prediction.input_edges_are_live = true;
+        ctx.prediction.button_changes_are_live = true;
       }
       // Otherwise the two ways of knowing which buttons are down have to agree
       // -- but they are read at DIFFERENT cuts of the timeline, and the check
       // has to account for that rather than pretend they are one instant.
       //
-      // The poll reflects SDL's last PUMP; the edges reflect the last raw
+      // The poll reflects SDL's last PUMP; the events reflect the last raw
       // DRAIN; and the pump sits between the previous drain and this one:
       //
       //     drain N-1 ....... pump N-1 ....... drain N
       //     |                 |                |
-      //     live_tracked      `buttons`        after this frame's edges
+      //     live_tracked      `buttons`        after this frame's events
       //
-      // So the poll is BRACKETED. An edge that landed after the pump is not in
+      // So the poll is BRACKETED. An event that landed after the pump is not in
       // the poll yet and the poll matches the left end; one that landed in the
       // gap before it is, and the poll matches the right end. Both are honest
       // readings of the same input, which is why comparing against the left end
@@ -1827,26 +1827,26 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
       // nothing else resamples.
       else
       {
-        uint64_t buttons_after_this_frames_edges = live_tracked_buttons;
-        for (const input::input_edge_t& edge : input::frame_input_edges())
+        uint64_t buttons_after_this_frames_changes = live_tracked_buttons;
+        for (const input::timed_input_event_t& input_event : input::frame_timed_input_events())
         {
-          const uint64_t bit = subtick_button_for_input_edge(edge, mouse_look_allowed);
+          const uint64_t bit = subtick_button_for_input_event(input_event, mouse_look_allowed);
           if (bit == 0)
             continue;
-          buttons_after_this_frames_edges = edge.down
-                                                ? (buttons_after_this_frames_edges | bit)
-                                                : (buttons_after_this_frames_edges & ~bit);
+          buttons_after_this_frames_changes = input_event.down
+                                                ? (buttons_after_this_frames_changes | bit)
+                                                : (buttons_after_this_frames_changes & ~bit);
         }
 
         const uint64_t polled_tracked_buttons = buttons & Button::Subtick_Tracked;
         if (polled_tracked_buttons != live_tracked_buttons &&
-            polled_tracked_buttons != buttons_after_this_frames_edges)
+            polled_tracked_buttons != buttons_after_this_frames_changes)
         {
-          log_warning("input edges disagree with the keyboard: edges say {:#x} "
+          log_warning("input events disagree with the keyboard: events say {:#x} "
                       "before this frame's and {:#x} after, the poll says {:#x} "
                       "and matches neither. A transition was lost (focus "
                       "change?); resyncing to the poll",
-                      live_tracked_buttons, buttons_after_this_frames_edges,
+                      live_tracked_buttons, buttons_after_this_frames_changes,
                       polled_tracked_buttons);
           record_transition(polled_tracked_buttons, 0.f);
         }
@@ -1856,35 +1856,35 @@ void Play_State::place_input_edges_on_the_tick_timeline(client_context_t &ctx,
       // travel is not summed somewhere else: the aim a shot is taken through is
       // the travel that arrived BEFORE the trigger, and nothing downstream can
       // recover that from a frame total.
-      for (const input::input_edge_t& edge : input::frame_input_edges())
+      for (const input::timed_input_event_t& input_event : input::frame_timed_input_events())
       {
-        // Both ends inclusive: the resync and focus-release edges, and every
-        // edge on the SDL fallback path, are stamped exactly at the span end.
-        const float seconds_into_frame = compute_arrival_fraction_within_frame(edge.arrival_qpc_ticks) * dt;
+        // Both ends inclusive: the resync and focus-release events, and every
+        // event on the SDL fallback path, are stamped exactly at the span end.
+        const float seconds_into_frame = compute_arrival_fraction_within_frame(input_event.arrival_qpc_ticks) * dt;
 
-        if (edge.device == input::input_device_t::Mouse_Motion)
+        if (input_event.device == input::input_device_t::Mouse_Motion)
         {
-          apply_mouse_travel(edge.motion);
-          record_sample(live_tracked_buttons, seconds_into_frame, edge.arrival_qpc_ticks);
+          apply_mouse_travel(input_event.motion);
+          record_sample(live_tracked_buttons, seconds_into_frame, input_event.arrival_qpc_ticks);
           continue;
         }
 
-        const uint64_t bit = subtick_button_for_input_edge(edge, mouse_look_allowed);
+        const uint64_t bit = subtick_button_for_input_event(input_event, mouse_look_allowed);
         if (bit == 0)
           continue;
 
         const uint64_t tracked_buttons =
-            edge.down ? (live_tracked_buttons | bit) : (live_tracked_buttons & ~bit);
+            input_event.down ? (live_tracked_buttons | bit) : (live_tracked_buttons & ~bit);
         if (tracked_buttons == live_tracked_buttons)
           continue;
 
-        record_sample(tracked_buttons, seconds_into_frame, edge.arrival_qpc_ticks);
+        record_sample(tracked_buttons, seconds_into_frame, input_event.arrival_qpc_ticks);
       }
     }
   }
 }
 
-// This tick's input, built from the pending edges, and when the trigger went down on the WALL
+// This tick's input, built from the pending button changes, and when the trigger went down on the WALL
 // clock, zero with no press. Those are different questions: the slot says which sub-step a shot is
 // taken from, the arrival says which drawn frame was in front of the player, and the drawn frames
 // are stamped on the input clock. Neither derives from the other.
@@ -1895,11 +1895,11 @@ struct tick_input_t
 };
 
 // buttons_at_start is the state the LAST tick left behind, not a fresh poll: a press that happened
-// mid-tick belongs to that tick as an edge, and folding it into the next one's start state is
+// mid-tick belongs to that tick as a button change, and folding it into the next one's start state is
 // exactly the quantization this replaces. The untracked bits (weapon keys, zoom) are polled and
 // ride along whole; they are tick-granular by choice. The leftovers are rebased onto the next tick
 // by the same subtraction the accumulator itself just took.
-static tick_input_t tick_input_from_pending_edges(client_context_t &ctx, uint64_t buttons, float tick_dt)
+static tick_input_t tick_input_from_pending_button_changes(client_context_t &ctx, uint64_t buttons, float tick_dt)
 {
   tick_input_t             tick_input{};
   shared::subtick_input_t &subtick_input = tick_input.subtick_input;
@@ -1908,8 +1908,8 @@ static tick_input_t tick_input_from_pending_edges(client_context_t &ctx, uint64_
   subtick_input.view_at_end      = ctx.prediction.view_at_tick_start;
 
   uint64_t tracked_buttons_walked = ctx.prediction.tracked_buttons_at_tick_start;
-  size_t   edges_consumed         = 0;
-  for (const prediction_t::pending_input_edge_t &pending : ctx.prediction.pending_input_edges)
+  size_t   button_changes_consumed         = 0;
+  for (const prediction_t::pending_button_change_t &pending : ctx.prediction.pending_button_changes)
   {
     if (pending.accumulator_seconds >= tick_dt)
       break;
@@ -1921,31 +1921,31 @@ static tick_input_t tick_input_from_pending_edges(client_context_t &ctx, uint64_
       tick_input.fire_press_arrival_qpc_ticks = pending.arrival_qpc_ticks;
     tracked_buttons_walked = pending.buttons_after;
 
-    // A travel-only sample records no edge and is not an overflow when the list is full; only a
+    // A travel-only sample records no button change and is not an overflow when the list is full; only a
     // real transition that cannot be placed is input being abandoned.
     const bool changes_buttons = buttons_after != subtick_input.buttons_at_end();
     if (changes_buttons &&
         !shared::try_record_subtick_state(subtick_input, slot, buttons_after, pending.view_after))
     {
       log_warning("losing the TIMING of a button transition at slot {}: command "
-                  "{} already carries {} sub-tick edges, the most one tick can "
+                  "{} already carries {} sub-tick button changes, the most one tick can "
                   "hold. The state change still lands, at the next tick "
                   "boundary instead of where it happened",
-                  slot, ctx.prediction.input_number, shared::MAX_SUBTICK_EDGES);
+                  slot, ctx.prediction.input_number, shared::MAX_SUBTICK_BUTTON_CHANGES);
     }
 
     // Every sample moves the aim, transition or not. The last one before the boundary IS the aim
     // at the boundary: what the next tick starts from and what everyone else draws us looking at.
     subtick_input.view_at_end                    = pending.view_after;
     ctx.prediction.tracked_buttons_at_tick_start = pending.buttons_after;
-    ++edges_consumed;
+    ++button_changes_consumed;
   }
 
   ctx.prediction.view_at_tick_start = subtick_input.view_at_end;
 
-  ctx.prediction.pending_input_edges.erase(ctx.prediction.pending_input_edges.begin(),
-                                           ctx.prediction.pending_input_edges.begin() + edges_consumed);
-  for (prediction_t::pending_input_edge_t &pending : ctx.prediction.pending_input_edges)
+  ctx.prediction.pending_button_changes.erase(ctx.prediction.pending_button_changes.begin(),
+                                           ctx.prediction.pending_button_changes.begin() + button_changes_consumed);
+  for (prediction_t::pending_button_change_t &pending : ctx.prediction.pending_button_changes)
     pending.accumulator_seconds -= tick_dt;
 
   return tick_input;
@@ -2101,7 +2101,7 @@ void Play_State::predict_own_body_for_input(client_context_t &ctx, play_frame_t 
 }
 
 // SIMULATE proper: one fixed step per server tick the accumulator has earned, at the server's
-// tickrate so prediction matches the server. Each tick: build its input from the pending edges,
+// tickrate so prediction matches the server. Each tick: build its input from the pending button changes,
 // send the command with the whole unacked tail, predict our own body. `phase != Connected` means
 // the connection is pending or broken, never that a server was deliberately not wanted: nothing
 // here plays offline, the integrated build connects over loopback too.
@@ -2117,7 +2117,7 @@ void Play_State::run_predicted_ticks(client_context_t &ctx, play_frame_t &frame)
   {
     ctx.prediction.physics_accumulator -= tick_dt;
 
-    const tick_input_t                    tick_input    = tick_input_from_pending_edges(ctx, frame.buttons, tick_dt);
+    const tick_input_t                    tick_input    = tick_input_from_pending_button_changes(ctx, frame.buttons, tick_dt);
     const shared::interpolation_bracket_t drawn_bracket = bracket_drawn_at_press(ctx, tick_input.fire_press_arrival_qpc_ticks);
     send_input_with_unacked_tail(ctx, tick_input.subtick_input, drawn_bracket);
 
@@ -2460,7 +2460,7 @@ void Play_State::update(float dt)
 
   reconcile_with_server(ctx, frame);
   resolve_aim_and_buttons(ctx, frame);
-  place_input_edges_on_the_tick_timeline(ctx, frame);
+  place_button_changes_on_the_tick_timeline(ctx, frame);
   run_predicted_ticks(ctx, frame);
   ctx.visuals.drawn_shadow_volumes = frame.predicted_world_storage.shadow_volumes;
   ctx.visuals.drawn_lens_watchers  = frame.predicted_world_storage.lens_watchers;

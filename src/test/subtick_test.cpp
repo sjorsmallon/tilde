@@ -4,14 +4,14 @@
 // but the two GRAMMARS, which are deliberately different and easy to collapse
 // into one by accident:
 //
-//   the wire's, strict    — an edge that breaks it is a client we did not ship,
+//   the wire's, strict    — a button change that breaks it is a client we did not ship,
 //                           and the server must refuse the command rather than
 //                           simulate something no honest client asked for.
 //   the client's, folding — fed raw input transitions, whose resolution is
 //                           coarser than a slot and whose order is whatever SDL
 //                           handed us.
 //
-// Plus the one property everything downstream leans on: a command with NO edges
+// Plus the one property everything downstream leans on: a command with NO button changes
 // splits into exactly the single tick_dt step it replaced, so bots, replays and
 // every pre-sub-tick caller keep the simulation they had.
 #include "../shared/network/subtick_codec.hpp"
@@ -20,14 +20,14 @@
 #include <cmath>
 #include <cstdio>
 
-using shared::MAX_SUBTICK_EDGES;
+using shared::MAX_SUBTICK_BUTTON_CHANGES;
 using shared::split_input_per_tick_into_subtick_steps;
 using shared::subtick_input_t;
 using shared::subtick_steps_t;
 using shared::SUBTICK_SLOT_COUNT;
 using shared::subtick_slot_from_fraction;
-using shared::try_append_subtick_edge;
-using shared::subtick_rising_edges;
+using shared::try_append_subtick_button_change;
+using shared::subtick_presses;
 using shared::subtick_slot_of_press;
 using shared::try_record_subtick_state;
 using shared::subtick_time_t;
@@ -72,9 +72,9 @@ static constexpr uint64_t B = 1ull << 1;
 
 // --- The empty case ----------------------------------------------------------
 
-static void test_no_edges_is_one_whole_step()
+static void test_no_button_changes_is_one_whole_step()
 {
-  printf("no edges -> one step of tick_dt\n");
+  printf("no button changes -> one step of tick_dt\n");
 
   subtick_input_t input{};
   input.buttons_at_start = A;
@@ -89,13 +89,13 @@ static void test_no_edges_is_one_whole_step()
 
 // --- Splitting ---------------------------------------------------------------
 
-static void test_one_edge_splits_at_its_slot()
+static void test_one_button_change_splits_at_its_slot()
 {
-  printf("one edge -> two steps, cut at the slot\n");
+  printf("one button change -> two steps, cut at the slot\n");
 
   subtick_input_t input{};
   input.buttons_at_start = 0;
-  check(try_append_subtick_edge(input, 16, A), "edge at slot 16 accepted");
+  check(try_append_subtick_button_change(input, 16, A), "button change at slot 16 accepted");
 
   const subtick_steps_t result = split_input_per_tick_into_subtick_steps(input, TICK_DT);
 
@@ -111,12 +111,12 @@ static void test_steps_sum_to_the_tick()
   printf("the steps of a tick add up to the tick\n");
 
   subtick_input_t input{};
-  check(try_append_subtick_edge(input, 7, A), "edge at 7");
-  check(try_append_subtick_edge(input, 8, A | B), "edge at 8");
-  check(try_append_subtick_edge(input, 61, B), "edge at 61");
+  check(try_append_subtick_button_change(input, 7, A), "button change at 7");
+  check(try_append_subtick_button_change(input, 8, A | B), "button change at 8");
+  check(try_append_subtick_button_change(input, 61, B), "button change at 61");
 
   const subtick_steps_t result = split_input_per_tick_into_subtick_steps(input, TICK_DT);
-  check_equal(result.step_count, 4, "four steps for three edges");
+  check_equal(result.step_count, 4, "four steps for three button changes");
 
   float total = 0.f;
   for (const shared::subtick_step_t& step : result)
@@ -134,8 +134,8 @@ static void test_every_step_is_positive()
   printf("no step has zero or negative duration\n");
 
   subtick_input_t input{};
-  check(try_append_subtick_edge(input, 1, A), "an edge in the first slot");
-  check(try_append_subtick_edge(input, SUBTICK_SLOT_COUNT - 1, 0), "and one in the last");
+  check(try_append_subtick_button_change(input, 1, A), "a button change in the first slot");
+  check(try_append_subtick_button_change(input, SUBTICK_SLOT_COUNT - 1, 0), "and one in the last");
 
   const subtick_steps_t result = split_input_per_tick_into_subtick_steps(input, TICK_DT);
   bool all_positive = true;
@@ -147,31 +147,31 @@ static void test_every_step_is_positive()
 
 // --- The wire grammar, strict ------------------------------------------------
 
-static void test_wire_grammar_refuses_malformed_edges()
+static void test_wire_grammar_refuses_malformed_button_changes()
 {
   printf("the wire grammar refuses what an honest client cannot send\n");
 
   {
     subtick_input_t input{};
-    check(!try_append_subtick_edge(input, 0, A), "slot 0 (that is buttons_at_start)");
+    check(!try_append_subtick_button_change(input, 0, A), "slot 0 (that is buttons_at_start)");
   }
   {
     subtick_input_t input{};
-    check(!try_append_subtick_edge(input, SUBTICK_SLOT_COUNT, A), "a slot past the tick");
+    check(!try_append_subtick_button_change(input, SUBTICK_SLOT_COUNT, A), "a slot past the tick");
   }
   {
     subtick_input_t input{};
-    check(try_append_subtick_edge(input, 32, A), "an edge at 32");
-    check(!try_append_subtick_edge(input, 32, B), "a second edge in the same slot");
-    check(!try_append_subtick_edge(input, 31, B), "an edge that goes backwards");
-    check_equal(input.edge_count, 1, "and neither was recorded");
+    check(try_append_subtick_button_change(input, 32, A), "a button change at 32");
+    check(!try_append_subtick_button_change(input, 32, B), "a second button change in the same slot");
+    check(!try_append_subtick_button_change(input, 31, B), "a button change that goes backwards");
+    check_equal(input.button_change_count, 1, "and neither was recorded");
   }
   {
     subtick_input_t input{};
-    for (uint32_t slot = 1; slot <= MAX_SUBTICK_EDGES; ++slot)
-      check(try_append_subtick_edge(input, slot, slot & 1), "filling the edge list");
-    check(!try_append_subtick_edge(input, MAX_SUBTICK_EDGES + 1, A),
-          "one edge past the cap -- the sub-step budget is what it bounds");
+    for (uint32_t slot = 1; slot <= MAX_SUBTICK_BUTTON_CHANGES; ++slot)
+      check(try_append_subtick_button_change(input, slot, slot & 1), "filling the button-change list");
+    check(!try_append_subtick_button_change(input, MAX_SUBTICK_BUTTON_CHANGES + 1, A),
+          "one button change past the cap -- the sub-step budget is what it bounds");
   }
 }
 
@@ -185,8 +185,8 @@ static void test_recorder_folds_within_a_slot()
   check(try_record_subtick_state(input, 20, A), "press at slot 20");
   check(try_record_subtick_state(input, 20, A | B), "a second press in the same slot");
 
-  check_equal(input.edge_count, 1, "one edge, not two");
-  check_equal(input.edges[0].buttons_after, A | B, "carrying the state that LEAVES the slot");
+  check_equal(input.button_change_count, 1, "one button change, not two");
+  check_equal(input.button_changes[0].buttons_after, A | B, "carrying the state that LEAVES the slot");
 }
 
 static void test_recorder_drops_a_tap_shorter_than_a_slot()
@@ -198,8 +198,8 @@ static void test_recorder_drops_a_tap_shorter_than_a_slot()
   check(try_record_subtick_state(input, 20, A), "press");
   check(try_record_subtick_state(input, 20, 0), "release, same slot");
 
-  check_equal(input.edge_count, 0,
-              "no edge at all -- an edge restating the state in effect would split "
+  check_equal(input.button_change_count, 0,
+              "no button change at all -- a button change restating the state in effect would split "
               "the tick for nothing");
   check_equal(input.buttons_at_end(), 0, "and the end state is still up");
 }
@@ -211,7 +211,7 @@ static void test_recorder_writes_the_boundary_to_buttons_at_start()
   subtick_input_t input{};
   check(try_record_subtick_state(input, 0, A), "recorded at slot 0");
 
-  check_equal(input.edge_count, 0, "no edge");
+  check_equal(input.button_change_count, 0, "no button change");
   check_equal(input.buttons_at_start, A, "the tick simply starts with it down");
 }
 
@@ -222,7 +222,7 @@ static void test_recorder_ignores_a_restatement()
   subtick_input_t input{};
   input.buttons_at_start = A;
   check(try_record_subtick_state(input, 10, A), "same buttons at slot 10");
-  check_equal(input.edge_count, 0, "no edge");
+  check_equal(input.button_change_count, 0, "no button change");
 }
 
 static void test_recorder_pins_an_out_of_order_transition()
@@ -233,53 +233,53 @@ static void test_recorder_pins_an_out_of_order_transition()
   check(try_record_subtick_state(input, 40, A), "press at 40");
   check(try_record_subtick_state(input, 12, A | B), "a second one stamped earlier");
 
-  check_equal(input.edge_count, 1, "one edge -- pinned onto slot 40, it folds into it");
-  check_equal(input.edges[0].slot, 40, "at the edge it could not precede");
+  check_equal(input.button_change_count, 1, "one button change -- pinned onto slot 40, it folds into it");
+  check_equal(input.button_changes[0].slot, 40, "at the button change it could not precede");
   check_equal(input.buttons_at_end(), A | B, "the state is right even though the timing was not");
 }
 
 static void test_recorder_reports_a_full_list()
 {
-  printf("a full edge list is reported, because that is input being dropped\n");
+  printf("a full button-change list is reported, because that is input being dropped\n");
 
   subtick_input_t input{};
   uint64_t buttons = 0;
-  for (uint32_t slot = 1; slot <= MAX_SUBTICK_EDGES; ++slot)
+  for (uint32_t slot = 1; slot <= MAX_SUBTICK_BUTTON_CHANGES; ++slot)
   {
     buttons ^= A;
     check(try_record_subtick_state(input, slot, buttons), "filling");
   }
 
   buttons ^= A;
-  check(!try_record_subtick_state(input, MAX_SUBTICK_EDGES + 2, buttons),
+  check(!try_record_subtick_state(input, MAX_SUBTICK_BUTTON_CHANGES + 2, buttons),
         "the next transition returns false rather than vanishing");
 }
 
 // --- Reading the tick back out -----------------------------------------------
 
-static void test_rising_edges_see_a_press_inside_the_tick()
+static void test_presses_see_a_press_inside_the_tick()
 {
   printf("a press and its release inside one tick still counts as a press\n");
 
   subtick_input_t input{};
   input.buttons_at_start = 0;
-  check(try_append_subtick_edge(input, 10, A), "down at 10");
-  check(try_append_subtick_edge(input, 40, 0), "up at 40");
+  check(try_append_subtick_button_change(input, 10, A), "down at 10");
+  check(try_append_subtick_button_change(input, 40, 0), "up at 40");
 
-  check_equal(subtick_rising_edges(input, 0), A,
+  check_equal(subtick_presses(input, 0), A,
               "rising, even though both ends of the tick have it up -- at tick "
               "granularity this press was invisible");
   check_equal(input.buttons_at_end(), 0, "and the tick still ends with it up");
 }
 
-static void test_rising_edges_ignore_a_button_already_down()
+static void test_presses_ignore_a_button_already_down()
 {
   printf("a button held across the boundary is not a press\n");
 
   subtick_input_t input{};
   input.buttons_at_start = A;
-  check_equal(subtick_rising_edges(input, A), 0, "nothing rose");
-  check_equal(subtick_rising_edges(input, 0), A, "unless the last tick had it up");
+  check_equal(subtick_presses(input, A), 0, "nothing rose");
+  check_equal(subtick_presses(input, 0), A, "unless the last tick had it up");
 }
 
 static void test_slot_of_press_is_the_shot_timestamp()
@@ -288,7 +288,7 @@ static void test_slot_of_press_is_the_shot_timestamp()
 
   {
     subtick_input_t input{};
-    check(try_append_subtick_edge(input, 48, A), "down at 48");
+    check(try_append_subtick_button_change(input, 48, A), "down at 48");
     check_equal(subtick_slot_of_press(input, 0, A), 48, "found at its slot");
   }
   {
@@ -305,9 +305,9 @@ static void test_slot_of_press_is_the_shot_timestamp()
   }
   {
     subtick_input_t input{};
-    check(try_append_subtick_edge(input, 12, A), "a different button at 12");
-    check(try_append_subtick_edge(input, 30, A | B), "the one we asked about at 30");
-    check_equal(subtick_slot_of_press(input, 0, B), 30, "the right edge of the two");
+    check(try_append_subtick_button_change(input, 12, A), "a different button at 12");
+    check(try_append_subtick_button_change(input, 30, A | B), "the one we asked about at 30");
+    check_equal(subtick_slot_of_press(input, 0, B), 30, "the right button change of the two");
   }
 }
 
@@ -319,9 +319,9 @@ static void test_wire_round_trip()
 
   shared::subtick_input_t sent{};
   sent.buttons_at_start = A;
-  check(try_append_subtick_edge(sent, 3, A | B), "edge at 3");
-  check(try_append_subtick_edge(sent, 31, B), "edge at 31");
-  check(try_append_subtick_edge(sent, 63, 0), "edge at 63");
+  check(try_append_subtick_button_change(sent, 3, A | B), "button change at 3");
+  check(try_append_subtick_button_change(sent, 31, B), "button change at 31");
+  check(try_append_subtick_button_change(sent, 63, 0), "button change at 63");
 
   game::C2S_ClientInput move;
   network::write_subtick_input(move, sent);
@@ -333,25 +333,25 @@ static void test_wire_round_trip()
     return;
 
   check_equal(received->buttons_at_start, sent.buttons_at_start, "the start state");
-  check_equal(received->edge_count, sent.edge_count, "every edge");
+  check_equal(received->button_change_count, sent.button_change_count, "every button change");
 
   bool identical = true;
-  for (uint32_t i = 0; i < sent.edge_count; ++i)
-    identical = identical && received->edges[i].slot == sent.edges[i].slot &&
-                received->edges[i].buttons_after == sent.edges[i].buttons_after;
+  for (uint32_t i = 0; i < sent.button_change_count; ++i)
+    identical = identical && received->button_changes[i].slot == sent.button_changes[i].slot &&
+                received->button_changes[i].buttons_after == sent.button_changes[i].buttons_after;
   check(identical, "slot and buttons, unchanged");
 }
 
 static void test_wire_refuses_a_malformed_command()
 {
-  printf("a command with edges that break the grammar is refused whole\n");
+  printf("a command with button changes that break the grammar is refused whole\n");
 
   game::C2S_ClientInput move;
   move.set_buttons_bitfield(0);
-  game::C2S_SubtickEdge* first = move.add_subtick_edges();
+  game::C2S_SubtickButtonChange* first = move.add_subtick_button_changes();
   first->set_slot(40);
   first->set_buttons_after(A);
-  game::C2S_SubtickEdge* second = move.add_subtick_edges();
+  game::C2S_SubtickButtonChange* second = move.add_subtick_button_changes();
   second->set_slot(9);
   second->set_buttons_after(B);
 
@@ -359,9 +359,9 @@ static void test_wire_refuses_a_malformed_command()
         "descending slots, so nothing is simulated -- not the prefix that parsed");
 }
 
-static void test_wire_carries_an_edgeless_command()
+static void test_wire_carries_a_command_with_no_button_changes()
 {
-  printf("a command with no edges is a whole command\n");
+  printf("a command with no button changes is a whole command\n");
 
   shared::subtick_input_t sent{};
   sent.buttons_at_start = A | B;
@@ -369,7 +369,7 @@ static void test_wire_carries_an_edgeless_command()
   game::C2S_ClientInput move;
   network::write_subtick_input(move, sent);
 
-  check_equal(move.subtick_edges_size(), 0, "nothing on the wire but the buttons");
+  check_equal(move.subtick_button_changes_size(), 0, "nothing on the wire but the buttons");
 
   const std::optional<shared::subtick_input_t> received =
       network::try_read_subtick_input(move);
@@ -394,8 +394,8 @@ static void test_slot_from_fraction()
 // --- Ordering inside one tick ------------------------------------------------
 //
 // The reason the weapon keys were admitted to Button::Subtick_Tracked
-// (raw_input_plan.md, step 5). The server applies a switch from the press edge
-// and fires from the trigger edge inside the SAME step loop, so switch-then-fire
+// (raw_input_plan.md, step 5). The server applies a switch from the press
+// and fires from the trigger press inside the SAME step loop, so switch-then-fire
 // and fire-then-switch are different outcomes -- and they are indistinguishable
 // at tick granularity, because both end the tick with both bits down. This is
 // the check that they are distinguishable now, and it fails if either button
@@ -406,12 +406,12 @@ static void test_ordering_within_a_tick_is_preserved()
   printf("two orderings of the same tick are two different ticks\n");
 
   subtick_input_t switch_then_fire{};
-  check(try_append_subtick_edge(switch_then_fire, 10, A), "switch at 10");
-  check(try_append_subtick_edge(switch_then_fire, 40, A | B), "fire at 40");
+  check(try_append_subtick_button_change(switch_then_fire, 10, A), "switch at 10");
+  check(try_append_subtick_button_change(switch_then_fire, 40, A | B), "fire at 40");
 
   subtick_input_t fire_then_switch{};
-  check(try_append_subtick_edge(fire_then_switch, 10, B), "fire at 10");
-  check(try_append_subtick_edge(fire_then_switch, 40, A | B), "switch at 40");
+  check(try_append_subtick_button_change(fire_then_switch, 10, B), "fire at 10");
+  check(try_append_subtick_button_change(fire_then_switch, 40, A | B), "switch at 40");
 
   check_equal(switch_then_fire.buttons_at_end(), fire_then_switch.buttons_at_end(),
               "the tick ENDS in the same state either way -- which is exactly why "
@@ -437,9 +437,9 @@ static void test_ordering_within_a_tick_is_preserved()
 //
 // Sub-tick timed the BUTTON and left the aim alone, which on a flick left the
 // press placed to 0.26ms and pointed wherever the mouse finished the frame.
-// These guard the fix: the angle is sampled at the edges that already exist,
+// These guard the fix: the angle is sampled at the button changes that already exist,
 // every step runs under the one in effect when it opened, and the tick's end
-// angle is carried separately because the common tick has no edge to hang it
+// angle is carried separately because the common tick has no button change to hang it
 // on.
 
 static void check_view(shared::subtick_view_t actual, float yaw, float pitch, const char* what)
@@ -459,16 +459,16 @@ static void test_every_step_runs_under_the_aim_it_opened_with()
   subtick_input_t input{};
   input.buttons_at_start = 0;
   input.view_at_start    = {10.f, 0.f};
-  check(try_append_subtick_edge(input, 16, A, {20.f, 1.f}), "edge at 16, aimed at 20");
-  check(try_append_subtick_edge(input, 48, A | B, {30.f, 2.f}), "edge at 48, aimed at 30");
+  check(try_append_subtick_button_change(input, 16, A, {20.f, 1.f}), "button change at 16, aimed at 20");
+  check(try_append_subtick_button_change(input, 48, A | B, {30.f, 2.f}), "button change at 48, aimed at 30");
   input.view_at_end = {35.f, 3.f};
 
   const subtick_steps_t result = split_input_per_tick_into_subtick_steps(input, TICK_DT);
   check_equal(result.step_count, 3, "three steps");
 
   check_view(result.steps[0].view, 10.f, 0.f, "the first runs under the tick's start aim");
-  check_view(result.steps[1].view, 20.f, 1.f, "the second under the first edge's");
-  check_view(result.steps[2].view, 30.f, 2.f, "the third under the second edge's");
+  check_view(result.steps[1].view, 20.f, 1.f, "the second under the first button change's");
+  check_view(result.steps[2].view, 30.f, 2.f, "the third under the second button change's");
 }
 
 static void test_the_shot_is_aimed_where_the_trigger_was_pulled()
@@ -481,7 +481,7 @@ static void test_the_shot_is_aimed_where_the_trigger_was_pulled()
   subtick_input_t input{};
   input.buttons_at_start = 0;
   input.view_at_start    = {0.f, 0.f};
-  check(try_append_subtick_edge(input, 16, B, {30.f, 0.f}), "trigger down at slot 16");
+  check(try_append_subtick_button_change(input, 16, B, {30.f, 0.f}), "trigger down at slot 16");
   input.view_at_end = {90.f, 0.f};
 
   const subtick_steps_t result = split_input_per_tick_into_subtick_steps(input, TICK_DT);
@@ -503,11 +503,11 @@ static void test_the_shot_is_aimed_where_the_trigger_was_pulled()
   check_view(input.view_in_effect_at(8), 0.f, 0.f, "and reads the start aim before it");
 }
 
-static void test_an_edgeless_tick_still_carries_both_ends()
+static void test_a_tick_with_no_button_changes_still_carries_both_ends()
 {
   printf("a tick that moved the mouse and pressed nothing still reports where the aim went\n");
 
-  // The common tick, and the one no edge can describe: the aim moved and no
+  // The common tick, and the one no button change can describe: the aim moved and no
   // button did, so there is nothing to hang the angle on but the two ends.
   subtick_input_t sent{};
   sent.buttons_at_start = A;
@@ -522,7 +522,7 @@ static void test_an_edgeless_tick_still_carries_both_ends()
   if (!received)
     return;
 
-  check_equal(received->edge_count, 0, "no edges were spent on it");
+  check_equal(received->button_change_count, 0, "no button changes were spent on it");
   check_view(received->view_at_start, 5.f, -1.f, "the start aim survived");
   check_view(received->view_at_end, 17.f, -4.f, "and so did the end aim");
 
@@ -531,15 +531,15 @@ static void test_an_edgeless_tick_still_carries_both_ends()
   check_view(result.steps[0].view, 5.f, -1.f, "run under the aim it started with");
 }
 
-static void test_wire_carries_the_aim_at_every_edge()
+static void test_wire_carries_the_aim_at_every_button_change()
 {
-  printf("per-edge aim survives the C2S_ClientInput it rides in\n");
+  printf("per-change aim survives the C2S_ClientInput it rides in\n");
 
   subtick_input_t sent{};
   sent.buttons_at_start = 0;
   sent.view_at_start    = {1.f, 2.f};
-  check(try_append_subtick_edge(sent, 8, A, {3.f, 4.f}), "edge at 8");
-  check(try_append_subtick_edge(sent, 40, A | B, {5.f, 6.f}), "edge at 40");
+  check(try_append_subtick_button_change(sent, 8, A, {3.f, 4.f}), "button change at 8");
+  check(try_append_subtick_button_change(sent, 40, A | B, {5.f, 6.f}), "button change at 40");
   sent.view_at_end = {7.f, 8.f};
 
   game::C2S_ClientInput move;
@@ -551,8 +551,8 @@ static void test_wire_carries_the_aim_at_every_edge()
     return;
 
   check_view(received->view_at_start, 1.f, 2.f, "the start aim");
-  check_view(received->edges[0].view_after, 3.f, 4.f, "the first edge's aim");
-  check_view(received->edges[1].view_after, 5.f, 6.f, "the second edge's aim");
+  check_view(received->button_changes[0].view_after, 3.f, 4.f, "the first button change's aim");
+  check_view(received->button_changes[1].view_after, 5.f, 6.f, "the second button change's aim");
   check_view(received->view_at_end, 7.f, 8.f, "the end aim");
 }
 
@@ -567,9 +567,9 @@ static void test_a_single_angle_tick_is_still_a_whole_tick()
   move.set_buttons_bitfield(0);
   move.mutable_viewangles()->set_yaw(42.f);
   move.mutable_viewangles()->set_pitch(-7.f);
-  game::C2S_SubtickEdge* edge = move.add_subtick_edges();
-  edge->set_slot(20);
-  edge->set_buttons_after(A);
+  game::C2S_SubtickButtonChange* wire_change = move.add_subtick_button_changes();
+  wire_change->set_slot(20);
+  wire_change->set_buttons_after(A);
 
   const std::optional<subtick_input_t> received = network::try_read_subtick_input(move);
   check(received.has_value(), "accepted");
@@ -663,8 +663,8 @@ static void test_the_step_a_press_opens_carries_its_slot()
   // site that stamps it. If start_slot ever stops being the press's slot, the
   // fire cadence and the reload deadline both silently round to the tick again.
   subtick_input_t input{};
-  check(try_append_subtick_edge(input, 10, A), "weapon key at 10");
-  check(try_append_subtick_edge(input, 40, A | B), "trigger at 40");
+  check(try_append_subtick_button_change(input, 10, A), "weapon key at 10");
+  check(try_append_subtick_button_change(input, 40, A | B), "trigger at 40");
 
   const subtick_steps_t steps = split_input_per_tick_into_subtick_steps(input, TICK_DT);
   check_equal(steps.step_count, 3, "three steps");
@@ -692,19 +692,19 @@ static void test_the_step_a_press_opens_carries_its_slot()
 
 int main()
 {
-  test_no_edges_is_one_whole_step();
-  test_one_edge_splits_at_its_slot();
+  test_no_button_changes_is_one_whole_step();
+  test_one_button_change_splits_at_its_slot();
   test_steps_sum_to_the_tick();
   test_every_step_is_positive();
-  test_wire_grammar_refuses_malformed_edges();
+  test_wire_grammar_refuses_malformed_button_changes();
   test_recorder_folds_within_a_slot();
   test_recorder_drops_a_tap_shorter_than_a_slot();
   test_recorder_writes_the_boundary_to_buttons_at_start();
   test_recorder_ignores_a_restatement();
   test_recorder_pins_an_out_of_order_transition();
   test_recorder_reports_a_full_list();
-  test_rising_edges_see_a_press_inside_the_tick();
-  test_rising_edges_ignore_a_button_already_down();
+  test_presses_see_a_press_inside_the_tick();
+  test_presses_ignore_a_button_already_down();
   test_slot_of_press_is_the_shot_timestamp();
   test_ordering_within_a_tick_is_preserved();
   test_subtick_time_is_a_moment_not_a_tick();
@@ -714,12 +714,12 @@ int main()
   test_the_step_a_press_opens_carries_its_slot();
   test_wire_round_trip();
   test_wire_refuses_a_malformed_command();
-  test_wire_carries_an_edgeless_command();
+  test_wire_carries_a_command_with_no_button_changes();
   test_slot_from_fraction();
   test_every_step_runs_under_the_aim_it_opened_with();
   test_the_shot_is_aimed_where_the_trigger_was_pulled();
-  test_an_edgeless_tick_still_carries_both_ends();
-  test_wire_carries_the_aim_at_every_edge();
+  test_a_tick_with_no_button_changes_still_carries_both_ends();
+  test_wire_carries_the_aim_at_every_button_change();
   test_a_single_angle_tick_is_still_a_whole_tick();
 
   printf(failures == 0 ? "\nsubtick: all checks passed\n" : "\nsubtick: %d FAILED\n", failures);

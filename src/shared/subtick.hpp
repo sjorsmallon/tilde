@@ -12,14 +12,14 @@ namespace shared
 // boundary. Quantizing a press to the 16.7ms tick grid is a modeling error --
 // the press happened at a time, and the grid is an implementation detail of the
 // simulator -- so a client's input carries the state at the tick's start plus the
-// EDGES that followed it, and one tick runs as one movement step per interval
+// BUTTON CHANGES that followed it, and one tick runs as one movement step per interval
 // between them. See subtick_plan.md.
 //
 // The grammar of one command's input over one tick:
 //
-//   input          := buttons_at_start edge*
-//   edge           := slot buttons_after
-//   slot           := 1 .. SUBTICK_SLOT_COUNT-1   strictly ascending across edges
+//   input          := buttons_at_start button_change*
+//   button_change  := slot buttons_after
+//   slot           := 1 .. SUBTICK_SLOT_COUNT-1   strictly ascending across button changes
 //   buttons_after  := the FULL button bitfield in effect from `slot` onward
 //
 // `buttons_after` is the whole bitfield and not a delta so a sub-step needs no
@@ -35,20 +35,20 @@ namespace shared
 //
 // 64 slots is 0.26ms at 60Hz, which is 0.12 units of travel at 500 units/s. The
 // thing being fixed is 16.7ms, which is 8 units. Resolution is not the
-// constraint, and the client can now reach it: edges are stamped by a dedicated
+// constraint, and the client can now reach it: button changes are stamped by a dedicated
 // raw-input thread on the QueryPerformanceCounter, measured at sub-millisecond
 // spacing with no quantization floor (raw_input_plan.md). Before that they came
 // from SDL, whose stamps are pump time -- one frame, not one millisecond.
 constexpr uint32_t SUBTICK_SLOT_COUNT = 64;
 
 // The cap is the sub-step budget, not a guess about how fast anyone types: a
-// command with N edges costs N+1 full pmove passes on the server, so this is
+// command with N button changes costs N+1 full pmove passes on the server, so this is
 // what bounds the work one datagram can ask for. A human produces one to three
 // transitions in 16.7ms even across the whole tracked set (movement, the
 // trigger, the weapon keys and reload); a client that overruns it drops the
 // excess and says so, which is the signal to raise this rather than to lose
 // timing quietly.
-constexpr uint32_t MAX_SUBTICK_EDGES = 8;
+constexpr uint32_t MAX_SUBTICK_BUTTON_CHANGES = 8;
 
 // A MOMENT in the server's simulation, exact to one slot.
 //
@@ -118,11 +118,11 @@ constexpr subtick_time_t subtick_time_after(subtick_time_t from, float seconds,
 // Where the player was AIMING, carried alongside the buttons.
 //
 // The angle is a continuous quantity and the buttons are discrete, so it does
-// not get edges of its own: a 1000Hz mouse would produce sixteen reports per
-// tick, and an edge costs a full pmove pass on the server -- MAX_SUBTICK_EDGES
+// not get button changes of its own: a 1000Hz mouse would produce sixteen reports per
+// tick, and a button change costs a full pmove pass on the server -- MAX_SUBTICK_BUTTON_CHANGES
 // is a work budget, not a resolution. Instead the angle is sampled at the
 // moments that already exist. Those are exactly the moments it is needed at:
-// the trigger edge IS the moment the shot is aimed, and every other edge opens
+// the trigger press IS the moment the shot is aimed, and every other button change opens
 // a step that has to run under some basis anyway.
 //
 // This is the other half of the modeling error sub-tick fixes. Timing the
@@ -135,7 +135,7 @@ struct subtick_view_t
   float pitch = 0.f;
 };
 
-struct subtick_edge_t
+struct subtick_button_change_t
 {
   uint8_t        slot          = 0;
   uint64_t       buttons_after = 0;
@@ -147,31 +147,31 @@ struct subtick_input_t
   uint64_t       buttons_at_start = 0;
   subtick_view_t view_at_start    = {};
 
-  // Where the aim ended up, which no edge carries: a tick whose mouse moved and
-  // whose buttons did not has no edge to hang it on, and that is the common
+  // Where the aim ended up, which no button change carries: a tick whose mouse moved and
+  // whose buttons did not has no button change to hang it on, and that is the common
   // case. Nothing simulates under it -- it is what the next tick starts from,
   // and what the server writes to Player_Entity::view_angle_* for everyone else
   // to draw.
   subtick_view_t view_at_end = {};
 
-  Array<subtick_edge_t, MAX_SUBTICK_EDGES> edges = {};
-  uint32_t edge_count = 0;
+  Array<subtick_button_change_t, MAX_SUBTICK_BUTTON_CHANGES> button_changes = {};
+  uint32_t button_change_count = 0;
 
   uint64_t buttons_at_end() const
   {
-    return edge_count == 0 ? buttons_at_start : edges[edge_count - 1].buttons_after;
+    return button_change_count == 0 ? buttons_at_start : button_changes[button_change_count - 1].buttons_after;
   }
 
-  // The aim in effect from `slot` onward, which is the last edge at or before
-  // it. Not view_at_end: that one is past every edge by construction.
+  // The aim in effect from `slot` onward, which is the last button change at or before
+  // it. Not view_at_end: that one is past every button change by construction.
   subtick_view_t view_in_effect_at(uint32_t slot) const
   {
     subtick_view_t view = view_at_start;
-    for (uint32_t edge_index = 0; edge_index < edge_count; ++edge_index)
+    for (uint32_t change_index = 0; change_index < button_change_count; ++change_index)
     {
-      if (edges[edge_index].slot > slot)
+      if (button_changes[change_index].slot > slot)
         break;
-      view = edges[edge_index].view_after;
+      view = button_changes[change_index].view_after;
     }
     return view;
   }
@@ -180,8 +180,8 @@ struct subtick_input_t
 // One movement step: the buttons it runs under, where it was aiming, and how
 // long it lasts.
 //
-// The aim is the one in effect at the step's START -- the edge that opened it.
-// That is what makes a shot exact, since the trigger edge opens the step it is
+// The aim is the one in effect at the step's START -- the button change that opened it.
+// That is what makes a shot exact, since the trigger press opens the step it is
 // resolved in, and it bounds the error for movement at one step rather than the
 // whole tick.
 struct subtick_step_t
@@ -196,15 +196,15 @@ struct subtick_step_t
 
 struct subtick_steps_t
 {
-  Array<subtick_step_t, MAX_SUBTICK_EDGES + 1> steps = {};
+  Array<subtick_step_t, MAX_SUBTICK_BUTTON_CHANGES + 1> steps = {};
   uint32_t step_count = 0;
 
   const subtick_step_t* begin() const { return steps.begin(); }
   const subtick_step_t* end() const { return steps.begin() + step_count; }
 };
 
-// The tick, cut at its edges. Always at least one step, so a command with no
-// edges is exactly the single `tick_dt` step this replaced -- which is what
+// The tick, cut at its button changes. Always at least one step, so a command with no
+// button changes is exactly the single `tick_dt` step this replaced -- which is what
 // makes bots and replays need no sub-tick story at all.
 //
 // Each step's duration is `tick_dt * slots / SUBTICK_SLOT_COUNT`, computed the
@@ -220,7 +220,7 @@ subtick_steps_t split_input_per_tick_into_subtick_steps(const subtick_input_t& i
 // counts, which is the point: at tick granularity that press was invisible, and
 // a trigger pull that lands entirely between two boundaries is exactly the input
 // sub-tick exists to stop dropping.
-uint64_t subtick_rising_edges(const subtick_input_t& input, uint64_t buttons_before);
+uint64_t subtick_presses(const subtick_input_t& input, uint64_t buttons_before);
 
 // The slot a button went DOWN in, or SUBTICK_SLOT_COUNT if it did not go down
 // at all this tick. Slot 0 means it was already down when the tick began.
@@ -234,13 +234,13 @@ uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_be
 
 // The strict grammar append, for input that arrived over the wire. Refuses a
 // slot of 0 (redundant with buttons_at_start), one past the end of the tick, one
-// that does not advance, and an edge past the cap -- each of which is a client
+// that does not advance, and a button change past the cap -- each of which is a client
 // that is not the one we ship.
 //
 // `view_after` defaults to the zero angle, which is honest for the callers that
 // have none: a bot, a replay and every test about the button grammar itself
-// simulate under the input's own view_at_start and never look at an edge's.
-[[nodiscard]] bool try_append_subtick_edge(subtick_input_t& input, uint32_t slot,
+// simulate under the input's own view_at_start and never look at a button change's.
+[[nodiscard]] bool try_append_subtick_button_change(subtick_input_t& input, uint32_t slot,
                                            uint64_t buttons_after,
                                            subtick_view_t view_after = {});
 
@@ -250,10 +250,10 @@ uint32_t subtick_slot_of_press(const subtick_input_t& input, uint64_t buttons_be
 // rather than a validated message. Two transitions inside one slot are
 // indistinguishable at this resolution, so the later one wins; a fold that ends
 // up restating the state already in effect (a press and its release inside one
-// slot) records nothing rather than an edge that splits the tick for no reason.
+// slot) records nothing rather than a button change that splits the tick for no reason.
 // Slot 0 is the tick boundary itself and writes `buttons_at_start`.
 //
-// False means the edge list is full and this transition is being DROPPED, which
+// False means the button-change list is full and this transition is being DROPPED, which
 // is input loss and the caller must say so.
 [[nodiscard]] bool try_record_subtick_state(subtick_input_t& input, uint32_t slot,
                                             uint64_t buttons, subtick_view_t view = {});

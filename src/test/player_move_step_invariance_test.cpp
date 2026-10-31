@@ -174,7 +174,7 @@ struct hook_probe_t
 // ONE Movement across the whole run, for the same reason position and velocity
 // are threaded: it is per-player state that a tick's steps share, and a fresh
 // one per step would hide precisely the step-count dependence this file exists
-// to catch (a jump edge would re-fire on every sub-step).
+// to catch (a jump press would re-fire on every sub-step).
 static move_result_t run_split(const cvar_state_t& cvars,
                                const Bounding_Volume_Hierarchy& bvh,
                                const Move_Input& input, vec3 position,
@@ -648,9 +648,9 @@ static void test_accelerate_clamp_alone_composes(const cvar_state_t& cvars)
 //
 // This is the test the Movement component exists to make possible, and it is
 // the one that fails the moment somebody reads the jump LEVEL to spend a
-// charge. player_move splits a tick into one step per sub-tick edge, so a held
+// charge. player_move splits a tick into one step per sub-tick button change, so a held
 // jump key is `jump_pressed == true` on every one of them -- 1 step or 16. A
-// budget spent off the level therefore empties in proportion to how many edges
+// budget spent off the level therefore empties in proportion to how many button changes
 // happened to be in the tick, which is a movement rule that depends on how fast
 // you were moving your mouse.
 //
@@ -658,7 +658,7 @@ static void test_accelerate_clamp_alone_composes(const cvar_state_t& cvars)
 // a fresh one per step is exactly the bug and would make this pass vacuously.
 static void test_air_jump_fires_once_per_press(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] air jump: an edge-triggered ability is step-invariant\n");
+  printf("\n[EXACT] air jump: an press-triggered ability is step-invariant\n");
 
   cvar_state_t with_air_jumps = cvars;
   with_air_jumps.pm_air_jump_count = 1;
@@ -688,7 +688,7 @@ static void test_air_jump_fires_once_per_press(const cvar_state_t& cvars)
   }
 
   // And the budget is a budget: with the key still held on the next tick there
-  // is no new edge, so nothing more is spent. Holding jump does not levitate.
+  // is no new button change, so nothing more is spent. Holding jump does not levitate.
   entities::Movement movement{};
   vec3 position = start_position;
   vec3 velocity = start_velocity;
@@ -711,7 +711,7 @@ static void test_air_jump_fires_once_per_press(const cvar_state_t& cvars)
         "pm_air_jump_count 0 spends nothing and leaves free fall untouched");
 }
 
-// --- movement volumes: a jump pad is an edge, like an air jump ----------------
+// --- movement volumes: a jump pad is a button change, like an air jump ----------------
 //
 // The launch used to be a server system's write after the move loop, which the
 // client could not see. It is a step now, which means it has to obey the same
@@ -1178,11 +1178,11 @@ static void test_bunnyhop_hl2_jump_boost(const cvar_state_t& cvars)
   }
 }
 
-// --- 15. the air push sweeps the aim: an edge on a steady turn adds nothing ---
+// --- 15. the air push sweeps the aim: a button change on a steady turn adds nothing ---
 static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
                                           const Bounding_Volume_Hierarchy& bvh,
                                           const Move_Input& input, float start_yaw,
-                                          float yaw_turn, uint32_t edge_slot,
+                                          float yaw_turn, uint32_t change_slot,
                                           bool sweep_the_aim)
 {
   entities::Movement movement{};
@@ -1190,8 +1190,8 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
   vec3 velocity{cvars.pm_maxspeed, 0.f, 0.f};
 
   const std::vector<uint32_t> step_ends =
-      edge_slot == 0 ? std::vector<uint32_t>{shared::SUBTICK_SLOT_COUNT}
-                     : std::vector<uint32_t>{edge_slot, shared::SUBTICK_SLOT_COUNT};
+      change_slot == 0 ? std::vector<uint32_t>{shared::SUBTICK_SLOT_COUNT}
+                     : std::vector<uint32_t>{change_slot, shared::SUBTICK_SLOT_COUNT};
   const float slot_fraction = 1.f / static_cast<float>(shared::SUBTICK_SLOT_COUNT);
 
   uint32_t step_start = 0;
@@ -1221,9 +1221,9 @@ static vec3 velocity_after_a_turning_tick(const cvar_state_t& cvars,
   return velocity;
 }
 
-static void test_air_push_ignores_edges_on_a_steady_turn(const cvar_state_t& cvars)
+static void test_air_push_ignores_button_changes_on_a_steady_turn(const cvar_state_t& cvars)
 {
-  printf("\n[EXACT] air push: an extra edge on a steady mouse turn adds nothing\n");
+  printf("\n[EXACT] air push: an extra button change on a steady mouse turn adds nothing\n");
 
   const Bounding_Volume_Hierarchy bvh = empty_world();
   Move_Input input;
@@ -1234,26 +1234,26 @@ static void test_air_push_ignores_edges_on_a_steady_turn(const cvar_state_t& cva
 
   const float    start_yaw = -6.f;
   const float    yaw_turn  = 3.f;
-  const uint32_t edge_slot = 24;
+  const uint32_t change_slot = 24;
 
   const vec3 swept_whole =
       velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, 0, true);
   const vec3 swept_split =
-      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, edge_slot, true);
+      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, change_slot, true);
   const vec3 stepped_whole =
       velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, 0, false);
   const vec3 stepped_split =
-      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, edge_slot, false);
+      velocity_after_a_turning_tick(strafing, bvh, input, start_yaw, yaw_turn, change_slot, false);
 
-  printf("    swept aim:         whole tick %.6f  with an edge %.6f\n",
+  printf("    swept aim:         whole tick %.6f  with a button change %.6f\n",
          horizontal_speed(swept_whole), horizontal_speed(swept_split));
-  printf("    one aim per step:  whole tick %.6f  with an edge %.6f\n",
+  printf("    one aim per step:  whole tick %.6f  with a button change %.6f\n",
          horizontal_speed(stepped_whole), horizontal_speed(stepped_split));
 
-  check_near(swept_split.x, swept_whole.x, 1e-3f, "swept aim: the edge leaves x alone");
-  check_near(swept_split.z, swept_whole.z, 1e-3f, "swept aim: the edge leaves z alone");
+  check_near(swept_split.x, swept_whole.x, 1e-3f, "swept aim: the button change leaves x alone");
+  check_near(swept_split.z, swept_whole.z, 1e-3f, "swept aim: the button change leaves z alone");
   check(horizontal_speed(stepped_split) > horizontal_speed(stepped_whole) + 0.1f,
-        "one aim per step: the same edge buys speed, which is what the sweep removes");
+        "one aim per step: the same button change buys speed, which is what the sweep removes");
 }
 
 // --- 16. a mover carries its rider the same under any step count ---
@@ -2889,7 +2889,7 @@ int main()
   test_carried_speed_survives_the_clip(cvars);
   test_bunnyhop_cs_strafe_gains(cvars);
   test_bunnyhop_hl2_jump_boost(cvars);
-  test_air_push_ignores_edges_on_a_steady_turn(cvars);
+  test_air_push_ignores_button_changes_on_a_steady_turn(cvars);
   test_a_jump_pad_fires_once_per_contact(cvars);
   test_a_disabled_jump_pad_is_passed_through(cvars);
   test_an_inverted_gravity_zone_lifts_a_standing_hull(cvars);

@@ -1,6 +1,6 @@
 # Raw input timing — plan
 
-Sub-tick edge times are currently **frame-quantized, not millisecond-accurate**, and
+Sub-tick input event times are currently **frame-quantized, not millisecond-accurate**, and
 the code claims otherwise. This is the plan to fix it properly: take input
 timestamps from a dedicated raw-input thread instead of from SDL, and widen the
 sub-tick tracked set to every button `player_move` and the server's step loop
@@ -25,7 +25,7 @@ Do not re-litigate this from first principles; re-run the probe instead.
 
 | Clock | Measurement | Verdict |
 |---|---|---|
-| SDL2 `event.timestamp` | 40 edges: age min 1.000ms, max 2.000ms, mean **1.125ms**, on 6.283ms frames | Pump time. Constant. Carries **no** input timing. |
+| SDL2 `event.timestamp` | 40 input events: age min 1.000ms, max 2.000ms, mean **1.125ms**, on 6.283ms frames | Pump time. Constant. Carries **no** input timing. |
 | Windows `msg.time` | 300 motion messages: **276 deltas of 0ms**, 21 of 15–17ms | `GetTickCount` domain, 15.6ms granular — coarser than a frame, ~one tick. |
 | `msg.time` + `timeBeginPeriod(1)` | 276 zeros / 21 jumps — statistically identical | No effect. Tickless kernel; `GetTickCount` no longer follows the multimedia timer. |
 | **Raw-input thread + QPC** | 300 motion events: 159 deltas in 0.25–1ms, 141 in 1–3ms, **0 identical**, smallest **0.5892ms**, 0 dropped | Sub-millisecond, no quantization floor. The 0.59ms is the *mouse's* report interval, not a clock limit. |
@@ -82,9 +82,9 @@ is the whole diagnostic signature: **keys work, mouse does not.**
 
 Downstream, all three of these were the same bug: the 60-frame starvation
 fallback in `new_frame` firing and blaming an absolute-coordinate device; every
-left click logging "input edges disagree with the keyboard"; and right-click
+left click logging "input input events disagree with the keyboard"; and right-click
 zoom dying outright, because `Button::Zoom` is not in `Subtick_Tracked` so
-nothing resynced it, and the SDL fallback for mouse-button edges is gated on the
+nothing resynced it, and the SDL fallback for mouse-button events is gated on the
 thread being INACTIVE -- and the thread was alive, just robbed.
 
 **The rule:** while this thread is running, SDL gets the POINTER and never the
@@ -117,10 +117,10 @@ the text I-beam) working in the editor and the console.
 
 Probe state, all reachable via the `cl_input_timing_debug` `@Client` cvar
 (`src/shared/cvars/cvars.def`). ~~**Nothing is wired into gameplay yet** — the
-game still runs entirely on SDL's edges.~~
+game still runs entirely on SDL's events.~~
 
 **This table is now HISTORY.** Everything in it is deleted, the cvar with it, and
-the thread is the edge source with SDL's transitions as the fallback behind
+the thread is the event source with SDL's transitions as the fallback behind
 `input::raw_input_is_active()`. The table stays because restoring the probe is
 the only way to re-run the measurement, and this says what it was.
 
@@ -129,7 +129,7 @@ the only way to re-run the measurement, and this says what it was.
 | `src/client/raw_input_win32.{hpp,cpp}` | **Keep.** The thread, the ring, the API. Production-shaped already. |
 | ~~`input.cpp` — `windows_message_timing_hook`, `timeBeginPeriod(1)`, msg.time histograms~~ | **DELETED.** It measured SDL's stamps; §1 records what it found, and it could not outlive the field it read. |
 | ~~`play_state.cpp` — the `[raw-input]` motion-delta block~~ | **DELETED.** It started the thread from inside a debug branch, which step 6 replaced with a real lifecycle. |
-| ~~`play_state.cpp` — the `[input-timing]` block~~ | **DELETED at step 7**, after it reported the numbers below. It was rewritten first to report per-edge FRACTION and arrival spacing rather than SDL stamps. |
+| ~~`play_state.cpp` — the `[input-timing]` block~~ | **DELETED at step 7**, after it reported the numbers below. It was rewritten first to report per-event FRACTION and arrival spacing rather than SDL stamps. |
 | ~~`cl_input_timing_debug` cvar~~ | **DELETED** with the probe above. |
 
 `raw_input_win32.cpp` already does the load-bearing part: `QueryPerformanceCounter`
@@ -147,7 +147,7 @@ The split established in `input.hpp` stays, and this sharpens it:
 LEVELS  ── SDL ──▶ is_key_down / is_mouse_down, sampled once in new_frame().
                    One defined instant. The resync source for lost transitions.
 
-TIMES   ── raw ──▶ frame_input_edges(), stamped on arrival by the input thread.
+TIMES   ── raw ──▶ frame_timed_input_events(), stamped on arrival by the input thread.
            input   Microsecond resolution. The only thing sub-tick reads.
 ```
 
@@ -172,7 +172,7 @@ Target set:
 | `Jump` | Space | yes | |
 | `Fire` | Mouse left | yes | |
 | `Key0`–`Key9` | 0–9 | **no** | ordering vs `Fire` is the reason |
-| `Zoom` | Mouse right | **no** | see decision D1 — it is a client-derived *state*, not a raw edge |
+| `Zoom` | Mouse right | **no** | see decision D1 — it is a client-derived *state*, not a raw event |
 | `Reload` | R | **does not exist** | new bit 18; `P` squats on bit 17 |
 
 Once every consumed bit is tracked, the `buttons & ~Button::Subtick_Tracked`
@@ -184,7 +184,7 @@ That simplification is a deliverable, not a side effect.
 
 ### Budget
 
-`MAX_SUBTICK_EDGES = 8` per tick, `SUBTICK_SLOT_COUNT = 64` (`subtick.hpp`). A
+`MAX_SUBTICK_BUTTON_CHANGES = 8` per tick, `SUBTICK_SLOT_COUNT = 64` (`subtick.hpp`). A
 human produces 1–3 transitions in a 16.7ms tick even across a wider set, so 8
 stands. The existing overflow `log_warning` is the guard — if it starts firing in
 normal play, raise the cap rather than silently dropping timing.
@@ -198,18 +198,18 @@ Each step is independently verifiable. Do not batch them.
 ### Step 1 — Clock mapping
 
 Replace the `age_seconds / real_frame_seconds` clamp
-(`play_state.cpp`, the edge fold) with a real span.
+(`play_state.cpp`, the event fold) with a real span.
 
 - Record QPC once per frame at the same point `now_milliseconds` is read today.
 - Keep the previous frame's value; `[previous, current]` is the span the
   accumulator's `dt` advance represents.
-- An edge's fraction is `(arrival - span_start) / (span_end - span_start)`.
+- An input event's fraction is `(arrival - span_start) / (span_end - span_start)`.
 - **The clamp goes away.** It exists only because the age could exceed the frame;
   with real span endpoints an in-range arrival is in range by construction. An
   out-of-range arrival is now a bug worth a `log_warning`, not something to
   silently saturate to 0.
 
-Verify: `[input-timing]` per-edge fractions spread across `0..1` instead of
+Verify: `[input-timing]` per-event fractions spread across `0..1` instead of
 clustering at ~0.82.
 
 **Landed.** The span lives in the input layer (`input::frame_arrival_span()`,
@@ -234,18 +234,18 @@ Verify: the probe's `[raw-input] key code N down/up` lines name the right keys.
 `key_mappings` and built the same way. The codes are numeric literals rather
 than `VK_*` names so the table survives a non-Windows build. A second table
 falls out of the same rows — `g_key_is_raw_reportable`, which is what stops a
-focus-regain resync pushing a down-edge for a key raw input will never send a
+focus-regain resync pushing a press for a key raw input will never send a
 release for.
 
 ### Step 3 — Focus gating
 
-`RIDEV_INPUTSINK` delivers while the game is not foreground. Drop raw edges unless
+`RIDEV_INPUTSINK` delivers while the game is not foreground. Drop raw events unless
 the game window has focus.
 
 Do it **in the drain, on the game thread, not in the input thread** — the input
 thread must not learn about game state, and the game thread already knows whether
-it has focus (`gameplay_input_allowed` and the `input_edges_are_live` park logic).
-Losing focus already records a release-everything edge; that path stays and is what
+it has focus (`gameplay_input_allowed` and the `button_changes_are_live` park logic).
+Losing focus already records a release-everything event; that path stays and is what
 makes this safe.
 
 Verify: alt-tab, type, return. Character does not move; no lost-transition warning
@@ -253,17 +253,17 @@ on return (the resample path covers it).
 
 **Landed** in `drain_raw_input`. Losing focus releases everything held and
 discards the backlog; regaining it discards the backlog and *then* resyncs from
-the levels, pushing down-edges for whatever is still held. Both are stamped at
+the levels, pushing presses for whatever is still held. Both are stamped at
 the span end. The drain runs after `new_frame`'s level snapshot precisely so the
 resync reads this frame's levels.
 
-### Step 4 — Swap the edge source
+### Step 4 — Swap the event source
 
-`frame_input_edges()` is filled from the raw-input drain instead of from
+`frame_timed_input_events()` is filled from the raw-input drain instead of from
 `process_sdl_event`. SDL's `process_sdl_event` keeps filling the level arrays and
-the shortcut queue; it stops pushing `input_edge_t`.
+the shortcut queue; it stops pushing `timed_input_event_t`.
 
-`input_edge_t` gains the QPC arrival field and loses
+`timed_input_event_t` gains the QPC arrival field and loses
 `timestamp_milliseconds`. Everything downstream — the fold, `record_transition`,
 slot conversion, the wire, the server — is untouched.
 
@@ -271,7 +271,7 @@ Verify: gameplay is unchanged; the lost-transition check does not fire in normal
 play.
 
 **Landed.** `process_sdl_event` still fills the level arrays and the shortcut
-queue, and keeps its edge push as the FALLBACK — live only while
+queue, and keeps its event push as the FALLBACK — live only while
 `raw_input_is_active()` is false, stamping at the frame boundary because SDL has
 no moment inside the frame to recover. One field, one code path downstream.
 
@@ -283,18 +283,18 @@ sub-tick position.
 
 Aligning the two reads cannot fix it — they are two independent readers cutting
 the timeline at two instants, and no ordering merges them (drain-before-pump
-puts the levels ahead, drain-after puts the edges ahead). The fix is that the
+puts the levels ahead, drain-after puts the input events ahead). The fix is that the
 CHECK was wrong to compare against one instant. The pump sits between the
 previous drain and this one:
 
 ```
 drain N-1 ....... pump N-1 ....... drain N
 |                 |                |
-live_tracked      `buttons`        after this frame's edges
+live_tracked      `buttons`        after this frame's input events
 ```
 
 so the poll is **bracketed**, and both ends are honest readings of the same
-input — which end it matches says only which side of the pump the edge landed
+input — which end it matches says only which side of the pump the input event landed
 on. Matching NEITHER is the real failure. That is exact: zero false positives,
 no deferral, no new state, and it still catches a genuinely lost transition on
 the frame it happens.
@@ -302,10 +302,10 @@ the frame it happens.
 ### Step 5 — Widen `Subtick_Tracked`
 
 Add `Reload` (bit 18) to `player_move.hpp`, widen `Subtick_Tracked` to the table in
-§3, extend `subtick_button_for_input_edge`.
+§3, extend `subtick_button_for_input_event`.
 
 Then **delete** the `buttons & ~Button::Subtick_Tracked` merges in `play_state.cpp`
-— there are two, one in `buttons_before_tick` and one in the per-edge
+— there are two, one in `buttons_before_tick` and one in the per-event
 `buttons_after`. If either still has bits to contribute, the set was not widened
 far enough; that is the check.
 
@@ -326,7 +326,7 @@ set does not cover".
 
 **Still open, deliberately out of scope:** the server now RECEIVES the ordering
 but does not act on it. `server_impl.cpp` applies weapon switches from
-`subtick_rising_edges` across the whole tick, before the step loop, so
+`subtick_presses` across the whole tick, before the step loop, so
 switch-then-fire and fire-then-switch still resolve identically. Moving the
 switch inside the step loop is a server behaviour change; the wire carrying the
 information is its prerequisite, and that is what landed here.
@@ -335,7 +335,7 @@ information is its prerequisite, and that is what landed here.
 
 `raw_input::stop()` exists and nothing calls it. Wire `try_start()` into client
 init and `stop()` into shutdown. On `try_start()` failure, log and fall back to
-SDL-sourced edges — one frame coarser, still playable, never silent.
+SDL-sourced input events — one frame coarser, still playable, never silent.
 
 **Landed** as `input::init()` / `input::shutdown()`, called from `client::init`
 / `client::shutdown` rather than as bare `raw_input::` calls at the launcher:
@@ -346,15 +346,15 @@ not, `steady_clock` nanoseconds off Windows.
 
 ### Step 7 — Verify, then tear out
 
-Re-run every measurement in §1 through the probe. Expected: per-edge fractions
+Re-run every measurement in §1 through the probe. Expected: per-event fractions
 uniform across the frame, arrival deltas sub-millisecond. Then delete everything in
 §2 marked *delete*, and record the final numbers in `subtick_plan.md` so nobody
 re-derives this.
 
-**Done. The measurement, 40 real edges through the shipping path:**
+**Done. The measurement, 40 real input events through the shipping path:**
 
 ```
-[input-timing] ===== VERDICT over 40 edges (raw-input thread) =====
+[input-timing] ===== VERDICT over 40 input events (raw-input thread) =====
 [input-timing] fraction min 0.0121  max 0.9856  mean 0.5068
 [input-timing] smallest gap between arrivals 0.2078 ms (one sub-tick slot is 0.26 ms), 0 raw events dropped
 ```
@@ -377,7 +377,7 @@ include it was the only user of in `play_state.cpp`, and the
 
 ## 5. Decisions still open
 
-**D1 — Zoom. DECIDED as recommended.** The raw right-button edge drives the
+**D1 — Zoom. DECIDED as recommended.** The raw right-button press drives the
 toggle now (`play_state.cpp`, the zoom block) and `Button::Zoom` stays a state
 bit. That fixed a real bug in passing: `is_mouse_pressed(Right)` compares
 frame-START levels, so a click that both pressed and released inside one frame
@@ -388,7 +388,7 @@ The original text:
 **D1 — Zoom.** `zoom_active` is a client-side *toggle* derived from
 `is_mouse_pressed(Right)` and sent as a STATE (`client_context.hpp`, the
 `zoom_active` comment). Sub-tick timing on it only matters once the server charges
-accuracy or speed per-step. Recommend: track the raw right-button edge, keep the
+accuracy or speed per-step. Recommend: track the raw right-button press, keep the
 toggle derivation on the game thread, and leave `Button::Zoom` a state bit. Revisit
 if scoping ever costs anything mid-tick.
 

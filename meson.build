@@ -1,4 +1,4 @@
-project('MyGame', 'cpp', 'c',
+project('MVMT', 'cpp', 'c',
   version : '0.1.0',
   default_options : ['warning_level=3', 'cpp_std=c++23']
 )
@@ -219,14 +219,14 @@ game_server_dep = declare_dependency(
 # Executables
 
 # 4. Integrated Game
-executable('MyGame',
+executable('MVMT',
   'src/launcher/main_integrated.cpp',
   dependencies : [game_client_dep, game_server_dep, game_shared_dep],
   include_directories : include_directories('src')
 )
 
 # 5. Dedicated Server
-executable('MyGame_Server',
+executable('MVMT_Server',
   'src/launcher/main_dedicated.cpp',
   dependencies : [game_server_dep, game_shared_dep],
   include_directories : include_directories('src')

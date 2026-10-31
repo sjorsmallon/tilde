@@ -170,7 +170,7 @@ hitscan after all.
 
 `Button::Key1` / `Key2` already exist in the bitfield and
 `Player_Entity::active_weapon_id` is already `@Networked`. Server maps
-Key1→Knife, Key2→Scout on press (edge-detected like Fire is today),
+Key1→Knife, Key2→Scout on press (press-detected like Fire is today),
 writes `active_weapon_id`. Client reads its own entity's field for HUD
 text. No proto change, no schema change.
 

@@ -437,12 +437,12 @@ become the package hash before remote clients / streaming are real.
   both client resolve sites: on_enter (the last_map.txt entry) and the
   CmdChangeMap handler. Server still LOADS from its own absolute path; only the
   wire id changed.
-- TESTING map streaming locally = the "cold client": run MyGame_Client with
+- TESTING map streaming locally = the "cold client": run MVMT_Client with
   MAPS_DIR pointed at an empty folder so it lacks the map and must stream.
   scripts/run_client_cold.cmd sets MAPS_DIR=cold_maps and launches it (.cmd not
   .ps1 so PowerShell's execution policy doesn't block it). Workflow: start
-  MyGame_Server, then run the cold-client script. Normal play is plain
-  MyGame_Client.exe (uses ./maps). Still runtime-unverified (needs the GUI).
+  MVMT_Server, then run the cold-client script. Normal play is plain
+  MVMT_Client.exe (uses ./maps). Still runtime-unverified (needs the GUI).
 
 ## P3 — Finish the entity DSL generator  ✅ DONE (2026-07-27)
 
@@ -624,7 +624,7 @@ The phase's one hard rule — do not stop while the tree is broken — is satisf
       `entities::SCHEMA_HASH`; the server refuses a mismatch before a slot is
       taken, `log_error`s both hashes, and echoes the server's in
       `CmdReject.server_schema_hash` so the client can report both too.
-      Verified against a live `MyGame_Server` with a raw UDP prober: matching
+      Verified against a live `MVMT_Server` with a raw UDP prober: matching
       hash → CmdAccept, `0xdeadbeef` → CmdReject naming both hashes.
 - [x] **`asset_test` now passes.** Two bugs, both in the test: the fixtures were
       hardcoded to POSIX `/tmp` (now `std::filesystem::temp_directory_path()`,
@@ -1100,7 +1100,7 @@ registered with CTest at the bottom of `CMakeLists.txt` (`GAME_TESTS`), each wit
 ROOT" footgun rather than documenting it a third time — verified by running the
 suite from `%TEMP%`. Running the binaries directly out of `cmake_build/bin/` is
 unchanged and still needs the project root. The list is written out rather than
-globbed on purpose: a glob over `bin/` also catches `MyGame`, `def_gen` and
+globbed on purpose: a glob over `bin/` also catches `MVMT`, `def_gen` and
 `map_convert`, and the exclusion list that would keep them out rots faster than
 the inclusion list. Adding a test means adding the target AND its name.
 
@@ -1264,7 +1264,7 @@ has nothing to convert. `S2C_CVarSync` and `CvarPair` are deleted from
         `commands::<name>` handlers — the only way to reach the binders outside
         the DLLs that own the real ones, and a standing check that a binder TU
         references nothing but those handler symbols.
-      * **ACCEPTANCE MET**: `spawn_bot` typed by hand into `MyGame.exe`'s ImGui
+      * **ACCEPTANCE MET**: `spawn_bot` typed by hand into `MVMT.exe`'s ImGui
         console → `spawn_bot: spawned idle bot at slot 32`, each command logged
         exactly once. `spawn_bot` was the bug that started this whole track, so
         that was always the criterion.
@@ -1297,7 +1297,7 @@ ping-pong; the handler never ran. Fixed two ways:
 
 **Two lessons worth keeping:**
 
-1. An out-of-process probe against `MyGame_Server.exe` **cannot** catch an
+1. An out-of-process probe against `MVMT_Server.exe` **cannot** catch an
    integrated-build ownership bug — the dedicated server legitimately has no
    forwarder, so the loop cannot form there. A probe of exactly that shape
    passed while the integrated build was broken. The integrated build is a
@@ -1338,7 +1338,7 @@ The rule that falls out:
 every `get_mesh` caller lives in **`game_client.dll`**. The copy that got filled
 was never the copy that got read. Observed twice and not client-specific:
 `render_3d` logging `get_mesh called before assets::init()` every frame in
-`MyGame_Client` (2026-07-28), and `spawn_cube` producing an invisible cube in
+`MVMT_Client` (2026-07-28), and `spawn_cube` producing an invisible cube in
 the **integrated** build (2026-07-30).
 
 Worth keeping: `get_mesh` returned an **invalid handle, not the `Missing`

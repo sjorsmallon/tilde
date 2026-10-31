@@ -110,11 +110,11 @@ struct accepted_client_input_t
   const std::optional<shared::subtick_input_t> decoded_input = network::try_read_subtick_input(input);
   if (!decoded_input)
   {
-    log_error("slot {}: input {} carries sub-tick edges that break the grammar "
+    log_error("slot {}: input {} carries sub-tick button changes that break the grammar "
               "(slots must be 1..{}, strictly ascending, at most {} of them) — "
               "command dropped",
               client_slot, input.input_number(), shared::SUBTICK_SLOT_COUNT - 1,
-              shared::MAX_SUBTICK_EDGES);
+              shared::MAX_SUBTICK_BUTTON_CHANGES);
     return std::nullopt;
   }
 

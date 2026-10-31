@@ -317,8 +317,8 @@ and `game_server.dll`. Two real bugs come from this:
    stroke. Removes the `force_link_*` shims (including the one in
    the damage-routing migration's step 1). No design change.
 3. **Evaluate eliminating DLLs entirely.** Single-binary builds with
-   two CMake targets — `MyGame` (integrated client+server) and
-   `MyGame_Server` (dedicated, excludes Vulkan/SDL2/ImGui sources).
+   two CMake targets — `MVMT` (integrated client+server) and
+   `MVMT_Server` (dedicated, excludes Vulkan/SDL2/ImGui sources).
    Removes cross-DLL ABI concerns, faster link times, simpler
    debugging. Only worth doing if there's no plan to support
    runtime-loaded plugins or hot-reload of game code. Subsumes the

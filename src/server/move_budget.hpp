@@ -6,15 +6,15 @@
 // TIME rather than a cap per tick.
 //
 // The exploit: every input in `incoming.client_inputs` runs a full tick_dt of movement --
-// as one `player_move` step, or as the several a command's sub-tick edges split
+// as one `player_move` step, or as the several a command's sub-tick button changes split
 // it into (shared/subtick.hpp), which sum to the same tick_dt -- so a client
 // that sends more inputs than the server ticks moves further per second
 // than anyone else. Firing is interval-gated, so it is a movement exploit rather
 // than a damage one.
 //
-// Sub-tick edges change what a credit COSTS, not what it buys: a command with
-// the maximum edges asks for MAX_SUBTICK_EDGES + 1 pmove passes instead of one.
-// That is CPU, and it is bounded by the edge cap rather than by this budget --
+// Sub-tick button changes change what a credit COSTS, not what it buys: a command with
+// the maximum button changes asks for MAX_SUBTICK_BUTTON_CHANGES + 1 pmove passes instead of one.
+// That is CPU, and it is bounded by the button-change cap rather than by this budget --
 // which is the reason the cap exists at all.
 //
 // **A per-tick cap does not fix this**, which is the thing worth writing down. A

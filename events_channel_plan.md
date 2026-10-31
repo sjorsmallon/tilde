@@ -505,7 +505,7 @@ be **shorter** than what it replaces: no walker, no second field-type enum, no
 second formatter, no group-block handling.
 
 End-to-end, since neither channel's transport is covered by a test today: run
-`./cmake_build/bin/MyGame`, open the console (backtick), set `sv_event_debug 1`
+`./cmake_build/bin/MVMT`, open the console (backtick), set `sv_event_debug 1`
 and `cl_event_debug 1`, and fire a rocket. Expect a
 `[event fired] Rocket_Detonated{ … }` line and a matching `[event received]`,
 plus the explosion **and its surface decal** — the decal is what proves the

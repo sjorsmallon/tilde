@@ -479,7 +479,7 @@ Two things fell out of it being derived rather than announced. The server's two
 manual writes are gone — the optimistic `map_ready = true` at accept (which sent
 snapshots to a client that turned out to need a download) and the
 `map_ready = false` when a transfer starts (which the map-load reset already
-covers). And the client's two `Loading -> Connected` edges now send *nothing*:
+covers). And the client's two `Loading -> Connected` transitions now send *nothing*:
 entering `Connected` starts the input flow, and the hash rides it.
 
 Only the client's **newest** input in the batch answers, which is the one place

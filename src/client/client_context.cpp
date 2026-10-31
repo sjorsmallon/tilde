@@ -58,7 +58,7 @@ void reset_state_in_preparation_for_new_map_load(client_context_t& context)
 void reset_state_for_replay_seek(client_context_t& context)
 {
   // The snapshot ring and latest_processed_tick, so an older tick passes the
-  // staleness gate and the edge watchers see no previous frame; every remote
+  // staleness gate and the change watchers see no previous frame; every remote
   // ring and death timer; the interpolation cursor.
   silence(context);
   context.replication = {};
@@ -112,8 +112,8 @@ void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientatio
   prediction.player_yaw         = view.yaw;
   prediction.player_pitch       = view.pitch;
   prediction.view_at_tick_start = view;
-  for (prediction_t::pending_input_edge_t& edge : prediction.pending_input_edges)
-    edge.view_after = view;
+  for (prediction_t::pending_button_change_t& change : prediction.pending_button_changes)
+    change.view_after = view;
 }
 
 } // namespace client

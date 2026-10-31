@@ -223,7 +223,7 @@ prediction writes `ctx.prediction`.
 - `player_move` is a pure function of its arguments and stays one. Its one
   mutable parameter is the `Movement` component, every field of which is
   `@Networked`, and a reconciliation replay restarts it unconditionally from
-  the latest snapshot. A jump is an edge, not a level.
+  the latest snapshot. A jump is a press, not a held button.
 - A face too steep to stand on (past 45 degrees) is a `steep_face_rule_t`,
   answered per model by `get_steep_face_rule_for_locomotion_model`: a `Ramp` under `quake` (surfing),
   a `Wall` under the instant models, which would otherwise turn their per-step
@@ -269,8 +269,8 @@ prediction writes `ctx.prediction`.
 
 ### Input, aim, hits
 
-- A tick's input is the buttons at its start plus the EDGES inside it, each
-  a 6-bit slot; `subtick_codec` is the one place that becomes a message. Edge
+- A tick's input is the buttons at its start plus the BUTTON CHANGES inside it, each
+  a 6-bit slot; `subtick_codec` is the one place that becomes a message. Button change
   times come from the raw-input thread, never SDL. SDL gets the pointer and
   never the travel; relative mouse mode is used only when the thread failed to
   start. Anything touching cursor visibility agrees with

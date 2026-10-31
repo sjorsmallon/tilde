@@ -7,7 +7,7 @@
 // A dedicated input thread, and the reason it exists is a MEASUREMENT.
 //
 // SDL2 stamps events in SDL_PushEvent -- when the pump drains the OS queue --
-// so every edge in one frame shares a timestamp (measured: age range [1,2] ms
+// so every input event in one frame shares a timestamp (measured: age range [1,2] ms
 // on 6.3 ms frames, mean 1.125). Windows' own msg.time is 15.6 ms granular
 // (measured: 276 of 300 consecutive motion messages shared a value), and
 // timeBeginPeriod(1) does not move it. SDL3 would not help either -- its
@@ -22,7 +22,7 @@
 //
 // SDL keeps every other job. It owns the window, the levels every poll answers
 // with, menu clicks and ImGui. This owns TIMES, which is the split the input
-// layer already draws between polling and frame_input_edges().
+// layer already draws between polling and frame_timed_input_events().
 
 namespace client::raw_input
 {
@@ -51,7 +51,7 @@ struct raw_input_event_t
 
 // Starts the thread and registers for raw keyboard and mouse input. Empty when
 // the platform is not Windows, or when the window or the registration failed --
-// the caller keeps running on SDL's edges in that case, one frame coarser.
+// the caller keeps running on SDL's events in that case, one frame coarser.
 [[nodiscard]] std::optional<uint64_t> try_start();
 
 void stop();

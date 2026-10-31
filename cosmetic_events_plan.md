@@ -614,7 +614,7 @@ hardcoded in `respawn_system.hpp`.
   anywhere on the server?** Only inside the tick update. Plain `std::vector`
   is fine. No threading concerns.
 
-- **Does the dedicated server build (`MyGame_Server`) need the dispatch sides
+- **Does the dedicated server build (`MVMT_Server`) need the dispatch sides
   but not the handler/subscriber sides?** Yes. The shared types and serialize
   code live in `game_shared`. The server-side dispatch lives in `game_server`.
   The client-side handler registry, effect handlers, and event subscribers

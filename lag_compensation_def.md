@@ -467,10 +467,10 @@ ctest --test-dir cmake_build -R lag_compensation --output-on-failure
 ```
 
 The proto changes both sides, so a stale executable will not interoperate —
-rebuild all three launchers, not just `MyGame`.
+rebuild all three launchers, not just `MVMT`.
 
 Live check, which needs the real network path rather than the integrated build:
-run `MyGame_Server`, connect `MyGame_Client`, `spawn_bot chase`, and set
+run `MVMT_Server`, connect `MVMT_Client`, `spawn_bot chase`, and set
 `sv_lag_compensation_debug 1`. Fire at a moving bot and compare the logged
 requested vs clamped bracket against the debug overlay. Then toggle
 `sv_lag_compensation 0` mid-session — that A/B is the whole point of it being a

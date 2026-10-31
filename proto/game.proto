@@ -20,18 +20,18 @@ message C2S_ClientInputBatch {
   repeated C2S_ClientInput inputs = 1;
 }
 
-message C2S_SubtickEdge {
-  optional uint32 slot = 1; // 1..63, strictly ascending across edges
+message C2S_SubtickButtonChange {
+  optional uint32 slot = 1; // 1..63, strictly ascending across button changes
   optional uint64 buttons_after = 2; // the FULL bitfield, not a delta
 
-  // Where the player was AIMING from this slot onward. Sampled at the edge
-  // rather than given edges of its own: the angle is continuous, a 1000Hz mouse
-  // would spend the whole MAX_SUBTICK_EDGES budget on motion, and an edge costs
+  // Where the player was AIMING from this slot onward. Sampled at the button change
+  // rather than given button changes of its own: the angle is continuous, a 1000Hz mouse
+  // would spend the whole MAX_SUBTICK_BUTTON_CHANGES budget on motion, and a button change costs
   // a full pmove pass on the server. The moments that already exist are the
-  // ones that matter -- the trigger edge IS the moment a shot is aimed.
+  // ones that matter -- the trigger press IS the moment a shot is aimed.
   //
-  // Absent means "unchanged from the previous edge", which is what a client
-  // with no per-edge aim to report sends. That degrades exactly to the old
+  // Absent means "unchanged from the previous button change", which is what a client
+  // with no per-change aim to report sends. That degrades exactly to the old
   // behaviour: every step runs under viewangles_at_start.
   optional ViewAngle view_after = 3;
 }
@@ -46,8 +46,8 @@ message C2S_ClientInput {
   // Where the aim ENDED UP this tick. Nothing simulates under it: it is what
   // the next tick starts from and what the server writes to
   // Player_Entity::view_angle_*, so everyone else draws where this player is
-  // looking now. A tick whose mouse moved and whose buttons did not has no edge
-  // to hang the motion on, which is why this cannot be folded into the edges.
+  // looking now. A tick whose mouse moved and whose buttons did not has no button change
+  // to hang the motion on, which is why this cannot be folded into the button changes.
   optional ViewAngle viewangles = 3;
 
   // Where it STARTED, which is what the tick's first step runs under. Split
@@ -62,27 +62,27 @@ message C2S_ClientInput {
   // 2 was `tick_count`, which the client set to a verbatim copy of
   // input_number and nothing ever read. 4/5/6 were forwardmove/sidemove/upmove,
   // dead since the sub-tick cutover moved movement into the buttons and their
-  // edges -- they outlived their readers and only the message's NAME still
+  // button changes -- they outlived their readers and only the message's NAME still
   // referred to them.
   reserved 2, 4, 5, 6;
 
   // The buttons at the START of this tick, and every transition that followed,
   // in order. Together they are the tick's input: the server runs one movement
-  // step per interval between the edges, and the client's prediction runs the
+  // step per interval between the button changes, and the client's prediction runs the
   // identical split (shared/subtick.hpp, split_tick).
   //
   // buttons_bitfield used to be "the buttons when the command was built", which
   // quantized every press to the 16.7ms tick grid -- a modeling error, since the
   // press happened at a time and the grid is an implementation detail of the
   // simulator. It is the START state now, so a press mid-tick shows up as an
-  // edge rather than as next tick's state, and the server sees the press at the
+  // button change rather than as next tick's state, and the server sees the press at the
   // moment it happened rather than up to a tick late.
   //
-  // No edges is a whole client, not a degenerate one: it means nothing changed
+  // No button changes is a whole client, not a degenerate one: it means nothing changed
   // inside the tick, and the tick runs as the single step it always did. Bots
   // and tests never send any.
   optional uint64 buttons_bitfield = 7;
-  repeated C2S_SubtickEdge subtick_edges = 12;
+  repeated C2S_SubtickButtonChange subtick_button_changes = 12;
 
   // The newest snapshot this client holds a complete copy of, named by the
   // server tick it was taken at. 0 = none yet, send a full update.
@@ -115,7 +115,7 @@ message C2S_ClientInput {
   //
   // Read at the moment of the SHOT when this input carries one, not at the
   // moment the input was built: the trigger goes down at a sub-tick slot
-  // inside the tick (see subtick_edges above), and the world the shooter was
+  // inside the tick (see subtick_button_changes above), and the world the shooter was
   // drawing then is that fraction of a tick older. With no press in the tick it
   // is the read it always was, and nothing consumes it.
   //

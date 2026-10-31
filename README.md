@@ -1,4 +1,4 @@
-# MyGame (SDL + Vulkan + Protobuf)
+# MVMT (SDL + Vulkan + Protobuf)
 
 A cross-platform C++23 project template.
 
@@ -31,9 +31,9 @@ meson compile -C meson_build
 
 **Run**:
 ```bash
-./meson_build/MyGame
+./meson_build/MVMT
 ```
-(On Windows: `.\meson_build\MyGame.exe` or `.\meson_build\MyGame_Server.exe`)
+(On Windows: `.\meson_build\MVMT.exe` or `.\meson_build\MVMT_Server.exe`)
 
 #### 2. CMake (Alternative)
 
@@ -50,9 +50,9 @@ cmake --build cmake_build
 
 **Run**:
 ```bash
-./cmake_build/MyGame
+./cmake_build/MVMT
 ```
-(On Windows: `.\cmake_build\Debug\MyGame.exe`)
+(On Windows: `.\cmake_build\Debug\MVMT.exe`)
 
 ## Troubleshooting
 

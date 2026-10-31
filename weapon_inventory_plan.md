@@ -8,7 +8,8 @@ was found by asking why quick-switching an AWP to a deagle felt wrong.
 
 Status: **DONE — steps 0–5 all landed (2026-08-23).** The fire-rate bug is
 fixed, ammo lives on the weapon, `Weapon_Entity` replicates, the deploy gate
-runs on both ends, and the client mirror reproduces both gates. What is left is
+runs on both ends, and the client runs the gates itself through the shared
+input step (input_step_plan.md; the mirror of step 5 is gone). What is left is
 in "What this did not do" at the bottom.
 
 ---
@@ -185,14 +186,20 @@ answers, so it is one table in `weapons.hpp`. It also fixed a divergence that
 predates all of this: the client cancelled its predicted reload on **any**
 number key, including unbound ones the server ignores.
 
-## Step 5 — the client mirror (DONE)
+## Step 5 — the client mirror (DONE, then replaced)
+
+Superseded by input_step_plan.md: the client holds the server's three clocks as
+`prediction_t::state.inventory` and runs them through the same
+`apply_input_step_to_player` the server does, so the knowingly-wrong case below
+(the switch judged against a stale replicated slot) no longer exists. Kept as
+the record of what the mirror was.
 
 `prediction.seconds_since_local_fire` is `Enum_Array<Weapon, float>` — one clock
 per weapon, all advancing, because the server's do. One float was the client
 half of the original bug.
 
 `seconds_until_local_deploy_complete` beside it is the deploy gate, started off
-the same edge and the same table the server switches on. Both are cleared on
+the same press and the same table the server switches on. Both are cleared on
 death, like the reload clock, because `refill_inventory` clears the server's.
 
 One knowingly-wrong case, documented at the site: the switch predicate compares
@@ -212,7 +219,8 @@ once, counts itself down, and the model is what gets drawn. A deploy countdown
 is a continuous read of a clock that already exists, so pushing it into a banner
 would be a second copy of the gate, free to disagree with the one the shot is
 judged against. It is polled every frame from
-`prediction.seconds_until_local_deploy_complete`, unconditionally, and zero
+`prediction.state.inventory.deploy_complete_time` (converted to seconds once at
+the call site), unconditionally, and zero
 draws nothing. See the "continuous values are polled from the truth" rule in
 CLAUDE.md.
 

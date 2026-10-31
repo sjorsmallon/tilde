@@ -207,11 +207,11 @@ jump_t try_jump(const movement_settings_t& settings, bool grounded, move_state_t
 {
   entities::Movement& movement = state.movement;
 
-  const bool jump_edge = input.buttons.jump_pressed && !movement.jump_was_held;
+  const bool jump_pressed_this_step = input.buttons.jump_pressed && !movement.jump_was_held;
 
   jump_t jump{.velocity    = state.velocity,
               .from_ground = grounded && input.buttons.jump_pressed,
-              .in_air      = !grounded && jump_edge &&
+              .in_air      = !grounded && jump_pressed_this_step &&
                         (int32_t)movement.air_jumps_used < settings.shared.air_jump_count};
 
   // Both jumps fly their whole step, so gravity starts at the impulse whatever the step's length.
