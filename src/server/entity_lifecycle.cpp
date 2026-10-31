@@ -15,7 +15,8 @@
 namespace server
 {
 
-shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &context, int32_t slot)
+shared::entity_uid_t spawn_player_entity_for_client_slot(
+    server_context_t &context, int32_t slot, const std::optional<requested_spawn_t> &requested_spawn)
 {
   if (!is_valid_client_slot(slot))
   {
@@ -45,17 +46,26 @@ shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &conte
   // so the spawn policy and the team agree without either knowing the mode.
   player->team_allegiance = pick_team_for_new_player(context);
 
-  // Cycled by slot so two players joining an empty server don't stack.
-  const entities::Player_Spawn_Entity* marker =
-      try_pick_human_spawn(context.world.session, current_mode(context).spawn_policy,
-                           player->team_allegiance, static_cast<uint32_t>(slot));
-  if (marker == nullptr)
-    log_error("spawn_player: map '{}' declares no Spawn_Type::Human marker — "
-              "spawning slot {} at origin",
-              context.world.session.map_name, slot);
+  if (requested_spawn)
+  {
+    place_player_at(context.world.session, *player, requested_spawn->feet,
+                    linalg::from_view_angles(requested_spawn->yaw_degrees,
+                                             requested_spawn->pitch_degrees));
+  }
+  else
+  {
+    // Cycled by slot so two players joining an empty server don't stack.
+    const entities::Player_Spawn_Entity* marker =
+        try_pick_human_spawn(context.world.session, current_mode(context).spawn_policy,
+                             player->team_allegiance, static_cast<uint32_t>(slot));
+    if (marker == nullptr)
+      log_error("spawn_player: map '{}' declares no Spawn_Type::Human marker — "
+                "spawning slot {} at origin",
+                context.world.session.map_name, slot);
 
-  place_player_at_spawn(context.world.session, *player,
-                        marker ? *marker : origin_fallback_spawn());
+    place_player_at_spawn(context.world.session, *player,
+                          marker ? *marker : origin_fallback_spawn());
+  }
 
   log_terminal("Spawned player at slot {} with entity_id {} at position ({}, {}, {})",
                slot, player->entity_id, player->position.x, player->position.y,
@@ -65,7 +75,8 @@ shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &conte
   return player_uid;
 }
 
-void try_admit_player(server_context_t &context, int32_t slot)
+void try_admit_player(server_context_t &context, int32_t slot,
+                      const std::optional<requested_spawn_t> &requested_spawn)
 {
   if (!is_valid_client_slot(slot))
   {
@@ -85,12 +96,13 @@ void try_admit_player(server_context_t &context, int32_t slot)
   // of them is a round anyone can be reinforced in the middle of.
   if (!current_mode(context).join_in_progress && is_round_live(context))
   {
-    log_terminal("slot {} joined mid-round; spawning at the start of round {}",
-                 slot, get_match(context).round_number + 1);
+    log_terminal("slot {} joined mid-round; spawning at the start of round {}{}",
+                 slot, get_match(context).round_number + 1,
+                 requested_spawn ? ", at a marker rather than the requested point" : "");
     return;
   }
 
-  spawn_player_entity_for_client_slot(context, slot);
+  spawn_player_entity_for_client_slot(context, slot, requested_spawn);
 }
 
 void admit_waiting_players(server_context_t &context)
@@ -102,7 +114,7 @@ void admit_waiting_players(server_context_t &context)
     if (row.client.player_uid != shared::null_entity_uid)
       continue;
 
-    spawn_player_entity_for_client_slot(context, row.slot);
+    spawn_player_entity_for_client_slot(context, row.slot, std::nullopt);
   }
 }
 

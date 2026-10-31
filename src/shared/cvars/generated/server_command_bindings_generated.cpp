@@ -149,6 +149,65 @@ bool invoke_join_game(Span<std::string_view> args, const command_context_t& cont
   return true;
 }
 
+// join_game_at <x> <y> <z> <yaw> <pitch>
+bool invoke_join_game_at(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 5u)
+  {
+    usage_error(out_reply, command_id::join_game_at, args.size());
+    return false;
+  }
+
+  float x = {};
+  const std::optional<float> parsed_x = try_parse_whole<float>(args[0]);
+  if (!parsed_x)
+  {
+    bad_argument(out_reply, command_id::join_game_at, "x", args[0]);
+    return false;
+  }
+  x = *parsed_x;
+
+  float y = {};
+  const std::optional<float> parsed_y = try_parse_whole<float>(args[1]);
+  if (!parsed_y)
+  {
+    bad_argument(out_reply, command_id::join_game_at, "y", args[1]);
+    return false;
+  }
+  y = *parsed_y;
+
+  float z = {};
+  const std::optional<float> parsed_z = try_parse_whole<float>(args[2]);
+  if (!parsed_z)
+  {
+    bad_argument(out_reply, command_id::join_game_at, "z", args[2]);
+    return false;
+  }
+  z = *parsed_z;
+
+  float yaw = {};
+  const std::optional<float> parsed_yaw = try_parse_whole<float>(args[3]);
+  if (!parsed_yaw)
+  {
+    bad_argument(out_reply, command_id::join_game_at, "yaw", args[3]);
+    return false;
+  }
+  yaw = *parsed_yaw;
+
+  float pitch = {};
+  const std::optional<float> parsed_pitch = try_parse_whole<float>(args[4]);
+  if (!parsed_pitch)
+  {
+    bad_argument(out_reply, command_id::join_game_at, "pitch", args[4]);
+    return false;
+  }
+  pitch = *parsed_pitch;
+
+  commands::join_game_at(x, y, z, yaw, pitch, context);
+  return true;
+}
+
 // spectate
 bool invoke_spectate(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -390,6 +449,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::map] = &invoke_map;
   table.binders[(uint32_t)command_id::setpos] = &invoke_setpos;
   table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;
+  table.binders[(uint32_t)command_id::join_game_at] = &invoke_join_game_at;
   table.binders[(uint32_t)command_id::spectate] = &invoke_spectate;
   table.binders[(uint32_t)command_id::sv_mem_report] = &invoke_sv_mem_report;
   table.binders[(uint32_t)command_id::sv_frame_report] = &invoke_sv_frame_report;

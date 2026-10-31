@@ -647,44 +647,45 @@ enum class command_id : uint16_t
   map = 1,
   setpos = 2,
   join_game = 3,
-  spectate = 4,
-  sv_mem_report = 5,
-  sv_frame_report = 6,
-  sv_shadow_volume_report = 7,
-  sv_hitch_report = 8,
-  sv_zone_report = 9,
-  ent_fire = 10,
-  restart_round = 11,
-  end_match = 12,
-  ready = 13,
-  sv_replay_record = 14,
-  sv_replay_stop = 15,
-  shadow_volume_report = 16,
-  bind = 17,
-  grab_frame = 18,
-  grab_clear = 19,
-  connect = 20,
-  announce = 21,
-  noclip = 22,
-  mem_report = 23,
-  mem_frame = 24,
-  mem_stacks = 25,
-  frame_report = 26,
-  frame_reset = 27,
-  gpu_report = 28,
-  gpu_reset = 29,
-  hitch_report = 30,
-  zone_report = 31,
-  replay_record = 32,
-  replay_play = 33,
-  replay_stop = 34,
-  replay_pause = 35,
-  replay_speed = 36,
-  replay_seek = 37,
-  replay_skip = 38,
+  join_game_at = 4,
+  spectate = 5,
+  sv_mem_report = 6,
+  sv_frame_report = 7,
+  sv_shadow_volume_report = 8,
+  sv_hitch_report = 9,
+  sv_zone_report = 10,
+  ent_fire = 11,
+  restart_round = 12,
+  end_match = 13,
+  ready = 14,
+  sv_replay_record = 15,
+  sv_replay_stop = 16,
+  shadow_volume_report = 17,
+  bind = 18,
+  grab_frame = 19,
+  grab_clear = 20,
+  connect = 21,
+  announce = 22,
+  noclip = 23,
+  mem_report = 24,
+  mem_frame = 25,
+  mem_stacks = 26,
+  frame_report = 27,
+  frame_reset = 28,
+  gpu_report = 29,
+  gpu_reset = 30,
+  hitch_report = 31,
+  zone_report = 32,
+  replay_record = 33,
+  replay_play = 34,
+  replay_stop = 35,
+  replay_pause = 36,
+  replay_speed = 37,
+  replay_seek = 38,
+  replay_skip = 39,
 };
 
-constexpr uint32_t COMMAND_COUNT = 39;
+constexpr uint32_t COMMAND_COUNT = 40;
 
 enum cvar_type : uint8_t
 {
@@ -779,6 +780,9 @@ void setpos(float x, float y, float z, const command_context_t& context);
 // @Server  Leave spectate and spawn into the match
 // usage: join_game
 void join_game(const command_context_t& context);
+// @Server  Leave spectate and spawn into the match with the feet at a point, aimed along yaw and pitch
+// usage: join_game_at <x> <y> <z> <yaw> <pitch>
+void join_game_at(float x, float y, float z, float yaw, float pitch, const command_context_t& context);
 // @Server  Leave the match and return to spectating
 // usage: spectate
 void spectate(const command_context_t& context);

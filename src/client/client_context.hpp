@@ -538,8 +538,8 @@ struct client_context_t
   // Not in the connection group: it is set BEFORE on_enter, which resets that.
   bool requested_join_on_connect = false;
 
-  // The editor camera F1 left from: the first living body this connection gets is
-  // moved there and aimed along it. Read once and cleared, like the join above.
+  // The editor camera F1 left from: the join this connection sends carries it,
+  // and the body is born there, aimed along it. Read once and cleared, like the join above.
   std::optional<camera_t> requested_spawn_view;
 
   // The other direction: the view play was showing when it went back to the

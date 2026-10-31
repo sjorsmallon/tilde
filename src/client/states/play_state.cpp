@@ -725,13 +725,22 @@ void Play_State::enter_connected_phase()
   {
     pending_join_on_connect = false;
 
+    std::string join_line = "join_game";
+    if (pending_spawn_view)
+    {
+      const vec3f feet = shared::player_feet_from_eye(pending_spawn_view->position);
+      join_line        = std::format("join_game_at {} {} {} {} {}", feet.x, feet.y, feet.z,
+                                     pending_spawn_view->yaw, pending_spawn_view->pitch);
+      pending_spawn_view.reset();
+    }
+
     auto reply = std::string{};
     const cvars::console_result_t result = cvars::execute_console_line(
-        *ctx.cvars, *ctx.commands, "join_game", cvars::command_context_t{}, &reply);
+        *ctx.cvars, *ctx.commands, join_line, cvars::command_context_t{}, &reply);
 
     if (result != cvars::console_result_t::forwarded && result != cvars::console_result_t::ok)
     {
-      log_error("auto join_game on connect failed: {}", reply);
+      log_error("auto {} on connect failed: {}", join_line, reply);
     }
   }
 }
@@ -1045,24 +1054,6 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   const bool free_camera_active = ctx.cvars->cl_free_camera;
   if (free_camera_active && !free_camera_was_active)
     free_camera = camera;
-
-  const entities::Player_Entity* spawned_player = try_find_my_player(ctx);
-  if (pending_spawn_view && spawned_player != nullptr &&
-      spawned_player->health.current_health > 0 && !free_camera_active)
-  {
-    const vec3f feet = shared::player_feet_from_eye(pending_spawn_view->position);
-    ctx.prediction.player_yaw           = pending_spawn_view->yaw;
-    ctx.prediction.player_pitch         = pending_spawn_view->pitch;
-    ctx.prediction.state.move.feet      = feet;
-    ctx.prediction.state.move.velocity      = {};
-    ctx.prediction.visual_error_offset  = {};
-    ctx.prediction.ridden_canopy        = {};
-    ctx.prediction.drawn_carry_shift    = {};
-    ctx.prediction.drawn_carry_uid      = shared::null_entity_uid;
-    const std::string setpos_line = std::format("setpos {} {} {}", feet.x, feet.y, feet.z);
-    console::get().execute_command(setpos_line.c_str());
-    pending_spawn_view.reset();
-  }
 
   free_camera_was_active = free_camera_active;
 

@@ -395,7 +395,7 @@ bool change_map_to(const std::string &map_name)
   {
     // e.g. joined mid-round.
     if (row.client.wants_to_play)
-      try_admit_player(context, row.slot);
+      try_admit_player(context, row.slot, std::nullopt);
 
     send_change_map_message(context, row.slot);
   }
@@ -475,7 +475,11 @@ void spawn_bot(Bot_Mode mode, const command_context_t &)
                world.next_bot_slot - 1);
 }
 
-void join_game(const command_context_t &command_context)
+namespace
+{
+
+void admit_caller(std::string_view command_name, const command_context_t &command_context,
+                  const std::optional<server::requested_spawn_t> &requested_spawn)
 {
   using namespace server;
 
@@ -487,20 +491,33 @@ void join_game(const command_context_t &command_context)
   // why -- unlike spawn_bot, this command is meaningless without a caller.
   if (!is_valid_client_slot(slot))
   {
-    log_error("join_game: no calling player (caller_slot {}) — this command "
+    log_error("{}: no calling player (caller_slot {}) — this command "
               "only means something from a connected client",
-              slot);
+              command_name, slot);
     return;
   }
 
   if (server_context.clients[slot].player_uid != shared::null_entity_uid)
   {
-    log_terminal("join_game: slot {} already has a player entity — ignoring",
-                 slot);
+    log_terminal("{}: slot {} already has a player entity — ignoring", command_name, slot);
     return;
   }
 
-  try_admit_player(server_context, slot);
+  try_admit_player(server_context, slot, requested_spawn);
+}
+
+} // namespace
+
+void join_game(const command_context_t &command_context)
+{
+  admit_caller("join_game", command_context, std::nullopt);
+}
+
+void join_game_at(float x, float y, float z, float yaw, float pitch,
+                  const command_context_t &command_context)
+{
+  admit_caller("join_game_at", command_context,
+               server::requested_spawn_t{.feet = {x, y, z}, .yaw_degrees = yaw, .pitch_degrees = pitch});
 }
 
 void spectate(const command_context_t &command_context)

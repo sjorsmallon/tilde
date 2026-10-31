@@ -4,18 +4,30 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "server_context.hpp"
 
+#include <optional>
+
 namespace server
 {
 
+// Where a joiner asked to be born instead of at a marker: the editor's camera.
+struct requested_spawn_t
+{
+  linalg::vec3f feet;
+  float         yaw_degrees;
+  float         pitch_degrees;
+};
+
 bool destroy_entity(server_context_t &context, shared::entity_uid_t uid);
 
-// Give this client a body: a Player_Entity at a spawn marker, its inventory
-// and its team. Returns the uid, or null_entity_uid if
-// the slot is out of range or the pool refused the spawn.
+// Give this client a body: a Player_Entity at a spawn marker, or at the
+// requested spawn when one is carried, its inventory and its team. Returns the
+// uid, or null_entity_uid if the slot is out of range or the pool refused the
+// spawn.
 //
 // Unconditional -- it does not ask whether the mode allows joining right now.
 // try_admit_player is the one that asks.
-shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &context, int32_t slot);
+shared::entity_uid_t spawn_player_entity_for_client_slot(
+    server_context_t &context, int32_t slot, const std::optional<requested_spawn_t> &requested_spawn);
 
 // Record that this client wants to play, and give it a body if the mode allows
 // one right now. A mode with join_in_progress = false leaves a mid-round
@@ -24,7 +36,11 @@ shared::entity_uid_t spawn_player_entity_for_client_slot(server_context_t &conte
 // This is the ONE door into the match for a human: join_game, and a map change
 // re-seating the players who had bodies before it, both come through here, so
 // "may I play yet" is answered in one place rather than at each of them.
-void try_admit_player(server_context_t &context, int32_t slot);
+//
+// A requested spawn is spent by the body it admits now; a joiner the mode holds
+// until the round boundary is placed by that boundary's pass, at a marker.
+void try_admit_player(server_context_t &context, int32_t slot,
+                      const std::optional<requested_spawn_t> &requested_spawn);
 
 // Give a body to every client that asked for one and is still waiting. Called
 // from enter_phase at the round boundary, ahead of respawn_all_players, which

@@ -182,7 +182,7 @@ static void handle_connection_messages(server_context_t &context)
                                  cmd.connect().player_name(), slot));
 
         if (try_find_rules_entity(context) != nullptr && current_mode(context).admit_on_connect)
-          try_admit_player(context, slot);
+          try_admit_player(context, slot, std::nullopt);
       }
       else
       {

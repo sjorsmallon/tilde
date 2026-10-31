@@ -752,8 +752,7 @@ Server_Commands :: commands {
     map(path: string)                  @Server  "Switch the server to a new map"
 
     // Source's setpos: moves the CALLER's body, feet at the point, velocity
-    // zeroed. The client fires it to place a body spawned from the editor at
-    // the editor's camera; three floats because a command parameter has no v3.
+    // zeroed. The hand-typed verb; three floats because a command parameter has no v3.
     setpos(x: f32, y: f32, z: f32)     @Server  "Move the calling player's body to a position"
 
     // A client connects as a SPECTATOR -- it holds a slot with no player
@@ -761,6 +760,11 @@ Server_Commands :: commands {
     // the server's to do; the caller is command_context_t::caller_slot, so
     // there is nothing to name and no parameters.
     join_game()                        @Server  "Leave spectate and spawn into the match"
+    // The same door with the point carried on it: the body is born with its
+    // feet at (x, y, z) aimed along yaw and pitch, never at a marker first. What
+    // the editor's play-at-camera sends, so the spawn is one placement and no
+    // `setpos` follows it.
+    join_game_at(x: f32, y: f32, z: f32, yaw: f32, pitch: f32)  @Server  "Leave spectate and spawn into the match with the feet at a point, aimed along yaw and pitch"
     // A VERB, so a command rather than a cvar -- the same reason `map` stopped
     // being one. There is no spectator state to hold: a client with no
     // player_uid IS a spectator (see "Client vs Player" in CLAUDE.md), so this

@@ -159,8 +159,8 @@ private:
   // @Server, so it needs the forwarder that entering Connected installs.
   bool pending_join_on_connect = false;
 
-  // Taken off client_context_t in on_enter, spent on the first frame we own a
-  // living body: a `setpos` before the join has admitted us moves nobody.
+  // Taken off client_context_t in on_enter and spent with the join above, which
+  // becomes a `join_game_at` carrying it: the body is born there, aimed along it.
   std::optional<camera_t> pending_spawn_view;
 
   // Storage, not state: refilled from the latest snapshot every frame the board
