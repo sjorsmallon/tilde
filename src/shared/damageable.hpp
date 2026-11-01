@@ -10,7 +10,7 @@ namespace shared
 inline assets::posed_hitbox_t damageable_hit_volume(const entities::Damageable_Entity& damageable)
 {
   return assets::make_box_hit_volume(damageable.position + damageable.volume.position,
-                                     damageable.volume.half_extents, hit_region_t::Torso);
+                                     damageable.volume.half_extents, entities::Hit_Region::Torso);
 }
 
 } // namespace shared

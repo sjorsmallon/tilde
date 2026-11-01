@@ -219,12 +219,12 @@ Lag_Compensation :: cvars {
     sv_lag_compensation:       bool = true   @Server  "Rewind targets to what the shooter saw"
     sv_max_rewind_ticks:       i32  = 12     @Server  "Cap on how far back a shot may reach (~200ms at 60Hz)"
     sv_lag_compensation_debug: bool = false  @Server  "Log every rewind: requested bracket, clamped bracket, disparity, hit"
-    // The VISUAL half of the above. Sends S2C_ShotDebug to the shooter for every
+    // The VISUAL half of the above. Sends Shot_Debug to the shooter for every
     // shot they resolve: the ray, the rewind verdict, and the pose of every
     // target the server ranked. Shooter-only and off by default -- it is one
     // message per shot per client, which is fine for two people debugging and
     // not fine for a full server.
-    sv_shot_debug:             bool = false  @Server  "Send each shooter the server's view of their own shots (S2C_ShotDebug)"
+    sv_shot_debug:             bool = false  @Server  "Send each shooter the server's view of their own shots (Shot_Debug)"
 }
 
 // The placeholder world ping: middle mouse raycasts against the map and stands
@@ -266,7 +266,7 @@ Server :: cvars {
 }
 
 Client :: cvars {
-    // Sent once in CmdConnect and never again: the server sanitizes it, holds
+    // Sent once in Connect and never again: the server sanitizes it, holds
     // it on the slot, and copies it onto the Player_Entity, which is what
     // actually replicates it. Changing this mid-session therefore does nothing
     // until the next connect -- deliberate, since a rename would otherwise need
@@ -678,8 +678,8 @@ Debugging :: cvars {
     // matters on a dedicated server over a real connection where breakpoints
     // are not an option. Both log through the generated table-driven formatter,
     // so they cover every event with no per-event print code.
-    sv_event_debug:         bool = false    @Server     "Log each gameplay event as the server fires it"
-    cl_event_debug:         bool = false    @Client     "Log each gameplay event as this client dispatches it"
+    sv_event_debug:         string<16> = "" @Server     "Log each message as the server writes it: 1 for all, reliable or unreliable for one transport, empty for off"
+    cl_event_debug:         string<16> = "" @Client     "Log each message as this client dispatches it: 1 for all, reliable or unreliable for one transport, empty for off"
 
     // Walks the records pending in each client's reliable stream. The buffer is
     // self-describing, which is why there is no {type, offset, length} index
@@ -748,7 +748,7 @@ Server_Commands :: commands {
     // costume. It is a command here, which also removes the only user of the
     // callback mechanism, which is why v1 has no callback mechanism at all.
     // The "current map" question is answered by the server's own state and the
-    // CmdChangeMap broadcast, not by a settable string.
+    // Change_Map broadcast, not by a settable string.
     map(path: string)                  @Server  "Switch the server to a new map"
 
     // Source's setpos: moves the CALLER's body, feet at the point, velocity

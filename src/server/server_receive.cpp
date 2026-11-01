@@ -1,46 +1,21 @@
 #include "entities/generated/entities_tables_generated.hpp"
 #include "server_receive.hpp"
 
-#include "../shared/assets/asset_id.hpp"
-#include "../shared/cvars/cvar_console.hpp"
 #include "../shared/network/bitstream.hpp"
-#include "../shared/network/cvar_mirror.hpp"
 #include "../shared/network/ghost_transfer.hpp"
-#include "../shared/network/map_transfer.hpp"
 #include "../shared/network/packet.hpp"
 #include "../shared/network/server_transport_layer.hpp"
-#include "game_mode.hpp"
 #include "log.hpp"
+#include "message_handlers.hpp"
 #include "move_budget.hpp"
 #include "server_context.hpp"
 #include "server_messages.hpp"
-#include "systems/game_rules_system.hpp"
-#include "entity_lifecycle.hpp"
 
 #include <algorithm>
-#include <chrono>
-#include <format>
-#include <string>
 #include <vector>
 
 namespace server
 {
-
-static void send_message_to_reject_incoming_connection(
-  server_context_t &context,
-  const network::Address& sender,
-  std::string_view reason,
-  uint32_t server_schema_hash,
-  uint32_t server_asset_table_hash)
-{
-  game::S2C_Connection reply;
-  auto *reject = reply.mutable_reject();
-  reject->set_reason(std::string(reason));
-  reject->set_server_schema_hash(server_schema_hash);
-  reject->set_server_asset_table_hash(server_asset_table_hash);
-
-  network::send_protobuf_message_to_unslotted_peer(context.transport_layer, context.socket, sender, reply);
-}
 
 static void drop_timed_out_clients(server_context_t &context)
 {
@@ -67,203 +42,46 @@ static void drop_timed_out_clients(server_context_t &context)
   }
 }
 
-static network::pascal_string_t<32> sanitized_player_name(const std::string& requested_name, int32_t slot)
+// A peer with no slot may say exactly one thing, a Connect on its own: the
+// first record's tag, read where the dispatch would read it.
+static bool unslotted_payload_is_one_connect(Span<const network::uint8> payload)
 {
-  auto filtered_name = std::string{};
-  for (const char character : requested_name)
-  {
-    if (filtered_name.size() >= 32)
-    {
-      log_warning("slot {}: player name '{}' exceeds 32 characters — truncated",
-                  slot, requested_name);
-      break;
-    }
-    if (static_cast<unsigned char>(character) >= 0x20 &&
-        static_cast<unsigned char>(character) != 0x7f)
-      filtered_name.push_back(character);
-  }
-
-  if (filtered_name.empty())
-    filtered_name = std::format("Player {}", slot);
-
-  network::pascal_string_t<32> name;
-  name.set(filtered_name.c_str());
-  return name;
+  network::Bit_Reader reader(payload.data, payload.count);
+  if (reader.bits_remaining() < (size_t)(shared::MESSAGE_STREAM_COUNT_BITS + 16))
+    return false;
+  const uint32_t count = reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS);
+  const uint32_t kind  = reader.read_bits(16);
+  return count == 1 && kind == (uint32_t)shared::Message_Type::Connect;
 }
 
-static void handle_connection_messages(server_context_t &context)
+// Every Message payload as it arrives, datagram and reliable record alike, in
+// arrival order, through the one generated dispatch.
+static void receive_messages(server_context_t &context)
 {
-  for (const auto& [sender, cmd] : context.incoming.connection_messages)
-  {
-    if (cmd.has_connect())
-    {
-      // duplicate connect, no meaningful work to do.
-      if (network::try_find_client_slot(context.transport_layer, sender))
-      {
-        log_warning("duplicate connect received from sender: <not sure if i should log ip addresses.>");
-        continue;
-      }
+  const shared::message_log_filter_t filter =
+      shared::message_log_filter_from_text(context.cvars->sv_event_debug.c_str());
 
-      // are we talking the same version of the game?
-      const uint32_t client_schema_hash = cmd.connect().schema_hash();
-      if (client_schema_hash != entities::SCHEMA_HASH)
-      {
-        log_error("Refusing connection from {}: schema hash mismatch "
-                  "(client {:#010x}, server {:#010x}). Both sides must be "
-                  "built from the same .def files.",
-                  cmd.connect().player_name(), client_schema_hash,
-                  entities::SCHEMA_HASH);
-        send_message_to_reject_incoming_connection(context, sender,
-                    std::format("Schema mismatch: client {:#010x}, server "
-                                "{:#010x} -- rebuild against the same "
-                                "entities.def",
-                                client_schema_hash, entities::SCHEMA_HASH),
-                    entities::SCHEMA_HASH, 0);
-        continue;
-      }
-
-      // and did we number our assets from the same resource tree? An asset id
-      // on the wire names a file by position, so the trees must agree.
-      const uint32_t client_asset_table_hash = cmd.connect().asset_table_hash();
-      const uint32_t server_asset_table_hash = assets::asset_table_hash();
-      if (client_asset_table_hash != server_asset_table_hash)
-      {
-        log_error("Refusing connection from {}: asset table hash mismatch "
-                  "(client {:#010x}, server {:#010x}). Both sides must run "
-                  "against the same resources/ tree.",
-                  cmd.connect().player_name(), client_asset_table_hash,
-                  server_asset_table_hash);
-        send_message_to_reject_incoming_connection(context, sender,
-                    std::format("Asset table mismatch: client {:#010x}, server "
-                                "{:#010x} -- the two resources/ trees differ",
-                                client_asset_table_hash, server_asset_table_hash),
-                    0, server_asset_table_hash);
-        continue;
-      }
-
-      // find a free slot. if there's a free slot, connect them.
-      int32_t slot = invalid_slot_idx;
-      for (int32_t candidate = 0; candidate < network::sv_max_client_count; ++candidate)
-      {
-        if (!context.transport_layer.clients[candidate].occupied)
+  network::poll_network(
+      context.transport_layer, context.socket, network::server_receive_drain_cap_in_datagrams,
+      context.tick_number,
+      [&context, filter](int32_t slot, const network::Address &sender, Span<const network::uint8> payload) {
+        if (slot < 0 && !unslotted_payload_is_one_connect(payload))
         {
-          slot = candidate;
-          break;
-        }
-      }
-
-      if (slot != invalid_slot_idx)
-      {
-        connect_client(context, slot, sender,
-                       sanitized_player_name(cmd.connect().player_name(), slot));
-
-        // actually handshake back to the client.
-        {
-          game::S2C_Connection reply;
-          auto *accept = reply.mutable_accept();
-          accept->set_client_slot(slot);
-          accept->set_map_name(context.world.session.map_name.empty()
-                                  ? "start.map"
-                                  : context.world.session.map_name);
-          accept->set_server_tickrate(
-              static_cast<int>(context.cvars->sv_tickrate));
-          accept->set_map_path(current_map_wire_id(context));
-          accept->set_content_hash(context.world.map_content_hash);
-
-          network::send_protobuf_message(context.transport_layer, context.socket, slot, reply);
+          log_warning("{} holds no slot and sent something other than a lone Connect; dropped",
+                      sender.to_string());
+          return;
         }
 
-        send_cvar_values(context, slot,
-                         shared::collect_mirrored_cvars(*context.cvars));
-
-        // Announce join to all clients (including the new one)
-        broadcast_server_text_message(
-            context, std::format("{} joined the server (slot {})",
-                                 cmd.connect().player_name(), slot));
-
-        if (try_find_rules_entity(context) != nullptr && current_mode(context).admit_on_connect)
-          try_admit_player(context, slot, std::nullopt);
-      }
-      else
-      {
-        send_message_to_reject_incoming_connection(context, sender, "Server is Full. please try again later.", 0, 0);
-      }
-    }
-    else if (cmd.has_disconnect())
-    {
-      process_client_leave_message(context, sender);
-    }
-  }
+        context.incoming.unslotted_sender = sender;
+        network::Bit_Reader reader(payload.data, payload.count);
+        dispatch_received_messages(context, slot, reader, filter);
+      });
 }
 
-static void handle_developer_console_entries(server_context_t &context)
-{
-  for (const auto& [client_slot, line] : context.incoming.developer_console_entries)
-  {
-    log_terminal("Command from slot {}: {}", client_slot, line);
-    const network::Address &client_address =
-        context.transport_layer.clients[client_slot].address;
-
-    cvars::command_context_t command_context{.caller_slot = client_slot};
-    auto reply = std::string{};
-    cvars::console_result_t result = cvars::execute_console_line(
-        *context.cvars, *context.commands, line, command_context, &reply);
-
-    if (result == cvars::console_result_t::unknown_name)
-      log_terminal("Unknown command from slot {}: {}", client_slot, line);
-
-    // echo something back, if it succeeded or not.
-    send_text_message_to_a_specific_client(
-        context, client_address, reply.empty() ? ("OK: " + line) : reply);
-  }
-}
-
-static void handle_map_data_requests(server_context_t &context)
-{
-  for (const auto &[client_slot, payload] : context.incoming.map_data_requests)
-  {
-    network::Bit_Reader reader(payload.data(), payload.size());
-    shared::request_map_data_message_t request =
-        shared::deserialize_request_map_data(reader);
-
-    world_t &world = context.world;
-    if (world.map_data_message_bytes.empty())
-    {
-      const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
-      const shared::map_data_message_t message =
-          shared::make_map_data_message(world.current_map, world.session.map_name);
-
-      auto writer = network::Bit_Writer{};
-      shared::serialize_map_data(writer, message);
-      world.map_data_message_bytes = std::move(writer.buffer);
-
-      const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
-      log_terminal("Built map package '{}': {} bytes, {} compressed, hash {:#x}, in {:.2f}s.",
-                   message.map_name, message.package_size_in_bytes,
-                   message.compressed_package.size(), message.package_hash, elapsed.count());
-    }
-
-    network::begin_paced_transfer(
-        context.transport_layer, client_slot, world.map_data_message_bytes,
-        static_cast<network::uint8>(network::Message_Type::S2C_MapData));
-
-    log_terminal("Queued map package '{}' ({} bytes, {} fragments) for slot {} (requested '{}').",
-                 world.session.map_name, world.map_data_message_bytes.size(),
-                 context.transport_layer.clients[client_slot].outbound_transfer.fragments.size(),
-                 client_slot, request.map_name);
-  }
-}
-
-// The ghost, in three passes that are all STATE compared with state (coop_ghost_plan.md §2F): what a
-// client asked for, what it may be sent now, and what it has been told.
+// The ghost, in two passes that are STATE compared with state (coop_ghost_plan.md §2F): what a
+// client asked for (on_ghost_request held it) and may be sent now, and what it has been told.
 static void service_ghost_transfers(server_context_t &context)
 {
-  for (const auto &[client_slot, payload] : context.incoming.ghost_requests)
-  {
-    network::Bit_Reader reader(payload.data(), payload.size());
-    context.clients[client_slot].requested_ghost_hash = shared::deserialize_request_ghost(reader).ghost_hash;
-  }
-
   const shared::ghost_announcement_t &announced = context.world.announced_ghost;
 
   for (connected_client_t row : connected_clients(context))
@@ -293,7 +111,7 @@ static void service_ghost_transfers(server_context_t &context)
     network::Bit_Writer writer;
     shared::serialize_ghost_data(writer, message);
     network::begin_paced_transfer(context.transport_layer, row.slot, writer.buffer,
-                                  static_cast<network::uint8>(network::Message_Type::S2C_GhostData));
+                                  network::Payload_Kind::Ghost_Transfer);
     row.client.requested_ghost_hash = 0;
 
     log_terminal("Queued {}-player ghost ({} bytes, hash {:#x}) for slot {}", announced.party_size,
@@ -306,58 +124,49 @@ static void service_ghost_transfers(server_context_t &context)
     if (!row.client.map_ready || row.client.ghost_hash_told_to_this_client == announced.hash)
       continue;
 
-    auto message = shared::ghost_available_message_t{};
+    shared::Ghost_Available message;
     message.party_size = announced.party_size;
     message.ghost_hash = announced.hash;
     message.byte_count = static_cast<uint32_t>(announced.bytes.size());
-
-    auto writer = network::Bit_Writer{};
-    shared::serialize_ghost_available(writer, message);
-    network::queue_reliable_message(row.transport.reliable_stream,
-                                    static_cast<network::uint8>(network::Message_Type::S2C_GhostAvailable),
-                                    writer.buffer);
+    shared::write_ghost_available(context.outgoing.reliable[row.slot], message);
     row.client.ghost_hash_told_to_this_client = announced.hash;
   }
 }
 
-// Everything on a C2S_ClientInput that is NOT input: the snapshot the client
+// Everything on a Client_Input that is NOT input: the snapshot the client
 // says it holds, the map it says it holds, and this tick's move credit.
 static void read_riders_off_client_inputs(server_context_t &context)
 {
-  network::Server_Inbox& inbox = context.incoming;
+  tick_incoming_t& inbox = context.incoming;
 
-  // this used to sort by timestamp which was broken regardless.
-  // now ordered monotonically by command number so that commands in the same tick
-  // will at least be processed later. :~)
+  // Ordered by (slot, input_number) so a slot's inputs run oldest first and
+  // the last of each slot's run is its newest.
   std::sort(inbox.client_inputs.begin(), inbox.client_inputs.end(),
-    [](const auto& a, const auto& b)
-    {
-      if (a.first != b.first) return a.first < b.first;
+            [](const received_client_input_t& a, const received_client_input_t& b)
+            {
+              if (a.slot != b.slot)
+                return a.slot < b.slot;
+              return a.input.input_number < b.input.input_number;
+            });
 
-      return a.second.input_number() < b.second.input_number();
-    });
-
-  // update (on the servers internal data structure)
-  // each client's held snapshot, based on the held_snapshot tick from the move,
-  // which (in theory?) should be the latest snapshot.
   for (size_t index = 0; index < inbox.client_inputs.size(); ++index)
   {
-    const auto& [client_slot, input] = inbox.client_inputs[index];
+    const int32_t               client_slot = inbox.client_inputs[index].slot;
+    const shared::Client_Input& input       = inbox.client_inputs[index].input;
     if (!is_valid_client_slot(client_slot))
       continue; // the input loop below logs it; one complaint per input is enough
 
     client_slot_t& client = context.clients[client_slot];
-    client.held_snapshot_tick = std::max(client.held_snapshot_tick, input.held_snapshot_tick());
+    client.held_snapshot_tick = std::max(client.held_snapshot_tick, input.held_snapshot_tick);
 
-    // does this mean that it's a redundant input?
     const bool this_is_the_slots_newest_input =
         index + 1 == inbox.client_inputs.size() ||
-        inbox.client_inputs[index + 1].first != client_slot;
+        inbox.client_inputs[index + 1].slot != client_slot;
 
     if (!this_is_the_slots_newest_input) continue;
 
     const bool map_ready_now =
-        input.map_content_hash() == context.world.map_content_hash;
+        input.map_content_hash == context.world.map_content_hash;
 
     if (map_ready_now != client.map_ready)
       log_terminal("Slot {} {} map '{}' (hash {:#x}); {} snapshots.", client_slot,
@@ -378,17 +187,11 @@ static void read_riders_off_client_inputs(server_context_t &context)
 void receive_from_clients(server_context_t &context)
 {
   clear_incoming(context);
-
-  network::poll_network(context.transport_layer, context.socket,
-                        network::server_receive_drain_cap_in_datagrams,
-                        context.tick_number, context.incoming);
+  receive_messages(context);
 
   // if we lost someone, no use processing them.
   drop_timed_out_clients(context);
 
-  handle_connection_messages(context);
-  handle_developer_console_entries(context);
-  handle_map_data_requests(context);
   service_ghost_transfers(context);
 
   // send a block of map fragments so not to swamp the connection.

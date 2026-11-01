@@ -12,12 +12,9 @@
 #include "../weapon_fire_audio.hpp"
 #include "../surface_audio.hpp"
 #include "../held_snapshot.hpp"
-#include "../event_handlers.hpp"
 #include "../../shared/cvars/cvar_console.hpp"
 #include "../../shared/movement/player_constants.hpp"
 #include "../../shared/round_phase_rules.hpp"
-#include "../../shared/hit_region.hpp"
-#include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
 #include "../../shared/collision/disabled_geometry.hpp"
 #include "../../shared/timer_fraction.hpp"
@@ -962,29 +959,28 @@ void Play_State::draw_debug_overlays(client_context_t &ctx, const draw_inputs_t 
 
   // --- Bot path / goal debug draw ---
   {
-    static constexpr color_t goal_color[] = {
-      color_t{136, 136, 136},  // Idle
-      color_t{255, 0, 255},    // Chase
-      colors::red,             // Attack
-      color_t{0, 68, 255},     // Retreat
-    };
+    static constexpr Enum_Array<shared::Bot_Goal, color_t> GOAL_COLORS = {{
+        color_t{136, 136, 136}, // Idle
+        color_t{255, 0, 255},   // Chase
+        colors::red,            // Attack
+        color_t{0, 68, 255},    // Retreat
+    }};
 
-    for (const auto &bot : ctx.replication.bot_debug_entries)
+    for (const shared::Bot_Debug_Entry &bot : ctx.replication.bot_debug_entries)
     {
-      int gi = static_cast<int>(bot.goal);
-      color_t color = goal_color[gi < 4 ? gi : 0];
+      const color_t color = GOAL_COLORS[bot.goal];
 
-      const auto &path = bot.path;
-      for (int i = bot.path_index; i + 1 < (int)path.size(); ++i)
+      // The waypoints still ahead, the next one first.
+      for (uint32_t i = 0; i + 1 < bot.path.count; ++i)
       {
-        vec3f a = path[i];     a.y += 4.f;
-        vec3f b = path[i + 1]; b.y += 4.f;
+        vec3f a = bot.path[i];     a.y += 4.f;
+        vec3f b = bot.path[i + 1]; b.y += 4.f;
         scene.debug.line(a, b, color);
       }
 
-      if (bot.path_index < (int)path.size())
+      if (bot.path.count > 0)
       {
-        vec3f wp = path[bot.path_index]; wp.y += 4.f;
+        vec3f wp = bot.path[0]; wp.y += 4.f;
         constexpr float r = 8.f;
         scene.debug.line({wp.x - r, wp.y, wp.z}, {wp.x + r, wp.y, wp.z}, color);
         scene.debug.line({wp.x, wp.y, wp.z - r}, {wp.x, wp.y, wp.z + r}, color);

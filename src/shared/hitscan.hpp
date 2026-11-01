@@ -3,7 +3,7 @@
 #include "entity_uid.hpp"
 #include "animation/hitbox_rig.hpp"
 #include "linalg.hpp"
-#include "hit_region.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "span.hpp"
 
 #include <limits>
@@ -39,7 +39,7 @@ inline hitscan_target_t make_hitscan_target(entity_uid_t uid,
 struct hitscan_result_t
 {
   entity_uid_t hit_uid{null_entity_uid};                    // 0 = nothing hit
-  hit_region_t region = hit_region_t::Torso;  // only meaningful when hit_uid != 0
+  entities::Hit_Region region = entities::Hit_Region::Torso;  // only meaningful when hit_uid != 0
   vec3f impact_point{};
   vec3f impact_normal{};
   float distance = 0.f;

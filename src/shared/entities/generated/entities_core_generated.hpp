@@ -147,6 +147,18 @@ constexpr uint32_t Damage_Type_COUNT = 3;
 const char* to_string(Damage_Type value);
 template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_view text);
 
+enum class Hit_Region : uint8_t
+{
+  Head = 0,
+  Torso = 1,
+  Legs = 2,
+};
+
+constexpr uint32_t Hit_Region_COUNT = 3;
+
+const char* to_string(Hit_Region value);
+template <> std::optional<Hit_Region> try_from_string<Hit_Region>(std::string_view text);
+
 enum class Light_Mode : uint8_t
 {
   Baked = 0,
@@ -291,19 +303,20 @@ enum class enum_type : uint16_t
   Fire_Trigger = 4,
   Inventory_Slot = 5,
   Damage_Type = 6,
-  Light_Mode = 7,
-  Aim_Pose = 8,
-  Round_Phase = 9,
-  Game_Mode = 10,
-  Round_End_Reason = 11,
-  Match_Request = 12,
-  Easing = 13,
-  Reveal_Cone_Kind = 14,
-  Lens_Filter = 15,
-  Movement_Override = 16,
+  Hit_Region = 7,
+  Light_Mode = 8,
+  Aim_Pose = 9,
+  Round_Phase = 10,
+  Game_Mode = 11,
+  Round_End_Reason = 12,
+  Match_Request = 13,
+  Easing = 14,
+  Reveal_Cone_Kind = 15,
+  Lens_Filter = 16,
+  Movement_Override = 17,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 17;
+constexpr uint32_t ENUM_TYPE_COUNT = 18;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -429,6 +442,12 @@ template <> struct enum_traits<entities::Damage_Type>
 {
   static constexpr uint32_t count = entities::Damage_Type_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Damage_Type;
+};
+
+template <> struct enum_traits<entities::Hit_Region>
+{
+  static constexpr uint32_t count = entities::Hit_Region_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Hit_Region;
 };
 
 template <> struct enum_traits<entities::Light_Mode>

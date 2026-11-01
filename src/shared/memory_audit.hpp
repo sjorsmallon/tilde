@@ -6,7 +6,7 @@
 // This answers the question at the level of `operator new`, NOT at the level of
 // one container. That is the whole point: a house Vector would report on
 // vectors and on nothing else, while this sees std::string (758 references
-// against std::vector's 608), the hash maps, protobuf, Vulkan, SDL, miniaudio
+// against std::vector's 608), the hash maps, Vulkan, SDL, miniaudio
 // and stb as well -- with no call site touched anywhere.
 //
 // THREE THINGS MAKE IT WORK, and each of them is load-bearing:

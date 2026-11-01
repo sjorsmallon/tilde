@@ -5,37 +5,32 @@
 #include <cstdint>
 #include <optional>
 
-namespace game
-{
-class S2C_EntityPackage;
-}
-
 namespace client
 {
 
 struct client_context_t;
 
-// What one accepted S2C_EntityPackage said. The frame is the world;
+// What one accepted Entity_Package said. The frame is the world;
 // latest_processed_input_number is the server's ack of our input stream, riding
 // the same message because snapshots are the only regular S2C traffic -- the
-// mirror of held_snapshot_tick hitching a ride on C2S_ClientInput.
+// mirror of held_snapshot_tick hitching a ride on Client_Input.
 struct decoded_snapshot_t
 {
   ::network::snapshot_frame_t frame;
-  std::optional<uint32_t>     latest_processed_input_number;
+  int32_t                     latest_processed_input_number = ::network::NO_INPUT_PROCESSED_YET;
 };
 
-// Decode one package against the history we hold. Reads the context and writes
-// NOTHING to it: a packet we drop must leave no trace, and that is worth a
-// return value rather than a promise about the order of statements in a
-// hundred-line loop. Empty means dropped -- a stale tick, a baseline we no
-// longer hold, or an undecodable payload -- and each of those logs its own
-// reason before returning.
+// Decode one package, whose tick is connection.last_server_tick, against the
+// history we hold. Reads the context and writes NOTHING to it: a packet we drop
+// must leave no trace, and that is worth a return value rather than a promise
+// about the order of statements in a hundred-line loop. Empty means dropped --
+// a stale tick, a baseline we no longer hold, or an undecodable payload -- and
+// each of those logs its own reason before returning.
 [[nodiscard]] std::optional<decoded_snapshot_t>
-try_decode_snapshot(const client_context_t& context, const game::S2C_EntityPackage& package);
+try_decode_snapshot(const client_context_t& context, const shared::Entity_Package& package);
 
 // Tick N becomes the NEWEST of the snapshots the client holds -- the state named
-// by C2S_ClientInput::held_snapshot_tick. Newest of, not the only one: the ring
+// by Client_Input::held_snapshot_tick. Newest of, not the only one: the ring
 // keeps 32, and try_decode_snapshot resolves a baseline with find(tick) against
 // any of them, because a delta the server built before our ack reached it names
 // an older one and still has to decode.

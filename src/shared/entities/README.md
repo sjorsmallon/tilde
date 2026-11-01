@@ -24,8 +24,8 @@ purpose: they are meant to be readable and opened without building, and a
 `.def` change should show up as one reviewable diff. CMake regenerates them
 whenever a `.def` *or* the resource tree changes.
 
-`def_gen` is not entity-only: `../cvars/cvars.def`, `../effects/effects.def` and
-`../events/events.def` are its other inputs, and one run over all of them
+`def_gen` is not entity-only: `../cvars/cvars.def` and
+`../network/messages.def` are its other inputs, and one run over all of them
 produces the single `SCHEMA_HASH` the connect handshake compares. Pass every
 `.def` in one invocation — a partial run with `--emit` writes a hash that
 disagrees with a full build. The families share the lexer, the primitive type
@@ -45,7 +45,7 @@ emission is opt-in via `--emit`):
 
 ```bash
 ./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def \
-    src/shared/effects/effects.def src/shared/events/events.def --dump
+    src/shared/network/messages.def --dump
 ```
 
 ## The old macro system is gone
@@ -144,7 +144,7 @@ it as one opaque blob and never flatten.
 
 ## SCHEMA_HASH
 
-A digest of every declaration in the `.def` files. It rides in `CmdConnect`
+A digest of every declaration in the `.def` files. It rides in `Connect`
 beside `assets::asset_table_hash()`, the runtime digest of the ids numbered
 from `resources/`; the server refuses a client whose hash differs on either
 and reports both. A mismatch means the two sides disagree about entity layout

@@ -26,7 +26,7 @@ void append_pod(std::vector<uint8_t>& out, const auto& value)
   memcpy(out.data() + at, &value, sizeof(value));
 }
 
-void append_view(std::vector<uint8_t>& out, const subtick_view_t& view)
+void append_view(std::vector<uint8_t>& out, const View& view)
 {
   append_pod(out, view.yaw);
   append_pod(out, view.pitch);
@@ -46,21 +46,21 @@ struct view_cursor_t
     return value;
   }
 
-  subtick_view_t read_view()
+  View read_view()
   {
-    subtick_view_t view;
+    View view;
     view.yaw   = read<float>();
     view.pitch = read<float>();
     return view;
   }
 };
 
-[[nodiscard]] bool is_finite_view(const subtick_view_t& view)
+[[nodiscard]] bool is_finite_view(const View& view)
 {
   return std::isfinite(view.yaw) && std::isfinite(view.pitch);
 }
 
-[[nodiscard]] subtick_view_t lerp_view(const subtick_view_t& from, const subtick_view_t& towards, float fraction)
+[[nodiscard]] View lerp_view(const View& from, const View& towards, float fraction)
 {
   return {linalg::lerp_degrees_clamped(from.yaw, towards.yaw, fraction),
           lerp_clamped(from.pitch, towards.pitch, fraction)};
@@ -104,14 +104,14 @@ struct view_cursor_t
 } // namespace
 
 replay_player_view_t replay_player_view_from_input(uint8_t client_slot, const interpolation_bracket_t& bracket,
-                                                   const tick_input_t& input)
+                                                   const Tick_Input& input)
 {
   replay_player_view_t view;
   view.client_slot   = client_slot;
   view.bracket       = bracket;
   view.view_at_start = input.view_at_start;
   view.view_at_end   = input.view_at_end;
-  view.button_change_count    = std::min(input.button_change_count, MAX_SUBTICK_BUTTON_CHANGES);
+  view.button_change_count = input.button_changes.count;
   for (uint32_t change_index = 0; change_index < view.button_change_count; ++change_index)
     view.view_changes[change_index] = {input.button_changes[change_index].slot, input.button_changes[change_index].view_after};
   return view;
@@ -168,9 +168,9 @@ std::optional<replay_player_view_t> try_parse_replay_player_view(Span<const uint
   return view;
 }
 
-subtick_view_t replay_view_at_slot(const replay_player_view_t& view, float slot_position)
+View replay_view_at_slot(const replay_player_view_t& view, float slot_position)
 {
-  subtick_view_t from_view = view.view_at_start;
+  View from_view = view.view_at_start;
   float          from_slot = 0.0f;
   if (slot_position <= from_slot)
     return from_view;

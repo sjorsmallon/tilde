@@ -12,12 +12,10 @@
 #include "../weapon_fire_audio.hpp"
 #include "../surface_audio.hpp"
 #include "../held_snapshot.hpp"
-#include "../event_handlers.hpp"
+#include "../message_handlers.hpp"
 #include "../../shared/cvars/cvar_console.hpp"
 #include "../../shared/movement/player_constants.hpp"
 #include "../../shared/round_phase_rules.hpp"
-#include "../../shared/hit_region.hpp"
-#include "../../shared/network/subtick_codec.hpp"
 #include "../../shared/subtick.hpp"
 #include "../../shared/collision/disabled_geometry.hpp"
 #include "../../shared/timer_fraction.hpp"
@@ -502,7 +500,7 @@ uint32_t local_held_lens_channels(const client_context_t &ctx)
 }
 
 // The aim the server holds for us when it opens `input_number`: where the input before it ended.
-static shared::subtick_view_t local_view_entering(const client_context_t &ctx,
+static shared::View local_view_entering(const client_context_t &ctx,
                                                   const entities::Player_Entity &my_player,
                                                   int input_number)
 {
@@ -563,24 +561,40 @@ uint8_t clamp_crosshair_color_channel(uint32_t value)
 static void forward_console_line_to_server(std::string_view line)
 {
   auto& ctx = state_manager::get_client_context();
-  game::C2S_Command cmd;
-  cmd.set_line(std::string(line));
+  shared::Console_Line message;
+  if (!message.line.set(std::string(line.substr(0, decltype(message.line)::capacity)).c_str()) ||
+      line.size() > decltype(message.line)::capacity)
+    log_warning("console line of {} characters cut to the {} the wire carries", line.size(),
+                (int)decltype(message.line)::capacity);
   // console lines cannot be dropped.
-  network::queue_reliable_protobuf_message(ctx.transport_layer, cmd);
+  shared::write_console_line(ctx.connection.outgoing_reliable, message);
 }
 
-// message to the server we need the map data for the map name they just sent us to switch to.
-static void send_request_map_data(network::Client_Transport_Layer &transport,
-                                  const std::string &map_name)
+// Ask the server for the compiled package of the map it runs, at the generation it told us.
+static void send_request_map_data(client_context_t &ctx)
 {
-  auto msg = shared::request_map_data_message_t{map_name};
+  shared::Map_Data_Request request;
+  request.map_generation = ctx.connection.server_map.generation;
+  request.map_name       = ctx.connection.server_map.name;
+  shared::write_map_data_request(ctx.connection.outgoing_reliable, request);
+}
 
-  auto writer = network::Bit_Writer{};
-  shared::serialize_request_map_data(writer, msg);
-  network::queue_reliable_client_message(
-      transport,
-      static_cast<network::uint8>(network::Message_Type::C2S_RequestMapData),
-      writer.buffer);
+// What this frame wrote into the reliable scope, as one record on the stream,
+// then whatever the stream has outstanding. Skipped with no server to talk to.
+static void send_pending_reliable_messages(client_context_t &ctx)
+{
+  if (ctx.connection.phase == Connection_Phase::Disconnected ||
+      ctx.connection.phase == Connection_Phase::Replaying)
+    return;
+
+  shared::message_stream_t &records = ctx.connection.outgoing_reliable.records;
+  records.finish();
+  if (!records.empty())
+  {
+    network::queue_reliable_client_message(ctx.transport_layer, records.writer.buffer);
+    records.reset();
+  }
+  network::service_client_reliable_stream(ctx.transport_layer);
 }
 
 bool Play_State::load_client_map(const std::string &map_path)
@@ -745,6 +759,43 @@ void Play_State::enter_connected_phase()
   }
 }
 
+void Play_State::follow_server_map(client_context_t &ctx)
+{
+  const shared::Server_Map &server_map = ctx.connection.server_map;
+  if (server_map.generation == ctx.connection.followed_map_generation)
+    return;
+  if (ctx.connection.phase != Connection_Phase::Loading && ctx.connection.phase != Connection_Phase::Connected)
+    return;
+  ctx.connection.followed_map_generation = server_map.generation;
+
+  // Held already: a Change_Map back to the map we run, or an Accept after a boot load of it.
+  if (ctx.world.ready && ctx.world.map_content_hash == server_map.content_hash)
+  {
+    log_terminal("Following the server's map '{}' (generation {}, hash {:#x}): already held", server_map.name.c_str(),
+                 server_map.generation, server_map.content_hash);
+    if (ctx.connection.phase != Connection_Phase::Connected)
+      enter_connected_phase();
+    return;
+  }
+
+  ctx.connection.phase = Connection_Phase::Loading;
+  hud::set_announcement("Loading map...");
+
+  const std::string local_path = shared::resolve_map_path(client_maps_directory(), server_map.path.c_str());
+  if (load_client_map(local_path) && ctx.world.map_content_hash == server_map.content_hash)
+  {
+    log_terminal("Following the server's map '{}' (generation {}): loaded '{}', now reporting hash {:#x}",
+                 server_map.name.c_str(), server_map.generation, local_path, server_map.content_hash);
+    enter_connected_phase();
+    return;
+  }
+
+  log_terminal("No matching local copy of '{}' (generation {}, server hash {:#x}, local {:#x}); requesting it",
+               server_map.name.c_str(), server_map.generation, server_map.content_hash, ctx.world.map_content_hash);
+  hud::set_announcement("Downloading map...");
+  send_request_map_data(ctx);
+}
+
 void Play_State::enter_replay_playback(shared::replay_t&& replay)
 {
   auto &ctx = state_manager::get_client_context();
@@ -843,14 +894,16 @@ void Play_State::on_enter()
   transport.server_address = ctx.requested_server_address;
   log_terminal("Connecting to {}", transport.server_address.to_string());
 
-  game::C2S_Connection connect_message;
-  auto* connect_cmd = connect_message.mutable_connect();
-  connect_cmd->set_protocol_version(1);
-  connect_cmd->set_player_name(ctx.cvars->name.c_str());
-  connect_cmd->set_schema_hash(entities::SCHEMA_HASH);
-  connect_cmd->set_asset_table_hash(assets::asset_table_hash());
+  shared::Connect connect;
+  connect.protocol_version = 1;
+  connect.player_name      = ctx.cvars->name;
+  connect.schema_hash      = entities::SCHEMA_HASH;
+  connect.asset_table_hash = assets::asset_table_hash();
 
-  network::send_protobuf_message(transport, connect_message);
+  shared::message_stream_t stream;
+  shared::write_connect(stream, connect);
+  stream.finish();
+  network::send_message_stream_to_server(transport, stream);
   ctx.connection.phase = Connection_Phase::Connecting;
 
   hud::set_announcement("Play State");
@@ -869,9 +922,12 @@ void Play_State::on_exit()
   if (ctx.connection.phase != Connection_Phase::Disconnected &&
       ctx.connection.phase != Connection_Phase::Replaying)
   {
-    game::C2S_Connection disconnect_cmd;
-    disconnect_cmd.mutable_disconnect()->set_reason("Player left");
-    network::send_protobuf_message(transport, disconnect_cmd);
+    shared::Disconnect disconnect;
+    (void)disconnect.reason.set("Player left");
+    shared::message_stream_t stream;
+    shared::write_disconnect(stream, disconnect);
+    stream.finish();
+    network::send_message_stream_to_server(transport, stream);
 
     ctx.connection.phase = Connection_Phase::Disconnected;
     //commands that should go to the server now just go nowhere.
@@ -1094,17 +1150,61 @@ bool Play_State::update_shell(client_context_t &ctx, play_frame_t &frame)
   return false;
 }
 
+// The server tick off the payload's head, then its streams through the one
+// generated dispatch. The snapshot is a record among them (Entity_Package, on
+// the slot's own scope ahead of the broadcast), so its handler advances the
+// newest held snapshot before the effects behind it run, and records it; the
+// payload is recorded after, keeping that order.
+void receive_server_message_payload(client_context_t &ctx, Span<const network::uint8> payload)
+{
+  network::Bit_Reader reader(payload.data, payload.count);
+  ctx.connection.last_server_tick = reader.read_bits(32);
+
+  if (reader.bits_remaining() == 0)
+    return;
+  dispatch_received_messages(ctx, reader,
+                             shared::message_log_filter_from_text(ctx.cvars->cl_event_debug.c_str()));
+
+  shared::record_replay_messages(ctx.replay_recorder,
+                                 Span<const uint8_t>(payload.data + sizeof(uint32_t),
+                                                     payload.count - static_cast<uint32_t>(sizeof(uint32_t))));
+}
+
+void Play_State::receive_map_transfer(client_context_t &ctx, Span<const network::uint8> payload)
+{
+  if (ctx.connection.phase != Connection_Phase::Loading)
+  {
+    log_warning("received map data while phase is not Loading; ignoring it (late retransmit, or an eager server?)");
+    return;
+  }
+
+  network::Bit_Reader reader(payload.data, payload.count);
+  shared::map_data_message_t data = shared::deserialize_map_data(reader);
+  const std::optional<shared::map_package_t> package = shared::try_unpack_map_data_message(data);
+
+  if (!package)
+  {
+    log_warning("unpacking map data message failed. doing nothing.");
+    return;
+  }
+
+  if (!switch_to_map_provided_by_map_package(*package))
+  {
+    log_error("Failed to switch to map based on map package. supposed map name: '{}'.", data.map_name);
+    return;
+  }
+
+  enter_connected_phase();
+  log_terminal("Downloaded map '{}' ({} bytes on the wire, {} unpacked, package hash {:#x}); "
+               "now reporting content hash {:#x}",
+               package->map_name, data.compressed_package.size(), data.package_size_in_bytes,
+               data.package_hash, ctx.world.map_content_hash);
+}
+
 void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
 {
   const float dt = frame.dt;
 
-  auto& transport = ctx.transport_layer;
-
-  // actually network related stuff.
-  // receive_drain_cap_in_datagrams is the maximum packet count we'll be reading
-  // while in that function. it's a cap. if it's more than that, something is flooding traffic.
-  network::Client_Inbox& inbox = ctx.incoming;
-  network::clear_client_inbox(inbox);
   if (ctx.connection.phase == Connection_Phase::Replaying)
   {
     if (ctx.replay.pending_seek_tick)
@@ -1112,14 +1212,35 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
       reset_state_for_replay_seek(ctx);
       hud::current_announcement() = {};
     }
-    feed_replay_into_inbox(ctx.replay, dt, inbox);
+    dispatch_due_replay_records(ctx.replay, dt, ctx);
   }
   else
   {
+    // Every payload as it arrives, datagram and reliable record alike: the two
+    // transfers to their decoders, a Message to the generated dispatch. The cap
+    // is a livelock guard; past it something is flooding the socket.
     network::poll_client_network(
-      transport,
-      network::client_receive_drain_cap_in_datagrams,
-      inbox);
+        ctx.transport_layer, network::client_receive_drain_cap_in_datagrams,
+        [this, &ctx](network::Payload_Kind kind, Span<const network::uint8> payload) {
+          switch (kind)
+          {
+          case network::Payload_Kind::Map_Transfer:
+            receive_map_transfer(ctx, payload);
+            return;
+          case network::Payload_Kind::Ghost_Transfer:
+            receive_ghost_transfer(ctx, payload);
+            return;
+          case network::Payload_Kind::Message:
+            receive_server_message_payload(ctx, payload);
+            return;
+          case network::Payload_Kind::Reliable:
+          case network::Payload_Kind::Transfer_Receipt:
+          case network::Payload_Kind::Count:
+            break;
+          }
+          fatal_error("poll_client_network delivered payload kind {}, which is a transport parcel",
+                      static_cast<int>(kind));
+        });
   }
 
   frame.world_dt = ctx.connection.phase == Connection_Phase::Replaying ? replay_world_dt(ctx.replay, dt) : dt;
@@ -1127,271 +1248,20 @@ void Play_State::receive_from_server(client_context_t &ctx, play_frame_t &frame)
   // set the audio to mute if replayhing because slowing audio is not supported at this moment.
   ctx.audio.set_muted(ctx.connection.phase == Connection_Phase::Replaying && !replay_plays_at_normal_speed(ctx.replay));
 
-  // in case I forget again: poll_client_network already does all the reassembly for us.
-  // this iterates over fully constructed messages. that's why the switch_to_map_provided_by_map_package
-  // is just a single call. I confused myself with thinking that the map probably wouldnt'fit
-  // in one packet.
-  for (const auto &cmd : inbox.connection_messages)
+  // Each Shot_Debug against the stash of the input that fired it, into the
+  // timed debug list; a reply is drawn once.
+  for (const shared::Shot_Debug &reply : ctx.visuals.shot_debug_replies)
   {
-    if (cmd.has_accept())
-    {
-      ctx.connection.my_slot = cmd.accept().client_slot();
-      ctx.connection.server_tickrate = cmd.accept().server_tickrate();
-
-      if (ctx.connection.server_tickrate == 0)
-      {
-        fatal_error("server did not specify tickrate. that seems kind of problematic.");
-        ctx.connection.server_tickrate = 60;
-      }
-
-      // Decide whether we can play immediately or must download the map first.
-      uint32_t server_hash = cmd.accept().content_hash();
-      bool hash_mismatch = server_hash != 0 && ctx.world.map_content_hash != 0 &&
-                           server_hash != ctx.world.map_content_hash;
-
-      if (!ctx.world.ready || hash_mismatch)
-      {
-        const char *reason = ctx.world.ready ? "Map mismatch" : "No local map";
-        log_terminal("{} on connect (server '{}' hash {:#x}, local {:#x}); "
-                     "requesting map from server.",
-                     reason, cmd.accept().map_name(), server_hash,
-                     ctx.world.map_content_hash);
-        ctx.connection.phase = Connection_Phase::Loading;
-        ctx.connection.downloading_map_content_hash = server_hash;
-
-        hud::set_announcement("Downloading map...");
-
-        send_request_map_data(transport, cmd.accept().map_name());
-        continue;
-      }
-
-      log_terminal("Connected to server! Slot {}, map: {} (hash {:#x})",
-                   ctx.connection.my_slot, cmd.accept().map_name(), server_hash);
-      enter_connected_phase();
-    }
-    else if (cmd.has_reject())
-    {
-      // got a server reject. check the entity schema hash and the asset table hash.
-      const uint32_t server_schema_hash      = cmd.reject().server_schema_hash();
-      const uint32_t server_asset_table_hash = cmd.reject().server_asset_table_hash();
-      if (server_schema_hash != 0 && server_schema_hash != entities::SCHEMA_HASH)
-      {
-        log_error("Connection rejected -- schema hash mismatch (client "
-                  "{:#010x}, server {:#010x}). The two builds disagree about "
-                  "entity layout; rebuild both from the same .def files. "
-                  "Server said: {}",
-                  entities::SCHEMA_HASH, server_schema_hash,
-                  cmd.reject().reason());
-      }
-      if (server_asset_table_hash != 0 && server_asset_table_hash != assets::asset_table_hash())
-      {
-        log_error("Connection rejected -- asset table hash mismatch (client "
-                  "{:#010x}, server {:#010x}). The two resource trees differ, so "
-                  "an asset id would name different files on each side. Server said: {}",
-                  assets::asset_table_hash(), server_asset_table_hash,
-                  cmd.reject().reason());
-      }
-      // otherwise: extracurricular reason?
-      log_terminal("Connection rejected: {}", cmd.reject().reason());
-      ctx.connection.phase = Connection_Phase::Disconnected;
-    }
+    const client::shot_debug_local_t *local = shot_debug_history.find(reply.input_number);
+    client::draw_shot_debug_pair(scene.debug, local, reply, aim_settings_from_cvars(*ctx.cvars),
+                                 ctx.cvars->cl_shot_debug_seconds);
   }
+  ctx.visuals.shot_debug_replies.clear();
 
-  for (const auto &payload : inbox.change_map_messages)
-  {
-    auto reader = network::Bit_Reader(payload.data(), payload.size());
-    shared::change_map_message_t change = shared::deserialize_change_map(reader);
-
-    // we are running this map already.
-    if (ctx.connection.phase == Connection_Phase::Connected && ctx.world.map_content_hash == change.content_hash)
-    {
-      continue;
-    }
-
-    // we are already downloading this map. don't resend or do anything, the download is managed over the reliable stream.
-    if (ctx.connection.phase == Connection_Phase::Loading &&
-        ctx.connection.downloading_map_content_hash == change.content_hash)
-    {
-      continue;
-    }
-
-    log_terminal("Server switching map to '{}' (path '{}', hash {:#x})", change.map_name, change.map_path, change.content_hash);
-    ctx.connection.phase = Connection_Phase::Loading;
-    hud::set_announcement("Loading map...");
-
-    // try to resolve locally or request it from the server.
-    std::string local_path = shared::resolve_map_path(client_maps_directory(), change.map_path);
-    if (!load_client_map(local_path) ||
-        ctx.world.map_content_hash != change.content_hash)
-    {
-      log_terminal("No matching local copy of '{}' (cache miss/mismatch); requesting map from server.", change.map_name);
-      ctx.connection.downloading_map_content_hash = change.content_hash;
-      hud::set_announcement("Downloading map...");
-      send_request_map_data(transport, change.map_name);
-      continue;
-    }
-
-    // reset the hash.
-    ctx.connection.downloading_map_content_hash = 0;
-    ctx.connection.phase = Connection_Phase::Connected;
-    log_terminal("Map switch to '{}' complete; now reporting hash {:#x}",
-                 change.map_name, change.content_hash);
-  }
-
-  for (const auto &payload : inbox.map_data_messages)
-  {
-    
-    if (ctx.connection.phase != Connection_Phase::Loading)
-    {
-      log_warning("received map data while phase is not Loading; ignoring it (late retransmit, or an eager server?)");
-      continue;
-    }
-
-    auto reader = network::Bit_Reader(payload.data(), payload.size());
-    shared::map_data_message_t data = shared::deserialize_map_data(reader);
-    const std::optional<shared::map_package_t> package = shared::try_unpack_map_data_message(data);
-
-    if (!package)
-    {
-      log_warning("unpacking map data message failed. doing nothing.");
-      continue;
-    }
-
-    if (!switch_to_map_provided_by_map_package(*package))
-    {
-      log_error("Failed to switch to map based on map package. supposed map name: '{}'.", data.map_name);
-      continue;
-    }
-
-    // map loaded.
-    ctx.connection.downloading_map_content_hash = 0;
-    enter_connected_phase();
-    log_terminal("Downloaded map '{}' ({} bytes on the wire, {} unpacked, package hash {:#x}); "
-                 "now reporting content hash {:#x}",
-                 package->map_name, data.compressed_package.size(), data.package_size_in_bytes,
-                 data.package_hash, ctx.world.map_content_hash);
-  }
-
-  consume_ghost_messages(ctx, inbox);
-
-  // send all the pending reliable data over the reliable stream in chunks.
-  // it happens here because a new map could just have been requested and we want 
-  // to send the correct chunks, and the world may not be ready so doing it after also doesn'\t work.
-  // this is fully skipped when disconnected or replaying (in both cases, there's no server to talk to).
-  if (ctx.connection.phase != Connection_Phase::Disconnected &&
-      ctx.connection.phase != Connection_Phase::Replaying)
-    network::service_client_reliable_stream(transport);
-
-  // text messages from the server that are forwarded to the console (not announcements.)
-  for (const auto &msg : inbox.server_text_messages)
-  {
-    log_terminal("[SERVER] {}", msg.message());
-    console::get().print_line(msg.message());
-  }
-
-  // take on any cvar changes.
-  for (const auto &payload : inbox.cvar_value_messages)
-  {
-    auto reader = network::Bit_Reader(payload.data(), payload.size());
-    shared::cvar_values_message_t values = shared::deserialize_cvar_values(reader);
-    apply_cvar_values(*ctx.cvars, values);
-
-    for (const shared::cvar_value_t &value : values.values)
-    {
-      log_terminal("[CLIENT] mirrored cvar '{}' = {}", cvars::cvar_info(value.id).name, value.text);
-    }
-  }
-
-  // debug 
-  {
-    for (const auto& msg : inbox.bot_debug_updates)
-    {
-      ctx.replication.bot_debug_entries.clear();
-
-      for (const auto &bot : msg.bots())
-      {
-        auto entry = bot_debug_entry_t{};
-        entry.slot = bot.slot();
-        entry.goal = bot.goal();
-        entry.type = bot.type();
-        entry.path_index = bot.path_index();
-      
-        for (const auto &path_point : bot.path())
-        {
-          entry.path.push_back({path_point.x(), path_point.y(), path_point.z()});
-        }
-
-        ctx.replication.bot_debug_entries.push_back(std::move(entry));
-      }
-    }
-
-    // find the move history.// take the poses at that moment?
-    for (const auto &msg : inbox.shot_debug_updates)
-    {
-      const client::shot_debug_local_t* local =
-          shot_debug_history.find(msg.input_number());
-
-      client::draw_shot_debug_pair(scene.debug, local, msg,
-                                   aim_settings_from_cvars(*ctx.cvars),
-                                   ctx.cvars->cl_shot_debug_seconds);
-    }
-
-  }
-
-
-  // note that advancing the newest held snapshot does not in any way depend on any dt.
-  for (const auto &pkg : inbox.entity_updates)
-  {
-    std::optional<client::decoded_snapshot_t> decoded = client::try_decode_snapshot(ctx, pkg);
-    if (!decoded) continue;
-
-    shared::record_replay_tick(ctx.replay_recorder, decoded->frame, {}, {}, *ctx.cvars);
-
-    // we have a complete new snapshot now, so we move the cursor to it.
-    client::advance_newest_held_snapshot(ctx, std::move(*decoded));
-  }
-
-  if (ctx.replay_recorder.active)
-  {
-    auto batch_bytes = std::vector<uint8_t>{};
-    for (const auto& batch : inbox.effect_batches)
-    {
-      batch_bytes.resize(batch.ByteSizeLong());
-      batch.SerializeToArray(batch_bytes.data(), static_cast<int>(batch_bytes.size()));
-      shared::record_replay_batch(ctx.replay_recorder, shared::replay_record_kind_t::Effects,
-                                  Span<const uint8_t>(batch_bytes));
-    }
-    for (const auto& batch : inbox.game_event_batches)
-    { 
-      batch_bytes.resize(batch.ByteSizeLong());
-      batch.SerializeToArray(batch_bytes.data(), static_cast<int>(batch_bytes.size()));
-      shared::record_replay_batch(ctx.replay_recorder, shared::replay_record_kind_t::Events,
-                                  Span<const uint8_t>(batch_bytes));
-    }
-  }
-
-
-  // after the newest snapshot is established, dispatch received effects and game events.
-  for (const auto &batch : inbox.effect_batches)
-  {
-    if (!batch.has_effect_data() || batch.effect_data().empty()) continue;
-
-    const auto* data = reinterpret_cast<const network::uint8*>(batch.effect_data().data());
-    auto reader = network::Bit_Reader(data, batch.effect_data().size());
-
-    dispatch_received_effects(ctx, reader, ctx.cvars->cl_event_debug);
-  }
-  
-  for (const auto &batch : inbox.game_event_batches)
-  {
-    if (!batch.has_event_data() || batch.event_data().empty())
-      continue;
-
-    const auto* data = reinterpret_cast<const network::uint8*>(batch.event_data().data());
-    auto reader = network::Bit_Reader(data, batch.event_data().size());
-
-    dispatch_received_game_events(ctx, reader, ctx.cvars->cl_event_debug);
-  }
+  // After the messages: the Accept or a Change_Map may have named a new map,
+  // and the request that follows must be on this frame's reliable record.
+  follow_server_map(ctx);
+  send_pending_reliable_messages(ctx);
 }
 
 
@@ -1683,7 +1553,7 @@ void Play_State::place_button_changes_on_the_tick_timeline(client_context_t &ctx
     ctx.prediction.player_pitch = linalg::clamp_view_pitch(ctx.prediction.player_pitch);
   };
 
-  auto current_view = [&]() -> shared::subtick_view_t {
+  auto current_view = [&]() -> shared::View {
     return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
   };
 
@@ -1881,7 +1751,7 @@ void Play_State::place_button_changes_on_the_tick_timeline(client_context_t &ctx
 // are stamped on the input clock. Neither derives from the other.
 struct tick_input_with_fire_press_arrival_t
 {
-  shared::tick_input_t tick_input                   = {};
+  shared::Tick_Input tick_input                   = {};
   uint64_t             fire_press_arrival_qpc_ticks = 0;
 };
 
@@ -1893,7 +1763,7 @@ struct tick_input_with_fire_press_arrival_t
 static tick_input_with_fire_press_arrival_t tick_input_from_pending_button_changes(client_context_t &ctx, uint64_t buttons, float tick_dt)
 {
   tick_input_with_fire_press_arrival_t tick_input_with_arrival{};
-  shared::tick_input_t &tick_input = tick_input_with_arrival.tick_input;
+  shared::Tick_Input &tick_input = tick_input_with_arrival.tick_input;
   tick_input.buttons_at_start = ctx.prediction.tracked_buttons_at_tick_start | (buttons & ~Button::Subtick_Tracked);
   tick_input.view_at_start    = ctx.prediction.view_at_tick_start;
   tick_input.view_at_end      = ctx.prediction.view_at_tick_start;
@@ -1914,7 +1784,7 @@ static tick_input_with_fire_press_arrival_t tick_input_from_pending_button_chang
 
     // A travel-only sample records no button change and is not an overflow when the list is full; only a
     // real transition that cannot be placed is input being abandoned.
-    const bool changes_buttons = buttons_after != tick_input.buttons_at_end();
+    const bool changes_buttons = buttons_after != shared::buttons_at_end_of_tick(tick_input);
     if (changes_buttons &&
         !shared::try_record_subtick_state(tick_input, slot, buttons_after, pending.view_after))
     {
@@ -1980,24 +1850,24 @@ static shared::interpolation_bracket_t bracket_drawn_at_press(const client_conte
 // what the server has not confirmed, so a lost packet costs no input; the server's high-water
 // check drops the duplicates. Held as the BUILT messages because a resend has to carry the
 // snapshot tick and the bracket the command was issued with, not the moment it is re-sent.
-void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const shared::tick_input_t &tick_input,
+void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const shared::Tick_Input &tick_input,
                                               const shared::interpolation_bracket_t &drawn_bracket) const
 {
-  game::C2S_ClientInput input_message;
-  input_message.set_input_number(ctx.prediction.input_number);
-  network::write_tick_input(input_message, tick_input);
-  input_message.set_held_snapshot_tick(ctx.replication.snapshot_history.acked_tick);
-  input_message.set_map_content_hash(ctx.world.map_content_hash);
+  shared::Client_Input input_message;
+  input_message.input_number       = ctx.prediction.input_number;
+  input_message.input              = tick_input;
+  input_message.held_snapshot_tick = ctx.replication.snapshot_history.acked_tick;
+  input_message.map_content_hash   = ctx.world.map_content_hash;
 
   const shared::lens_watch_screen_t sent_screen = local_watch_screen(ctx);
-  input_message.set_view_fov_degrees(sent_screen.fov_degrees);
-  input_message.set_view_aspect(sent_screen.aspect);
+  input_message.view_fov_degrees = sent_screen.fov_degrees;
+  input_message.view_aspect      = sent_screen.aspect;
 
   if (drawn_bracket.from_tick != 0)
   {
-    input_message.set_interpolated_from_tick(drawn_bracket.from_tick);
-    input_message.set_interpolated_towards_tick(drawn_bracket.towards_tick);
-    input_message.set_interpolation_fraction(drawn_bracket.fraction);
+    input_message.interpolated_from_tick    = drawn_bracket.from_tick;
+    input_message.interpolated_towards_tick = drawn_bracket.towards_tick;
+    input_message.interpolation_fraction    = drawn_bracket.fraction;
   }
 
   ctx.prediction.unacked_inputs.push_back(input_message);
@@ -2010,18 +1880,19 @@ void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const share
     log_warning("dropping input {} unsent: {} inputs unacked, over "
                 "cl_max_unacked_inputs ({}). The server has not acked in "
                 "{} inputs",
-                ctx.prediction.unacked_inputs.front().input_number(), ctx.prediction.unacked_inputs.size(),
+                ctx.prediction.unacked_inputs.front().input_number, ctx.prediction.unacked_inputs.size(),
                 max_unacked, ctx.prediction.input_number - ctx.prediction.latest_input_number_processed_by_server);
     ctx.prediction.unacked_inputs.erase(
         ctx.prediction.unacked_inputs.begin(),
         ctx.prediction.unacked_inputs.begin() + (ctx.prediction.unacked_inputs.size() - max_unacked));
   }
 
-  game::C2S_ClientInputBatch input_batch;
-  for (const game::C2S_ClientInput &unacked : ctx.prediction.unacked_inputs)
-    *input_batch.add_inputs() = unacked;
-
-  network::send_protobuf_message(ctx.transport_layer, input_batch);
+  shared::message_stream_t &datagram = ctx.connection.outgoing_input_datagram;
+  datagram.reset();
+  for (const shared::Client_Input &unacked : ctx.prediction.unacked_inputs)
+    shared::write_client_input(datagram, unacked);
+  datagram.finish();
+  network::send_message_stream_to_server(ctx.transport_layer, datagram);
 }
 
 // Our OWN body through this tick's steps, and nothing else: every other entity in the session is
@@ -2030,7 +1901,7 @@ void Play_State::send_input_with_unacked_tail(client_context_t &ctx, const share
 // toggles, each behind the server's gate. What follows a step is the client's half of what it
 // reported: the view easing over a stair, a sound, a shot-debug record.
 void Play_State::predict_own_body_for_input(client_context_t &ctx, play_frame_t &frame,
-                                            const shared::tick_input_t &tick_input, float tick_dt,
+                                            const shared::Tick_Input &tick_input, float tick_dt,
                                             const shared::interpolation_bracket_t &drawn_bracket)
 {
   const int                     input_number = ctx.prediction.input_number;
@@ -2608,9 +2479,6 @@ void Play_State::draw_imgui_panels()
   // --- Bot debug HUD ---
   if (!ctx.replication.bot_debug_entries.empty())
   {
-    static constexpr const char *goal_names[] = {"Idle","Chase","Attack","Retreat"};
-    static constexpr const char *type_names[] = {"idle","chase","regular"};
-
     ImGui::SetNextWindowPos(ImVec2(10, 200), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.4f);
     if (ImGui::Begin("##bot_hud", nullptr,
@@ -2620,13 +2488,9 @@ void Play_State::draw_imgui_panels()
                          ImGuiWindowFlags_NoSavedSettings))
     {
       ImGui::TextDisabled("-- Bots --");
-      for (const auto &bot : ctx.replication.bot_debug_entries)
-      {
-        const char *goal_str = (bot.goal >= 0 && bot.goal < 4) ? goal_names[bot.goal] : "?";
-        const char *type_str = (bot.type >= 0 && bot.type < 3) ? type_names[bot.type] : "?";
-        int wp_remaining = (int)bot.path.size() - bot.path_index;
-        ImGui::Text("slot %d [%s] %s  wp:%d", bot.slot, type_str, goal_str, wp_remaining);
-      }
+      for (const shared::Bot_Debug_Entry &bot : ctx.replication.bot_debug_entries)
+        ImGui::Text("slot %d [%s] %s  wp:%u", bot.slot, shared::to_string(bot.behavior),
+                    shared::to_string(bot.goal), bot.path.count);
     }
     ImGui::End();
   }

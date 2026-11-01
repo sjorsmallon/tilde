@@ -22,7 +22,7 @@ namespace server
 
 Bot_State spawn_bot(shared::game_session_t &session,
                     const entities::Player_Spawn_Entity &marker,
-                    int32_t slot, bot_behavior_t type, bot_personality_t personality)
+                    int32_t slot, shared::Bot_Behavior type, bot_personality_t personality)
 {
   const shared::entity_uid_t bot_uid =
       session.entity_system.spawn<entities::Player_Entity>();
@@ -48,8 +48,8 @@ Bot_State spawn_bot(shared::game_session_t &session,
   state.player_slot = slot;
   state.type = type;
   state.personality = personality;
-  if (type == bot_behavior_t::Chase)
-    state.goal = bot_goal_t::Chase;
+  if (type == shared::Bot_Behavior::Chase)
+    state.goal = shared::Bot_Goal::Chase;
   return state;
 }
 
@@ -121,29 +121,29 @@ static void apply_bot_movement(server_context_t &context,
   if (move_events.jumped)
   {
     shared::Jump fx{};
-    fx.origin          = moved.feet;
-    fx.attached_entity = bot_ent.entity_id;
-    shared::fire_jump(context.outgoing.effects, fx);
+    fx.site.origin          = moved.feet;
+    fx.site.attached_entity = bot_ent.entity_id;
+    shared::write_jump(context.outgoing.tick_broadcast, fx);
   }
   if (move_events.landed &&
       move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
   {
     shared::Land fx{};
-    fx.origin           = moved.feet;
-    fx.scale            = move_events.land_impact_speed;
-    fx.attached_entity  = bot_ent.entity_id;
-    fx.surface_material = shared::material_index_under(session, move_events.ground_contact);
-    shared::fire_land(context.outgoing.effects, fx);
+    fx.site.origin           = moved.feet;
+    fx.site.scale            = move_events.land_impact_speed;
+    fx.site.attached_entity  = bot_ent.entity_id;
+    fx.site.surface_material = shared::material_index_under(session, move_events.ground_contact);
+    shared::write_land(context.outgoing.tick_broadcast, fx);
   }
   if (move_events.stepped)
   {
     shared::Footstep fx{};
-    fx.origin           = moved.feet;
-    fx.normal           = move_events.ground_contact.plane.normal;
-    fx.scale            = move_events.step_speed;
-    fx.attached_entity  = bot_ent.entity_id;
-    fx.surface_material = shared::material_index_under(session, move_events.ground_contact);
-    shared::fire_footstep(context.outgoing.effects, fx);
+    fx.site.origin           = moved.feet;
+    fx.site.normal           = move_events.ground_contact.plane.normal;
+    fx.site.scale            = move_events.step_speed;
+    fx.site.attached_entity  = bot_ent.entity_id;
+    fx.site.surface_material = shared::material_index_under(session, move_events.ground_contact);
+    shared::write_footstep(context.outgoing.tick_broadcast, fx);
   }
   if (move_events.launched_by_pad)
   {
@@ -152,10 +152,10 @@ static void apply_bot_movement(server_context_t &context,
       case shared::movement_volume_kind_t::Jump_Pad:
       {
         shared::Jump_Pad_Launch fx{};
-        fx.origin = shared::movement_volume_origin(world.movement_volumes, move_events.pad_uid, moved.feet);
-        fx.normal          = linalg::normalize(moved.velocity);
-        fx.attached_entity = bot_ent.entity_id;
-        shared::fire_jump_pad_launch(context.outgoing.effects, fx);
+        fx.site.origin = shared::movement_volume_origin(world.movement_volumes, move_events.pad_uid, moved.feet);
+        fx.site.normal          = linalg::normalize(moved.velocity);
+        fx.site.attached_entity = bot_ent.entity_id;
+        shared::write_jump_pad_launch(context.outgoing.tick_broadcast, fx);
         break;
       }
       case shared::movement_volume_kind_t::Bounce:
@@ -173,12 +173,8 @@ void update_bots(server_context_t &context,
   shared::game_session_t &session = context.world.session;
   std::vector<Bot_State> &bots    = context.world.bots;
 
-  // Nothing fills a shared debug list here, and there is no longer one to fill:
-  // the old bot_debug::g_entries lived in game_shared, a STATIC lib, so this
-  // DLL's copy was never the one the client read -- and nothing serialized it
-  // either. The client's bot visualisation is fed over the wire from
-  // context.world.bots directly, in server_impl.cpp's S2C_BotDebug broadcast,
-  // which is the real bridge; it lands in client replication_t::bot_debug_entries.
+  // The client's bot visualisation is fed over the wire from context.world.bots
+  // directly (Bot_Debug, written in server_send.cpp); nothing here fills a list.
 
   Span<entities::Player_Entity> players =
       session.entity_system.entities_of_type<entities::Player_Entity>();
@@ -236,50 +232,50 @@ void update_bots(server_context_t &context,
 
     // ---- state transitions ----
     {
-      bot_goal_t next = bot.goal;
+      shared::Bot_Goal next = bot.goal;
 
-      if (bot.type == bot_behavior_t::Idle)
+      if (bot.type == shared::Bot_Behavior::Idle)
       {
         // Idle bots never leave the Idle state.
-        next = bot_goal_t::Idle;
+        next = shared::Bot_Goal::Idle;
       }
-      else if (bot.type == bot_behavior_t::Chase)
+      else if (bot.type == shared::Bot_Behavior::Chase)
       {
         // Chase bots follow players but never attack or retreat.
-        next = target ? bot_goal_t::Chase : bot_goal_t::Idle;
+        next = target ? shared::Bot_Goal::Chase : shared::Bot_Goal::Idle;
       }
-      else // bot_behavior_t::Regular — full state machine
+      else // shared::Bot_Behavior::Regular — full state machine
       {
         // Retreat takes priority if health is low and personality calls for it.
         if (bot.personality.retreat_health > 0.f &&
             bot_ent->health.current_health> 0 &&
             static_cast<float>(bot_ent->health.current_health) < bot.personality.retreat_health)
         {
-          next = bot_goal_t::Retreat;
+          next = shared::Bot_Goal::Retreat;
         }
-        else if (bot.goal == bot_goal_t::Retreat)
+        else if (bot.goal == shared::Bot_Goal::Retreat)
         {
           // Exit retreat after timer or if health recovered.
           if (bot.time_spent_in_current_state > 4.f ||
               static_cast<float>(bot_ent->health.current_health) >= bot.personality.retreat_health * 2.f)
-            next = bot_goal_t::Idle;
+            next = shared::Bot_Goal::Idle;
         }
         else if (!target)
         {
-          next = bot_goal_t::Idle;
+          next = shared::Bot_Goal::Idle;
         }
         else if (best_dist <= bot.personality.engage_range)
         {
-          next = bot_goal_t::Attack;
+          next = shared::Bot_Goal::Attack;
         }
-        else if (bot.goal == bot_goal_t::Attack &&
+        else if (bot.goal == shared::Bot_Goal::Attack &&
                  best_dist <= bot.personality.engage_range * 1.5f)
         {
-          next = bot_goal_t::Attack;
+          next = shared::Bot_Goal::Attack;
         }
         else
         {
-          next = bot_goal_t::Chase;
+          next = shared::Bot_Goal::Chase;
         }
       }
 
@@ -302,13 +298,13 @@ void update_bots(server_context_t &context,
 
     switch (bot.goal)
     {
-      case bot_goal_t::Idle:
+      case shared::Bot_Goal::Idle:
       {
         // Stand still, keep facing where we already face.
         break;
       }
 
-      case bot_goal_t::Chase:
+      case shared::Bot_Goal::Chase:
       {
         if (!target) break;
 
@@ -325,7 +321,7 @@ void update_bots(server_context_t &context,
         break;
       }
 
-      case bot_goal_t::Attack:
+      case shared::Bot_Goal::Attack:
       {
         if (!target) break;
 
@@ -366,7 +362,7 @@ void update_bots(server_context_t &context,
         break;
       }
 
-      case bot_goal_t::Retreat:
+      case shared::Bot_Goal::Retreat:
       {
         // Pathfind to a point directly away from the threat.
         if (bot.path_refresh <= 0.f || bot.path.empty())

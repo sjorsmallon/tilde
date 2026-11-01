@@ -12,7 +12,6 @@
 // the real fire path takes -- which is the whole reason the split exists.
 
 #include "../shared/hitscan.hpp"
-#include "../shared/hit_region.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -60,26 +59,26 @@ static std::vector<posed_hitbox_t> make_volumes(linalg::vec3f feet,
                      .start  = feet + linalg::vec3f{0.f, head_y, 0.f},
                      .end    = feet + linalg::vec3f{0.f, head_y, 0.f},
                      .radius = 9.f,
-                     .region = hit_region_t::Head},
+                     .region = entities::Hit_Region::Head},
       // Torso: a box spanning 30..54, in the default (world-axis) frame.
       posed_hitbox_t{.shape        = hitbox_shape_t::Box,
                      .start        = feet + linalg::vec3f{0.f, 30.f, 0.f},
                      .end          = feet + linalg::vec3f{0.f, 54.f, 0.f},
                      .half_extents = {14.f, 12.f, 14.f},
-                     .region       = hit_region_t::Torso},
+                     .region       = entities::Hit_Region::Torso},
       // Legs: a capsule, so the round caps are on a ray too.
       posed_hitbox_t{.shape  = hitbox_shape_t::Capsule,
                      .start  = feet + linalg::vec3f{0.f, 4.f, 0.f},
                      .end    = feet + linalg::vec3f{0.f, 26.f, 0.f},
                      .radius = 8.f,
-                     .region = hit_region_t::Legs},
+                     .region = entities::Hit_Region::Legs},
       // An arm out along +Z. Cylinder by default; the caller flips it to Capsule
       // to compare flat caps against round ones.
       posed_hitbox_t{.shape  = arm_shape,
                      .start  = feet + linalg::vec3f{0.f, arm_y, arm_near_z},
                      .end    = feet + linalg::vec3f{0.f, arm_y, arm_far_z},
                      .radius = arm_radius,
-                     .region = hit_region_t::Torso},
+                     .region = entities::Hit_Region::Torso},
   };
 }
 
@@ -97,15 +96,15 @@ int main()
   {
     const hitscan_result_t head =
         resolve_hitscan({0.f, head_y, 0.f}, {1.f, 0.f, 0.f}, 1000.f, targets);
-    check(head.hit_uid == 1 && head.region == hit_region_t::Head, "ray at 63 hits Head");
+    check(head.hit_uid == 1 && head.region == entities::Hit_Region::Head, "ray at 63 hits Head");
 
     const hitscan_result_t torso =
         resolve_hitscan({0.f, torso_y, 0.f}, {1.f, 0.f, 0.f}, 1000.f, targets);
-    check(torso.hit_uid == 1 && torso.region == hit_region_t::Torso, "ray at 42 hits Torso");
+    check(torso.hit_uid == 1 && torso.region == entities::Hit_Region::Torso, "ray at 42 hits Torso");
 
     const hitscan_result_t legs =
         resolve_hitscan({0.f, legs_y, 0.f}, {1.f, 0.f, 0.f}, 1000.f, targets);
-    check(legs.hit_uid == 1 && legs.region == hit_region_t::Legs, "ray at 15 hits Legs");
+    check(legs.hit_uid == 1 && legs.region == entities::Hit_Region::Legs, "ray at 15 hits Legs");
   }
 
   // The arm is a separate VOLUME costing Torso damage -- ten volumes, three
@@ -113,7 +112,7 @@ int main()
   {
     const hitscan_result_t arm =
         resolve_hitscan({0.f, arm_y, arm_near_z + 2.f}, {1.f, 0.f, 0.f}, 1000.f, targets);
-    check(arm.hit_uid == 1 && arm.region == hit_region_t::Torso,
+    check(arm.hit_uid == 1 && arm.region == entities::Hit_Region::Torso,
           "a limb volume off the body axis is hit, and costs Torso");
   }
 
@@ -122,7 +121,7 @@ int main()
   {
     const hitscan_result_t behind =
         resolve_hitscan({400.f, torso_y, 0.f}, {-1.f, 0.f, 0.f}, 1000.f, targets);
-    check(behind.hit_uid == 1 && behind.region == hit_region_t::Torso,
+    check(behind.hit_uid == 1 && behind.region == entities::Hit_Region::Torso,
           "torso hit from behind is still Torso");
   }
 
@@ -275,7 +274,7 @@ int main()
                            .frame        = {.right   = {ROOT_HALF, 0.f, ROOT_HALF},
                                             .up      = {0.f, 1.f, 0.f},
                                             .forward = {-ROOT_HALF, 0.f, ROOT_HALF}},
-                           .region       = hit_region_t::Torso};
+                           .region       = entities::Hit_Region::Torso};
 
     const std::vector<posed_hitbox_t>   slab{turned};
     const std::vector<hitscan_target_t> slab_target{{1, slab}};
@@ -386,7 +385,7 @@ int main()
     crate.start        = crate_position;
     crate.end          = crate_position;
     crate.half_extents = crate_half_extents;
-    crate.region       = hit_region_t::Torso;
+    crate.region       = entities::Hit_Region::Torso;
 
     const std::vector<posed_hitbox_t> crate_volumes{crate};
 

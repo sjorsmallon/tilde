@@ -64,9 +64,12 @@ std::string write_small_replay(const std::string& file_name)
   const std::vector<uint8_t> effect   = {0xEE};
   for (uint32_t tick = 10; tick <= 40; ++tick)
   {
-    write_replay_snapshot(*writer, tick, (tick - 10) % 10 == 0 ? 0 : tick - 1, Span<const uint8_t>(snapshot));
+    Entity_Package package;
+    package.delta_from_tick = (tick - 10) % 10 == 0 ? 0 : tick - 1;
+    package.entity_data     = Span<const uint8_t>(snapshot);
+    write_replay_snapshot(*writer, tick, package);
     if (tick % 3 == 0)
-      write_replay_record(*writer, replay_record_kind_t::Effects, tick, Span<const uint8_t>(effect));
+      write_replay_record(*writer, replay_record_kind_t::Messages, tick, Span<const uint8_t>(effect));
   }
   finish_replay(*writer);
   return path;
@@ -107,15 +110,16 @@ void test_header_and_records_round_trip()
     expected_tick = record->tick;
     if (record->kind == replay_record_kind_t::Snapshot)
     {
-      std::optional<replay_snapshot_payload_t> snapshot = try_split_replay_snapshot(*record);
-      assert(snapshot);
-      assert(snapshot->baseline_tick == ((record->tick - 10) % 10 == 0 ? 0 : record->tick - 1));
-      assert(snapshot->snapshot_bytes.size() == 2 && snapshot->snapshot_bytes[0] == 0xAA);
+      std::optional<Entity_Package> package = try_read_replay_snapshot(*record);
+      assert(package);
+      assert(package->delta_from_tick == ((record->tick - 10) % 10 == 0 ? 0 : record->tick - 1));
+      assert(package->latest_processed_input_number == 0);
+      assert(package->entity_data.size() == 2 && package->entity_data[0] == 0xAA);
       ++snapshot_count;
     }
     else
     {
-      assert(record->kind == replay_record_kind_t::Effects);
+      assert(record->kind == replay_record_kind_t::Messages);
       assert(record->tick % 3 == 0);
       ++effect_count;
     }
@@ -139,7 +143,7 @@ void check_keyframe_lookup(const replay_t& replay)
   {
     std::optional<replay_record_t> record = try_read_replay_record(replay, keyframe.byte_offset);
     assert(record && record->kind == replay_record_kind_t::Snapshot && record->tick == keyframe.tick);
-    assert(try_split_replay_snapshot(*record)->baseline_tick == 0);
+    assert(try_read_replay_snapshot(*record)->delta_from_tick == 0);
   }
 }
 
@@ -322,24 +326,30 @@ void test_recorder_frames_decode_bit_exact_across_a_gap()
     offset = replay_record_end(*record);
     if (record->kind == replay_record_kind_t::Cvar_Values)
     {
-      network::Bit_Reader         reader(record->payload.data, record->payload.size());
-      const cvar_values_message_t message = deserialize_cvar_values(reader);
-      assert(!message.values.empty());
+      // One finished stream of Cvar_Values rows, read the way the dispatch reads it.
+      network::Bit_Reader reader(record->payload.data, record->payload.size());
+      const uint32_t      row_count = reader.read_bits(MESSAGE_STREAM_COUNT_BITS);
+      assert(row_count >= 1);
+      assert(reader.read_bits(16) == (uint32_t)Message_Type::Cvar_Values);
+      const std::optional<Cvar_Values> message = try_read_cvar_values(reader);
+      assert(message && !message->values.empty());
       assert(cvar_records == 0 ? record->tick == 1 : record->tick == 150);
       if (cvar_records == 1)
-        assert(message.values.size() == 1 && message.values[0].id == cvars::cvar_id::pm_maxspeed);
+        assert(row_count == 1 && message->values.count == 1 &&
+               message->values[0].id == (uint16_t)cvars::cvar_id::pm_maxspeed);
       ++cvar_records;
       continue;
     }
     if (record->kind != replay_record_kind_t::Snapshot)
       continue;
 
-    std::optional<replay_snapshot_payload_t> snapshot = try_split_replay_snapshot(*record);
-    assert(snapshot);
+    std::optional<Entity_Package> package = try_read_replay_snapshot(*record);
+    assert(package);
+    assert(package->latest_processed_input_number == network::NO_INPUT_PROCESSED_YET);
     const network::snapshot_frame_t* baseline = nullptr;
-    if (snapshot->baseline_tick != 0)
+    if (package->delta_from_tick != 0)
     {
-      baseline = history.find(snapshot->baseline_tick);
+      baseline = history.find(package->delta_from_tick);
       assert(baseline != nullptr && "a delta names a frame playback no longer holds");
     }
     else
@@ -348,7 +358,7 @@ void test_recorder_frames_decode_bit_exact_across_a_gap()
     }
 
     network::snapshot_frame_t decoded;
-    network::Bit_Reader        reader(snapshot->snapshot_bytes.data, snapshot->snapshot_bytes.size());
+    network::Bit_Reader        reader(package->entity_data.data, package->entity_data.size());
     assert(network::deserialize_snapshot(reader, baseline, decoded));
     decoded.tick = record->tick;
     assert(full_update_bytes(decoded) == expected[record->tick]);
@@ -387,7 +397,7 @@ replay_player_view_t make_player_view(uint8_t client_slot, uint32_t button_chang
   return view;
 }
 
-bool views_equal(const subtick_view_t& a, const subtick_view_t& b)
+bool views_equal(const View& a, const View& b)
 {
   return a.yaw == b.yaw && a.pitch == b.pitch;
 }
@@ -429,7 +439,7 @@ void test_player_view_round_trip_and_button_change_aims()
 
   replay_player_view_t one_change = make_player_view(0, 1, 0.0f);
   one_change.view_changes[0].slot        = 32;
-  const subtick_view_t halfway  = replay_view_at_slot(one_change, 16.0f);
+  const View halfway  = replay_view_at_slot(one_change, 16.0f);
   assert(halfway.yaw == 5.5f && halfway.pitch == -2.5f);
 
   std::printf("  player view: 0 and %u button changes round trip, the aim at a button change's slot is its view_after: ok\n",

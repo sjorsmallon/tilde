@@ -65,7 +65,7 @@ int main()
       big_data[i] = (uint8)(i % 255);
 
     uint8 next_message_id = 0;
-    auto packets = convert_to_packets(big_data, 10, next_message_id);
+    auto packets = convert_to_packets(big_data, Payload_Kind::Message, next_message_id);
 
     // Expected packets: ceil(3000 / MAX_PAYLOAD_SIZE_IN_BYTES).
     // Header = 1+1+1+1+2 = 6 bytes, padded to PACKET_PAYLOAD_OFFSET_IN_BYTES = 8.
@@ -74,7 +74,7 @@ int main()
     assert(packets.size() == 3);
     assert(packets[0].header.fragment_index == 0);
     assert(packets[0].header.fragment_count == 3);
-    assert(packets[0].header.message_type == 10);
+    assert(packets[0].header.payload_kind == static_cast<uint8>(Payload_Kind::Message));
     assert(packets[0].header.payload_size == MAX_PAYLOAD_SIZE_IN_BYTES);
 
     assert(packets[2].header.fragment_index == 2);
@@ -90,7 +90,7 @@ int main()
 
     // The NEXT logical message must get a distinct id, so two concurrent
     // multi-fragment streams can't collide in the receiver's reassembly bucket.
-    auto packets2 = convert_to_packets(big_data, 10, next_message_id);
+    auto packets2 = convert_to_packets(big_data, Payload_Kind::Message, next_message_id);
     assert(packets2[0].header.message_id == 1);
     assert(packets2[0].header.message_id != packets[0].header.message_id);
     assert(next_message_id == 2);
@@ -122,7 +122,7 @@ int main()
 
     // Create a packet
     Packet p = {};
-    p.header.message_type = 42;
+    p.header.payload_kind = static_cast<uint8>(Payload_Kind::Message);
     p.header.payload_size = 5;
     std::memcpy(p.buffer, "HELLO", 5);
 
@@ -145,7 +145,7 @@ int main()
     {
       std::cout << "  -> Received Packet from " << sender_addr.to_string()
                 << std::endl;
-      assert(received_p.header.message_type == 42);
+      assert(received_p.header.payload_kind == static_cast<uint8>(Payload_Kind::Message));
       assert(received_p.header.payload_size == 5);
       assert(std::memcmp(received_p.buffer, "HELLO", 5) == 0);
 

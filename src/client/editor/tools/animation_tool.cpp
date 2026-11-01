@@ -8,7 +8,6 @@
 #include "../../../shared/animation/player_animator.hpp"
 #include "../../../shared/movement/player_constants.hpp"
 #include "../../../shared/animation/player_rig.hpp"
-#include "../../../shared/hit_region.hpp"
 #include "../../../shared/animation/skinning.hpp"
 #include "../../hitbox_debug_draw.hpp"
 #include "../../renderer.hpp"
@@ -613,7 +612,7 @@ void draw_hitbox_volume_table(hitbox_workspace_t &workspace)
       ImGui::Text("%s -> %s", volume.start_bone.c_str(), volume.end_bone.c_str());
 
     ImGui::TableNextColumn();
-    ImGui::TextUnformatted(shared::to_string(volume.region));
+    ImGui::TextUnformatted(entities::to_string(volume.region));
 
     ImGui::TableNextColumn();
     if (round)

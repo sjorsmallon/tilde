@@ -19,13 +19,17 @@ namespace shared
 namespace
 {
 
-void write_cvar_values(replay_recorder_t& recorder, uint32_t tick, const cvar_values_message_t& message)
+// One finished stream of Cvar_Values rows: the same bytes the reliable
+// broadcast would carry, so playback feeds the record to the same dispatch.
+void write_cvar_values_record(replay_recorder_t& recorder, uint32_t tick, Span<const Cvar_Value> values)
 {
-  if (message.values.empty())
+  if (values.empty())
     return;
-  network::Bit_Writer writer;
-  serialize_cvar_values(writer, message);
-  write_replay_record(recorder.writer, replay_record_kind_t::Cvar_Values, tick, Span<const uint8_t>(writer.buffer));
+  reliable_stream_t stream;
+  write_cvar_value_messages(stream, values);
+  stream.records.finish();
+  write_replay_record(recorder.writer, replay_record_kind_t::Cvar_Values, tick,
+                      Span<const uint8_t>(stream.records.writer.buffer));
 }
 
 } // namespace
@@ -113,16 +117,16 @@ std::optional<std::string> try_start_replay_recording_of_map(replay_recorder_t& 
 }
 
 void record_replay_tick(replay_recorder_t& recorder, const network::snapshot_frame_t& frame,
-                        Span<const uint8_t> effects, Span<const uint8_t> events,
+                        Span<const uint8_t> broadcast, Span<const uint8_t> broadcast_reliable,
                         const cvars::cvar_state_t& cvars)
 {
   if (!recorder.active)
     return;
 
-  if (!recorder.has_written_cvars)
-    write_cvar_values(recorder, frame.tick, collect_mirrored_cvars(cvars));
-  else
-    write_cvar_values(recorder, frame.tick, collect_changed_mirrored_cvars(cvars, recorder.last_written_cvars));
+  const std::vector<Cvar_Value> cvar_values =
+      recorder.has_written_cvars ? collect_changed_mirrored_cvars(cvars, recorder.last_written_cvars)
+                                 : collect_mirrored_cvars(cvars);
+  write_cvar_values_record(recorder, frame.tick, cvar_values);
   recorder.last_written_cvars = cvars;
   recorder.has_written_cvars  = true;
 
@@ -130,14 +134,14 @@ void record_replay_tick(replay_recorder_t& recorder, const network::snapshot_fra
                         frame.tick - recorder.last_keyframe_tick >= recorder.keyframe_interval_ticks;
 
   network::Bit_Writer writer;
-  network::serialize_snapshot(writer, frame, keyframe ? nullptr : &recorder.previous);
-  write_replay_snapshot(recorder.writer, frame.tick, keyframe ? 0 : recorder.previous.tick,
-                        Span<const uint8_t>(writer.buffer));
+  write_replay_snapshot(recorder.writer, frame.tick,
+                        network::entity_package_from_snapshot(writer, frame, keyframe ? nullptr : &recorder.previous,
+                                                              network::NO_INPUT_PROCESSED_YET));
 
-  if (!effects.empty())
-    write_replay_record(recorder.writer, replay_record_kind_t::Effects, frame.tick, effects);
-  if (!events.empty())
-    write_replay_record(recorder.writer, replay_record_kind_t::Events, frame.tick, events);
+  if (!broadcast.empty())
+    write_replay_record(recorder.writer, replay_record_kind_t::Messages, frame.tick, broadcast);
+  if (!broadcast_reliable.empty())
+    write_replay_record(recorder.writer, replay_record_kind_t::Messages, frame.tick, broadcast_reliable);
 
   for (const replay_player_view_t& view : recorder.pending_player_views)
   {
@@ -171,11 +175,11 @@ void queue_replay_player_view(replay_recorder_t& recorder, const replay_player_v
   recorder.pending_player_views.push_back(view);
 }
 
-void record_replay_batch(replay_recorder_t& recorder, replay_record_kind_t kind, Span<const uint8_t> payload)
+void record_replay_messages(replay_recorder_t& recorder, Span<const uint8_t> streams)
 {
-  if (!recorder.active || !recorder.has_previous || payload.empty())
+  if (!recorder.active || !recorder.has_previous || streams.empty())
     return;
-  write_replay_record(recorder.writer, kind, recorder.previous.tick, payload);
+  write_replay_record(recorder.writer, replay_record_kind_t::Messages, recorder.previous.tick, streams);
 }
 
 void finish_replay_recording(replay_recorder_t& recorder)

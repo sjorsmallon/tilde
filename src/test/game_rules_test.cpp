@@ -18,7 +18,7 @@
 #include "server/systems/respawn_system.hpp"
 
 #include "shared/entities/generated/entity_io_generated.hpp"
-#include "shared/events/generated/events_generated.hpp"
+#include "shared/network/generated/messages_generated.hpp"
 #include "shared/replay/ghost.hpp"
 #include "shared/movement/player_constants.hpp"
 #include "shared/round_phase_rules.hpp"
@@ -1006,7 +1006,7 @@ std::string finish_the_run(server_context_t& context, shared::entity_uid_t activ
   input_context_t handler_context{context, activator, context.tick_number};
   entities::send_action(*try_find_rules_entity(context), data, handler_context);
   tick(context);
-  return shared::game_event_stream_to_text(context.outgoing.events);
+  return shared::message_stream_to_text(context.outgoing.tick_broadcast_reliable.records);
 }
 
 void restart_and_run(server_context_t& context, uint32_t live_ticks)

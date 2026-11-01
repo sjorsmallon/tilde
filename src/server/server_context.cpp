@@ -82,28 +82,26 @@ void reset_client_slot(server_context_t& context, int32_t slot)
 void clear_incoming(server_context_t& context)
 {
   context.incoming.client_inputs.clear();
-  context.incoming.potential_joins.clear();
-  context.incoming.connection_messages.clear();
-  context.incoming.developer_console_entries.clear();
-  context.incoming.map_data_requests.clear();
-  context.incoming.ghost_requests.clear();
+  context.incoming.unslotted_sender = {};
 }
 
-// The client's clear_client_inbox carries the reasoning; this is the same
-// tripwire on the same silent failure, one connection over. An inbox member
-// nothing clears replays last tick's traffic every tick.
-static_assert(sizeof(network::Server_Inbox) == 6 * sizeof(std::vector<int>),
-              "Server_Inbox gained or lost a member. If you added one: clear it "
-              "above AND drain it in server_impl.cpp's Tick(), then update this "
-              "count");
+// A member nothing clears replays last tick's traffic every tick, and
+// type-checks perfectly; this is the tripwire.
+static_assert(sizeof(tick_incoming_t) == sizeof(std::vector<int>) + sizeof(network::Address),
+              "tick_incoming_t gained or lost a member. If you added one: clear it "
+              "above AND read it in server_receive.cpp, then update this count");
 
 void clear_outgoing(server_context_t& context)
 {
   // reset(), not clear(): a stream re-reserves the 16 bits its count is
   // backpatched into, so it comes out of this ready to be fired into. Keeps the
   // buffer's capacity for the same reason the vectors above do.
-  context.outgoing.effects.reset();
-  context.outgoing.events.reset();
+  context.outgoing.tick_broadcast.reset();
+  context.outgoing.tick_broadcast_reliable.records.reset();
+  for (shared::message_stream_t& stream : context.outgoing.datagram)
+    stream.reset();
+  for (shared::reliable_stream_t& stream : context.outgoing.reliable)
+    stream.records.reset();
   // clear(), not `= {}`, for the same capacity reason as the inbox vectors: this
   // is refilled from scratch at the tickrate.
   context.outgoing.pending_contacts.clear();
@@ -111,9 +109,15 @@ void clear_outgoing(server_context_t& context)
   // sv_event_debug, latched once per tick rather than read per fire. This is
   // the one place guaranteed to run exactly once before anything can fire, and
   // it keeps the generated fire helpers free of the cvar family.
-  const bool log_fired = context.cvars != nullptr && context.cvars->sv_event_debug;
-  context.outgoing.effects.log_fired = log_fired;
-  context.outgoing.events.log_fired  = log_fired;
+  const shared::message_log_filter_t filter =
+      context.cvars != nullptr ? shared::message_log_filter_from_text(context.cvars->sv_event_debug.c_str())
+                               : shared::message_log_filter_t::Off;
+  context.outgoing.tick_broadcast.log_fired                  = shared::message_log_filter_admits(filter, false);
+  context.outgoing.tick_broadcast_reliable.records.log_fired = shared::message_log_filter_admits(filter, true);
+  for (shared::message_stream_t& stream : context.outgoing.datagram)
+    stream.log_fired = shared::message_log_filter_admits(filter, false);
+  for (shared::reliable_stream_t& stream : context.outgoing.reliable)
+    stream.records.log_fired = shared::message_log_filter_admits(filter, true);
 }
 
 } // namespace server

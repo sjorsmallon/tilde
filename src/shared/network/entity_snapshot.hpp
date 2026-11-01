@@ -69,6 +69,7 @@
 #include "../entity_uid.hpp"
 #include "bitstream.hpp"
 #include "entity_serialization.hpp"
+#include "generated/messages_generated.hpp"
 
 #include <optional>
 
@@ -130,36 +131,26 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
                           snapshot_frame_t& out_frame);
 
 // ---------------------------------------------------------------------------
-// Which kind of package this is
+// The package a snapshot rides
 // ---------------------------------------------------------------------------
 //
-// A package is a FULL UPDATE or a DELTA AGAINST ONE TICK, never a mixture, and
-// the two kinds are told apart by the PRESENCE of delta_from_tick -- not by a
-// tick number reserved to mean "no tick". These two functions are the only
-// places that touch the field, so the sentinel cannot leak back in: the sender
-// hands over the baseline frame it actually used, and the receiver gets back a
-// value whose two states are the two kinds.
+// A snapshot travels as one Entity_Package (messages.def): a FULL UPDATE or a
+// DELTA AGAINST ONE TICK, never a mixture, told apart by delta_from_tick, where
+// 0 is a full update -- the same spelling Client_Input::held_snapshot_tick gives
+// "none". Its tick is the datagram's, never a field.
 
-// Records which frame `writer` deltaed against. Null baseline => full update,
-// so the field is left absent rather than written as zero.
-inline void set_snapshot_baseline(game::S2C_EntityPackage& package,
-                                  const snapshot_frame_t* baseline)
-{
-  if (baseline != nullptr)
-    package.set_delta_from_tick(baseline->tick);
-  else
-    package.clear_delta_from_tick();
-}
+// Input numbers start at 0, so "none consumed yet" sits below that: a server
+// slot's starting ack, the client's starting copy of it, and what a replay's
+// package carries. Its own constant rather than invalid_slot_idx: that one
+// names SLOT indices, a different number space that merely spells its empty
+// value the same way.
+inline constexpr int32_t NO_INPUT_PROCESSED_YET = -1;
 
-// The tick this package is a delta against, or nothing at all when it is a full
-// update. Absence is one of the two answers, not a failure, which is why this
-// is not a try_.
-[[nodiscard]] inline std::optional<uint32_t> snapshot_baseline_tick(
-    const game::S2C_EntityPackage& package)
-{
-  if (!package.has_delta_from_tick())
-    return std::nullopt;
-  return package.delta_from_tick();
-}
+// `current` against `baseline` as the package, its bytes in `scratch` (reset,
+// capacity kept; the package views them). A null baseline is a full update.
+[[nodiscard]] shared::Entity_Package entity_package_from_snapshot(Bit_Writer&             scratch,
+                                                                  const snapshot_frame_t& current,
+                                                                  const snapshot_frame_t* baseline,
+                                                                  int32_t latest_processed_input_number);
 
 } // namespace network

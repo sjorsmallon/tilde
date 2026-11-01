@@ -2,11 +2,9 @@
 
 // How a ghost reaches a client (coop_ghost_plan.md §2E): the way the map does.
 //
-//   S2C_GhostAvailable  reliable stream   "the ghost for this party is <hash>"; hash 0 is "there is none"
-//   C2S_RequestGhost    reliable stream   the client's cache did not hash to that
-//   S2C_GhostData       paced transfer    the .ghost file's bytes
-//
-// Bitstream-native, decoded in the game layer, like map_transfer.hpp.
+//   Ghost_Available  messages.def, reliable   "the ghost for this party is <hash>"; hash 0 is "there is none"
+//   Ghost_Request    messages.def, reliable   the client's cache did not hash to that
+//   S2C_GhostData    paced transfer           the .ghost file's bytes, hand-written here like map_transfer.hpp
 
 #include "../span.hpp"
 #include "bitstream.hpp"
@@ -32,24 +30,6 @@ struct ghost_announcement_t
 
 // Absent, unparseable or the wrong track count is an announcement with hash 0.
 [[nodiscard]] ghost_announcement_t load_ghost_announcement(std::string_view map_path, uint32_t party_size);
-
-struct ghost_available_message_t
-{
-  uint32_t party_size = 0;
-  uint32_t ghost_hash = 0;
-  uint32_t byte_count = 0;
-};
-
-void serialize_ghost_available(network::Bit_Writer& writer, const ghost_available_message_t& message);
-[[nodiscard]] ghost_available_message_t deserialize_ghost_available(network::Bit_Reader& reader);
-
-struct request_ghost_message_t
-{
-  uint32_t ghost_hash = 0;
-};
-
-void serialize_request_ghost(network::Bit_Writer& writer, const request_ghost_message_t& message);
-[[nodiscard]] request_ghost_message_t deserialize_request_ghost(network::Bit_Reader& reader);
 
 struct ghost_data_message_t
 {

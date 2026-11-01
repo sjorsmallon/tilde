@@ -283,7 +283,7 @@ static void test_the_buffer_is_reclaimed_once_drained()
   check_equal(sender.outbound.size(), 0, "the outbound buffer is emptied");
   check_equal(sender.confirmed_bytes, 0, "and the offset is rebased to 0");
   check(sender.outbound.capacity() >= capacity_after_queue,
-        "clear() kept the capacity, like event_stream_t::reset");
+        "clear() kept the capacity, like message_stream_t::reset");
 
   // The next record starts from a clean stream and still numbers forward.
   queue_text(sender, TYPE_B, "next");

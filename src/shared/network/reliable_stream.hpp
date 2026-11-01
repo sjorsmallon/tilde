@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 namespace network
@@ -54,7 +55,7 @@ struct Reliable_Stream
   uint8  received_through = 0;
 };
 
-// Framing: [message_type: u8][length: u32, little-endian][payload: length bytes]
+// Framing: [payload_kind: u8][length: u32, little-endian][payload: length bytes]
 //
 // u32 rather than u16 because a record's length is not bounded by the datagram,
 // and a cap that is hit exactly once will be hit at the worst time.
@@ -85,12 +86,12 @@ constexpr size_t RELIABLE_OUTBOUND_CAP_IN_BYTES = 256 * 1024;
 // Appends one record. The bytes go on the end of the stream and are cut into a
 // block whenever the stream next becomes free -- the queue IS the stream, and
 // there is no separate message list.
-inline void queue_reliable_message(Reliable_Stream &stream, uint8 message_type,
+inline void queue_reliable_message(Reliable_Stream &stream, uint8 payload_kind,
                                    Span<const uint8> payload)
 {
   const uint32 length = static_cast<uint32>(payload.count);
 
-  stream.outbound.push_back(message_type);
+  stream.outbound.push_back(payload_kind);
   stream.outbound.push_back(static_cast<uint8>(length & 0xFFu));
   stream.outbound.push_back(static_cast<uint8>((length >> 8) & 0xFFu));
   stream.outbound.push_back(static_cast<uint8>((length >> 16) & 0xFFu));
@@ -160,7 +161,7 @@ inline void confirm_reliable_block(Reliable_Stream &stream,
   // Reclaim once drained. No compaction, no ring buffer, no rebasing: the
   // buffer only grows while the stream is continuously busy, and a stream that
   // stays busy is the overflow case above. clear() keeps capacity, like
-  // event_stream_t::reset.
+  // message_stream_t::reset.
   if (stream.confirmed_bytes == stream.outbound.size())
   {
     stream.outbound.clear();
@@ -195,50 +196,42 @@ inline bool accept_reliable_block(Reliable_Stream &stream, uint8 block_number,
   return true;
 }
 
-// Hands every complete record at the front of `inbound` to `deliver`, then
-// erases them. A trailing partial record stays for the block that completes it.
+// Hands every complete record at the front of `inbound` to `deliver`, oldest
+// first. A record leaves the stream BEFORE it is delivered, so a handler that
+// resets the stream underneath (a disconnect) ends the drain rather than
+// reading past it. A trailing partial record stays for the block that
+// completes it.
 //
-// deliver(uint8 message_type, std::vector<uint8>&& payload).
+// deliver(uint8 payload_kind, std::vector<uint8>&& payload).
 template <typename Deliver_Fn>
 inline void drain_reliable_records(Reliable_Stream &stream, Deliver_Fn &&deliver)
 {
-  size_t offset = 0;
-
-  while (stream.inbound.size() - offset >= RELIABLE_RECORD_HEADER_SIZE_IN_BYTES)
+  while (stream.inbound.size() >= RELIABLE_RECORD_HEADER_SIZE_IN_BYTES)
   {
-    const uint8 *header = stream.inbound.data() + offset;
-    const uint8 message_type = header[0];
+    const uint8 *header = stream.inbound.data();
+    const uint8 payload_kind = header[0];
     const uint32 length = static_cast<uint32>(header[1]) |
                           (static_cast<uint32>(header[2]) << 8) |
                           (static_cast<uint32>(header[3]) << 16) |
                           (static_cast<uint32>(header[4]) << 24);
 
     const size_t record_size = RELIABLE_RECORD_HEADER_SIZE_IN_BYTES + length;
-    if (stream.inbound.size() - offset < record_size)
+    if (stream.inbound.size() < record_size)
       break;
 
-    const uint8 *payload = header + RELIABLE_RECORD_HEADER_SIZE_IN_BYTES;
-    deliver(message_type, std::vector<uint8>(payload, payload + length));
-
-    offset += record_size;
-  }
-
-  if (offset == 0)
-    return;
-
-  if (offset == stream.inbound.size())
-    stream.inbound.clear();
-  else
+    std::vector<uint8> payload(header + RELIABLE_RECORD_HEADER_SIZE_IN_BYTES, header + record_size);
     stream.inbound.erase(stream.inbound.begin(),
-                         stream.inbound.begin() + static_cast<ptrdiff_t>(offset));
+                         stream.inbound.begin() + static_cast<ptrdiff_t>(record_size));
+    deliver(payload_kind, std::move(payload));
+  }
 }
 
-// Builds the one datagram a block rides. Its own message type rather than a
+// Builds the one datagram a block rides. Its own payload kind rather than a
 // prepend onto existing payloads: that costs one ~36-byte datagram only while a
 // block is in flight, and in exchange every other send and receive path is
 // untouched.
 //
-// Message_Type::Reliable in both directions, because a block is a transport
+// Payload_Kind::Reliable in both directions, because a block is a transport
 // parcel and its direction is already said by who sent it. The ack is NOT
 // stamped here: it belongs to the PEER's stream, not this one, and it rides
 // every outbound datagram -- so it is stamped at each side's one send choke
@@ -248,7 +241,7 @@ inline void drain_reliable_records(Reliable_Stream &stream, Deliver_Fn &&deliver
   const Span<const uint8> block = reliable_block_in_flight(stream);
 
   Packet packet = {};
-  packet.header.message_type = static_cast<uint8>(Message_Type::Reliable);
+  packet.header.payload_kind = static_cast<uint8>(Payload_Kind::Reliable);
   packet.header.message_id = 0;
   packet.header.fragment_count = 1;
   packet.header.fragment_index = 0;
@@ -261,7 +254,7 @@ inline void drain_reliable_records(Reliable_Stream &stream, Deliver_Fn &&deliver
 // Walks the pending records without consuming them -- what sv_reliable_debug
 // prints, and the reason there is no index beside the buffer.
 //
-// visit(uint8 message_type, uint32 length, size_t offset_from_the_block_front).
+// visit(uint8 payload_kind, uint32 length, size_t offset_from_the_block_front).
 template <typename Visit_Fn>
 inline void visit_pending_reliable_records(const Reliable_Stream &stream,
                                            Visit_Fn &&visit)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "array.hpp"
+#include "network/generated/messages_generated.hpp"
 #include "tick_clock.hpp"
 
 #include <cstdint>
@@ -47,8 +48,8 @@ constexpr uint32_t SUBTICK_SLOT_COUNT = 64;
 // transitions in 16.7ms even across the whole tracked set (movement, the
 // trigger, the weapon keys and reload); a client that overruns it drops the
 // excess and says so, which is the signal to raise this rather than to lose
-// timing quietly.
-constexpr uint32_t MAX_SUBTICK_BUTTON_CHANGES = 8;
+// timing quietly. The number lives on Tick_Input's row in messages.def.
+constexpr uint32_t MAX_SUBTICK_BUTTON_CHANGES = decltype(Tick_Input::button_changes)::capacity;
 
 // A MOMENT in the server's simulation, exact to one slot.
 //
@@ -115,7 +116,9 @@ constexpr subtick_time_t subtick_time_after(subtick_time_t from, float seconds,
   return from + whole_slots + (static_cast<float>(whole_slots) < slots ? 1 : 0);
 }
 
-// Where the player was AIMING, carried alongside the buttons.
+// A tick's input is the Tick_Input row of messages.def: the buttons at the start,
+// the aim at the start and the end, and the button changes between them, each
+// carrying the aim from its slot onward.
 //
 // The angle is a continuous quantity and the buttons are discrete, so it does
 // not get button changes of its own: a 1000Hz mouse would produce sixteen reports per
@@ -129,53 +132,37 @@ constexpr subtick_time_t subtick_time_after(subtick_time_t from, float seconds,
 // button to 0.26ms and then handing it a frame-old aim leaves the flick shot
 // exactly as wrong as it was -- the press was placed correctly and pointed
 // somewhere the player had already left.
-struct subtick_view_t
+//
+// view_at_end is where the aim ended up, which no button change carries: a tick whose
+// mouse moved and whose buttons did not has no button change to hang it on, and that
+// is the common case. Nothing simulates under it -- it is what the next tick starts
+// from, and what the server writes to Player_Entity::view_angle_* for everyone else
+// to draw.
+
+inline uint64_t buttons_at_end_of_tick(const Tick_Input& input)
 {
-  float yaw   = 0.f;
-  float pitch = 0.f;
-};
+  return input.button_changes.empty() ? input.buttons_at_start
+                                      : input.button_changes[input.button_changes.count - 1].buttons_after;
+}
 
-struct subtick_button_change_t
+// The aim in effect from `slot` onward, which is the last button change at or before
+// it. Not view_at_end: that one is past every button change by construction.
+inline View view_in_effect_at_slot(const Tick_Input& input, uint32_t slot)
 {
-  uint8_t        slot          = 0;
-  uint64_t       buttons_after = 0;
-  subtick_view_t view_after    = {};
-};
-
-struct tick_input_t
-{
-  uint64_t       buttons_at_start = 0;
-  subtick_view_t view_at_start    = {};
-
-  // Where the aim ended up, which no button change carries: a tick whose mouse moved and
-  // whose buttons did not has no button change to hang it on, and that is the common
-  // case. Nothing simulates under it -- it is what the next tick starts from,
-  // and what the server writes to Player_Entity::view_angle_* for everyone else
-  // to draw.
-  subtick_view_t view_at_end = {};
-
-  Array<subtick_button_change_t, MAX_SUBTICK_BUTTON_CHANGES> button_changes = {};
-  uint32_t button_change_count = 0;
-
-  uint64_t buttons_at_end() const
+  View view = input.view_at_start;
+  for (const Button_Change& change : input.button_changes)
   {
-    return button_change_count == 0 ? buttons_at_start : button_changes[button_change_count - 1].buttons_after;
+    if (change.slot > slot)
+      break;
+    view = change.view_after;
   }
+  return view;
+}
 
-  // The aim in effect from `slot` onward, which is the last button change at or before
-  // it. Not view_at_end: that one is past every button change by construction.
-  subtick_view_t view_in_effect_at(uint32_t slot) const
-  {
-    subtick_view_t view = view_at_start;
-    for (uint32_t change_index = 0; change_index < button_change_count; ++change_index)
-    {
-      if (button_changes[change_index].slot > slot)
-        break;
-      view = button_changes[change_index].view_after;
-    }
-    return view;
-  }
-};
+// What try_append_subtick_button_change refuses, asked of an input that arrived
+// whole over the wire: slots 1..SUBTICK_SLOT_COUNT-1, strictly ascending. The
+// count is already within the bound, or the codec would not have decoded it.
+[[nodiscard]] bool button_changes_follow_grammar(const Tick_Input& input);
 
 // One movement step: the buttons it runs under, where it was aiming, and how
 // long it lasts.
@@ -186,12 +173,12 @@ struct tick_input_t
 // whole tick.
 struct subtick_step_t
 {
-  uint64_t       buttons     = 0;
-  subtick_view_t view        = {};
-  float          dt          = 0.f;
-  uint32_t       start_slot  = 0;
-  subtick_view_t view_at_end = {};
-  uint32_t       slot_count  = 0;
+  uint64_t buttons     = 0;
+  View     view        = {};
+  float    dt          = 0.f;
+  uint32_t start_slot  = 0;
+  View     view_at_end = {};
+  uint32_t slot_count  = 0;
 };
 
 struct subtick_steps_t
@@ -212,7 +199,7 @@ struct subtick_steps_t
 // produce bit-identical dts. They sum to `tick_dt` only up to float rounding
 // (~1e-9s at 60Hz); the last step is deliberately NOT made the remainder, which
 // would make its duration depend on every step before it.
-subtick_steps_t split_tick_input_into_subtick_steps(const tick_input_t& input,
+subtick_steps_t split_tick_input_into_subtick_steps(const Tick_Input& input,
                                                         float tick_dt);
 
 // Every button that went DOWN at any point in the tick, against the state the
@@ -220,7 +207,7 @@ subtick_steps_t split_tick_input_into_subtick_steps(const tick_input_t& input,
 // counts, which is the point: at tick granularity that press was invisible, and
 // a trigger pull that lands entirely between two boundaries is exactly the input
 // sub-tick exists to stop dropping.
-uint64_t subtick_presses(const tick_input_t& input, uint64_t buttons_before);
+uint64_t subtick_presses(const Tick_Input& input, uint64_t buttons_before);
 
 // The slot a button went DOWN in, or SUBTICK_SLOT_COUNT if it did not go down
 // at all this tick. Slot 0 means it was already down when the tick began.
@@ -229,7 +216,7 @@ uint64_t subtick_presses(const tick_input_t& input, uint64_t buttons_before);
 // is consumed by something other than the movement step it splits: the world the
 // shooter was drawing at the press is a fraction of a tick older than the one
 // they were drawing when the command was built, and that fraction is this.
-uint32_t subtick_slot_of_press(const tick_input_t& input, uint64_t buttons_before,
+uint32_t subtick_slot_of_press(const Tick_Input& input, uint64_t buttons_before,
                                uint64_t button);
 
 // The strict grammar append, for input that arrived over the wire. Refuses a
@@ -240,9 +227,9 @@ uint32_t subtick_slot_of_press(const tick_input_t& input, uint64_t buttons_befor
 // `view_after` defaults to the zero angle, which is honest for the callers that
 // have none: a bot, a replay and every test about the button grammar itself
 // simulate under the input's own view_at_start and never look at a button change's.
-[[nodiscard]] bool try_append_subtick_button_change(tick_input_t& input, uint32_t slot,
+[[nodiscard]] bool try_append_subtick_button_change(Tick_Input& input, uint32_t slot,
                                            uint64_t buttons_after,
-                                           subtick_view_t view_after = {});
+                                           View view_after = {});
 
 // The client's recorder: the button state as of `slot`, wherever that lands.
 //
@@ -255,8 +242,8 @@ uint32_t subtick_slot_of_press(const tick_input_t& input, uint64_t buttons_befor
 //
 // False means the button-change list is full and this transition is being DROPPED, which
 // is input loss and the caller must say so.
-[[nodiscard]] bool try_record_subtick_state(tick_input_t& input, uint32_t slot,
-                                            uint64_t buttons, subtick_view_t view = {});
+[[nodiscard]] bool try_record_subtick_state(Tick_Input& input, uint32_t slot,
+                                            uint64_t buttons, View view = {});
 
 // Where in the tick a moment fell, as a slot. Clamped rather than checked: the
 // caller derives `fraction` from wall-clock event timestamps against a frame

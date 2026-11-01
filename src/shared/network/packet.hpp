@@ -1,196 +1,59 @@
 #pragma once
 
 #include "../log.hpp"
-#include "game.pb.h"
 #include "network_types.hpp"
 #include <chrono>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace network
 {
 
-// The first block maps linearly to the protobuf message types. The trailing
-// entries (CmdChangeMap onward) are bitstream-native map-transfer control
-// messages with no protobuf equivalent — they carry a hand-serialized payload
-// (see shared/network/map_transfer.hpp) and so have no Packet_Traits mapping.
+// What a payload IS: the header byte of every datagram and the first byte of
+// every reliable record. Two transport parcels, two bulk transfers and the
+// message stream; everything either end sends is a row of messages.def riding
+// `Message`.
 //
-// A type says WHAT a payload is, never how it got here: the same C2S_Command
+// A kind says what a payload is, never how it got here: the same Message
 // arrives as an ordinary datagram or as a record inside a reliable block, and
 // nothing above the transport can tell which. See reliable_stream.hpp.
-enum class Message_Type : uint8
+enum class Payload_Kind : uint8
 {
-  C2S_ClientInputBatch, // C2S: the client's unacked input tail, oldest first
-  S2C_EntityPackage,
-  C2S_Connection,
-  S2C_ServerMessage,
-  C2S_Command,
-  S2C_BotDebug,
-  S2C_GameEventBatch,
-  S2C_EffectBatch,
-  CmdChangeMap,       // S2C: switch to a new map (bitstream-native)
-  C2S_RequestMapData, // C2S: client lacks the compiled package; stream it
-  S2C_MapData,        // S2C: the compiled map package blob (bitstream-native)
-  S2C_CvarValues,     // S2C: @Mirrored cvar values (bitstream-native)
-  S2C_ShotDebug,      // S2C: one shot's rewind evidence, to the shooter only
-
-  // One block of a peer's reliable byte stream, and the ONE type with no
-  // direction in its name. Every other entry names a message with a sender and
-  // a meaning; a block is a transport parcel whose direction is already said by
-  // who sent it, and both ends run the same symmetric Reliable_Stream. Two
-  // entries would be two ordinals for one thing, free to disagree about which
-  // one make_reliable_packet stamps.
+  // One block of a peer's reliable byte stream. A block is a transport parcel
+  // whose direction is already said by who sent it, and both ends run the same
+  // symmetric Reliable_Stream, so one kind serves both directions.
   Reliable,
-  C2S_TransferReceipt, // C2S: which fragments of a bulk message we hold
-  S2C_Connection,      // S2C: the server's answer to a connect
 
-  // The map's ghost, which travels the way the map does (network/ghost_transfer.hpp).
-  S2C_GhostAvailable, // S2C: the ghost for the party being run, by hash; 0 is none
-  C2S_RequestGhost,   // C2S: the client's cached ghost did not hash to that
-  S2C_GhostData,      // S2C: the .ghost file's bytes, a paced transfer
+  // S2C: the compiled map package and the .ghost file's bytes, each a paced
+  // transfer recovered by receipt bitmaps (Outbound_Transfer). Never a record
+  // on the stream.
+  Map_Transfer,
+  Ghost_Transfer,
 
-  // Not a wire value: one past the last type, so a table indexed by
-  // Message_Type sizes itself (see the client's handler table).
+  // C2S: which fragments of a transfer the receiver holds.
+  Transfer_Receipt,
+
+  // One or more shared::message_stream_t back to back: the rows of messages.def,
+  // dispatched through the generated binding on arrival. Both directions, as a
+  // datagram or as a record inside a reliable block; a S2C payload starts with
+  // the server tick it was sent on. The one kind a peer with no slot may send
+  // (a Connect) and be sent (a Reject).
+  Message,
+
+  // Not a wire value: one past the last kind, the range a byte off the wire is
+  // checked against before it is cast.
   Count,
 };
 
-// Which end is allowed to SEND a message of this type. `Both` is Reliable alone:
-// a transport parcel whose direction is said by who sent it.
-//
-// This exists so "a null slot in the client's handler table means C2S" stops
-// being a comment and becomes a checkable claim -- see the static_assert beside
-// CLIENT_MESSAGE_HANDLERS, and the switch in deliver_client_message.
-enum class message_direction_t
+// A byte off the wire as a kind; empty when it is garbage or a newer build's.
+[[nodiscard]] constexpr std::optional<Payload_Kind> try_payload_kind(uint8 byte)
 {
-  C2S,
-  S2C,
-  Both,
-};
-
-// A switch with no `default:`, which is the whole point: -Werror=switch makes a
-// new Message_Type a compile error HERE first, before it can be added to the
-// enum and quietly compile everywhere else.
-constexpr message_direction_t message_direction(Message_Type type)
-{
-  switch (type)
-  {
-  case Message_Type::C2S_ClientInputBatch:
-  case Message_Type::C2S_Command:
-  case Message_Type::C2S_RequestMapData:
-  case Message_Type::C2S_TransferReceipt:
-  case Message_Type::C2S_Connection:
-  case Message_Type::C2S_RequestGhost:
-    return message_direction_t::C2S;
-
-  case Message_Type::S2C_EntityPackage:
-  case Message_Type::S2C_ServerMessage:
-  case Message_Type::S2C_BotDebug:
-  case Message_Type::S2C_GameEventBatch:
-  case Message_Type::S2C_EffectBatch:
-  case Message_Type::S2C_ShotDebug:
-  case Message_Type::CmdChangeMap:
-  case Message_Type::S2C_MapData:
-  case Message_Type::S2C_CvarValues:
-  case Message_Type::S2C_Connection:
-  case Message_Type::S2C_GhostAvailable:
-  case Message_Type::S2C_GhostData:
-    return message_direction_t::S2C;
-
-  case Message_Type::Reliable:
-    return message_direction_t::Both;
-
-  case Message_Type::Count:
-    break;
-  }
-
-  fatal_error("message_direction called with {}, which is not a wire value",
-              static_cast<int>(type));
+  if (byte >= static_cast<uint8>(Payload_Kind::Count))
+    return std::nullopt;
+  return static_cast<Payload_Kind>(byte);
 }
-
-// --------------------------------------------------------------------------------
-// Packet_Traits: Compile-time mapping from Protobuf Types -> Message_Type Enum
-// --------------------------------------------------------------------------------
-//
-// We use a template structure to associate a specific Protobuf C++ type (T)
-// with a value from our Message_Type enum. This allows us to write generic
-// functions like `send_protobuf_message<T>` that automatically know which
-// message header to use.
-//
-// The base template is empty and will trigger a static_assert if you try to use
-// a type that hasn't been specialized. This prevents sending unsupported types.
-template <typename T> struct Packet_Traits
-{
-  static_assert(
-      sizeof(T) == 0,
-      "Packet_Traits not specialized for this type. Make sure to define "
-      "the mapping in packet.hpp");
-};
-
-// --------------------------------------------------------------------------------
-// Template Specializations
-// --------------------------------------------------------------------------------
-//
-// The syntax `template <> struct Packet_Traits<SpecificType>` is called
-// "Explicit Template Specialization". It tells the compiler: "When T is exactly
-// `SpecificType`, use THIS definition of the struct instead of the generic one
-// above."
-//
-// Inside the struct, we define `type`, effectively attaching metadata (the enum
-// value) to the C++ type itself.
-
-template <> struct Packet_Traits<game::C2S_Connection>
-{
-  static constexpr Message_Type type = Message_Type::C2S_Connection;
-};
-
-template <> struct Packet_Traits<game::S2C_Connection>
-{
-  static constexpr Message_Type type = Message_Type::S2C_Connection;
-};
-
-template <> struct Packet_Traits<game::S2C_EntityPackage>
-{
-  static constexpr Message_Type type = Message_Type::S2C_EntityPackage;
-};
-
-// The batch, not the input: a lone C2S_ClientInput is never sent on its
-// own, so it has no mapping and reaching for one is a compile error rather than
-// a datagram the server has no handler for.
-template <> struct Packet_Traits<game::C2S_ClientInputBatch>
-{
-  static constexpr Message_Type type = Message_Type::C2S_ClientInputBatch;
-};
-
-template <> struct Packet_Traits<game::S2C_ServerMessage>
-{
-  static constexpr Message_Type type = Message_Type::S2C_ServerMessage;
-};
-
-template <> struct Packet_Traits<game::C2S_Command>
-{
-  static constexpr Message_Type type = Message_Type::C2S_Command;
-};
-
-template <> struct Packet_Traits<game::S2C_ShotDebug>
-{
-  static constexpr Message_Type type = Message_Type::S2C_ShotDebug;
-};
-
-template <> struct Packet_Traits<game::S2C_BotDebug>
-{
-  static constexpr Message_Type type = Message_Type::S2C_BotDebug;
-};
-
-template <> struct Packet_Traits<game::S2C_GameEventBatch>
-{
-  static constexpr Message_Type type = Message_Type::S2C_GameEventBatch;
-};
-
-template <> struct Packet_Traits<game::S2C_EffectBatch>
-{
-  static constexpr Message_Type type = Message_Type::S2C_EffectBatch;
-};
 
 // A `uint64 timestamp` used to lead this, and nothing ever wrote it — while the
 // server sorted incoming moves by it. A sort key nobody sets is a nondeterminism
@@ -203,8 +66,8 @@ struct Packet_Header
   // Fragmentation: a message too big for one packet is split into fragments.
   // ("sequence" is deliberately avoided here — that word is reserved for the
   // future packet-level ack layer; this axis is message/fragment, not packet.)
-  uint8 message_id;      // which message this fragment belongs to (NOT message_type)
-  uint8 message_type;    // what KIND of message this is (enum)
+  uint8 message_id;      // which message this fragment belongs to (NOT the kind)
+  uint8 payload_kind;    // what the payload IS (Payload_Kind)
   // 16 bits: at 8 a message stopped at 255 fragments (~304KB), which a lit map package outgrew.
   uint16 fragment_count; // how many fragments the message was split into
   uint16 fragment_index; // this fragment's index within the message
@@ -522,7 +385,7 @@ inline bool reassemble_fragment(std::map<uint8, Partial_Message> &partial_packet
 constexpr size_t MAX_FRAGMENTS_PER_MESSAGE = 65535;
 
 inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
-                                              uint8 message_type,
+                                              Payload_Kind payload_kind,
                                               uint8 &next_message_id)
 {
   std::vector<Packet> packets;
@@ -535,9 +398,9 @@ inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
   // Refused whole, never truncated: a message cut short reassembles into bytes nothing can parse.
   if (packet_count > MAX_FRAGMENTS_PER_MESSAGE)
   {
-    log_error("message of type {} is {} bytes, which is {} fragments and more than the {} one "
+    log_error("a payload of kind {} is {} bytes, which is {} fragments and more than the {} one "
               "message may have; NOT SENT",
-              message_type, total_size, packet_count, MAX_FRAGMENTS_PER_MESSAGE);
+              static_cast<int>(payload_kind), total_size, packet_count, MAX_FRAGMENTS_PER_MESSAGE);
     return packets;
   }
 
@@ -548,7 +411,7 @@ inline std::vector<Packet> convert_to_packets(const std::vector<uint8> &data,
   for (size_t i = 0; i < packet_count; ++i)
   {
     Packet packet = {};
-    packet.header.message_type = message_type;
+    packet.header.payload_kind = static_cast<uint8>(payload_kind);
     packet.header.message_id = message_id;
     packet.header.fragment_count = static_cast<uint16>(packet_count);
     packet.header.fragment_index = static_cast<uint16>(i);

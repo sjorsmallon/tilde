@@ -33,29 +33,29 @@ namespace shared
 struct replay_view_change_t
 {
   uint8_t        slot       = 0;
-  subtick_view_t view_after = {};
+  View view_after = {};
 };
 
 struct replay_player_view_t
 {
   uint8_t                                      client_slot   = 0;
   interpolation_bracket_t                      bracket       = {};
-  subtick_view_t                               view_at_start = {};
+  View                               view_at_start = {};
   Array<replay_view_change_t, MAX_SUBTICK_BUTTON_CHANGES> view_changes         = {};
   uint32_t                                     button_change_count    = 0;
-  subtick_view_t                               view_at_end   = {};
+  View                               view_at_end   = {};
 };
 
 [[nodiscard]] replay_player_view_t replay_player_view_from_input(uint8_t                        client_slot,
                                                                  const interpolation_bracket_t& bracket,
-                                                                 const tick_input_t&         input);
+                                                                 const Tick_Input&         input);
 
 void append_replay_player_view(std::vector<uint8_t>& out, const replay_player_view_t& view);
 
 [[nodiscard]] std::optional<replay_player_view_t> try_parse_replay_player_view(Span<const uint8_t> payload);
 
 // The aim at a fractional slot in [0, SUBTICK_SLOT_COUNT]: exact at every button change, a lerp between them.
-[[nodiscard]] subtick_view_t replay_view_at_slot(const replay_player_view_t& view, float slot_position);
+[[nodiscard]] View replay_view_at_slot(const replay_player_view_t& view, float slot_position);
 
 // The cursor tick the player drew the others at, or nothing when the input named no bracket.
 [[nodiscard]] std::optional<double> try_seen_cursor_tick(const interpolation_bracket_t& bracket);
@@ -79,7 +79,7 @@ struct replay_view_tracks_t
 
 struct replay_view_sample_t
 {
-  subtick_view_t        view;
+  View        view;
   std::optional<double> seen_cursor_tick;
 };
 

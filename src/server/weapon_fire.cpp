@@ -6,6 +6,7 @@
 #include "../shared/lag_compensation.hpp"
 #include "../shared/log.hpp"
 #include "../shared/merge.hpp"
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/animation/player_animator.hpp"
 #include "../shared/movement/player_constants.hpp"
@@ -62,14 +63,14 @@ static void append_static_targets(const shared::posed_players_t &present,
 // The blend the shooter aimed through, judged against what this slot holds and how far back the server allows.
 static shared::bracket_verdict_t get_interpolation_bracket_for_input(
     server_context_t &context, int32_t client_slot,
-    const game::C2S_ClientInput &input)
+    const shared::Client_Input &input)
 {
   client_slot_t &client = context.clients[client_slot];
 
   const shared::interpolation_bracket_t requested{
-      .from_tick    = input.interpolated_from_tick(),
-      .towards_tick = input.interpolated_towards_tick(),
-      .fraction     = input.interpolation_fraction()};
+      .from_tick    = input.interpolated_from_tick,
+      .towards_tick = input.interpolated_towards_tick,
+      .fraction     = input.interpolation_fraction};
 
   const int32_t configured_max_rewind_ticks = context.cvars->sv_max_rewind_ticks;
   const uint32_t max_rewind =
@@ -81,25 +82,25 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
 
   switch (verdict.status)
   {
-    case shared::bracket_status_t::Absent:
+    case shared::Bracket_Status::Absent:
       return verdict;
 
-    case shared::bracket_status_t::Unheld:
+    case shared::Bracket_Status::Unheld:
       log_warning("slot {}: move names a blend towards tick {}, but that slot has "
                   "only acked up to {} (server is at {}) — rewind refused",
                   client_slot, requested.towards_tick, client.held_snapshot_tick,
                   context.tick_number);
       return verdict;
 
-    case shared::bracket_status_t::Malformed:
+    case shared::Bracket_Status::Malformed:
       log_warning("slot {}: malformed interpolation bracket {} -> {} at {:.3f} — "
                   "rewind refused",
                   client_slot, requested.from_tick, requested.towards_tick,
                   requested.fraction);
       return verdict;
 
-    case shared::bracket_status_t::Ok:
-    case shared::bracket_status_t::Clamped:
+    case shared::Bracket_Status::Ok:
+    case shared::Bracket_Status::Clamped:
       break;
   }
 
@@ -118,7 +119,7 @@ static shared::bracket_verdict_t get_interpolation_bracket_for_input(
                  rewind_tick_count * milliseconds_per_tick);
 
   // Clamped: the bracket reached past sv_max_rewind_ticks and was pulled to the oldest tick allowed.
-  if (verdict.status == shared::bracket_status_t::Clamped)
+  if (verdict.status == shared::Bracket_Status::Clamped)
   {
     const uint32_t warning_interval_ticks =
         std::max(1u, context.cvars->sv_tickrate);
@@ -158,18 +159,12 @@ static float distance_to_nearest_target(const vec3f& eye, const vec3f& direction
   return nearest;
 }
 
-static void fill_shot_debug_vector(game::Vec3* out, const vec3f& value)
-{
-  out->set_x(value.x);
-  out->set_y(value.y);
-  out->set_z(value.z);
-}
-
-
+// The server's view of one shot, on the shooter's own datagram scope: the input
+// that fired it is the key the client pairs its own stash against.
 static void send_shot_debug(
   server_context_t &context,
   int32_t client_slot,
-  const game::C2S_ClientInput &input,
+  const shared::Client_Input &input,
   uint32_t fire_subtick_slot,
   const vec3f& eye,
   const vec3f& direction,
@@ -180,21 +175,20 @@ static void send_shot_debug(
   const shared::hitscan_result_t &hit,
   shared::entity_uid_t shooter_uid)
 {
-  game::S2C_ShotDebug message;
-  message.set_input_number(input.input_number());
-  message.set_server_tick(context.tick_number);
-  message.set_fire_subtick_slot(fire_subtick_slot);
-  fill_shot_debug_vector(message.mutable_eye(), eye);
-  fill_shot_debug_vector(message.mutable_direction(), direction);
+  shared::Shot_Debug message;
+  message.input_number      = input.input_number;
+  message.fire_subtick_slot = static_cast<uint8_t>(fire_subtick_slot);
+  message.eye               = eye;
+  message.direction         = direction;
 
-  message.set_bracket_status(static_cast<uint32_t>(verdict.status));
-  message.set_used_rewind(used_rewind);
-  message.set_requested_from_tick(input.interpolated_from_tick());
-  message.set_requested_towards_tick(input.interpolated_towards_tick());
-  message.set_requested_fraction(input.interpolation_fraction());
-  message.set_used_from_tick(verdict.bracket.from_tick);
-  message.set_used_towards_tick(verdict.bracket.towards_tick);
-  message.set_used_fraction(verdict.bracket.fraction);
+  message.bracket_status         = verdict.status;
+  message.used_rewind            = used_rewind;
+  message.requested_from_tick    = input.interpolated_from_tick;
+  message.requested_towards_tick = input.interpolated_towards_tick;
+  message.requested_fraction     = input.interpolation_fraction;
+  message.used_from_tick         = verdict.bracket.from_tick;
+  message.used_towards_tick      = verdict.bracket.towards_tick;
+  message.used_fraction          = verdict.bracket.fraction;
 
   // `poses` is filled in lockstep with `targets` by both builders, so index i
   // describes the same player in each. Guarded anyway: a builder that ever
@@ -202,23 +196,27 @@ static void send_shot_debug(
   const size_t target_count = std::min(tested.targets.size(), tested.poses.size());
   for (size_t index = 0; index < target_count; ++index)
   {
-    game::ShotDebugTarget *entry = message.add_targets();
-    entry->set_player_uid(tested.targets[index].uid);
-    fill_shot_debug_vector(entry->mutable_feet_position(), tested.poses[index].feet_position);
-    entry->set_body_yaw(tested.poses[index].body_yaw);
-    entry->set_view_yaw(tested.poses[index].view_yaw);
-    entry->set_view_pitch(tested.poses[index].view_pitch);
+    const shared::Shot_Debug_Target target{.player_uid    = tested.targets[index].uid,
+                                           .feet_position = tested.poses[index].feet_position,
+                                           .body_yaw      = tested.poses[index].body_yaw,
+                                           .view_yaw      = tested.poses[index].view_yaw,
+                                           .view_pitch    = tested.poses[index].view_pitch};
+    if (!message.targets.try_push_back(target))
+    {
+      log_warning("shot debug: {} targets were ranked and the row carries {}; the rest are not drawn",
+                  target_count, message.targets.capacity);
+      break;
+    }
   }
 
-  message.set_hit_uid(hit.hit_uid);
-  message.set_hit_region(static_cast<uint32_t>(hit.region));
+  message.hit_uid    = hit.hit_uid;
+  message.hit_region = hit.region;
   if (hit.hit_uid != shared::null_entity_uid)
-    fill_shot_debug_vector(message.mutable_impact_point(), hit.impact_point);
+    message.impact_point = hit.impact_point;
   else
-    message.set_nearest_miss_distance(
-        distance_to_nearest_target(eye, direction, targets, shooter_uid));
-  
-  network::send_protobuf_message(context.transport_layer, context.socket, client_slot, message);
+    message.nearest_miss_distance = distance_to_nearest_target(eye, direction, targets, shooter_uid);
+
+  shared::write_shot_debug(context.outgoing.datagram[client_slot], message);
 }
 
 void mark_shot_fired(const server_context_t &context, entities::Player_Entity &player,
@@ -278,7 +276,7 @@ static Span<const shared::hitscan_target_t> collect_hitscan_targets(server_conte
 // the one question every flying thing asks, at radius zero, through the shooter's team view of the
 // map AND the movers; the world hit clips the range. Tested here, acted on in update_contacts.
 static void resolve_hitscan_shot(server_context_t& context, int32_t client_slot,
-                                 const game::C2S_ClientInput& input,
+                                 const shared::Client_Input& input,
                                  const shared::predicted_world_t& world,
                                  const entities::Player_Entity& player,
                                  const entities::Weapon_Entity& active_weapon,
@@ -317,8 +315,8 @@ static void resolve_hitscan_shot(server_context_t& context, int32_t client_slot,
   {
     verdict = get_interpolation_bracket_for_input(context, client_slot, input);
 
-    const bool bracket_is_usable = verdict.status == shared::bracket_status_t::Ok ||
-                                   verdict.status == shared::bracket_status_t::Clamped;
+    const bool bracket_is_usable = verdict.status == shared::Bracket_Status::Ok ||
+                                   verdict.status == shared::Bracket_Status::Clamped;
 
     if (bracket_is_usable &&
         shared::try_pose_players_across_bracket(context.replication.snapshot_history, shared::player_rig(),
@@ -415,7 +413,7 @@ static void resolve_placed_shot(server_context_t& context, const entities::Playe
 }
 
 void resolve_player_shot(server_context_t& context, int32_t client_slot,
-                         const game::C2S_ClientInput& input, const shared::predicted_world_t& world,
+                         const shared::Client_Input& input, const shared::predicted_world_t& world,
                          entities::Player_Entity& player, float yaw, float pitch,
                          shared::subtick_time_t fire_time, entities::Fire_Trigger trigger)
 {

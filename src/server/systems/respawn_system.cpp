@@ -4,7 +4,7 @@
 #include "game_rules_system.hpp"
 #include "inventory_system.hpp"
 
-#include "../../shared/events/generated/events_generated.hpp"
+#include "../../shared/network/generated/messages_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/movement/player_constants.hpp"
 #include "../../shared/weapons.hpp"
@@ -23,7 +23,7 @@ void fire_player_spawned_event(server_context_t &context,
   spawned.client_slot       = player.client_slot_index;
   spawned.spawn_position    = player.position;
   spawned.spawn_orientation = player.orientation;
-  shared::fire_player_spawned(context.outgoing.events, spawned);
+  shared::write_player_spawned(context.outgoing.tick_broadcast_reliable, spawned);
 }
 
 const entities::Player_Spawn_Entity& origin_fallback_spawn()

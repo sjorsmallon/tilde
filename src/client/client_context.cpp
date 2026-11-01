@@ -106,7 +106,7 @@ void snap_local_aim_to(prediction_t& prediction, const linalg::quatf& orientatio
 {
   const linalg::view_angles_t facing =
       linalg::view_angles_from_direction(linalg::forward(orientation));
-  const shared::subtick_view_t view = {facing.yaw_degrees,
+  const shared::View view = {facing.yaw_degrees,
                                        linalg::clamp_view_pitch(facing.pitch_degrees)};
 
   prediction.player_yaw         = view.yaw;

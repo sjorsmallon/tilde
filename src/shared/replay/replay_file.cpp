@@ -193,8 +193,7 @@ void write_replay_record(replay_writer_t& writer, replay_record_kind_t kind, uin
   write_bytes(writer, payload.data, payload.size());
 }
 
-void write_replay_snapshot(replay_writer_t& writer, uint32_t tick, uint32_t baseline_tick,
-                           Span<const uint8_t> snapshot_bytes)
+void write_replay_snapshot(replay_writer_t& writer, uint32_t tick, const Entity_Package& package)
 {
   if (writer.file == nullptr)
     return;
@@ -202,14 +201,13 @@ void write_replay_snapshot(replay_writer_t& writer, uint32_t tick, uint32_t base
   note_tick(writer, tick);
   const uint64_t record_offset = writer.bytes_written;
 
-  std::vector<uint8_t> baseline;
-  append_u32(baseline, baseline_tick);
-  write_record_header(writer, replay_record_kind_t::Snapshot, tick,
-                      (uint32_t)(baseline.size() + snapshot_bytes.size()));
-  write_bytes(writer, baseline.data(), baseline.size());
-  write_bytes(writer, snapshot_bytes.data, snapshot_bytes.size());
+  message_stream_t stream;
+  write_entity_package(stream, package);
+  stream.finish();
+  write_record_header(writer, replay_record_kind_t::Snapshot, tick, (uint32_t)stream.writer.buffer.size());
+  write_bytes(writer, stream.writer.buffer.data(), stream.writer.buffer.size());
 
-  if (baseline_tick == 0 && writer.file != nullptr)
+  if (package.delta_from_tick == 0 && writer.file != nullptr)
   {
     writer.index.keyframes.push_back({tick, record_offset});
     fflush(writer.file);
@@ -352,13 +350,13 @@ std::optional<replay_t> try_open_replay(std::vector<uint8_t> bytes, uint32_t exp
 
       if (record->kind == replay_record_kind_t::Snapshot)
       {
-        const std::optional<replay_snapshot_payload_t> snapshot = try_split_replay_snapshot(*record);
-        if (!snapshot)
+        const std::optional<Entity_Package> package = try_read_replay_snapshot(*record);
+        if (!package)
         {
-          out_reason = "has a snapshot record with no baseline tick at byte " + std::to_string(offset);
+          out_reason = "has a snapshot record that is not one Entity_Package at byte " + std::to_string(offset);
           return std::nullopt;
         }
-        if (snapshot->baseline_tick == 0)
+        if (package->delta_from_tick == 0)
           rebuilt.keyframes.push_back({record->tick, offset});
       }
     }
@@ -398,15 +396,16 @@ std::optional<replay_t> try_read_replay_file(const std::string& path, uint32_t e
   return try_open_replay(std::move(bytes), expected_schema_hash, expected_asset_table_hash, out_reason);
 }
 
-std::optional<replay_snapshot_payload_t> try_split_replay_snapshot(const replay_record_t& record)
+std::optional<Entity_Package> try_read_replay_snapshot(const replay_record_t& record)
 {
-  if (record.kind != replay_record_kind_t::Snapshot || record.payload.size() < sizeof(uint32_t))
+  if (record.kind != replay_record_kind_t::Snapshot)
     return std::nullopt;
 
-  replay_snapshot_payload_t snapshot;
-  memcpy(&snapshot.baseline_tick, record.payload.data, sizeof(uint32_t));
-  snapshot.snapshot_bytes = record.payload.subspan(sizeof(uint32_t));
-  return snapshot;
+  network::Bit_Reader reader(record.payload.data, record.payload.size());
+  if (reader.read_bits(MESSAGE_STREAM_COUNT_BITS) != 1 ||
+      reader.read_bits(16) != (uint32_t)Message_Type::Entity_Package)
+    return std::nullopt;
+  return try_read_entity_package(reader);
 }
 
 std::optional<replay_keyframe_t> try_find_keyframe_at_or_before(const replay_index_t& index,

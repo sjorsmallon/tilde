@@ -59,20 +59,21 @@ struct replay_recorder_t
                                                                          float              keyframe_seconds,
                                                                          const std::string& name);
 
-// `effects` and `events` are the finished batch messages; empty writes no record.
+// The two broadcast scopes as finished streams, one Messages record each; empty
+// writes no record.
 void record_replay_tick(replay_recorder_t&               recorder,
                         const network::snapshot_frame_t& frame,
-                        Span<const uint8_t>              effects,
-                        Span<const uint8_t>              events,
+                        Span<const uint8_t>              broadcast,
+                        Span<const uint8_t>              broadcast_reliable,
                         const cvars::cvar_state_t&       cvars);
 
 // Held until this tick's record_replay_tick writes it after the snapshot. Idle recorders drop it.
 void queue_replay_player_view(replay_recorder_t& recorder, const replay_player_view_t& view);
 
-// A batch that arrived on its own clock, stamped with the last recorded tick: the
-// client dispatches a batch against the newest frame it holds, and a batch's own
-// tick can precede a snapshot already written. Nothing recorded yet writes nothing.
-void record_replay_batch(replay_recorder_t& recorder, replay_record_kind_t kind, Span<const uint8_t> payload);
+// A Message payload's streams as they arrived, stamped with the last recorded
+// tick: the client dispatches them against the newest frame it holds, and their
+// own tick can precede a snapshot already written. Nothing recorded yet writes nothing.
+void record_replay_messages(replay_recorder_t& recorder, Span<const uint8_t> streams);
 
 // Writes the index and closes the file. Idle recorders are left alone.
 void finish_replay_recording(replay_recorder_t& recorder);

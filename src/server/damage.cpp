@@ -99,7 +99,7 @@ static void apply_player_damage_total(server_context_t &context,
     died.attacker_id  = credited.attacker_uid;
     died.weapon_id    = credited.weapon_id;
     died.was_headshot = credited.was_headshot;
-    shared::fire_player_died(context.outgoing.events, died);
+    shared::write_player_died(context.outgoing.tick_broadcast_reliable, died);
 
     // Scored at the crossing rather than off Player_Died, so the score and the
     // event cannot disagree about what happened. A world kill and a suicide

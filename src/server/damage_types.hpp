@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../shared/entity_uid.hpp"
-#include "../shared/hit_region.hpp"
 #include "../shared/linalg.hpp"
 #include "entities/generated/entities_core_generated.hpp"
 
@@ -29,7 +28,7 @@ struct pending_hit_t
   damage_info_t        info;
   linalg::vec3f        impact_point{};
   linalg::vec3f        impact_normal{};
-  shared::hit_region_t region = shared::hit_region_t::Torso;
+  entities::Hit_Region region = entities::Hit_Region::Torso;
 };
 
 } // namespace server

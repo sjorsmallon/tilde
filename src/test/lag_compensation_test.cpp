@@ -38,7 +38,7 @@
 #include <vector>
 
 using linalg::vec3f;
-using shared::bracket_status_t;
+using shared::Bracket_Status;
 using shared::interpolation_bracket_t;
 using shared::posed_players_t;
 
@@ -141,7 +141,7 @@ static void test_classify_bracket()
   {
     const shared::bracket_verdict_t verdict =
         shared::classify_bracket({299, 300, 0.4f}, held, current, max_rewind);
-    check(verdict.status == bracket_status_t::Ok && verdict.bracket.from_tick == 299 &&
+    check(verdict.status == Bracket_Status::Ok && verdict.bracket.from_tick == 299 &&
               verdict.bracket.towards_tick == 300 &&
               std::abs(verdict.bracket.fraction - 0.4f) < 1e-6f,
           "an in-range bracket passes through untouched");
@@ -150,35 +150,35 @@ static void test_classify_bracket()
   // Either endpoint at 0 is the routine "no blend yet" case, not a complaint:
   // a spectator, or a client that has seen fewer than two snapshots.
   check(shared::classify_bracket({0, 0, 0.f}, held, current, max_rewind).status ==
-            bracket_status_t::Absent,
+            Bracket_Status::Absent,
         "a zeroed bracket is Absent, not an error");
   check(shared::classify_bracket({0, 300, 0.5f}, held, current, max_rewind).status ==
-            bracket_status_t::Absent,
+            Bracket_Status::Absent,
         "only one snapshot seen (from_tick 0) is Absent");
 
   // THE fabricated-bracket check. The ring bounds alone would happily accept a
   // tick the server sent to nobody, so this is the one that ties the bracket to
   // what the client demonstrably received.
   check(shared::classify_bracket({300, 301, 0.5f}, held, current, max_rewind).status ==
-            bracket_status_t::Unheld,
+            Bracket_Status::Unheld,
         "a bracket reaching past held_snapshot_tick is refused");
   check(shared::classify_bracket({300, 400, 0.5f}, /*held*/ 400, current, max_rewind).status ==
-            bracket_status_t::Unheld,
+            Bracket_Status::Unheld,
         "a bracket naming a tick the server has not reached is refused");
 
   // Malformed, and rejected rather than repaired: a bracket the server has to
   // fix up is one it cannot claim to reproduce.
   check(shared::classify_bracket({300, 299, 0.5f}, held, current, max_rewind).status ==
-            bracket_status_t::Malformed,
+            Bracket_Status::Malformed,
         "towards older than from is rejected");
   check(shared::classify_bracket({299, 300, 1.5f}, held, current, max_rewind).status ==
-            bracket_status_t::Malformed,
+            Bracket_Status::Malformed,
         "a fraction above 1 is rejected");
   check(shared::classify_bracket({299, 300, -0.1f}, held, current, max_rewind).status ==
-            bracket_status_t::Malformed,
+            Bracket_Status::Malformed,
         "a negative fraction is rejected");
   check(shared::classify_bracket({299, 300, std::nanf("")}, held, current, max_rewind).status ==
-            bracket_status_t::Malformed,
+            Bracket_Status::Malformed,
         "a NaN fraction is rejected");
 
   // The policy clamp: pinned to the boundary, never rejected, and never silent
@@ -188,7 +188,7 @@ static void test_classify_bracket()
     // 293), so `towards` is left where the client put it.
     const shared::bracket_verdict_t verdict =
         shared::classify_bracket({290, 300, 0.5f}, held, current, max_rewind);
-    check(verdict.status == bracket_status_t::Clamped &&
+    check(verdict.status == Bracket_Status::Clamped &&
               verdict.bracket.from_tick == current - max_rewind &&
               verdict.bracket.towards_tick == 300,
           "a from_tick past the rewind limit is pinned to the boundary");
@@ -198,7 +198,7 @@ static void test_classify_bracket()
     // the server is willing to be judged against.
     const shared::bracket_verdict_t verdict =
         shared::classify_bracket({250, 260, 0.5f}, /*held*/ 260, current, max_rewind);
-    check(verdict.status == bracket_status_t::Clamped &&
+    check(verdict.status == Bracket_Status::Clamped &&
               verdict.bracket.from_tick == current - max_rewind &&
               verdict.bracket.towards_tick == current - max_rewind,
           "both endpoints past the limit collapse onto the boundary tick");
@@ -208,7 +208,7 @@ static void test_classify_bracket()
     // exist. Ticks start at 1 because 0 is the "no baseline" sentinel.
     const shared::bracket_verdict_t verdict =
         shared::classify_bracket({1, 2, 0.5f}, /*held*/ 2, /*current*/ 5, max_rewind);
-    check(verdict.status == bracket_status_t::Ok && verdict.bracket.from_tick == 1,
+    check(verdict.status == Bracket_Status::Ok && verdict.bracket.from_tick == 1,
           "the clamp does not wrap below tick 1 on a young server");
   }
 }
@@ -464,7 +464,7 @@ static void test_hit_then_and_not_now(const shared::player_rig_t& rig,
   // keeps this a test of the path rather than of the authored rig numbers.
   float torso_height = 0.f;
   for (const assets::posed_hitbox_t& volume : now_volumes)
-    if (volume.region == shared::hit_region_t::Torso)
+    if (volume.region == entities::Hit_Region::Torso)
     {
       torso_height = 0.5f * (volume.start.y + volume.end.y);
       break;

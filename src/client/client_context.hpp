@@ -12,6 +12,7 @@
 #include "../shared/map/game_session.hpp"
 #include "../shared/replay/ghost.hpp"
 #include "../shared/network/client_transport_layer.hpp"
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/network/entity_snapshot.hpp"
 #include "../shared/network/snapshot_history.hpp"
 #include "../shared/map/map.hpp"
@@ -57,7 +58,7 @@ static constexpr int32_t invalid_slot_idx = -1;
 //           ──load/verify fails─────────────────▶ (stay Loading; re-request)
 //
 // Nothing is SENT on the two Loading -> Connected transitions, and that is the point:
-// the map we hold rides every C2S_ClientInput as `map_content_hash`, so the
+// the map we hold rides every Client_Input as `map_content_hash`, so the
 // server derives client_slot_t::map_ready by comparing it rather than waiting
 // for an ack it could lose. Entering Connected starts the input flow, and
 // snapshots resume one tick later.
@@ -86,7 +87,7 @@ struct Saved_Input
   // every step of a tick through it while the live prediction had already moved
   // on -- two spellings of the same thing, free to disagree. A replay now runs
   // the identical basis the live step did because it reads the identical field.
-  shared::tick_input_t tick_input = {};
+  shared::Tick_Input tick_input = {};
 };
 static constexpr uint32_t MAX_PENDING_INPUTS = 128;
 
@@ -175,14 +176,22 @@ struct connection_t
 {
   Connection_Phase phase = Connection_Phase::Disconnected;
 
-  // Non-zero while we're in Loading because we lacked (cache miss) or
-  // mismatched the server's map and asked it to stream the compiled package:
-  // holds the content_hash we're waiting to receive. Guards the CmdChangeMap
-  // handler so a second switch message naming the map we are ALREADY
-  // downloading is ignored rather than restarting the transfer under us --
-  // begin_paced_transfer replaces whatever a slot was sending. Cleared once
-  // S2C_MapData applies.
-  uint32_t downloading_map_content_hash = 0;
+  // The map the server runs, as its Accept or latest Change_Map said. STATE,
+  // followed by comparison: Play_State::follow_server_map acts once per
+  // generation (loads a local copy or requests the package), and
+  // followed_map_generation is the one it last acted on. A second Change_Map
+  // for the generation already being downloaded is therefore nothing, and one
+  // for a newer generation re-requests, which replaces the transfer in flight.
+  shared::Server_Map server_map;
+  uint32_t           followed_map_generation = 0;
+
+  // The C2S reliable scope: what this frame wrote (a console line, a map or
+  // ghost request), queued on the stream as one record at the end of the frame.
+  shared::reliable_stream_t outgoing_reliable;
+
+  // The input datagram: the unacked tail, written and sent once per tick. Held
+  // so the allocation survives the tick.
+  shared::message_stream_t outgoing_input_datagram;
 
   // The slot we occupy on the server.
   int32_t my_slot = invalid_slot_idx;
@@ -204,6 +213,10 @@ struct connection_t
   bool spectating = true;
 
   uint32_t server_tickrate = 60;
+
+  // The tick the Message payload being dispatched was sent on, off its header:
+  // what a handler that needs a tick reads, so no message carries one as a field.
+  uint32_t last_server_tick = 0;
 
   // One log line per connection, the first time a snapshot names our own body.
   // Connection-scoped, so it resets with the rest of this group rather than
@@ -229,7 +242,7 @@ struct prediction_t
   float physics_accumulator = 0.0f;
 
   // The aim a Pilot flight was launched with, handed back when the ride ends; empty while not riding.
-  std::optional<shared::subtick_view_t> aim_at_pilot_launch;
+  std::optional<shared::View> aim_at_pilot_launch;
 
   // Our own Player_Entity::health, off the last snapshot. Prediction reads it:
   // the server stops steering a dead player, so a client that kept feeding its
@@ -252,7 +265,7 @@ struct prediction_t
   //
   // The tracked buttons (Button::Subtick_Tracked) as of the last tick boundary,
   // and every transition since it that no tick has consumed yet. Together they
-  // are what the next command's tick_input_t is built from.
+  // are what the next command's Tick_Input is built from.
   //
   // `accumulator_seconds` is measured in the SAME timeline the ticks are cut
   // from -- seconds past the last tick boundary, in physics_accumulator space --
@@ -269,7 +282,7 @@ struct prediction_t
   {
     float                  accumulator_seconds = 0.f;
     uint64_t               buttons_after       = 0; // tracked bits only; the rest are polled
-    shared::subtick_view_t view_after          = {};
+    shared::View view_after          = {};
 
     // Wall clock, unlike accumulator_seconds beside it, and both are needed
     // because they answer to different things. The accumulator decides which
@@ -288,7 +301,7 @@ struct prediction_t
   // at all, and that is the common tick. Carried across from the last sample
   // the previous tick consumed, which is by construction the last travel before
   // the boundary.
-  shared::subtick_view_t view_at_tick_start = {};
+  shared::View view_at_tick_start = {};
 
   // Whether the button changes above are a current account of what is held. False while
   // anything stops them being read -- the console owning the keyboard, or not
@@ -308,7 +321,7 @@ struct prediction_t
   //
   // Trimmed by latest_input_number_processed_by_server, which is a high-water
   // mark, so this needs no per-input acking. Capped by cl_max_unacked_inputs.
-  std::vector<game::C2S_ClientInput> unacked_inputs;
+  std::vector<shared::Client_Input> unacked_inputs;
 
   // --- Server reconciliation ---
   // The server's word on us, read off the newest snapshot by the builder the server reads a
@@ -319,7 +332,7 @@ struct prediction_t
   // not an input, and the processing is the SERVER'S -- we process our own
   // inputs too, every tick, as prediction. Everything at or below it is done, so
   // it both trims unacked_inputs and is where reconciliation starts replaying.
-  int latest_input_number_processed_by_server = -1;
+  int latest_input_number_processed_by_server = ::network::NO_INPUT_PROCESSED_YET;
   // The tick of the snapshot that carried latest_server_state. Input N is
   // predicted to run at latest_server_tick + (N - the processed number above),
   // which is where a mover is for it (mover_def.md ss12).
@@ -343,26 +356,6 @@ struct prediction_t
   vec3f visual_error_offset = {0, 0, 0};
   vec3f reconciliation_error = {0, 0, 0};      // HUD readout only
   float reconciliation_error_magnitude = 0.0f; // HUD readout only
-};
-
-// One bot's pathfinding state as of the last S2C_BotDebug packet. Filled from
-// the wire in play_state.cpp; drawn by the bot HUD and the path overlay.
-//
-// This is NOT a memory bridge from game_server, though it claimed to be one as
-// a `bot_debug::g_entries` global for a long time. It cannot be: game_shared is
-// a static lib, so each module linked its own copy and the server's writes were
-// never visible here. The server's real path is `g_bots` -> S2C_BotDebug ->
-// this vector, which works in both the integrated (loopback) and networked
-// builds. It sits in replication_t because that is what it is -- and because as
-// a global neither reset reached it, so a previous connection's bot paths kept
-// drawing over the new one.
-struct bot_debug_entry_t
-{
-  int32_t            slot       = -1;
-  int                goal       = 0; // bot_goal_t: 0=Idle 1=Chase 2=Attack 3=Retreat
-  int                type       = 0; // bot_behavior_t: 0=Idle 1=Chase 2=Regular
-  std::vector<vec3f> path;
-  int                path_index = 0;
 };
 
 // Everything the server tells us about the world other than ourselves. Keyed by
@@ -401,7 +394,7 @@ struct replication_t
   // exact state we reconstructed for that tick — not merely "the current
   // world", which has moved on. Mirrors the server's ring one for one; see
   // shared/network/snapshot_history.hpp. `acked_tick` on it is the value echoed
-  // back in every C2S_ClientInput. The frame type is the same one the
+  // back in every Client_Input. The frame type is the same one the
   // server stores — the server deltas against what it believes we
   // reconstructed, so the two structures being one type is not a convenience,
   // it is the guarantee.
@@ -420,8 +413,10 @@ struct replication_t
   // The voices each emitter started, so Stop_Playing has something to name.
   std::unordered_map<shared::entity_uid_t, std::vector<client::voice_handle_t>> emitter_voices;
 
-  // Replaced wholesale by each S2C_BotDebug packet.
-  std::vector<bot_debug_entry_t> bot_debug_entries;
+  // What every bot is doing, as the server last said: the Bot_Debug rows of one
+  // tick replace the previous tick's, so the tick they arrived on is kept.
+  std::vector<shared::Bot_Debug_Entry> bot_debug_entries;
+  uint32_t                             bot_debug_tick = 0;
 };
 
 // What a player's body was last drawn as. Kept per uid so that when its teleport_count changes the frame after,
@@ -475,6 +470,10 @@ struct visual_effects_t
   // during prediction, drawn and cleared in draw.
   debug_collision::Face_Bucket debug_collision_faces;
 
+  // The server's view of our own shots (Shot_Debug), paired with the stash and
+  // drawn by Play_State the frame they arrive, then cleared.
+  std::vector<shared::Shot_Debug> shot_debug_replies;
+
   // Where players came through a team wall lately, and who is inside one now.
   // Derived per frame from positions every client already holds, so nothing is
   // networked; aged in retire_per_frame_visuals, drawn by the ghost shader.
@@ -518,13 +517,6 @@ struct client_context_t
 
   const shared::game_session_t* server_session = nullptr;
   ::network::Client_Transport_Layer transport_layer;
-
-  // One frame's drained messages. Not reset-scoped: it is refilled from scratch
-  // and fully consumed every frame, and lives here only so its vectors keep
-  // their capacity instead of reallocating at the frame rate. Reassembly state
-  // is NOT here -- it is transport_layer.partial_packets, a stratum down, which
-  // is what lets a fragmented message span as many frames as it needs.
-  ::network::Client_Inbox incoming;
 
   ::network::Address requested_server_address =
       ::network::Address(127, 0, 0, 1, ::network::server_port_number);

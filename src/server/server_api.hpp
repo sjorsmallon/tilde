@@ -53,6 +53,6 @@ GAME_SERVER_API const shared::game_session_t *get_session_for_integrated_client(
 // `maps/<name>.source`); one that resolves to no file is refused BEFORE the
 // running world is torn down. Wipes the current session, physics world, bots
 // and per-client baselines, loads the map, keeps connected players connected
-// and broadcasts CmdChangeMap. Returns true on successful load.
+// and writes one Change_Map on the reliable broadcast. Returns true on successful load.
 GAME_SERVER_API bool change_map_to(const std::string &map_name);
 } // namespace server

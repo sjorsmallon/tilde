@@ -14,7 +14,7 @@ inline assets::posed_hitbox_t remnant_hit_volume(const entities::Remnant_Entity&
 {
   return assets::make_sphere_hit_volume(
       shared::player_hull_center(remnant.position), remnant.hit_radius,
-      hit_region_t::Torso);
+      entities::Hit_Region::Torso);
 }
 
 } // namespace shared

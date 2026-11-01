@@ -1,11 +1,10 @@
 #pragma once
 
-// replay_def.md §5: a file where the socket is. The feed files a replay's records
-// into the SAME Client_Inbox poll_client_network fills, so everything after the
-// inbox drain is the live path.
+// replay_def.md §5: a file where the socket is. A replay's records reach
+// receive_server_message_payload the way a datagram's payload does, so
+// everything after the receive is the live path.
 
 #include "../shared/cvars/generated/cvars_generated.hpp"
-#include "../shared/network/client_transport_layer.hpp"
 #include "../shared/replay/replay_file.hpp"
 #include "../shared/replay/replay_player_view.hpp"
 
@@ -14,6 +13,8 @@
 
 namespace client
 {
+
+struct client_context_t;
 
 struct replay_playback_t
 {
@@ -49,9 +50,9 @@ void begin_replay_playback(replay_playback_t& playback, shared::replay_t&& repla
 // Clamped to the file. Seconds from the file's first tick.
 void request_replay_seek(replay_playback_t& playback, double seconds_from_start);
 
-// Advances the clock and files every record due by it; a pending seek files the
-// rebuilt frame instead, as one full update.
-void feed_replay_into_inbox(replay_playback_t& playback, float dt, network::Client_Inbox& inbox);
+// Advances the clock and dispatches every record due by it; a pending seek
+// dispatches the rebuilt frame instead, as one full update.
+void dispatch_due_replay_records(replay_playback_t& playback, float dt, client_context_t& context);
 
 // cl_spectate_slot, when the replay rides that player's recorded screen (replay_def.md §6).
 [[nodiscard]] std::optional<int32_t> try_replay_first_person_slot(const replay_playback_t&  playback,

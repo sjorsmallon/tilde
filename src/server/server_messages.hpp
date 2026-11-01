@@ -13,22 +13,27 @@ namespace server
 struct server_context_t;
 
 // What the wire calls the running map: maps-relative, a basename like
-// "new_map.source", resolved per side against that side's maps dir. The accept
-// handshake and CmdChangeMap are the two senders and they must agree.
+// "new_map.source", resolved per side against that side's maps dir.
 std::string current_map_wire_id(const server_context_t& context);
 
-// @Mirrored values to one client, on its reliable stream. The whole set right
-// after CmdAccept, the changed subset every tick after that.
-void send_cvar_values(server_context_t& context, int32_t slot,
-                      const shared::cvar_values_message_t& msg);
+// The map as the Accept and every Change_Map name it: generation, path, name, hash.
+shared::Server_Map current_server_map(const server_context_t& context);
 
-// Console text to one peer, on its reliable stream; a peer with no slot (a
-// rejected connect) is told once, unreliably.
-void send_text_message_to_a_specific_client(server_context_t& context,
-                                            const network::Address& address,
-                                            std::string_view text);
+// @Mirrored values to one client, on its own reliable scope. The whole set
+// right after the Accept; the changed subset rides the reliable broadcast.
+void send_cvar_values(server_context_t& context, int32_t slot, Span<const shared::Cvar_Value> values);
+
+// Console text to one client, on its own reliable scope. A line longer than a
+// Server_Text holds goes as several, which the stream keeps in order.
+void send_server_text(server_context_t& context, int32_t slot, std::string_view text);
 
 // The same line to every connected client.
 void broadcast_server_text_message(server_context_t& context, std::string_view text);
+
+// The one message to a peer with no slot: a Reject, sent once as its own
+// datagram. The hashes are 0 unless the rejection IS that mismatch.
+void send_reject_to_unslotted_peer(server_context_t& context, const network::Address& address,
+                                   std::string_view reason, uint32_t server_schema_hash,
+                                   uint32_t server_asset_table_hash);
 
 } // namespace server

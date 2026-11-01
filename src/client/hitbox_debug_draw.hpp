@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../shared/color.hpp"
-#include "../shared/hit_region.hpp"
+#include "../shared/entities/generated/entities_core_generated.hpp"
 #include "../shared/animation/hitbox_rig.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/log.hpp"
@@ -30,13 +30,13 @@ constexpr uint8_t HITBOX_FACE_ALPHA = 30;
 
 // Damage region, not volume: ten volumes share three colours, so a forearm that
 // costs Torso damage reads as one at a glance.
-inline color_t hit_region_color(shared::hit_region_t region)
+inline color_t hit_region_color(entities::Hit_Region region)
 {
   switch (region)
   {
-    case shared::hit_region_t::Head:  return colors::red;
-    case shared::hit_region_t::Torso: return colors::yellow;
-    case shared::hit_region_t::Legs:  return colors::cyan;
+    case entities::Hit_Region::Head:  return colors::red;
+    case entities::Hit_Region::Torso: return colors::yellow;
+    case entities::Hit_Region::Legs:  return colors::cyan;
     default:                          return colors::grey;
   }
 }

@@ -4,10 +4,8 @@
 
 #include "../shared/animation/player_animator.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
-#include "../shared/effects/generated/effects_generated.hpp"
 #include "../shared/lighting/lens.hpp"
 #include "../shared/merge.hpp"
-#include "../shared/network/subtick_codec.hpp"
 #include "movement/player_constants.hpp"
 #include "movement/player_move.hpp"
 #include "replay/replay_recorder.hpp"
@@ -61,7 +59,7 @@ static void log_refused_shot(server_context_t& context, int32_t client_slot,
 struct accepted_client_input_t
 {
   entities::Player_Entity* player;
-  shared::tick_input_t  tick_input;
+  shared::Tick_Input  tick_input;
 };
 
 // Everything that drops or acks an input before it moves anyone. The high-water mark means "I have
@@ -69,7 +67,7 @@ struct accepted_client_input_t
 // its held_snapshot_tick was the only part of it that applied, and leaving it unacked had the client
 // resend it forever. An input that breaks the sub-tick grammar is acked and dropped.
 [[nodiscard]] static std::optional<accepted_client_input_t> try_accept_client_input(
-    server_context_t& context, int32_t client_slot, const game::C2S_ClientInput& input)
+    server_context_t& context, int32_t client_slot, const shared::Client_Input& input)
 {
   if (!is_valid_client_slot(client_slot))
   {
@@ -79,14 +77,14 @@ struct accepted_client_input_t
   }
 
   client_slot_t& client = context.clients[client_slot];
-  if (input.input_number() <= client.latest_processed_input_number)
+  if (input.input_number <= client.latest_processed_input_number)
     return std::nullopt;
 
   entities::Player_Entity* player =
       context.world.session.entity_system.get<entities::Player_Entity>(client.player_uid);
   if (player == nullptr)
   {
-    client.latest_processed_input_number = input.input_number();
+    client.latest_processed_input_number = input.input_number;
     return std::nullopt;
   }
 
@@ -105,20 +103,17 @@ struct accepted_client_input_t
     return std::nullopt;
   }
 
-  client.latest_processed_input_number = input.input_number();
+  client.latest_processed_input_number = input.input_number;
 
-  const std::optional<shared::tick_input_t> decoded_input = network::try_read_tick_input(input);
-  if (!decoded_input)
+  if (!shared::button_changes_follow_grammar(input.input))
   {
     log_error("slot {}: input {} carries sub-tick button changes that break the grammar "
-              "(slots must be 1..{}, strictly ascending, at most {} of them) — "
-              "command dropped",
-              client_slot, input.input_number(), shared::SUBTICK_SLOT_COUNT - 1,
-              shared::MAX_SUBTICK_BUTTON_CHANGES);
+              "(slots must be 1..{}, strictly ascending) — command dropped",
+              client_slot, input.input_number, shared::SUBTICK_SLOT_COUNT - 1);
     return std::nullopt;
   }
 
-  return accepted_client_input_t{.player = player, .tick_input = *decoded_input};
+  return accepted_client_input_t{.player = player, .tick_input = input.input};
 }
 
 // The sounds of a tick's movement, fired once per input off the accumulated events. The launch pad
@@ -130,28 +125,28 @@ static void fire_move_event_effects(server_context_t& context, const entities::P
   if (move_events.jumped)
   {
     shared::Jump fx{};
-    fx.origin          = player.position;
-    fx.attached_entity = player.entity_id;
-    shared::fire_jump(context.outgoing.effects, fx);
+    fx.site.origin          = player.position;
+    fx.site.attached_entity = player.entity_id;
+    shared::write_jump(context.outgoing.tick_broadcast, fx);
   }
   if (move_events.landed && move_events.land_impact_speed > context.cvars->pm_minimum_land_impact_speed)
   {
     shared::Land fx{};
-    fx.origin           = player.position;
-    fx.scale            = move_events.land_impact_speed;
-    fx.attached_entity  = player.entity_id;
-    fx.surface_material = shared::material_index_under(context.world.session, move_events.ground_contact);
-    shared::fire_land(context.outgoing.effects, fx);
+    fx.site.origin           = player.position;
+    fx.site.scale            = move_events.land_impact_speed;
+    fx.site.attached_entity  = player.entity_id;
+    fx.site.surface_material = shared::material_index_under(context.world.session, move_events.ground_contact);
+    shared::write_land(context.outgoing.tick_broadcast, fx);
   }
   if (move_events.stepped)
   {
     shared::Footstep fx{};
-    fx.origin           = player.position;
-    fx.normal           = move_events.ground_contact.plane.normal;
-    fx.scale            = move_events.step_speed;
-    fx.attached_entity  = player.entity_id;
-    fx.surface_material = shared::material_index_under(context.world.session, move_events.ground_contact);
-    shared::fire_footstep(context.outgoing.effects, fx);
+    fx.site.origin           = player.position;
+    fx.site.normal           = move_events.ground_contact.plane.normal;
+    fx.site.scale            = move_events.step_speed;
+    fx.site.attached_entity  = player.entity_id;
+    fx.site.surface_material = shared::material_index_under(context.world.session, move_events.ground_contact);
+    shared::write_footstep(context.outgoing.tick_broadcast, fx);
   }
 
   if (move_events.launched_by_pad)
@@ -161,11 +156,11 @@ static void fire_move_event_effects(server_context_t& context, const entities::P
     case shared::movement_volume_kind_t::Jump_Pad:
     {
       shared::Jump_Pad_Launch fx{};
-      fx.origin = shared::movement_volume_origin(world.movement_volumes, move_events.pad_uid,
+      fx.site.origin = shared::movement_volume_origin(world.movement_volumes, move_events.pad_uid,
                                                  player.position);
-      fx.normal          = linalg::normalize(player.velocity);
-      fx.attached_entity = player.entity_id;
-      shared::fire_jump_pad_launch(context.outgoing.effects, fx);
+      fx.site.normal          = linalg::normalize(player.velocity);
+      fx.site.attached_entity = player.entity_id;
+      shared::write_jump_pad_launch(context.outgoing.tick_broadcast, fx);
       break;
     }
     case shared::movement_volume_kind_t::Bounce:
@@ -178,10 +173,10 @@ static void fire_move_event_effects(server_context_t& context, const entities::P
       linalg::length_squared(move_events.override_ended.surface_normal) > 0.f)
   {
     shared::Pilot_Impact fx{};
-    fx.origin          = move_events.override_ended.surface_point;
-    fx.normal          = move_events.override_ended.surface_normal;
-    fx.attached_entity = player.entity_id;
-    shared::fire_pilot_impact(context.outgoing.effects, fx);
+    fx.site.origin          = move_events.override_ended.surface_point;
+    fx.site.normal          = move_events.override_ended.surface_normal;
+    fx.site.attached_entity = player.entity_id;
+    shared::write_pilot_impact(context.outgoing.tick_broadcast, fx);
   }
 }
 
@@ -193,34 +188,33 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
   const shared::movement_settings_t move_settings = shared::movement_settings_from_cvars(*context.cvars);
 
-  for (const auto& [client_slot, input] : context.incoming.client_inputs)
+  for (const received_client_input_t& received : context.incoming.client_inputs)
   {
+    const int32_t               client_slot = received.slot;
+    const shared::Client_Input& input       = received.input;
     const std::optional<accepted_client_input_t> accepted = try_accept_client_input(context, client_slot, input);
     if (!accepted)
       continue;
 
     client_slot_t&                 client        = context.clients[client_slot];
     entities::Player_Entity&       player        = *accepted->player;
-    const shared::tick_input_t& tick_input = accepted->tick_input;
+    const shared::Tick_Input& tick_input = accepted->tick_input;
 
     shared::queue_replay_player_view(
         context.world.replay_recorder,
         shared::replay_player_view_from_input(static_cast<uint8_t>(client_slot),
-                                              {.from_tick    = input.interpolated_from_tick(),
-                                               .towards_tick = input.interpolated_towards_tick(),
-                                               .fraction     = input.interpolation_fraction()},
+                                              {.from_tick    = input.interpolated_from_tick,
+                                               .towards_tick = input.interpolated_towards_tick,
+                                               .fraction     = input.interpolation_fraction},
                                               tick_input));
 
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
-    client.latest_buttons_bitmap       = tick_input.buttons_at_end();
+    client.latest_buttons_bitmap       = shared::buttons_at_end_of_tick(tick_input);
 
-    if (input.has_view_fov_degrees() && input.has_view_aspect())
-    {
-      const shared::lens_watch_screen_t view = shared::clamp_lens_watch_screen(
-          {.fov_degrees = input.view_fov_degrees(), .aspect = input.view_aspect()});
-      player.view_fov_degrees = view.fov_degrees;
-      player.view_aspect      = view.aspect;
-    }
+    const shared::lens_watch_screen_t screen = shared::clamp_lens_watch_screen(
+        {.fov_degrees = input.view_fov_degrees, .aspect = input.view_aspect});
+    player.view_fov_degrees = screen.fov_degrees;
+    player.view_aspect      = screen.aspect;
 
     const bool is_dead = player.health.current_health <= 0;
 

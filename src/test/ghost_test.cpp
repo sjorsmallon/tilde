@@ -280,17 +280,7 @@ void test_write_then_read_back()
 
 void test_transfer_messages_round_trip()
 {
-  network::Bit_Writer available_writer;
-  serialize_ghost_available(available_writer, {.party_size = 2, .ghost_hash = 0xdeadbeef, .byte_count = 70000});
-  network::Bit_Reader available_reader(available_writer.buffer.data(), available_writer.buffer.size());
-  const ghost_available_message_t available = deserialize_ghost_available(available_reader);
-  assert(available.party_size == 2 && available.ghost_hash == 0xdeadbeef && available.byte_count == 70000);
-
-  network::Bit_Writer request_writer;
-  serialize_request_ghost(request_writer, {.ghost_hash = 0xdeadbeef});
-  network::Bit_Reader request_reader(request_writer.buffer.data(), request_writer.buffer.size());
-  assert(deserialize_request_ghost(request_reader).ghost_hash == 0xdeadbeef);
-
+  // The announce and the request are rows of messages.def, round-tripped by messages_test.
   const std::vector<uint8_t> ghost_bytes = serialize_ghost(make_ghost(6, 2));
   network::Bit_Writer        data_writer;
   serialize_ghost_data(data_writer, {.party_size = 2, .ghost_hash = 7, .bytes = ghost_bytes});

@@ -19,8 +19,6 @@
 #include "hud.hpp"
 #include "weapon_fire_audio.hpp"
 
-#include "game.pb.h"
-
 #include <algorithm>
 #include <format>
 #include <iterator>
@@ -291,59 +289,43 @@ void react_to_snapshot_changes(client_context_t& context,
 } // namespace
 
 std::optional<decoded_snapshot_t>
-try_decode_snapshot(const client_context_t& context, const game::S2C_EntityPackage& package)
+try_decode_snapshot(const client_context_t& context, const shared::Entity_Package& package)
 {
-  if (!package.has_entity_data() || package.entity_data().empty())
-    return std::nullopt;
+  const uint32_t server_tick = context.connection.last_server_tick;
 
-  // the tick that the server ran and produced this data.
-  const uint32_t server_tick = package.has_server_tick() ? package.server_tick() : 0;
-
-  // if it's one that's older than the one we have, skip it.
   if (server_tick <= context.replication.latest_processed_tick &&
       context.replication.latest_processed_tick != 0)
     return std::nullopt;
 
-  // is this a baseline tick or a delta tick?
-  const std::optional<uint32_t> baseline_tick = ::network::snapshot_baseline_tick(package);
   const ::network::snapshot_frame_t* baseline = nullptr;
-  if (baseline_tick.has_value())
+  if (package.delta_from_tick != 0)
   {
-    baseline = context.replication.snapshot_history.find(*baseline_tick);
+    baseline = context.replication.snapshot_history.find(package.delta_from_tick);
     if (baseline == nullptr)
     {
-      // the server deltaed against a tick we no longer hold.
-      // not anything meaningful to do, drop the packet and
-      // wait for a new baseline.
       log_error("[CLIENT] Snapshot {} is a delta from tick {}, which is not in our history "
                 "(acked {}). Dropping the packet; the server will re-baseline.",
-                server_tick, *baseline_tick, context.replication.snapshot_history.acked_tick);
+                server_tick, package.delta_from_tick, context.replication.snapshot_history.acked_tick);
       return std::nullopt;
     }
   }
 
-  const auto* data = reinterpret_cast<const ::network::uint8*>(package.entity_data().data());
-  const size_t data_size = package.entity_data().size();
-  ::network::Bit_Reader reader(data, data_size);
+  ::network::Bit_Reader reader(package.entity_data.data, package.entity_data.size());
 
-  // latest snapshot starts from the baseline that's attached to the incoming
-  // message, whether the incoming message _is_ the baseline, or a delta.
-  auto decoded = decoded_snapshot_t{};
+  decoded_snapshot_t decoded;
   if (!::network::deserialize_snapshot(reader, baseline, decoded.frame))
     return std::nullopt;
 
-  decoded.frame.tick = server_tick;
-
-  if (package.has_latest_processed_input_number())
-    decoded.latest_processed_input_number = package.latest_processed_input_number();
+  decoded.frame.tick                    = server_tick;
+  decoded.latest_processed_input_number = package.latest_processed_input_number;
 
   if (context.cvars->net_snapshot_debug && server_tick % SNAPSHOT_DEBUG_TICK_INTERVAL == 0)
   {
     log_terminal("[net] snapshot {}: {}, {} players, {} bytes", server_tick,
-                 baseline_tick.has_value() ? std::format("delta from {}", *baseline_tick)
-                                           : std::string("full update"),
+                 baseline != nullptr ? std::format("delta from {}", package.delta_from_tick)
+                                     : std::string("full update"),
                  decoded.frame.entities.entities_of_type<entities::Player_Entity>().size(),
-                 data_size);
+                 package.entity_data.size());
   }
 
   return decoded;
@@ -407,15 +389,13 @@ void advance_newest_held_snapshot(client_context_t& context, decoded_snapshot_t&
   react_to_snapshot_changes(context, previous, decoded.frame);
 
   // --- 4. The server's word on our input stream ---
-  if (decoded.latest_processed_input_number.has_value())
-    context.prediction.latest_input_number_processed_by_server =
-        *decoded.latest_processed_input_number;
+  context.prediction.latest_input_number_processed_by_server = decoded.latest_processed_input_number;
 
   // erase any input number lower than the latest acknowledged.
   std::erase_if(context.prediction.unacked_inputs,
-                [&](const game::C2S_ClientInput& input)
+                [&](const shared::Client_Input& input)
                 {
-                  return input.input_number() <=
+                  return input.input_number <=
                          context.prediction.latest_input_number_processed_by_server;
                 });
 

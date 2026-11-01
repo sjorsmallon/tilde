@@ -2,7 +2,7 @@
 
 #include "assets/asset_types.hpp"
 #include "linalg.hpp"
-#include "hit_region.hpp"
+#include "entities/generated/entities_core_generated.hpp"
 #include "skeleton.hpp"
 #include "span.hpp"
 
@@ -40,7 +40,7 @@ struct hitbox_volume_t
   hitbox_shape_t       shape = hitbox_shape_t::Capsule;
   std::string          start_bone;
   std::string          end_bone; // == start_bone for a Sphere
-  shared::hit_region_t region    = shared::hit_region_t::Torso;
+  entities::Hit_Region region    = entities::Hit_Region::Torso;
 
   // Sphere, Capsule, Cylinder.
   float radius = 0.0f;
@@ -125,7 +125,7 @@ struct posed_hitbox_t
   float                radius = 0.0f;
   linalg::vec3f        half_extents = {0, 0, 0};
   hitbox_frame_t       frame;  // Box only; the other shapes are frame-free
-  shared::hit_region_t region = shared::hit_region_t::Torso;
+  entities::Hit_Region region = entities::Hit_Region::Torso;
 
   linalg::vec3f center() const { return (start + end) * 0.5f; }
 };
@@ -139,7 +139,7 @@ struct posed_hitbox_t
 // constructions would be a silhouette that disagrees with what you can hit.
 inline posed_hitbox_t make_box_hit_volume(const linalg::vec3f  &center,
                                           const linalg::vec3f  &half_extents,
-                                          shared::hit_region_t  region)
+                                          entities::Hit_Region  region)
 {
   posed_hitbox_t volume{};
   volume.shape        = hitbox_shape_t::Box;
@@ -153,7 +153,7 @@ inline posed_hitbox_t make_box_hit_volume(const linalg::vec3f  &center,
 // A sphere at `center`. start == end, so center() is exact and the Sphere arm
 // reads `start`. One spelling for the same reason as the box above.
 inline posed_hitbox_t make_sphere_hit_volume(const linalg::vec3f& center, float radius,
-                                             shared::hit_region_t region)
+                                             entities::Hit_Region region)
 {
   posed_hitbox_t volume{};
   volume.shape  = hitbox_shape_t::Sphere;

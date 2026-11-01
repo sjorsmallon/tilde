@@ -698,6 +698,14 @@ void test_command_binders()
 
 // --- 5. Mirroring -----------------------------------------------------------
 
+shared::Cvar_Value make_cvar_value(uint16_t id, const char* text)
+{
+  shared::Cvar_Value value;
+  value.id = id;
+  value.text.set(text);
+  return value;
+}
+
 void test_mirroring()
 {
   std::cout << "[mirroring]\n";
@@ -706,39 +714,38 @@ void test_mirroring()
   cvars::cvar_state_t last_broadcast = server;
 
   // Nothing changed yet: no traffic. A per-tick diff that always fires would
-  // put ten pairs on the wire every tick forever.
-  check(shared::collect_changed_mirrored_cvars(server, last_broadcast)
-            .values.empty(),
-        "an unchanged state produces no pairs");
+  // put ten values on the wire every tick forever.
+  check(shared::collect_changed_mirrored_cvars(server, last_broadcast).empty(),
+        "an unchanged state produces no values");
 
   // A DIRECT field write replicates -- there is no Set() to forget to call.
   server.pm_maxspeed = 400.f;
-  shared::cvar_values_message_t changed =
+  std::vector<shared::Cvar_Value> changed =
       shared::collect_changed_mirrored_cvars(server, last_broadcast);
-  check(changed.values.size() == 1, "exactly the changed cvar is collected");
-  check(changed.values[0].id == cvars::cvar_id::pm_maxspeed,
+  check(changed.size() == 1, "exactly the changed cvar is collected");
+  check(changed[0].id == (uint16_t)cvars::cvar_id::pm_maxspeed,
         "the changed cvar is the one that changed");
-  check_equal(changed.values[0].text, "400", "the pair carries the new value");
+  check_equal(changed[0].text.c_str(), "400", "the value carries the new text");
 
   // A non-@Mirrored change is NOT collected: the client owns its own copy.
   last_broadcast          = server;
   server.debug_show_navmesh = true;
   server.cl_timescale       = 0.25f;
-  check(shared::collect_changed_mirrored_cvars(server, last_broadcast)
-            .values.empty(),
-        "changes to unflagged cvars produce no pairs");
+  check(shared::collect_changed_mirrored_cvars(server, last_broadcast).empty(),
+        "changes to unflagged cvars produce no values");
 
   // The full set is what a joining client gets, so it must be the whole
   // @Mirrored subset and nothing else.
-  shared::cvar_values_message_t full = shared::collect_mirrored_cvars(server);
-  check(full.values.size() == cvars::mirrored_cvars().size(),
+  std::vector<shared::Cvar_Value> full = shared::collect_mirrored_cvars(server);
+  check(full.size() == cvars::mirrored_cvars().size(),
         "the full set covers every @Mirrored cvar");
-  for (const shared::cvar_value_t& value : full.values)
-    check((cvars::cvar_info(value.id).flags & cvars::CVAR_FLAG_MIRRORED) != 0,
+  for (const shared::Cvar_Value& value : full)
+    check((cvars::cvar_info((cvars::cvar_id)value.id).flags & cvars::CVAR_FLAG_MIRRORED) != 0,
           "the full set carries only @Mirrored cvars");
 
-  // Wire round-trip, then apply: a fresh client must end up bit-identical to
-  // the server on every mirrored member, because it feeds them into the same
+  // Wire round-trip through the generated Cvar_Values rows, as many as the
+  // set takes, then apply: a fresh client must end up bit-identical to the
+  // server on every mirrored member, because it feeds them into the same
   // player_move() the server runs.
   server.pm_maxspeed  = 411.5f;
   server.pm_quake_friction  = 6.25f;
@@ -746,24 +753,33 @@ void test_mirroring()
   server.pm_overbounce = 1.001f;
   full = shared::collect_mirrored_cvars(server);
 
-  network::Bit_Writer writer;
-  shared::serialize_cvar_values(writer, full);
-  network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
-  shared::cvar_values_message_t received = shared::deserialize_cvar_values(reader);
+  shared::reliable_stream_t stream;
+  shared::write_cvar_value_messages(stream, full);
+  stream.records.finish();
+  check(stream.records.count == (full.size() + 63) / 64, "the set is cut into rows of at most the bound");
 
-  check(received.values.size() == full.values.size(),
-        "the pair count survives the wire");
-  for (size_t index = 0; index < received.values.size(); ++index)
+  network::Bit_Reader reader(stream.records.writer.buffer.data(), stream.records.writer.buffer.size());
+  const uint32_t record_count = reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS);
+  std::vector<shared::Cvar_Value> received;
+  for (uint32_t record = 0; record < record_count; ++record)
   {
-    check(received.values[index].id == full.values[index].id,
-          "the cvar id survives the wire");
-    check_equal(received.values[index].text, full.values[index].text,
-                "the value text survives the wire");
+    check(reader.read_bits(16) == (uint32_t)shared::Message_Type::Cvar_Values, "every record is a Cvar_Values");
+    const std::optional<shared::Cvar_Values> message = shared::try_read_cvar_values(reader);
+    check(message.has_value(), "the record decodes");
+    for (const shared::Cvar_Value& value : message->values)
+      received.push_back(value);
+  }
+
+  check(received.size() == full.size(), "the value count survives the wire");
+  for (size_t index = 0; index < received.size(); ++index)
+  {
+    check(received[index].id == full[index].id, "the cvar id survives the wire");
+    check_equal(received[index].text.c_str(), full[index].text.c_str(), "the value text survives the wire");
   }
 
   cvars::cvar_state_t client;
   check(shared::apply_cvar_values(client, received),
-        "a well-formed message applies cleanly");
+        "a well-formed set applies cleanly");
   for (cvars::cvar_id id : cvars::mirrored_cvars())
   {
     const cvars::cvar_info_t& info = cvars::cvar_info(id);
@@ -781,37 +797,35 @@ void test_mirroring()
   check(client.debug_show_navmesh == false,
         "a client-side debug toggle is untouched by a mirror apply");
 
-  // The server may only push what it OWNS. A pair naming a non-@Mirrored cvar
+  // The server may only push what it OWNS. A value naming a non-@Mirrored cvar
   // is refused rather than silently overwriting a locally-owned value.
   std::cout << "  (the next few log_errors are expected -- rejection tests)\n";
-  shared::cvar_values_message_t hostile;
-  hostile.values.push_back({cvars::cvar_id::cl_timescale, "9"});
+  const std::vector<shared::Cvar_Value> hostile = {make_cvar_value((uint16_t)cvars::cvar_id::cl_timescale, "9")};
   cvars::cvar_state_t defended;
   check(!shared::apply_cvar_values(defended, hostile),
-        "a non-@Mirrored pair is refused");
-  check(defended.cl_timescale == 1.0f, "the refused pair changed nothing");
+        "a non-@Mirrored value is refused");
+  check(defended.cl_timescale == 1.0f, "the refused value changed nothing");
 
   // An id past the end of our table can only mean the two builds disagree
   // about cvars.def despite a matching schema hash -- loud, not silent.
-  shared::cvar_values_message_t out_of_range;
-  out_of_range.values.push_back({(cvars::cvar_id)cvars::CVAR_COUNT, "1"});
+  const std::vector<shared::Cvar_Value> out_of_range = {make_cvar_value((uint16_t)cvars::CVAR_COUNT, "1")};
   check(!shared::apply_cvar_values(defended, out_of_range),
         "an out-of-range cvar id is refused");
 
-  // One bad pair must not drop the rest: a tick's worth of movement constants
+  // One bad value must not drop the rest: a tick's worth of movement constants
   // still lands, and only the bad one is reported.
-  shared::cvar_values_message_t mixed;
-  mixed.values.push_back({cvars::cvar_id::pm_maxspeed, "not_a_number"});
-  mixed.values.push_back({cvars::cvar_id::pm_jumpspeed, "290"});
+  const std::vector<shared::Cvar_Value> mixed = {
+      make_cvar_value((uint16_t)cvars::cvar_id::pm_maxspeed, "not_a_number"),
+      make_cvar_value((uint16_t)cvars::cvar_id::pm_jumpspeed, "290")};
   cvars::cvar_state_t partial;
   check(!shared::apply_cvar_values(partial, mixed),
-        "a message with a bad pair reports failure");
-  check(partial.pm_maxspeed == 320.f, "the bad pair left its value alone");
-  check(partial.pm_jumpspeed == 290.f, "the good pair still applied");
+        "a set with a bad value reports failure");
+  check(partial.pm_maxspeed == 320.f, "the bad value left its cvar alone");
+  check(partial.pm_jumpspeed == 290.f, "the good value still applied");
 
-  // An empty message is legal and does nothing (the server simply never sends
+  // An empty set is legal and does nothing (the server simply never sends
   // one, but a truncated read must not be mistaken for a failure).
-  check(shared::apply_cvar_values(partial, {}), "an empty message applies cleanly");
+  check(shared::apply_cvar_values(partial, Span<const shared::Cvar_Value>{}), "an empty set applies cleanly");
 }
 
 // --- 6. Reverting on disconnect ---------------------------------------------
@@ -837,7 +851,7 @@ void test_mirror_revert()
   // Every @Mirrored cvar is back to the cvars.def default -- checked over the
   // whole set through the generated table, not just the two written above, so
   // adding an @Mirrored cvar cannot quietly escape the revert.
-  check(shared::collect_changed_mirrored_cvars(client, defaults).values.empty(),
+  check(shared::collect_changed_mirrored_cvars(client, defaults).empty(),
         "every @Mirrored cvar matches a default-constructed state");
 
   // ...and nothing the client owns was touched. This is the half that makes the
@@ -849,7 +863,7 @@ void test_mirror_revert()
   // Idempotent: reverting an already-default state is a no-op, so calling it
   // from both on_exit and reset_for_new_connection costs nothing.
   shared::revert_mirrored_cvars_to_defaults(client);
-  check(shared::collect_changed_mirrored_cvars(client, defaults).values.empty(),
+  check(shared::collect_changed_mirrored_cvars(client, defaults).empty(),
         "a second revert changes nothing");
 }
 

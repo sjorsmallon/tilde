@@ -13,37 +13,19 @@ namespace shared
 
 struct map_t; // fwd; build_map_package() lives in the .cpp (includes map.hpp)
 
-// --- Map switching control messages ---
+// --- The compiled map package, a bulk TRANSFER ---
 //
-// These are bitstream-native (Bit_Writer / Bit_Reader), NOT protobuf. New
-// networking code is written directly over the bitstream as we migrate off
-// protobuf (see todo.md "Remove protobuf"). They ride the existing packet
-// fragmenter via convert_to_packets() keyed on a dedicated Message_Type, and
-// are decoded in the game layer (play_state / server_impl) rather than in the
-// network reassembly, which stays ignorant of message semantics.
-
-// Server -> all clients: switch to this map now. Carries the same (path, name,
-// hash) triple as CmdAccept so the client can reference-load its own copy and
-// verify it matches the server's. Byte streaming (a future S2C_MapData) is the
-// fallback for when the client lacks the file; it lands with the packet
-// reassembly reliability work (see todo.md).
-struct change_map_message_t
-{
-  std::string map_path;     // loadable path/identifier (see CmdAccept TODO)
-  std::string map_name;     // logical worldspawn name, for display
-  uint32_t    content_hash; // FNV-1a of the map file bytes
-};
-
-void serialize_change_map(network::Bit_Writer &writer,
-                          const change_map_message_t &msg);
-change_map_message_t deserialize_change_map(network::Bit_Reader &reader);
-
-// There is deliberately no map-loaded ACK here any more. "I hold this map" is
-// client STATE the server needs, not an occurrence, so it is a rider on
-// C2S_ClientInput (`map_content_hash`) reported every tick -- state that gates
-// behavior is replicated as state, never delivered as an event. A one-shot ack
-// could be lost, and losing it withheld snapshots forever; a value that is
-// continuously true self-heals in one tick with no retransmit anywhere. See
+// The control messages around it (Change_Map, the Accept's map, the client's
+// Map_Data_Request) are rows of messages.def; what stays hand-written here is
+// the package itself, which rides S2C_MapData as a paced transfer with receipt
+// bitmaps rather than as a message.
+//
+// There is deliberately no map-loaded ACK. "I hold this map" is client STATE
+// the server needs, not an occurrence, so it is a rider on Client_Input
+// (`map_content_hash`) reported every tick -- state that gates behavior is
+// replicated as state, never delivered as an event. A one-shot ack could be
+// lost, and losing it withheld snapshots forever; a value that is continuously
+// true self-heals in one tick with no retransmit anywhere. See
 // reliable_stream_def.md §12.
 
 // --- Compiled map package (the wire artifact / .bsp analogue) ---
@@ -94,18 +76,6 @@ bool deserialize_map_package(const std::vector<uint8_t> &bytes,
 // (map_name, package_hash) — it covers entities AND baked data, unlike
 // compute_map_content_hash() which hashes only the entity text.
 uint32_t compute_map_package_hash(const std::vector<uint8_t> &package_bytes);
-
-// Client -> server: I lack the compiled package for this map (cache miss or
-// package_hash mismatch); please stream it. Sent instead of hard-erroring.
-struct request_map_data_message_t
-{
-  std::string map_name;
-};
-
-void serialize_request_map_data(network::Bit_Writer &writer,
-                                const request_map_data_message_t &msg);
-request_map_data_message_t
-deserialize_request_map_data(network::Bit_Reader &reader);
 
 // Server -> client: here is the compiled package. `compressed_package` is the
 // serialize_map_package() blob through compress_bytes, always; `package_hash`

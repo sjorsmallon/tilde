@@ -3,6 +3,7 @@
 #include "../shared/network/bitstream.hpp"
 #include "../shared/network/cvar_mirror.hpp"
 #include "../shared/network/entity_snapshot.hpp"
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/network/reliable_stream.hpp"
 #include "../shared/network/server_transport_layer.hpp"
 #include "../shared/replay/replay_recorder.hpp"
@@ -10,58 +11,135 @@
 #include "server_context.hpp"
 #include "server_messages.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace server
 {
 
 // Bots have no client, so nothing else on the wire says where one thinks it is
-// going; this is the only way to see a path in the viewport.
-static void send_bot_debug(server_context_t &context)
+// going; this is the only way to see a path in the viewport. On each ready
+// client's own scope, never the broadcast: a long path is a record the cut
+// would drop every tick.
+static void write_bot_debug(server_context_t &context)
 {
   if (context.world.bots.empty())
     return;
 
-  game::S2C_BotDebug bot_debug_message;
-  for (const auto &bot : context.world.bots)
+  std::vector<shared::Bot_Debug> rows(1);
+  for (const Bot_State &bot : context.world.bots)
   {
-    auto *entry = bot_debug_message.add_bots();
-    entry->set_slot(bot.player_slot);
-    entry->set_goal(static_cast<int>(bot.goal));
-    entry->set_type(static_cast<int>(bot.type));
-    entry->set_path_index(bot.path_index);
-    for (const auto &wp : bot.path)
+    shared::Bot_Debug_Entry entry;
+    entry.slot     = bot.player_slot;
+    entry.goal     = bot.goal;
+    entry.behavior = bot.type;
+    for (size_t index = static_cast<size_t>(std::max(bot.path_index, 0)); index < bot.path.size(); ++index)
+      if (!entry.path.try_push_back(bot.path[index]))
+        break;
+
+    if (!rows.back().bots.try_push_back(entry))
     {
-      auto *v = entry->add_path();
-      v->set_x(wp.x);
-      v->set_y(wp.y);
-      v->set_z(wp.z);
+      rows.emplace_back();
+      (void)rows.back().bots.try_push_back(entry);
     }
   }
 
   for (connected_client_t row : connected_clients(context))
   {
-    network::send_protobuf_message(context.transport_layer, context.socket, row.slot, bot_debug_message);
+    if (!row.client.map_ready)
+      continue;
+    for (const shared::Bot_Debug &message : rows)
+      shared::write_bot_debug(context.outgoing.datagram[row.slot], message);
   }
 }
 
+// The changed @Mirrored subset, once, on the reliable broadcast. Retained the
+// moment it is written: the stream delivers what it holds.
 static void broadcast_changed_cvar_values(server_context_t &context)
 {
-  shared::cvar_values_message_t changed =
-      shared::collect_changed_mirrored_cvars(*context.cvars,
-                                             context.last_broadcast_cvars);
-  if (changed.values.empty())
+  const std::vector<shared::Cvar_Value> changed =
+      shared::collect_changed_mirrored_cvars(*context.cvars, context.last_broadcast_cvars);
+  if (changed.empty())
     return;
 
-  for (connected_client_t row : connected_clients(context))
-    send_cvar_values(context, row.slot, changed);
-
-  // just copy the whole struct.
+  shared::write_cvar_value_messages(context.outgoing.tick_broadcast_reliable, changed);
   context.last_broadcast_cvars = *context.cvars;
 
-  for (const shared::cvar_value_t &value : changed.values)
+  for (const shared::Cvar_Value &value : changed)
     log_terminal("Mirroring '{}' = {} to connected clients",
-                 cvars::cvar_info(value.id).name, value.text);
+                 cvars::cvar_info(static_cast<cvars::cvar_id>(value.id)).name, value.text.c_str());
+}
+
+// One Message datagram per connected client: the slot's own records first, then
+// the broadcast, and the broadcast only when the client holds the map. Nothing
+// else is gated. An over-long datagram is cut at a record boundary, broadcast
+// tail first; the slot's own records are never dropped, so they fragment.
+static void send_message_datagrams(server_context_t &context)
+{
+  context.outgoing.tick_broadcast.finish();
+
+  std::vector<network::uint8> payload;
+  bool                        logged_cut = false;
+  for (connected_client_t row : connected_clients(context))
+  {
+    shared::message_stream_t &own = context.outgoing.datagram[row.slot];
+    own.finish();
+
+    shared::begin_server_message_payload(payload, context.tick_number);
+    if (!own.empty())
+      shared::append_message_stream(payload, own);
+
+    if (row.client.map_ready && !context.outgoing.tick_broadcast.empty())
+    {
+      const size_t fragments = (payload.size() + network::MAX_PAYLOAD_SIZE_IN_BYTES - 1) / network::MAX_PAYLOAD_SIZE_IN_BYTES;
+      const size_t budget    = std::max<size_t>(fragments, 1) * network::MAX_PAYLOAD_SIZE_IN_BYTES - payload.size();
+      const uint16_t dropped = shared::append_message_records_that_fit(payload, context.outgoing.tick_broadcast, budget);
+      if (dropped != 0 && !logged_cut)
+      {
+        log_warning("tick {}: the broadcast overran slot {}'s datagram; its last {} of {} records were dropped",
+                    context.tick_number, row.slot, dropped, context.outgoing.tick_broadcast.count);
+        logged_cut = true;
+      }
+    }
+
+    if (payload.size() == sizeof(uint32_t))
+      continue;
+
+    for (const network::Packet &packet :
+         network::convert_to_packets(payload, network::Payload_Kind::Message,
+                                     context.transport_layer.next_message_id))
+      network::send_packet_to_client(context.transport_layer, context.socket, row.slot, packet);
+  }
+}
+
+// A finished reliable scope as one Message record on a slot's stream.
+static void queue_reliable_records(server_context_t &context, int32_t slot,
+                                   const shared::message_stream_t &records)
+{
+  std::vector<network::uint8> payload;
+  shared::begin_server_message_payload(payload, context.tick_number);
+  shared::append_message_stream(payload, records);
+  network::queue_reliable_message(context.transport_layer.clients[slot].reliable_stream,
+                                  static_cast<network::uint8>(network::Payload_Kind::Message), payload);
+}
+
+// Each client's own reliable records first, then the tick's reliable broadcast,
+// written once and appended to every client's stream: the same order a
+// datagram keeps.
+static void queue_reliable_messages(server_context_t &context)
+{
+  shared::message_stream_t &broadcast = context.outgoing.tick_broadcast_reliable.records;
+  broadcast.finish();
+
+  for (connected_client_t row : connected_clients(context))
+  {
+    shared::message_stream_t &own = context.outgoing.reliable[row.slot].records;
+    own.finish();
+    if (!own.empty())
+      queue_reliable_records(context, row.slot, own);
+    if (!broadcast.empty())
+      queue_reliable_records(context, row.slot, broadcast);
+  }
 }
 
 static void send_reliable_blocks_if_there_are_any(server_context_t &context)
@@ -97,95 +175,43 @@ static void send_reliable_blocks_if_there_are_any(server_context_t &context)
 
 void send_to_clients(server_context_t &context)
 {
-  send_bot_debug(context);
-
   network::snapshot_frame_t& frame = context.replication.snapshot_history.slot_for(context.tick_number);
   frame.clear();
   frame.tick = context.tick_number;
 
   frame.copy_replicated_entities_from(context.world.session.entity_system);
 
-  // Serialize and send to each client with per-client delta compression
+  // Each ready client's snapshot on its own datagram scope, ahead of the
+  // broadcast: a delta against the tick it says it holds, or a full update when
+  // the history no longer has that tick.
   for (connected_client_t row : connected_clients(context))
   {
-    const int32_t slot = row.slot;
-
-    // if the client doesn't have the map ready, they don't need deltas or full updates.
     if (!row.client.map_ready) continue;
 
-    auto writer = network::Bit_Writer{};
-
-    // what's the diff against the snapshot the client holds?
     const network::snapshot_frame_t* baseline =
-        context.replication.snapshot_history.find(context.clients[slot].held_snapshot_tick);
-
-    network::serialize_snapshot(writer, frame, baseline);
-
-    // create and send package
-    game::S2C_EntityPackage package;
-    package.set_server_tick(context.tick_number);
-    package.set_latest_processed_input_number(context.clients[slot].latest_processed_input_number);
-    network::set_snapshot_baseline(package, baseline);
-
-    package.set_entity_data(writer.buffer.data(), writer.buffer.size());
-    network::send_protobuf_message(context.transport_layer, context.socket, slot, package);
+        context.replication.snapshot_history.find(row.client.held_snapshot_tick);
+    shared::write_entity_package(context.outgoing.datagram[row.slot],
+                                 network::entity_package_from_snapshot(context.outgoing.snapshot_writer, frame,
+                                                                       baseline,
+                                                                       row.client.latest_processed_input_number));
   }
 
-  // send the effects in a batch.
-  std::vector<network::uint8> effect_batch_bytes;
-  if (!context.outgoing.effects.empty())
-  {
-    //@NOTE(SJM): why is this finish necessary?
-    context.outgoing.effects.finish();
+  write_bot_debug(context);
+  broadcast_changed_cvar_values(context);
 
-    game::S2C_EffectBatch batch;
-    batch.set_effect_data(context.outgoing.effects.writer.buffer.data(),
-                          context.outgoing.effects.writer.buffer.size());
-    batch.set_server_tick(context.tick_number);
+  send_message_datagrams(context);
+  queue_reliable_messages(context);
 
-    for (connected_client_t row : connected_clients(context))
-    {
-      if (!row.client.map_ready) continue;
-      network::send_protobuf_message(context.transport_layer, context.socket, row.slot, batch);
-    }
-
-    effect_batch_bytes.resize(batch.ByteSizeLong());
-    batch.SerializeToArray(effect_batch_bytes.data(), static_cast<int>(effect_batch_bytes.size()));
-  }
-
-  // send gameplay events in a batch. note that this is _reliable_ transfer
-  // because events cause gameplay state to change. cosmetic events nobody
-  // cares about. entity updates need neither: each is a delta against a tick the client says it holds.
-  std::vector<network::uint8> event_batch_bytes;
-  if (!context.outgoing.events.empty())
-  {
-
-    context.outgoing.events.finish();
-
-    game::S2C_GameEventBatch batch;
-    batch.set_event_data(context.outgoing.events.writer.buffer.data(),
-                         context.outgoing.events.writer.buffer.size());
-    batch.set_server_tick(context.tick_number);
-
-    event_batch_bytes.resize(batch.ByteSizeLong());
-    batch.SerializeToArray(event_batch_bytes.data(),
-                           static_cast<int>(event_batch_bytes.size()));
-
-    for (connected_client_t row : connected_clients(context))
-      network::queue_reliable_message(
-          row.transport.reliable_stream,
-          static_cast<network::uint8>(network::Message_Type::S2C_GameEventBatch),
-          event_batch_bytes);
-  }
-
+  const shared::message_stream_t &broadcast          = context.outgoing.tick_broadcast;
+  const shared::message_stream_t &broadcast_reliable = context.outgoing.tick_broadcast_reliable.records;
   shared::record_replay_tick(context.world.replay_recorder, frame,
-                             Span<const uint8_t>(effect_batch_bytes),
-                             Span<const uint8_t>(event_batch_bytes), *context.cvars);
+                             broadcast.empty() ? Span<const uint8_t>{} : Span<const uint8_t>(broadcast.writer.buffer),
+                             broadcast_reliable.empty() ? Span<const uint8_t>{}
+                                                        : Span<const uint8_t>(broadcast_reliable.writer.buffer),
+                             *context.cvars);
 
   // in theory redundant but just so we don't have stale shit to send.
   clear_outgoing(context);
-
-  broadcast_changed_cvar_values(context);
 
   // if we had reliable data to send, do so.
   send_reliable_blocks_if_there_are_any(context);

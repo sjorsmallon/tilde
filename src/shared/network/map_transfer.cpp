@@ -62,28 +62,6 @@ std::optional<std::vector<uint8_t>> try_decompress_bytes(Span<const uint8_t> com
 
 } // namespace
 
-// content_hash is a full-entropy 32-bit value, so it's written with the
-// variable-length uint helper (which handles the whole uint32 range safely)
-// rather than write_bits(.., 32) — the latter's 1 << 31 shift is UB on the
-// signed int accumulator inside Bit_Reader.
-
-void serialize_change_map(network::Bit_Writer &writer,
-                          const change_map_message_t &msg)
-{
-  network::write_string(writer, msg.map_path);
-  network::write_string(writer, msg.map_name);
-  network::write_var_uint(writer, msg.content_hash);
-}
-
-change_map_message_t deserialize_change_map(network::Bit_Reader &reader)
-{
-  change_map_message_t msg{};
-  network::read_string(reader, msg.map_path);
-  network::read_string(reader, msg.map_name);
-  msg.content_hash = network::read_var_uint(reader);
-  return msg;
-}
-
 // --- Compiled map package ---
 
 // Package container tag. Bump PACKAGE_VERSION on any layout change (e.g. a new
@@ -531,21 +509,7 @@ uint32_t compute_map_package_hash(const std::vector<uint8_t> &package_bytes)
   return hash;
 }
 
-// --- Streaming control messages ---
-
-void serialize_request_map_data(network::Bit_Writer &writer,
-                                const request_map_data_message_t &msg)
-{
-  network::write_string(writer, msg.map_name);
-}
-
-request_map_data_message_t
-deserialize_request_map_data(network::Bit_Reader &reader)
-{
-  request_map_data_message_t msg{};
-  network::read_string(reader, msg.map_name);
-  return msg;
-}
+// --- The package on the wire ---
 
 void serialize_map_data(network::Bit_Writer &writer,
                         const map_data_message_t &msg)

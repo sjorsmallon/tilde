@@ -56,23 +56,23 @@ bracket_verdict_t classify_bracket(interpolation_bracket_t requested,
                                    uint32_t max_rewind_ticks)
 {
   if (requested.from_tick == 0 || requested.towards_tick == 0)
-    return {bracket_status_t::Absent, {}};
+    return {Bracket_Status::Absent, {}};
 
   // the client never held the tick it seems to mention.
   if (requested.towards_tick > held_snapshot_tick || requested.towards_tick > current_tick)
-    return {bracket_status_t::Unheld, {}};
+    return {Bracket_Status::Unheld, {}};
 
   // from -> towards is borked or the fraction exceeds bounds.
   if (requested.from_tick > requested.towards_tick || !(requested.fraction >= 0.f) ||
       requested.fraction > 1.f)
-    return {bracket_status_t::Malformed, {}};
+    return {Bracket_Status::Malformed, {}};
 
   // The policy clamp. Ticks start at 1, so 1 is the oldest tick that can exist
   // at all; subtracting past it would wrap.
   const uint32_t oldest_allowed =
       current_tick > max_rewind_ticks ? current_tick - max_rewind_ticks : 1;
 
-  bracket_verdict_t verdict{bracket_status_t::Ok, requested};
+  bracket_verdict_t verdict{Bracket_Status::Ok, requested};
 
   // Each endpoint is PINNED to the boundary rather than the request being
   // rejected: a client at 300ms should still get a rewind, just a bounded one.
@@ -81,12 +81,12 @@ bracket_verdict_t classify_bracket(interpolation_bracket_t requested,
   if (verdict.bracket.from_tick < oldest_allowed)
   {
     verdict.bracket.from_tick = oldest_allowed;
-    verdict.status            = bracket_status_t::Clamped;
+    verdict.status            = Bracket_Status::Clamped;
   }
   if (verdict.bracket.towards_tick < oldest_allowed)
   {
     verdict.bracket.towards_tick = oldest_allowed;
-    verdict.status               = bracket_status_t::Clamped;
+    verdict.status               = Bracket_Status::Clamped;
   }
 
   return verdict;

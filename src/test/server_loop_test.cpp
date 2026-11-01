@@ -1,15 +1,75 @@
 #include "../shared/replay/ghost.hpp"
+#include "../shared/message_stream.hpp"
+#include "../shared/network/bitstream.hpp"
 #include "../shared/network/client_transport_layer.hpp"
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/network/ghost_transfer.hpp"
 #include "../shared/network/packet.hpp"
 #include "../shared/network/server_transport_layer.hpp"
 #include "../shared/network/udp_socket.hpp"
-#include "game.pb.h"
 #include <cassert>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <thread>
 
 using namespace network;
+
+// What a test collects off each side's poll, the shape the inboxes used to have:
+// the transport delivers through a callback, and a test keeps the bytes.
+struct received_payload_t
+{
+  int32_t            slot;
+  Address            sender;
+  std::vector<uint8> payload;
+};
+
+struct server_received_t
+{
+  std::vector<received_payload_t> message_payloads;
+};
+
+struct client_received_t
+{
+  std::vector<std::vector<uint8>> message_payloads;
+  std::vector<std::vector<uint8>> map_transfers;
+  std::vector<std::vector<uint8>> ghost_transfers;
+};
+
+static void poll_server(Server_Transport_Layer &state, Udp_Socket &socket, uint32_t tick,
+                        server_received_t &received)
+{
+  poll_network(state, socket, server_receive_drain_cap_in_datagrams, tick,
+               [&received](int32_t slot, const Address &sender, Span<const uint8> payload) {
+                 received.message_payloads.push_back(
+                     {slot, sender, std::vector<uint8>(payload.data, payload.data + payload.count)});
+               });
+}
+
+static void poll_client(Client_Transport_Layer &state, client_received_t &received)
+{
+  poll_client_network(state, client_receive_drain_cap_in_datagrams,
+                      [&received](Payload_Kind kind, Span<const uint8> payload) {
+                        std::vector<uint8> bytes(payload.data, payload.data + payload.count);
+                        switch (kind)
+                        {
+                        case Payload_Kind::Message:
+                          received.message_payloads.push_back(std::move(bytes));
+                          return;
+                        case Payload_Kind::Map_Transfer:
+                          received.map_transfers.push_back(std::move(bytes));
+                          return;
+                        case Payload_Kind::Ghost_Transfer:
+                          received.ghost_transfers.push_back(std::move(bytes));
+                          return;
+                        case Payload_Kind::Reliable:
+                        case Payload_Kind::Transfer_Receipt:
+                        case Payload_Kind::Count:
+                          break;
+                        }
+                        assert(false && "the client poll delivers no transport parcel");
+                      });
+}
 
 void test_receive_and_reassembly()
 {
@@ -45,27 +105,23 @@ void test_receive_and_reassembly()
 
   occupy_client_slot(state, 0, client_addr, 100);
 
-  // A batch of two, because the batch is the only input message on the wire and
-  // unpacking it into one inbox entry per input is the part worth exercising.
-  game::C2S_ClientInputBatch batch;
+  // Two Client_Input rows in one stream, the way the client sends its unacked
+  // tail: one Message datagram whose payload the dispatch walks row by row.
+  shared::message_stream_t stream;
   for (int input_number : {9, 10})
   {
-    game::C2S_ClientInput *input = batch.add_inputs();
-    input->set_input_number(input_number);
-    input->set_buttons_bitfield(0xABCDull); // a payload marker, to prove the
-                                            // bytes survive the round trip
-    auto *va = input->mutable_viewangles();
-    va->set_yaw(45.0f);
-    va->set_pitch(0.0f);
+    shared::Client_Input input;
+    input.input_number           = input_number;
+    input.input.buttons_at_start = 0xABCDull; // a payload marker, to prove the
+                                              // bytes survive the round trip
+    input.input.view_at_end      = {45.0f, 0.0f};
+    shared::write_client_input(stream, input);
   }
-
-  std::vector<uint8> serialized_data(batch.ByteSizeLong());
-  batch.SerializeToArray(serialized_data.data(), serialized_data.size());
+  stream.finish();
 
   uint8 next_message_id = 0;
-  auto packets = convert_to_packets(
-      serialized_data, static_cast<uint8>(Message_Type::C2S_ClientInputBatch),
-      next_message_id);
+  auto packets = convert_to_packets(stream.writer.buffer, Payload_Kind::Message,
+                                    next_message_id);
 
   // Send packets
   Address server_addr(127, 0, 0, 1, 9001);
@@ -80,39 +136,37 @@ void test_receive_and_reassembly()
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
   // Server Receive
-  Server_Inbox inbox;
+  server_received_t inbox;
   // The 50ms sleep above is what makes this deterministic: the datagrams are
   // already queued, so the drain finds them and stops. The cap is the livelock
   // guard, not a window to wait in.
-  poll_network(state, server_socket, server_receive_drain_cap_in_datagrams, 140,
-               inbox);
+  poll_server(state, server_socket, 140, inbox);
 
   // Verify
-  if (inbox.client_inputs.empty())
+  if (inbox.message_payloads.empty())
   {
-    std::cerr << "Failed to receive/reassemble moves!" << std::endl;
-    // Debug
+    std::cerr << "Failed to receive/reassemble the input datagram!" << std::endl;
     std::cerr << "Partial packets count: " << state.clients[0].partial_packets.size()
               << std::endl;
     assert(false);
   }
 
-  // Both inputs of the batch, as separate inbox entries and in the order they
-  // were packed: the receive side unpacks, it does not deduplicate or reorder.
-  std::vector<const game::C2S_ClientInput *> inputs_for_player_0;
-  for (const auto &[pidx, input] : inbox.client_inputs)
-  {
-    if (pidx == 0)
-      inputs_for_player_0.push_back(&input);
-  }
+  // One payload, filed under the sender's slot, carrying both rows in the order
+  // they were written: the transport reassembles, it does not look inside.
+  assert(inbox.message_payloads.size() == 1 && inbox.message_payloads[0].slot == 0);
+  const std::vector<uint8> &payload = inbox.message_payloads[0].payload;
+  assert(payload == stream.writer.buffer && "the bytes survive the round trip");
 
-  assert(inputs_for_player_0.size() == 2 &&
-         "a batch of two must land as two inbox inputs");
-  assert(inputs_for_player_0[0]->input_number() == 9);
-  assert(inputs_for_player_0[1]->input_number() == 10);
-  assert(inputs_for_player_0[0]->buttons_bitfield() == 0xABCDull);
-  assert(inputs_for_player_0[1]->buttons_bitfield() == 0xABCDull);
-  std::cout << "  -> Input batch reassembled and unpacked correctly!" << std::endl;
+  Bit_Reader reader(payload.data(), payload.size());
+  assert(reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 2);
+  for (int input_number : {9, 10})
+  {
+    assert(reader.read_bits(16) == (uint32_t)shared::Message_Type::Client_Input);
+    const std::optional<shared::Client_Input> input = shared::try_read_client_input(reader);
+    assert(input && input->input_number == input_number);
+    assert(input->input.buttons_at_start == 0xABCDull && input->input.view_at_end.yaw == 45.0f);
+  }
+  std::cout << "  -> Input datagram reassembled and both rows read back!" << std::endl;
 
   // Arrival stamps the slot: this is what sv_timeout measures silence against.
   assert(state.clients[0].latest_packet_tick == 140);
@@ -152,16 +206,19 @@ void test_reliable_stream_round_trip()
   client_state.server_address = server_address;
   occupy_client_slot(server_state, 0, client_address, 100);
 
-  // A message with no protobuf behind it: the record's type is opaque to the
-  // stream, and CmdChangeMap is one the client files as a raw payload.
-  game::S2C_ServerMessage message;
-  message.set_message("the stream carries this");
-  std::vector<uint8> payload(message.ByteSizeLong());
-  message.SerializeToArray(payload.data(), static_cast<int>(payload.size()));
+  // A Server_Text on the stream the way the server queues one: a Message
+  // record holding the tick, then the finished reliable scope.
+  shared::reliable_stream_t reliable;
+  shared::Server_Text       text;
+  (void)text.text.set("the stream carries this");
+  shared::write_server_text(reliable, text);
+  reliable.records.finish();
 
+  std::vector<uint8> payload;
+  shared::begin_server_message_payload(payload, 123);
+  shared::append_message_stream(payload, reliable.records);
   queue_reliable_message(server_state.clients[0].reliable_stream,
-                         static_cast<uint8>(Message_Type::S2C_ServerMessage),
-                         payload);
+                         static_cast<uint8>(Payload_Kind::Message), payload);
 
   send_reliable_block(server_state, server_socket, 0);
   assert(server_state.clients[0].reliable_stream.block_number == 1);
@@ -169,26 +226,35 @@ void test_reliable_stream_round_trip()
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Client_Inbox inbox;
-  poll_client_network(client_state, client_receive_drain_cap_in_datagrams, inbox);
+  client_received_t inbox;
+  poll_client(client_state, inbox);
 
-  assert(inbox.server_text_messages.size() == 1 &&
-         "the record came out of the block and through the handler table");
-  assert(inbox.server_text_messages[0].message() == "the stream carries this");
+  assert(inbox.message_payloads.size() == 1 &&
+         "the record came out of the block and through the same deliver");
+  {
+    Bit_Reader reader(inbox.message_payloads[0].data(), inbox.message_payloads[0].size());
+    assert(reader.read_bits(32) == 123);
+    assert(reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 1);
+    assert(reader.read_bits(16) == (uint32_t)shared::Message_Type::Server_Text);
+    const std::optional<shared::Server_Text> read_back = shared::try_read_server_text(reader);
+    assert(read_back && std::string(read_back->text.c_str()) == "the stream carries this");
+  }
   assert(client_state.reliable_stream.received_through == 1);
   std::cout << "  -> Block delivered and framed back into a message!" << std::endl;
 
   // The ack is not a message: it rides the header of whatever the client sends
-  // next, which in the live client is its per-tick input.
-  game::C2S_Command any_outbound;
-  any_outbound.set_line("noclip 1");
-  send_protobuf_message(client_state, any_outbound);
+  // next, which in the live client is its per-tick input. Any datagram does.
+  shared::message_stream_t any_outbound;
+  shared::Connect          connect;
+  (void)connect.player_name.set("acker");
+  shared::write_connect(any_outbound, connect);
+  any_outbound.finish();
+  send_message_stream_to_server(client_state, any_outbound);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Server_Inbox server_inbox;
-  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
-               141, server_inbox);
+  server_received_t server_inbox;
+  poll_server(server_state, server_socket, 141, server_inbox);
 
   assert(server_state.clients[0].reliable_stream.block_length == 0 &&
          "an ordinary datagram's header freed the block");
@@ -232,17 +298,21 @@ void test_reliable_stream_round_trip_c2s()
   client_state.server_address = server_address;
   occupy_client_slot(server_state, 0, client_address, 300);
 
-  // The two riders, queued in one frame so they share a block -- which is also
-  // what makes "rely on order, never on grouping" checkable: they arrive in the
-  // order they were queued because the stream cannot reorder them.
-  game::C2S_Command command;
-  command.set_line("changelevel new_map");
-  queue_reliable_protobuf_message(client_state, command);
+  // The two rows, written into one frame's reliable scope and queued as one
+  // record -- which is also what makes "rely on order, never on grouping"
+  // checkable: they arrive in the order they were written because neither the
+  // scope nor the stream can reorder them.
+  shared::reliable_stream_t reliable;
+  shared::Console_Line      command;
+  (void)command.line.set("changelevel new_map");
+  shared::write_console_line(reliable, command);
 
-  const std::vector<uint8> request_payload = {0x11, 0x22, 0x33};
-  queue_reliable_client_message(
-      client_state, static_cast<uint8>(Message_Type::C2S_RequestMapData),
-      request_payload);
+  shared::Map_Data_Request request;
+  request.map_generation = 3;
+  (void)request.map_name.set("new_map");
+  shared::write_map_data_request(reliable, request);
+  reliable.records.finish();
+  queue_reliable_client_message(client_state, reliable.records.writer.buffer);
 
   service_client_reliable_stream(client_state);
   assert(client_state.reliable_stream.block_number == 1);
@@ -250,18 +320,23 @@ void test_reliable_stream_round_trip_c2s()
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Server_Inbox inbox;
-  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
-               301, inbox);
+  server_received_t inbox;
+  poll_server(server_state, server_socket, 301, inbox);
 
-  assert(inbox.developer_console_entries.size() == 1 &&
-         "the console line came out of the block and into the inbox the "
-         "unreliable path files into");
-  assert(inbox.developer_console_entries[0].first == 0);
-  assert(inbox.developer_console_entries[0].second == "changelevel new_map");
-  assert(inbox.map_data_requests.size() == 1 &&
-         "and so did the bitstream-native map request, still raw");
-  assert(inbox.map_data_requests[0].second == request_payload);
+  assert(inbox.message_payloads.size() == 1 &&
+         "the record came out of the block and through the deliver the unreliable path uses");
+  assert(inbox.message_payloads[0].slot == 0);
+  {
+    const std::vector<uint8> &received = inbox.message_payloads[0].payload;
+    Bit_Reader                reader(received.data(), received.size());
+    assert(reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 2);
+    assert(reader.read_bits(16) == (uint32_t)shared::Message_Type::Console_Line);
+    const std::optional<shared::Console_Line> line = shared::try_read_console_line(reader);
+    assert(line && std::string(line->line.c_str()) == "changelevel new_map");
+    assert(reader.read_bits(16) == (uint32_t)shared::Message_Type::Map_Data_Request);
+    const std::optional<shared::Map_Data_Request> read_back = shared::try_read_map_data_request(reader);
+    assert(read_back && read_back->map_generation == 3 && std::string(read_back->map_name.c_str()) == "new_map");
+  }
   assert(server_state.clients[0].reliable_stream.received_through == 1);
   std::cout << "  -> Both records delivered, in the order they were queued!"
             << std::endl;
@@ -273,15 +348,22 @@ void test_reliable_stream_round_trip_c2s()
   // An ORDINARY S2C datagram -- not a reliable one -- sent the way the server
   // sends every snapshot. This is the property the Loading client depends on,
   // since the only S2C traffic it gets is the map package's fragments.
-  game::S2C_EntityPackage snapshot;
-  snapshot.set_server_tick(77);
-  send_protobuf_message(server_state, server_socket, 0, snapshot);
+  {
+    shared::message_stream_t stream;
+    shared::write_entity_package(stream, shared::Entity_Package{});
+    stream.finish();
+    std::vector<uint8> payload;
+    shared::begin_server_message_payload(payload, 77);
+    shared::append_message_stream(payload, stream);
+    for (const Packet &packet : convert_to_packets(payload, Payload_Kind::Message,
+                                                   server_state.next_message_id))
+      send_packet_to_client(server_state, server_socket, 0, packet);
+  }
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Client_Inbox client_inbox;
-  poll_client_network(client_state, client_receive_drain_cap_in_datagrams,
-                      client_inbox);
+  client_received_t client_inbox;
+  poll_client(client_state, client_inbox);
 
   assert(client_state.reliable_stream.block_length == 0 &&
          "an ordinary S2C datagram's header freed our block");
@@ -332,7 +414,7 @@ void test_lossy_transfer_converges(uint16_t server_port, uint16_t client_port,
     payload.data()[index] = static_cast<uint8>(index * 13 + 5);
 
   begin_paced_transfer(server_state, 0, payload,
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
   const std::vector<Packet> fragments = server_state.clients[0].outbound_transfer.fragments;
   assert(fragments.size() == fragment_count);
 
@@ -348,9 +430,8 @@ void test_lossy_transfer_converges(uint16_t server_port, uint16_t client_port,
   report_transfer_progress(client_state);
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Server_Inbox server_inbox;
-  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
-               201, server_inbox);
+  server_received_t server_inbox;
+  poll_server(server_state, server_socket, 201, server_inbox);
 
   size_t confirmed_count = 0;
   for (bool confirmed : server_state.clients[0].outbound_transfer.confirmed)
@@ -395,8 +476,7 @@ void test_lossy_transfer_converges(uint16_t server_port, uint16_t client_port,
   report_transfer_progress(client_state);
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams,
-               202, server_inbox);
+  poll_server(server_state, server_socket, 202, server_inbox);
   assert(server_state.clients[0].outbound_transfer.fragments.empty() &&
          "a completed bucket keeps confirming, which is what ends the transfer");
   std::cout << "  -> The completing report freed the transfer!" << std::endl;
@@ -448,72 +528,82 @@ void test_a_cold_client_receives_the_announced_ghost()
   const uint32_t ghost_hash = shared::compute_ghost_hash(
       Span<const uint8_t>(ghost_bytes.data(), static_cast<uint32_t>(ghost_bytes.size())));
 
-  // 1. The announce, on the S2C reliable stream.
-  Bit_Writer announce_writer;
-  shared::serialize_ghost_available(
-      announce_writer, {.party_size = 2,
-                        .ghost_hash = ghost_hash,
-                        .byte_count = static_cast<uint32_t>(ghost_bytes.size())});
+  // 1. The announce, a Ghost_Available on the S2C reliable stream.
+  shared::reliable_stream_t announce;
+  shared::Ghost_Available   available;
+  available.party_size = 2;
+  available.ghost_hash = ghost_hash;
+  available.byte_count = static_cast<uint32_t>(ghost_bytes.size());
+  shared::write_ghost_available(announce, available);
+  announce.records.finish();
+  std::vector<uint8> announce_payload;
+  shared::begin_server_message_payload(announce_payload, 400);
+  shared::append_message_stream(announce_payload, announce.records);
   queue_reliable_message(server_state.clients[0].reliable_stream,
-                         static_cast<uint8>(Message_Type::S2C_GhostAvailable),
-                         announce_writer.buffer);
+                         static_cast<uint8>(Payload_Kind::Message), announce_payload);
   send_reliable_block(server_state, server_socket, 0);
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Client_Inbox client_inbox;
-  poll_client_network(client_state, client_receive_drain_cap_in_datagrams, client_inbox);
-  assert(client_inbox.ghost_available_messages.size() == 1);
-  Bit_Reader announce_reader(client_inbox.ghost_available_messages[0].data(),
-                             client_inbox.ghost_available_messages[0].size());
-  const shared::ghost_available_message_t announced =
-      shared::deserialize_ghost_available(announce_reader);
-  assert(announced.party_size == 2 && announced.ghost_hash == ghost_hash &&
-         announced.byte_count == ghost_bytes.size());
+  client_received_t client_inbox;
+  poll_client(client_state, client_inbox);
+  assert(client_inbox.message_payloads.size() == 1);
+  Bit_Reader announce_reader(client_inbox.message_payloads[0].data(),
+                             client_inbox.message_payloads[0].size());
+  assert(announce_reader.read_bits(32) == 400);
+  assert(announce_reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 1);
+  assert(announce_reader.read_bits(16) == (uint32_t)shared::Message_Type::Ghost_Available);
+  const std::optional<shared::Ghost_Available> announced = shared::try_read_ghost_available(announce_reader);
+  assert(announced && announced->party_size == 2 && announced->ghost_hash == ghost_hash &&
+         announced->byte_count == ghost_bytes.size());
   std::cout << "  -> The announce named the party, the hash and the size!" << std::endl;
 
-  // 2. A cold cache: the request, on the C2S reliable stream.
-  Bit_Writer request_writer;
-  shared::serialize_request_ghost(request_writer, {.ghost_hash = announced.ghost_hash});
-  queue_reliable_client_message(client_state, static_cast<uint8>(Message_Type::C2S_RequestGhost),
-                                request_writer.buffer);
+  // 2. A cold cache: a Ghost_Request on the C2S reliable stream.
+  shared::reliable_stream_t request;
+  shared::Ghost_Request     ghost_request;
+  ghost_request.ghost_hash = announced->ghost_hash;
+  shared::write_ghost_request(request, ghost_request);
+  request.records.finish();
+  queue_reliable_client_message(client_state, request.records.writer.buffer);
   service_client_reliable_stream(client_state);
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  Server_Inbox server_inbox;
-  poll_network(server_state, server_socket, server_receive_drain_cap_in_datagrams, 401,
-               server_inbox);
-  assert(server_inbox.ghost_requests.size() == 1 && server_inbox.ghost_requests[0].first == 0);
-  Bit_Reader request_reader(server_inbox.ghost_requests[0].second.data(),
-                            server_inbox.ghost_requests[0].second.size());
-  assert(shared::deserialize_request_ghost(request_reader).ghost_hash == ghost_hash);
-  std::cout << "  -> The request reached the server's inbox, naming that hash!" << std::endl;
+  server_received_t server_inbox;
+  poll_server(server_state, server_socket, 401, server_inbox);
+  assert(server_inbox.message_payloads.size() == 1 && server_inbox.message_payloads[0].slot == 0);
+  Bit_Reader request_reader(server_inbox.message_payloads[0].payload.data(),
+                            server_inbox.message_payloads[0].payload.size());
+  assert(request_reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 1);
+  assert(request_reader.read_bits(16) == (uint32_t)shared::Message_Type::Ghost_Request);
+  const std::optional<shared::Ghost_Request> requested = shared::try_read_ghost_request(request_reader);
+  assert(requested && requested->ghost_hash == ghost_hash);
+  std::cout << "  -> The request reached the server, naming that hash!" << std::endl;
 
   // 3. The file, as a paced transfer.
   Bit_Writer data_writer;
   shared::serialize_ghost_data(
       data_writer, {.party_size = 2, .ghost_hash = ghost_hash, .bytes = ghost_bytes});
   begin_paced_transfer(server_state, 0, data_writer.buffer,
-                       static_cast<uint8>(Message_Type::S2C_GhostData));
+                       Payload_Kind::Ghost_Transfer);
   assert(server_state.clients[0].outbound_transfer.fragments.size() > 1 &&
          "the fixture is a real multi-fragment transfer");
 
   client_inbox = {};
-  for (int pass = 0; pass < 20 && client_inbox.ghost_data_messages.empty(); ++pass)
+  for (int pass = 0; pass < 20 && client_inbox.ghost_transfers.empty(); ++pass)
   {
     service_paced_transfers(server_state, server_socket, 8);
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    poll_client_network(client_state, client_receive_drain_cap_in_datagrams, client_inbox);
+    poll_client(client_state, client_inbox);
   }
-  assert(client_inbox.ghost_data_messages.size() == 1);
+  assert(client_inbox.ghost_transfers.size() == 1);
 
-  Bit_Reader data_reader(client_inbox.ghost_data_messages[0].data(),
-                         client_inbox.ghost_data_messages[0].size());
+  Bit_Reader data_reader(client_inbox.ghost_transfers[0].data(),
+                         client_inbox.ghost_transfers[0].size());
   const std::optional<shared::ghost_data_message_t> data =
       shared::try_deserialize_ghost_data(data_reader);
   assert(data && data->party_size == 2 && data->ghost_hash == ghost_hash);
   assert(data->bytes == ghost_bytes && "the file's bytes survived the transfer");
   assert(shared::compute_ghost_hash(Span<const uint8_t>(
-             data->bytes.data(), static_cast<uint32_t>(data->bytes.size()))) == announced.ghost_hash &&
+             data->bytes.data(), static_cast<uint32_t>(data->bytes.size()))) == announced->ghost_hash &&
          "and hash to what was announced, which is the client's whole check");
 
   const std::optional<shared::ghost_t> received = shared::try_parse_ghost(
@@ -550,7 +640,7 @@ void test_wrapped_message_id_takes_over_a_stale_bucket()
   uint8 stale_id = 7;
   const std::vector<uint8> abandoned(4 * MAX_PAYLOAD_SIZE_IN_BYTES, 0xAB);
   const std::vector<Packet> stale = convert_to_packets(
-      abandoned, static_cast<uint8>(Message_Type::C2S_ClientInputBatch), stale_id);
+      abandoned, Payload_Kind::Message, stale_id);
   assert(stale.size() == 4);
 
   for (size_t index = 0; index < stale.size(); ++index)
@@ -569,7 +659,7 @@ void test_wrapped_message_id_takes_over_a_stale_bucket()
     arriving[index] = static_cast<uint8>(index * 7 + 3);
 
   const std::vector<Packet> fresh = convert_to_packets(
-      arriving, static_cast<uint8>(Message_Type::C2S_ClientInputBatch), wrapped_id);
+      arriving, Payload_Kind::Message, wrapped_id);
   assert(fresh.size() == 2);
   assert(fresh[0].header.message_id == stale[0].header.message_id &&
          "the two messages collide on one id, which is what the wrap does");
@@ -586,9 +676,133 @@ void test_wrapped_message_id_takes_over_a_stale_bucket()
             << std::endl;
 }
 
+// A Message is one payload kind for every row of messages.def, by either route:
+// a datagram's payload and a reliable record's payload both reach the same
+// deliver, in arrival order, for the generated dispatch to walk.
+void test_message_payloads_arrive_by_both_routes()
+{
+  std::cout << "[TEST] Testing Message payloads by datagram and by block..." << std::endl;
+
+  Server_Transport_Layer server_state;
+  Udp_Socket             server_socket;
+  Client_Transport_Layer client_state;
+
+  if (!server_socket.try_open({.port_id = 9015}))
+  {
+    std::cerr << "Failed to open server socket on 9015" << std::endl;
+    exit(1);
+  }
+  if (!client_state.socket.try_open({.port_id = 9016}))
+  {
+    std::cerr << "Failed to open client socket on 9016" << std::endl;
+    exit(1);
+  }
+  client_state.server_address = Address(127, 0, 0, 1, 9015);
+  occupy_client_slot(server_state, 0, Address(127, 0, 0, 1, 9016), 100);
+
+  // The server tick, then one stream holding one footstep.
+  shared::message_stream_t stream;
+  shared::Footstep         step;
+  step.site.attached_entity = 42;
+  shared::write_footstep(stream, step);
+  stream.finish();
+
+  std::vector<uint8> payload;
+  Bit_Writer         header;
+  header.write_bits(777, 32);
+  payload.assign(header.buffer.begin(), header.buffer.end());
+  shared::append_message_stream(payload, stream);
+
+  for (const Packet &packet :
+       convert_to_packets(payload, Payload_Kind::Message, server_state.next_message_id))
+    send_packet_to_client(server_state, server_socket, 0, packet);
+
+  queue_reliable_message(server_state.clients[0].reliable_stream, static_cast<uint8>(Payload_Kind::Message), payload);
+  send_reliable_block(server_state, server_socket, 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  client_received_t inbox;
+  poll_client(client_state, inbox);
+
+  assert(inbox.message_payloads.size() == 2 && "one by datagram, one out of the block");
+  for (const std::vector<uint8> &received : inbox.message_payloads)
+  {
+    assert(received == payload && "the bytes are the payload, whichever route");
+    Bit_Reader reader(received.data(), received.size());
+    assert(reader.read_bits(32) == 777);
+    assert(reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 1);
+    assert(reader.read_bits(16) == (uint32_t)shared::Message_Type::Footstep);
+    const std::optional<shared::Footstep> read_back = shared::try_read_footstep(reader);
+    assert(read_back && read_back->site.attached_entity == 42);
+    reader.align();
+    assert(reader.bits_remaining() == 0);
+  }
+  std::cout << "  -> Both routes delivered the same Message payload!" << std::endl;
+
+  release_client_slot(server_state, 0);
+  client_state.socket.close();
+  server_socket.close();
+}
+
+// A peer with no slot may say one thing, a Connect: its Message is delivered
+// with no slot and its address, for on_connect to answer. Anything else from a
+// stranger, and anything that needs reassembly, is dropped at the door.
+void test_stranger_connect_is_filed_without_a_slot()
+{
+  std::cout << "[TEST] Testing a stranger's Connect..." << std::endl;
+
+  Server_Transport_Layer server_state;
+  Udp_Socket             server_socket;
+  Client_Transport_Layer client_state;
+
+  if (!server_socket.try_open({.port_id = 9017}) || !client_state.socket.try_open({.port_id = 9018}))
+  {
+    std::cerr << "Failed to open the socket pair" << std::endl;
+    exit(1);
+  }
+  client_state.server_address = Address(127, 0, 0, 1, 9017);
+  const Address client_address(127, 0, 0, 1, 9018);
+
+  shared::message_stream_t stream;
+  shared::Connect          connect;
+  (void)connect.player_name.set("stranger");
+  connect.schema_hash = 0x1234;
+  shared::write_connect(stream, connect);
+  stream.finish();
+  send_message_stream_to_server(client_state, stream);
+
+  // A transfer receipt from a stranger names a transfer it cannot have.
+  send_raw_message(client_state, Payload_Kind::Transfer_Receipt, {1, 2, 3});
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  server_received_t inbox;
+  poll_server(server_state, server_socket, 500, inbox);
+
+  assert(inbox.message_payloads.size() == 1 && "the Connect was delivered, the receipt was not");
+  assert(inbox.message_payloads[0].slot == -1);
+  assert(inbox.message_payloads[0].sender == client_address);
+  {
+    const std::vector<uint8> &payload = inbox.message_payloads[0].payload;
+    Bit_Reader                reader(payload.data(), payload.size());
+    assert(reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS) == 1);
+    assert(reader.read_bits(16) == (uint32_t)shared::Message_Type::Connect);
+    const std::optional<shared::Connect> read_back = shared::try_read_connect(reader);
+    assert(read_back && read_back->schema_hash == 0x1234 && std::string(read_back->player_name.c_str()) == "stranger");
+  }
+  assert(!try_find_client_slot(server_state, client_address) && "delivering a Connect occupies nothing");
+  std::cout << "  -> The stranger's Connect was delivered with no slot and its address!" << std::endl;
+
+  client_state.socket.close();
+  server_socket.close();
+}
+
 int main()
 {
   test_receive_and_reassembly();
+  test_message_payloads_arrive_by_both_routes();
+  test_stranger_connect_is_filed_without_a_slot();
   test_reliable_stream_round_trip();
   test_reliable_stream_round_trip_c2s();
   test_lossy_transfer_converges(9005, 9006, 20, 4, 17);

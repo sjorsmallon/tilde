@@ -10,7 +10,7 @@
 // duplicated lexer that drifts.
 //
 // Design notes live in entity_def.md (entities), cvar_def.md (cvars and
-// commands) and events_def.md (events) at the repo root.
+// commands) and message_def.md (messages) at the repo root.
 //
 // ---------------------------------------------------------------------------
 // Four families, fenced apart
@@ -19,9 +19,9 @@
 // The ENTITY family is `base` / `component` / `entity` / `enum` / `asset` /
 // flagsets, and emits entities_generated.{hpp,cpp}. The CVAR family is
 // `cvars` / `commands`, and emits cvars_generated.{hpp,cpp} plus the two
-// per-side command binder TUs. The EVENT family is `base` plus declarations that
-// NAME a base as their kind, and emits events_generated.{hpp,cpp} plus one
-// per-side binding TU.
+// per-side command binder TUs. The MESSAGE family is `message` rows plus the
+// components and flagsets beside them, and emits messages_generated.{hpp,cpp}
+// plus one binding TU per side.
 //
 // One .def file holds ONE family. They share the lexer, the block parser, the
 // primitive type table and the hash. A cvar may not reference an entity type, an
@@ -119,8 +119,8 @@
 // nothing downstream -- the wire codec, the text conversion, the change masks,
 // the runtime leaf walk -- has an array case. Two consequences worth knowing:
 // every emitted span length comes from emitted_row_count() rather than a
-// declared field count, and an array is refused in a channel, whose row count
-// is its declared field count by construction. An array OF A COMPONENT is
+// declared field count, and an array is refused in a message, whose row count
+// is its leaf count by construction. An array OF A COMPONENT is
 // refused too, pending a look at how capture_field_changes indexes one.
 //
 //   default_value     -> NUMBER
@@ -354,6 +354,17 @@ enum class_flags_t : uint32_t
   CLASS_FLAG_PREDICTED    = 1 << 2,
 };
 
+// The message family's vocabulary, also in declaration_t::class_flags: a
+// message's direction and transport. One of each is mandatory.
+enum message_flags_t : uint32_t
+{
+  MESSAGE_FLAG_NONE             = 0,
+  MESSAGE_FLAG_CLIENT_TO_SERVER = 1 << 0,
+  MESSAGE_FLAG_SERVER_TO_CLIENT = 1 << 1,
+  MESSAGE_FLAG_RELIABLE         = 1 << 2,
+  MESSAGE_FLAG_UNRELIABLE       = 1 << 3,
+};
+
 enum type_kind_t : uint8_t
 {
   TYPE_UNRESOLVED = 0, // a name the resolve pass has not linked yet
@@ -376,6 +387,7 @@ enum type_kind_t : uint8_t
   TYPE_F32_EXACT,
   TYPE_V3_EXACT,
   TYPE_STRING,    // capacity lives in type_reference_t::capacity
+  TYPE_BYTES,     // a u32 length then the bytes: a payload another codec owns, message fields only
   TYPE_ASSET,     // mesh_asset / texture_asset: an id into a table numbered at startup
   // A uid naming another entity, `shared::entity_uid_t`. Trait verb payloads
   // only, where `Died(killer: entity)` is the first thing that needed one. Not
@@ -414,6 +426,7 @@ static const char* type_kind_name(type_kind_t kind)
     case TYPE_F32_EXACT:  return "f32_exact";
     case TYPE_V3_EXACT:   return "v3_exact";
     case TYPE_STRING:     return "string";
+    case TYPE_BYTES:      return "bytes";
     case TYPE_ASSET:      return "asset";
     case TYPE_ENTITY:     return "entity";
     case TYPE_ENUM:       return "enum";
@@ -423,6 +436,8 @@ static const char* type_kind_name(type_kind_t kind)
   return "unknown";
 }
 
+struct program_t;
+
 struct type_reference_t
 {
   type_kind_t   kind;
@@ -430,17 +445,36 @@ struct type_reference_t
   int32_t       capacity;          // string<N>, otherwise 0
   int32_t       declaration_index; // resolved target, -1 until then
 
+  // An enum declared in ANOTHER .def: a message typed by an entity enum.
+  // declaration_index stays -1, so every walker over this file's declarations
+  // skips the field, and these two say where the enum lives. Only the message
+  // family resolves one, and only to an entity enum.
+  const program_t* foreign_program;
+  int32_t          foreign_declaration_index;
+
   // `u32[Weapon]` -- one element per value of an enum, emitted as an
   // Enum_Array. The KEY is held here; `kind` and `name` above stay the
   // ELEMENT's, so every existing reader of a type sees the element and needs no
   // array case. Zero length and -1 when the field is not an array.
   string_view_t array_key_name;
   int32_t       array_key_declaration_index;
+
+  // `T<N>` -- a COUNT on the wire, then at most N elements, generated as
+  // Pascal_Array<T, N>. Message fields only: every list in the protocol has a
+  // real bound, and the bound is what keeps a message a stack local. 0 when
+  // the field is a single value. `string<N>` is not one: there the number is
+  // the string's capacity (see `capacity`), and `string<N><M>` is M of them.
+  int32_t pascal_bound;
 };
 
 static bool type_is_array(const type_reference_t* type)
 {
   return type->array_key_name.length > 0;
+}
+
+static bool type_is_pascal_array(const type_reference_t* type)
+{
+  return type->pascal_bound > 0;
 }
 
 enum default_kind_t : uint8_t
@@ -500,7 +534,7 @@ struct annotation_t
 // A name written in one declaration that refers to another: a trait's
 // `requires` component, a trait's `by` activator type, or an entity's `is`
 // trait. Resolved after parsing, because any of the three may name a
-// declaration written below it -- the same reason a channel member's kind is.
+// declaration written below it.
 struct name_reference_t
 {
   string_view_t name;
@@ -563,14 +597,10 @@ enum declaration_kind_t : uint8_t
   DECLARATION_ASSETS,
   DECLARATION_CVARS,
   DECLARATION_COMMANDS,
-  // A closed set of named messages, each carrying a payload, each dispatched to
-  // exactly one handler. The declaration itself holds the SHARED payload; its
-  // members are prepended with it.
-  DECLARATION_CHANNEL,
-  // A member of a channel: its declaration kind is the NAME of the channel. A
-  // member's kind identifier is not a keyword, so it is recorded at parse time
-  // and resolved after.
-  DECLARATION_CHANNEL_MEMBER,
+  // One row of messages.def: a payload either end sends. Its position among
+  // the rows is the record tag on the wire; its direction and transport are
+  // class flags; its description is mandatory.
+  DECLARATION_MESSAGE,
 };
 
 static const char* declaration_kind_name(declaration_kind_t kind)
@@ -586,8 +616,7 @@ static const char* declaration_kind_name(declaration_kind_t kind)
     case DECLARATION_ASSETS:         return "asset";
     case DECLARATION_CVARS:          return "cvars";
     case DECLARATION_COMMANDS:       return "commands";
-    case DECLARATION_CHANNEL:        return "channel";
-    case DECLARATION_CHANNEL_MEMBER: return "channel member";
+    case DECLARATION_MESSAGE:        return "message";
   }
   return "unknown";
 }
@@ -615,11 +644,7 @@ struct declaration_t
   int32_t first_annotation; // into program_t::annotations, the class level ones
   int32_t annotation_count;
 
-  // DECLARATION_CHANNEL_MEMBER only: the channel named on the right-hand side
-  // of '::', and its mandatory description. Resolved after parsing, because a
-  // member may name a channel declared below it.
-  string_view_t base_name;
-  int32_t       base_declaration; // -1 until resolved
+  // DECLARATION_MESSAGE only: the mandatory description.
   string_view_t description;
 
   // The three name lists, all into program_t::name_references.
@@ -640,9 +665,9 @@ struct declaration_t
 // Which family a .def file belongs to. Decided by its contents, not by its name:
 // a file that declares cvars/commands blocks emits the cvar artifacts, one that
 // declares assets emits the asset artifacts, one that declares component/entity
-// emits the entity artifacts, one that declares a channel and its members emits
-// the event artifacts, and a file that mixes two is an error (see
-// check_family). `enum` claims no family -- every family declares them.
+// emits the entity artifacts, one that declares messages emits the message
+// artifacts, and a file that mixes two is an error (see check_family). `enum`
+// claims no family -- every family declares them.
 // An `asset` declaration does not count toward the decision either: it exists
 // so a field can be typed by it and emits nothing of its own.
 enum def_family_t : uint8_t
@@ -650,7 +675,7 @@ enum def_family_t : uint8_t
   DEF_FAMILY_EMPTY = 0,
   DEF_FAMILY_ENTITY,
   DEF_FAMILY_CVAR,
-  DEF_FAMILY_EVENT,
+  DEF_FAMILY_MESSAGE,
 };
 
 struct program_t
@@ -743,7 +768,6 @@ static declaration_t* push_declaration(program_t* program)
   declaration->first_field        = program->field_count;
   declaration->first_enum_value   = program->enum_value_count;
   declaration->first_annotation   = program->annotation_count;
-  declaration->base_declaration   = -1;
   return declaration;
 }
 
@@ -1125,6 +1149,7 @@ static type_kind_t builtin_type_kind(string_view_t name)
   if (string_view_matches(name, "f32_exact")) return TYPE_F32_EXACT;
   if (string_view_matches(name, "v3_exact"))  return TYPE_V3_EXACT;
   if (string_view_matches(name, "string")) return TYPE_STRING;
+  if (string_view_matches(name, "bytes"))  return TYPE_BYTES;
   if (string_view_matches(name, "entity")) return TYPE_ENTITY;
 
   // Asset classes are NOT builtin: `mesh_asset` and `sprite_asset` used to be
@@ -1174,6 +1199,7 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
   out_type->declaration_index             = -1;
   out_type->array_key_name                = {};
   out_type->array_key_declaration_index   = -1;
+  out_type->pascal_bound                  = 0;
 
   if (out_type->kind == TYPE_STRING)
   {
@@ -1218,11 +1244,37 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
     }
     out_type->capacity = (int32_t)capacity;
   }
-  else if (check(parser, TOKEN_LESS))
+
+  // `T<N>`: a Pascal array, at most N elements behind a count. After a
+  // string's capacity, so `string<32><8>` is eight strings of 32.
+  if (check(parser, TOKEN_LESS))
   {
-    parse_error(parser, "only 'string' takes a capacity, '%.*s' does not", out_type->name.length,
-                out_type->name.data);
-    return false;
+    if (bare_string_allowed)
+    {
+      parse_error(parser, "a command parameter is one console token; there is no spelling for "
+                          "a list of them");
+      return false;
+    }
+    if (out_type->kind == TYPE_BYTES)
+    {
+      parse_error(parser, "'bytes' is one payload another codec owns; there is no list of them");
+      return false;
+    }
+    advance(parser);
+
+    double bound = 0.0;
+    if (!parse_number(parser, &bound))
+      return false;
+
+    if (!expect(parser, TOKEN_GREATER, "'>' to close the element bound"))
+      return false;
+
+    if (bound < 1.0 || bound != (double)(int32_t)bound || bound > 65535.0)
+    {
+      parse_error(parser, "the bound of 'T<N>' is a whole number from 1 to 65535");
+      return false;
+    }
+    out_type->pascal_bound = (int32_t)bound;
   }
 
   // `u32[Weapon]` -- one element per value of the named enum. Postfix, and
@@ -1236,6 +1288,18 @@ static bool parse_type(parser_t* parser, type_reference_t* out_type, bool bare_s
       // A command parameter. Its value is one console token, and there is no
       // spelling for a list of them.
       parse_error(parser, "a command parameter may not be an array");
+      return false;
+    }
+
+    if (type_is_pascal_array(out_type))
+    {
+      parse_error(parser, "'T<N>' is a counted list and 'T[Enum]' one element per key; a field is "
+                          "one or the other");
+      return false;
+    }
+    if (out_type->kind == TYPE_BYTES)
+    {
+      parse_error(parser, "'bytes' is one payload another codec owns; there is no array of them");
       return false;
     }
 
@@ -1762,16 +1826,16 @@ static bool parse_struct_body(parser_t* parser, declaration_t* declaration)
   return expect(parser, TOKEN_CLOSE_BRACE, "'}' to close the declaration body");
 }
 
-// `Name :: <a declared channel> "description" { fields }`
+// `Name :: message @flags "description" { fields }`
 //
 // The description is mandatory and sits on the declaration line, exactly as it
 // does for a cvar or a command: these are the names of a closed protocol, and
 // it feeds the generated enum comments and --scaffold's stubs. The body is
-// optional -- a member with none carries only the channel's fields, which is
-// the whole of what an effect is.
-static bool parse_channel_member(parser_t* parser, declaration_t* declaration, int32_t line)
+// optional.
+static bool parse_described_body(parser_t* parser, declaration_t* declaration, int32_t line,
+                                 const char* what)
 {
-  if (!parse_description(parser, line, &declaration->description, "channel member"))
+  if (!parse_description(parser, line, &declaration->description, what))
     return false;
 
   declaration->first_field = parser->program->field_count;
@@ -1921,15 +1985,21 @@ static declaration_t* parse_declaration(parser_t* parser)
     if (parsed)
       parsed = parse_trait_body(parser, declaration);
   }
+  else if (string_view_matches(kind_text, "message"))
+  {
+    // `Name :: message @direction @transport "description" { fields }`
+    declaration->kind             = DECLARATION_MESSAGE;
+    declaration->first_annotation = parser->program->annotation_count;
+    declaration->annotation_count = parse_annotations(parser, kind_token.line);
+    parsed = parse_described_body(parser, declaration, kind_token.line, "message");
+  }
   else if (string_view_matches(kind_text, "base") || string_view_matches(kind_text, "component") ||
-           string_view_matches(kind_text, "entity") || string_view_matches(kind_text, "channel"))
+           string_view_matches(kind_text, "entity"))
   {
     if (string_view_matches(kind_text, "base"))
       declaration->kind = DECLARATION_BASE;
     else if (string_view_matches(kind_text, "component"))
       declaration->kind = DECLARATION_COMPONENT;
-    else if (string_view_matches(kind_text, "channel"))
-      declaration->kind = DECLARATION_CHANNEL;
     else
       declaration->kind = DECLARATION_ENTITY;
 
@@ -1952,14 +2022,11 @@ static declaration_t* parse_declaration(parser_t* parser)
   }
   else
   {
-    // Not a keyword, so it names a channel -- or it is a typo. Which one cannot
-    // be decided here (a member may name a channel declared below it), so the
-    // name is recorded and the resolve pass reports an unknown one.
-    declaration->kind             = DECLARATION_CHANNEL_MEMBER;
-    declaration->base_name        = kind_text;
-    declaration->base_declaration = -1;
-
-    parsed = parse_channel_member(parser, declaration, kind_token.line);
+    report_error(parser->program, kind_token.offset, kind_token.line,
+                 "'%.*s' is not a declaration kind; expected 'base', 'component', 'entity', "
+                 "'trait', 'enum', 'assets', 'message', 'cvars' or 'commands'",
+                 kind_text.length, kind_text.data);
+    parsed = false;
   }
 
   if (!parsed)
@@ -2057,24 +2124,43 @@ static uint32_t builtin_field_flag(string_view_t name)
   return FIELD_FLAG_NONE;
 }
 
+static uint32_t builtin_message_flag(string_view_t name)
+{
+  if (string_view_matches(name, "Client_To_Server")) return MESSAGE_FLAG_CLIENT_TO_SERVER;
+  if (string_view_matches(name, "Server_To_Client")) return MESSAGE_FLAG_SERVER_TO_CLIENT;
+  if (string_view_matches(name, "Reliable"))         return MESSAGE_FLAG_RELIABLE;
+  if (string_view_matches(name, "Unreliable"))       return MESSAGE_FLAG_UNRELIABLE;
+  return MESSAGE_FLAG_NONE;
+}
+
+// A flagset is read in the vocabulary of the family that declares it: field
+// flags in entities.def, message flags in messages.def.
 static void resolve_flagsets(program_t* program)
 {
+  const bool message_family = program->family == DEF_FAMILY_MESSAGE;
+
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     declaration_t* declaration = &program->declarations[index];
     if (declaration->kind != DECLARATION_FLAGSET)
       continue;
 
-    uint32_t mask = FIELD_FLAG_NONE;
+    uint32_t mask = 0;
     for (int32_t offset = 0; offset < declaration->annotation_count; ++offset)
     {
       const annotation_t* annotation = &program->annotations[declaration->first_annotation + offset];
 
-      uint32_t flag = builtin_field_flag(annotation->name);
-      if (flag == FIELD_FLAG_NONE)
+      uint32_t flag = message_family ? builtin_message_flag(annotation->name)
+                                     : builtin_field_flag(annotation->name);
+      if (flag == 0)
       {
         if (string_view_matches(annotation->name, "Saveable"))
           report_error(program, annotation->offset, annotation->line, "%s", RETIRED_SAVEABLE_MESSAGE);
+        else if (message_family)
+          report_error(program, annotation->offset, annotation->line,
+                       "'@%.*s' is not a message flag; a flagset here may only contain "
+                       "@Client_To_Server, @Server_To_Client, @Reliable or @Unreliable",
+                       annotation->name.length, annotation->name.data);
         else
           report_error(program, annotation->offset, annotation->line,
                        "'@%.*s' is not a field flag; a flagset may only contain @Networked "
@@ -2174,13 +2260,13 @@ static void resolve_entity_field_flags(program_t* program, const name_table_t* t
 // rather than an omission: every declared field of an event is networked (that
 // is the only thing an event is), never editable and never saved. A flag here
 // would be a claim with nothing to read it.
-static void resolve_event_field_flags(program_t* program, field_t* field)
+static void resolve_message_field_flags(program_t* program, field_t* field)
 {
   for (int32_t offset = 0; offset < field->annotation_count; ++offset)
   {
     const annotation_t* annotation = &program->annotations[field->first_annotation + offset];
     report_error(program, annotation->offset, annotation->line,
-                 "'@%.*s': an event field takes no flags. Every field of an event rides the "
+                 "'@%.*s': a message field takes no flags. Every field of a message rides the "
                  "wire and nothing else ever reads it, so there is nothing for a flag to say",
                  annotation->name.length, annotation->name.data);
   }
@@ -2193,7 +2279,7 @@ static void resolve_event_field_flags(program_t* program, field_t* field)
 // field array.
 static void resolve_field_flags(program_t* program, const name_table_t* table)
 {
-  const bool event_family = program->family == DEF_FAMILY_EVENT;
+  const bool message_family = program->family == DEF_FAMILY_MESSAGE;
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
@@ -2205,11 +2291,66 @@ static void resolve_field_flags(program_t* program, const name_table_t* table)
       field_t* field = &program->fields[declaration->first_field + offset];
       if (cvar_family)
         resolve_cvar_line_flags(program, field);
-      else if (event_family)
-        resolve_event_field_flags(program, field);
+      else if (message_family)
+        resolve_message_field_flags(program, field);
       else
         resolve_entity_field_flags(program, table, field);
     }
+  }
+}
+
+// A message's flags: a builtin or a flagset declared in the file (Bidirectional).
+// Direction is at least one of the two, transport exactly one.
+static void resolve_message_flags(program_t* program, const name_table_t* table)
+{
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_MESSAGE)
+      continue;
+
+    uint32_t flags = MESSAGE_FLAG_NONE;
+    for (int32_t offset = 0; offset < declaration->annotation_count; ++offset)
+    {
+      const annotation_t* annotation = &program->annotations[declaration->first_annotation + offset];
+
+      const uint32_t builtin = builtin_message_flag(annotation->name);
+      if (builtin != MESSAGE_FLAG_NONE)
+      {
+        flags |= builtin;
+        continue;
+      }
+
+      const int32_t flagset_index = find_declaration(table, program, annotation->name);
+      if (flagset_index >= 0 && program->declarations[flagset_index].kind == DECLARATION_FLAGSET)
+      {
+        flags |= program->declarations[flagset_index].class_flags;
+        continue;
+      }
+
+      report_error(program, annotation->offset, annotation->line,
+                   "'@%.*s' is not a message flag; the complete list is @Client_To_Server, "
+                   "@Server_To_Client, @Reliable, @Unreliable and a flagset declared in this file",
+                   annotation->name.length, annotation->name.data);
+    }
+
+    if ((flags & (MESSAGE_FLAG_CLIENT_TO_SERVER | MESSAGE_FLAG_SERVER_TO_CLIENT)) == 0)
+      report_error(program, declaration->offset, declaration->line,
+                   "'%.*s' names no direction: a message is @Client_To_Server, "
+                   "@Server_To_Client or @Bidirectional",
+                   declaration->name.length, declaration->name.data);
+
+    const uint32_t transport = flags & (MESSAGE_FLAG_RELIABLE | MESSAGE_FLAG_UNRELIABLE);
+    if (transport == 0)
+      report_error(program, declaration->offset, declaration->line,
+                   "'%.*s' names no transport: a message is @Reliable or @Unreliable",
+                   declaration->name.length, declaration->name.data);
+    else if (transport == (MESSAGE_FLAG_RELIABLE | MESSAGE_FLAG_UNRELIABLE))
+      report_error(program, declaration->offset, declaration->line,
+                   "'%.*s' is both @Reliable and @Unreliable; a message rides one",
+                   declaration->name.length, declaration->name.data);
+
+    declaration->class_flags = flags;
   }
 }
 
@@ -2218,7 +2359,7 @@ static void resolve_class_annotations(program_t* program)
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind == DECLARATION_FLAGSET)
+    if (declaration->kind == DECLARATION_FLAGSET || declaration->kind == DECLARATION_MESSAGE)
       continue;
 
     for (int32_t offset = 0; offset < declaration->annotation_count; ++offset)
@@ -2267,7 +2408,33 @@ static void resolve_class_annotations(program_t* program)
   }
 }
 
-static void resolve_types(program_t* program, const name_table_t* table)
+// The enum `name` declared in an entity .def other than `self`, or nullptr.
+static const declaration_t* find_foreign_enum(const program_t* programs, int32_t program_count,
+                                              const program_t* self, string_view_t name,
+                                              const program_t** out_program,
+                                              int32_t*          out_index)
+{
+  for (int32_t which = 0; which < program_count; ++which)
+  {
+    const program_t* candidate = &programs[which];
+    if (candidate == self || candidate->family != DEF_FAMILY_ENTITY)
+      continue;
+
+    for (int32_t index = 0; index < candidate->declaration_count; ++index)
+    {
+      const declaration_t* declaration = &candidate->declarations[index];
+      if (declaration->kind != DECLARATION_ENUM || !string_views_match(declaration->name, name))
+        continue;
+      *out_program = candidate;
+      *out_index   = index;
+      return declaration;
+    }
+  }
+  return nullptr;
+}
+
+static void resolve_types(program_t* program, const name_table_t* table,
+                          const program_t* programs, int32_t program_count)
 {
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
@@ -2304,10 +2471,39 @@ static void resolve_types(program_t* program, const name_table_t* table)
         }
       }
 
+      if (type_is_pascal_array(&field->type) && program->family != DEF_FAMILY_MESSAGE)
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is a counted list ('T<N>'), which only a message carries",
+                     field->name.length, field->name.data);
+
+      if (field->type.kind == TYPE_BYTES && program->family != DEF_FAMILY_MESSAGE)
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is 'bytes', which only a message carries",
+                     field->name.length, field->name.data);
+
       if (field->type.kind != TYPE_UNRESOLVED)
         continue;
 
       int32_t target = find_declaration(table, program, field->type.name);
+      if (target < 0 && program->family == DEF_FAMILY_MESSAGE)
+      {
+        const program_t* foreign_program = nullptr;
+        int32_t          foreign_index   = -1;
+        if (find_foreign_enum(programs, program_count, program, field->type.name,
+                              &foreign_program, &foreign_index) != nullptr)
+        {
+          field->type.kind                      = TYPE_ENUM;
+          field->type.foreign_program           = foreign_program;
+          field->type.foreign_declaration_index = foreign_index;
+          if (field->default_value.kind != DEFAULT_NONE)
+            report_error(program, field->offset, field->line,
+                         "field '%.*s' is typed by '%.*s' from %s and takes no default: its "
+                         "values are not this file's to check",
+                         field->name.length, field->name.data, field->type.name.length,
+                         field->type.name.data, foreign_program->filename);
+          continue;
+        }
+      }
       if (target < 0)
       {
         report_error(program, field->offset, field->line, "unknown type '%.*s' on field '%.*s'",
@@ -2406,8 +2602,8 @@ static void resolve_types(program_t* program, const name_table_t* table)
 // namespace, one rule -- and it costs a declaration nothing to avoid seven words.
 static void check_declaration_names(program_t* program)
 {
-  static const char* KEYWORDS[] = {"base",  "component", "entity", "asset",
-                                   "enum",  "channel",   "cvars",  "commands"};
+  static const char* KEYWORDS[] = {"base",    "component", "entity", "trait", "asset",
+                                   "enum",    "message",   "cvars",  "commands"};
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
@@ -2420,7 +2616,7 @@ static void check_declaration_names(program_t* program)
 
       report_error(program, declaration->offset, declaration->line,
                    "'%s' is a declaration keyword, so it cannot also be a declaration name: the "
-                   "right-hand side of '::' holds both keywords and declared channel names",
+                   "right-hand side of '::' is the keyword list",
                    keyword);
       break;
     }
@@ -2662,16 +2858,15 @@ static void check_flag_contradictions(program_t* program)
 
 // A verb's payload becomes a trivially copyable struct with a field_info_t
 // table, read through field_from_text by the map loader and by ent_fire. So the
-// allowed set is the channel family's -- everything the reflection walker
-// handles -- plus `entity`, a uid naming another entity, which is what
-// `Died(killer: entity)` needs. Component and asset stay out for the channel
-// family's reasons: a verb table is flat, and an asset id would need the cross
-// family reference the design forbids.
-static bool channel_type_is_allowed(type_kind_t kind);
+// allowed set is every leaf the reflection walker handles plus `entity`, a uid
+// naming another entity, which is what `Died(killer: entity)` needs. Component
+// and asset stay out: a verb table is flat, and an asset id is a per-process
+// table index.
+static bool wire_leaf_type_is_allowed(type_kind_t kind);
 
 static bool trait_parameter_type_is_allowed(type_kind_t kind)
 {
-  return kind == TYPE_ENTITY || channel_type_is_allowed(kind);
+  return kind == TYPE_ENTITY || wire_leaf_type_is_allowed(kind);
 }
 
 // The three name lists are resolved together because they fail the same two
@@ -2997,7 +3192,12 @@ static void check_trait_opt_ins(program_t* program)
 // toward a cross-family reference, which is exactly what the design forbids.
 static void check_family(program_t* program)
 {
-  const declaration_t* first[DEF_FAMILY_EVENT + 1] = {};
+  const declaration_t* first[DEF_FAMILY_MESSAGE + 1] = {};
+
+  bool declares_message = false;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+    if (program->declarations[index].kind == DECLARATION_MESSAGE)
+      declares_message = true;
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
@@ -3011,25 +3211,18 @@ static void check_family(program_t* program)
     // An enum is family-NEUTRAL: entity fields, asset classes and command
     // parameters all sit beside enums, and each family emits the enums declared
     // with it. It claims no family, so a file of cvars plus their enums stays
-    // one family. It is the LAST neutral kind -- `base` was neutral only while
-    // the event family used one, and `channel` took that job.
+    // one family. A component belongs to whichever family the file declares:
+    // an entity's component or a message's.
     if (declaration->kind == DECLARATION_ENUM || declaration->kind == DECLARATION_FLAGSET)
       continue;
 
     def_family_t family = DEF_FAMILY_ENTITY;
     if (declaration_is_cvar_family(declaration->kind))
       family = DEF_FAMILY_CVAR;
-    else if (declaration->kind == DECLARATION_CHANNEL)
-      family = DEF_FAMILY_EVENT;
-    else if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
-    {
-      // Its channel did not resolve, so this is a misspelled keyword and
-      // resolve_channel_members has already said so. Letting it claim the event
-      // family would bury that under a "this file mixes families".
-      if (declaration->base_declaration < 0)
-        continue;
-      family = DEF_FAMILY_EVENT;
-    }
+    else if (declaration->kind == DECLARATION_MESSAGE)
+      family = DEF_FAMILY_MESSAGE;
+    else if (declaration->kind == DECLARATION_COMPONENT && declares_message)
+      family = DEF_FAMILY_MESSAGE;
 
     if (first[family] == nullptr)
       first[family] = declaration;
@@ -3038,7 +3231,7 @@ static void check_family(program_t* program)
   const declaration_t* claimed = nullptr;
   def_family_t         family  = DEF_FAMILY_EMPTY;
 
-  for (int32_t index = DEF_FAMILY_ENTITY; index <= DEF_FAMILY_EVENT; ++index)
+  for (int32_t index = DEF_FAMILY_ENTITY; index <= DEF_FAMILY_MESSAGE; ++index)
   {
     if (first[index] == nullptr)
       continue;
@@ -3068,39 +3261,10 @@ static void check_family(program_t* program)
 // Event family checks
 // ---------------------------------------------------------------------------
 
-// Links each member to the channel named on the right-hand side of its '::'.
-// This is also where a plain typo lands: `Foo :: entty "..."` parsed as a member
-// of a channel called `entty`, because the parser cannot tell a channel name
-// from a misspelled keyword without the whole file.
-static void resolve_channel_members(program_t* program, const name_table_t* table)
-{
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_CHANNEL_MEMBER)
-      continue;
-
-    int32_t target = find_declaration(table, program, declaration->base_name);
-    if (target < 0 || program->declarations[target].kind != DECLARATION_CHANNEL)
-    {
-      report_error(program, declaration->offset, declaration->line,
-                   "'%.*s' is not a declaration kind and not a declared channel; expected 'base', "
-                   "'component', 'entity', 'channel', 'enum', 'assets', 'cvars', 'commands', or "
-                   "the name of a 'channel' declared in this file",
-                   declaration->base_name.length, declaration->base_name.data);
-      continue;
-    }
-
-    declaration->base_declaration = target;
-  }
-}
-
-// What the shared field codec (network/field_codec.hpp) can encode, minus the
-// two aggregate types. A `component` would need the leaf flattening only the
-// entity family does, and an `asset` would need the `import` this family
-// forbids -- so each is rejected by name below rather than emitting a row no
-// walker can read.
-static bool channel_type_is_allowed(type_kind_t kind)
+// What the shared field codec (network/field_codec.hpp) can encode: every leaf
+// type. A `component` is flattened into leaves by whoever emits the table, and
+// an `asset` is a per-process table index with no wire form.
+static bool wire_leaf_type_is_allowed(type_kind_t kind)
 {
   switch (kind)
   {
@@ -3129,121 +3293,94 @@ static bool channel_type_is_allowed(type_kind_t kind)
   }
 }
 
-static void check_event_family(program_t* program)
+// ---------------------------------------------------------------------------
+// Message family checks
+// ---------------------------------------------------------------------------
+
+// A message or a component in messages.def: every field is a leaf the codec
+// encodes, an entity uid, a component declared in this file, a counted list of
+// either, or (a message alone) `bytes`.
+static void check_message_fields(program_t* program, const declaration_t* declaration)
 {
-  int32_t channel_count = 0;
+  for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+  {
+    const field_t* field = &program->fields[declaration->first_field + offset];
+    if (field->type.kind == TYPE_UNRESOLVED)
+      continue;
+
+    if (type_is_array(&field->type))
+    {
+      report_error(program, field->offset, field->line,
+                   "field '%.*s' is an array. A message's rows are its leaves; inline the "
+                   "elements you need",
+                   field->name.length, field->name.data);
+      continue;
+    }
+
+    if (field->type.kind == TYPE_ASSET)
+    {
+      report_error(program, field->offset, field->line,
+                   "field '%.*s' is an asset class. An asset id is a per-process table index, "
+                   "not a wire value; send what the receiver actually needs",
+                   field->name.length, field->name.data);
+      continue;
+    }
+
+    if (field->type.kind == TYPE_BYTES)
+    {
+      if (declaration->kind != DECLARATION_MESSAGE)
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is 'bytes', which only a message carries: a component is a "
+                     "stack local",
+                     field->name.length, field->name.data);
+      continue;
+    }
+
+    if (field->type.kind == TYPE_ENTITY || field->type.kind == TYPE_COMPONENT ||
+        wire_leaf_type_is_allowed(field->type.kind))
+      continue;
+
+    report_error(program, field->offset, field->line,
+                 "field '%.*s' has type '%.*s', which a message cannot carry",
+                 field->name.length, field->name.data, field->type.name.length,
+                 field->type.name.data);
+  }
+}
+
+static void check_message_family(program_t* program)
+{
+  int32_t message_count = 0;
 
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    if (declaration->kind == DECLARATION_CHANNEL)
+    if (declaration->kind == DECLARATION_MESSAGE)
     {
-      ++channel_count;
-      if (channel_count > 1)
-        report_error(program, declaration->offset, declaration->line,
-                     "'%.*s' is a second channel in this file; one .def holds one channel, "
-                     "because the emitted filenames are derived from the .def's own name and two "
-                     "channels have no single answer for them",
-                     declaration->name.length, declaration->name.data);
+      ++message_count;
       continue;
     }
-
-    if (declaration->kind == DECLARATION_ENUM || declaration->kind == DECLARATION_CHANNEL_MEMBER)
+    if (declaration->kind == DECLARATION_ENUM || declaration->kind == DECLARATION_FLAGSET ||
+        declaration->kind == DECLARATION_COMPONENT)
       continue;
 
     report_error(program, declaration->offset, declaration->line,
-                 "'%.*s' is %s; an event .def declares one channel, its members and enums only",
+                 "'%.*s' is %s; messages.def declares messages, components, flagsets and enums only",
                  declaration->name.length, declaration->name.data,
                  declaration_kind_name(declaration->kind));
   }
 
-  if (channel_count == 0)
-    report_error(program, 0, 1,
-                 "an event .def declares one 'channel': its shared payload is authored, not built "
-                 "into the generator");
+  if (message_count == 0)
+    report_error(program, 0, 1, "messages.def declares no message");
 
-  // --- field types ---
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_CHANNEL &&
-        declaration->kind != DECLARATION_CHANNEL_MEMBER)
-      continue;
-
-    for (int32_t offset = 0; offset < declaration->field_count; ++offset)
-    {
-      const field_t* field = &program->fields[declaration->first_field + offset];
-      if (field->type.kind == TYPE_UNRESOLVED)
-        continue; // already reported
-
-      if (field->type.kind == TYPE_COMPONENT)
-      {
-        report_error(program, field->offset, field->line,
-                     "field '%.*s' is a component. A channel's field table is FLAT -- there is no "
-                     "leaf flattening pass to compose a component's offsets. Inline the fields "
-                     "you need",
-                     field->name.length, field->name.data);
-        continue;
-      }
-
-      if (field->type.kind == TYPE_ASSET)
-      {
-        report_error(program, field->offset, field->line,
-                     "field '%.*s' is an asset class. An asset id is a per-process table index "
-                     "-- it is not stable, and a channel payload has no table to resolve it "
-                     "against. Send it as a u32, or send what the consumer actually needs",
-                     field->name.length, field->name.data);
-        continue;
-      }
-
-      if (type_is_array(&field->type))
-      {
-        report_error(program, field->offset, field->line,
-                     "field '%.*s' is an array. A channel member's row count is its DECLARED field "
-                     "count (channel_member_field_count), which an expanded array would silently "
-                     "disagree with. Inline the elements you need",
-                     field->name.length, field->name.data);
-        continue;
-      }
-
-      if (!channel_type_is_allowed(field->type.kind))
-        report_error(program, field->offset, field->line,
-                     "field '%.*s' has type '%.*s', which the field codec cannot encode",
-                     field->name.length, field->name.data, field->type.name.length,
-                     field->type.name.data);
-    }
+    if (declaration->kind == DECLARATION_MESSAGE || declaration->kind == DECLARATION_COMPONENT)
+      check_message_fields(program, declaration);
   }
 
-  // --- member names are unique within their channel ---
-  //
-  // A member name is a declaration name, so the general duplicate check already
-  // catches a collision. This one exists for the message: the members of one
-  // channel become one enum, and that is why it matters.
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-  {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_CHANNEL_MEMBER || declaration->base_declaration < 0)
-      continue;
-
-    for (int32_t other = 0; other < index; ++other)
-    {
-      const declaration_t* previous = &program->declarations[other];
-      if (previous->kind != DECLARATION_CHANNEL_MEMBER ||
-          previous->base_declaration != declaration->base_declaration)
-        continue;
-      if (!string_views_match(declaration->name, previous->name))
-        continue;
-
-      report_error(program, declaration->offset, declaration->line,
-                   "'%.*s' is already a member of channel '%.*s' on line %d; the members of one "
-                   "channel become one enum",
-                   declaration->name.length, declaration->name.data,
-                   program->declarations[declaration->base_declaration].name.length,
-                   program->declarations[declaration->base_declaration].name.data, previous->line);
-      break;
-    }
-  }
+  check_component_cycles(program);
 }
 
 // A cvar's value has to survive a memcmp against a retained copy (that is how
@@ -3817,18 +3954,12 @@ static void derive_replicated_types(program_t* program)
   }
 }
 
-static void resolve_program(program_t* program)
+// After check_family has run on EVERY program: a message resolves an entity
+// enum by name, which needs the entity file's family known.
+static void resolve_program(program_t* program, const program_t* programs, int32_t program_count)
 {
   name_table_t table = {};
   build_name_table(&table, program);
-
-  // Before check_family, because an unresolved channel name is a MISSPELLED
-  // KEYWORD as often as it is a real member, and reporting that plainly beats
-  // reporting that the file mixes families.
-  resolve_channel_members(program, &table);
-
-  // Then family, because everything after it is family-specific.
-  check_family(program);
 
   check_declaration_names(program);
   check_duplicate_declarations(program);
@@ -3837,7 +3968,8 @@ static void resolve_program(program_t* program)
   resolve_flagsets(program);
   resolve_field_flags(program, &table);
   resolve_class_annotations(program);
-  resolve_types(program, &table);
+  resolve_message_flags(program, &table);
+  resolve_types(program, &table, programs, program_count);
   resolve_trait_references(program, &table);
 
   // Needs resolve_types: an override is looked up in the component's field
@@ -3864,9 +3996,9 @@ static void resolve_program(program_t* program)
     check_trait_verbs(program);
     check_trait_opt_ins(program);
   }
-  else if (program->family == DEF_FAMILY_EVENT)
+  else if (program->family == DEF_FAMILY_MESSAGE)
   {
-    check_event_family(program);
+    check_message_family(program);
   }
 
   check_literal_defaults(program);
@@ -3982,6 +4114,13 @@ static void write_cpp_type(FILE* out, const type_reference_t* type)
     fprintf(out, ">");
     return;
   }
+  if (type_is_pascal_array(type))
+  {
+    fprintf(out, "Pascal_Array<");
+    write_cpp_element_type(out, type);
+    fprintf(out, ", %d>", type->pascal_bound);
+    return;
+  }
   write_cpp_element_type(out, type);
 }
 
@@ -4014,12 +4153,23 @@ static void write_cpp_element_type(FILE* out, const type_reference_t* type)
       fprintf(out, "network::pascal_string_t<%d>", type->capacity);
       return;
 
+    // Non-owning in both directions: the sender's scratch writer, the receive
+    // buffer during dispatch. Whatever must outlive the dispatch copies.
+    case TYPE_BYTES:
+      fprintf(out, "Span<const uint8_t>");
+      return;
+
     // An asset class is hand-written in asset_id.hpp, in namespace assets.
     case TYPE_ASSET:
       fprintf(out, "assets::%.*s", type->name.length, type->name.data);
       return;
 
     case TYPE_ENUM:
+      if (type->foreign_program != nullptr)
+        fprintf(out, "entities::");
+      fprintf(out, "%.*s", type->name.length, type->name.data);
+      return;
+
     case TYPE_COMPONENT:
       fprintf(out, "%.*s", type->name.length, type->name.data);
       return;
@@ -4065,6 +4215,7 @@ static const char* field_type_enum_name(type_kind_t kind)
     case TYPE_ENTITY:    return "FIELD_TYPE_ENTITY_UID";
     case TYPE_ENUM:      return "FIELD_TYPE_ENUM";
     case TYPE_COMPONENT: return "FIELD_TYPE_COMPONENT";
+    case TYPE_BYTES:     break; // message codec only; never a table row
     case TYPE_VOID:      break; // cvar family only; never reaches an entity table
     case TYPE_UNRESOLVED: break;
   }
@@ -4127,6 +4278,21 @@ static void write_lower_into(string_view_t name, char* buffer, size_t buffer_siz
   {
     char character = name.data[index];
     buffer[index]  = (character >= 'A' && character <= 'Z') ? (char)(character - 'A' + 'a')
+                                                            : character;
+  }
+  buffer[length] = '\0';
+}
+
+static void write_upper_into(string_view_t name, char* buffer, size_t buffer_size)
+{
+  size_t length = (size_t)name.length;
+  if (length > buffer_size - 1)
+    length = buffer_size - 1;
+
+  for (size_t index = 0; index < length; ++index)
+  {
+    char character = name.data[index];
+    buffer[index]  = (character >= 'a' && character <= 'z') ? (char)(character - 'a' + 'A')
                                                             : character;
   }
   buffer[length] = '\0';
@@ -5028,17 +5194,12 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
     mix(declaration_kind_name(declaration->kind),
         (int32_t)strlen(declaration_kind_name(declaration->kind)));
 
-    // A member's kind name is "channel member" for all of them, so the channel
-    // it belongs to has to be mixed separately -- moving a member between two
-    // channels changes which enum it is numbered in, which is exactly the kind
-    // of silent remap the handshake exists to catch.
-    if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
-      mix(declaration->base_name.data, declaration->base_name.length);
-
     // The class flags carry the derived replicated bit, which decides which
     // types ride the snapshot, so two builds that disagree on it misparse
     // every packet.
-    if (declaration->kind == DECLARATION_ENTITY)
+    // A message's direction and transport decide which side reads it and
+    // which stream carries it, so they are part of what the bytes mean too.
+    if (declaration->kind == DECLARATION_ENTITY || declaration->kind == DECLARATION_MESSAGE)
     {
       char buffer[32];
       int  written = snprintf(buffer, sizeof(buffer), "cf:%u", declaration->class_flags);
@@ -5057,8 +5218,9 @@ static uint32_t mix_schema_hash(uint32_t hash, const program_t* program)
       mix(field->name.data, field->name.length);
       mix(field->type.name.data, field->type.name.length);
 
-      char buffer[32];
-      int  written = snprintf(buffer, sizeof(buffer), "%u:%d", field->flags, field->type.capacity);
+      char buffer[48];
+      int  written = snprintf(buffer, sizeof(buffer), "%u:%d:%d", field->flags, field->type.capacity,
+                              field->type.pascal_bound);
       mix(buffer, written);
 
       // A command's signature. Arguments ride the wire as forwarded text and
@@ -6589,142 +6751,323 @@ static void emit_command_bindings(FILE* out, const program_t* program, const cha
 }
 
 // ---------------------------------------------------------------------------
-// Code generation -- the event family
+// Code generation -- shared by the wire families
 // ---------------------------------------------------------------------------
 //
-// Three files, in namespace `shared`, which is where both channels' types
-// already live. Their names are derived from the .def's own filename stem, the
-// way the output DIRECTORY already was -- this is the first family with two
-// input files, and a hardcoded name has no single answer across them:
-//
-//   <stem>_generated.hpp        the channel enum, the payload structs, the
-//                               field tables, the codec and the fire helpers
-//   <stem>_generated.cpp        the tables and the codec. References NO
-//                               handler, so it compiles into game_shared with
-//                               neither side present
-//   client_<stem>_bindings.cpp  the channel's dispatch, which is what
-//                               references the handlers -> into game_client
-//
-// The split is the cvar family's, for the cvar family's reason. Two facts this
-// emitter is TOLD rather than derives, exactly as emit_command_bindings is told
-// `cvars::commands` and `command_context_t`: the receiving side's context type
-// is client_context_t, and a handler is `on_<member>`. Everything else --
-// namespaces, enum names, function names, parameter types -- comes off the .def.
-//
-// There is NO event codec here. A member's table is rows of the same
+// There is NO message codec here. A message's table is rows of the same
 // field_info_t the entity family emits, so the wire is network::write_field /
-// read_field and the text is field_to_text. What used to be ~200 lines of
-// emitted walker plus a second field-type enum plus a second formatter is now
-// three call sites.
+// read_field and the text is field_to_text.
 
-// The receiving side. One place, so moving the seam is one edit.
-static const char* EVENT_CONTEXT_TYPE   = "client_context_t";
-static const char* EVENT_HANDLER_HEADER = "event_handlers.hpp";
-
-// A channel's tag enum and its count, derived from the channel name so the two
-// are one edit: `Effect` -> `effect_type` / `EFFECT_TYPE_COUNT`.
-static void write_channel_enum(FILE* out, string_view_t channel_name)
+// One row per LEAF of `source`. A component field is flattened in place with
+// its offsets composed: "site.origin" at offsetof(Shot_Impact, site) +
+// offsetof(Effect_Site, origin), so the codec, the text and the reader never
+// learn that components exist. A wire field carries no flags and can be
+// neither a component row nor an asset, so three of the nine columns are
+// always their sentinel.
+// A field the codec encodes by offset through one row. A component field and a
+// counted list are CODE instead -- see emit_message_field_codec -- so a list can
+// sit inside a component inside a list.
+static bool message_field_is_leaf(const field_t* field)
 {
-  write_lower(out, channel_name);
-  fprintf(out, "_type");
+  return field->type.kind != TYPE_COMPONENT && field->type.kind != TYPE_BYTES &&
+         !type_is_pascal_array(&field->type);
 }
 
-static void write_channel_count(FILE* out, string_view_t channel_name)
+static void write_message_field_row(FILE* out, const char* name, const type_reference_t* type,
+                                    const char* offset_expression, const char* size_expression,
+                                    const int32_t* enum_ids)
 {
-  write_upper(out, channel_name);
-  fprintf(out, "_TYPE_COUNT");
+  char enum_info[128] = "NOT_AN_ENUM";
+  if (type->kind == TYPE_ENUM && type->foreign_program != nullptr)
+    snprintf(enum_info, sizeof(enum_info), "&entities::ENUM_INFOS[(uint32_t)entities::enum_type::%.*s]",
+             type->name.length, type->name.data);
+  else if (type->kind == TYPE_ENUM && type->declaration_index >= 0)
+    snprintf(enum_info, sizeof(enum_info), "&ENUM_INFOS[%d]", enum_ids[type->declaration_index]);
+
+  char string_capacity[64] = "NOT_A_STRING";
+  if (type->kind == TYPE_STRING)
+    snprintf(string_capacity, sizeof(string_capacity), "%u", (uint32_t)type->capacity);
+
+  fprintf(out, "  {.name = \"%s\",\n", name);
+  fprintf(out, "   .type = %s,\n", field_type_enum_name(type->kind));
+  fprintf(out, "   .offset = %s,\n", offset_expression);
+  fprintf(out, "   .size_in_bytes = %s,\n", size_expression);
+  fprintf(out, "   .flags = 0u,\n");
+  fprintf(out, "   .component_id = NOT_A_COMPONENT,\n");
+  fprintf(out, "   .string_capacity = %s,\n", string_capacity);
+  fprintf(out, "   .asset_class_id = NOT_AN_ASSET_CLASS,\n");
+  fprintf(out, "   .enum_info = %s},\n", enum_info);
 }
 
-// The one channel this file declares, or -1. check_event_family has already
-// rejected a file with none or with two, so a caller reaching -1 is on the
-// error path and emits nothing.
-static int32_t find_channel_declaration(const program_t* program)
+// `source`'s own leaves, in declaration order: the rows of <SOURCE>_FIELDS.
+static void emit_message_field_rows(FILE* out, const program_t* program,
+                                    const declaration_t* source, const int32_t* enum_ids)
 {
-  for (int32_t index = 0; index < program->declaration_count; ++index)
-    if (program->declarations[index].kind == DECLARATION_CHANNEL)
-      return index;
-  return -1;
-}
-
-// The channel's members, in declaration order -- which IS the wire id.
-static int32_t collect_channel_members(const program_t* program, int32_t channel_index,
-                                       const declaration_t** out, int32_t capacity)
-{
-  int32_t count = 0;
-
-  for (int32_t index = 0; index < program->declaration_count; ++index)
+  for (int32_t offset = 0; offset < source->field_count; ++offset)
   {
-    const declaration_t* declaration = &program->declarations[index];
-    if (declaration->kind != DECLARATION_CHANNEL_MEMBER ||
-        declaration->base_declaration != channel_index)
+    const field_t* field = &program->fields[source->first_field + offset];
+    if (!message_field_is_leaf(field))
       continue;
 
-    assert(count < capacity);
-    out[count++] = declaration;
+    char name[256];
+    snprintf(name, sizeof(name), "%.*s", field->name.length, field->name.data);
+    char offset_expression[512];
+    snprintf(offset_expression, sizeof(offset_expression), "(uint32_t)offsetof(%.*s, %.*s)",
+             source->name.length, source->name.data, field->name.length, field->name.data);
+    char size_expression[512];
+    snprintf(size_expression, sizeof(size_expression), "(uint32_t)sizeof(%.*s::%.*s)",
+             source->name.length, source->name.data, field->name.length, field->name.data);
+    write_message_field_row(out, name, &field->type, offset_expression, size_expression, enum_ids);
   }
-
-  return count;
 }
 
-// The channel's fields first, then the member's own, which is both the struct
-// layout and the wire order. Offsets are into the MEMBER struct, so the two
-// halves need no composition at read time -- a channel table is flat.
-static void emit_channel_field_table(FILE* out, const program_t* program,
-                                     const declaration_t* channel, const declaration_t* member,
-                                     const int32_t* enum_ids)
+// How many rows emit_message_field_rows writes for `source`.
+static int32_t count_message_leaf_rows(const program_t* program, const declaration_t* source)
 {
-  const string_view_t struct_name = member->name;
+  int32_t rows = 0;
+  for (int32_t offset = 0; offset < source->field_count; ++offset)
+    if (message_field_is_leaf(&program->fields[source->first_field + offset]))
+      rows += 1;
+  return rows;
+}
 
-  for (int32_t pass = 0; pass < 2; ++pass)
+// The one-row table a counted list of LEAVES reads each element through, at
+// offset 0 over the element: <SOURCE>_<FIELD>_ELEMENT.
+static void emit_message_element_rows(FILE* out, const program_t* program,
+                                      const declaration_t* source, const int32_t* enum_ids)
+{
+  for (int32_t offset = 0; offset < source->field_count; ++offset)
   {
-    const declaration_t* source = pass == 0 ? channel : member;
+    const field_t* field = &program->fields[source->first_field + offset];
+    if (!type_is_pascal_array(&field->type) || field->type.kind == TYPE_COMPONENT)
+      continue;
 
-    for (int32_t offset = 0; offset < source->field_count; ++offset)
+    char source_upper[256], field_upper[256];
+    write_upper_into(source->name, source_upper, sizeof(source_upper));
+    write_upper_into(field->name, field_upper, sizeof(field_upper));
+
+    char name[256];
+    snprintf(name, sizeof(name), "%.*s", field->name.length, field->name.data);
+    char size_expression[512];
+    snprintf(size_expression, sizeof(size_expression), "(uint32_t)sizeof(decltype(%.*s::%.*s)::element_t)",
+             source->name.length, source->name.data, field->name.length, field->name.data);
+
+    fprintf(out, "constexpr field_info_t %s_%s_ELEMENT[] = {\n", source_upper, field_upper);
+    write_message_field_row(out, name, &field->type, "0u", size_expression, enum_ids);
+    fprintf(out, "};\n\n");
+  }
+}
+
+enum codec_half_t
+{
+  CODEC_WRITE,
+  CODEC_READ,
+  CODEC_TEXT,
+};
+
+// One half of `source`'s codec over a local named `value`, every field in
+// declaration order: a leaf through its row, a component through that
+// component's own codec, a counted list as its count then each element, bytes
+// as a u32 length then the bytes on a byte boundary. The READ half returns
+// std::nullopt on the first field that does not decode.
+static void emit_message_field_codec(FILE* out, const program_t* program,
+                                     const declaration_t* source, codec_half_t half)
+{
+  char table[256];
+  write_upper_into(source->name, table, sizeof(table));
+
+  int32_t row = 0;
+  for (int32_t offset = 0; offset < source->field_count; ++offset)
+  {
+    const field_t* field      = &program->fields[source->first_field + offset];
+    const int32_t  name_len   = field->name.length;
+    const char*    name       = field->name.data;
+    const char*    separator  = offset > 0 ? ", " : "";
+
+    char element_lower[256] = "";
+    if (field->type.kind == TYPE_COMPONENT)
+      write_lower_into(field->type.name, element_lower, sizeof(element_lower));
+
+    if (message_field_is_leaf(field))
     {
-      const field_t* field = &program->fields[source->first_field + offset];
+      switch (half)
+      {
+        case CODEC_WRITE:
+          fprintf(out, "  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), "
+                       "%s_FIELDS[%d], %s_FIELDS[%d].offset);\n", table, row, table, row);
+          break;
+        case CODEC_READ:
+          fprintf(out, "  if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&value), "
+                       "%s_FIELDS[%d], %s_FIELDS[%d].offset))\n    return std::nullopt;\n",
+                  table, row, table, row);
+          break;
+        case CODEC_TEXT:
+          fprintf(out, "  text += \"%s%.*s=\";\n  text += leaf_text(&value, %s_FIELDS[%d]);\n",
+                  separator, name_len, name, table, row);
+          break;
+      }
+      ++row;
+      continue;
+    }
 
-      char enum_info[64] = "NOT_AN_ENUM";
-      if (field->type.kind == TYPE_ENUM && field->type.declaration_index >= 0)
-        snprintf(enum_info, sizeof(enum_info), "&ENUM_INFOS[%d]",
-                 enum_ids[field->type.declaration_index]);
+    if (field->type.kind == TYPE_BYTES)
+    {
+      switch (half)
+      {
+        case CODEC_WRITE:
+          fprintf(out, "  writer.write_bits(value.%.*s.count, 32);\n", name_len, name);
+          fprintf(out, "  writer.write_bytes(value.%.*s.data, value.%.*s.count);\n", name_len, name,
+                  name_len, name);
+          break;
+        case CODEC_READ:
+          fprintf(out, "  {\n    const uint32_t length = reader.read_bits(32);\n");
+          fprintf(out, "    const std::optional<Span<const uint8_t>> bytes = reader.try_read_byte_span(length);\n");
+          fprintf(out, "    if (!bytes)\n    {\n");
+          fprintf(out, "      log_error(\"%.*s: '%.*s' claims {} bytes, {} remain\", length, reader.bits_remaining() / 8);\n",
+                  source->name.length, source->name.data, name_len, name);
+          fprintf(out, "      return std::nullopt;\n    }\n");
+          fprintf(out, "    value.%.*s = *bytes;\n  }\n", name_len, name);
+          break;
+        case CODEC_TEXT:
+          fprintf(out, "  text += std::format(\"%s%.*s=<{} bytes>\", value.%.*s.count);\n", separator,
+                  name_len, name, name_len, name);
+          break;
+      }
+      continue;
+    }
 
-      char string_capacity[64] = "NOT_A_STRING";
-      if (field->type.kind == TYPE_STRING)
-        snprintf(string_capacity, sizeof(string_capacity), "%u", (uint32_t)field->type.capacity);
+    if (!type_is_pascal_array(&field->type))
+    {
+      switch (half)
+      {
+        case CODEC_WRITE:
+          fprintf(out, "  write_%s(writer, value.%.*s);\n", element_lower, name_len, name);
+          break;
+        case CODEC_READ:
+          fprintf(out, "  {\n    const std::optional<%.*s> field = try_read_%s(reader);\n",
+                  field->type.name.length, field->type.name.data, element_lower);
+          fprintf(out, "    if (!field)\n      return std::nullopt;\n    value.%.*s = *field;\n  }\n",
+                  name_len, name);
+          break;
+        case CODEC_TEXT:
+          fprintf(out, "  text += \"%s%.*s=\";\n  text += to_text(value.%.*s);\n", separator, name_len,
+                  name, name_len, name);
+          break;
+      }
+      continue;
+    }
 
-      // A channel field carries no flags -- everything declared rides the wire
-      // and nothing else reads the table -- and can be neither a component nor
-      // an asset, so three of the nine columns are always their sentinel.
-      fprintf(out, "  {.name = \"%.*s\",\n", field->name.length, field->name.data);
-      fprintf(out, "   .type = %s,\n", field_type_enum_name(field->type.kind));
-      fprintf(out, "   .offset = (uint32_t)offsetof(%.*s, %.*s),\n", struct_name.length,
-              struct_name.data, field->name.length, field->name.data);
-      fprintf(out, "   .size_in_bytes = (uint32_t)sizeof(%.*s::%.*s),\n", struct_name.length,
-              struct_name.data, field->name.length, field->name.data);
-      fprintf(out, "   .flags = 0u,\n");
-      fprintf(out, "   .component_id = NOT_A_COMPONENT,\n");
-      fprintf(out, "   .string_capacity = %s,\n", string_capacity);
-      fprintf(out, "   .asset_class_id = NOT_AN_ASSET_CLASS,\n");
-      fprintf(out, "   .enum_info = %s},\n", enum_info);
+    char element_row[600];
+    char field_upper[256];
+    write_upper_into(field->name, field_upper, sizeof(field_upper));
+    snprintf(element_row, sizeof(element_row), "%s_%s_ELEMENT[0]", table, field_upper);
+    const bool component_element = field->type.kind == TYPE_COMPONENT;
+
+    switch (half)
+    {
+      case CODEC_WRITE:
+        fprintf(out, "  network::write_var_uint(writer, value.%.*s.count);\n", name_len, name);
+        fprintf(out, "  for (uint32_t index = 0; index < value.%.*s.count; ++index)\n", name_len, name);
+        if (component_element)
+          fprintf(out, "    write_%s(writer, value.%.*s.elements[index]);\n", element_lower, name_len, name);
+        else
+          fprintf(out, "    network::write_field(writer, reinterpret_cast<const uint8_t*>(&value.%.*s.elements[index]), "
+                       "%s, 0);\n", name_len, name, element_row);
+        break;
+      case CODEC_READ:
+        fprintf(out, "  {\n    const uint32_t count = network::read_var_uint(reader);\n");
+        fprintf(out, "    if (count > %d)\n    {\n", field->type.pascal_bound);
+        fprintf(out, "      log_error(\"%.*s: '%.*s' carries {} elements, at most %d fit\", count);\n",
+                source->name.length, source->name.data, name_len, name, field->type.pascal_bound);
+        fprintf(out, "      return std::nullopt;\n    }\n");
+        fprintf(out, "    value.%.*s.count = count;\n", name_len, name);
+        fprintf(out, "    for (uint32_t index = 0; index < count; ++index)\n");
+        if (component_element)
+        {
+          fprintf(out, "    {\n      const std::optional<%.*s> element = try_read_%s(reader);\n",
+                  field->type.name.length, field->type.name.data, element_lower);
+          fprintf(out, "      if (!element)\n        return std::nullopt;\n");
+          fprintf(out, "      value.%.*s.elements[index] = *element;\n    }\n", name_len, name);
+        }
+        else
+        {
+          fprintf(out, "      if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&value.%.*s.elements[index]), "
+                       "%s, 0))\n        return std::nullopt;\n", name_len, name, element_row);
+        }
+        fprintf(out, "  }\n");
+        break;
+      case CODEC_TEXT:
+        fprintf(out, "  text += \"%s%.*s=[\";\n", separator, name_len, name);
+        fprintf(out, "  for (uint32_t index = 0; index < value.%.*s.count; ++index)\n  {\n", name_len, name);
+        fprintf(out, "    if (index > 0)\n      text += \", \";\n");
+        if (component_element)
+          fprintf(out, "    text += to_text(value.%.*s.elements[index]);\n", name_len, name);
+        else
+          fprintf(out, "    text += leaf_text(&value.%.*s.elements[index], %s);\n", name_len, name, element_row);
+        fprintf(out, "  }\n  text += \"]\";\n");
+        break;
     }
   }
 }
 
-static int32_t channel_member_field_count(const declaration_t* channel,
-                                          const declaration_t* member)
+// The text half as a whole function. A message's text leads with its name, a
+// component's is the braces alone.
+static void emit_message_to_text(FILE* out, const program_t* program, const declaration_t* source)
 {
-  return channel->field_count + member->field_count;
+  fprintf(out, "std::string to_text(const %.*s& value)\n{\n", source->name.length, source->name.data);
+  fprintf(out, "  std::string text = \"%.*s{ \";\n",
+          source->kind == DECLARATION_MESSAGE ? source->name.length : 0, source->name.data);
+  if (source->field_count == 0)
+    fprintf(out, "  (void)value;\n");
+  emit_message_field_codec(out, program, source, CODEC_TEXT);
+  fprintf(out, "  text += \"%s}\";\n  return text;\n}\n\n", source->field_count == 0 ? "" : " ");
 }
 
-static void emit_channel_struct(FILE* out, const program_t* program,
-                                const declaration_t* declaration, const declaration_t* channel)
+// A component's codec as whole functions over a bare Bit_Writer / Bit_Reader:
+// what every row carrying the component calls, and what a test can call alone.
+static void emit_message_component_codec(FILE* out, const program_t* program,
+                                         const declaration_t* source)
 {
-  if (channel != nullptr)
-    fprintf(out, "struct %.*s : %.*s\n{\n", declaration->name.length, declaration->name.data,
-            channel->name.length, channel->name.data);
-  else
-    fprintf(out, "struct %.*s\n{\n", declaration->name.length, declaration->name.data);
+  const int32_t name_len = source->name.length;
+  const char*   name     = source->name.data;
 
+  fprintf(out, "void write_");
+  write_lower(out, source->name);
+  fprintf(out, "(network::Bit_Writer& writer, const %.*s& value)\n{\n", name_len, name);
+  if (source->field_count == 0)
+    fprintf(out, "  (void)writer;\n  (void)value;\n");
+  emit_message_field_codec(out, program, source, CODEC_WRITE);
+  fprintf(out, "}\n\n");
+
+  fprintf(out, "std::optional<%.*s> try_read_", name_len, name);
+  write_lower(out, source->name);
+  fprintf(out, "(network::Bit_Reader& reader)\n{\n  %.*s value;\n", name_len, name);
+  if (source->field_count == 0)
+    fprintf(out, "  (void)reader;\n");
+  emit_message_field_codec(out, program, source, CODEC_READ);
+  fprintf(out, "  return value;\n}\n\n");
+
+  emit_message_to_text(out, program, source);
+}
+
+// The components declared beside the messages, each after everything it
+// contains. Cycles are already rejected by check_component_cycles.
+static void emit_message_component_struct(FILE* out, const program_t* program, int32_t index,
+                                          visit_state_t* states)
+{
+  if (states[index] != VISIT_UNVISITED)
+    return;
+  states[index] = VISIT_IN_PROGRESS;
+
+  const declaration_t* declaration = &program->declarations[index];
+  for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+  {
+    const field_t* field = &program->fields[declaration->first_field + offset];
+    if (field->type.kind == TYPE_COMPONENT && field->type.declaration_index >= 0)
+      emit_message_component_struct(out, program, field->type.declaration_index, states);
+  }
+
+  fprintf(out, "struct %.*s\n{\n", declaration->name.length, declaration->name.data);
   write_field_members(out, program, declaration);
   fprintf(out, "};\n");
   fprintf(out,
@@ -6733,43 +7076,24 @@ static void emit_channel_struct(FILE* out, const program_t* program,
           "              \"through byte offsets\");\n\n",
           declaration->name.length, declaration->name.data, declaration->name.length,
           declaration->name.data);
+
+  states[index] = VISIT_DONE;
 }
 
-static void emit_events_header(FILE* out, const program_t* program)
+static void emit_message_component_structs(FILE* out, const program_t* program)
 {
-  const int32_t channel_index = find_channel_declaration(program);
-  if (channel_index < 0)
-    return;
+  visit_state_t* states =
+      (visit_state_t*)calloc((size_t)program->declaration_count, sizeof(visit_state_t));
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+    if (program->declarations[index].kind == DECLARATION_COMPONENT)
+      emit_message_component_struct(out, program, index, states);
+  free(states);
+}
 
-  const declaration_t* channel = &program->declarations[channel_index];
-
-  const declaration_t** members =
-      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
-                                    sizeof(const declaration_t*));
-  const int32_t member_count =
-      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
-
-  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
-  fprintf(out, "#pragma once\n\n");
-  // Relative to src/shared, which is game_shared's public include dir.
-  fprintf(out, "#include \"array.hpp\"\n");
-  fprintf(out, "#include \"event_stream.hpp\"\n");
-  fprintf(out, "#include \"linalg.hpp\"\n");
-  fprintf(out, "#include \"network/bitstream.hpp\"\n");
-  fprintf(out, "#include \"network/network_types.hpp\"\n");
-  fprintf(out, "#include \"reflection.hpp\"\n");
-  fprintf(out, "#include \"span.hpp\"\n\n");
-  fprintf(out, "#include <cstdint>\n");
-  fprintf(out, "#include <optional>\n");
-  fprintf(out, "#include <string>\n");
-  fprintf(out, "#include <string_view>\n");
-  fprintf(out, "#include <type_traits>\n\n");
-
-  fprintf(out, "namespace shared\n{\n\n");
-
-  fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
-
-  // --- enums declared beside the channel ---
+// The enums declared beside a wire family, header half: the enum, its count,
+// to_string and try_from_string.
+static void emit_file_enum_declarations(FILE* out, const program_t* program)
+{
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -6792,110 +7116,11 @@ static void emit_events_header(FILE* out, const program_t* program)
             declaration->name.length, declaration->name.data, declaration->name.length,
             declaration->name.data);
   }
+}
 
-  fprintf(out, "// ===================================================================\n");
-  fprintf(out, "// Channel: %.*s\n", channel->name.length, channel->name.data);
-  fprintf(out, "// ===================================================================\n\n");
-
-  // --- the tag ---
-  fprintf(out, "// Declaration order is the wire id. It is mixed into SCHEMA_HASH, so a\n");
-  fprintf(out, "// reorder is a refused handshake rather than a silent remap -- a better\n");
-  fprintf(out, "// outcome, not a licence. Append.\n");
-  fprintf(out, "enum class ");
-  write_channel_enum(out, channel->name);
-  fprintf(out, " : uint16_t\n{\n");
-  for (int32_t which = 0; which < member_count; ++which)
-  {
-    fprintf(out, "  %.*s = %d, // %.*s\n", members[which]->name.length, members[which]->name.data,
-            which, members[which]->description.length, members[which]->description.data);
-  }
-  fprintf(out, "};\n\n");
-
-  fprintf(out, "// Not a member of the enum above, so `switch` over a ");
-  write_channel_enum(out, channel->name);
-  fprintf(out, "\n// still warns on an unhandled case.\n");
-  fprintf(out, "constexpr uint32_t ");
-  write_channel_count(out, channel->name);
-  fprintf(out, " = %d;\n\n", member_count);
-
-  fprintf(out, "const char* to_string(");
-  write_channel_enum(out, channel->name);
-  fprintf(out, " value);\n\n");
-
-  // --- the channel struct: the shared payload ---
-  fprintf(out, "// The shared payload. Authored in the .def rather than built into the\n");
-  fprintf(out, "// generator, so adding a field every member can use is one line there.\n");
-  emit_channel_struct(out, program, channel, nullptr);
-
-  fprintf(out, "// One struct per member, ALWAYS -- a member with no fields of its own gets\n");
-  fprintf(out, "// an empty one rather than a special case. These are STACK LOCALS: the\n");
-  fprintf(out, "// encoder builds one inside the fire helper and the reader builds one on\n");
-  fprintf(out, "// the way to a consumer. Neither is ever stored, which is why this family\n");
-  fprintf(out, "// has no tagged union and no queue.\n");
-  for (int32_t which = 0; which < member_count; ++which)
-    emit_channel_struct(out, program, members[which], channel);
-
-  fprintf(out, "// Fire helpers. Each writes the kind, then the channel's fields, then its\n");
-  fprintf(out, "// own -- straight into the stream. Nothing is queued, so no value survives\n");
-  fprintf(out, "// the call and a kind can never disagree with its payload.\n");
-  for (int32_t which = 0; which < member_count; ++which)
-  {
-    fprintf(out, "void fire_");
-    write_lower(out, members[which]->name);
-    fprintf(out, "(event_stream_t& stream, const %.*s& payload);\n", members[which]->name.length,
-            members[which]->name.data);
-  }
-  fprintf(out, "\n");
-
-  fprintf(out, "// The read half, one per member. Empty when a field's value is outside\n");
-  fprintf(out, "// this build's tables -- an enum id no declared value holds. That leaves\n");
-  fprintf(out, "// the reader mid-record with the rest of the batch bit-packed behind it,\n");
-  fprintf(out, "// so there is nothing to resynchronize to and the caller stops.\n");
-  fprintf(out, "//\n");
-  fprintf(out, "// The receiving side's dispatch switch is generated beside its handlers\n");
-  fprintf(out, "// (client_*_bindings_generated.cpp), because it is what references them.\n");
-  for (int32_t which = 0; which < member_count; ++which)
-  {
-    fprintf(out, "[[nodiscard]] std::optional<%.*s> try_read_", members[which]->name.length,
-            members[which]->name.data);
-    write_lower(out, members[which]->name);
-    fprintf(out, "(network::Bit_Reader& reader);\n");
-  }
-  fprintf(out, "\n");
-
-  fprintf(out, "// The ONE place a payload becomes characters. One overload per member, so\n");
-  fprintf(out, "// a caller holding a payload has a formatter for it.\n");
-  for (int32_t which = 0; which < member_count; ++which)
-    fprintf(out, "std::string to_text(const %.*s& value);\n", members[which]->name.length,
-            members[which]->name.data);
-  fprintf(out, "\n");
-
-  fprintf(out, "// Every event PENDING in the stream, decoded back out of the bytes that\n");
-  fprintf(out, "// will actually be sent. A debugger view of a queue shows what someone\n");
-  fprintf(out, "// INTENDED to send; a codec bug is invisible there and visible here.\n");
-  fprintf(out, "std::string ");
-  write_lower(out, channel->name);
-  fprintf(out, "_stream_to_text(const event_stream_t& stream);\n\n");
-
-  fprintf(out, "} // namespace shared\n");
-
-  // enum_traits for the channel tag AND the declared enums, at global scope --
-  // the primary template lives in shared/array.hpp. Enum_Array<effect_type, T>
-  // is what replaced the effect handler registry's magic table size.
-  fprintf(out, "\n// --- Enum_Array support ---------------------------------------------\n");
-  fprintf(out, "//\n");
-  fprintf(out, "// Global scope on purpose: enum_traits is declared in shared/array.hpp,\n");
-  fprintf(out, "// which knows nothing about this namespace. `count` is what sizes an\n");
-  fprintf(out, "// Enum_Array over a channel tag -- adding a member to the .def resizes\n");
-  fprintf(out, "// every table over it, which is what deleted the handler registry's\n");
-  fprintf(out, "// hand-picked table size.\n\n");
-
-  fprintf(out, "template <> struct enum_traits<shared::");
-  write_channel_enum(out, channel->name);
-  fprintf(out, ">\n{\n  static constexpr uint32_t count = shared::");
-  write_channel_count(out, channel->name);
-  fprintf(out, ";\n};\n\n");
-
+// The enum_traits specialisations for the same enums, at global scope.
+static void emit_file_enum_traits(FILE* out, const program_t* program)
+{
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -6907,45 +7132,13 @@ static void emit_events_header(FILE* out, const program_t* program)
     fprintf(out, "  static constexpr uint32_t count = shared::%.*s_COUNT;\n};\n\n",
             declaration->name.length, declaration->name.data);
   }
-
-  free(members);
 }
 
-static void emit_events_source(FILE* out, const program_t* program, const char* header_path)
+// Source half, inside the anonymous namespace: the value names and the infos an
+// enum-typed field row points at.
+static void emit_file_enum_tables(FILE* out, const program_t* program, const int32_t* enum_ids,
+                                  int32_t enum_count)
 {
-  const int32_t channel_index = find_channel_declaration(program);
-  if (channel_index < 0)
-    return;
-
-  const declaration_t* channel = &program->declarations[channel_index];
-
-  int32_t  enum_count = 0;
-  int32_t* enum_ids   = build_enum_ids(program, &enum_count);
-
-  const declaration_t** members =
-      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
-                                    sizeof(const declaration_t*));
-  const int32_t member_count =
-      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
-
-  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
-  fprintf(out, "#include \"%s\"\n\n", header_path);
-  fprintf(out, "#include \"log.hpp\"\n");
-  fprintf(out, "#include \"network/field_codec.hpp\"\n\n");
-  fprintf(out, "#include <cassert>\n#include <cstddef>\n#include <format>\n\n");
-
-  // A member struct derives from its channel and both halves may carry data, so
-  // offsetof is conditionally-supported -- the same situation the entity family
-  // is in, suppressed the same way.
-  fprintf(out, "#if defined(__clang__) || defined(__GNUC__)\n");
-  fprintf(out, "#pragma GCC diagnostic ignored \"-Winvalid-offsetof\"\n");
-  fprintf(out, "#elif defined(_MSC_VER)\n");
-  fprintf(out, "#pragma warning(disable : 4841)\n");
-  fprintf(out, "#endif\n\n");
-
-  fprintf(out, "namespace shared\n{\n\nnamespace\n{\n\n");
-
-  // --- enum value names, then the infos an enum-typed field row points at ---
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     if (enum_ids[index] < 0)
@@ -6977,20 +7170,11 @@ static void emit_events_source(FILE* out, const program_t* program, const char* 
     }
     fprintf(out, "};\n\n");
   }
+}
 
-  // --- field tables ---
-  for (int32_t which = 0; which < member_count; ++which)
-  {
-    fprintf(out, "constexpr field_info_t ");
-    write_upper(out, members[which]->name);
-    fprintf(out, "_FIELDS[] = {\n");
-    emit_channel_field_table(out, program, channel, members[which], enum_ids);
-    fprintf(out, "};\n\n");
-  }
-
-  fprintf(out, "} // namespace\n\n");
-
-  // --- enum string conversion ---
+// Source half, outside it: to_string and try_from_string.
+static void emit_file_enum_conversions(FILE* out, const program_t* program)
+{
   for (int32_t index = 0; index < program->declaration_count; ++index)
   {
     const declaration_t* declaration = &program->declarations[index];
@@ -7019,92 +7203,350 @@ static void emit_events_source(FILE* out, const program_t* program, const char* 
     }
     fprintf(out, "  return std::nullopt;\n}\n\n");
   }
+}
 
-  // --- the tag's name ---
-  fprintf(out, "const char* to_string(");
-  write_channel_enum(out, channel->name);
-  fprintf(out, " value)\n{\n  switch (value)\n  {\n");
-  for (int32_t which = 0; which < member_count; ++which)
+// ---------------------------------------------------------------------------
+// Code generation -- the message family
+// ---------------------------------------------------------------------------
+//
+// Four files from the one messages.def:
+//
+//   messages_generated.hpp                  Message_Type, one struct per row, the
+//                                           write/read/to_text declarations
+//   messages_generated.cpp                  the tables and the codec; references
+//                                           no handler, so it compiles into
+//                                           game_shared with neither side present
+//   client_messages_bindings_generated.cpp  the client's dispatch over every
+//                                           @Server_To_Client row -> game_client
+//   server_messages_bindings_generated.cpp  the server's over every
+//                                           @Client_To_Server row -> game_server
+//
+// A binder references `<side>::messages::on_<name>`, written by hand, one file
+// each under src/<side>/messages/. A row with no file is a link error naming it.
+
+static const char* MESSAGE_HEADER_PATH    = "network/generated/messages_generated.hpp";
+static const char* MESSAGE_HANDLER_HEADER = "message_handlers.hpp";
+
+// Every message, in declaration order -- which IS the wire id.
+static int32_t collect_messages(const program_t* program, const declaration_t** out,
+                                int32_t capacity)
+{
+  int32_t count = 0;
+  for (int32_t index = 0; index < program->declaration_count; ++index)
   {
-    fprintf(out, "    case ");
-    write_channel_enum(out, channel->name);
-    fprintf(out, "::%.*s: return \"%.*s\";\n", members[which]->name.length,
-            members[which]->name.data, members[which]->name.length, members[which]->name.data);
+    const declaration_t* declaration = &program->declarations[index];
+    if (declaration->kind != DECLARATION_MESSAGE)
+      continue;
+    assert(count < capacity);
+    out[count++] = declaration;
   }
-  fprintf(out, "  }\n  assert(false && \"invalid ");
-  write_channel_enum(out, channel->name);
-  fprintf(out, "\");\n  return \"\";\n}\n\n");
+  return count;
+}
 
-  // --- per member: fire, read, format ---
-  for (int32_t which = 0; which < member_count; ++which)
+// The components declared beside the messages, each after everything it
+// contains, so a codec can call the one it embeds.
+static int32_t collect_components_in_dependency_order(const program_t* program,
+                                                      const declaration_t** out, int32_t capacity)
+{
+  visit_state_t* states =
+      (visit_state_t*)calloc((size_t)program->declaration_count, sizeof(visit_state_t));
+  int32_t count = 0;
+
+  // An explicit stack would be the general answer; components nest a few deep,
+  // so a repeated sweep that admits every component whose parts are admitted is
+  // enough, and check_component_cycles already guarantees it terminates.
+  bool admitted_one = true;
+  while (admitted_one)
   {
-    const declaration_t* member = members[which];
-    const int32_t        total  = channel_member_field_count(channel, member);
+    admitted_one = false;
+    for (int32_t index = 0; index < program->declaration_count; ++index)
+    {
+      const declaration_t* declaration = &program->declarations[index];
+      if (declaration->kind != DECLARATION_COMPONENT || states[index] == VISIT_DONE)
+        continue;
 
-    fprintf(out, "void fire_");
-    write_lower(out, member->name);
-    fprintf(out, "(event_stream_t& stream, const %.*s& payload)\n{\n", member->name.length,
-            member->name.data);
-    fprintf(out, "  stream.writer.write_bits((uint32_t)");
-    write_channel_enum(out, channel->name);
-    fprintf(out, "::%.*s, 16);\n", member->name.length, member->name.data);
-    fprintf(out, "  for (const field_info_t& field : Span<const field_info_t>{");
-    write_upper(out, member->name);
-    fprintf(out, "_FIELDS, %d})\n", total);
-    fprintf(out, "    network::write_field(stream.writer, "
-                 "reinterpret_cast<const uint8_t*>(&payload), field, field.offset);\n");
+      bool parts_admitted = true;
+      for (int32_t offset = 0; offset < declaration->field_count; ++offset)
+      {
+        const field_t* field = &program->fields[declaration->first_field + offset];
+        if (field->type.kind == TYPE_COMPONENT && field->type.declaration_index >= 0 &&
+            states[field->type.declaration_index] != VISIT_DONE)
+          parts_admitted = false;
+      }
+      if (!parts_admitted)
+        continue;
+
+      assert(count < capacity);
+      out[count++]  = declaration;
+      states[index] = VISIT_DONE;
+      admitted_one  = true;
+    }
+  }
+
+  free(states);
+  return count;
+}
+
+// The scope a row's writer accepts, by its transport flag.
+static const char* message_stream_type_name(const declaration_t* message)
+{
+  return (message->class_flags & MESSAGE_FLAG_RELIABLE) != 0 ? "reliable_stream_t" : "message_stream_t";
+}
+
+static void emit_messages_header(FILE* out, const program_t* program)
+{
+  const declaration_t** messages = (const declaration_t**)malloc(
+      (size_t)(program->declaration_count + 1) * sizeof(const declaration_t*));
+  const int32_t message_count =
+      collect_messages(program, messages, program->declaration_count + 1);
+
+  write_generated_banner(out, program);
+  fprintf(out, "#pragma once\n\n");
+  fprintf(out, "#include \"array.hpp\"\n");
+  fprintf(out, "#include \"entities/generated/entities_core_generated.hpp\"\n");
+  fprintf(out, "#include \"entity_uid.hpp\"\n");
+  fprintf(out, "#include \"linalg.hpp\"\n");
+  fprintf(out, "#include \"message_stream.hpp\"\n");
+  fprintf(out, "#include \"network/bitstream.hpp\"\n");
+  fprintf(out, "#include \"network/network_types.hpp\"\n");
+  fprintf(out, "#include \"pascal_array.hpp\"\n");
+  fprintf(out, "#include \"reflection.hpp\"\n");
+  fprintf(out, "#include \"span.hpp\"\n\n");
+  fprintf(out, "#include <cstdint>\n");
+  fprintf(out, "#include <optional>\n");
+  fprintf(out, "#include <string>\n");
+  fprintf(out, "#include <string_view>\n");
+  fprintf(out, "#include <type_traits>\n\n");
+
+  fprintf(out, "namespace shared\n{\n\n");
+  fprintf(out, "template <typename T> std::optional<T> try_from_string(std::string_view text);\n\n");
+
+  emit_file_enum_declarations(out, program);
+  emit_message_component_structs(out, program);
+
+  {
+    const declaration_t** components = (const declaration_t**)malloc(
+        (size_t)(program->declaration_count + 1) * sizeof(const declaration_t*));
+    const int32_t component_count =
+        collect_components_in_dependency_order(program, components, program->declaration_count + 1);
+    if (component_count > 0)
+    {
+      fprintf(out, "// A component's fields as they sit inside a record, in declaration order:\n");
+      fprintf(out, "// what every row carrying one encodes it through. try_read_ is empty when a\n");
+      fprintf(out, "// field's value is outside this build's tables.\n");
+      for (int32_t which = 0; which < component_count; ++which)
+      {
+        const declaration_t* component = components[which];
+        fprintf(out, "void write_");
+        write_lower(out, component->name);
+        fprintf(out, "(network::Bit_Writer& writer, const %.*s& value);\n", component->name.length,
+                component->name.data);
+        fprintf(out, "[[nodiscard]] std::optional<%.*s> try_read_", component->name.length,
+                component->name.data);
+        write_lower(out, component->name);
+        fprintf(out, "(network::Bit_Reader& reader);\n");
+        fprintf(out, "std::string to_text(const %.*s& value);\n\n", component->name.length,
+                component->name.data);
+      }
+    }
+    free(components);
+  }
+
+  fprintf(out, "// Declaration order is the wire id, mixed into SCHEMA_HASH: a reorder is a\n");
+  fprintf(out, "// refused handshake rather than a silent remap. Append.\n");
+  fprintf(out, "enum class Message_Type : uint16_t\n{\n");
+  for (int32_t which = 0; which < message_count; ++which)
+    fprintf(out, "  %.*s = %d, // %.*s\n", messages[which]->name.length,
+            messages[which]->name.data, which, messages[which]->description.length,
+            messages[which]->description.data);
+  fprintf(out, "};\n\n");
+  fprintf(out, "constexpr uint32_t MESSAGE_TYPE_COUNT = %d;\n\n", message_count);
+  fprintf(out, "const char* to_string(Message_Type value);\n");
+  fprintf(out, "const char* description(Message_Type value);\n\n");
+
+  fprintf(out, "// One struct per message. A stack local: the writer builds one and the\n");
+  fprintf(out, "// reader builds one on the way to a handler; nothing stores one.\n");
+  for (int32_t which = 0; which < message_count; ++which)
+  {
+    const declaration_t* message = messages[which];
+    fprintf(out, "struct %.*s\n{\n", message->name.length, message->name.data);
+    fprintf(out, "  static constexpr Message_Type type = Message_Type::%.*s;\n",
+            message->name.length, message->name.data);
+    write_field_members(out, program, message);
+    fprintf(out, "};\n");
+    fprintf(out,
+            "static_assert(std::is_trivially_copyable_v<%.*s>,\n"
+            "              \"%.*s must stay trivially copyable: the codec addresses its fields \"\n"
+            "              \"through byte offsets\");\n\n",
+            message->name.length, message->name.data, message->name.length, message->name.data);
+  }
+
+  fprintf(out, "// Each writes the tag, then the fields, straight into the stream. A @Reliable\n");
+  fprintf(out, "// row writes only into a reliable_stream_t and an @Unreliable row only into a\n");
+  fprintf(out, "// message_stream_t: the signature is what keeps a message on its transport.\n");
+  for (int32_t which = 0; which < message_count; ++which)
+  {
+    fprintf(out, "void write_");
+    write_lower(out, messages[which]->name);
+    fprintf(out, "(%s& stream, const %.*s& payload);\n", message_stream_type_name(messages[which]),
+            messages[which]->name.length, messages[which]->name.data);
+  }
+  fprintf(out, "\n");
+
+  fprintf(out, "// Empty when a field's value is outside this build's tables, which leaves\n");
+  fprintf(out, "// the reader mid-record: the caller stops.\n");
+  for (int32_t which = 0; which < message_count; ++which)
+  {
+    fprintf(out, "[[nodiscard]] std::optional<%.*s> try_read_", messages[which]->name.length,
+            messages[which]->name.data);
+    write_lower(out, messages[which]->name);
+    fprintf(out, "(network::Bit_Reader& reader);\n");
+  }
+  fprintf(out, "\n");
+
+  for (int32_t which = 0; which < message_count; ++which)
+    fprintf(out, "std::string to_text(const %.*s& value);\n", messages[which]->name.length,
+            messages[which]->name.data);
+  fprintf(out, "\n");
+
+  fprintf(out, "// Every record pending in the stream, decoded back out of the bytes that\n");
+  fprintf(out, "// will actually be sent.\n");
+  fprintf(out, "std::string message_stream_to_text(const message_stream_t& stream);\n\n");
+
+  fprintf(out, "} // namespace shared\n\n");
+
+  fprintf(out, "template <> struct enum_traits<shared::Message_Type>\n{\n");
+  fprintf(out, "  static constexpr uint32_t count = shared::MESSAGE_TYPE_COUNT;\n};\n\n");
+  emit_file_enum_traits(out, program);
+
+  free(messages);
+}
+
+static void emit_messages_source(FILE* out, const program_t* program)
+{
+  int32_t  enum_count = 0;
+  int32_t* enum_ids   = build_enum_ids(program, &enum_count);
+
+  const declaration_t** messages = (const declaration_t**)malloc(
+      (size_t)(program->declaration_count + 1) * sizeof(const declaration_t*));
+  const int32_t message_count =
+      collect_messages(program, messages, program->declaration_count + 1);
+
+  write_generated_banner(out, program);
+  fprintf(out, "#include \"%s\"\n\n", MESSAGE_HEADER_PATH);
+  fprintf(out, "#include \"log.hpp\"\n");
+  fprintf(out, "#include \"network/field_codec.hpp\"\n\n");
+  fprintf(out, "#include <cassert>\n#include <cstddef>\n#include <format>\n\n");
+
+  const declaration_t** components = (const declaration_t**)malloc(
+      (size_t)(program->declaration_count + 1) * sizeof(const declaration_t*));
+  const int32_t component_count =
+      collect_components_in_dependency_order(program, components, program->declaration_count + 1);
+
+  fprintf(out, "namespace shared\n{\n\nnamespace\n{\n\n");
+
+  emit_file_enum_tables(out, program, enum_ids, enum_count);
+
+  fprintf(out, "// Each declaration's own leaves; a component field and a counted list are\n");
+  fprintf(out, "// code in the codec below, not rows here.\n");
+  for (int32_t pass = 0; pass < 2; ++pass)
+  {
+    const declaration_t** sources = pass == 0 ? components : messages;
+    const int32_t         count   = pass == 0 ? component_count : message_count;
+    for (int32_t which = 0; which < count; ++which)
+    {
+      if (count_message_leaf_rows(program, sources[which]) > 0)
+      {
+        fprintf(out, "constexpr field_info_t ");
+        write_upper(out, sources[which]->name);
+        fprintf(out, "_FIELDS[] = {\n");
+        emit_message_field_rows(out, program, sources[which], enum_ids);
+        fprintf(out, "};\n\n");
+      }
+      emit_message_element_rows(out, program, sources[which], enum_ids);
+    }
+  }
+
+  fprintf(out, "std::string leaf_text(const void* base, const field_info_t& field)\n{\n");
+  fprintf(out, "  std::string text;\n");
+  fprintf(out, "  return field_to_text(static_cast<const uint8_t*>(base) + field.offset, field, text)\n");
+  fprintf(out, "             ? text\n             : \"<unprintable>\";\n}\n\n");
+
+  fprintf(out, "} // namespace\n\n");
+
+  emit_file_enum_conversions(out, program);
+
+  for (int32_t which = 0; which < component_count; ++which)
+    emit_message_component_codec(out, program, components[which]);
+
+  fprintf(out, "const char* to_string(Message_Type value)\n{\n  switch (value)\n  {\n");
+  for (int32_t which = 0; which < message_count; ++which)
+    fprintf(out, "    case Message_Type::%.*s: return \"%.*s\";\n", messages[which]->name.length,
+            messages[which]->name.data, messages[which]->name.length, messages[which]->name.data);
+  fprintf(out, "  }\n  assert(false && \"invalid Message_Type\");\n  return \"\";\n}\n\n");
+
+  fprintf(out, "const char* description(Message_Type value)\n{\n  switch (value)\n  {\n");
+  for (int32_t which = 0; which < message_count; ++which)
+    fprintf(out, "    case Message_Type::%.*s: return \"%.*s\";\n", messages[which]->name.length,
+            messages[which]->name.data, messages[which]->description.length,
+            messages[which]->description.data);
+  fprintf(out, "  }\n  assert(false && \"invalid Message_Type\");\n  return \"\";\n}\n\n");
+
+  for (int32_t which = 0; which < message_count; ++which)
+  {
+    const declaration_t* message = messages[which];
+
+    const bool reliable = (message->class_flags & MESSAGE_FLAG_RELIABLE) != 0;
+    fprintf(out, "void write_");
+    write_lower(out, message->name);
+    fprintf(out, "(%s& %s, const %.*s& value)\n{\n", message_stream_type_name(message),
+            reliable ? "reliable" : "stream", message->name.length, message->name.data);
+    if (reliable)
+      fprintf(out, "  message_stream_t& stream = reliable.records;\n");
+    fprintf(out, "  network::Bit_Writer& writer = stream.writer;\n");
+    if (message->field_count == 0)
+      fprintf(out, "  (void)writer;\n");
+    fprintf(out, "  stream.begin_record((uint32_t)Message_Type::%.*s);\n",
+            message->name.length, message->name.data);
+    emit_message_field_codec(out, program, message, CODEC_WRITE);
     fprintf(out, "  ++stream.count;\n\n");
-    fprintf(out, "  if (stream.log_fired)\n    log_terminal(\"[event fired] {}\", "
-                 "to_text(payload));\n");
+    fprintf(out, "  if (stream.log_fired)\n    log_terminal(\"[message written] {}\", "
+                 "to_text(value));\n");
     fprintf(out, "}\n\n");
 
-    fprintf(out, "std::optional<%.*s> try_read_", member->name.length, member->name.data);
-    write_lower(out, member->name);
+    fprintf(out, "std::optional<%.*s> try_read_", message->name.length, message->name.data);
+    write_lower(out, message->name);
     fprintf(out, "(network::Bit_Reader& reader)\n{\n");
-    fprintf(out, "  %.*s payload;\n", member->name.length, member->name.data);
-    fprintf(out, "  for (const field_info_t& field : Span<const field_info_t>{");
-    write_upper(out, member->name);
-    fprintf(out, "_FIELDS, %d})\n", total);
-    fprintf(out, "    if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&payload), "
-                 "field, field.offset))\n      return std::nullopt;\n");
-    fprintf(out, "  return payload;\n}\n\n");
+    fprintf(out, "  %.*s value;\n", message->name.length, message->name.data);
+    if (message->field_count == 0)
+      fprintf(out, "  (void)reader;\n");
+    emit_message_field_codec(out, program, message, CODEC_READ);
+    fprintf(out, "  return value;\n}\n\n");
 
-    fprintf(out, "std::string to_text(const %.*s& value)\n{\n", member->name.length,
-            member->name.data);
-    fprintf(out, "  return std::string(\"%.*s\") + fields_to_text({", member->name.length,
-            member->name.data);
-    write_upper(out, member->name);
-    fprintf(out, "_FIELDS, %d}, &value);\n}\n\n", total);
+    emit_message_to_text(out, program, message);
   }
 
-  // --- the pending-stream dump ---
-  fprintf(out, "std::string ");
-  write_lower(out, channel->name);
-  fprintf(out, "_stream_to_text(const event_stream_t& stream)\n{\n");
+  fprintf(out, "std::string message_stream_to_text(const message_stream_t& stream)\n{\n");
   fprintf(out, "  if (stream.empty())\n    return \"<nothing pending>\";\n\n");
   fprintf(out, "  network::Bit_Reader reader(stream.writer.buffer.data(),\n");
   fprintf(out, "                             stream.writer.buffer.size());\n");
-  fprintf(out, "  reader.read_bits(16); // the count slot, backpatched only at send\n\n");
+  fprintf(out, "  reader.read_bits(MESSAGE_STREAM_COUNT_BITS);\n\n");
   fprintf(out, "  std::string text;\n");
   fprintf(out, "  for (uint32_t index = 0; index < stream.count; ++index)\n  {\n");
   fprintf(out, "    if (index > 0)\n      text += '\\n';\n\n");
   fprintf(out, "    const uint32_t kind = reader.read_bits(16);\n");
-  fprintf(out, "    if (kind >= ");
-  write_channel_count(out, channel->name);
-  fprintf(out, ")\n    {\n");
+  fprintf(out, "    if (kind >= MESSAGE_TYPE_COUNT)\n    {\n");
   fprintf(out, "      text += std::format(\"<unknown kind {}; the rest is unreadable>\", kind);\n");
   fprintf(out, "      break;\n    }\n\n");
-  fprintf(out, "    switch ((");
-  write_channel_enum(out, channel->name);
-  fprintf(out, ")kind)\n    {\n");
-  for (int32_t which = 0; which < member_count; ++which)
+  fprintf(out, "    switch ((Message_Type)kind)\n    {\n");
+  for (int32_t which = 0; which < message_count; ++which)
   {
-    fprintf(out, "      case ");
-    write_channel_enum(out, channel->name);
-    fprintf(out, "::%.*s:\n      {\n", members[which]->name.length, members[which]->name.data);
-    fprintf(out, "        const std::optional<%.*s> payload = try_read_",
-            members[which]->name.length, members[which]->name.data);
-    write_lower(out, members[which]->name);
+    const declaration_t* message = messages[which];
+    fprintf(out, "      case Message_Type::%.*s:\n      {\n", message->name.length,
+            message->name.data);
+    fprintf(out, "        const std::optional<%.*s> payload = try_read_", message->name.length,
+            message->name.data);
+    write_lower(out, message->name);
     fprintf(out, "(reader);\n");
     fprintf(out, "        if (!payload)\n        {\n");
     fprintf(out, "          text += \"<undecodable payload; the rest is unreadable>\";\n");
@@ -7115,113 +7557,115 @@ static void emit_events_source(FILE* out, const program_t* program, const char* 
 
   fprintf(out, "} // namespace shared\n");
 
-  free(members);
+  free(messages);
+  free(components);
   free(enum_ids);
 }
 
-// The per-side TU. Everything that references a handler lives here, so
-// <stem>_generated.cpp compiles into game_shared with neither side present --
-// the cvar family's split, for the cvar family's reason.
-static void emit_event_bindings(FILE* out, const program_t* program, const char* header_path)
+// One side's dispatch. Switches over the whole closed enum so -Werror=switch
+// holds; a row the other side sends is one shared case that drops the rest of
+// the stream, since its payload length is unknown to this side's reader.
+static void emit_message_bindings(FILE* out, const program_t* program, bool server_side)
 {
-  const int32_t channel_index = find_channel_declaration(program);
-  if (channel_index < 0)
-    return;
+  const uint32_t wanted = server_side ? MESSAGE_FLAG_CLIENT_TO_SERVER : MESSAGE_FLAG_SERVER_TO_CLIENT;
+  const char* side          = server_side ? "server" : "client";
+  const char* context_type  = server_side ? "server_context_t" : "client_context_t";
+  const char* slot_parameter = server_side ? ", int32_t slot" : "";
+  const char* slot_argument  = server_side ? ", slot" : "";
 
-  const declaration_t* channel = &program->declarations[channel_index];
+  const declaration_t** messages = (const declaration_t**)malloc(
+      (size_t)(program->declaration_count + 1) * sizeof(const declaration_t*));
+  const int32_t message_count =
+      collect_messages(program, messages, program->declaration_count + 1);
 
-  const declaration_t** members =
-      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
-                                    sizeof(const declaration_t*));
-  const int32_t member_count =
-      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
-
-  fprintf(out, "// Generated from %s by def_gen. Do not edit.\n", program->filename);
+  write_generated_banner(out, program);
   fprintf(out, "//\n");
-  fprintf(out, "// The receiving side's seam. Every handler below is REFERENCED here and\n");
+  fprintf(out, "// The %s's receiving seam. Every handler below is REFERENCED here and\n", side);
   fprintf(out, "// DEFINED by hand, so a missing, misspelled or wrongly typed one fails at\n");
-  fprintf(out, "// LINK time, naming the symbol. That link step is the assert: there is no\n");
-  fprintf(out, "// registration, so \"forgot to register\" is not representable and the only\n");
-  fprintf(out, "// surviving failure is \"forgot to write it\".\n");
-  fprintf(out, "#include \"%s\"\n", header_path);
-  fprintf(out, "#include \"%s\"\n\n", EVENT_HANDLER_HEADER);
+  fprintf(out, "// LINK time, naming the symbol.\n");
+  fprintf(out, "#include \"%s\"\n", MESSAGE_HEADER_PATH);
+  fprintf(out, "#include \"%s\"\n\n", MESSAGE_HANDLER_HEADER);
   fprintf(out, "#include \"log.hpp\"\n\n");
 
-  fprintf(out, "namespace client\n{\n\n");
+  fprintf(out, "namespace %s\n{\n\n", side);
 
-  // --- handler declarations ---
-  fprintf(out, "// Channel %.*s. One file per member under src/client/", channel->name.length,
-          channel->name.data);
-  write_lower(out, channel->name);
-  fprintf(out, "s/.\nnamespace ");
-  write_lower(out, channel->name);
-  fprintf(out, "s\n{\n");
-  for (int32_t which = 0; which < member_count; ++which)
+  fprintf(out, "// One file per message under src/%s/messages/.\n", side);
+  fprintf(out, "namespace messages\n{\n");
+  for (int32_t which = 0; which < message_count; ++which)
   {
+    if ((messages[which]->class_flags & wanted) == 0)
+      continue;
     fprintf(out, "void on_");
-    write_lower(out, members[which]->name);
-    fprintf(out, "(%s& context, const shared::%.*s& value);\n", EVENT_CONTEXT_TYPE,
-            members[which]->name.length, members[which]->name.data);
+    write_lower(out, messages[which]->name);
+    fprintf(out, "(%s& context%s, const shared::%.*s& value);\n", context_type, slot_parameter,
+            messages[which]->name.length, messages[which]->name.data);
   }
-  fprintf(out, "} // namespace ");
-  write_lower(out, channel->name);
-  fprintf(out, "s\n\n");
+  fprintf(out, "} // namespace messages\n\n");
 
-  // --- the batch reader IS the dispatch switch ---
-  fprintf(out, "// The switch lives here rather than beside the codec because it is what\n");
-  fprintf(out, "// references the consumers. Each payload is a stack local on its way to\n");
-  fprintf(out, "// one call -- no vector, no tagged union, no member access to get wrong.\n");
-  fprintf(out, "void dispatch_received_");
-  write_lower(out, channel->name);
-  fprintf(out, "s(%s& context, network::Bit_Reader& reader,\n", EVENT_CONTEXT_TYPE);
-  fprintf(out, "                                 bool log_received)\n{\n");
-  fprintf(out, "  const uint32_t count = reader.read_bits(16);\n\n");
-  fprintf(out, "  for (uint32_t index = 0; index < count; ++index)\n  {\n");
-  fprintf(out, "    const uint32_t kind = reader.read_bits(16);\n");
-  fprintf(out, "    if (kind >= shared::");
-  write_channel_count(out, channel->name);
-  fprintf(out, ")\n    {\n");
-  fprintf(out, "      // The payload behind an unknown kind has an unknown length, so\n");
-  fprintf(out, "      // every record after it is unreadable too.\n");
-  fprintf(out, "      log_error(\"dispatch_received_");
-  write_lower(out, channel->name);
-  fprintf(out, "s: record {} of {} carries an \"\n");
-  fprintf(out, "                \"unknown kind {}; dropping the rest of the batch\", index, count, kind);\n");
-  fprintf(out, "      return;\n    }\n\n");
-  fprintf(out, "    switch ((shared::");
-  write_channel_enum(out, channel->name);
-  fprintf(out, ")kind)\n    {\n");
-  for (int32_t which = 0; which < member_count; ++which)
+  fprintf(out, "// A payload is one or more finished streams back to back, each starting on a\n");
+  fprintf(out, "// byte; every record is dispatched in arrival order.\n");
+  fprintf(out, "void dispatch_received_messages(%s& context%s, network::Bit_Reader& reader,\n",
+          context_type, slot_parameter);
+  fprintf(out, "                                shared::message_log_filter_t log_filter)\n{\n");
+  fprintf(out, "  while (reader.bits_remaining() >= (size_t)shared::MESSAGE_STREAM_COUNT_BITS)\n  {\n");
+  fprintf(out, "    const uint32_t count = reader.read_bits(shared::MESSAGE_STREAM_COUNT_BITS);\n\n");
+  fprintf(out, "    for (uint32_t index = 0; index < count; ++index)\n    {\n");
+  fprintf(out, "      const uint32_t kind = reader.read_bits(16);\n");
+  fprintf(out, "      if (kind >= shared::MESSAGE_TYPE_COUNT)\n      {\n");
+  if (server_side)
+    fprintf(out, "        log_error(\"dispatch_received_messages: record {} of {} from slot {} carries "
+                 "an unknown kind {}; dropping the rest\", index, count, slot, kind);\n");
+  else
+    fprintf(out, "        log_error(\"dispatch_received_messages: record {} of {} carries an unknown "
+                 "kind {}; dropping the rest\", index, count, kind);\n");
+  fprintf(out, "        return;\n      }\n\n");
+  fprintf(out, "      switch ((shared::Message_Type)kind)\n      {\n");
+
+  for (int32_t which = 0; which < message_count; ++which)
   {
-    const declaration_t* member = members[which];
-    fprintf(out, "      case shared::");
-    write_channel_enum(out, channel->name);
-    fprintf(out, "::%.*s:\n      {\n", member->name.length, member->name.data);
-    fprintf(out, "        const std::optional<shared::%.*s> payload = shared::try_read_",
-            member->name.length, member->name.data);
-    write_lower(out, member->name);
+    const declaration_t* message = messages[which];
+    if ((message->class_flags & wanted) == 0)
+      continue;
+
+    fprintf(out, "        case shared::Message_Type::%.*s:\n        {\n", message->name.length,
+            message->name.data);
+    fprintf(out, "          const std::optional<shared::%.*s> payload = shared::try_read_",
+            message->name.length, message->name.data);
+    write_lower(out, message->name);
     fprintf(out, "(reader);\n");
-    fprintf(out, "        if (!payload)\n        {\n");
-    fprintf(out, "          // A field the tables cannot represent leaves the reader\n");
-    fprintf(out, "          // mid-record, so the rest of the batch is gone with it.\n");
-    fprintf(out, "          log_error(\"dispatch_received_");
-    write_lower(out, channel->name);
-    fprintf(out, "s: record {} of {} did not \"\n");
-    fprintf(out, "                    \"decode; dropping the rest of the batch\", index, count);\n");
-    fprintf(out, "          return;\n        }\n");
-    fprintf(out, "        if (log_received)\n          log_terminal(\"[event received] {}\", "
-                 "shared::to_text(*payload));\n");
-    fprintf(out, "        ");
-    write_lower(out, channel->name);
-    fprintf(out, "s::on_");
-    write_lower(out, member->name);
-    fprintf(out, "(context, *payload);\n        break;\n      }\n");
+    fprintf(out, "          if (!payload)\n          {\n");
+    fprintf(out, "            log_error(\"dispatch_received_messages: record {} of {} did not decode; "
+                 "dropping the rest\", index, count);\n");
+    fprintf(out, "            return;\n          }\n");
+    fprintf(out, "          if (shared::message_log_filter_admits(log_filter, %s))\n"
+                 "            log_terminal(\"[message received] {}\", shared::to_text(*payload));\n",
+            (message->class_flags & MESSAGE_FLAG_RELIABLE) != 0 ? "true" : "false");
+    fprintf(out, "          messages::on_");
+    write_lower(out, message->name);
+    fprintf(out, "(context%s, *payload);\n          break;\n        }\n", slot_argument);
   }
-  fprintf(out, "    }\n  }\n}\n\n");
 
-  fprintf(out, "} // namespace client\n");
+  bool any_other_direction = false;
+  for (int32_t which = 0; which < message_count; ++which)
+  {
+    if ((messages[which]->class_flags & wanted) != 0)
+      continue;
+    fprintf(out, "        case shared::Message_Type::%.*s:\n", messages[which]->name.length,
+            messages[which]->name.data);
+    any_other_direction = true;
+  }
+  if (any_other_direction)
+  {
+    fprintf(out, "          log_error(\"dispatch_received_messages: {} is not sent to the %s; "
+                 "dropping the rest\", shared::to_string((shared::Message_Type)kind));\n",
+            side);
+    fprintf(out, "          return;\n");
+  }
 
-  free(members);
+  fprintf(out, "      }\n    }\n\n    reader.align();\n  }\n}\n\n");
+  fprintf(out, "} // namespace %s\n", side);
+
+  free(messages);
 }
 
 // ---------------------------------------------------------------------------
@@ -7237,9 +7681,12 @@ static void print_type(const type_reference_t* type)
       printf("string<%d>", type->capacity);
     else
       printf("string");
-    return;
   }
-  printf("%.*s", type->name.length, type->name.data);
+  else
+    printf("%.*s", type->name.length, type->name.data);
+
+  if (type_is_pascal_array(type))
+    printf("<%d>", type->pascal_bound);
 }
 
 static void print_default_value(const program_t* program, const default_value_t* value)
@@ -7309,6 +7756,14 @@ static void print_cvar_flags(uint32_t flags)
   if (flags & CVAR_FLAG_MIRRORED) printf(" @Mirrored");
 }
 
+static void print_message_flags(uint32_t flags)
+{
+  if (flags & MESSAGE_FLAG_CLIENT_TO_SERVER) printf(" @Client_To_Server");
+  if (flags & MESSAGE_FLAG_SERVER_TO_CLIENT) printf(" @Server_To_Client");
+  if (flags & MESSAGE_FLAG_RELIABLE)         printf(" @Reliable");
+  if (flags & MESSAGE_FLAG_UNRELIABLE)       printf(" @Unreliable");
+}
+
 static void print_name_reference_list(const program_t* program, int32_t first, int32_t count,
                                       const char* prefix)
 {
@@ -7332,20 +7787,33 @@ static void dump_program(const program_t* program)
   {
     const declaration_t* declaration = &program->declarations[index];
 
-    if (declaration->kind == DECLARATION_CHANNEL_MEMBER)
-      printf("\n%.*s :: %.*s  \"%.*s\"", declaration->name.length, declaration->name.data,
-             declaration->base_name.length, declaration->base_name.data,
-             declaration->description.length, declaration->description.data);
-    else
-      printf("\n%.*s :: %s", declaration->name.length, declaration->name.data,
-             declaration_kind_name(declaration->kind));
+    printf("\n%.*s :: %s", declaration->name.length, declaration->name.data,
+           declaration_kind_name(declaration->kind));
 
     if (declaration->kind == DECLARATION_FLAGSET)
     {
       printf(" [");
-      print_field_flags(declaration->class_flags);
+      if (program->family == DEF_FAMILY_MESSAGE)
+        print_message_flags(declaration->class_flags);
+      else
+        print_field_flags(declaration->class_flags);
       printf(" ]\n");
       continue;
+    }
+
+    if (declaration->kind == DECLARATION_MESSAGE)
+    {
+      print_message_flags(declaration->class_flags);
+      printf("  \"%.*s\"", declaration->description.length, declaration->description.data);
+    }
+    else
+    {
+      if (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY)
+        printf(" @runtime_only");
+      if (declaration->class_flags & CLASS_FLAG_REPLICATED)
+        printf(" (replicated)");
+      if (declaration->class_flags & CLASS_FLAG_PREDICTED)
+        printf(" @predicted");
     }
 
     if (declaration->kind == DECLARATION_ASSETS)
@@ -7353,13 +7821,6 @@ static void dump_program(const program_t* program)
       printf("  (ids numbered at startup from resources/)\n");
       continue;
     }
-
-    if (declaration->class_flags & CLASS_FLAG_RUNTIME_ONLY)
-      printf(" @runtime_only");
-    if (declaration->class_flags & CLASS_FLAG_REPLICATED)
-      printf(" (replicated)");
-    if (declaration->class_flags & CLASS_FLAG_PREDICTED)
-      printf(" @predicted");
 
     print_name_reference_list(program, declaration->first_requirement,
                               declaration->requirement_count, " requires ");
@@ -9299,125 +9760,8 @@ static bool emit_cvar_family(const program_t* program, const char* output_dir)
   return wrote;
 }
 
-// The .def's filename stem: "src/shared/effects/effects.def" -> "effects". Both
-// the emitted filenames and the directory they land in come off the input path,
-// so two inputs in one family cannot collide.
-static void derive_input_stem(const char* def_path, char* buffer, size_t buffer_size)
-{
-  std::string stem = std::filesystem::path(def_path).stem().string();
-  snprintf(buffer, buffer_size, "%s", stem.c_str());
-}
-
-// Lowercase `name` into `buffer`, appending a trailing 's'. The channel's
-// handler namespace and directory: `Effect` -> "effects".
-static void write_lower_plural(string_view_t name, char* buffer, size_t buffer_size)
-{
-  size_t length = (size_t)name.length;
-  if (length > buffer_size - 2)
-    length = buffer_size - 2;
-
-  for (size_t index = 0; index < length; ++index)
-  {
-    char character = name.data[index];
-    buffer[index]  = (character >= 'A' && character <= 'Z') ? (char)(character - 'A' + 'a')
-                                                            : character;
-  }
-  buffer[length]     = 's';
-  buffer[length + 1] = '\0';
-}
-
-// --scaffold: write the empty handler file for any member that has none.
-//
-// The link error already tells you WHAT to write; this only saves the typing.
-// Three constraints, all load-bearing:
-//
-//   - Write-if-absent, full stop. It stats the path and skips it if anything is
-//     there. It never opens an existing file for writing, never merges, never
-//     diffs, never backs up -- because it never needs to. A stub is a starting
-//     point, not an owned artifact; the moment it exists it belongs to a human.
-//   - Opt-in, never part of a build. A `cmake --build` must not create source
-//     files. This is something you type, like --dump.
-//   - It reports what it wrote, one line each, so an accidental invocation is
-//     visible now rather than discovered later in `git status`.
-//
-// CMake still needs the new file in the game_client list. The repo writes its
-// source lists out rather than globbing, and the link error is the reminder.
-static bool scaffold_event_handlers(const program_t* program, const char* client_root)
-{
-  const int32_t channel_index = find_channel_declaration(program);
-  if (channel_index < 0)
-    return true;
-
-  const declaration_t* channel = &program->declarations[channel_index];
-
-  const declaration_t** members =
-      (const declaration_t**)malloc((size_t)(program->declaration_count + 1) *
-                                    sizeof(const declaration_t*));
-  const int32_t member_count =
-      collect_channel_members(program, channel_index, members, program->declaration_count + 1);
-
-  int32_t written = 0;
-  bool    ok      = true;
-
-  // src/client/<channel>s/<member>.cpp -- the same shape src/client/effects/
-  // already has, derived rather than declared.
-  char plural[256];
-  write_lower_plural(channel->name, plural, sizeof(plural));
-
-  char directory[1024];
-  snprintf(directory, sizeof(directory), "%s/%s", client_root, plural);
-
-  std::error_code error_code;
-  std::filesystem::create_directories(directory, error_code);
-
-  for (int32_t which = 0; which < member_count; ++which)
-  {
-    char lowered_member[256];
-    write_lower_into(members[which]->name, lowered_member, sizeof(lowered_member));
-
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/%s.cpp", directory, lowered_member);
-
-    if (std::filesystem::exists(path))
-      continue;
-
-    FILE* file = fopen(path, "wb");
-    if (file == nullptr)
-    {
-      fprintf(stderr, "error: cannot write '%s'\n", path);
-      ok = false;
-      continue;
-    }
-
-    fprintf(file, "#include \"../%s\"\n\n", EVENT_HANDLER_HEADER);
-    fprintf(file, "namespace client::%s\n{\n\n", plural);
-    fprintf(file, "// %.*s\n", members[which]->description.length,
-            members[which]->description.data);
-    fprintf(file, "// This file is yours now -- --scaffold wrote it once and will never\n");
-    fprintf(file, "// touch it again. Its consumer list lives here.\n");
-    fprintf(file, "void on_%s(%s &context, const shared::%.*s &value)\n", lowered_member,
-            EVENT_CONTEXT_TYPE, members[which]->name.length, members[which]->name.data);
-    fprintf(file, "{\n  (void)context;\n  (void)value;\n}\n\n");
-    fprintf(file, "} // namespace client::%s\n", plural);
-    fclose(file);
-
-    fprintf(stderr, "def_gen: scaffolded %s\n", path);
-    ++written;
-  }
-
-  if (written == 0)
-    fprintf(stderr, "def_gen: every %s handler already has a file; nothing scaffolded\n", plural);
-  else
-    fprintf(stderr, "def_gen: %d file%s scaffolded -- add them to the game_client source "
-                    "list in CMakeLists.txt\n",
-            written, written == 1 ? "" : "s");
-
-  free(members);
-  return ok;
-}
-
-// --scaffold, the entity family's half. Same three constraints as the event
-// channels' above, and the same reason: the link error already says WHAT to
+// --scaffold, the entity family's half. Same three constraints as the message
+// family's below, and the same reason: the link error already says WHAT to
 // write, this only saves the typing.
 //
 // Two directories, because a handler lives where its RECEIVER's type is
@@ -9581,53 +9925,120 @@ static bool scaffold_entity_io_handlers(const program_t* program, const char* se
   return ok;
 }
 
-static bool emit_event_family(const program_t* program, const char* output_dir)
+static bool emit_message_family(const program_t* program, const char* output_dir)
 {
   char path[1024];
-  char stem[256];
-  derive_input_stem(program->filename, stem, sizeof(stem));
 
-  // All four names are derived from the stem. They were literals while every
-  // family had exactly one input file; the event family has two, and the fourth
-  // one below is written verbatim into an #include, so a literal would have the
-  // effects codec including the gameplay-event header.
-  char header_name[512];
-  char source_name[512];
-  char bindings_name[512];
-  char header_path[512];
-  snprintf(header_name, sizeof(header_name), "%s_generated.hpp", stem);
-  snprintf(source_name, sizeof(source_name), "%s_generated.cpp", stem);
-  snprintf(bindings_name, sizeof(bindings_name), "client_%s_bindings_generated.cpp", stem);
-
-  // The generated TUs include the header by PATH rather than by its bare name:
-  // one of them sits in this directory but is compiled into another module,
-  // where the bare name resolves against a different include root.
-  snprintf(header_path, sizeof(header_path), "%s/generated/%s", stem, header_name);
-
-  FILE* header_file = open_generated_file(output_dir, header_name, path, sizeof(path));
+  FILE* header_file = open_generated_file(output_dir, "messages_generated.hpp", path, sizeof(path));
   if (header_file == nullptr)
     return false;
-  emit_events_header(header_file, program);
+  emit_messages_header(header_file, program);
   if (!close_generated_file(header_file))
     return false;
 
-  FILE* source_file = open_generated_file(output_dir, source_name, path, sizeof(path));
+  FILE* source_file = open_generated_file(output_dir, "messages_generated.cpp", path, sizeof(path));
   if (source_file == nullptr)
     return false;
-  emit_events_source(source_file, program, header_path);
+  emit_messages_source(source_file, program);
   if (!close_generated_file(source_file))
     return false;
 
-  FILE* bindings_file = open_generated_file(output_dir, bindings_name, path, sizeof(path));
-  if (bindings_file == nullptr)
+  FILE* client_file =
+      open_generated_file(output_dir, "client_messages_bindings_generated.cpp", path, sizeof(path));
+  if (client_file == nullptr)
     return false;
-  emit_event_bindings(bindings_file, program, header_path);
-  if (!close_generated_file(bindings_file))
+  emit_message_bindings(client_file, program, false);
+  if (!close_generated_file(client_file))
     return false;
 
-  fprintf(stderr, "def_gen: emitted %s/%s_generated.{hpp,cpp} and %s\n", output_dir, stem,
-          bindings_name);
+  FILE* server_file =
+      open_generated_file(output_dir, "server_messages_bindings_generated.cpp", path, sizeof(path));
+  if (server_file == nullptr)
+    return false;
+  emit_message_bindings(server_file, program, true);
+  if (!close_generated_file(server_file))
+    return false;
+
+  fprintf(stderr, "def_gen: emitted %s/messages_generated.{hpp,cpp}, "
+                  "client_messages_bindings_generated.cpp and server_messages_bindings_generated.cpp\n",
+          output_dir);
   return true;
+}
+
+// --scaffold for messages: a @Server_To_Client row gets src/client/messages/
+// <name>.cpp, a @Client_To_Server row src/server/messages/<name>.cpp, both
+// write-if-absent. Same three constraints as scaffold_event_handlers.
+static bool scaffold_message_handlers(const program_t* program, const char* client_root,
+                                      const char* server_root)
+{
+  int32_t written = 0;
+  bool    ok      = true;
+
+  for (int32_t index = 0; index < program->declaration_count; ++index)
+  {
+    const declaration_t* message = &program->declarations[index];
+    if (message->kind != DECLARATION_MESSAGE)
+      continue;
+
+    for (int32_t side = 0; side < 2; ++side)
+    {
+      const bool     server_side = side == 1;
+      const uint32_t wanted = server_side ? MESSAGE_FLAG_CLIENT_TO_SERVER : MESSAGE_FLAG_SERVER_TO_CLIENT;
+      if ((message->class_flags & wanted) == 0)
+        continue;
+
+      char lowered[256];
+      write_lower_into(message->name, lowered, sizeof(lowered));
+
+      char directory[1024];
+      snprintf(directory, sizeof(directory), "%s/messages", server_side ? server_root : client_root);
+
+      std::error_code error_code;
+      std::filesystem::create_directories(directory, error_code);
+
+      char path[1024];
+      snprintf(path, sizeof(path), "%s/%s.cpp", directory, lowered);
+      if (std::filesystem::exists(path))
+        continue;
+
+      FILE* file = fopen(path, "wb");
+      if (file == nullptr)
+      {
+        fprintf(stderr, "error: cannot write '%s'\n", path);
+        ok = false;
+        continue;
+      }
+
+      const char* side_name = server_side ? "server" : "client";
+      fprintf(file, "#include \"../%s\"\n\n", MESSAGE_HANDLER_HEADER);
+      fprintf(file, "namespace %s::messages\n{\n\n", side_name);
+      fprintf(file, "// %.*s\n", message->description.length, message->description.data);
+      fprintf(file, "// This file is yours now -- --scaffold wrote it once and will never\n");
+      fprintf(file, "// touch it again.\n");
+      if (server_side)
+        fprintf(file, "void on_%s(server_context_t &context, int32_t slot, const shared::%.*s &value)\n",
+                lowered, message->name.length, message->name.data);
+      else
+        fprintf(file, "void on_%s(client_context_t &context, const shared::%.*s &value)\n", lowered,
+                message->name.length, message->name.data);
+      fprintf(file, "{\n  (void)context;\n%s  (void)value;\n}\n\n",
+              server_side ? "  (void)slot;\n" : "");
+      fprintf(file, "} // namespace %s::messages\n", side_name);
+      fclose(file);
+
+      fprintf(stderr, "def_gen: scaffolded %s\n", path);
+      ++written;
+    }
+  }
+
+  if (written == 0)
+    fprintf(stderr, "def_gen: every message handler already has a file; nothing scaffolded\n");
+  else
+    fprintf(stderr, "def_gen: %d file%s scaffolded -- add them to the game_client or game_server "
+                    "source list in CMakeLists.txt\n",
+            written, written == 1 ? "" : "s");
+
+  return ok;
 }
 
 int main(int argument_count, char** arguments)
@@ -9718,7 +10129,7 @@ int main(int argument_count, char** arguments)
                     "                  <dir of the .def>/generated unless --output-dir says\n"
                     "                  otherwise. Without it the tool only parses and checks.\n"
                     "  --dump          print the parsed IR\n"
-                    "  --scaffold      write a handler stub for any event member or entity I/O\n"
+                    "  --scaffold      write a handler stub for any message, event member or entity I/O\n"
                     "                  verb with no file yet. Write-if-absent: never overwrites,\n"
                     "                  never merges, and reports every file it writes. Opt-in,\n"
                     "                  so a build never creates source files.\n"
@@ -9759,8 +10170,13 @@ int main(int argument_count, char** arguments)
     parser_t parser = {};
     parser.program  = program;
     parse_program(&parser);
+    check_family(program);
+  }
 
-    resolve_program(program);
+  for (int32_t index = 0; index < input_count; ++index)
+  {
+    program_t* program = &programs[index];
+    resolve_program(program, programs, input_count);
 
     if (program->error_count > 0)
       fprintf(stderr, "%s: %d error%s\n", program->filename, program->error_count,
@@ -9794,11 +10210,11 @@ int main(int argument_count, char** arguments)
   {
     for (int32_t index = 0; index < input_count; ++index)
     {
-      if (programs[index].family == DEF_FAMILY_EVENT &&
-          !scaffold_event_handlers(&programs[index], client_root))
-        return 1;
       if (programs[index].family == DEF_FAMILY_ENTITY &&
           !scaffold_entity_io_handlers(&programs[index], server_root))
+        return 1;
+      if (programs[index].family == DEF_FAMILY_MESSAGE &&
+          !scaffold_message_handlers(&programs[index], client_root, server_root))
         return 1;
     }
   }
@@ -9825,8 +10241,8 @@ int main(int argument_count, char** arguments)
         wrote = emit_cvar_family(program, output_dir);
         break;
 
-      case DEF_FAMILY_EVENT:
-        wrote = emit_event_family(program, output_dir);
+      case DEF_FAMILY_MESSAGE:
+        wrote = emit_message_family(program, output_dir);
         break;
 
       case DEF_FAMILY_EMPTY:

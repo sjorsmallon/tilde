@@ -199,4 +199,18 @@ bool deserialize_snapshot(Bit_Reader& reader, const snapshot_frame_t* baseline,
   return true;
 }
 
+shared::Entity_Package entity_package_from_snapshot(Bit_Writer& scratch, const snapshot_frame_t& current,
+                                                    const snapshot_frame_t* baseline,
+                                                    int32_t                 latest_processed_input_number)
+{
+  scratch.reset();
+  serialize_snapshot(scratch, current, baseline);
+
+  shared::Entity_Package package;
+  package.latest_processed_input_number = latest_processed_input_number;
+  package.delta_from_tick               = baseline != nullptr ? baseline->tick : 0;
+  package.entity_data                   = Span<const uint8_t>(scratch.buffer);
+  return package;
+}
+
 } // namespace network

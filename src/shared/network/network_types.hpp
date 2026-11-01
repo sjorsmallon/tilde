@@ -38,6 +38,8 @@ using vec3f = linalg::vec3_t<float32>;
 // branch of deserialize_field_from_bits() in entity.cpp.
 template <uint8 N = 250> struct pascal_string_t
 {
+  static constexpr uint8 capacity = N;
+
   uint8 length = 0;
   char data[N + 1] = {};
 

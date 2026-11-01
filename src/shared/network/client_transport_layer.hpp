@@ -1,15 +1,15 @@
 #pragma once
 
 #include "../log.hpp"
-#include "game.pb.h"
+#include "../message_stream.hpp"
 #include "network_types.hpp"
 #include "reliable_stream.hpp"
 #include "transfer_receipt.hpp"
 #include "udp_socket.hpp"
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -42,82 +42,13 @@ struct Client_Transport_Layer
   //
   // The ack rides EVERY datagram we send (see send_packet_to_server), which is
   // why the server's stream cannot stall while we are alive; a spectator sends
-  // C2S_ClientInputBatch too, so there is no client state in which acks stop
+  // input datagram too, so there is no client state in which acks stop
   // flowing. The server's ack of OUR stream rides every datagram it sends, and a
   // client mid-download gets no snapshots -- so what carries it then is the map
   // package's own fragments and the server's reliable blocks. Both go through
   // send_packet_to_client for exactly that reason.
   Reliable_Stream reliable_stream;
 };
-
-struct Client_Inbox
-{
-  std::vector<game::S2C_Connection> connection_messages;
-  std::vector<game::S2C_EntityPackage> entity_updates;
-  std::vector<game::S2C_ServerMessage> server_text_messages;
-  std::vector<game::S2C_BotDebug> bot_debug_updates;
-  std::vector<game::S2C_ShotDebug> shot_debug_updates;
-  std::vector<game::S2C_GameEventBatch> game_event_batches;
-  std::vector<game::S2C_EffectBatch> effect_batches;
-  // Raw reassembled payloads of bitstream-native CmdChangeMap messages. Decoded
-  // in play_state via shared::deserialize_change_map(); the network layer stays
-  // ignorant of the payload's meaning (same division as game_event_batches).
-  std::vector<std::vector<uint8>> change_map_messages;
-  // Raw reassembled payloads of bitstream-native S2C_MapData messages (the
-  // streamed compiled package). Decoded in play_state via
-  // shared::deserialize_map_data().
-  std::vector<std::vector<uint8>> map_data_messages;
-  // Raw reassembled payloads of bitstream-native S2C_CvarValues messages (the
-  // @Mirrored values push). Decoded in play_state via
-  // shared::deserialize_cvar_values() and applied to the launcher's
-  // cvar_state_t — the network layer stays ignorant of cvars, same division as
-  // the two above.
-  std::vector<std::vector<uint8>> cvar_value_messages;
-  // S2C_GhostAvailable and S2C_GhostData, decoded in client/ghost_playback.cpp.
-  std::vector<std::vector<uint8>> ghost_available_messages;
-  std::vector<std::vector<uint8>> ghost_data_messages;
-};
-
-// clear() per member rather than `= {}` on the whole struct: this is refilled
-// from scratch every frame, and assigning would free and re-grow every vector's
-// capacity each time -- the allocation churn keeping the inbox on the context
-// exists to avoid. Same trade, and same reason, as the server's clear_incoming.
-inline void clear_client_inbox(Client_Inbox &inbox)
-{
-  inbox.connection_messages.clear();
-  inbox.entity_updates.clear();
-  inbox.server_text_messages.clear();
-  inbox.bot_debug_updates.clear();
-  inbox.shot_debug_updates.clear();
-  inbox.game_event_batches.clear();
-  inbox.effect_batches.clear();
-  inbox.change_map_messages.clear();
-  inbox.map_data_messages.clear();
-  inbox.cvar_value_messages.clear();
-  inbox.ghost_available_messages.clear();
-  inbox.ghost_data_messages.clear();
-}
-
-// A member that exists but is never cleared, or never read, type-checks
-// perfectly -- those are the two genuinely silent sites in the whole message
-// path, and nothing above can see them. Forget the clear and last frame's
-// messages replay every frame; forget the drain and messages are filed and
-// never read, forever.
-//
-// So: a blunt tripwire. Crude, and it costs one line to convert both into
-// visit-forced sites. Bumping the count is not the fix -- doing the two things
-// it names is.
-//
-// Counted in MEMBERS rather than bytes, because every member is a std::vector
-// and a vector's size does not vary with its element type. A byte count would
-// have been a different number in a debug build than in a release one (the MSVC
-// STL widens every container under _ITERATOR_DEBUG_LEVEL), which is a tripwire
-// that fires on the build configuration rather than on the change it is
-// watching for.
-static_assert(sizeof(Client_Inbox) == 12 * sizeof(std::vector<int>),
-              "Client_Inbox gained or lost a member. If you added one: clear it "
-              "in clear_client_inbox AND drain it in play_state.cpp's "
-              "network-consume section, then update this count");
 
 // Everything here that describes ONE connection rather than the socket, cleared
 // at the start of the next one. The server's occupy_client_slot is the exact
@@ -154,47 +85,33 @@ inline bool send_packet_to_server(Client_Transport_Layer &state, Packet packet)
 // receipts go through this -- both are continuously restated, so a lost one is
 // corrected by the next. Anything whose loss nothing recovers from goes through
 // queue_reliable_client_message below instead.
-inline void send_raw_message(Client_Transport_Layer &state, uint8 message_type,
+inline void send_raw_message(Client_Transport_Layer &state, Payload_Kind payload_kind,
                              const std::vector<uint8> &payload)
 {
   const std::vector<Packet> packets =
-      convert_to_packets(payload, message_type, state.next_message_id);
+      convert_to_packets(payload, payload_kind, state.next_message_id);
 
   for (const Packet &packet : packets)
     send_packet_to_server(state, packet);
 }
 
-template <typename T>
-inline void send_protobuf_message(Client_Transport_Layer &state, const T &msg)
-{
-  std::vector<uint8> buffer(msg.ByteSizeLong());
-  msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-
-  send_raw_message(state, static_cast<uint8>(Packet_Traits<T>::type), buffer);
-}
-
-// Appends one record to the C2S stream. It goes out on the next block, which
-// service_client_reliable_stream cuts at the end of the frame -- so a record
-// queued anywhere in a frame rides that frame's block.
+// Appends one Message record to the C2S stream: the stream carries nothing
+// else. It goes out on the next block, which service_client_reliable_stream
+// cuts at the end of the frame -- so a record queued anywhere in a frame rides
+// that frame's block.
 inline void queue_reliable_client_message(Client_Transport_Layer &state,
-                                          uint8 message_type,
                                           Span<const uint8> payload)
 {
-  queue_reliable_message(state.reliable_stream, message_type, payload);
+  queue_reliable_message(state.reliable_stream, static_cast<uint8>(Payload_Kind::Message), payload);
 }
 
-// The protobuf half of the above, so a caller with a message rather than bytes
-// does not have to spell the serialization out. Same relationship as
-// send_protobuf_message has to send_raw_message.
-template <typename T>
-inline void queue_reliable_protobuf_message(Client_Transport_Layer &state,
-                                            const T &msg)
+// A FINISHED stream as one Message datagram, now: the Connect and the
+// Disconnect, the two rows sent outside the per-frame scopes. A C2S payload is
+// the streams alone; only the server's lead with a tick.
+inline void send_message_stream_to_server(Client_Transport_Layer &state,
+                                          const shared::message_stream_t &stream)
 {
-  std::vector<uint8> buffer(msg.ByteSizeLong());
-  msg.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-
-  queue_reliable_client_message(state, static_cast<uint8>(Packet_Traits<T>::type),
-                                buffer);
+  send_raw_message(state, Payload_Kind::Message, stream.writer.buffer);
 }
 
 // Cuts a block if the stream is free, then sends whatever is outstanding. Call
@@ -225,137 +142,6 @@ inline void service_client_reliable_stream(Client_Transport_Layer &state)
 
   send_packet_to_server(state, make_reliable_packet(state.reliable_stream));
 }
-
-namespace detail
-{
-
-// Files one completed message's payload into the inbox. Every accepted message
-// type names one of these in CLIENT_MESSAGE_HANDLERS; reassembly happens once,
-// before dispatch, so a handler only decides where the bytes go.
-using client_message_handler_fn = void (*)(std::vector<uint8> &&payload,
-                                           Client_Inbox &out_inbox);
-
-// Protobuf-backed message: parse and append to Target.
-template <typename Message_T, std::vector<Message_T> Client_Inbox::*Target>
-void deliver_protobuf_message(std::vector<uint8> &&payload,
-                              Client_Inbox &out_inbox)
-{
-  Message_T message;
-  if (!message.ParseFromArray(payload.data(),
-                              static_cast<int>(payload.size())))
-  {
-    log_error("dropping malformed {} payload ({} bytes)",
-              Message_T::descriptor()->full_name(), payload.size());
-    return;
-  }
-
-  (out_inbox.*Target).push_back(std::move(message));
-}
-
-// Bitstream-native message: the network layer stays ignorant of what the bytes
-// mean and hands them to the game layer. The Client_Inbox member's comment names
-// the decoder for each.
-template <std::vector<std::vector<uint8>> Client_Inbox::*Target>
-void deliver_raw_payload(std::vector<uint8> &&payload, Client_Inbox &out_inbox)
-{
-  (out_inbox.*Target).push_back(std::move(payload));
-}
-
-using client_message_handler_table_t =
-    std::array<client_message_handler_fn,
-               static_cast<size_t>(Message_Type::Count)>;
-
-// The client's accept list. A slot left null is a type the client is never
-// supposed to receive — the C2S half of the protocol — and one arriving anyway
-// is reported rather than dropped on the floor.
-//
-// Which slots may be null is NOT a matter of comment: message_direction() says
-// it, and the static_assert below checks the table against it. So adding an S2C
-// type is a compile error until it has a handler here, and therefore until the
-// Client_Inbox member that handler targets exists.
-constexpr client_message_handler_table_t make_client_message_handlers()
-{
-  client_message_handler_table_t handlers{};
-
-  handlers[static_cast<size_t>(Message_Type::S2C_EntityPackage)] =
-      &deliver_protobuf_message<game::S2C_EntityPackage,
-                                &Client_Inbox::entity_updates>;
-  handlers[static_cast<size_t>(Message_Type::S2C_Connection)] =
-      &deliver_protobuf_message<game::S2C_Connection,
-                                &Client_Inbox::connection_messages>;
-  handlers[static_cast<size_t>(Message_Type::S2C_ServerMessage)] =
-      &deliver_protobuf_message<game::S2C_ServerMessage,
-                                &Client_Inbox::server_text_messages>;
-  handlers[static_cast<size_t>(Message_Type::S2C_BotDebug)] =
-      &deliver_protobuf_message<game::S2C_BotDebug,
-                                &Client_Inbox::bot_debug_updates>;
-  handlers[static_cast<size_t>(Message_Type::S2C_ShotDebug)] =
-      &deliver_protobuf_message<game::S2C_ShotDebug,
-                                &Client_Inbox::shot_debug_updates>;
-  handlers[static_cast<size_t>(Message_Type::S2C_GameEventBatch)] =
-      &deliver_protobuf_message<game::S2C_GameEventBatch,
-                                &Client_Inbox::game_event_batches>;
-  handlers[static_cast<size_t>(Message_Type::S2C_EffectBatch)] =
-      &deliver_protobuf_message<game::S2C_EffectBatch,
-                                &Client_Inbox::effect_batches>;
-  handlers[static_cast<size_t>(Message_Type::CmdChangeMap)] =
-      &deliver_raw_payload<&Client_Inbox::change_map_messages>;
-  handlers[static_cast<size_t>(Message_Type::S2C_MapData)] =
-      &deliver_raw_payload<&Client_Inbox::map_data_messages>;
-  handlers[static_cast<size_t>(Message_Type::S2C_CvarValues)] =
-      &deliver_raw_payload<&Client_Inbox::cvar_value_messages>;
-  handlers[static_cast<size_t>(Message_Type::S2C_GhostAvailable)] =
-      &deliver_raw_payload<&Client_Inbox::ghost_available_messages>;
-  handlers[static_cast<size_t>(Message_Type::S2C_GhostData)] =
-      &deliver_raw_payload<&Client_Inbox::ghost_data_messages>;
-
-  return handlers;
-}
-
-inline constexpr client_message_handler_table_t CLIENT_MESSAGE_HANDLERS =
-    make_client_message_handlers();
-
-// Every S2C type has a handler, every C2S type has none. The one exception is
-// Reliable, which poll_client_network intercepts BEFORE the table -- a block is
-// a transport parcel, not a message, and the records inside it come back through
-// this same table afterwards.
-consteval bool client_handlers_match_message_directions()
-{
-  for (size_t index = 0; index < CLIENT_MESSAGE_HANDLERS.size(); ++index)
-  {
-    const Message_Type type = static_cast<Message_Type>(index);
-    if (type == Message_Type::Reliable)
-    {
-      if (CLIENT_MESSAGE_HANDLERS[index] != nullptr)
-        return false;
-      continue;
-    }
-
-    const bool expects_handler =
-        message_direction(type) != message_direction_t::C2S;
-    if ((CLIENT_MESSAGE_HANDLERS[index] != nullptr) != expects_handler)
-      return false;
-  }
-
-  return true;
-}
-
-static_assert(client_handlers_match_message_directions(),
-              "CLIENT_MESSAGE_HANDLERS disagrees with message_direction(): an "
-              "S2C type with no handler (add one, and the Client_Inbox member "
-              "it files into), or a C2S type with one");
-
-// Null when the type is out of range (garbage, or a newer build's message) or
-// has no slot in the table.
-inline client_message_handler_fn find_client_message_handler(uint8 message_type)
-{
-  if (message_type >= CLIENT_MESSAGE_HANDLERS.size())
-    return nullptr;
-
-  return CLIENT_MESSAGE_HANDLERS[message_type];
-}
-
-} // namespace detail
 
 // Tells the server which fragments of each bulk message we hold, so it can
 // re-send exactly the rest.
@@ -410,14 +196,47 @@ inline void report_transfer_progress(Client_Transport_Layer &state)
         receipt_mark_fragment(receipt, index);
     }
 
-    send_raw_message(state, static_cast<uint8>(Message_Type::C2S_TransferReceipt),
-                     serialize_transfer_receipt(receipt));
+    send_raw_message(state, Payload_Kind::Transfer_Receipt, serialize_transfer_receipt(receipt));
 
     message.last_receipt_time = now;
   }
 }
 
-// Drains what the kernel has queued for us and returns.
+// What the client takes off the wire, past the block poll_client_network
+// intercepts itself: the two transfers and a Message. A receipt is the
+// server's to receive, and a byte out of range is garbage or a newer build's
+// kind. A switch with no `default:`, so a new kind is a compile error here.
+[[nodiscard]] inline std::optional<Payload_Kind> try_client_payload_kind(uint8 byte)
+{
+  const std::optional<Payload_Kind> kind = try_payload_kind(byte);
+  if (!kind)
+    return std::nullopt;
+
+  switch (*kind)
+  {
+  case Payload_Kind::Map_Transfer:
+  case Payload_Kind::Ghost_Transfer:
+  case Payload_Kind::Message:
+    return kind;
+
+  case Payload_Kind::Reliable:
+  case Payload_Kind::Transfer_Receipt:
+  case Payload_Kind::Count:
+    break;
+  }
+  return std::nullopt;
+}
+
+// Drains what the kernel has queued for us and hands every complete payload to
+// `deliver` in arrival order, then returns.
+//
+// deliver(Payload_Kind kind, Span<const uint8> payload), for a Map_Transfer, a
+// Ghost_Transfer or a Message. The bytes are the transport's and live for the
+// call; whatever must outlive it copies. A record out of a reliable block
+// reaches the same `deliver` as a datagram of that kind, after the drain, so a
+// record completed by a later block in the same drain still arrives this frame.
+// Nothing above can tell which route a payload took, which is the point:
+// reliability is the transport's business.
 //
 // Reception is asynchronous -- the network stack fills the socket queue while we
 // render -- so sitting in this loop does not make packets arrive sooner. It only
@@ -430,8 +249,9 @@ inline void report_transfer_progress(Client_Transport_Layer &state)
 // Deliberately NOT logged: the sole condition that trips it is a sustained
 // flood, and complaining once per frame would add our own disk I/O to a machine
 // already being overwhelmed.
-inline void poll_client_network(Client_Transport_Layer &state,
-                                size_t max_datagrams, Client_Inbox &out_inbox)
+template <typename Deliver_Fn>
+inline void poll_client_network(Client_Transport_Layer &state, size_t max_datagrams,
+                                Deliver_Fn &&deliver)
 {
   expire_stale_partial_messages(state.partial_packets, "client");
 
@@ -450,7 +270,7 @@ inline void poll_client_network(Client_Transport_Layer &state,
       continue;
 
     // Freeing is event-driven: the ack, and nothing else. Read off EVERY
-    // datagram, before the packet's type or contents mean anything, because the
+    // datagram, before the packet's kind or contents mean anything, because the
     // report rides Packet_Header rather than any message -- which is what makes
     // "the stream cannot get stuck while the connection is alive" true in this
     // direction too.
@@ -459,10 +279,9 @@ inline void poll_client_network(Client_Transport_Layer &state,
 
     // Intercepted BEFORE reassembly: a block is not a message and has no
     // fragments. Its bytes are appended to the stream, and the records inside
-    // them are dispatched below, once the drain loop is done -- so a record
-    // completed by a later block in the same drain still arrives this frame.
-    if (packet.header.message_type ==
-        static_cast<uint8>(Message_Type::Reliable))
+    // them are delivered below, once the drain loop is done.
+    if (packet.header.payload_kind ==
+        static_cast<uint8>(Payload_Kind::Reliable))
     {
       accept_reliable_block(
           state.reliable_stream, packet.header.reliable_block_number,
@@ -470,18 +289,16 @@ inline void poll_client_network(Client_Transport_Layer &state,
       continue;
     }
 
-    const detail::client_message_handler_fn handler =
-        detail::find_client_message_handler(packet.header.message_type);
-    if (handler == nullptr)
+    const std::optional<Payload_Kind> kind = try_client_payload_kind(packet.header.payload_kind);
+    if (!kind)
     {
-      log_error("dropping packet with message type {}, which the client does "
-                "not accept",
-                static_cast<int>(packet.header.message_type));
+      log_error("dropping a datagram of payload kind {}, which the client does not accept",
+                static_cast<int>(packet.header.payload_kind));
       continue;
     }
 
     if (reassemble_fragment(state.partial_packets, packet, payload))
-      handler(std::move(payload), out_inbox);
+      deliver(*kind, Span<const uint8>{payload});
     else if (packet.header.fragment_count == 1)
       // An unfragmented message must complete the instant it arrives — the
       // bucket it lands in is created and freed inside that one call. Not
@@ -490,10 +307,10 @@ inline void poll_client_network(Client_Transport_Layer &state,
       // and wraps every 256 sends), so the whole message was just eaten. The
       // expiry pass above bounds how long that can persist; it cannot prevent
       // the collision itself. Say so rather than dropping it on the floor.
-      log_error("message type {} (id {}) arrived unfragmented but did not "
+      log_error("a payload of kind {} (id {}) arrived unfragmented but did not "
                 "reassemble — its message_id bucket still holds an incomplete "
                 "message; the payload was dropped",
-                static_cast<int>(packet.header.message_type),
+                static_cast<int>(packet.header.payload_kind),
                 packet.header.message_id);
   }
 
@@ -502,24 +319,19 @@ inline void poll_client_network(Client_Transport_Layer &state,
   // reporting first would ask again for fragments we just took.
   report_transfer_progress(state);
 
-  // The stream hands back whole records, in order, exactly once -- so a record
-  // is filed into the inbox by the SAME handler table an unreliable datagram of
-  // that type would have used. Nothing downstream can tell which path a message
-  // took, which is the point: reliability is the transport's business.
+  // The stream hands back whole records, in order, exactly once, and the stream
+  // carries Message records alone: a transfer must not ride it.
   drain_reliable_records(
       state.reliable_stream,
-      [&out_inbox](uint8 message_type, std::vector<uint8> &&record) {
-        const detail::client_message_handler_fn handler =
-            detail::find_client_message_handler(message_type);
-        if (handler == nullptr)
+      [&deliver](uint8 payload_kind, std::vector<uint8> &&record) {
+        if (payload_kind != static_cast<uint8>(Payload_Kind::Message))
         {
-          log_error("dropping reliable record with message type {}, which the "
-                    "client does not accept",
-                    static_cast<int>(message_type));
+          log_error("dropping a reliable record of payload kind {}: the stream carries "
+                    "Message records only",
+                    static_cast<int>(payload_kind));
           return;
         }
-
-        handler(std::move(record), out_inbox);
+        deliver(Payload_Kind::Message, Span<const uint8>{record});
       });
 }
 

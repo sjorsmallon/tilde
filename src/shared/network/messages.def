@@ -1,0 +1,294 @@
+// messages.def -- every message either end sends, one row each.
+//
+//   Name :: message @direction @transport "description" { fields }
+//
+// Direction is @Client_To_Server, @Server_To_Client or @Bidirectional (both);
+// transport is @Reliable or @Unreliable; one of each is mandatory. Message_Type
+// is derived from row order and is the record tag on the wire. ORDER IS THE
+// WIRE ID, mixed into SCHEMA_HASH. Append.
+//
+// Emits into generated/ beside this file: messages_generated.{hpp,cpp} (the tag,
+// one struct per row, write_<name>, try_read_<name>, to_text),
+// client_messages_bindings_generated.cpp (calls client::messages::on_<name>, one
+// file each under src/client/messages/) and server_messages_bindings_generated.cpp
+// (calls server::messages::on_<name>, under src/server/messages/). A row with no
+// handler is a link error naming it; --scaffold writes the stub once.
+//
+// f32 and v3 ride the wire quantized (network::write_coord); f32_exact and
+// v3_exact ride raw. An `entity` field is a uid. `T<N>` is a count then at most
+// N elements (Pascal_Array). `bytes` is a u32 length then the bytes, a
+// Span<const uint8_t> over a payload another codec owns, non-owning in both
+// directions; a message alone may carry one.
+
+Bidirectional :: [@Client_To_Server, @Server_To_Client]
+
+Rocket_Detonated :: message @Server_To_Client @Reliable  "a rocket detonated, by impact or lifetime expiry"
+{
+    attacker_id: u32
+    victim_id:   u32   // 0 = splash-only, no direct victim
+    weapon_id:   u16
+}
+
+Player_Died :: message @Server_To_Client @Reliable  "a player's health crossed from >0 to <=0"
+{
+    victim_id:    u32
+    attacker_id:  u32  // 0 = world/suicide
+    weapon_id:    u16
+    was_headshot: bool
+}
+
+Player_Spawned :: message @Server_To_Client @Reliable  "a player entered the world at a spawn point"
+{
+    player_id:         u32
+    client_slot:       i32
+    spawn_position:    v3
+    spawn_orientation: quat // the Entity rotation, x y z w
+}
+
+Objective_Reached :: message @Server_To_Client @Reliable  "the level's objective was completed"
+{
+    completed_by: u32   // activator uid, 0 = nobody
+    attempt_ticks: u32  // ticks since Live began; 0 = not a timed run
+    best_ticks:    u32  // the map's best on file BEFORE this run; 0 = none
+}
+
+// --- The cosmetic effects: unreliable, broadcast to every ready client. Lost =
+// invisible; you will not notice a missing explosion under packet loss.
+
+Effect_Site :: component
+{
+    origin:           v3      // where it happened, world space
+    normal:           v3      // {0,0,0} = not applicable
+    color:            v3
+    scale:            f32
+    attached_entity:  entity  // 0 = world-space
+    surface_material: u16     // the map's material index on a world hit; 0 = unknown
+}
+
+Rocket_Explosion :: message @Server_To_Client @Unreliable  "splash particles + surface decal"
+{
+    site: Effect_Site
+}
+
+Footstep :: message @Server_To_Client @Unreliable  "one foot planting"
+{
+    site: Effect_Site
+}
+
+Jump :: message @Server_To_Client @Unreliable  "leaving the ground"
+{
+    site: Effect_Site
+}
+
+Land :: message @Server_To_Client @Unreliable  "arriving back on it"
+{
+    site: Effect_Site
+}
+
+Shot_Impact :: message @Server_To_Client @Unreliable  "a shot landed; attached_entity is what it hit, 0 for the world"
+{
+    site:    Effect_Site
+    region:  Hit_Region    // read only when the thing hit is a player
+    weapon:  Weapon
+    trigger: Fire_Trigger
+}
+
+Jump_Pad_Launch :: message @Server_To_Client @Unreliable  "a pad threw somebody; normal is the launch direction, attached_entity who"
+{
+    site: Effect_Site
+}
+
+Ping :: message @Server_To_Client @Unreliable  "a player pinged a spot; attached_entity is who pinged, normal the surface"
+{
+    site: Effect_Site
+}
+
+Pilot_Impact :: message @Server_To_Client @Unreliable  "a piloted rocket ended on a surface; origin the contact, normal the surface, attached_entity the pilot"
+{
+    site: Effect_Site
+}
+
+// --- Console text, both ways. A line longer than the bound is sent as several.
+
+Console_Line :: message @Client_To_Server @Reliable  "a console line typed at the client, run by the server as its caller"
+{
+    line: string<255>
+}
+
+Server_Text :: message @Server_To_Client @Reliable  "a line for the client's console"
+{
+    text: string<255>
+}
+
+// --- The handshake. Unreliable: a peer with no slot has no stream, and a lost
+// Connect is retried by the client. map is the one the server runs; the client
+// follows it by generation (Change_Map carries the same).
+
+Server_Map :: component
+{
+    generation:   u32          // bumped by the server per map load; 0 = none yet
+    path:         string<128>  // maps-relative file name, resolved per side against that side's maps dir
+    name:         string<64>   // the worldspawn name, for display
+    content_hash: u32          // what the client reports back once it holds the map
+}
+
+Connect :: message @Client_To_Server @Unreliable  "a peer asking for a slot"
+{
+    protocol_version: u32
+    player_name:      string<32>
+    schema_hash:      u32   // entities::SCHEMA_HASH; refused on mismatch
+    asset_table_hash: u32   // assets::asset_table_hash(); refused on mismatch
+}
+
+Disconnect :: message @Client_To_Server @Unreliable  "a client leaving on purpose"
+{
+    reason: string<64>
+}
+
+Accept :: message @Server_To_Client @Unreliable  "the answer to a Connect that got a slot"
+{
+    client_slot:     i32
+    server_tickrate: u32
+    map:             Server_Map
+}
+
+Reject :: message @Server_To_Client @Unreliable  "the answer to a Connect that did not"
+{
+    reason:                  string<255>
+    server_schema_hash:      u32   // only when the rejection IS a schema mismatch, else 0
+    server_asset_table_hash: u32   // the same, for an asset table mismatch
+}
+
+// --- The map, the mirrored cvars and the ghost.
+
+Change_Map :: message @Server_To_Client @Reliable  "the server switched map; follow it"
+{
+    map: Server_Map
+}
+
+Cvar_Value :: component
+{
+    id:   u16         // cvars::cvar_id, a per-build index the handshake already agreed on
+    text: string<64>  // the value as text: cvar_to_text / cvar_from_text stay the one pair
+}
+
+Cvar_Values :: message @Server_To_Client @Reliable  "@Mirrored values: the whole set at connect, the changed subset after"
+{
+    values: Cvar_Value<64>
+}
+
+Map_Data_Request :: message @Client_To_Server @Reliable  "the client lacks the compiled package of the map at this generation; stream it"
+{
+    map_generation: u32
+    map_name:       string<64>
+}
+
+Ghost_Available :: message @Server_To_Client @Reliable  "the ghost for the party being run, by hash; 0 is none"
+{
+    party_size: u32
+    ghost_hash: u32
+    byte_count: u32
+}
+
+Ghost_Request :: message @Client_To_Server @Reliable  "the client's cached ghost did not hash to the announced one"
+{
+    ghost_hash: u32
+}
+
+// --- The client's input. One row per tick; the unacked tail is resent whole in
+// every input datagram and the server's high-water mark drops the duplicates.
+
+View :: component
+{
+    yaw:   f32_exact
+    pitch: f32_exact
+}
+
+Button_Change :: component
+{
+    slot:          u8    // 1..63, strictly ascending across a tick's changes
+    buttons_after: u64   // the FULL bitfield in effect from slot onward
+    view_after:    View  // the aim from slot onward; a trigger press is aimed here
+}
+
+Tick_Input :: component
+{
+    buttons_at_start: u64
+    view_at_start:    View              // what the tick's first step runs under
+    view_at_end:      View              // nothing simulates under it: the next tick starts here, everyone else draws it
+    button_changes:   Button_Change<8>  // the cap is the server's sub-step budget: N changes cost N+1 move passes
+}
+
+Client_Input :: message @Client_To_Server @Unreliable  "one tick of input plus what the client HOLDS, restated every tick: the snapshot, the map, the screen"
+{
+    input_number:              i32        // the client's own counter; the snapshot acks a high-water mark of it
+    input:                     Tick_Input
+    held_snapshot_tick:        u32        // the newest complete snapshot held; the delta is built against it. 0 = none
+    map_content_hash:          u32        // the map held; compared to the server's for map_ready. 0 = none
+    interpolated_from_tick:    u32        // the blend the aim was drawn through; both 0 = no blend yet
+    interpolated_towards_tick: u32
+    interpolation_fraction:    f32_exact
+    view_fov_degrees:          f32_exact  // the screen the aim went through, clamped by the server
+    view_aspect:               f32_exact
+}
+
+// --- The replicated world. One per ready client per tick, first in its datagram,
+// so the effects behind it may name what it spawned. Its tick is the datagram's.
+
+Entity_Package :: message @Server_To_Client @Unreliable  "the snapshot at the datagram's tick: a delta against the tick the client said it holds, or a full update"
+{
+    latest_processed_input_number: i32   // high-water mark over Client_Input.input_number; -1 = none yet
+    delta_from_tick:               u32   // the baseline; 0 = a full update, decodable with no history
+    entity_data:                   bytes // network::serialize_snapshot's stream
+}
+
+// --- The two debug readouts. Unreliable, on the client's own datagram scope: a
+// lost one is a frame without a line, and a record there is never dropped.
+
+Bracket_Status :: enum { Ok, Clamped, Absent, Malformed, Unheld }
+
+Shot_Debug_Target :: component
+{
+    player_uid:    entity
+    feet_position: v3
+    body_yaw:      f32
+    view_yaw:      f32
+    view_pitch:    f32
+}
+
+Shot_Debug :: message @Server_To_Client @Unreliable  "the server's view of one of the shooter's own shots, to the shooter alone (sv_shot_debug)"
+{
+    input_number:           i32                   // the input that fired it: the key the client pairs its own stash against
+    fire_subtick_slot:      u8
+    eye:                    v3                    // the ray as the server took it: the post-move eye, along the aim at the step the press opened
+    direction:              v3_exact
+    bracket_status:         Bracket_Status        // anything but Ok or Clamped means NO rewind happened and the targets are present-tick
+    used_rewind:            bool
+    requested_from_tick:    u32
+    requested_towards_tick: u32
+    requested_fraction:     f32_exact
+    used_from_tick:         u32
+    used_towards_tick:      u32
+    used_fraction:          f32_exact
+    targets:                Shot_Debug_Target<16> // every target the hitscan ranked, posed as the server posed them
+    hit_uid:                entity                // 0 = miss
+    hit_region:             Hit_Region
+    impact_point:           v3
+    nearest_miss_distance:  f32                   // on a miss: how far the ray passed from the closest target's bounding sphere
+}
+
+Bot_Goal     :: enum { Idle, Chase, Attack, Retreat }
+Bot_Behavior :: enum { Idle, Chase, Regular }
+
+Bot_Debug_Entry :: component
+{
+    slot:     i32
+    goal:     Bot_Goal
+    behavior: Bot_Behavior
+    path:     v3<32>  // the waypoints still ahead of the bot, the next one first
+}
+
+Bot_Debug :: message @Server_To_Client @Unreliable  "every bot's goal and the path ahead of it, each tick while bots exist; more than the bound is several rows"
+{
+    bots: Bot_Debug_Entry<16>
+}

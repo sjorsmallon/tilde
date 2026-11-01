@@ -99,21 +99,6 @@ void connect_client(server_context_t &context, int32_t slot,
                slot);
 }
 
-void process_client_leave_message(server_context_t &context,
-                         const network::Address &sender)
-{
-  const std::optional<int32_t> sender_slot =
-      network::try_find_client_slot(context.transport_layer, sender);
-  if (!sender_slot)
-  {
-    log_error("tried to handle a client leave from {}, which occupies no slot",
-              sender.to_string());
-    return;
-  }
-
-  disconnect_client(context, *sender_slot, "Left.");
-}
-
 // apply all the stored map cvars that are set in the editor.
 // this more or less just executes console lines.
 static void apply_map_cvars_that_were_supplied_from_the_editor(server_context_t &context, const shared::map_t &map)
@@ -226,6 +211,7 @@ static bool load_map_file_into_context(server_context_t &context,
     if (context.world.current_map_path.empty())
     {
       reset_state_in_preparation_for_new_map_load(context);
+      ++context.map_generation;
       install_match(context, context.tick_number, context.cvars->sv_tickrate,
                     false);
     }
@@ -234,6 +220,7 @@ static bool load_map_file_into_context(server_context_t &context,
 
   const bool replaces_a_started_match = match_has_started(context);
   reset_state_in_preparation_for_new_map_load(context);
+  ++context.map_generation;
 
   world_t& world = context.world;
 
@@ -264,7 +251,7 @@ static bool load_map_file_into_context(server_context_t &context,
       if (player_spawn.spawn_type == entities::Spawn_Type::Bot)
       {
         world.bots.push_back(spawn_bot(world.session, player_spawn,
-                                       world.next_bot_slot, bot_behavior_t::Regular));
+                                       world.next_bot_slot, shared::Bot_Behavior::Regular));
         world.next_bot_slot += 1;
         bot_spawn_count += 1;
       }
@@ -341,22 +328,6 @@ bool init(cvars::cvar_state_t* cvar_state, cvars::command_table_t* cvar_command_
 }
 
 
-static void send_change_map_message(server_context_t &context, int32_t slot)
-{
-  shared::change_map_message_t msg;
-  msg.map_path     = current_map_wire_id(context);
-  msg.map_name     = context.world.session.map_name;
-  msg.content_hash = context.world.map_content_hash;
-
-  auto writer = network::Bit_Writer{};
-  shared::serialize_change_map(writer, msg);
-
-  network::queue_reliable_message(
-      context.transport_layer.clients[slot].reliable_stream,
-      static_cast<network::uint8>(network::Message_Type::CmdChangeMap),
-      writer.buffer);
-}
-
 static std::optional<std::string> try_resolve_map_path(const std::string &name)
 {
   const std::string candidates[] = {
@@ -396,9 +367,12 @@ bool change_map_to(const std::string &map_name)
     // e.g. joined mid-round.
     if (row.client.wants_to_play)
       try_admit_player(context, row.slot, std::nullopt);
-
-    send_change_map_message(context, row.slot);
   }
+
+  // Once, on the reliable broadcast: every connected client follows the new generation.
+  shared::Change_Map change;
+  change.map = current_server_map(context);
+  shared::write_change_map(context.outgoing.tick_broadcast_reliable, change);
   return true;
 }
 
@@ -446,12 +420,12 @@ void spawn_bot(Bot_Mode mode, const command_context_t &)
 {
   using namespace server;
 
-  bot_behavior_t type = bot_behavior_t::Idle;
+  shared::Bot_Behavior type = shared::Bot_Behavior::Idle;
   switch (mode)
   {
-    case Bot_Mode::idle:    type = bot_behavior_t::Idle;    break;
-    case Bot_Mode::chase:   type = bot_behavior_t::Chase;   break;
-    case Bot_Mode::regular: type = bot_behavior_t::Regular; break;
+    case Bot_Mode::idle:    type = shared::Bot_Behavior::Idle;    break;
+    case Bot_Mode::chase:   type = shared::Bot_Behavior::Chase;   break;
+    case Bot_Mode::regular: type = shared::Bot_Behavior::Regular; break;
   }
 
   server_context_t &server_context = g_server_context;

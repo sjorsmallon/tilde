@@ -86,6 +86,12 @@ constexpr const char* Damage_Type_VALUE_NAMES[] = {
   "Teal",
 };
 
+constexpr const char* Hit_Region_VALUE_NAMES[] = {
+  "Head",
+  "Torso",
+  "Legs",
+};
+
 constexpr const char* Light_Mode_VALUE_NAMES[] = {
   "Baked",
   "Mixed",
@@ -169,6 +175,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
+  {"Hit_Region", {Hit_Region_VALUE_NAMES, 3}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
   {"Round_Phase", {Round_Phase_VALUE_NAMES, 6}},
@@ -499,7 +506,7 @@ constexpr field_info_t Light_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[7]},
+   .enum_info = &ENUM_INFOS[8]},
   {.name = "source_radius",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Light, source_radius),
@@ -628,7 +635,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[17]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -799,7 +806,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[10]},
+   .enum_info = &ENUM_INFOS[11]},
   {.name = "phase",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, phase),
@@ -808,7 +815,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[9]},
+   .enum_info = &ENUM_INFOS[10]},
   {.name = "phase_start_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Match, phase_start_tick),
@@ -844,7 +851,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[11]},
+   .enum_info = &ENUM_INFOS[12]},
   {.name = "winning_team",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, winning_team),
@@ -880,7 +887,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[12]},
+   .enum_info = &ENUM_INFOS[13]},
 };
 
 constexpr field_info_t Path_Follow_FIELDS[] = {
@@ -3223,7 +3230,7 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[16]},
   {.name = "solid_only_when_lensed",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_lensed),
@@ -3439,7 +3446,7 @@ constexpr field_info_t Path_Node_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[13]},
+   .enum_info = &ENUM_INFOS[14]},
 };
 
 constexpr field_info_t Mover_Entity_FIELDS[] = {
@@ -4240,7 +4247,7 @@ constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[14]},
+   .enum_info = &ENUM_INFOS[15]},
   {.name = "range",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Reveal_Light_Entity, range),
@@ -4426,7 +4433,7 @@ constexpr field_info_t Lens_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[16]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Lens_Entity, render),
@@ -4881,6 +4888,26 @@ template <> std::optional<Damage_Type> try_from_string<Damage_Type>(std::string_
   return std::nullopt;
 }
 
+const char* to_string(Hit_Region value)
+{
+  switch (value)
+  {
+    case Hit_Region::Head: return "Head";
+    case Hit_Region::Torso: return "Torso";
+    case Hit_Region::Legs: return "Legs";
+  }
+  assert(false && "invalid Hit_Region");
+  return "";
+}
+
+template <> std::optional<Hit_Region> try_from_string<Hit_Region>(std::string_view text)
+{
+  if (text == "Head") return Hit_Region::Head;
+  if (text == "Torso") return Hit_Region::Torso;
+  if (text == "Legs") return Hit_Region::Legs;
+  return std::nullopt;
+}
+
 const char* to_string(Light_Mode value)
 {
   switch (value)
@@ -5265,6 +5292,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x3f07baa3u;
+const uint32_t SCHEMA_HASH = 0x4c548cc8u;
 
 } // namespace entities

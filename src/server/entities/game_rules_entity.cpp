@@ -1,6 +1,6 @@
 // Game_Rules_Entity's own handlers -- the verbs only this type can answer.
 #include "../../shared/entities/generated/entities/game_rules_entity_generated.hpp"
-#include "../../shared/events/generated/events_generated.hpp"
+#include "../../shared/network/generated/messages_generated.hpp"
 #include "../../shared/replay/ghost.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/replay/run_times.hpp"
@@ -128,7 +128,7 @@ void complete_level(Game_Rules_Entity& rules, const Complete_Level_Data&,
   shared::Objective_Reached reached{};
   reached.completed_by = context.activator;
   record_run(rules.match, context, reached);
-  shared::fire_objective_reached(context.server.outgoing.events, reached);
+  shared::write_objective_reached(context.server.outgoing.tick_broadcast_reliable, reached);
   log_terminal("objective reached, by {}", context.activator);
 }
 

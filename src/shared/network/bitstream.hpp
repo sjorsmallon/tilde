@@ -1,8 +1,11 @@
 #pragma once
 
 #include "network_types.hpp"
+#include "span.hpp"
+
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <vector>
 
 //@NOTE(SJM): we need to be very careful about aligned reads and writes: I am
@@ -19,6 +22,13 @@ public:
   std::vector<uint8> buffer;
   // size_t: a map package is one stream, and an int of BITS ends at 256 MB.
   size_t bit_index = 0;
+
+  // Empty, capacity kept: for a writer reused at the tickrate.
+  void reset()
+  {
+    buffer.clear();
+    bit_index = 0;
+  }
 
   void align()
   {
@@ -40,7 +50,8 @@ public:
       buffer.resize(needed_size);
     }
 
-    std::memcpy(buffer.data() + current_byte, data, size);
+    if (size != 0)
+      std::memcpy(buffer.data() + current_byte, data, size);
     bit_index += size * 8;
   }
 
@@ -88,6 +99,12 @@ public:
 
   Bit_Reader(const uint8 *buffer, size_t sz) : buffer(buffer), size(sz) {}
 
+  size_t bits_remaining() const
+  {
+    const size_t total = size * 8;
+    return bit_index < total ? total - bit_index : 0;
+  }
+
   void align()
   {
     if (bit_index % 8 != 0)
@@ -107,6 +124,18 @@ public:
     }
     bit_index += 8;
     return buffer[byte_pos];
+  }
+
+  // `count` bytes viewed in place from the next byte boundary. Empty, and the
+  // position unmoved, when fewer remain.
+  [[nodiscard]] std::optional<Span<const uint8_t>> try_read_byte_span(size_t count)
+  {
+    align();
+    const size_t byte_pos = bit_index / 8;
+    if (byte_pos + count > size)
+      return std::nullopt;
+    bit_index += count * 8;
+    return Span<const uint8_t>(buffer + byte_pos, static_cast<uint32_t>(count));
   }
 
   void read_bytes(void *out_data, size_t count)

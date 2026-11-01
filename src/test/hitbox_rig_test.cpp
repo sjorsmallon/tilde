@@ -141,7 +141,7 @@ static void test_authored_rig(const model_t &model)
   }
   for (uint32_t region = 0; region < 3; ++region)
     CHECK(region_present[region], "no volume covers region %s",
-          shared::to_string((shared::hit_region_t)region));
+          entities::to_string((entities::Hit_Region)region));
 
   // Volume names are how the tool's table and every log line refer to a volume,
   // so two volumes with one name is two rows you cannot tell apart.
@@ -281,7 +281,7 @@ static void test_hitscan_against_the_real_rig()
   // test of the path and not of the authored numbers.
   for (uint32_t region_index = 0; region_index < 3; ++region_index)
   {
-    const shared::hit_region_t region = (shared::hit_region_t)region_index;
+    const entities::Hit_Region region = (entities::Hit_Region)region_index;
 
     const assets::posed_hitbox_t *volume = nullptr;
     for (const assets::posed_hitbox_t &candidate : volumes)
@@ -290,7 +290,7 @@ static void test_hitscan_against_the_real_rig()
         volume = &candidate;
         break;
       }
-    CHECK(volume != nullptr, "the rig has no %s volume", shared::to_string(region));
+    CHECK(volume != nullptr, "the rig has no %s volume", entities::to_string(region));
 
     const linalg::vec3f centre = volume->center();
     const shared::hitscan_result_t hit =
@@ -298,7 +298,7 @@ static void test_hitscan_against_the_real_rig()
 
     CHECK(hit.hit_uid == 1, "a ray through the centre of a %s volume (%.1f, %.1f, %.1f) missed the "
                             "player entirely",
-          shared::to_string(region), centre.x, centre.y, centre.z);
+          entities::to_string(region), centre.x, centre.y, centre.z);
     CHECK(hit.distance > 0.0f && hit.distance < TARGET_X,
           "hit distance %.1f is not between the shooter and the target", hit.distance);
   }
@@ -478,14 +478,14 @@ static void test_every_shape_round_trips(const model_t &model)
   authored.skeleton_hash = model.skeleton.hash;
   authored.volumes       = {
       {.name = "ball", .shape = assets::hitbox_shape_t::Sphere, .start_bone = "spine.006",
-             .end_bone = "spine.006", .region = shared::hit_region_t::Head, .radius = 6.5f,
+             .end_bone = "spine.006", .region = entities::Hit_Region::Head, .radius = 6.5f,
              .offset = 3.25f},
       {.name = "limb", .shape = assets::hitbox_shape_t::Capsule, .start_bone = "thigh.L",
-             .end_bone = "shin.L", .region = shared::hit_region_t::Legs, .radius = 5.5f},
+             .end_bone = "shin.L", .region = entities::Hit_Region::Legs, .radius = 5.5f},
       {.name = "tube", .shape = assets::hitbox_shape_t::Cylinder, .start_bone = "shin.L",
-             .end_bone = "foot.L", .region = shared::hit_region_t::Legs, .radius = 4.25f},
+             .end_bone = "foot.L", .region = entities::Hit_Region::Legs, .radius = 4.25f},
       {.name = "crate", .shape = assets::hitbox_shape_t::Box, .start_bone = "spine",
-             .end_bone = "spine.003", .region = shared::hit_region_t::Torso, .radius = 0.0f,
+             .end_bone = "spine.003", .region = entities::Hit_Region::Torso, .radius = 0.0f,
              .half_extents = {9.0f, 7.5f, 6.25f}},
   };
 
@@ -602,19 +602,19 @@ static void test_malformed(const model_t &model)
   refuses_resolution("a bone the skeleton lacks",
                      {.name = "probe", .shape = assets::hitbox_shape_t::Capsule,
                       .start_bone = "spine", .end_bone = "no_such_bone",
-                      .region = shared::hit_region_t::Torso, .radius = 5.0f});
+                      .region = entities::Hit_Region::Torso, .radius = 5.0f});
   // Two bones on different limbs: the volume would run through the middle of
   // the character, which is a wrong answer that looks plausible.
   refuses_resolution("a span that is not a bone chain",
                      {.name = "probe", .shape = assets::hitbox_shape_t::Capsule,
                       .start_bone = "thigh.L", .end_bone = "forearm.R",
-                      .region = shared::hit_region_t::Torso, .radius = 5.0f});
+                      .region = entities::Hit_Region::Torso, .radius = 5.0f});
   // Backwards: the parent must be the START, or the walk up from the end never
   // reaches it.
   refuses_resolution("a reversed span",
                      {.name = "probe", .shape = assets::hitbox_shape_t::Capsule,
                       .start_bone = "hand.L", .end_bone = "forearm.L",
-                      .region = shared::hit_region_t::Torso, .radius = 5.0f});
+                      .region = entities::Hit_Region::Torso, .radius = 5.0f});
 
   // A rig authored against another skeleton revision is refused whole rather
   // than resolved by name and hoped over -- same shape as the .mesh/.animation
@@ -627,7 +627,7 @@ static void test_malformed(const model_t &model)
                            .shape      = assets::hitbox_shape_t::Capsule,
                            .start_bone = "spine",
                            .end_bone   = "spine.003",
-                           .region     = shared::hit_region_t::Torso,
+                           .region     = entities::Hit_Region::Torso,
                            .radius     = 10.0f});
   g_checks += 1;
   if (assets::try_resolve_hitbox_rig(stale, model.skeleton).has_value())
@@ -666,7 +666,7 @@ static void dump(const model_t &model)
       assets::make_hitbox_rig_template(model.mesh, model.skeleton);
   for (const assets::rigged_hitbox_volume_t &rigged : template_rig.volumes)
     printf("  v %-18s %-18s %-6s %6.2f\n", rigged.volume.name.c_str(), rigged.volume.name.c_str(),
-           shared::to_string(rigged.volume.region), rigged.volume.radius);
+           entities::to_string(rigged.volume.region), rigged.volume.radius);
 }
 
 int main(int argument_count, char **arguments)

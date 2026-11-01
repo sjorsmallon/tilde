@@ -20,10 +20,9 @@
 //
 //   map_record    -> kind=Map_Package tick=0   payload = the map package bytes
 //
-//   record        -> kind=Cvar_Values          payload = a cvar_values_message_t
-//                  | kind=Snapshot             payload = baseline_tick:u32 snapshot_bytes
-//                  | kind=Effects              payload = S2C_EffectBatch bytes
-//                  | kind=Events               payload = S2C_GameEventBatch bytes
+//   record        -> kind=Cvar_Values          payload = one finished message_stream_t of Cvar_Values rows
+//                  | kind=Snapshot             payload = one finished message_stream_t of ONE Entity_Package
+//                  | kind=Messages             payload = one finished message_stream_t
 //                  | kind=Player_View          payload = a player_view, replay_player_view.hpp
 //
 //   index_record  -> kind=Index                payload = first_tick:u32 last_tick:u32
@@ -32,10 +31,12 @@
 //
 //   string        -> length:u32 byte{length}
 //
-// A Snapshot whose baseline_tick is 0 is a KEYFRAME. Ticks never go backwards.
+// A Snapshot whose Entity_Package has delta_from_tick 0 is a KEYFRAME. Ticks
+// never go backwards.
 // A file with no index (a crash mid-match) still opens: the reader rebuilds it
 // from the keyframes it scans past.
 
+#include "network/generated/messages_generated.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -48,7 +49,7 @@ namespace shared
 {
 
 inline constexpr char     REPLAY_MAGIC[8]            = {'T', 'I', 'L', 'D', 'E', 'R', 'E', 'P'};
-inline constexpr uint32_t REPLAY_VERSION             = 2;
+inline constexpr uint32_t REPLAY_VERSION             = 5;
 inline constexpr uint32_t REPLAY_RECORD_HEADER_SIZE  = 9;
 
 enum class replay_record_kind_t : uint8_t
@@ -57,10 +58,9 @@ enum class replay_record_kind_t : uint8_t
   Map_Package = 2,
   Cvar_Values = 3,
   Snapshot    = 4,
-  Effects     = 5,
-  Events      = 6,
-  Index       = 7,
-  Player_View = 8,
+  Messages    = 5,
+  Index       = 6,
+  Player_View = 7,
 };
 
 struct replay_header_t
@@ -103,8 +103,8 @@ struct replay_writer_t
 void write_replay_record(replay_writer_t& writer, replay_record_kind_t kind, uint32_t tick,
                          Span<const uint8_t> payload);
 
-void write_replay_snapshot(replay_writer_t& writer, uint32_t tick, uint32_t baseline_tick,
-                           Span<const uint8_t> snapshot_bytes);
+// The package as the one record of a finished stream; delta_from_tick 0 notes a keyframe.
+void write_replay_snapshot(replay_writer_t& writer, uint32_t tick, const Entity_Package& package);
 
 // Writes the index and closes the file. A writer that was never opened is a no-op.
 void finish_replay(replay_writer_t& writer);
@@ -158,14 +158,9 @@ struct replay_t
   return record.byte_offset + REPLAY_RECORD_HEADER_SIZE + record.payload.size();
 }
 
-struct replay_snapshot_payload_t
-{
-  uint32_t            baseline_tick = 0;
-  Span<const uint8_t> snapshot_bytes;
-};
-
-[[nodiscard]] std::optional<replay_snapshot_payload_t>
-try_split_replay_snapshot(const replay_record_t& record);
+// The one Entity_Package a Snapshot record holds, its bytes a view into the
+// record. Nothing for another kind or a stream that is not exactly that.
+[[nodiscard]] std::optional<Entity_Package> try_read_replay_snapshot(const replay_record_t& record);
 
 // The last keyframe at or before `tick`, or nothing when `tick` precedes them all.
 [[nodiscard]] std::optional<replay_keyframe_t> try_find_keyframe_at_or_before(const replay_index_t& index,

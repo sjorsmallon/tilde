@@ -7,7 +7,7 @@ the rules and the commands.
 ## Build and test
 
 ```bash
-cmake -S . -B cmake_build                 # first run downloads SDL2 and Protobuf
+cmake -S . -B cmake_build                 # first run downloads SDL2
 cmake --build cmake_build -j32
 ./cmake_build/bin/MVMT
 
@@ -37,7 +37,7 @@ Other tools:
 
 ```bash
 # Inspect what the DSL parsed. Pass EVERY .def: SCHEMA_HASH spans all of them.
-./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def src/shared/effects/effects.def src/shared/events/events.def --dump
+./cmake_build/bin/def_gen src/shared/entities/entities.def src/shared/cvars/cvars.def src/shared/network/messages.def --dump
 # --emit writes generated/ beside each .def; --scaffold writes missing handler files (write-if-absent, never part of a build)
 
 ./cmake_build/bin/asset_pack resources --package cmake_build/assets.pkg   # pkg and embed builds only; loose reads the tree
@@ -53,8 +53,6 @@ src/
 ├── shared/           game_shared (static lib); the flat files are the primitives everything shares
 │   ├── entities/     entities.def (the DSL), entity_reflection, generated/
 │   ├── cvars/        cvars.def, cvar_runtime.hpp, generated/
-│   ├── effects/      effects.def (cosmetic channel), generated/
-│   ├── events/       events.def (gameplay channel), generated/
 │   ├── assets/       the id space (asset_id.hpp), the walk (asset_walk.cpp), decoders, the package
 │   ├── map/          map_t, mesh/ (the one geometry kind), map_piece, connections, groups, game_session
 │   ├── geometry/     convex_hull (the hull of a point set), convex_decomposition (the solid inside a set of planes)
@@ -63,7 +61,7 @@ src/
 │   ├── lighting/     lighting model, lightmap bake and sidecar, shadow volumes, beams, reveal, lens
 │   ├── animation/    skeleton, skinning, clips, the player rig and animator, the hitbox rig
 │   ├── replay/       replay file, recorder, seek, player view, ghosts, run times
-│   └── network/      wire serialization, bitstream, UDP, reliable stream, transfers
+│   └── network/      messages.def (every message either end sends), generated/, wire serialization, bitstream, UDP, reliable stream, transfers
 ├── third_party/      vendored verbatim: xatlas, stb, miniz, tinygltf, tiny-optional
 ├── client/           game_client (shared lib): Vulkan, SDL2, ImGui, states/, editor/, hud/, ui/
 ├── server/           game_server (shared lib): tick.cpp, systems/, traits/, entities/
@@ -83,7 +81,7 @@ file only states them.
 | Entity DSL and generator | `entity_def.md`, `entity_system_def.md`, `entity_storage_def.md`, `src/shared/entities/README.md` |
 | Entity I/O (traits, connections, queue) | `entity_io_def.md` |
 | CVars and commands | `cvar_def.md` |
-| Effects and events channels | `events_def.md`, `src/shared/EVENTS.md` |
+| Messages: the one file, the scopes, the transport, the receive path | `message_def.md` |
 | Map file format, prefabs | `map_format_def.md`, `prefab_def.md` |
 | Brushes, faces, subdivision, collision decomposition | `geometry_def.md` |
 | Rotation representation | `rotation_def.md` |
@@ -122,8 +120,8 @@ file only states them.
   `src/tools/def_gen.cpp` and rebuild. Emitted file names end in `_generated`.
 - `SCHEMA_HASH` is mixed from the parsed `.def` content, and the connect
   handshake refuses a mismatch, beside `assets::asset_table_hash()` for the
-  resource tree. Defaults are excluded from it. Enum and channel-member order
-  is the wire id: append, never reorder.
+  resource tree. Defaults are excluded from it. Enum and message order is
+  the wire id: append, never reorder.
 - Field flags: `@Networked` (rides the snapshot), `@Editable` (inspector and
   map I/O). `Fully_Serializable :: [@Networked, @Editable]` at the top of
   `entities.def` is a flag alias. A type replicates when one of its own fields
@@ -132,7 +130,7 @@ file only states them.
   (the only guard: run `ctest`). Cvar flags are `@Client`,
   `@Server`, `@Mirrored`; none means both sides hold their own copy.
 - Missing handlers are **link errors naming the symbol**: command handlers,
-  channel members (`src/client/effects/`, `src/client/game_events/`), entity
+  message rows (`src/client/messages/`, `src/server/messages/`), entity
   I/O actions (`src/server/traits/<trait>.cpp` when the trait has `requires`,
   `src/server/entities/<entity>.cpp` otherwise), and `decode_<ext>` for a new
   asset extension. `-Werror=missing-prototypes` on the handler files catches
@@ -256,21 +254,38 @@ prediction writes `ctx.prediction`.
   `[type u8][length u32][payload]`, acked on every datagram through each
   side's ONE send choke point (`send_packet_to_server`,
   `send_packet_to_client`). Rely on order, never on grouping. A bulk transfer
-  uses `C2S_TransferReceipt` bitmaps instead and must not ride the stream.
-- Nothing above the transport can tell which route a message took.
+  uses `Transfer_Receipt` bitmaps instead and must not ride the stream.
+- `Payload_Kind` (`Reliable`, `Map_Transfer`, `Ghost_Transfer`,
+  `Transfer_Receipt`, `Message`) is the header byte of a datagram and the
+  first byte of a reliable record: what a payload IS, never how it got here.
+  Nothing above the transport can tell which route a message took.
 - **client** is a connection slot, **player** is a `Player_Entity`; the
   mapping is 0-or-1 both ways (`client_slot_t::player_uid`). Bots start at
   `BOT_SLOT_BASE`. Every server loop over slots goes through
   `connected_clients(context)`.
-- Both channels (`effects.def`, `events.def`) encode at fire time into an
-  `event_stream_t` and ride their own messages; there is no queue and no tagged
-  union. Effects are unreliable and gated on `map_ready`; events are reliable.
+- Every message is a row of `messages.def` (`src/shared/network/`), encoded
+  at write time into a `message_stream_t`; there is no queue and no tagged
+  union. Direction and transport are the row's flags: a `@Reliable` row's
+  `write_<name>` takes a `reliable_stream_t`, an `@Unreliable` row's a
+  `message_stream_t`, and the signature is what keeps a message on its
+  transport. The sender holds streams by SCOPE (`outgoing.tick_broadcast`,
+  `tick_broadcast_reliable`, `datagram[slot]`); who receives a message is the
+  scope a site writes into, never a flag. The `Message` wire type carries
+  finished streams back to back behind the server tick; a datagram is the
+  slot's own records then the broadcast (only when `map_ready`), cut at a
+  record boundary. Receive delivers each payload through a callback as it
+  arrives, datagram and reliable record alike, with no inbox; the generated
+  `dispatch_received_messages` walks a `Message`, and a handler may rely on
+  the records before it in ITS stream and on nothing else (a cross-type order
+  is a state check at the top of the handler). A replay's record is the same
+  payload. Handlers live in `src/client/messages/` and `src/server/messages/`.
 - Geometry is never replicated; it comes from the map load or map streaming.
 
 ### Input, aim, hits
 
 - A tick's input is the buttons at its start plus the BUTTON CHANGES inside it, each
-  a 6-bit slot; `subtick_codec` is the one place that becomes a message. Button change
+  a 6-bit slot; the `Tick_Input` component of `messages.def` IS that input and
+  `Client_Input` the row it rides, with what the client holds beside it. Button change
   times come from the raw-input thread, never SDL. SDL gets the pointer and
   never the travel; relative mouse mode is used only when the thread failed to
   start. Anything touching cursor visibility agrees with

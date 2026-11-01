@@ -4,9 +4,8 @@
 #include "../shared/lag_compensation.hpp" // interpolation_bracket_t
 #include "../shared/animation/player_animator.hpp"  // aim_settings_t
 #include "../shared/animation/player_rig.hpp"       // player_pose_t
+#include "../shared/network/generated/messages_generated.hpp"
 #include "renderer.hpp"
-
-#include "game.pb.h"
 
 #include <cstdint>
 #include <deque>
@@ -29,7 +28,7 @@ struct shot_debug_pose_t
 // should have been on my screen", and only the first one settles anything.
 struct shot_debug_local_t
 {
-  uint32_t                        input_number = 0;
+  int32_t                         input_number = 0;
   linalg::vec3f                   eye{};
   linalg::vec3f                   direction{};
   shared::interpolation_bracket_t reported_bracket{};
@@ -46,7 +45,7 @@ struct shot_debug_history_t
   void record(shot_debug_local_t &&shot);
   // Null when the pair has aged out, which is the routine case for a client
   // that turned the cvar on mid-flight.
-  const shot_debug_local_t *find(uint32_t input_number) const;
+  const shot_debug_local_t *find(int32_t input_number) const;
 };
 
 // Appends both halves into `out`, held for `seconds`.
@@ -62,7 +61,7 @@ struct shot_debug_history_t
 // them cannot introduce a disagreement of its own.
 void draw_shot_debug_pair(renderer::debug_draw_list_t &out,
                           const shot_debug_local_t *local,
-                          const game::S2C_ShotDebug &server,
+                          const shared::Shot_Debug &server,
                           const aim_settings_t &settings, float seconds);
 
 } // namespace client

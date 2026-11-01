@@ -44,7 +44,7 @@ pending_contact_t contact_of_projectile_hit(const entities::Projectile& projecti
           .target_uid  = hit.entity_uid,
           .point       = hit.position - hit.normal * collision_radius,
           .normal      = hit.normal,
-          .region      = shared::hit_region_t::Torso,
+          .region      = entities::Hit_Region::Torso,
           .weapon      = projectile.weapon_id,
           .trigger     = projectile.trigger};
 }
@@ -56,7 +56,7 @@ pending_contact_t contact_of_projectile_expiry(const entities::Entity& entity,
           .target_uid  = shared::null_entity_uid,
           .point       = entity.position,
           .normal      = {0.f, 0.f, 0.f},
-          .region      = shared::hit_region_t::Torso,
+          .region      = entities::Hit_Region::Torso,
           .weapon      = projectile.weapon_id,
           .trigger     = projectile.trigger};
 }

@@ -269,17 +269,17 @@ int32_t find_bone_index_by_name(const skeleton_t &skeleton, const std::string &n
 // The template's region guess, which exists to be corrected. Region is a BALANCE
 // decision (a forearm counting as Torso is one), so the only thing this has to
 // get right is being obviously wrong when it is wrong.
-shared::hit_region_t guess_region(const std::string &bone_name)
+entities::Hit_Region guess_region(const std::string &bone_name)
 {
   auto contains = [&bone_name](const char *needle)
   { return bone_name.find(needle) != std::string::npos; };
 
   if (contains("head") || contains("neck"))
-    return shared::hit_region_t::Head;
+    return entities::Hit_Region::Head;
   if (contains("thigh") || contains("shin") || contains("foot") || contains("toe") ||
       contains("pelvis"))
-    return shared::hit_region_t::Legs;
-  return shared::hit_region_t::Torso;
+    return entities::Hit_Region::Legs;
+  return entities::Hit_Region::Torso;
 }
 
 // The percentile of a scratch list, by nth_element rather than a full sort --

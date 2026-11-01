@@ -380,8 +380,8 @@ struct cvar_state_t
   bool cl_solid_beam_debug;
   bool debug_show_entity_counts;
   bool net_snapshot_debug;
-  bool sv_event_debug;
-  bool cl_event_debug;
+  network::pascal_string_t<16> sv_event_debug;
+  network::pascal_string_t<16> cl_event_debug;
   bool sv_reliable_debug;
   bool sv_io_debug;
   float replay_keyframe_seconds;

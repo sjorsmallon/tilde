@@ -2,7 +2,6 @@
 
 #include "../array.hpp"
 #include "../log.hpp"
-#include "game.pb.h"
 #include "network_types.hpp"
 #include "reliable_stream.hpp"
 #include "transfer_receipt.hpp"
@@ -18,26 +17,6 @@
 
 namespace network
 {
-
-struct Server_Inbox
-{
-  // Pair of client slot and move. These used to be wrapped in a TimestampedMove
-  // carrying packet.header.timestamp, which NOTHING ever wrote -- the server
-  // sorted by it anyway. Ordering is now (slot, input_number), which the
-  // client does write; see the sort in server_impl.cpp's Tick().
-  std::vector<std::pair<int, game::C2S_ClientInput>> client_inputs;
-  std::vector<Address> potential_joins;
-  // Connect / disconnect messages from clients (or would-be clients)
-  std::vector<std::pair<Address, game::C2S_Connection>> connection_messages;
-  // developer console lines: client slot + raw line
-  std::vector<std::pair<int, std::string>> developer_console_entries;
-  // Bitstream-native C2S_RequestMapData: client slot + raw reassembled payload,
-  // decoded in server_impl via shared::deserialize_request_map_data(). The
-  // server responds by streaming the compiled package as S2C_MapData.
-  std::vector<std::pair<int, std::vector<uint8>>> map_data_requests;
-  // Bitstream-native C2S_RequestGhost, decoded via shared::deserialize_request_ghost().
-  std::vector<std::pair<int, std::vector<uint8>>> ghost_requests;
-};
 
 // One bulk message in flight to one peer, handed out a few fragments at a time.
 // Pure transport: it knows a byte range, a rate and an ack rule, never what the
@@ -199,31 +178,16 @@ inline bool send_packet_to_client(Server_Transport_Layer &state,
   return socket.send(packet, state.clients[slot].address);
 }
 
-// A protobuf message to one slot, unreliably, every fragment through the choke point above.
-template <typename Message_T>
-inline void send_protobuf_message(Server_Transport_Layer &state, Udp_Socket &socket, int32_t slot,
-                                  const Message_T &message)
+// The one recipient with no slot is a rejected connect: it has no stream to ack,
+// so the Message carrying the Reject goes out unstamped, once, and says so if
+// the socket refuses it.
+inline void send_message_payload_to_unslotted_peer(Server_Transport_Layer &state, Udp_Socket &socket,
+                                                   const Address &address,
+                                                   const std::vector<uint8> &payload)
 {
-  std::vector<uint8> buffer(message.ByteSizeLong());
-  message.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-  for (const Packet &packet :
-       convert_to_packets(buffer, static_cast<uint8>(Packet_Traits<Message_T>::type), state.next_message_id))
-    send_packet_to_client(state, socket, slot, packet);
-}
-
-// The one recipient with no slot is a rejected connect: it has no stream to ack, so the reject and
-// the text telling it why go out unstamped, once, and say so if the socket refuses them.
-template <typename Message_T>
-inline void send_protobuf_message_to_unslotted_peer(Server_Transport_Layer &state, Udp_Socket &socket,
-                                                    const Address &address, const Message_T &message)
-{
-  std::vector<uint8> buffer(message.ByteSizeLong());
-  message.SerializeToArray(buffer.data(), static_cast<int>(buffer.size()));
-  for (const Packet &packet :
-       convert_to_packets(buffer, static_cast<uint8>(Packet_Traits<Message_T>::type), state.next_message_id))
+  for (const Packet &packet : convert_to_packets(payload, Payload_Kind::Message, state.next_message_id))
     if (!socket.send(packet, address))
-      log_error("message type {} to unslotted peer {} failed to send ({} bytes)",
-                static_cast<int>(Packet_Traits<Message_T>::type), address.to_string(),
+      log_error("a Message to unslotted peer {} failed to send ({} bytes)", address.to_string(),
                 packet.header.payload_size);
 }
 
@@ -236,7 +200,7 @@ inline void send_protobuf_message_to_unslotted_peer(Server_Transport_Layer &stat
 // on bytes nobody is collecting.
 inline void begin_paced_transfer(Server_Transport_Layer &state, int32_t slot,
                                  const std::vector<uint8> &payload,
-                                 uint8 message_type)
+                                 Payload_Kind payload_kind)
 {
   Outbound_Transfer &transfer = state.clients[slot].outbound_transfer;
 
@@ -253,7 +217,7 @@ inline void begin_paced_transfer(Server_Transport_Layer &state, int32_t slot,
   }
 
   transfer.fragments =
-      convert_to_packets(payload, message_type, state.next_message_id);
+      convert_to_packets(payload, payload_kind, state.next_message_id);
   transfer.confirmed.assign(transfer.fragments.size(), false);
   transfer.cursor = 0;
   transfer.awaiting_receipt = false;
@@ -373,129 +337,26 @@ inline void send_reliable_block(Server_Transport_Layer &state,
   send_packet_to_client(state, socket, slot, make_reliable_packet(stream));
 }
 
-// Files one complete C2S payload into the inbox.
+// Drains what the kernel has queued for us and hands every Message payload to
+// `deliver` in arrival order, then returns. The client's poll_client_network is
+// the same shape and carries the reasoning; the one difference here is that
+// this socket takes every peer's traffic rather than one connection's, so its
+// cap is derived from the larger server buffer.
 //
-// ONE function, and both arrival paths call it: a reassembled datagram and a
-// record drained out of a reliable block. Nothing above the transport can tell
-// which route a message took, which is the point -- reliability is the
-// transport's business, so putting C2S_Command on the stream changed no handler.
-//
-// A type the server is never supposed to receive (the S2C half of the protocol)
-// is REPORTED rather than dropped on the floor. The client's counterpart is the
-// null slot in CLIENT_MESSAGE_HANDLERS.
-//
-// A SWITCH with no `default:`, so -Werror=switch makes a new Message_Type a
-// compile error here -- the S2C arms are listed out one by one for exactly that
-// reason, and the deliberate no-op case (C2S_Connection) stays a case rather than
-// becoming a null table slot indistinguishable from a forgotten one.
-inline void deliver_client_message(int32_t client_slot, uint8 message_type,
-                                   std::vector<uint8> &&payload,
-                                   Server_Inbox &out_inbox)
-{
-  // The raw byte comes off the wire with no range validation -- garbage, or a
-  // newer build's type. Checked before the cast, because casting it to the enum
-  // first would make the switch below undefined rather than merely wrong.
-  if (message_type >= static_cast<uint8>(Message_Type::Count))
-  {
-    log_error("dropping message type {} from slot {}, which is not a message "
-              "type this build knows",
-              static_cast<int>(message_type), client_slot);
-    return;
-  }
-
-  switch (static_cast<Message_Type>(message_type))
-  {
-  case Message_Type::C2S_Connection:
-    // Already filed, above the slot lookup in poll_network -- it has to be seen
-    // there because a CmdConnect arrives from a sender with no slot yet. A
-    // connected peer's CmdDisconnect then reaches here, so this is a deliberate
-    // no-op and not the error below.
-    return;
-
-  case Message_Type::C2S_ClientInputBatch:
-  {
-    // Every move the client has not seen acked, oldest first. Most of them are
-    // usually duplicates of inputs already run; the input loop's
-    // `input_number <= latest_processed_input_number` check is what makes that
-    // free, so nothing is deduplicated here.
-    game::C2S_ClientInputBatch batch;
-    if (!batch.ParseFromArray(payload.data(), static_cast<int>(payload.size())))
-    {
-      log_error("slot {} sent a move batch of {} bytes that would not parse — "
-                "dropped",
-                client_slot, payload.size());
-      return;
-    }
-
-    for (const game::C2S_ClientInput &input : batch.inputs())
-      out_inbox.client_inputs.push_back({client_slot, input});
-    return;
-  }
-
-  case Message_Type::C2S_Command:
-  {
-    game::C2S_Command command;
-    if (!command.ParseFromArray(payload.data(), static_cast<int>(payload.size())))
-    {
-      log_error("slot {} sent a console command of {} bytes that would not "
-                "parse — dropped",
-                client_slot, payload.size());
-      return;
-    }
-
-    out_inbox.developer_console_entries.push_back({client_slot, command.line()});
-    return;
-  }
-
-  case Message_Type::C2S_RequestMapData:
-    // Bitstream-native: keep the raw payload; server_impl decodes it with
-    // shared::deserialize_request_map_data() and streams S2C_MapData back.
-    out_inbox.map_data_requests.push_back({client_slot, std::move(payload)});
-    return;
-
-  case Message_Type::C2S_RequestGhost:
-    out_inbox.ghost_requests.push_back({client_slot, std::move(payload)});
-    return;
-
-  // Transport, handled in poll_network and never delivered -- a block is not a
-  // message, and a receipt names a message_id and a fragment set that nothing
-  // above this layer has an opinion about. Reaching here means one arrived by
-  // a path that should not exist.
-  case Message_Type::Reliable:
-  case Message_Type::C2S_TransferReceipt:
-    break;
-
-  // The S2C half of the protocol. Listed one by one so that adding a message
-  // type is a compile error here rather than a runtime log the day someone
-  // sends one.
-  case Message_Type::S2C_EntityPackage:
-  case Message_Type::S2C_ServerMessage:
-  case Message_Type::S2C_BotDebug:
-  case Message_Type::S2C_GameEventBatch:
-  case Message_Type::S2C_EffectBatch:
-  case Message_Type::S2C_ShotDebug:
-  case Message_Type::CmdChangeMap:
-  case Message_Type::S2C_MapData:
-  case Message_Type::S2C_CvarValues:
-  case Message_Type::S2C_Connection:
-  case Message_Type::S2C_GhostAvailable:
-  case Message_Type::S2C_GhostData:
-  case Message_Type::Count:
-    break;
-  }
-
-  log_error("dropping message type {} from slot {}, which the server does not "
-            "accept",
-            static_cast<int>(message_type), client_slot);
-}
-
-// Drains what the kernel has queued for us and returns. The client's
-// poll_client_network is the same shape and carries the reasoning; the one
-// difference here is that this socket takes every peer's traffic rather than one
-// connection's, so its cap is derived from the larger server buffer.
+// deliver(int32_t slot, const Address& sender, Span<const uint8> payload). The
+// bytes are the transport's and live for the call. A peer with no slot has no
+// reassembly bucket and no stream: the one thing it may say is a Connect, a
+// Message small enough to be one datagram, delivered with slot -1 and its
+// address for on_connect to answer; anything else from it is dropped. A record
+// out of a reliable block reaches the same `deliver` as a datagram, after the
+// drain, so nothing above can tell which route a message took -- reliability
+// is the transport's business, and putting a row on the stream changes no
+// handler. The S2C half of the protocol arriving here is reported, never
+// delivered.
+template <typename Deliver_Fn>
 inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
                          size_t max_datagrams, uint32_t current_tick,
-                         Server_Inbox &out_inbox)
+                         Deliver_Fn &&deliver)
 {
   for (client_transport_t &client : state.clients)
     if (client.occupied)
@@ -512,36 +373,20 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
     if (!socket.receive(packet, sender))
       break; // the kernel queue is empty -- nothing more has arrived yet
 
-    if (packet.header.message_type ==
-        static_cast<uint8>(Message_Type::C2S_Connection))
-    {
-      // For now, assume connection messages are single-packet for simplicity
-      // regarding unknown senders. Or use a temporary buffer. Since Connect
-      // is small, strict single-packet check.
-      if (packet.header.fragment_count == 1)
-      {
-        game::C2S_Connection cmd;
-        if (cmd.ParseFromArray(packet.buffer, packet.header.payload_size))
-        {
-          out_inbox.connection_messages.push_back({sender, cmd});
-        }
-      }
-    }
-
     const std::optional<int32_t> sender_slot =
         try_find_client_slot(state, sender);
     if (!sender_slot)
     {
-      // Not connected yet — maybe they want to join.
-      // Deduplicate? For now, just add.
-      out_inbox.potential_joins.push_back(sender);
+      if (packet.header.payload_kind == static_cast<uint8>(Payload_Kind::Message) &&
+          packet.header.fragment_count == 1)
+        deliver(-1, sender, Span<const uint8>{packet.buffer, packet.header.payload_size});
       continue;
     }
     const int32_t client_slot = *sender_slot;
     state.clients[client_slot].latest_packet_tick = current_tick;
 
     // Freeing is event-driven: the ack, and nothing else. Read off EVERY
-    // datagram, before the packet's type or contents mean anything, because the
+    // datagram, before the packet's kind or contents mean anything, because the
     // report rides Packet_Header rather than any message -- which is what makes
     // "the stream cannot get stuck while the connection is alive" true.
     confirm_reliable_block(state.clients[client_slot].reliable_stream,
@@ -549,10 +394,10 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
 
     // Intercepted BEFORE reassembly: a block is not a message and has no
     // fragments. Its bytes are appended to the stream, and the records inside
-    // them are dispatched below, once the drain loop is done -- so a record
+    // them are delivered below, once the drain loop is done -- so a record
     // completed by a later block in the same drain still arrives this tick.
-    if (packet.header.message_type ==
-        static_cast<uint8>(Message_Type::Reliable))
+    if (packet.header.payload_kind ==
+        static_cast<uint8>(Payload_Kind::Reliable))
     {
       accept_reliable_block(
           state.clients[client_slot].reliable_stream, packet.header.reliable_block_number,
@@ -560,18 +405,46 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
       continue;
     }
 
-    const bool reassembled =
-        reassemble_fragment(state.clients[client_slot].partial_packets, packet, payload);
+    if (!reassemble_fragment(state.clients[client_slot].partial_packets, packet, payload))
+    {
+      if (packet.header.fragment_count == 1)
+        // An unfragmented message must complete the instant it arrives. Not
+        // completing means a stale, never-completed message still holds this
+        // message_id -- and on this side that is not a remote possibility: the id
+        // is a uint8 incremented once per message sent, so a client sending one
+        // input datagram per tick wraps the whole space every 256/sv_tickrate
+        // seconds, which at 60Hz is 4.3s against a 5s bucket timeout. The wrap
+        // outlives the expiry, so the collision is reachable rather than
+        // theoretical. Say so rather than dropping it on the floor.
+        log_error("slot {}: a payload of kind {} (id {}) arrived unfragmented but did "
+                  "not reassemble — its message_id bucket still holds an "
+                  "incomplete message; the payload was dropped",
+                  client_slot, static_cast<int>(packet.header.payload_kind),
+                  packet.header.message_id);
+      continue;
+    }
 
-    // A fragment report about a bulk message we are sending. Handled here rather
-    // than through the inbox because it is transport, not gameplay: it names a
-    // message_id and a set of fragment indices and nothing above this layer has
-    // an opinion about either.
-    //
-    // AFTER reassembly, because the report is a message like any other: past
-    // 9496 fragments its bitmap outgrows one datagram and arrives as several.
-    if (reassembled && packet.header.message_type ==
-                           static_cast<uint8>(Message_Type::C2S_TransferReceipt))
+    // The raw byte comes off the wire with no range validation -- garbage, or a
+    // newer build's kind. Checked before the cast, because casting it to the
+    // enum first would make the switch below undefined rather than merely wrong.
+    const std::optional<Payload_Kind> kind = try_payload_kind(packet.header.payload_kind);
+    if (!kind)
+    {
+      log_error("slot {}: dropping a payload of kind {}, which this build does not know",
+                client_slot, static_cast<int>(packet.header.payload_kind));
+      continue;
+    }
+
+    // A switch with no `default:`, so -Werror=switch makes a new kind a compile
+    // error here: the S2C arms are listed one by one for exactly that reason.
+    switch (*kind)
+    {
+    // A fragment report about a bulk message we are sending: transport, not
+    // gameplay. It names a message_id and a set of fragment indices and nothing
+    // above this layer has an opinion about either. AFTER reassembly, because
+    // the report is a message like any other: past 9496 fragments its bitmap
+    // outgrows one datagram and arrives as several.
+    case Payload_Kind::Transfer_Receipt:
     {
       const std::optional<transfer_receipt_t> receipt =
           try_deserialize_transfer_receipt(Span<const uint8>{payload});
@@ -583,26 +456,24 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
       continue;
     }
 
-    if (reassembled)
-      deliver_client_message(client_slot, packet.header.message_type,
-                             std::move(payload), out_inbox);
-    else if (packet.header.fragment_count == 1)
-      // An unfragmented message must complete the instant it arrives. Not
-      // completing means a stale, never-completed message still holds this
-      // message_id -- and on this side that is not a remote possibility: the id
-      // is a uint8 incremented once per message sent, so a client sending one
-      // input batch per tick wraps the whole space every 256/sv_tickrate
-      // seconds, which at 60Hz is 4.3s against a 5s bucket timeout. The wrap
-      // outlives the expiry, so the collision is reachable rather than
-      // theoretical. Say so rather than dropping it on the floor.
-      log_error("slot {}: message type {} (id {}) arrived unfragmented but did "
-                "not reassemble — its message_id bucket still holds an "
-                "incomplete message; the payload was dropped",
-                client_slot, static_cast<int>(packet.header.message_type),
-                packet.header.message_id);
+    case Payload_Kind::Message:
+      deliver(client_slot, sender, Span<const uint8>{payload});
+      continue;
+
+    case Payload_Kind::Reliable:
+    case Payload_Kind::Map_Transfer:
+    case Payload_Kind::Ghost_Transfer:
+    case Payload_Kind::Count:
+      break;
+    }
+
+    log_error("dropping a payload of kind {} from slot {}, which the server does not "
+              "accept",
+              static_cast<int>(*kind), client_slot);
   }
 
-  // The streams hand back whole records, in order, exactly once. After the
+  // The streams hand back whole records, in order, exactly once, and a stream
+  // carries Message records alone: a transfer must not ride it. After the
   // drain, so a record straddling two blocks that both arrived this tick is
   // delivered now rather than next tick.
   for (int32_t slot = 0; slot < sv_max_client_count; ++slot)
@@ -612,11 +483,17 @@ inline void poll_network(Server_Transport_Layer &state, Udp_Socket &socket,
       continue;
 
     drain_reliable_records(client.reliable_stream,
-                           [slot, &out_inbox](uint8 message_type,
-                                              std::vector<uint8> &&record) {
-                             deliver_client_message(slot, message_type,
-                                                    std::move(record),
-                                                    out_inbox);
+                           [slot, &client, &deliver](uint8 payload_kind,
+                                                     std::vector<uint8> &&record) {
+                             if (payload_kind != static_cast<uint8>(Payload_Kind::Message))
+                             {
+                               log_error("slot {}: dropping a reliable record of payload kind {}: "
+                                         "the stream carries Message records only",
+                                         slot, static_cast<int>(payload_kind));
+                               return;
+                             }
+                             const Address sender = client.address;
+                             deliver(slot, sender, Span<const uint8>{record});
                            });
   }
 }

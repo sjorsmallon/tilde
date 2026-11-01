@@ -54,6 +54,9 @@ Inventory_Slot :: enum { Primary, Secondary, Melee, Utility_1, Utility_2 }
 //@NOTE(SJM): this is a hacky test to embed in weapon_entity, but it's a test.
 Damage_Type :: enum { Normal, Orange, Teal }
 
+// Where on a body a shot landed, read only when the thing hit is a player.
+Hit_Region :: enum { Head, Torso, Legs }
+
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }

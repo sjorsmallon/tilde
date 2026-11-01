@@ -7,8 +7,7 @@
 #include "systems/contact_system.hpp"
 
 #include "collision/bounce_body.hpp"
-#include "../shared/effects/generated/effects_generated.hpp"
-#include "../shared/events/generated/events_generated.hpp"
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/log.hpp"
 #include "../shared/merge.hpp"
 #include "movement/movement_kernel.hpp"
@@ -71,13 +70,13 @@ static void fire_shot_impact_at(server_context_t& context, const pending_contact
                                 shared::entity_uid_t attached)
 {
   shared::Shot_Impact impact{};
-  impact.origin          = contact.point;
-  impact.normal          = contact.normal;
-  impact.attached_entity = attached;
-  impact.region          = static_cast<uint16_t>(contact.region);
-  impact.weapon          = static_cast<uint16_t>(contact.weapon);
-  impact.trigger         = static_cast<uint8_t>(contact.trigger);
-  shared::fire_shot_impact(context.outgoing.effects, impact);
+  impact.site.origin          = contact.point;
+  impact.site.normal          = contact.normal;
+  impact.site.attached_entity = attached;
+  impact.region          = contact.region;
+  impact.weapon          = contact.weapon;
+  impact.trigger         = contact.trigger;
+  shared::write_shot_impact(context.outgoing.tick_broadcast, impact);
 }
 
 // A body effect that found no body of its kind: on a surface that is a bullet in a wall, not a
@@ -195,7 +194,7 @@ static void apply_damage_contact(server_context_t& context, const pending_contac
 
   const entities::Player_Entity* shooter =
       entity_system.get<entities::Player_Entity>(contact.shooter_uid);
-  const bool was_headshot = contact.region == shared::hit_region_t::Head;
+  const bool was_headshot = contact.region == entities::Hit_Region::Head;
 
   pending_hit_t hit{};
   hit.info.victim_uid      = contact.target_uid;
@@ -480,13 +479,13 @@ static void apply_explode(server_context_t& context, const pending_contact_t& co
   }
 
   shared::Rocket_Explosion explosion{};
-  explosion.origin           = contact.point;
-  explosion.normal           = contact.normal;
-  explosion.color            = {1.f, 1.f, 1.f};
-  explosion.scale            = rule.radius;
-  explosion.attached_entity  = 0;
-  explosion.surface_material = 0;
-  shared::fire_rocket_explosion(context.outgoing.effects, explosion);
+  explosion.site.origin           = contact.point;
+  explosion.site.normal           = contact.normal;
+  explosion.site.color            = {1.f, 1.f, 1.f};
+  explosion.site.scale            = rule.radius;
+  explosion.site.attached_entity  = 0;
+  explosion.site.surface_material = 0;
+  shared::write_rocket_explosion(context.outgoing.tick_broadcast, explosion);
 
   shared::Rocket_Detonated detonated{};
   detonated.attacker_id = contact.shooter_uid;
@@ -494,7 +493,7 @@ static void apply_explode(server_context_t& context, const pending_contact_t& co
                               ? contact.target_uid
                               : shared::null_entity_uid;
   detonated.weapon_id   = static_cast<uint16_t>(contact.weapon);
-  shared::fire_rocket_detonated(context.outgoing.events, detonated);
+  shared::write_rocket_detonated(context.outgoing.tick_broadcast_reliable, detonated);
 }
 
 // The shooter is sent to a hull resting on whatever was struck. Velocity is kept, the teleport's rule.

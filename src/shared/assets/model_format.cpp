@@ -793,8 +793,8 @@ std::optional<assets::hitbox_rig_file_t> try_parse_hitbox_rig(Span<const uint8_t
     if (reader.failed)
       return std::nullopt;
 
-    const std::optional<shared::hit_region_t> region =
-        shared::try_parse_hit_region(region_token);
+    const std::optional<entities::Hit_Region> region =
+        entities::try_from_string<entities::Hit_Region>(region_token);
     if (!region)
     {
       log_error("{}:{}: '{}' is not a damage region; expected Head, Torso or Legs", debug_name,
@@ -913,7 +913,7 @@ bool try_write_hitbox_rig_file(const char *path, const assets::hitbox_rig_t &rig
 
     char line[320];
     snprintf(line, sizeof(line), "v %-12s %-9s %s %-6s %s%s\n", volume.name.c_str(),
-             assets::to_string(volume.shape), bones, shared::to_string(volume.region), size,
+             assets::to_string(volume.shape), bones, entities::to_string(volume.region), size,
              offset);
     file << line;
   }

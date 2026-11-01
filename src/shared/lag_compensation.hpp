@@ -13,6 +13,7 @@
 // try_pose_players_across_bracket builds the volumes for one that is.
 
 #include "hitscan.hpp"
+#include "network/generated/messages_generated.hpp"
 #include "network/entity_snapshot.hpp"
 #include "network/snapshot_history.hpp"
 #include "animation/player_animator.hpp"
@@ -49,29 +50,16 @@ struct interpolation_bracket_t
   float    fraction     = 0.f; // 0..1, from -> towards
 };
 
-// What the server may do with a requested bracket. The status IS the answer --
-// this is a classification, not a fallible call -- and every value other than Ok
-// and Clamped means the caller falls back to its present-tick pose set.
-enum class bracket_status_t
-{
-  Ok,
-  // Usable, but pinned to the rewind limit: the shot will be judged through a
-  // blend OLDER than the shooter aimed through, and they feel that as no-reg.
-  // Never silent -- the caller logs it, rate-limited.
-  Clamped,
-  // No blend requested (either endpoint 0): spectating, or fewer than two
-  // snapshots seen. Routine, and not worth a word.
-  Absent,
-  // from > towards, or a fraction outside [0,1]. rejected outright.
-  Malformed,
-
-  // A malformed or hostile client, proposing a tick we never sent or one we didn't send yet.
-  Unheld,
-};
-
+// What the server may do with a requested bracket is a Bracket_Status (messages.def,
+// so the shot debug readout carries it): a classification, not a fallible call, and
+// every value other than Ok and Clamped means the caller falls back to its
+// present-tick pose set. Clamped is usable but pinned to the rewind limit, so the
+// shot is judged through a blend OLDER than the shooter aimed through; Absent is no
+// blend requested (spectating, or fewer than two snapshots seen); Malformed is
+// from > towards or a fraction outside [0,1]; Unheld names a tick never sent.
 struct bracket_verdict_t
 {
-  bracket_status_t        status = bracket_status_t::Absent;
+  Bracket_Status          status = Bracket_Status::Absent;
   // Meaningful for Ok and Clamped only.
   interpolation_bracket_t bracket{};
 };

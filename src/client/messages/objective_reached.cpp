@@ -1,0 +1,40 @@
+#include "../../shared/assets/asset_id.hpp"
+#include "../../shared/replay/run_times.hpp"
+#include "../audio/audio_system.hpp"
+#include "../client_context.hpp"
+#include "../message_handlers.hpp"
+#include "../hud.hpp"
+
+#include <format>
+
+namespace client::messages
+{
+
+void on_objective_reached(client_context_t &context, const shared::Objective_Reached &value)
+{
+  const float tick_dt = shared::tick_interval_seconds(context.connection.server_tickrate);
+  const bool  timed   = value.attempt_ticks > 0;
+  // No best on file is a record too: the first finish is the fastest one.
+  const bool is_record = timed && (value.best_ticks == 0 || value.attempt_ticks < value.best_ticks);
+
+  std::string text = "LEVEL COMPLETE";
+  if (timed)
+  {
+    text += "\n" + shared::format_run_time(static_cast<float>(value.attempt_ticks) * tick_dt);
+    if (value.best_ticks == 0)
+      text += "\nNEW RECORD";
+    else
+    {
+      const std::string best =
+          shared::format_run_time(static_cast<float>(value.best_ticks) * tick_dt);
+      text += is_record ? std::format("\nNEW RECORD (was {})", best) : std::format("\nBEST {}", best);
+    }
+  }
+  hud::set_announcement(text);
+
+  context.audio.play_2d(is_record ? assets::sound_id("a_new_record")
+                                  : assets::sound_id("wow_incredible"),
+                        1.0f);
+}
+
+} // namespace client::messages

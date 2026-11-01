@@ -40,7 +40,7 @@ struct player_sight_t
   entity_uid_t                              uid                   = null_entity_uid;
   bool                                      alive                 = false;
   linalg::vec3f                             feet                  = {0.f, 0.f, 0.f};
-  subtick_view_t                            view_entering_tick    = {};
+  View                            view_entering_tick    = {};
   held_toggles_t                            toggles               = {};
   lens_watch_screen_t                       screen                = {};
   std::optional<entities::Reveal_Cone_Kind> wielded_reveal_kind;

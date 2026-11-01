@@ -90,7 +90,7 @@ static void test_transfer_is_paced()
 
   const std::vector<uint8> payload = make_payload(40 * MAX_PAYLOAD_SIZE_IN_BYTES);
   begin_paced_transfer(transport, 0, payload,
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
 
   const size_t fragment_count = transport.clients[0].outbound_transfer.fragments.size();
   assert(fragment_count == 40 && "payload should fragment into 40 packets");
@@ -133,7 +133,7 @@ static void test_a_pass_waits_for_a_receipt()
   transport.clients[0].address = wire.receiver_address;
 
   begin_paced_transfer(transport, 0, make_payload(4 * MAX_PAYLOAD_SIZE_IN_BYTES),
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
 
   service_paced_transfers(transport, wire.sender, 8);
   assert(wire.drain().size() == 4);
@@ -158,7 +158,7 @@ static void test_only_the_missing_fragments_are_resent()
   transport.clients[0].address = wire.receiver_address;
 
   begin_paced_transfer(transport, 0, make_payload(40 * MAX_PAYLOAD_SIZE_IN_BYTES),
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
 
   while (!transport.clients[0].outbound_transfer.awaiting_receipt)
     service_paced_transfers(transport, wire.sender, 8);
@@ -247,7 +247,7 @@ static void test_a_receipt_for_another_message_is_ignored()
   transport.clients[0].occupied = true;
 
   begin_paced_transfer(transport, 0, make_payload(4 * MAX_PAYLOAD_SIZE_IN_BYTES),
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
   transport.clients[0].outbound_transfer.awaiting_receipt = true;
 
   transfer_receipt_t stranger;
@@ -275,13 +275,13 @@ static void test_rerequest_replaces_transfer()
   transport.clients[0].occupied = true;
 
   begin_paced_transfer(transport, 0, make_payload(40 * MAX_PAYLOAD_SIZE_IN_BYTES),
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
   transport.clients[0].outbound_transfer.cursor = 12;
   transport.clients[0].outbound_transfer.confirmed[0] = true;
   transport.clients[0].outbound_transfer.awaiting_receipt = true;
 
   begin_paced_transfer(transport, 0, make_payload(3 * MAX_PAYLOAD_SIZE_IN_BYTES),
-                       static_cast<uint8>(Message_Type::S2C_MapData));
+                       Payload_Kind::Map_Transfer);
 
   assert(transport.clients[0].outbound_transfer.fragments.size() == 3 &&
          "the new payload must replace the old one, not append to it");

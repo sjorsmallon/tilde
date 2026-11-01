@@ -2,6 +2,7 @@
 
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/linalg.hpp"
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/network/network_types.hpp"
 
 #include <vector>
@@ -10,9 +11,6 @@ namespace server
 {
 
 static constexpr int32_t BOT_SLOT_BASE = network::sv_max_client_count;
-
-enum class bot_goal_t { Idle, Chase, Attack, Retreat };
-enum class bot_behavior_t { Idle, Chase, Regular };
 
 struct bot_personality_t
 {
@@ -29,8 +27,8 @@ struct Bot_State
 
   int32_t player_slot = -1;
   float fire_cooldown = 0.f;
-  bot_goal_t goal = bot_goal_t::Idle;
-  bot_behavior_t type = bot_behavior_t::Idle;
+  shared::Bot_Goal goal = shared::Bot_Goal::Idle;
+  shared::Bot_Behavior type = shared::Bot_Behavior::Idle;
   bot_personality_t personality = {};
 
   std::vector<linalg::vec3> path;

@@ -1,12 +1,15 @@
 #include "replay_playback.hpp"
 
+#include "message_handlers.hpp"
 #include "../shared/log.hpp"
+#include "../shared/message_stream.hpp"
+#include "../shared/network/bitstream.hpp"
 #include "../shared/network/cvar_mirror.hpp"
+#include "../shared/network/entity_snapshot.hpp"
 #include "../shared/replay/replay_seek.hpp"
 
-#include "game.pb.h"
-
 #include <optional>
+#include <vector>
 
 namespace client
 {
@@ -14,48 +17,22 @@ namespace client
 namespace
 {
 
-void file_record(const shared::replay_record_t& record, network::Client_Inbox& inbox)
+void dispatch_record(const shared::replay_record_t& record, client_context_t& context)
 {
   switch (record.kind)
   {
+  // Each holds finished streams (the Snapshot one Entity_Package), received as
+  // the payload a live Message datagram carries: the tick, then the streams.
   case shared::replay_record_kind_t::Snapshot:
-  {
-    const std::optional<shared::replay_snapshot_payload_t> snapshot = shared::try_split_replay_snapshot(record);
-    if (!snapshot)
-    {
-      log_error("replay: the snapshot record at tick {} is too short to hold its baseline; skipped", record.tick);
-      return;
-    }
-    game::S2C_EntityPackage& package = inbox.entity_updates.emplace_back();
-    package.set_server_tick(static_cast<int32_t>(record.tick));
-    if (snapshot->baseline_tick != 0)
-      package.set_delta_from_tick(snapshot->baseline_tick);
-    package.set_entity_data(snapshot->snapshot_bytes.data, snapshot->snapshot_bytes.size());
-    return;
-  }
-  case shared::replay_record_kind_t::Effects:
-  {
-    game::S2C_EffectBatch& batch = inbox.effect_batches.emplace_back();
-    if (!batch.ParseFromArray(record.payload.data, static_cast<int>(record.payload.size())))
-    {
-      log_error("replay: the effect batch at tick {} does not parse; skipped", record.tick);
-      inbox.effect_batches.pop_back();
-    }
-    return;
-  }
-  case shared::replay_record_kind_t::Events:
-  {
-    game::S2C_GameEventBatch& batch = inbox.game_event_batches.emplace_back();
-    if (!batch.ParseFromArray(record.payload.data, static_cast<int>(record.payload.size())))
-    {
-      log_error("replay: the event batch at tick {} does not parse; skipped", record.tick);
-      inbox.game_event_batches.pop_back();
-    }
-    return;
-  }
+  case shared::replay_record_kind_t::Messages:
   case shared::replay_record_kind_t::Cvar_Values:
-    inbox.cvar_value_messages.emplace_back(record.payload.data, record.payload.data + record.payload.size());
+  {
+    std::vector<network::uint8> payload;
+    shared::begin_server_message_payload(payload, record.tick);
+    payload.insert(payload.end(), record.payload.data, record.payload.data + record.payload.size());
+    receive_server_message_payload(context, Span<const network::uint8>{payload});
     return;
+  }
   case shared::replay_record_kind_t::Player_View:
   case shared::replay_record_kind_t::Header:
   case shared::replay_record_kind_t::Map_Package:
@@ -119,7 +96,7 @@ void request_replay_seek(replay_playback_t& playback, double seconds_from_start)
     playback.pending_seek_tick = static_cast<uint32_t>(tick);
 }
 
-void feed_replay_into_inbox(replay_playback_t& playback, float dt, network::Client_Inbox& inbox)
+void dispatch_due_replay_records(replay_playback_t& playback, float dt, client_context_t& context)
 {
   if (!playback.active)
     return;
@@ -136,14 +113,22 @@ void feed_replay_into_inbox(replay_playback_t& playback, float dt, network::Clie
       return;
     }
 
-    for (Span<const uint8_t> payload : position->cvar_payloads)
-      inbox.cvar_value_messages.emplace_back(payload.data, payload.data + payload.size());
+    std::vector<network::uint8> payload;
+    for (Span<const uint8_t> streams : position->cvar_payloads)
+    {
+      shared::begin_server_message_payload(payload, target);
+      payload.insert(payload.end(), streams.data, streams.data + streams.size());
+      receive_server_message_payload(context, Span<const network::uint8>{payload});
+    }
 
-    network::Bit_Writer writer;
-    network::serialize_snapshot(writer, position->frame, nullptr);
-    game::S2C_EntityPackage& package = inbox.entity_updates.emplace_back();
-    package.set_server_tick(static_cast<int32_t>(position->frame.tick));
-    package.set_entity_data(writer.buffer.data(), writer.buffer.size());
+    network::Bit_Writer      writer;
+    shared::message_stream_t stream;
+    shared::write_entity_package(stream, network::entity_package_from_snapshot(writer, position->frame, nullptr,
+                                                                               network::NO_INPUT_PROCESSED_YET));
+    stream.finish();
+    shared::begin_server_message_payload(payload, position->frame.tick);
+    shared::append_message_stream(payload, stream);
+    receive_server_message_payload(context, Span<const network::uint8>{payload});
 
     playback.next_record_offset = position->next_record_offset;
     playback.clock_tick         = target;
@@ -169,7 +154,7 @@ void feed_replay_into_inbox(replay_playback_t& playback, float dt, network::Clie
     if (static_cast<double>(record->tick) > playback.clock_tick)
       return;
 
-    file_record(*record, inbox);
+    dispatch_record(*record, context);
     playback.next_record_offset = shared::replay_record_end(*record);
   }
 }

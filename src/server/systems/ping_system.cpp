@@ -3,7 +3,6 @@
 #include "ping_system.hpp"
 
 #include "../../shared/collision/collision_detection.hpp"
-#include "../../shared/effects/generated/effects_generated.hpp"
 #include "../../shared/log.hpp"
 #include "../../shared/tick_clock.hpp"
 #include "../entity_lifecycle.hpp"
@@ -82,10 +81,10 @@ bool try_place_ping(server_context_t& context, entities::Player_Entity& player, 
                             linalg::to_degrees(std::atan2(-aim_direction.z, -aim_direction.x)), 0.f);
 
   shared::Ping fx{};
-  fx.origin          = origin;
-  fx.normal          = world_hit.normal;
-  fx.attached_entity = player.entity_id;
-  shared::fire_ping(context.outgoing.effects, fx);
+  fx.site.origin          = origin;
+  fx.site.normal          = world_hit.normal;
+  fx.site.attached_entity = player.entity_id;
+  shared::write_ping(context.outgoing.tick_broadcast, fx);
   return true;
 }
 

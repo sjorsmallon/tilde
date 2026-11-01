@@ -35,7 +35,7 @@
 //                    // start_bone end_bone region radius [offset]  Cylinder
 //                  | ident ident region f32{3} [ f32 ]           // Box
 //                    // start_bone end_bone region half_extents [offset]
-//   region        := "Head" | "Torso" | "Legs"    // shared::hit_region_t
+//   region        := "Head" | "Torso" | "Legs"    // entities::Hit_Region
 //
 //   // There is deliberately NO volume count. The file is HANDWRITTEN, and a
 //   // declared count in a handwritten file is a second thing to keep in step

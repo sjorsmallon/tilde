@@ -2,10 +2,9 @@
 
 #include "../shared/array.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
-// Both channels: the context owns their per-tick streams, and every fire site
-// on this side reaches them through it.
-#include "../shared/effects/generated/effects_generated.hpp"
-#include "../shared/events/generated/events_generated.hpp"
+// The context owns the per-tick message streams, and every write site on this
+// side reaches them through it.
+#include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/collision/flight_path.hpp"
 #include "../shared/map/game_session.hpp"
 #include "../shared/hitscan.hpp"
@@ -45,12 +44,6 @@ inline bool is_valid_client_slot(int32_t slot)
   return slot >= 0 && slot < network::sv_max_client_count;
 }
 
-// Input numbers start at 0, so "none consumed yet" has to sit below that. Its
-// own constant rather than invalid_slot_idx: that one names SLOT indices, and a
-// client's input stream is a different number space that merely happens to
-// spell its empty value the same way.
-static constexpr int32_t no_input_processed_yet = -1;
-
 struct client_slot_t
 {
   shared::entity_uid_t player_uid = shared::null_entity_uid;
@@ -62,14 +55,14 @@ struct client_slot_t
   network::pascal_string_t<32> player_name;
 
   // How far this client's input stream has been CONSUMED -- a high-water mark
-  // over C2S_ClientInput.input_number, not "the last input that moved you". A spectator's input and one whose
+  // over Client_Input::input_number, not "the last input that moved you". A spectator's input and one whose
   // sub-tick grammar was refused both advance it, because both were consumed;
   // only an over-budget drop does not, since that one never ran and its button
   // edges must not be skipped. Echoed back in every snapshot, where it both
   // trims the client's resend tail and starts its reconciliation replay. No
   // "server" in the name: this struct is the server's note about a client, so
   // both sides of that are already said. The client's copy has to spell it out.
-  int32_t  latest_processed_input_number = no_input_processed_yet;
+  int32_t  latest_processed_input_number = network::NO_INPUT_PROCESSED_YET;
 
   // What the client's buttons were when its last processed input ENDED, which
   // is what the next one's rising edges are measured against. Not "what it sent
@@ -80,7 +73,7 @@ struct client_slot_t
   uint32_t held_snapshot_tick = 0;
 
   // This client holds the map we are running. DERIVED every tick from
-  // C2S_ClientInput::map_content_hash, never announced -- see the rider pass in
+  // Client_Input::map_content_hash, never announced -- see the rider pass in
   // receive_from_clients. False on a fresh slot and false after a map load, and it
   // comes back on its own one input later; there is no ack to wait for and
   // nothing that retransmits.
@@ -205,8 +198,6 @@ struct replication_t
   network::Snapshot_History<network::snapshot_frame_t> snapshot_history;
 };
 
-using tick_input_t = network::Server_Inbox;
-
 // A shot that has ARRIVED and not yet acted: a hitscan's or a projectile's,
 // pushed by the thing that flew and applied by update_contacts. It carries no
 // numbers -- what it does is the button's contact_t on the weapon row -- and
@@ -219,18 +210,51 @@ struct pending_contact_t
   shared::entity_uid_t   target_uid  = shared::null_entity_uid;
   linalg::vec3f          point{};
   linalg::vec3f          normal{};
-  shared::hit_region_t   region      = shared::hit_region_t::Torso;
+  entities::Hit_Region   region      = entities::Hit_Region::Torso;
   entities::Weapon       weapon      = entities::Weapon::Knife;
   entities::Fire_Trigger trigger     = entities::Fire_Trigger::Primary;
   // Per-instance state of the weapon that fired, read off the hand at fire time.
   entities::Damage_Type  damage_type = entities::Damage_Type::Normal;
 };
 
+// One Client_Input row as on_client_input filed it, with the slot it came from.
+struct received_client_input_t
+{
+  int32_t              slot;
+  shared::Client_Input input;
+};
+
+// What RECEIVE leaves for the tick: the inputs, filed in arrival order and
+// sorted by (slot, input_number) before their riders are read, and who sent
+// the payload being dispatched when that peer holds no slot, for the one
+// handler that answers a stranger (on_connect).
+struct tick_incoming_t
+{
+  std::vector<received_client_input_t> client_inputs;
+  network::Address                     unslotted_sender;
+};
+
+// The message scopes, which is where the kinds of traffic differ: not on the
+// message, whose transport is its flag, but in who receives it and whether its
+// content is per client. A write site says which by the scope it writes into.
 struct tick_output_t
 {
-  shared::event_stream_t effects;
+  // Written once, appended to every READY client's datagram: the effects.
+  shared::message_stream_t tick_broadcast;
 
-  shared::event_stream_t events;
+  // Written once, appended to every client's reliable stream: the events.
+  shared::reliable_stream_t tick_broadcast_reliable;
+
+  // One client's own records, first in its datagram and never dropped.
+  Array<shared::message_stream_t, network::sv_max_client_count> datagram;
+
+  // One client's own reliable records, queued on its stream before the tick's
+  // reliable broadcast: console text, the cvar set at connect, its ghost announce.
+  Array<shared::reliable_stream_t, network::sv_max_client_count> reliable;
+
+  // Where one client's snapshot delta is encoded before it rides its datagram as
+  // an Entity_Package: reset per client, capacity kept.
+  network::Bit_Writer snapshot_writer;
 
   std::vector<pending_contact_t> pending_contacts;
 };
@@ -264,11 +288,18 @@ struct server_context_t
   // means nothing pending.
   std::string pending_map_change;
 
+  // Bumped once per map load, including the empty world a failed first load
+  // stands up. Rides the Accept and every Change_Map, and a client's
+  // Map_Data_Request names the one it is asking about, so a request or a
+  // report from before a load is recognised as stale. Outside the reset scope
+  // because the load is what bumps it.
+  uint32_t map_generation = 0;
+
   // --- Reset-scoped state ---
   world_t       world;
   Array<client_slot_t, network::sv_max_client_count> clients;
   replication_t replication;
-  tick_input_t  incoming;
+  tick_incoming_t incoming;
   tick_output_t outgoing;
 };
 
@@ -355,10 +386,6 @@ void connect_client(server_context_t& context, int32_t slot,
 void disconnect_client(server_context_t& context, int32_t slot,
                        std::string_view reason);
 
-// A CmdDisconnect arrived: resolve the sender to a slot and disconnect it. An
-// address that occupies no slot is an error and says so.
-void process_client_leave_message(server_context_t& context,
-                                  const network::Address& sender);
 void clear_incoming(server_context_t& context);
 void clear_outgoing(server_context_t& context);
 

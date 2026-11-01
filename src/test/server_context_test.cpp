@@ -59,18 +59,21 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
 
   context.replication.snapshot_history.slot_for(900).tick = 900;
 
-  context.incoming.developer_console_entries.push_back({0, "noclip 1"});
-  context.incoming.map_data_requests.push_back({1, {1, 2, 3}});
-  // Both channels hold encoded bytes rather than values, so "dirty" is a fired
-  // event rather than a pushed one.
+  context.incoming.client_inputs.push_back({.slot = 0, .input = {}});
+  // The scopes hold encoded bytes rather than values, so "dirty" is a written
+  // record rather than a pushed one.
   shared::Jump jump{};
-  jump.attached_entity = 42;
-  shared::fire_jump(context.outgoing.effects, jump);
+  jump.site.attached_entity = 42;
+  shared::write_jump(context.outgoing.tick_broadcast, jump);
 
   shared::Player_Died died{};
   died.victim_id   = 42;
   died.attacker_id = 7;
-  shared::fire_player_died(context.outgoing.events, died);
+  shared::write_player_died(context.outgoing.tick_broadcast_reliable, died);
+
+  shared::Server_Text text{};
+  (void)text.text.set("hello");
+  shared::write_server_text(context.outgoing.reliable[1], text);
 
   // A contact a shot arrived at but has not acted on. Normally drained the
   // instant update_contacts runs; it is a group member so that a tick which
@@ -79,7 +82,7 @@ void make_dirty(server_context_t& context, cvars::cvar_state_t& cvar_state)
   pending.shooter_uid = 7;
   pending.target_uid  = 42;
   pending.point       = {1.f, 2.f, 3.f};
-  pending.region      = shared::hit_region_t::Head;
+  pending.region      = entities::Hit_Region::Head;
   pending.weapon      = entities::Weapon::Scout;
   context.outgoing.pending_contacts.push_back(pending);
 
@@ -165,11 +168,11 @@ void test_reset_state_in_preparation_for_new_map_load()
   // undo.
   assert(cvar_state.sv_tickrate == 30);
 
-  assert(context.incoming.developer_console_entries.empty());
-  assert(context.incoming.map_data_requests.empty());
-  assert(context.outgoing.effects.empty());
+  assert(context.incoming.client_inputs.empty());
+  assert(context.outgoing.tick_broadcast.empty());
 
-  assert(context.outgoing.events.empty());
+  assert(context.outgoing.tick_broadcast_reliable.records.empty());
+  assert(context.outgoing.reliable[1].records.empty());
   // A contact resolved against the world we are leaving must not act in the one
   // we are entering — the target uid may not even exist there.
   assert(context.outgoing.pending_contacts.empty());
@@ -192,7 +195,7 @@ void test_reset_state_in_preparation_for_new_map_load()
     assert(client.player_uid == shared::null_entity_uid);
     assert(client.held_snapshot_tick == 0);
     // Cleared, and it comes back on its own: map_ready is derived every tick
-    // from the hash riding C2S_ClientInput, so the client re-earns it one input
+    // from the hash riding Client_Input, so the client re-earns it one input
     // after it has loaded the new map. Nothing re-sends anything to make that
     // happen.
     assert(!client.map_ready);
@@ -249,7 +252,7 @@ void test_reset_client_slot()
   // of the previous one's command cursor, ack or map-ready gate.
   const client_slot_t& reset_client = context.clients[target_slot];
   assert(reset_client.player_uid == shared::null_entity_uid);
-  assert(reset_client.latest_processed_input_number == server::no_input_processed_yet);
+  assert(reset_client.latest_processed_input_number == network::NO_INPUT_PROCESSED_YET);
   assert(reset_client.latest_buttons_bitmap == 0);
   assert(reset_client.held_snapshot_tick == 0);
   assert(!reset_client.map_ready);
@@ -305,23 +308,20 @@ void test_clear_tick_groups()
   clear_outgoing(context);
 
   assert(context.incoming.client_inputs.empty());
-  assert(context.incoming.potential_joins.empty());
-  assert(context.incoming.connection_messages.empty());
-  assert(context.incoming.developer_console_entries.empty());
-  assert(context.incoming.map_data_requests.empty());
-  assert(context.outgoing.effects.empty());
-  assert(context.outgoing.events.empty());
+  assert(context.outgoing.tick_broadcast.empty());
+  assert(context.outgoing.tick_broadcast_reliable.records.empty());
+  assert(context.outgoing.reliable[1].records.empty());
   assert(context.outgoing.pending_contacts.empty());
 
   // The reason these are functions and not `= {}` on the group: they run at the
   // tickrate, so the capacity has to survive. An `= {}` "simplification" fails
   // here rather than silently reintroducing a per-tick realloc.
-  assert(context.incoming.developer_console_entries.capacity() > 0);
-  assert(context.incoming.map_data_requests.capacity() > 0);
+  assert(context.incoming.client_inputs.capacity() > 0);
   assert(context.outgoing.pending_contacts.capacity() > 0);
   // Same intent, different member: a stream keeps its buffer's allocation.
-  assert(context.outgoing.effects.writer.buffer.capacity() > 0);
-  assert(context.outgoing.events.writer.buffer.capacity() > 0);
+  assert(context.outgoing.tick_broadcast.writer.buffer.capacity() > 0);
+  assert(context.outgoing.tick_broadcast_reliable.records.writer.buffer.capacity() > 0);
+  assert(context.outgoing.reliable[1].records.writer.buffer.capacity() > 0);
 
   // Neither touches the world or the slots.
   assert(context.world.bots.size() == 2);

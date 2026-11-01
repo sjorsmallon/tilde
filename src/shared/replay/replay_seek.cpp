@@ -36,22 +36,22 @@ std::optional<replay_position_t> try_reconstruct_replay_at(const replay_t& repla
     if (record->kind != replay_record_kind_t::Snapshot)
       continue;
 
-    const std::optional<replay_snapshot_payload_t> snapshot = try_split_replay_snapshot(*record);
-    if (!snapshot)
+    const std::optional<Entity_Package> package = try_read_replay_snapshot(*record);
+    if (!package)
     {
-      log_error("replay seek: the snapshot record at tick {} is too short to hold its baseline", record->tick);
+      log_error("replay seek: the snapshot record at tick {} is not one Entity_Package", record->tick);
       return std::nullopt;
     }
 
-    const bool is_keyframe = snapshot->baseline_tick == 0;
-    if (!is_keyframe && (!holds_frame || snapshot->baseline_tick != position.frame.tick))
+    const bool is_keyframe = package->delta_from_tick == 0;
+    if (!is_keyframe && (!holds_frame || package->delta_from_tick != position.frame.tick))
     {
       log_error("replay seek: tick {} is a delta from tick {}, but the chain holds tick {}", record->tick,
-                snapshot->baseline_tick, holds_frame ? position.frame.tick : 0);
+                package->delta_from_tick, holds_frame ? position.frame.tick : 0);
       return std::nullopt;
     }
 
-    network::Bit_Reader reader(snapshot->snapshot_bytes.data, snapshot->snapshot_bytes.size());
+    network::Bit_Reader reader(package->entity_data.data, package->entity_data.size());
     if (!network::deserialize_snapshot(reader, is_keyframe ? nullptr : &position.frame, scratch))
     {
       log_error("replay seek: the snapshot at tick {} does not decode", record->tick);

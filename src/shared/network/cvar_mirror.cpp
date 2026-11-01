@@ -1,7 +1,6 @@
 #include "cvar_mirror.hpp"
 
 #include "log.hpp"
-#include "quantization.hpp"
 
 #include <cstring>
 
@@ -26,50 +25,49 @@ std::byte* mutable_value_bytes(cvars::cvar_state_t&      state,
   return reinterpret_cast<std::byte*>(&state) + info.offset;
 }
 
+// A formatting failure is a corrupted type tag, which try_cvar_to_text treats
+// as fatal -- so every mirrored cvar reaches the wire or nothing does. A value
+// past the row's text bound is the same kind of impossibility: the longest
+// mirrored cvar is a string<64>.
+Cvar_Value cvar_value_from_state(const cvars::cvar_state_t& state, cvars::cvar_id id)
+{
+  Cvar_Value value;
+  value.id = static_cast<uint16_t>(id);
+  if (!value.text.set(cvars::try_cvar_to_text(state, id)->c_str()))
+    fatal_error("cvar '{}' formats longer than a Cvar_Value's text holds", cvars::cvar_info(id).name);
+  return value;
+}
+
 } // namespace
 
-void serialize_cvar_values(network::Bit_Writer&         writer,
-                           const cvar_values_message_t& message)
+void write_cvar_value_messages(reliable_stream_t& stream, Span<const Cvar_Value> values)
 {
-  network::write_var_uint(writer,
-                          static_cast<uint32_t>(message.values.size()));
-  for (const cvar_value_t& value : message.values)
+  Cvar_Values message;
+  for (const Cvar_Value& value : values)
   {
-    network::write_var_uint(writer, static_cast<uint32_t>(value.id));
-    network::write_string(writer, value.text);
+    if (message.values.full())
+    {
+      write_cvar_values(stream, message);
+      message.values.clear();
+    }
+    (void)message.values.try_push_back(value);
   }
+  if (!message.values.empty())
+    write_cvar_values(stream, message);
 }
 
-cvar_values_message_t deserialize_cvar_values(network::Bit_Reader& reader)
+std::vector<Cvar_Value> collect_mirrored_cvars(const cvars::cvar_state_t& state)
 {
-  cvar_values_message_t message;
-  uint32_t              count = network::read_var_uint(reader);
-  message.values.resize(count);
-  for (cvar_value_t& value : message.values)
-  {
-    value.id = static_cast<cvars::cvar_id>(network::read_var_uint(reader));
-    network::read_string(reader, value.text);
-  }
-  return message;
-}
-
-cvar_values_message_t collect_mirrored_cvars(const cvars::cvar_state_t& state)
-{
-  cvar_values_message_t message;
+  std::vector<Cvar_Value> values;
   for (cvars::cvar_id id : cvars::mirrored_cvars())
-  {
-    // A formatting failure is a corrupted type tag, which try_cvar_to_text
-    // treats as fatal -- so every mirrored cvar reaches the wire or nothing does.
-    message.values.push_back({id, *cvars::try_cvar_to_text(state, id)});
-  }
-  return message;
+    values.push_back(cvar_value_from_state(state, id));
+  return values;
 }
 
-cvar_values_message_t
-collect_changed_mirrored_cvars(const cvars::cvar_state_t& current,
-                               const cvars::cvar_state_t& last_broadcast)
+std::vector<Cvar_Value> collect_changed_mirrored_cvars(const cvars::cvar_state_t& current,
+                                                       const cvars::cvar_state_t& last_broadcast)
 {
-  cvar_values_message_t message;
+  std::vector<Cvar_Value> values;
   for (cvars::cvar_id id : cvars::mirrored_cvars())
   {
     const cvars::cvar_info_t& info = cvars::cvar_info(id);
@@ -77,31 +75,31 @@ collect_changed_mirrored_cvars(const cvars::cvar_state_t& current,
                     value_bytes(last_broadcast, info), info.size) == 0)
       continue;
 
-    message.values.push_back({id, *cvars::try_cvar_to_text(current, id)});
+    values.push_back(cvar_value_from_state(current, id));
   }
-  return message;
+  return values;
 }
 
-bool apply_cvar_values(cvars::cvar_state_t&         state,
-                       const cvar_values_message_t& message)
+bool apply_cvar_values(cvars::cvar_state_t& state, Span<const Cvar_Value> values)
 {
   bool all_applied = true;
-  for (const cvar_value_t& value : message.values)
+  for (const Cvar_Value& value : values)
   {
     // An id past the end of OUR table can only mean the two builds disagree
     // about cvars.def, which the SCHEMA_HASH handshake is supposed to have
     // refused already -- so it is a build problem, said loudly.
-    if (static_cast<uint32_t>(value.id) >= cvars::CVAR_COUNT)
+    if (value.id >= cvars::CVAR_COUNT)
     {
       log_error("apply_cvar_values: cvar id {} is past the end of this build's "
                 "table ({} cvars). The two builds disagree about cvars.def "
                 "despite a matching schema hash.",
-                static_cast<uint32_t>(value.id), cvars::CVAR_COUNT);
+                value.id, cvars::CVAR_COUNT);
       all_applied = false;
       continue;
     }
 
-    const cvars::cvar_info_t& info = cvars::cvar_info(value.id);
+    const cvars::cvar_id      id   = static_cast<cvars::cvar_id>(value.id);
+    const cvars::cvar_info_t& info = cvars::cvar_info(id);
 
     // The server may only push what it OWNS. Anything else would silently
     // overwrite a value this process is the authority on.
@@ -114,11 +112,11 @@ bool apply_cvar_values(cvars::cvar_state_t&         state,
       continue;
     }
 
-    if (!cvars::try_cvar_from_text(state, value.id, value.text))
+    if (!cvars::try_cvar_from_text(state, id, value.text.c_str()))
     {
       log_error("apply_cvar_values: '{}' is not a valid value for '{}'; left "
                 "unchanged",
-                value.text, info.name);
+                value.text.c_str(), info.name);
       all_applied = false;
       continue;
     }

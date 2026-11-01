@@ -15,7 +15,7 @@ namespace server
 
 Bot_State spawn_bot(shared::game_session_t &session,
                     const entities::Player_Spawn_Entity &marker,
-                    int32_t slot, bot_behavior_t type = bot_behavior_t::Regular,
+                    int32_t slot, shared::Bot_Behavior type = shared::Bot_Behavior::Regular,
                     bot_personality_t personality = {});
 
 

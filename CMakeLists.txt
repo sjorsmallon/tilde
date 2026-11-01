@@ -38,7 +38,7 @@ set(SDL_STATIC ON CACHE BOOL "Build SDL2 as a static library" FORCE)
 set(SDL_TEST OFF CACHE BOOL "Build SDL2 test" FORCE)
 FetchContent_MakeAvailable(SDL2)
 
-# 3. Protobuf
+# 3. Compiler definitions every target shares
 # this is to silence a shitload of float normalization warnings that are super annoying.
 add_compile_definitions(_SILENCE_CXX23_DENORM_DEPRECATION_WARNING)
 
@@ -46,40 +46,6 @@ add_compile_definitions(_SILENCE_CXX23_DENORM_DEPRECATION_WARNING)
 # this codebase uses the plain C functions deliberately, so silence that warning
 # rather than adding _s calls or per-file pragmas.
 add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-
-set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
-set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-    protobuf
-    GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-    GIT_TAG v26.0
-)
-FetchContent_MakeAvailable(protobuf)
-
-# Abseil hands its randen HWAES translation units an -Xarch_<arch> pair per
-# architecture flag, and CMake DEDUPLICATES a target's COMPILE_OPTIONS: the
-# second -Xarch_x86_64 is dropped and the bare -msse4.1 behind it reaches an
-# arm64 clang, which refuses it. SHELL: keeps each pair together as one
-# argument group, which is also how upstream abseil now spells it.
-if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    foreach(randen_target IN ITEMS random_internal_randen_hwaes random_internal_randen_hwaes_impl)
-        if(TARGET ${randen_target})
-            get_target_property(randen_compile_options ${randen_target} COMPILE_OPTIONS)
-            if(NOT randen_compile_options)
-                set(randen_compile_options "")
-            endif()
-            list(REMOVE_ITEM randen_compile_options -Xarch_x86_64 -maes -msse4.1 -Xarch_arm64 -march=armv8-a+crypto)
-            list(APPEND randen_compile_options
-                "SHELL:-Xarch_x86_64 -maes"
-                "SHELL:-Xarch_x86_64 -msse4.1"
-                "SHELL:-Xarch_arm64 -march=armv8-a+crypto")
-            set_property(TARGET ${randen_target} PROPERTY COMPILE_OPTIONS ${randen_compile_options})
-        endif()
-    endforeach()
-endif()
 
 # 4. ImGui
 FetchContent_Declare(
@@ -159,7 +125,7 @@ endif()
 # firing twice on every build and nobody reading it.
 #
 # Deliberately BELOW the FetchContent blocks: add_compile_options only reaches
-# targets declared after it, so SDL2 / protobuf / miniaudio keep their own
+# targets declared after it, so SDL2 / ImGui / miniaudio keep their own
 # warning policy and a third-party switch cannot break our build.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Werror=switch)
@@ -277,24 +243,15 @@ set(CVAR_GEN_SERVER_BINDINGS ${CVAR_GEN_OUT_DIR}/server_command_bindings_generat
 set(CVAR_GEN_CLIENT_BINDINGS ${CVAR_GEN_OUT_DIR}/client_command_bindings_generated.cpp)
 file(MAKE_DIRECTORY ${CVAR_GEN_OUT_DIR})
 
-# The two server->client dispatch channels, one .def each -- the event family is
-# the first with two input files, so every emitted name is derived from the
-# .def's own stem rather than hardcoded. One per-side binder TU each, for the
-# cvar family's reason: it is what references the handlers, so it compiles into
-# the module that defines them.
-set(EFFECT_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/effects/effects.def)
-set(EFFECT_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/effects/generated)
-set(EFFECT_GEN_HEADER ${EFFECT_GEN_OUT_DIR}/effects_generated.hpp)
-set(EFFECT_GEN_SOURCE ${EFFECT_GEN_OUT_DIR}/effects_generated.cpp)
-set(EFFECT_GEN_CLIENT_BINDINGS ${EFFECT_GEN_OUT_DIR}/client_effects_bindings_generated.cpp)
-file(MAKE_DIRECTORY ${EFFECT_GEN_OUT_DIR})
-
-set(EVENT_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/events/events.def)
-set(EVENT_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/events/generated)
-set(EVENT_GEN_HEADER ${EVENT_GEN_OUT_DIR}/events_generated.hpp)
-set(EVENT_GEN_SOURCE ${EVENT_GEN_OUT_DIR}/events_generated.cpp)
-set(EVENT_GEN_CLIENT_BINDINGS ${EVENT_GEN_OUT_DIR}/client_events_bindings_generated.cpp)
-file(MAKE_DIRECTORY ${EVENT_GEN_OUT_DIR})
+# Every message either end sends, one row each. Two binder TUs, one per side,
+# each referencing that side's handlers.
+set(MESSAGE_DEF_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/network/messages.def)
+set(MESSAGE_GEN_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/network/generated)
+set(MESSAGE_GEN_HEADER ${MESSAGE_GEN_OUT_DIR}/messages_generated.hpp)
+set(MESSAGE_GEN_SOURCE ${MESSAGE_GEN_OUT_DIR}/messages_generated.cpp)
+set(MESSAGE_GEN_CLIENT_BINDINGS ${MESSAGE_GEN_OUT_DIR}/client_messages_bindings_generated.cpp)
+set(MESSAGE_GEN_SERVER_BINDINGS ${MESSAGE_GEN_OUT_DIR}/server_messages_bindings_generated.cpp)
+file(MAKE_DIRECTORY ${MESSAGE_GEN_OUT_DIR})
 
 # assets.pkg -- the resource tree with bytes, for the pkg and embed builds.
 # Nothing in a loose build depends on it: the game numbers its ids from the
@@ -355,16 +312,15 @@ add_custom_target(asset_package DEPENDS ${ASSET_PACKAGE_FILE})
 file(GLOB_RECURSE DEF_GEN_GLOBBED_HEADERS CONFIGURE_DEPENDS
     ${ENTITY_GEN_OUT_DIR}/*_generated.hpp
     ${CVAR_GEN_OUT_DIR}/*_generated.hpp
-    ${EFFECT_GEN_OUT_DIR}/*_generated.hpp
-    ${EVENT_GEN_OUT_DIR}/*_generated.hpp
+    ${MESSAGE_GEN_OUT_DIR}/*_generated.hpp
 )
 set(DEF_GEN_BYPRODUCTS
     ${ENTITY_GEN_HEADER} ${ENTITY_GEN_TABLES_HEADER} ${ENTITY_GEN_SOURCE} ${ENTITY_GEN_DEFAULTS}
     ${ENTITY_IO_GEN_HEADER} ${ENTITY_IO_GEN_SOURCE} ${ENTITY_IO_GEN_BINDINGS}
     ${CVAR_GEN_HEADER} ${CVAR_GEN_SOURCE}
     ${CVAR_GEN_SERVER_BINDINGS} ${CVAR_GEN_CLIENT_BINDINGS}
-    ${EFFECT_GEN_HEADER} ${EFFECT_GEN_SOURCE} ${EFFECT_GEN_CLIENT_BINDINGS}
-    ${EVENT_GEN_HEADER} ${EVENT_GEN_SOURCE} ${EVENT_GEN_CLIENT_BINDINGS}
+    ${MESSAGE_GEN_HEADER} ${MESSAGE_GEN_SOURCE}
+    ${MESSAGE_GEN_CLIENT_BINDINGS} ${MESSAGE_GEN_SERVER_BINDINGS}
     ${DEF_GEN_GLOBBED_HEADERS}
 )
 list(REMOVE_DUPLICATES DEF_GEN_BYPRODUCTS)
@@ -373,13 +329,11 @@ set(DEF_GEN_STAMP ${CMAKE_BINARY_DIR}/def_gen.stamp)
 add_custom_command(
     OUTPUT ${DEF_GEN_STAMP}
     BYPRODUCTS ${DEF_GEN_BYPRODUCTS}
-    COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
-            ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
+    COMMAND def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE} ${MESSAGE_DEF_FILE}
             --emit
     COMMAND ${CMAKE_COMMAND} -E touch ${DEF_GEN_STAMP}
-    DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE}
-            ${EFFECT_DEF_FILE} ${EVENT_DEF_FILE}
-    COMMENT "Generating definitions from entities.def, cvars.def, effects.def and events.def..."
+    DEPENDS def_gen ${ENTITY_DEF_FILE} ${CVAR_DEF_FILE} ${MESSAGE_DEF_FILE}
+    COMMENT "Generating definitions from entities.def, cvars.def and messages.def..."
 )
 add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 
@@ -387,7 +341,7 @@ add_custom_target(generate_definitions DEPENDS ${DEF_GEN_STAMP})
 # --- Components ---
 
 # 1. Game Shared (Static Library)
-# Contains logging, cvars, protos, common math
+# Contains logging, cvars, common math
 # Vendored verbatim, so its warnings are not ours to fix.
 set_source_files_properties(src/third_party/xatlas.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
 set_source_files_properties(src/third_party/tinygltf/tiny_gltf_implementation.cpp PROPERTIES COMPILE_OPTIONS "-w;-Wno-error=switch")
@@ -630,20 +584,16 @@ add_library(game_shared STATIC
     src/shared/lighting/solid_beams.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
-    src/shared/network/subtick_codec.hpp
-    src/shared/network/subtick_codec.cpp
     # Both channels' tables and fire helpers. Neither references a handler, so
     # they compile here with neither side present -- the two binder TUs are what
     # reference them, and those go into game_client below.
-    ${EFFECT_GEN_SOURCE}
-    ${EVENT_GEN_SOURCE}
-    src/shared/event_stream.hpp
-    src/shared/event_stream.cpp
+    ${MESSAGE_GEN_SOURCE}
+    src/shared/message_stream.hpp
+    src/shared/message_stream.cpp
     src/shared/weapons.hpp
     src/shared/weapons.cpp
     src/shared/input_step.hpp
     src/shared/input_step.cpp
-    src/shared/hit_region.hpp
     src/shared/hitscan.hpp
     src/shared/hitscan.cpp
     src/shared/lag_compensation.hpp
@@ -654,38 +604,13 @@ add_library(game_shared STATIC
 )
 add_dependencies(game_shared generate_definitions)
 
-# Protobuf Generation
-if(TARGET protoc)
-    set(PROTOC_EXECUTABLE protoc)
-else()
-    find_program(PROTOC_EXECUTABLE protoc REQUIRED)
-endif()
-
-set(PROTO_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
-set(PROTO_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
-set(PROTO_FILES ${PROTO_SRC_DIR}/game.proto)
-set(PROTO_HDRS ${PROTO_OUT_DIR}/game.pb.h)
-set(PROTO_SRCS ${PROTO_OUT_DIR}/game.pb.cc)
-
-add_custom_command(
-    OUTPUT ${PROTO_SRCS} ${PROTO_HDRS}
-    COMMAND ${PROTOC_EXECUTABLE}
-    ARGS --cpp_out=${PROTO_OUT_DIR} -I${PROTO_SRC_DIR} ${PROTO_FILES}
-    DEPENDS ${PROTO_FILES}
-    COMMENT "Generating Protobuf sources..."
-)
-
-target_sources(game_shared PRIVATE ${PROTO_SRCS} ${PROTO_HDRS})
 target_include_directories(game_shared PUBLIC 
     src/shared 
-    ${PROTO_OUT_DIR}
     # shader_math.hpp compiles resources/shaders/light_falloff.glsl as C++, so the
     # bake and the shaders share one falloff (lighting_def.md decision I). The
     # same directory glslc gets through -I below.
     ${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders
 )
-target_link_libraries(game_shared PUBLIC libprotobuf)
 if(WIN32)
     # dbghelp turns the captured return addresses into names and file:line at
     # report time. PUBLIC so every module carrying the hook gets it too.
@@ -882,20 +807,21 @@ add_library(game_client SHARED
     src/client/client_impl.cpp
     src/client/client_context.cpp
     src/client/raw_input_win32.cpp
-    # One binder TU per channel, each switching over its closed enum and calling
-    # one hand-written function per member. A member with no function is a link
-    # error on this target, naming the symbol.
-    ${EFFECT_GEN_CLIENT_BINDINGS}
-    ${EVENT_GEN_CLIENT_BINDINGS}
-    src/client/event_handlers.hpp
-    src/client/effects/rocket_explosion.cpp
-    src/client/effects/footstep.cpp
-    src/client/effects/jump.cpp
-    src/client/effects/land.cpp
-    src/client/effects/shot_impact.cpp
-    src/client/effects/jump_pad_launch.cpp
-    src/client/effects/ping.cpp
-    src/client/effects/pilot_impact.cpp
+    # The client's message dispatch, over every @Server_To_Client row, calling
+    # one hand-written function per row under src/client/messages/. A row with
+    # no function is a link error on this target, naming the symbol.
+    ${MESSAGE_GEN_CLIENT_BINDINGS}
+    src/client/message_handlers.hpp
+    src/client/messages/rocket_explosion.cpp
+    src/client/messages/footstep.cpp
+    src/client/messages/jump.cpp
+    src/client/messages/land.cpp
+    src/client/messages/shot_impact.cpp
+    src/client/messages/jump_pad_launch.cpp
+    src/client/messages/ping.cpp
+    src/client/messages/pilot_impact.cpp
+    src/client/messages/shot_debug.cpp
+    src/client/messages/bot_debug.cpp
     src/client/weapon_fire_audio.cpp
     src/client/surface_audio.cpp
     src/client/entity_type_audio.cpp
@@ -915,10 +841,17 @@ add_library(game_client SHARED
     src/client/ghost_playback.cpp
     src/client/audio/audio_system.cpp
     src/client/audio/miniaudio_impl.cpp
-    src/client/game_events/rocket_detonated.cpp
-    src/client/game_events/player_died.cpp
-    src/client/game_events/player_spawned.cpp
-    src/client/game_events/objective_reached.cpp
+    src/client/messages/rocket_detonated.cpp
+    src/client/messages/player_died.cpp
+    src/client/messages/player_spawned.cpp
+    src/client/messages/objective_reached.cpp
+    src/client/messages/server_text.cpp
+    src/client/messages/accept.cpp
+    src/client/messages/reject.cpp
+    src/client/messages/change_map.cpp
+    src/client/messages/cvar_values.cpp
+    src/client/messages/ghost_available.cpp
+    src/client/messages/entity_package.cpp
     src/client/hud.cpp
     # The render clock and sample rings behind remote interpolation. Its own TU
     # so remote_interpolation_test can compile it with no device (see ui/font.cpp,
@@ -1008,8 +941,10 @@ target_include_directories(game_client PUBLIC
 # exported; everything else was internal, which is why the editor
 # compile-isolation test sat uncompiled for so long.
 set_target_properties(game_client PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-# miniaudio.h lives at the populated source root; only game_client needs it.
-target_include_directories(game_client PRIVATE ${miniaudio_SOURCE_DIR})
+# miniaudio.h lives at the populated source root; only game_client needs it,
+# and so does the configured shader_tool_paths.h.
+target_include_directories(game_client PRIVATE ${miniaudio_SOURCE_DIR}
+                                               ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(game_client PUBLIC 
     game_shared 
     Vulkan::Vulkan 
@@ -1035,6 +970,16 @@ add_library(game_server SHARED
     ${MEMORY_AUDIT_HOOK}
     # Fills the @Server command slots -- the other half of the split above.
     ${CVAR_GEN_SERVER_BINDINGS}
+    # The server's message dispatch, over every @Client_To_Server row, calling
+    # one hand-written function per row under src/server/messages/.
+    ${MESSAGE_GEN_SERVER_BINDINGS}
+    src/server/message_handlers.hpp
+    src/server/messages/connect.cpp
+    src/server/messages/disconnect.cpp
+    src/server/messages/client_input.cpp
+    src/server/messages/console_line.cpp
+    src/server/messages/map_data_request.cpp
+    src/server/messages/ghost_request.cpp
     src/server/server_impl.cpp
     # Receive, simulate, send. tick.cpp is the ORDER and nothing else -- every
     # line in it is a call; tick_def.md says which of the six simulate steps a
@@ -1353,7 +1298,7 @@ add_game_test(array_test NO_GAME_SHARED)
 
 # The allocation audit. Compiles memory_audit.cpp directly rather than linking
 # game_shared, the same way server_context_test does: the table logic is pure
-# struct manipulation and pulling in protobuf to reach it would be noise. The
+# struct manipulation and pulling in the whole library to reach it would be noise. The
 # hook goes in too, so that under -DTILDE_MEMORY_AUDIT=ON the test also proves a
 # real `new` reaches the audit, which is the one thing the table-level checks
 # cannot show.
@@ -1364,8 +1309,8 @@ if(WIN32)
 endif()
 
 # Frame time distribution and CPU topology. Compiled directly for the same
-# reason memory_audit_test is: both are self-contained and pulling in protobuf
-# to reach a histogram would be noise. frame_timing asks the audit to capture
+# reason memory_audit_test is: both are self-contained and pulling in the whole
+# library to reach a histogram would be noise. frame_timing asks the audit to capture
 # the worst frame's per-site deltas, so memory_audit.cpp comes along for the
 # symbol even though this test installs no audit state.
 add_game_test(frame_timing_test NO_GAME_SHARED
@@ -1469,12 +1414,12 @@ add_game_test(emancipated_weapon_test)
 # frame.
 add_game_test(remote_interpolation_test SOURCES src/client/remote_interpolation.cpp)
 
-# Sub-tick input format and step driver (src/shared/subtick.{hpp,cpp}), plus its
-# wire codec (src/shared/network/subtick_codec.{hpp,cpp}). Step 3 of
-# subtick_plan.md. Splitting a tick at its input edges touches no world, no
-# socket and no cvar, which is why the format is its own file; the round-trip
-# cases reach through game_shared for the generated protobuf, since what they
-# guard is the client's write and the server's read agreeing.
+# Sub-tick input format and step driver (src/shared/subtick.{hpp,cpp}) over the
+# Tick_Input row of messages.def. Step 3 of subtick_plan.md. Splitting a tick at
+# its button changes touches no world, no socket and no cvar, which is why the
+# format is its own file; the round-trip cases go through the generated
+# Client_Input codec, since what they guard is the client's write and the
+# server's read agreeing.
 add_game_test(subtick_test)
 # The shared input step: feed steps, assert the outcome and the state, no server (input_step_plan.md).
 add_game_test(input_step_test)
@@ -1488,7 +1433,7 @@ add_game_test(move_budget_test NO_GAME_SHARED)
 # Event family round trip: fire, encode, decode, compare for every declared
 # member of both channels, plus the byte-for-byte check against the hand-written
 # codec the generator replaced. cvar_test's counterpart.
-add_game_test(events_test)
+add_game_test(messages_test)
 
 # Reliable stream: one block outstanding (order, duplicate suppression on the
 # lost-ack path, a record straddling two blocks, the datagram budget, reclaim on

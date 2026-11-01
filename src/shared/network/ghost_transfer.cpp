@@ -57,32 +57,6 @@ ghost_announcement_t load_ghost_announcement(std::string_view map_path, uint32_t
   return announcement;
 }
 
-void serialize_ghost_available(network::Bit_Writer& writer, const ghost_available_message_t& message)
-{
-  network::write_var_uint(writer, message.party_size);
-  network::write_var_uint(writer, message.ghost_hash);
-  network::write_var_uint(writer, message.byte_count);
-}
-
-ghost_available_message_t deserialize_ghost_available(network::Bit_Reader& reader)
-{
-  ghost_available_message_t message;
-  message.party_size = network::read_var_uint(reader);
-  message.ghost_hash = network::read_var_uint(reader);
-  message.byte_count = network::read_var_uint(reader);
-  return message;
-}
-
-void serialize_request_ghost(network::Bit_Writer& writer, const request_ghost_message_t& message)
-{
-  network::write_var_uint(writer, message.ghost_hash);
-}
-
-request_ghost_message_t deserialize_request_ghost(network::Bit_Reader& reader)
-{
-  return request_ghost_message_t{.ghost_hash = network::read_var_uint(reader)};
-}
-
 void serialize_ghost_data(network::Bit_Writer& writer, const ghost_data_message_t& message)
 {
   network::write_var_uint(writer, message.party_size);

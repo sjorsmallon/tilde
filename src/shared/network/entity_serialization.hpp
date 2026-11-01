@@ -19,7 +19,6 @@
 
 #include "../entities/entity_reflection.hpp"
 #include "bitstream.hpp"
-#include "packet.hpp"
 #include "quantization.hpp"
 
 #include <vector>
@@ -114,15 +113,5 @@ bool has_networked_changes(const entities::Entity& entity,
 // catches that at connect).
 bool deserialize_entity(Bit_Reader& reader, entities::Entity& entity,
                         changed_fields_t* out_changed = nullptr);
-
-inline void pack_entity_delta_for_update(game::S2C_EntityPackage& out_packet,
-                                         const entities::Entity& entity,
-                                         const entities::Entity* baseline = nullptr)
-{
-  Bit_Writer writer;
-  serialize_entity(writer, entity, baseline);
-
-  out_packet.set_entity_data(writer.buffer.data(), writer.buffer.size());
-}
 
 } // namespace network

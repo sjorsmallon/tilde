@@ -21,8 +21,8 @@ struct replay_position_t
   // The last snapshot recorded at or before the requested tick.
   network::snapshot_frame_t frame;
 
-  // Every Cvar_Values payload at or before the requested tick, in file order.
-  // Spans into the replay's bytes.
+  // Every Cvar_Values payload at or before the requested tick, in file order:
+  // finished streams of Cvar_Values rows, spans into the replay's bytes.
   std::vector<Span<const uint8_t>> cvar_payloads;
 
   // The first record past the requested tick: where playback resumes.

@@ -52,31 +52,6 @@ void adopt_ghost(client_context_t& context, Span<const uint8_t> bytes, uint32_t 
                context.world.ghost->run_ticks, context.world.ghost->tickrate_hz);
 }
 
-void apply_ghost_announcement(client_context_t& context, const shared::ghost_available_message_t& announced)
-{
-  context.world.ghost.reset();
-  context.world.ghost_hash_the_server_announced = announced.ghost_hash;
-  if (announced.ghost_hash == 0)
-    return;
-
-  const std::string          path   = cached_ghost_path(context, announced.party_size);
-  const std::vector<uint8_t> cached = read_file_bytes(path);
-  const Span<const uint8_t>  span(cached.data(), static_cast<uint32_t>(cached.size()));
-  if (!cached.empty() && shared::compute_ghost_hash(span) == announced.ghost_hash)
-  {
-    adopt_ghost(context, span, announced.party_size, path);
-    return;
-  }
-
-  log_terminal("ghost: no cached copy of the {}-player ghost {:#x} ({} bytes); requesting it",
-               announced.party_size, announced.ghost_hash, announced.byte_count);
-  network::Bit_Writer writer;
-  shared::serialize_request_ghost(writer, {.ghost_hash = announced.ghost_hash});
-  network::queue_reliable_client_message(context.transport_layer,
-                                         static_cast<network::uint8>(network::Message_Type::C2S_RequestGhost),
-                                         writer.buffer);
-}
-
 void apply_ghost_data(client_context_t& context, const shared::ghost_data_message_t& data)
 {
   if (data.ghost_hash != context.world.ghost_hash_the_server_announced)
@@ -106,20 +81,34 @@ void apply_ghost_data(client_context_t& context, const shared::ghost_data_messag
 
 } // namespace
 
-void consume_ghost_messages(client_context_t& context, const network::Client_Inbox& inbox)
+void apply_ghost_announcement(client_context_t& context, const shared::Ghost_Available& announced)
 {
-  for (const std::vector<network::uint8>& payload : inbox.ghost_available_messages)
+  context.world.ghost.reset();
+  context.world.ghost_hash_the_server_announced = announced.ghost_hash;
+  if (announced.ghost_hash == 0)
+    return;
+
+  const std::string          path   = cached_ghost_path(context, announced.party_size);
+  const std::vector<uint8_t> cached = read_file_bytes(path);
+  const Span<const uint8_t>  span(cached.data(), static_cast<uint32_t>(cached.size()));
+  if (!cached.empty() && shared::compute_ghost_hash(span) == announced.ghost_hash)
   {
-    network::Bit_Reader reader(payload.data(), payload.size());
-    apply_ghost_announcement(context, shared::deserialize_ghost_available(reader));
+    adopt_ghost(context, span, announced.party_size, path);
+    return;
   }
 
-  for (const std::vector<network::uint8>& payload : inbox.ghost_data_messages)
-  {
-    network::Bit_Reader reader(payload.data(), payload.size());
-    if (const std::optional<shared::ghost_data_message_t> data = shared::try_deserialize_ghost_data(reader))
-      apply_ghost_data(context, *data);
-  }
+  log_terminal("ghost: no cached copy of the {}-player ghost {:#x} ({} bytes); requesting it",
+               announced.party_size, announced.ghost_hash, announced.byte_count);
+  shared::Ghost_Request request;
+  request.ghost_hash = announced.ghost_hash;
+  shared::write_ghost_request(context.connection.outgoing_reliable, request);
+}
+
+void receive_ghost_transfer(client_context_t& context, Span<const network::uint8> payload)
+{
+  network::Bit_Reader reader(payload.data, payload.count);
+  if (const std::optional<shared::ghost_data_message_t> data = shared::try_deserialize_ghost_data(reader))
+    apply_ghost_data(context, *data);
 }
 
 std::optional<double> try_ghost_run_tick(client_context_t& context)
