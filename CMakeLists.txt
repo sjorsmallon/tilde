@@ -222,6 +222,7 @@ set(ENTITY_IO_HANDLERS
     src/server/traits/match_control.cpp
     src/server/traits/path_following.cpp
     src/server/entities/point_light_entity.cpp
+    src/server/entities/projector_entity.cpp
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
     src/server/entities/game_rules_entity.cpp
@@ -582,6 +583,8 @@ add_library(game_shared STATIC
     src/shared/collision/statues.cpp
     src/shared/collision/lens_panes.cpp
     src/shared/lighting/solid_beams.cpp
+    src/shared/lighting/solid_shadows.cpp
+    src/shared/lighting/projector_mask.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     # Both channels' tables and fire helpers. Neither references a handler, so
@@ -1177,6 +1180,10 @@ add_game_test(lightmap_bake_test)
 # the receiver's texel size is the cone's (gate 9).
 add_game_test(shadow_test)
 
+# Projector: the frame's corners at its range land on the map's edges and depth 1, rolled with the light;
+# the frame planes hold what the frame shows and a piece outside them casts nothing.
+add_game_test(projector_test)
+
 # Mesh: the two invariants, closed and planar, refused by name. geometry_def.md section 11.
 add_game_test(mesh_test)
 
@@ -1254,6 +1261,11 @@ add_game_test(reveal_cone_test)
 # A lens is seen through along the eye's line, and the filters of stacked lenses multiply.
 add_game_test(lens_test)
 add_game_test(shadow_volume_test)
+# A shadows_are_solid light's volume is a mover: a hull on the shadow's top face is held, one beside it falls through.
+add_game_test(solid_shadow_test)
+# A projector picture's dark is rectangles of its grid, cast from the glass as pieces: a hull walks into the
+# dark half of the frame and is stopped, and a texel's uv lands where the frame's matrix maps it.
+add_game_test(projector_mask_test)
 
 # CVar / command: tables, text conversion, console dispatch, argument binders,
 # and the @Mirrored wire path. It compiles BOTH generated binder TUs and defines

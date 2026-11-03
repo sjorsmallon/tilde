@@ -93,6 +93,7 @@ file only states them.
 | Prediction, predicted world, disabled geometry | `prediction_def.md` |
 | Shadow volumes: solid shadows, shadow holes | `shadow_volume_plan.md` |
 | Spot beam, hard-edged patch, fixture shadow flag | `spot_beam_plan.md` |
+| Projector: rectangular light, picture, the 2D scene as pyramids | `projector_plan.md` |
 | Movement models, overrides, impulses | `movement_def.md`, `generalization_def.md` |
 | Movers, platforms, canopy | `mover_def.md` |
 | Collision world, projectile sweep, bounce bodies | `collision_world_plan.md` |
@@ -390,6 +391,20 @@ prediction writes `ctx.prediction`.
   The carve is one flat arena, memoised per spot on pose and volumes; the
   pyramid is built once per range and angle and placed per pose. A `beam`
   spot throws volumes; collision reads only those whose light `cuts_geometry`.
+  A `shadows_are_solid` light's volumes are one mover per light
+  (`solid_shadows.cpp`), closed at `SOLID_SHADOW_REACH` where open: dark is
+  solid, and a light's own movers cast nothing.
+- A `Projector_Entity` is the fourth light kind: a rectangular frame (vertical
+  half angle, aspect, roll from its orientation) with hard edges, no cone and no
+  beam, always Dynamic. It ALWAYS takes a shadow layer, cast or not: that
+  layer's matrix is also the picture's uv, and the picture array (set 3,
+  binding 17) is indexed by shadow layer, blitted only when the layer's
+  projector changes what it shows. `projector_mask` multiplies the picture into
+  the light's visibility; black outside the frame is the sampler's border. Its
+  shadow volumes are cut to the frame's four planes as a spot's are to its cone.
+  The picture's DARK is solid through `projector_mask.cpp`: the texture's dark
+  cells as rectangles, each cast from the glass as a piece of the projector's
+  own, cached per texture in `game_session_t::projector_mask_cache`.
 - The material table is passed at the call site, never held in the renderer.
   A material folder is a `material.txt` naming its shader (absent is lit) beside `albedo.png`, `normal.png`, `orm.png`, `height.png`,
   `emissive.png`; an absent map is a default, never a branch, and an absent
