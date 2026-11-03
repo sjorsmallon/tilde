@@ -43,7 +43,7 @@ int main()
     const std::optional<shared::shadow_volume_t> volume =
         try_cast(light, caster);
     check(volume.has_value(), "a box below a light casts");
-    check(volume->side_plane_count == 4 && volume->front_plane_count == 1,
+    check(volume->side_plane_count == 4 && volume->light_facing_plane_count == 1,
           "a box seen square-on has four sides, and one face turned toward the light");
     check(shared::shadow_volume_contains_point(*volume, {0.f, -100.f, 0.f}), "straight below is inside");
     check(shared::shadow_volume_contains_point(*volume, {40.f, -200.f, 0.f}), "the pyramid widens with depth");
@@ -73,7 +73,7 @@ int main()
     };
     bool one_front_each = true;
     for (const shared::shadow_volume_t& volume : behind)
-      one_front_each = one_front_each && volume.side_plane_count == 4 && volume.front_plane_count == 1;
+      one_front_each = one_front_each && volume.side_plane_count == 4 && volume.light_facing_plane_count == 1;
     check(one_front_each, "each is the pyramid beyond one face");
     check(!any_contains({0.f, 0.f, 0.f}), "the caster's own body is in none of them");
     check(!any_contains({0.f, -31.f, 0.f}), "nor just inside its far face");
@@ -125,7 +125,7 @@ int main()
     const shared::shadow_light_t light = {.apex = {200.f, 200.f, 200.f}};
     const std::optional<shared::shadow_volume_t> volume =
         try_cast(light, caster);
-    check(volume.has_value() && volume->side_plane_count == 6 && volume->front_plane_count == 3,
+    check(volume.has_value() && volume->side_plane_count == 6 && volume->light_facing_plane_count == 3,
           "six sides, and the three faces turned toward the light");
     check(shared::shadow_volume_contains_point(*volume, {-100.f, -100.f, -100.f}), "the far corner's direction is inside");
   }
@@ -180,7 +180,7 @@ int main()
                                           .cosine_of_outer_angle = std::cos(linalg::to_radians(30.f))};
     const shared::shadow_cast_t cast = shared::cast_shadow_volume(light, long_slab.planes, long_slab.face_polygons, 7);
     printf("       refusal %d sides %u back %u\n", (int)cast.refusal, cast.volume.side_plane_count,
-           cast.volume.front_plane_count);
+           cast.volume.light_facing_plane_count);
     check(cast.refusal == shared::shadow_cast_refusal_t::None, "a spot just above the near end of a tall slab casts");
     check(cast.refusal == shared::shadow_cast_refusal_t::None &&
               shared::shadow_volume_contains_point(cast.volume, {0.f, -250.f, -380.f}),

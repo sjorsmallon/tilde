@@ -11,11 +11,11 @@ namespace shared
 std::optional<collision_piece_t> try_build_solid_shadow_piece(const shadow_volume_t& volume)
 {
   std::vector<Plane> planes;
-  planes.reserve(volume.side_plane_count + volume.front_plane_count + 6);
+  planes.reserve(volume.side_plane_count + volume.light_facing_plane_count + 6);
   for (uint32_t side = 0; side < volume.side_plane_count; ++side)
     planes.push_back(volume.side_planes[side]);
-  for (uint32_t front = 0; front < volume.front_plane_count; ++front)
-    planes.push_back(volume.front_planes[front]);
+  for (uint32_t front = 0; front < volume.light_facing_plane_count; ++front)
+    planes.push_back(volume.light_facing_planes[front]);
 
   const linalg::vec3f centre = get_aabb_center(volume.caster_bounds);
   const linalg::vec3f half   = (volume.caster_bounds.max - volume.caster_bounds.min) * 0.5f +

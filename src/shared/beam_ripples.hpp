@@ -1,6 +1,7 @@
 #pragma once
 
-// A solid beam's ripple where a player came to stand on it: an edge on Movement::ground_mover_uid, never networked.
+// A body's ripple (a solid beam's, a solid shadow's) where a player came to stand on it: an edge on
+// Movement::ground_mover_uid, never networked. The mover's uid is the light's, which is what tags the ripple.
 
 #include "entity_uid.hpp"
 #include "linalg.hpp"

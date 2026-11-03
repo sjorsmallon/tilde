@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
 #include "cvars_generated.hpp"
 
 #include "log.hpp"
@@ -230,8 +230,13 @@ cvar_state_t::cvar_state_t()
     r_beam_edge_pixels(2.0f),
     r_shadow_volume(true),
     r_shadow_volume_alpha(0.25f),
+    r_shadow_volume_red(0.0f),
+    r_shadow_volume_green(0.0f),
+    r_shadow_volume_blue(0.0f),
+    r_shadow_volume_edge_tint(0.0f),
     r_look_panel(false),
     sv_skybox(""),
+    sv_shadow_fill(""),
     debug_show_collisions(false),
     debug_show_hitboxes(true),
     debug_show_navmesh(false),
@@ -2055,6 +2060,38 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .size = sizeof(cvar_state_t::r_shadow_volume_alpha),
      .string_capacity = 0,
      .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_volume_red",
+     .description = "Red of the colour a drawn shadow volume's body is filled with, through r_beam_fill's pattern; black is the plain wash",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_volume_red),
+     .size = sizeof(cvar_state_t::r_shadow_volume_red),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_volume_green",
+     .description = "Green of the colour a drawn shadow volume's body is filled with",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_volume_green),
+     .size = sizeof(cvar_state_t::r_shadow_volume_green),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_volume_blue",
+     .description = "Blue of the colour a drawn shadow volume's body is filled with",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_volume_blue),
+     .size = sizeof(cvar_state_t::r_shadow_volume_blue),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "r_shadow_volume_edge_tint",
+     .description = "How much of the body's colour its line and rim keep: 0 is black ink, 1 an edge in the body's own colour",
+     .flags = CVAR_FLAG_CLIENT,
+     .type = CVAR_TYPE_F32,
+     .offset = offsetof(cvar_state_t, r_shadow_volume_edge_tint),
+     .size = sizeof(cvar_state_t::r_shadow_volume_edge_tint),
+     .string_capacity = 0,
+     .enum_info = NOT_AN_ENUM},
     {.name = "r_look_panel",
      .description = "Show the look panel: a slider per comic look cvar, and an export and load of their values as looks/<name>.look",
      .flags = CVAR_FLAG_CLIENT,
@@ -2069,6 +2106,14 @@ const cvar_info_t CVAR_INFO_TABLE[CVAR_COUNT] = {
      .type = CVAR_TYPE_STRING,
      .offset = offsetof(cvar_state_t, sv_skybox),
      .size = sizeof(cvar_state_t::sv_skybox),
+     .string_capacity = 64,
+     .enum_info = NOT_AN_ENUM},
+    {.name = "sv_shadow_fill",
+     .description = "Cubemap a drawn shadow volume's body shows, sampled by the line of sight as the sky is (a folder name under resources/cubemaps/); empty for the black wash",
+     .flags = CVAR_FLAG_MIRRORED,
+     .type = CVAR_TYPE_STRING,
+     .offset = offsetof(cvar_state_t, sv_shadow_fill),
+     .size = sizeof(cvar_state_t::sv_shadow_fill),
      .string_capacity = 64,
      .enum_info = NOT_AN_ENUM},
     {.name = "debug_show_collisions",
@@ -2388,7 +2433,7 @@ const command_info_t COMMAND_INFO_TABLE[COMMAND_COUNT] = {
      .flags = CVAR_FLAG_CLIENT},
 };
 
-const cvar_id MIRRORED_CVAR_TABLE[35] = {
+const cvar_id MIRRORED_CVAR_TABLE[36] = {
     cvar_id::pm_model,
     cvar_id::pm_maxspeed,
     cvar_id::pm_overbounce,
@@ -2424,6 +2469,7 @@ const cvar_id MIRRORED_CVAR_TABLE[35] = {
     cvar_id::map_kill_limit,
     cvar_id::map_round_time_limit_seconds,
     cvar_id::sv_skybox,
+    cvar_id::sv_shadow_fill,
 };
 
 // The value's bytes inside the state struct. Every text conversion goes
@@ -2485,7 +2531,7 @@ std::optional<command_id> try_find_command(std::string_view name)
 
 Span<const cvar_id> mirrored_cvars()
 {
-  return {MIRRORED_CVAR_TABLE, 35};
+  return {MIRRORED_CVAR_TABLE, 36};
 }
 
 std::optional<std::string> try_cvar_to_text(const cvar_state_t& state, cvar_id id)

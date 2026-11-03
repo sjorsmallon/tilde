@@ -110,7 +110,7 @@ std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry
   if (!mesh.collides)
     return {};
   if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
-    return {compute_asset_mesh_collision_box(mesh)};
+    return {compute_asset_mesh_collision_piece(mesh)};
 
   uint32_t sculpted_faces = 0;
   for (const mesh_face_t &face : mesh.faces)

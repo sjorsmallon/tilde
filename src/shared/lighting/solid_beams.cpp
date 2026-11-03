@@ -372,8 +372,8 @@ bool try_carve_piece_by_volume(solid_beam_arena_t& arena, solid_beam_carve_scrat
   uint32_t     plane_count = 0;
   for (uint32_t side = 0; side < volume.side_plane_count; ++side)
     planes[plane_count++] = &volume.side_planes[side];
-  for (uint32_t front = 0; front < volume.front_plane_count; ++front)
-    planes[plane_count++] = &volume.front_planes[front];
+  for (uint32_t front = 0; front < volume.light_facing_plane_count; ++front)
+    planes[plane_count++] = &volume.light_facing_planes[front];
   for (uint32_t index = 0; index < plane_count; ++index)
     if (classify_piece_against_plane(arena, piece, *planes[index]) == piece_side_t::Outside)
       return false;
@@ -421,9 +421,9 @@ bool same_planes(const Plane* a, const Plane* b, uint32_t count)
 
 bool same_shadow_volume_cut(const shadow_volume_t& a, const shadow_volume_t& b)
 {
-  return a.side_plane_count == b.side_plane_count && a.front_plane_count == b.front_plane_count &&
+  return a.side_plane_count == b.side_plane_count && a.light_facing_plane_count == b.light_facing_plane_count &&
          same_planes(&a.side_planes[0], &b.side_planes[0], a.side_plane_count) &&
-         same_planes(&a.front_planes[0], &b.front_planes[0], a.front_plane_count);
+         same_planes(&a.light_facing_planes[0], &b.light_facing_planes[0], a.light_facing_plane_count);
 }
 
 bool same_beam_shape(const solid_beam_cache_entry_t& entry, const path_pose_t& pose, float range, float half_angle)

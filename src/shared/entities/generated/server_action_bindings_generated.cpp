@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // The dispatch table and its shims. A shim is the ONLY code that names a
 // union member or downcasts an entity: it adapts the table's uniform call

@@ -172,7 +172,7 @@ void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
   const color_t box_color =
       mesh.collides ? ASSET_MESH_COLLISION_BOX_COLOR : ASSET_MESH_NO_COLLISION_BOX_COLOR;
   for (const std::vector<linalg::vec3>& polygon :
-       shared::compute_asset_mesh_collision_box(mesh).face_polygons)
+       shared::compute_asset_mesh_collision_piece(mesh).face_polygons)
   {
     for (size_t corner = 0; corner < polygon.size(); ++corner)
       draws.debug.line(polygon[corner] + translation,

@@ -17,8 +17,11 @@ void detect_beam_landings(const Entity_System& system, Span<const beam_stander_t
   {
     if (stander.ground_mover_uid == null_entity_uid)
       continue;
-    const entities::Spot_Light_Entity* spot = system.get<entities::Spot_Light_Entity>(stander.ground_mover_uid);
-    if (spot == nullptr || !spot->solid_beam)
+    const entities::Entity*            ground = system.try_find(stander.ground_mover_uid);
+    const entities::Light*             light  = entities::get_component<entities::Light>(ground);
+    const entities::Spot_Light_Entity* spot   = entities::entity_as<entities::Spot_Light_Entity>(ground);
+    const bool stands_on_a_body = light != nullptr && (light->shadows_are_solid || (spot != nullptr && spot->solid_beam));
+    if (!stands_on_a_body)
       continue;
 
     now.push_back({stander.uid, stander.ground_mover_uid});

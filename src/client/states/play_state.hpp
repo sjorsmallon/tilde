@@ -137,6 +137,7 @@ private:
   // mirror, so it can land AFTER the map did -- which is why this is asked
   // every frame rather than once at load.
   skybox_selection_t skybox;
+  skybox_selection_t shadow_fill;
 
 
   std::deque<assets::posed_skeleton_t> pose_storage;

@@ -749,6 +749,9 @@ bool Tick()
     look.beam_edge_pixels        = cvars.r_beam_edge_pixels;
     look.shadow_volume           = cvars.r_shadow_volume;
     look.shadow_volume_alpha     = cvars.r_shadow_volume_alpha;
+    look.shadow_volume_color     = {cvars.r_shadow_volume_red, cvars.r_shadow_volume_green,
+                                    cvars.r_shadow_volume_blue};
+    look.shadow_volume_edge_tint = cvars.r_shadow_volume_edge_tint;
     look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
     look.misprint_distance = cvars.r_misprint_distance;
     look.fog              = cvars.r_fog;

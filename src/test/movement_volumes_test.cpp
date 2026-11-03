@@ -959,9 +959,9 @@ static void test_a_solid_beam_is_carved_by_its_own_shadow_volumes()
       for (uint32_t side = 0; side < cast.volume.side_plane_count; ++side)
         found = found || std::memcmp(&cut.normal, &cast.volume.side_planes[side].normal, sizeof(cut.normal)) == 0 ||
                 linalg::length(cut.normal + cast.volume.side_planes[side].normal) < 1e-5f;
-      for (uint32_t front = 0; front < cast.volume.front_plane_count; ++front)
-        found = found || std::memcmp(&cut.normal, &cast.volume.front_planes[front].normal, sizeof(cut.normal)) == 0 ||
-                linalg::length(cut.normal + cast.volume.front_planes[front].normal) < 1e-5f;
+      for (uint32_t front = 0; front < cast.volume.light_facing_plane_count; ++front)
+        found = found || std::memcmp(&cut.normal, &cast.volume.light_facing_planes[front].normal, sizeof(cut.normal)) == 0 ||
+                linalg::length(cut.normal + cast.volume.light_facing_planes[front].normal) < 1e-5f;
       every_cut_plane_is_the_volumes = every_cut_plane_is_the_volumes && found;
     }
     check(every_cut_plane_is_the_volumes, "a piece's drawn planes are the volume's, never the pyramid's");

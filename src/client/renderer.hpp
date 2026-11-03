@@ -633,6 +633,8 @@ struct view_pass_t
   // here: it is a property of the world being drawn, not of any surface in it.
   // Invalid draws no sky at all and leaves the scene clear showing through.
   skybox_handle_t                           sky       = {};
+  // What a drawn shadow volume's body shows, sampled by the line of sight as the sky is. Invalid is the black wash.
+  skybox_handle_t                           shadow_fill = {};
   // Already folded by shared::try_convert_light_entity_to_scene_light, and LAID OUT: the first
   // `baked_light_count` entries are INDEXED BY BAKED SLOT, so a lightmapped
   // surface reads the four its chart named and never walks the array. Past
@@ -766,6 +768,8 @@ struct look_settings_t
   float   beam_edge_pixels        = 2.0f;  // r_beam_edge_pixels
   bool    shadow_volume           = true;  // r_shadow_volume
   float   shadow_volume_alpha     = 0.25f; // r_shadow_volume_alpha
+  linalg::vec3f shadow_volume_color = {0.0f, 0.0f, 0.0f}; // r_shadow_volume_red, _green, _blue
+  float   shadow_volume_edge_tint = 0.0f;  // r_shadow_volume_edge_tint
 };
 
 struct antialiasing_settings_t

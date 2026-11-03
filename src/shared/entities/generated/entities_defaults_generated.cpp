@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 //
 // Every entity's defaults, as the constructor its header declares. They are
 // out of line so that tuning a value is a change to this one TU rather than

@@ -28,7 +28,10 @@ resolve_mesh_asset(const asset_mesh_source_t &source);
 // editor can pick and draw the box of a mesh with its collision switched off.
 oriented_box_t compute_asset_mesh_box(const mesh_geometry_t &mesh);
 
-collision_piece_t compute_asset_mesh_collision_box(const mesh_geometry_t &mesh);
+// What the asset collides as: its directional bound (geometry/directional_bounds.hpp) over the vertices
+// under its scale, turned by the pose; the box above while the asset does not resolve. Answered whether or
+// not `collides` is set, as the box is.
+collision_piece_t compute_asset_mesh_collision_piece(const mesh_geometry_t &mesh);
 
 // A triangle is its three corners and its OUTWARD unit normal; a degenerate
 // triangle keeps its place in the list (index t is still source triangle t)

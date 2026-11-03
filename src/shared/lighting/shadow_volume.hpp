@@ -38,8 +38,8 @@ struct projector_mask_cache_t;
 // first (shadow_volume_plan.md ss2). The extra side slot is a point light's far cap.
 inline constexpr uint32_t MAX_SHADOW_VOLUME_SIDES       = 28;
 inline constexpr uint32_t SHADOW_VOLUME_SIDE_SLOTS      = MAX_SHADOW_VOLUME_SIDES + 1;
-inline constexpr uint32_t MAX_SHADOW_VOLUME_FRONT_PLANES = 12;
-inline constexpr uint32_t MAX_SHADOW_VOLUME_PLANES      = SHADOW_VOLUME_SIDE_SLOTS + MAX_SHADOW_VOLUME_FRONT_PLANES;
+inline constexpr uint32_t MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES = 14;
+inline constexpr uint32_t MAX_SHADOW_VOLUME_PLANES      = SHADOW_VOLUME_SIDE_SLOTS + MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES;
 // How far past the caster a volume with no far cap is drawn (cl_shadow_volume_debug).
 inline constexpr float    SHADOW_VOLUME_DRAWN_REACH = 2048.f;
 
@@ -62,8 +62,8 @@ struct shadow_volume_t
 {
   Array<Plane, SHADOW_VOLUME_SIDE_SLOTS>        side_planes;
   uint32_t                                      side_plane_count = 0;
-  Array<Plane, MAX_SHADOW_VOLUME_FRONT_PLANES>   front_planes;
-  uint32_t                                      front_plane_count = 0;
+  Array<Plane, MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES>   light_facing_planes;
+  uint32_t                                      light_facing_plane_count = 0;
   Array<linalg::vec3f, MAX_SHADOW_VOLUME_SIDES> near_ring;
   Array<linalg::vec3f, MAX_SHADOW_VOLUME_SIDES> far_ring;
   uint32_t                                      side_count = 0;
@@ -99,8 +99,8 @@ struct shadow_occluder_t
 {
   Array<Plane, SHADOW_VOLUME_SIDE_SLOTS>      pyramid_planes;
   uint32_t                                    pyramid_plane_count = 0;
-  Array<Plane, MAX_SHADOW_VOLUME_FRONT_PLANES> front_planes;
-  uint32_t                                    front_plane_count = 0;
+  Array<Plane, MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES> light_facing_planes;
+  uint32_t                                    light_facing_plane_count = 0;
   uint32_t                                    volume_bits       = 0;
   // A receiver: the shadow on it is a platform or a hole, so the body is drawn down to it. A plain piece
   // only stops the body.
@@ -142,6 +142,9 @@ struct shadow_light_t
   // The spot draws its beam (spot_beam_plan.md ss5) or is solid as one (solid_beams.hpp): its volumes are kept
   // whether or not one reaches a receiver, since the beam itself reads them.
   bool          keeps_every_volume    = false;
+  // The dark itself is what is stood on, so a volume LANDS on whatever it touches and its body is drawn
+  // there; otherwise a body is drawn only onto a receiver (a shadow platform or hole).
+  bool          shadows_are_solid     = false;
 };
 
 // Where a light's reach ends, as the plane that caps its volumes: a spot's or a projector's is square to its

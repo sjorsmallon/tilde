@@ -458,16 +458,18 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
     // One colour per light, so two lights' pyramids through one caster read apart.
     constexpr Array<color_t, 6> LIGHT_COLORS = {colors::magenta, colors::cyan,   colors::yellow,
                                                 colors::orange,  colors::green,  colors::hot_pink};
-    std::vector<shared::entity_uid_t> lights_seen;
+    auto lights_seen = std::vector<shared::entity_uid_t>{};
     for (size_t volume_index = 0; volume_index < ctx.visuals.drawn_shadow_volumes.size(); ++volume_index)
     {
       const shared::shadow_volume_t& volume = ctx.visuals.drawn_shadow_volumes[volume_index];
+      if (entities::entity_as<entities::Projector_Entity>(ctx.world.session.entity_system.try_find(volume.light)) == nullptr)
+        continue;
       auto seen = std::find(lights_seen.begin(), lights_seen.end(), volume.light);
       if (seen == lights_seen.end())
         seen = lights_seen.insert(lights_seen.end(), volume.light);
       const color_t color = LIGHT_COLORS[static_cast<uint32_t>(seen - lights_seen.begin()) % LIGHT_COLORS.size()];
 
-      std::vector<shared::shadow_volume_edge_t> edges;
+      auto edges = std::vector<shared::shadow_volume_edge_t>{};
       shared::collect_shadow_volume_edges(volume, shared::SHADOW_VOLUME_DRAWN_REACH, edges);
       for (const shared::shadow_volume_edge_t& edge : edges)
         scene.debug.line(edge.a, edge.b, color, 0.f, 0.f, true);
@@ -1270,7 +1272,8 @@ void Play_State::draw(float delta_seconds, std::vector<renderer::view_pass_t> &p
   draw_particles(ctx, frame);
 
   lap.next("draw: sky, grabbed frames, to_pass");
-  scene.sky = skybox.resolve(ctx.cvars->sv_skybox.c_str());
+  scene.sky         = skybox.resolve(ctx.cvars->sv_skybox.c_str());
+  scene.shadow_fill = shadow_fill.resolve(ctx.cvars->sv_shadow_fill.c_str());
 
   place_grabbed_frames();
 

@@ -432,6 +432,8 @@ add_library(game_shared STATIC
     src/shared/geometry/convex_hull.cpp
     src/shared/geometry/convex_decomposition.hpp
     src/shared/geometry/convex_decomposition.cpp
+    src/shared/geometry/directional_bounds.hpp
+    src/shared/geometry/directional_bounds.cpp
     # The one curve: centripetal Catmull-Rom through clicked points, the curve
     # wall's spine. Bezier waits for a caller.
     src/shared/curve.hpp
@@ -714,6 +716,8 @@ set(LIGHTMAP_SHADER_SOURCES
 set(PBR_SHADER_SOURCES ${SHADER_SRC_DIR}/mesh_lit.frag)
 
 set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.glsl
+                    ${SHADER_SRC_DIR}/beam_fill.glsl
+                    ${SHADER_SRC_DIR}/beam_ripple.glsl
                     ${SHADER_SRC_DIR}/lightmap.glsl ${SHADER_SRC_DIR}/light_falloff.glsl
                     ${SHADER_SRC_DIR}/light_arrival.glsl ${SHADER_SRC_DIR}/probes.glsl
                     ${SHADER_SRC_DIR}/direct_light.glsl
@@ -1263,6 +1267,7 @@ add_game_test(lens_test)
 add_game_test(shadow_volume_test)
 # A shadows_are_solid light's volume is a mover: a hull on the shadow's top face is held, one beside it falls through.
 add_game_test(solid_shadow_test)
+add_game_test(directional_bounds_test)
 # A projector picture's dark is rectangles of its grid, cast from the glass as pieces: a hull walks into the
 # dark half of the frame and is stopped, and a texel's uv lands where the frame's matrix maps it.
 add_game_test(projector_mask_test)

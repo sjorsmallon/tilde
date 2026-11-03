@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/entities/entities.def by def_gen. Do not edit.
 #include "entities_generated.hpp"
 #include <cassert>
 #include <cstddef>
@@ -5411,6 +5411,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xd8fac739u;
+const uint32_t SCHEMA_HASH = 0x8d757a87u;
 
 } // namespace entities

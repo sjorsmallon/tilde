@@ -1,4 +1,4 @@
-// Generated from /Users/sjors/Desktop/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
+// Generated from C:/Users/sjors/Desktop/Projects/tilde/tilde/src/shared/cvars/cvars.def by def_gen. Do not edit.
 //
 // Binds every @Server command. Each slot gets the command's generated ARGUMENT
 // BINDER, which parses the console tokens against the declared signature

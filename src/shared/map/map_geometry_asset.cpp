@@ -1,4 +1,7 @@
 #include "map_geometry_asset.hpp"
+#include "geometry/convex_decomposition.hpp"
+#include "geometry/convex_hull.hpp"
+#include "geometry/directional_bounds.hpp"
 
 #include "../../third_party/xatlas.h"
 
@@ -64,9 +67,36 @@ oriented_box_t compute_asset_mesh_box(const mesh_geometry_t &mesh)
           .orientation = mesh.orientation};
 }
 
-collision_piece_t compute_asset_mesh_collision_box(const mesh_geometry_t &mesh)
+collision_piece_t compute_asset_mesh_collision_piece(const mesh_geometry_t &mesh)
 {
-  return piece_from_oriented_box(compute_asset_mesh_box(mesh));
+  const asset_mesh_source_t &source = get_mesh_asset_source(mesh);
+  const assets::asset_handle_t<assets::mesh_asset_t> handle = resolve_mesh_asset(source);
+  const assets::mesh_asset_t *asset = handle.valid() ? assets::get(handle) : nullptr;
+  if (asset == nullptr || asset->vertices.empty())
+    return piece_from_oriented_box(compute_asset_mesh_box(mesh));
+
+  std::vector<linalg::vec3> points;
+  points.reserve(asset->vertices.size());
+  for (const vertex_xnu &vertex : asset->vertices)
+    points.push_back({vertex.position.x * source.scale.x, vertex.position.y * source.scale.y,
+                      vertex.position.z * source.scale.z});
+
+  const Array<Plane, DIRECTIONAL_BOUND_PLANES> local = compute_directional_bound_planes(points);
+  std::vector<Plane>                           planes;
+  planes.reserve(DIRECTIONAL_BOUND_PLANES);
+  for (uint32_t index = 0; index < local.size(); ++index)
+    planes.push_back({.point  = mesh.position + linalg::rotate(mesh.orientation, local[index].point),
+                      .normal = linalg::rotate(mesh.orientation, local[index].normal)});
+
+  const oriented_box_t                     box  = compute_asset_mesh_box(mesh);
+  const std::optional<convex_polyhedron_t> body =
+      try_build_convex_from_planes(planes, box.center, linalg::length(box.half_extents) + 1.f);
+  if (!body)
+    fatal_error("compute_asset_mesh_collision_piece: the bound of the asset mesh at ({} {} {}) closes nothing",
+                mesh.position.x, mesh.position.y, mesh.position.z);
+  return {.bounds        = compute_point_bounds(body->vertices),
+          .planes        = compute_polyhedron_planes(*body),
+          .face_polygons = compute_polyhedron_face_polygons(*body)};
 }
 
 linalg::mat4f compute_asset_mesh_transform(const mesh_geometry_t &mesh)

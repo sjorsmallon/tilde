@@ -75,6 +75,7 @@ struct draw_lists_t
   // The sky, for the atlas's reason and with the atlas's lifetime: it belongs
   // to the world rather than to the frame, so begin_frame leaves it alone.
   renderer::skybox_handle_t sky;
+  renderer::skybox_handle_t shadow_fill;
 
   cvars::Debug_Channel debug_channel = cvars::Debug_Channel::off;
 
@@ -162,6 +163,7 @@ struct draw_lists_t
     pass.custom    = custom;
     pass.lightmap  = lightmap;
     pass.sky       = sky;
+    pass.shadow_fill = shadow_fill;
     pass.selected_outline_color = selected_outline_color;
     pass.hovered_outline_color  = hovered_outline_color;
     return pass;

@@ -414,6 +414,13 @@ void test_console_cvars()
             cvars::console_result_t::unknown_name,
         "an unknown name is reported");
 
+  check(run(state, table, "sv_skybox night_sky", &reply) == cvars::console_result_t::ok &&
+            std::string_view(state.sv_skybox.c_str()) == "night_sky",
+        "a string cvar takes the rest of the line");
+  check(run(state, table, "sv_skybox \"\"", &reply) == cvars::console_result_t::ok &&
+            state.sv_skybox.c_str()[0] == '\0',
+        "\"\" sets a string cvar to the empty string");
+
   // A bare read is always local, even for a cvar this process does not own.
   check(run(state, table, "pm_maxspeed", &reply) == cvars::console_result_t::ok,
         "a bare read succeeds");

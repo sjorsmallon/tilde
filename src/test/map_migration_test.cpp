@@ -283,8 +283,8 @@ int main()
     mesh.collides = false;
     if (!get_collision_pieces(mesh_geometry_t{mesh}, 1).empty())
       return fail("mesh collision: a mesh with collision off still collides");
-    if (compute_asset_mesh_collision_box(mesh).planes.size() != 6)
-      return fail("mesh collision: the editor's box went away with the flag");
+    if (compute_asset_mesh_collision_piece(mesh).planes.empty())
+      return fail("mesh collision: the editor's piece went away with the flag");
 
     map_t silent;
     silent.add_geometry(mesh);

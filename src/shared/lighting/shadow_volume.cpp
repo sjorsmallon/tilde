@@ -31,7 +31,8 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                           .apex               = pose.position,
                           .range              = point->range,
                           .cuts_geometry      = point->light.cuts_geometry,
-                          .keeps_every_volume = point->light.shadows_are_solid};
+                          .keeps_every_volume = point->light.shadows_are_solid,
+                          .shadows_are_solid  = point->light.shadows_are_solid};
   }
   if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity))
   {
@@ -44,7 +45,8 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                           .range                 = spot->range,
                           .cosine_of_outer_angle = std::cos(linalg::to_radians(spot->outer_degrees)),
                           .cuts_geometry         = spot->light.cuts_geometry,
-                          .keeps_every_volume    = spot->beam || spot->solid_beam || spot->light.shadows_are_solid};
+                          .keeps_every_volume    = spot->beam || spot->solid_beam || spot->light.shadows_are_solid,
+                          .shadows_are_solid     = spot->light.shadows_are_solid};
   }
   if (const entities::Projector_Entity* projector = entities::entity_as<entities::Projector_Entity>(&entity))
   {
@@ -60,7 +62,8 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                          .frame_corners_at_unit_distance = compute_projector_frame_corners(*scene_light, 1.f),
                          .picture                        = projector->texture,
                          .cuts_geometry                  = projector->light.cuts_geometry,
-                         .keeps_every_volume             = projector->light.shadows_are_solid};
+                         .keeps_every_volume             = projector->light.shadows_are_solid,
+                         .shadows_are_solid              = projector->light.shadows_are_solid};
     return light;
   }
   if (const entities::Directional_Light_Entity* directional =
@@ -72,7 +75,8 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                           .directional        = true,
                           .direction          = linalg::normalize(linalg::basis_from(pose.orientation).forward),
                           .cuts_geometry      = directional->light.cuts_geometry,
-                          .keeps_every_volume = directional->light.shadows_are_solid};
+                          .keeps_every_volume = directional->light.shadows_are_solid,
+                          .shadows_are_solid  = directional->light.shadows_are_solid};
   }
   return std::nullopt;
 }
@@ -207,11 +211,11 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
     faces_away[index]  = plane_faces_away_from_light(light, plane);
     if (faces_away[index])
       continue;
-    if (volume.front_plane_count == MAX_SHADOW_VOLUME_FRONT_PLANES)
+    if (volume.light_facing_plane_count == MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES)
       return refused(shadow_cast_refusal_t::Too_Many_Planes);
-    volume.front_planes[volume.front_plane_count++] = plane;
+    volume.light_facing_planes[volume.light_facing_plane_count++] = plane;
   }
-  if (volume.front_plane_count == 0 || volume.front_plane_count == piece_planes.size())
+  if (volume.light_facing_plane_count == 0 || volume.light_facing_plane_count == piece_planes.size())
     return refused(shadow_cast_refusal_t::Light_Inside_Caster);
 
   // The silhouette: every edge a back face shares with a front face, wound as the back face winds it.
@@ -345,8 +349,8 @@ shadow_cast_refusal_t cast_shadow_volumes_behind_caster(const shadow_light_t& li
     if (!plane_faces_away_from_light(light, plane))
       continue;
     shadow_volume_t beyond   = cast.volume;
-    beyond.front_planes[0]   = {.point = plane.point, .normal = plane.normal * -1.f};
-    beyond.front_plane_count = 1;
+    beyond.light_facing_planes[0]   = {.point = plane.point, .normal = plane.normal * -1.f};
+    beyond.light_facing_plane_count = 1;
     out.push_back(beyond);
   }
   return shadow_cast_refusal_t::None;
@@ -471,9 +475,9 @@ std::optional<shadow_occluder_t> try_cast_shadow_occluder(const shadow_light_t& 
   {
     if (plane_faces_away_from_light(light, plane))
       continue;
-    if (occluder.front_plane_count == MAX_SHADOW_VOLUME_FRONT_PLANES)
+    if (occluder.light_facing_plane_count == MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES)
       return std::nullopt;
-    occluder.front_planes[occluder.front_plane_count++] = plane;
+    occluder.light_facing_planes[occluder.light_facing_plane_count++] = plane;
   }
   return occluder;
 }
@@ -590,9 +594,9 @@ bool shadow_occluder_is_behind_point(const shadow_occluder_t& occluder, const li
 {
   if (!shadow_occluder_pyramid_contains_point(occluder, point))
     return false;
-  for (uint32_t index = 0; index < occluder.front_plane_count; ++index)
+  for (uint32_t index = 0; index < occluder.light_facing_plane_count; ++index)
   {
-    const Plane& plane = occluder.front_planes[index];
+    const Plane& plane = occluder.light_facing_planes[index];
     if (linalg::dot(point - plane.point, plane.normal) > 0.f)
       return false;
   }
@@ -607,9 +611,9 @@ bool shadow_volume_contains_point(const shadow_volume_t& volume, const linalg::v
     if (linalg::dot(point - plane.point, plane.normal) > 0.f)
       return false;
   }
-  for (uint32_t index = 0; index < volume.front_plane_count; ++index)
+  for (uint32_t index = 0; index < volume.light_facing_plane_count; ++index)
   {
-    const Plane& plane = volume.front_planes[index];
+    const Plane& plane = volume.light_facing_planes[index];
     if (linalg::dot(point - plane.point, plane.normal) > 0.f)
       return false;
   }
@@ -637,9 +641,9 @@ bool shadow_volume_touches_box(const shadow_volume_t& volume, const aabb_bounds_
     if (linalg::dot(center - plane.point, plane.normal) > box_reach_along(half_extents, plane.normal))
       return false;
   }
-  for (uint32_t index = 0; index < volume.front_plane_count; ++index)
+  for (uint32_t index = 0; index < volume.light_facing_plane_count; ++index)
   {
-    const Plane& plane = volume.front_planes[index];
+    const Plane& plane = volume.light_facing_planes[index];
     if (linalg::dot(center - plane.point, plane.normal) > box_reach_along(half_extents, plane.normal))
       return false;
   }
@@ -691,7 +695,7 @@ std::string describe_shadow_volume_report(const shadow_volume_report_t& report, 
       report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.mask_pieces, report.cast, report.kept,
       report.refused_inside_caster, report.refused_open_silhouette, report.refused_on_silhouette,
       report.refused_too_many_planes, MAX_SHADOW_VOLUME_SIDES,
-      MAX_SHADOW_VOLUME_FRONT_PLANES, report.refused_outside_beam, report.culled_reaching_nothing);
+      MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES, report.refused_outside_beam, report.culled_reaching_nothing);
   if (report.cutting_lights == 0)
     text += "\n  no switched-on light has cuts_geometry or shadows_are_solid set, or a beam: nothing casts";
   if (report.receiver_pieces == 0)
@@ -709,7 +713,7 @@ std::string describe_shadow_volume_report(const shadow_volume_report_t& report, 
     far_center  = far_center * (1.f / static_cast<float>(std::max(volume.side_count, 1u)));
     text += std::format("\n  caster {} (0 is unowned geometry) from light {}: {} sides, {} front planes, silhouette about "
                         "({:.0f} {:.0f} {:.0f}), far ring about ({:.0f} {:.0f} {:.0f})",
-                        volume.caster, volume.light, volume.side_count, volume.front_plane_count, near_center.x,
+                        volume.caster, volume.light, volume.side_count, volume.light_facing_plane_count, near_center.x,
                         near_center.y, near_center.z, far_center.x, far_center.y, far_center.z);
   }
   for (const refused_piece_t& refused : report.refused)
@@ -1023,7 +1027,7 @@ uint32_t collect_shadow_occluders(const Entity_System& system, const Bounding_Vo
       if (bits == 0)
         continue;
       if (const std::optional<shadow_occluder_t> occluder = try_cast_shadow_occluder(
-              light, piece.planes, piece.polygons, bits, piece_role_receives(piece.role)))
+              light, piece.planes, piece.polygons, bits, piece_role_receives(piece.role) || light.shadows_are_solid))
         out.push_back(*occluder);
       else
         ++skipped;

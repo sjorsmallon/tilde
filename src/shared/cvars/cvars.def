@@ -631,6 +631,10 @@ Debugging :: cvars {
     r_beam_edge_pixels:     f32 = 2.0       @Client    "Width on screen of the line drawn where a beam ends on screen, its silhouette and where it lands, in the light's colour; 0 draws none"
     r_shadow_volume:        bool = true     @Client    "Draw every shadow volume the collision reads as a dark body in the air, lines where it ends on screen and a rim where it lands, the whole volume and not only the part inside a beam"
     r_shadow_volume_alpha:  f32 = 0.25      @Client    "How much a drawn shadow volume darkens the air it fills, the same at every length and from every side"
+    r_shadow_volume_red:    f32 = 0.0       @Client    "Red of the colour a drawn shadow volume's body is filled with, through r_beam_fill's pattern; black is the plain wash"
+    r_shadow_volume_green:  f32 = 0.0       @Client    "Green of the colour a drawn shadow volume's body is filled with"
+    r_shadow_volume_blue:   f32 = 0.0       @Client    "Blue of the colour a drawn shadow volume's body is filled with"
+    r_shadow_volume_edge_tint: f32 = 0.0    @Client    "How much of the body's colour its line and rim keep: 0 is black ink, 1 an edge in the body's own colour"
 
     r_look_panel:           bool = false    @Client    "Show the look panel: a slider per comic look cvar, and an export and load of their values as looks/<name>.look"
 
@@ -649,6 +653,7 @@ Debugging :: cvars {
     // and the existing memcmp broadcast replicates it to every client -- no new
     // message, and a late joiner gets it too.
     sv_skybox:              string<64> = ""  @Mirrored  "Cubemap the map shows as its sky (a folder name under resources/cubemaps/); empty for none"
+    sv_shadow_fill:         string<64> = ""  @Mirrored  "Cubemap a drawn shadow volume's body shows, sampled by the line of sight as the sky is (a folder name under resources/cubemaps/); empty for the black wash"
 
     debug_show_collisions:  bool = false                "Show collision faces in green"
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"

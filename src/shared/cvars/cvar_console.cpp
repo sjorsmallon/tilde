@@ -156,7 +156,10 @@ console_result_t execute_console_line(cvar_state_t&            state,
     std::string_view value_text;
     if (info.type == CVAR_TYPE_STRING)
     {
+      // A bare name prints, so "" is the one spelling of the empty string.
       value_text = remainder_after_first_token(line);
+      if (value_text == "\"\"")
+        value_text = {};
     }
     else if (tokens.size() > 2)
     {
