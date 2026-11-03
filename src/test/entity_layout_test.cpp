@@ -84,8 +84,9 @@ int main()
   // them back into one type carrying a kind enum fails right here.
   check(has_component(entity_type::Point_Light_Entity, component_type::Light) &&
             has_component(entity_type::Spot_Light_Entity, component_type::Light) &&
+            has_component(entity_type::Projector_Entity, component_type::Light) &&
             has_component(entity_type::Directional_Light_Entity, component_type::Light),
-        "all three light types share the Light component");
+        "all four light types share the Light component");
   check(!has_component(entity_type::Directional_Light_Entity, component_type::Render),
         "a light is not drawn from a Render component");
 
@@ -256,6 +257,8 @@ int main()
         entity_type::Fog_Volume_Entity,
         // Through Enabled and Render.
         entity_type::Lens_Entity,
+        // Through Enabled and Light.
+        entity_type::Projector_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 
@@ -287,8 +290,9 @@ int main()
               entity_type_is_predicted(entity_type::Shrinking_Platform_Entity) &&
               entity_type_is_predicted(entity_type::Extending_Platform_Entity) &&
               entity_type_is_predicted(entity_type::Canopy_Entity) &&
-              !entity_type_is_predicted(entity_type::Point_Light_Entity),
-          "@predicted is the jump pad, the brush entity, the mover, the bubble, the platform and the canopy, and not the light");
+              entity_type_is_predicted(entity_type::Point_Light_Entity) &&
+              !entity_type_is_predicted(entity_type::Reveal_Light_Entity),
+          "@predicted is the jump pad, the brush entity, the mover, the bubble, the platform, the canopy and the light whose shadows can be solid, and not the reveal light");
   }
 
   // --- placeable types ---

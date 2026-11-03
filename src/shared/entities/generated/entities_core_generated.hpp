@@ -363,11 +363,12 @@ enum class entity_type : uint16_t
   Reveal_Light_Entity = 35,
   Fog_Volume_Entity = 36,
   Lens_Entity = 37,
+  Projector_Entity = 38,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 38;
+constexpr uint32_t ENTITY_TYPE_COUNT = 39;
 
 enum class component_type : uint16_t
 {
@@ -621,6 +622,7 @@ struct Light
   float source_radius = 0.0f;
   bool casts_shadows = true;
   bool cuts_geometry = false;
+  bool shadows_are_solid = false;
 };
 
 struct Movement

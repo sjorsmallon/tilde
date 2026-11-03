@@ -1,6 +1,7 @@
 #define ENTITIES_WANT_INCLUDES
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/projector_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "lighting.hpp"
 
@@ -44,6 +45,28 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     light.cos_outer = std::cos(linalg::to_radians(spot->outer_degrees));
     light.source_radius = std::max(spot->light.source_radius, 0.f);
     light.casts_shadows = spot->light.casts_shadows;
+    return light;
+  }
+
+  if (const entities::Projector_Entity* projector = entities::entity_as<entities::Projector_Entity>(&entity))
+  {
+    const linalg::basis_t basis = linalg::basis_from(pose.orientation);
+    scene_light_t         light;
+    light.kind = light_kind_t::Projector;
+    // Read and refused (projector_plan.md non-goals): the bake never sees a projector, whatever the author
+    // typed; validate_map_paths names the entity.
+    light.mode          = entities::Light_Mode::Dynamic;
+    light.position      = pose.position;
+    light.forward       = basis.forward;
+    light.up            = basis.up;
+    light.radiance      = compute_radiance(projector->light, light_kind_t::Projector);
+    light.range         = projector->range;
+    light.cos_inner     = std::cos(linalg::to_radians(projector->half_angle_degrees));
+    light.cos_outer     = light.cos_inner;
+    light.aspect        = std::max(projector->aspect, 1e-3f);
+    light.picture       = projector->texture;
+    light.source_radius = std::max(projector->light.source_radius, 0.f);
+    light.casts_shadows = projector->light.casts_shadows;
     return light;
   }
 
@@ -97,6 +120,77 @@ shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t 
   projection.near_plane = SHADOW_NEAR_PLANE;
   projection.far_plane  = far_plane;
   return projection;
+}
+
+// Half the frame's vertical angle, clamped as the spot's cone is: a perspective map cannot hold a hemisphere.
+static float projector_half_angle(const scene_light_t &light)
+{
+  const float cos_outer = std::clamp(light.cos_outer, std::cos(linalg::to_radians(85.f)),
+                                     std::cos(linalg::to_radians(1.f)));
+  return std::acos(cos_outer);
+}
+
+// The frame's axes: forward, and `up` squared to it (a map's roll is free, but a sheared frame is not one).
+struct projector_axes_t
+{
+  linalg::vec3 forward;
+  linalg::vec3 right;
+  linalg::vec3 up;
+};
+
+static projector_axes_t projector_axes(const scene_light_t &light)
+{
+  const linalg::vec3 forward = linalg::normalize(light.forward);
+  linalg::vec3       up      = light.up - forward * linalg::dot(light.up, forward);
+  if (linalg::length(up) < 1e-4f)
+    up = std::abs(forward.y) < 0.99f ? linalg::vec3{0.f, 1.f, 0.f} : linalg::vec3{1.f, 0.f, 0.f};
+  up = linalg::normalize(up);
+  return {forward, linalg::normalize(linalg::cross(forward, up)), up};
+}
+
+shadow_projection_t projector_shadow_projection(const scene_light_t &light, uint32_t resolution)
+{
+  const float            half_angle = projector_half_angle(light);
+  const projector_axes_t axes       = projector_axes(light);
+  const float            far_plane  = std::max(light.range, SHADOW_NEAR_PLANE * 2.f);
+
+  shadow_projection_t projection;
+  projection.view_projection =
+      linalg::perspective(half_angle * 2.f, std::max(light.aspect, 1e-3f), SHADOW_NEAR_PLANE, far_plane) *
+      linalg::look_at(light.position, light.position + axes.forward, axes.up);
+  projection.texel_size_at_unit_distance =
+      2.f * std::tan(half_angle) / (float)std::max<uint32_t>(resolution, 1u);
+  projection.near_plane = SHADOW_NEAR_PLANE;
+  projection.far_plane  = far_plane;
+  return projection;
+}
+
+Array<linalg::vec3, 4> compute_projector_frame_corners(const scene_light_t &light, float distance)
+{
+  const projector_axes_t axes        = projector_axes(light);
+  const float            half_height = distance * std::tan(projector_half_angle(light));
+  const float            half_width  = half_height * std::max(light.aspect, 1e-3f);
+  const linalg::vec3     center      = light.position + axes.forward * distance;
+  const linalg::vec3     right       = axes.right * half_width;
+  const linalg::vec3     up          = axes.up * half_height;
+  return {{center - right - up, center + right - up, center + right + up, center - right + up}};
+}
+
+Array<Plane, 4> compute_projector_frame_planes(const scene_light_t &light)
+{
+  const Array<linalg::vec3, 4> corners = compute_projector_frame_corners(light, 1.f);
+  const linalg::vec3           inside  = light.position + linalg::normalize(light.forward);
+  Array<Plane, 4>              planes;
+  for (uint32_t edge = 0; edge < 4; ++edge)
+  {
+    const linalg::vec3 a      = corners[edge];
+    const linalg::vec3 b      = corners[(edge + 1) % 4];
+    linalg::vec3       normal = linalg::normalize(linalg::cross(a - light.position, b - light.position));
+    if (linalg::dot(inside - light.position, normal) > 0.f)
+      normal = normal * -1.f;
+    planes[edge] = {.point = light.position, .normal = normal};
+  }
+  return planes;
 }
 
 float cascade_split_depth(const shadow_view_t &view, const cascade_settings_t &settings,

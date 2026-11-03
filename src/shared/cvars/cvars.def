@@ -310,6 +310,7 @@ Client :: cvars {
     r_shadow_pcf_radius:    i32 = 1         @Client    "PCF kernel radius in texels (0 = the hardware 2x2 only)"
     r_shadow_pcss:          bool = true     @Client    "Widen the PCF kernel from the light's source_radius and the blocker distance (PCSS)"
     r_shadow_pcss_max_radius: f32 = 16.0    @Client    "Cap on the PCSS search and filter radius, in shadow texels"
+    r_projector_picture_size: i32 = 512     @Client    "Resolution of each layer of the projector picture array, which is indexed by shadow layer"
     r_shadow_debug_light:   i32 = 0         @Client    "Entity uid of the light r_debug_channel shadow_visibility shows; 0 picks the shadowed light nearest the camera"
 
     // The lightmap bake, lightmap_gpu_plan.md step 7b. Honoured only where the

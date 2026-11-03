@@ -791,6 +791,8 @@ struct shadow_settings_t
   int32_t  pcf_radius           = 1;
   bool     pcss                 = true;
   float    pcss_max_radius_texels = 16.0f;
+  // Each layer of the projector picture array (projector_plan.md ss2b), indexed by shadow layer.
+  uint32_t picture_size         = 512;
   // Which light r_debug_channel = shadow_visibility shows: this uid, or the
   // shadowed light nearest the camera when null. The channel shows ONE light
   // and the lit view sums them all, so without a pin "the shadow is missing"

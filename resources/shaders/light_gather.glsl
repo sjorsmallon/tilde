@@ -43,7 +43,8 @@ vec4 gather_direct_light(int look, Surface surface, vec3 world_position, vec3 V)
 
         // Atlas visibility TIMES the shadow map (decision K): independent blockers, nothing counted twice.
         vec3 visibility = coverage.slots[channel] *
-                          shadow_visibility(light, arrival, world_position, surface.normal);
+                          shadow_visibility(light, arrival, world_position, surface.normal) *
+                          projector_mask(light, world_position);
 
         lit += shade_light(look, surface, V, incoming_light(light, arrival, visibility));
     }
@@ -61,13 +62,15 @@ vec4 gather_direct_light(int look, Surface surface, vec3 world_position, vec3 V)
 #endif
 
         Light_Arrival arrival    = light_arrival(light, world_position);
-        float         visibility = shadow_visibility(light, arrival, world_position, surface.normal);
+        // The shadow map, and a projector's picture over it (1 for every other kind).
+        vec3          visibility = shadow_visibility(light, arrival, world_position, surface.normal) *
+                                   projector_mask(light, world_position);
 #ifndef LIGHTMAP
         // The probes' static occlusion of a Mixed light, the atlas texel's job at a point in space.
         visibility *= probe_light_visibility(light, world_position);
 #endif
 
-        lit += shade_light(look, surface, V, incoming_light(light, arrival, vec3(visibility)));
+        lit += shade_light(look, surface, V, incoming_light(light, arrival, visibility));
     }
 
     return lit;

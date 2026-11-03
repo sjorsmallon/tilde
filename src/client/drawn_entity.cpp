@@ -139,6 +139,7 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
   case entity_type::Sound_Emitter_Entity:
   case entity_type::Point_Light_Entity:
   case entity_type::Spot_Light_Entity:
+  case entity_type::Projector_Entity:
   case entity_type::Directional_Light_Entity:
   case entity_type::Trigger_Volume_Entity:
   case entity_type::Jump_Pad_Entity:

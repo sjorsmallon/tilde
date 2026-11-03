@@ -424,4 +424,16 @@ Lens_Entity::Lens_Entity()
   type = entity_type::Lens_Entity;
 }
 
+Projector_Entity::Projector_Entity()
+  : switch_state{},
+    light({.mode = Light_Mode::Dynamic}),
+    rides{},
+    range(512.0f),
+    half_angle_degrees(20.0f),
+    aspect(1.7778f),
+    texture(assets::texture_asset::Missing)
+{
+  type = entity_type::Projector_Entity;
+}
+
 } // namespace entities

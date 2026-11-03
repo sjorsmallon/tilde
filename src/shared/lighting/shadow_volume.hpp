@@ -7,6 +7,7 @@
 
 #include "aabb.hpp"
 #include "array.hpp"
+#include "assets/asset_id.hpp"
 #include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "collision/movers.hpp"
@@ -30,6 +31,7 @@ namespace shared
 {
 
 struct Entity_System;
+struct projector_mask_cache_t;
 
 // A silhouette with more edges (plus the spot beam's planes that cut it), or a piece with more faces toward
 // the light, than these casts nothing; the scene block carries exactly these slots per volume, side slots
@@ -126,6 +128,15 @@ struct shadow_light_t
   float         range       = 0.f;
   // A spot's beam: a piece with no corner inside the cone about `direction` casts nothing. -2 is no beam.
   float         cosine_of_outer_angle = -2.f;
+  // A projector's frame (lighting.hpp's compute_projector_frame_planes): the four planes through the apex,
+  // outward, which cut its volumes as a spot's cone does; a piece outside them casts nothing. 0 is no frame.
+  Array<Plane, 4> frame_planes;
+  uint32_t        frame_plane_count = 0;
+  // The frame's corners one unit along the axis (compute_projector_frame_corners: bottom-left, bottom-right,
+  // top-right, top-left) and what it shows: the picture's dark is cast as pieces on the glass
+  // (projector_mask.hpp). Missing is a plain white frame, casting nothing of its own.
+  Array<linalg::vec3f, 4> frame_corners_at_unit_distance;
+  assets::texture_asset   picture = assets::texture_asset::Missing;
   // The light's cuts_geometry, carried onto every volume it throws.
   bool          cuts_geometry         = true;
   // The spot draws its beam (spot_beam_plan.md ss5) or is solid as one (solid_beams.hpp): its volumes are kept
@@ -133,13 +144,15 @@ struct shadow_light_t
   bool          keeps_every_volume    = false;
 };
 
-// Where a light's reach ends, as the plane that caps its volumes: a spot's is square to its direction, a
-// point light's to the ray through `center` (the caster's), and a directional light or one with no range
-// has none. Normal points away from the light.
+// Where a light's reach ends, as the plane that caps its volumes: a spot's or a projector's is square to its
+// direction, a point light's to the ray through `center` (the caster's), and a directional light or one with
+// no range has none. Normal points away from the light.
 [[nodiscard]] std::optional<Plane> try_shadow_light_far_cap(const shadow_light_t& light, const linalg::vec3f& center);
 
-// The one fold from the three light types into a shadow light: a switched-on Point, Spot or Directional light
-// whose `cuts_geometry` is set, or a Spot whose `beam` or `solid_beam` is, at `pose`. Empty is "casts no volume".
+// The one fold from the four light types into a shadow light: a switched-on Point, Spot, Projector or
+// Directional light whose `cuts_geometry` or `shadows_are_solid` is set, or a Spot whose `beam` or `solid_beam`
+// is, at `pose`.
+// Empty is "casts no volume". A `shadows_are_solid` light keeps every volume: each is a mover (solid_shadows.hpp).
 [[nodiscard]] std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entity& entity,
                                                                          const path_pose_t&      pose);
 
@@ -154,6 +167,7 @@ enum class shadow_cast_refusal_t : uint8_t
   // A silhouette corner is at the light, or its edge runs through the light: no side plane.
   Light_On_Silhouette,
   Too_Many_Planes,
+  // No corner of the piece is inside the spot's cone or the projector's frame: nothing of it is lit.
   Outside_Spot_Beam,
 };
 
@@ -230,6 +244,8 @@ struct shadow_volume_report_t
   uint32_t cutting_lights           = 0;
   uint32_t receiver_pieces          = 0;
   uint32_t caster_pieces            = 0;
+  // Dark rectangles of projector pictures, cast after the pieces (projector_mask.hpp).
+  uint32_t mask_pieces              = 0;
   uint32_t cast                     = 0;
   uint32_t refused_inside_caster    = 0;
   uint32_t refused_open_silhouette  = 0;
@@ -246,11 +262,13 @@ struct shadow_volume_report_t
 [[nodiscard]] std::string describe_shadow_volume_report(const shadow_volume_report_t& report,
                                                         Span<const shadow_volume_t>   kept);
 
-// Every cuts_geometry light against every caster piece: every static piece in the BVH whose owner is
+// Every shadow light against every caster piece: every static piece in the BVH whose owner is
 // switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
-// every mover but a solid beam (light casts no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
+// every mover but a light's own (a solid beam, a solid shadow: light and dark cast no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
 // read at the same pose. A volume that touches no receiver's bounds is dropped unless its light draws
-// a beam the volume cuts: nothing else would read it, and the scene block holds few. The kept list is
+// a beam the volume cuts: nothing else would read it, and the scene block holds few. After every piece, the
+// dark of each projector's picture casts as pieces on its glass, read from `projector_masks` and computed
+// into it on the first ask (projector_mask.hpp). The kept list is
 // ordered, stably, with the volumes that cut geometry and reach a receiver first: the renderer draws the
 // first MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a platform past that.
 // APPENDS the volume's side polytope as lines (its silhouette pyramid cut by the beam's cone and its far
@@ -260,7 +278,8 @@ void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std
 
 shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
-                                              const mover_rests_t& rests, std::vector<shadow_volume_t>& out);
+                                              const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
+                                              std::vector<shadow_volume_t>& out);
 
 // What the drawn volumes `drawn` (at most 31, in the order the scene block holds them) land on and are
 // stopped by: every switched-on piece a volume touches other than its own caster becomes one occluder per

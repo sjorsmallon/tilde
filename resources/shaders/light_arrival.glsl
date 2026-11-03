@@ -16,6 +16,9 @@
 #define LIGHT_TYPE_POINT       0
 #define LIGHT_TYPE_SPOT        1
 #define LIGHT_TYPE_DIRECTIONAL 2
+// A spot's arrival without the cone factor: the frame is the cutoff, and it falls out of the picture sampler
+// (direct_light.glsl's projector_mask), black outside the frame by the sampler's border.
+#define LIGHT_TYPE_PROJECTOR   3
 
 // THE light struct, and it lives here rather than in scene.glsl because the
 // shader tool's preview held a second copy of it -- identical by inspection and
@@ -38,7 +41,7 @@ struct Light {
     // branch.
     vec4 direction;
     vec4 radiance;          // rgb, already through shared/lighting/lighting.hpp's radiance_of
-    vec4 spot_params;       // x = cos(inner), y = cos(outer), z = range, w = type
+    vec4 spot_params;       // x = cos(inner), y = cos(outer), z = range, w = type (one of LIGHT_TYPE_*)
 };
 
 // lighting_def.md decision B: ONE array, and the surface decides. The -DLIGHTMAP

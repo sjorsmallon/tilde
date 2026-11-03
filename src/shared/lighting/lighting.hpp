@@ -8,6 +8,8 @@
 #include "entities/generated/entities_core_generated.hpp"
 #include "lightmap.hpp"
 #include "linalg.hpp"
+#include "plane.hpp"
+#include "assets/asset_id.hpp"
 #include "collision/mover_path.hpp"
 
 #include <optional>
@@ -41,7 +43,10 @@ enum class light_kind_t : uint8_t
 {
   Point,
   Spot,
-  Directional
+  Directional,
+  // A rectangular frame with hard edges and no cone (projector_plan.md ss2b): a spot's arrival without the
+  // cone factor, cut to the frame by its picture, which its shadow layer's matrix is also the uv of.
+  Projector
 };
 
 // A DIRECTIONAL light has no distance for the reference to be measured at: its
@@ -76,10 +81,17 @@ struct scene_light_t
   entities::Light_Mode mode = entities::Light_Mode::Baked;
   linalg::vec3 position{0.f, 0.f, 0.f};
   linalg::vec3 forward{0.f, -1.f, 0.f}; // basis_from(orientation).forward
+  // basis_from(orientation).up: the top of a projector's frame, which its roll turns. Read for no other kind.
+  linalg::vec3 up{0.f, 1.f, 0.f};
   linalg::vec3 radiance{1.f, 1.f, 1.f};
   float        range     = 0.f;
   float        cos_inner = 1.f;
+  // A spot's cone edge. A projector's is the cosine of half its VERTICAL angle, the frame's top edge from the
+  // axis; its width is `aspect` times its height.
   float        cos_outer = 0.f;
+  float        aspect    = 1.f;
+  // What a projector's frame shows; Missing is a plain white frame. No other kind carries one.
+  assets::texture_asset picture = assets::texture_asset::Missing;
 
   // The emitter's RADIUS: world units for a point or a spot, and for a
   // DIRECTIONAL light the tangent of half its angular diameter, which is the
@@ -131,6 +143,20 @@ inline constexpr float SHADOW_NEAR_PLANE = 1.f;
 // perspective map cannot hold a hemisphere.
 [[nodiscard]] shadow_projection_t spot_shadow_projection(const scene_light_t &light,
                                                          uint32_t             resolution);
+
+// A projector's frustum IS its frame: twice its half angle as the vertical fov, its aspect, its range as the
+// far plane, its `up` as the map's up. The one matrix per projector: the shadow map's and the picture's uv
+// (direct_light.glsl's projector_mask reads the same layer's matrix), so a projector always takes a layer.
+// The half angle is clamped as a spot's is.
+[[nodiscard]] shadow_projection_t projector_shadow_projection(const scene_light_t &light,
+                                                              uint32_t             resolution);
+
+// The frame's four side planes through the apex, normals OUTWARD: a point inside every one is in the
+// picture. Bottom, right, top, left.
+[[nodiscard]] Array<Plane, 4> compute_projector_frame_planes(const scene_light_t &light);
+
+// The frame's corners `distance` along the axis: bottom-left, bottom-right, top-right, top-left.
+[[nodiscard]] Array<linalg::vec3, 4> compute_projector_frame_corners(const scene_light_t &light, float distance);
 
 // --- Cascades, the directional light's shadow map (gate 9 step 2) ---
 //
@@ -254,7 +280,7 @@ struct point_shadow_faces_t
                                                       const shadow_view_t &view,
                                                       uint32_t             resolution);
 
-// The ONE fold from the three authoring light types; empty means "not a light".
+// The ONE fold from the four authoring light types; empty means "not a light".
 // It does NOT filter by mode -- see scene_light_t::mode -- and it does NOT
 // filter by the switch either, because the editor's inspector wants to describe
 // a light that is currently off rather than say nothing about it. `pose` is

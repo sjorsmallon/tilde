@@ -59,7 +59,8 @@ struct predicted_world_t
   // carry is NOT in player_move -- see push_player_by_movers. A landed
   // Platform_Entity and Shrinking_Platform_Entity are in here too, as movers whose two poses are equal,
   // and so is a growing Extending_Platform_Entity, an oriented box whose length is a clock, and a
-  // spot's solid beam, carved by the shadow volumes below and so appended after them. A switched-on
+  // spot's solid beam, carved by the shadow volumes below and so appended after them, and a
+  // shadows_are_solid light's volumes themselves (solid_shadows.hpp): dark is solid. A switched-on
   // lens's pane is one as well (lens_panes.hpp): glass is glass.
   Span<const mover_t> movers;
 
@@ -139,12 +140,14 @@ void compute_disabled_geometry_per_team(const game_session_t& session, predicted
 void compute_movers_at_tick(const game_session_t& session, const predicted_world_settings_t& settings,
                             predicted_world_storage_t& out);
 // The whole per-tick cut, in the one order: the solid beams are carved by the shadow volumes, which the movers
-// throw. The disabled set is not in it: it depends on switches alone, so a client takes it once per frame.
+// throw, and the solid shadows are those volumes. The disabled set is not in it: it depends on switches alone,
+// so a client takes it once per frame.
 // `sights` are the players as the cones and watchers see them; a client overwrites its own row before calling.
 shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& session,
                                                        const predicted_world_settings_t& settings,
                                                        Span<const player_sight_t> sights,
                                                        solid_beam_cache_t& solid_beam_cache,
+                                                       projector_mask_cache_t& projector_mask_cache,
                                                        predicted_world_storage_t& out);
 
 } // namespace shared

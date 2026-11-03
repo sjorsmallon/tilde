@@ -843,7 +843,8 @@ int main()
       game_session_t          shadow_session = build_session(shadow_map);
       predicted_world_storage_t storage;
       return compute_shadow_volumes(shadow_session.entity_system, shadow_session.bvh, shadow_session.owner_of,
-                                    storage.movers, shadow_session.mover_rests, storage.shadow_volumes);
+                                    storage.movers, shadow_session.mover_rests, shadow_session.projector_mask_cache,
+                                    storage.shadow_volumes);
     };
 
     const shadow_volume_report_t crate =
@@ -897,7 +898,8 @@ int main()
       predicted_world_storage_t storage;
       const shadow_volume_report_t report =
           compute_shadow_volumes(ordered_session.entity_system, ordered_session.bvh, ordered_session.owner_of,
-                                 storage.movers, ordered_session.mover_rests, storage.shadow_volumes);
+                                 storage.movers, ordered_session.mover_rests, ordered_session.projector_mask_cache,
+                                 storage.shadow_volumes);
       bool     ordered          = report.kept >= 2 && storage.shadow_volumes[0].light == cutting &&
                      storage.shadow_volumes[0].cuts_geometry && storage.shadow_volumes[0].reaches_receiver;
       uint32_t reaching_first   = 0;

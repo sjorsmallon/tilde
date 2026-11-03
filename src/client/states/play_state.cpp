@@ -1018,7 +1018,8 @@ static void compute_predicted_world_for_input(
       }
 
   ctx.visuals.drawn_shadow_volume_report = shared::compute_predicted_world_at_tick(
-      session, settings, sights, ctx.world.session.solid_beam_cache, frame.predicted_world_storage);
+      session, settings, sights, ctx.world.session.solid_beam_cache, ctx.world.session.projector_mask_cache,
+      frame.predicted_world_storage);
   frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
 }
 

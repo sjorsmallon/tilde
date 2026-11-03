@@ -5,6 +5,7 @@
 #include "entity_system.hpp"
 #include "map.hpp"
 #include "collision/movers.hpp"
+#include "lighting/projector_mask.hpp"
 #include "lighting/solid_beams.hpp"
 #include "movement/navmesh.hpp"
 #include <string>
@@ -72,6 +73,10 @@ struct game_session_t
   // Each solid beam's last carve with what it was carved from, so a tick that changes nothing in a beam
   // reuses it (solid_beams.hpp).
   solid_beam_cache_t solid_beam_cache;
+
+  // The dark of each projector picture as rectangles, computed from the texture on the first tick that asks
+  // (projector_mask.hpp).
+  projector_mask_cache_t projector_mask_cache;
 
   // The map's material table, copied for the same reason the geometry is: a
   // brush face holds an INDEX into it, so the two have to travel together or the

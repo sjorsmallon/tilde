@@ -89,7 +89,8 @@ bool Tick()
                                  .tickrate_hz = context.cvars->sv_tickrate,
                                  .gravity     = context.cvars->g_gravity,
                                  .reveal_cone = shared::reveal_cone_settings_from_cvars(*context.cvars)},
-                                sights, context.world.session.solid_beam_cache, predicted_world_storage);
+                                sights, context.world.session.solid_beam_cache,
+                                context.world.session.projector_mask_cache, predicted_world_storage);
   }
   const shared::predicted_world_storage_t& world = predicted_world_storage;
 

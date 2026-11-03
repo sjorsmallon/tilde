@@ -26,7 +26,11 @@
 #include "collision/lens_panes.hpp"
 #include "collision/statues.hpp"
 #include "lighting/reveal_light.hpp"
+#include "lighting/projector_mask.hpp"
 #include "lighting/solid_beams.hpp"
+#include "lighting/solid_shadows.hpp"
+#include "map/map_geometry.hpp"
+#include "map/mesh/mesh.hpp"
 #include "collision/spawned_platforms.hpp"
 
 #include <cmath>
@@ -117,6 +121,38 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   for (entities::Lens_Entity& lens : system.entities_of_type<entities::Lens_Entity>())
     lens.switch_state.value = true;
 
+  // A point or directional light answers while its shadows are solid and something casts into it: one crate
+  // below the origin every light is at. The spot is answered for by its beam.
+  for (entities::Point_Light_Entity& point : system.entities_of_type<entities::Point_Light_Entity>())
+  {
+    point.switch_state.value     = true;
+    point.light.shadows_are_solid = true;
+  }
+  for (entities::Directional_Light_Entity& sun : system.entities_of_type<entities::Directional_Light_Entity>())
+  {
+    sun.orientation             = linalg::from_axis_angle({1.f, 0.f, 0.f}, -90.f);
+    sun.light.shadows_are_solid = true;
+  }
+  for (entities::Projector_Entity& projector : system.entities_of_type<entities::Projector_Entity>())
+  {
+    projector.switch_state.value     = true;
+    projector.orientation             = linalg::from_view_angles(0.f, -90.f);
+    projector.light.shadows_are_solid = true;
+  }
+  std::vector<BVH_Input> crate_inputs;
+  for (const shared::collision_piece_t& piece :
+       shared::get_collision_pieces(shared::make_box_mesh({0.f, -200.f, 0.f}, {32.f, 32.f, 32.f}), 1))
+  {
+    BVH_Input input;
+    input.aabb             = piece.bounds;
+    input.id               = {Collision_Id::Type::Static_Geometry, 0};
+    input.collision_planes = piece.planes;
+    input.face_polygons    = piece.face_polygons;
+    crate_inputs.push_back(std::move(input));
+  }
+  const Bounding_Volume_Hierarchy          crate_bvh      = build_bvh(crate_inputs);
+  const std::vector<shared::entity_uid_t>  crate_owner_of = {shared::null_entity_uid};
+
   // A player answers only while frozen.
   for (entities::Player_Entity& player : system.entities_of_type<entities::Player_Entity>())
     player.movement.active_override = entities::Movement_Override::Stasis;
@@ -149,6 +185,10 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   shared::compute_statue_movers(system, movers);
   shared::compute_lens_panes(system, movers);
   shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
+  std::vector<shared::shadow_volume_t> shadow_volumes;
+  shared::projector_mask_cache_t       projector_masks;
+  shared::compute_shadow_volumes(system, crate_bvh, crate_owner_of, movers, {}, projector_masks, shadow_volumes);
+  shared::compute_solid_shadows(system, shadow_volumes, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {
@@ -214,6 +254,12 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
         "a frozen player is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Spot_Light_Entity) > 0,
         "a solid beam spot is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Point_Light_Entity) > 0,
+        "a point light whose shadows are solid is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Directional_Light_Entity) > 0,
+        "a directional light whose shadows are solid is a mover");
+  check(types_that_produced_a_mover.count(entities::entity_type::Projector_Entity) > 0,
+        "a projector whose shadows are solid is a mover");
   check(types_that_produced_a_mover.count(entities::entity_type::Lens_Entity) > 0,
         "a switched-on lens's pane is a mover");
 

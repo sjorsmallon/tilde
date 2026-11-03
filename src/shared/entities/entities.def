@@ -169,6 +169,8 @@ Light :: component {
     casts_shadows: bool = true      @Editable
     // Its shadow is a volume collision reads (shared/shadow_volume.hpp): every casts_shadow_volume piece throws one.
     cuts_geometry: bool = false     @Networked @Editable
+    // Every volume it throws is a mover (shared/lighting/solid_shadows.hpp): dark is solid, and a hull stands on a crate's shadow.
+    shadows_are_solid: bool = false @Networked @Editable
 }
 
 // Every float in here is EXACT on the wire: the replay adopts this component with no tolerance.
@@ -600,7 +602,8 @@ Sound_Emitter_Entity :: entity is Switchable, Playable {
     range:        f32 = 1024.0         @Editable
 }
 
-Point_Light_Entity :: entity is Colorable, Switchable {
+// @predicted because a shadows_are_solid light's volumes are movers (shared/lighting/solid_shadows.hpp).
+Point_Light_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:      Enabled
     light: Light
     rides: Rides
@@ -615,7 +618,7 @@ Point_Light_Entity :: entity is Colorable, Switchable {
     range: f32 = 256.0                  @Editable
 }
 
-// @predicted because a solid_beam spot is a mover (shared/solid_beams.hpp): the cut is a function of replicated state.
+// @predicted because a solid_beam spot is a mover (shared/solid_beams.hpp) and so are a shadows_are_solid light's volumes: the cut is a function of replicated state.
 Spot_Light_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:      Enabled
     light:         Light
@@ -637,8 +640,9 @@ Spot_Light_Entity :: entity @predicted is Colorable, Switchable {
 
 // No range and no position falloff -- a directional light is a direction and a
 // colour. It still has a `position`, inherited from the base, and the editor
-// draws its gizmo there; nothing shading reads it.
-Directional_Light_Entity :: entity {
+// draws its gizmo there; nothing shading reads it. @predicted because a shadows_are_solid light's volumes are
+// movers (shared/lighting/solid_shadows.hpp).
+Directional_Light_Entity :: entity @predicted {
     light: Light
     // The FULL angle the disc of the emitter subtends, in degrees -- the sun is
     // 0.53 in reality, and an overcast sky is effectively the whole hemisphere.
@@ -856,4 +860,19 @@ Lens_Entity :: entity @predicted is Switchable {
     filter:       Lens_Filter = .Red                @Editable
     // Drawn at the volume and in the filter's colour, never at render.scale or material.color.
     render:       Render = { mesh = .Box, material = .ghost }
+}
+// The rectangular light a picture needs (projector_plan.md ss2b): a frame of `aspect` by `half_angle_degrees`,
+// rolled by its orientation, with hard edges and no cone, falloff or beam. Its shadow map IS the picture's
+// uv, so it always takes a shadow layer. Dynamic only: the mask changes, so the bake never sees it. @predicted
+// because a shadows_are_solid light's volumes are movers (shared/lighting/solid_shadows.hpp).
+Projector_Entity :: entity @predicted is Colorable, Switchable {
+    switch_state:       Enabled
+    light:              Light = { mode = .Dynamic }
+    rides:              Rides
+    range:              f32 = 512.0    @Editable
+    // Half the VERTICAL angle of the frame, from the axis; the width is aspect times the height.
+    half_angle_degrees: f32 = 20.0     @Editable
+    aspect:             f32 = 1.7778   @Editable
+    // What the frame shows. Missing is no picture: a plain white frame.
+    texture:            texture_asset = .Missing @Editable
 }

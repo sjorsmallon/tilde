@@ -3,6 +3,7 @@
 #include "canopy.hpp"
 #include "map/game_session.hpp"
 #include "lighting/solid_beams.hpp"
+#include "lighting/solid_shadows.hpp"
 #include "spawned_platforms.hpp"
 #include "lens_panes.hpp"
 #include "statues.hpp"
@@ -36,6 +37,7 @@ shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& ses
                                                        const predicted_world_settings_t& settings,
                                                        Span<const player_sight_t> sights,
                                                        solid_beam_cache_t& solid_beam_cache,
+                                                       projector_mask_cache_t& projector_mask_cache,
                                                        predicted_world_storage_t& out)
 {
   compute_movement_volumes_at_tick(session.entity_system,
@@ -50,9 +52,11 @@ shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& ses
   compute_lenses(session.entity_system, out.lenses);
   compute_lens_watchers(sights, out.lens_watchers);
   const shadow_volume_report_t report = compute_shadow_volumes(
-      session.entity_system, session.bvh, session.owner_of, out.movers, session.mover_rests, out.shadow_volumes);
+      session.entity_system, session.bvh, session.owner_of, out.movers, session.mover_rests, projector_mask_cache,
+      out.shadow_volumes);
   compute_solid_beams(session.entity_system, session.mover_rests, out.shadow_volumes, settings.beams_carved,
                       solid_beam_cache, out.movers);
+  compute_solid_shadows(session.entity_system, out.shadow_volumes, out.movers);
   return report;
 }
 

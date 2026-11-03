@@ -5,10 +5,12 @@
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/projector_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entity_system.hpp"
 #include "lighting.hpp"
 #include "log.hpp"
+#include "projector_mask.hpp"
 #include "reveal_light.hpp"
 
 #include <algorithm>
@@ -23,13 +25,18 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
 {
   if (const entities::Point_Light_Entity* point = entities::entity_as<entities::Point_Light_Entity>(&entity))
   {
-    if (!point->light.cuts_geometry || !light_is_switched_on(entity))
+    if ((!point->light.cuts_geometry && !point->light.shadows_are_solid) || !light_is_switched_on(entity))
       return std::nullopt;
-    return shadow_light_t{.uid = point->entity_id, .apex = pose.position, .range = point->range};
+    return shadow_light_t{.uid                = point->entity_id,
+                          .apex               = pose.position,
+                          .range              = point->range,
+                          .cuts_geometry      = point->light.cuts_geometry,
+                          .keeps_every_volume = point->light.shadows_are_solid};
   }
   if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity))
   {
-    if ((!spot->light.cuts_geometry && !spot->beam && !spot->solid_beam) || !light_is_switched_on(entity))
+    if ((!spot->light.cuts_geometry && !spot->light.shadows_are_solid && !spot->beam && !spot->solid_beam) ||
+        !light_is_switched_on(entity))
       return std::nullopt;
     return shadow_light_t{.uid                   = spot->entity_id,
                           .apex                  = pose.position,
@@ -37,31 +44,77 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                           .range                 = spot->range,
                           .cosine_of_outer_angle = std::cos(linalg::to_radians(spot->outer_degrees)),
                           .cuts_geometry         = spot->light.cuts_geometry,
-                          .keeps_every_volume    = spot->beam || spot->solid_beam};
+                          .keeps_every_volume    = spot->beam || spot->solid_beam || spot->light.shadows_are_solid};
+  }
+  if (const entities::Projector_Entity* projector = entities::entity_as<entities::Projector_Entity>(&entity))
+  {
+    if ((!projector->light.cuts_geometry && !projector->light.shadows_are_solid) || !light_is_switched_on(entity))
+      return std::nullopt;
+    const std::optional<scene_light_t> scene_light = try_convert_light_entity_to_scene_light(entity, pose);
+    shadow_light_t light{.uid                            = projector->entity_id,
+                         .apex                           = pose.position,
+                         .direction                      = linalg::normalize(scene_light->forward),
+                         .range                          = projector->range,
+                         .frame_planes                   = compute_projector_frame_planes(*scene_light),
+                         .frame_plane_count              = 4,
+                         .frame_corners_at_unit_distance = compute_projector_frame_corners(*scene_light, 1.f),
+                         .picture                        = projector->texture,
+                         .cuts_geometry                  = projector->light.cuts_geometry,
+                         .keeps_every_volume             = projector->light.shadows_are_solid};
+    return light;
   }
   if (const entities::Directional_Light_Entity* directional =
           entities::entity_as<entities::Directional_Light_Entity>(&entity))
   {
-    if (!directional->light.cuts_geometry || !light_is_switched_on(entity))
+    if ((!directional->light.cuts_geometry && !directional->light.shadows_are_solid) || !light_is_switched_on(entity))
       return std::nullopt;
-    return shadow_light_t{.uid         = directional->entity_id,
-                          .directional = true,
-                          .direction   = linalg::normalize(linalg::basis_from(pose.orientation).forward)};
+    return shadow_light_t{.uid                = directional->entity_id,
+                          .directional        = true,
+                          .direction          = linalg::normalize(linalg::basis_from(pose.orientation).forward),
+                          .cuts_geometry      = directional->light.cuts_geometry,
+                          .keeps_every_volume = directional->light.shadows_are_solid};
   }
   return std::nullopt;
+}
+
+// A spot or a projector: its reach is measured along `direction`, and its sides cut what it throws.
+static bool shadow_light_is_directed(const shadow_light_t& light)
+{
+  return light.cosine_of_outer_angle > -1.f || light.frame_plane_count > 0;
 }
 
 std::optional<Plane> try_shadow_light_far_cap(const shadow_light_t& light, const linalg::vec3f& center)
 {
   if (light.directional || light.range <= 0.f)
     return std::nullopt;
-  const bool          spot = light.cosine_of_outer_angle > -1.f;
-  const linalg::vec3f axis = linalg::normalize(spot ? light.direction : center - light.apex);
+  const linalg::vec3f axis =
+      linalg::normalize(shadow_light_is_directed(light) ? light.direction : center - light.apex);
   return Plane{.point = light.apex + axis * light.range, .normal = axis};
 }
 
 namespace
 {
+
+// Within the frame's reach and not wholly outside any of its planes: reveal_cone_touches_box for a frame.
+bool projector_frame_touches_box(const shadow_light_t& light, const aabb_bounds_t& box)
+{
+  const linalg::vec3f nearest = {std::clamp(light.apex.x, box.min.x, box.max.x),
+                                 std::clamp(light.apex.y, box.min.y, box.max.y),
+                                 std::clamp(light.apex.z, box.min.z, box.max.z)};
+  if (light.range > 0.f && linalg::length(nearest - light.apex) > light.range)
+    return false;
+  const linalg::vec3f center       = get_aabb_center(box);
+  const linalg::vec3f half_extents = (box.max - box.min) * 0.5f;
+  for (uint32_t index = 0; index < light.frame_plane_count; ++index)
+  {
+    const Plane& side  = light.frame_planes[index];
+    const float  reach = half_extents.x * std::fabs(side.normal.x) + half_extents.y * std::fabs(side.normal.y) +
+                        half_extents.z * std::fabs(side.normal.z);
+    if (linalg::dot(center - side.point, side.normal) > reach)
+      return false;
+  }
+  return true;
+}
 
 Plane plane_outward_from(const linalg::vec3f& point, linalg::vec3f normal, const linalg::vec3f& inside)
 {
@@ -108,7 +161,9 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
     }
   if (corner_count < 3)
     return refused(shadow_cast_refusal_t::Silhouette_Open);
+  // The sides that cut the pyramid: a spot's cone or a projector's frame.
   std::optional<reveal_cone_planes_t> beam;
+  Span<const Plane>                   clip_sides;
   if (light.cosine_of_outer_angle > -1.f)
   {
     beam = planes_of_reveal_cone({.apex                 = light.apex,
@@ -117,6 +172,13 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
                                   .cosine_of_half_angle = light.cosine_of_outer_angle});
     if (!reveal_cone_touches_box(*beam, piece_bounds))
       return refused(shadow_cast_refusal_t::Outside_Spot_Beam);
+    clip_sides = beam->sides;
+  }
+  else if (light.frame_plane_count > 0)
+  {
+    if (!projector_frame_touches_box(light, piece_bounds))
+      return refused(shadow_cast_refusal_t::Outside_Spot_Beam);
+    clip_sides = Span<const Plane>(light.frame_planes.data, light.frame_plane_count);
   }
   center = center * (1.f / static_cast<float>(corner_count));
 
@@ -210,13 +272,12 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
     volume.has_far_cap                            = true;
   }
 
-  // The beam clips the pyramid, last: these planes are the beam's own surface, and the beam pass leaves them
-  // out of its margins (a chord ending on the beam's surface is not at a shadow's edge). Both pass through
-  // the apex, so a cone plane every silhouette corner is inside of has every ray inside of it too and is
-  // left out; one some corner is outside of is a side.
-  if (beam)
+  // The beam or the frame clips the pyramid, last: these planes are the beam's own surface, and the beam pass
+  // leaves them out of its margins (a chord ending on the beam's surface is not at a shadow's edge). Both pass
+  // through the apex, so a cone plane every silhouette corner is inside of has every ray inside of it too and
+  // is left out; one some corner is outside of is a side.
   {
-    for (const Plane& cone_side : beam->sides)
+    for (const Plane& cone_side : clip_sides)
     {
       bool cuts = false;
       for (const silhouette_edge_t& edge : edges)
@@ -363,8 +424,7 @@ std::optional<shadow_occluder_t> try_cast_shadow_occluder(const shadow_light_t& 
 
   std::vector<Plane>                     cut_planes;
   std::vector<std::vector<linalg::vec3>> cut_polygons;
-  const bool                             spot = light.cosine_of_outer_angle > -1.f;
-  if (spot && light.range > 0.f)
+  if (shadow_light_is_directed(light) && light.range > 0.f)
   {
     linalg::vec3f center{0.f, 0.f, 0.f};
     float         radius       = 0.f;
@@ -623,16 +683,17 @@ bool geometry_owner_receives_shadow(const entities::Geometry_Owner_Entity& owner
 std::string describe_shadow_volume_report(const shadow_volume_report_t& report, Span<const shadow_volume_t> kept)
 {
   std::string text = std::format(
-      "shadow volumes: {} switched-on lights cut geometry, {} receiver pieces, {} caster pieces; {} cast, {} kept "
+      "shadow volumes: {} switched-on lights cut geometry, {} receiver pieces, {} caster pieces, {} picture mask "
+      "pieces; {} cast, {} kept "
       "({} refused: light inside the caster, {} refused: open silhouette, {} refused: light on the silhouette, "
       "{} refused: more than {} silhouette edges or {} faces toward the light, "
       "{} refused: outside the spot's beam, {} dropped: reaching no receiver)",
-      report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast, report.kept,
+      report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.mask_pieces, report.cast, report.kept,
       report.refused_inside_caster, report.refused_open_silhouette, report.refused_on_silhouette,
       report.refused_too_many_planes, MAX_SHADOW_VOLUME_SIDES,
       MAX_SHADOW_VOLUME_FRONT_PLANES, report.refused_outside_beam, report.culled_reaching_nothing);
   if (report.cutting_lights == 0)
-    text += "\n  no light has cuts_geometry set while switched on: nothing casts";
+    text += "\n  no switched-on light has cuts_geometry or shadows_are_solid set, or a beam: nothing casts";
   if (report.receiver_pieces == 0)
     text += "\n  no switched-on Geometry_Owner_Entity with solid_only_in_shadow or erased_in_shadow owns geometry: nothing receives";
   for (const shadow_volume_t& volume : kept)
@@ -667,7 +728,7 @@ const char* describe_shadow_cast_refusal(shadow_cast_refusal_t refusal)
     case shadow_cast_refusal_t::Silhouette_Open: return "open silhouette (face polygons do not meet at their corners)";
     case shadow_cast_refusal_t::Light_On_Silhouette: return "light on the silhouette";
     case shadow_cast_refusal_t::Too_Many_Planes: return "too many planes";
-    case shadow_cast_refusal_t::Outside_Spot_Beam: return "outside the spot's beam";
+    case shadow_cast_refusal_t::Outside_Spot_Beam: return "outside the spot's beam or the projector's frame";
   }
   return "cast";
 }
@@ -692,6 +753,7 @@ std::vector<shadow_light_t> gather_shadow_lights(const Entity_System& system, Sp
   };
   gather.template operator()<entities::Point_Light_Entity>();
   gather.template operator()<entities::Spot_Light_Entity>();
+  gather.template operator()<entities::Projector_Entity>();
   gather.template operator()<entities::Directional_Light_Entity>();
   return lights;
 }
@@ -744,8 +806,8 @@ struct visited_piece_t
 
 // Every piece in the one order both collects agree on, keyed by its place in it: the static pieces
 // in the BVH's order, then every mover's pieces. A mover's pieces cast and occlude; none receives. An
-// erased receiver casts from behind itself. A solid beam is a mover and is light: it casts no shadow and
-// stops none, whichever collect it is in by.
+// erased receiver casts from behind itself. A mover that is a light's (a solid beam, a solid shadow) is light
+// or dark: it casts no shadow and stops none, whichever collect it is in by.
 template <typename Visit_T>
 void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                            Span<const entity_uid_t> owner_of, Span<const piece_role_t> role_of,
@@ -765,7 +827,7 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
   }
   for (const mover_t& mover : movers)
   {
-    if (entities::entity_as<entities::Spot_Light_Entity>(system.try_find(mover.uid)) != nullptr)
+    if (entities::get_component<entities::Light>(system.try_find(mover.uid)) != nullptr)
       continue;
     for (const collision_piece_t& piece : mover.pieces)
       visit(visited_piece_t{.key      = key++,
@@ -781,7 +843,8 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
 
 shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
-                                              const mover_rests_t& rests, std::vector<shadow_volume_t>& out)
+                                              const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
+                                              std::vector<shadow_volume_t>& out)
 {
   out.clear();
   shadow_volume_report_t report;
@@ -816,62 +879,89 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
 
   std::vector<shadow_volume_t> behind;
 
+  const auto cast_piece_into = [&](const shadow_light_t& light, const visited_piece_t& piece)
+  {
+    shadow_cast_t cast;
+    behind.clear();
+    if (piece.role == piece_role_t::Erased)
+      cast.refusal = cast_shadow_volumes_behind_caster(light, piece.planes, piece.polygons, piece.owner, behind);
+    else
+    {
+      cast = cast_shadow_volume(light, piece.planes, piece.polygons, piece.owner);
+      if (cast.refusal == shadow_cast_refusal_t::None)
+        behind.push_back(cast.volume);
+    }
+    switch (cast.refusal)
+    {
+      case shadow_cast_refusal_t::None: break;
+      case shadow_cast_refusal_t::Light_Inside_Caster: ++report.refused_inside_caster; break;
+      case shadow_cast_refusal_t::Silhouette_Open: ++report.refused_open_silhouette; break;
+      case shadow_cast_refusal_t::Light_On_Silhouette: ++report.refused_on_silhouette; break;
+      case shadow_cast_refusal_t::Too_Many_Planes: ++report.refused_too_many_planes; break;
+      case shadow_cast_refusal_t::Outside_Spot_Beam: ++report.refused_outside_beam; break;
+    }
+    if (cast.refusal != shadow_cast_refusal_t::None)
+    {
+      if (cast.refusal != shadow_cast_refusal_t::Outside_Spot_Beam)
+        report.refused.push_back({.piece  = piece.key,
+                                  .light  = light.uid,
+                                  .center = get_aabb_center(piece.bounds),
+                                  .reason = cast.refusal});
+      return;
+    }
+    for (shadow_volume_t& volume : behind)
+    {
+      ++report.cast;
+      volume.caster_piece = piece.key;
+      bool reaches_a_receiver = false;
+      for (const receiver_t& receiver : receivers)
+        if (receiver.key != piece.key && shadow_volume_touches_box(volume, receiver.bounds))
+        {
+          reaches_a_receiver = true;
+          break;
+        }
+      if (!reaches_a_receiver && !light.keeps_every_volume)
+      {
+        ++report.culled_reaching_nothing;
+        continue;
+      }
+      volume.reaches_receiver = reaches_a_receiver;
+      out.push_back(volume);
+    }
+  };
+
+  uint32_t next_key = 0;
   for_each_shadow_piece(system, bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
   {
+    next_key = piece.key + 1;
     if (piece.role != piece_role_t::Casts && piece.role != piece_role_t::Erased)
       return;
     ++report.caster_pieces;
     for (const shadow_light_t& light : lights)
-    {
-      shadow_cast_t cast;
-      behind.clear();
-      if (piece.role == piece_role_t::Erased)
-        cast.refusal = cast_shadow_volumes_behind_caster(light, piece.planes, piece.polygons, piece.owner, behind);
-      else
-      {
-        cast = cast_shadow_volume(light, piece.planes, piece.polygons, piece.owner);
-        if (cast.refusal == shadow_cast_refusal_t::None)
-          behind.push_back(cast.volume);
-      }
-      switch (cast.refusal)
-      {
-        case shadow_cast_refusal_t::None: break;
-        case shadow_cast_refusal_t::Light_Inside_Caster: ++report.refused_inside_caster; break;
-        case shadow_cast_refusal_t::Silhouette_Open: ++report.refused_open_silhouette; break;
-        case shadow_cast_refusal_t::Light_On_Silhouette: ++report.refused_on_silhouette; break;
-        case shadow_cast_refusal_t::Too_Many_Planes: ++report.refused_too_many_planes; break;
-        case shadow_cast_refusal_t::Outside_Spot_Beam: ++report.refused_outside_beam; break;
-      }
-      if (cast.refusal != shadow_cast_refusal_t::None)
-      {
-        if (cast.refusal != shadow_cast_refusal_t::Outside_Spot_Beam)
-          report.refused.push_back({.piece  = piece.key,
-                                    .light  = light.uid,
-                                    .center = get_aabb_center(piece.bounds),
-                                    .reason = cast.refusal});
-        continue;
-      }
-      for (shadow_volume_t& volume : behind)
-      {
-        ++report.cast;
-        volume.caster_piece = piece.key;
-        bool reaches_a_receiver = false;
-        for (const receiver_t& receiver : receivers)
-          if (receiver.key != piece.key && shadow_volume_touches_box(volume, receiver.bounds))
-          {
-            reaches_a_receiver = true;
-            break;
-          }
-        if (!reaches_a_receiver && !light.keeps_every_volume)
-        {
-          ++report.culled_reaching_nothing;
-          continue;
-        }
-        volume.reaches_receiver = reaches_a_receiver;
-        out.push_back(volume);
-      }
-    }
+      cast_piece_into(light, piece);
   });
+
+  // The dark of each projector's picture, as pieces on its glass, cast into that projector alone: a piece on
+  // one lens stands in no other light's way.
+  for (const shadow_light_t& light : lights)
+  {
+    if (light.picture == assets::texture_asset::Missing)
+      continue;
+    const projector_mask_t& mask = find_or_compute_projector_mask(projector_masks, light.picture);
+    for (const projector_mask_rectangle_t& rectangle : mask.rectangles)
+    {
+      const std::optional<collision_piece_t> piece = try_build_projector_mask_piece(light, rectangle);
+      if (!piece)
+        continue;
+      ++report.mask_pieces;
+      cast_piece_into(light, visited_piece_t{.key      = next_key++,
+                                             .role     = piece_role_t::Casts,
+                                             .owner    = light.uid,
+                                             .bounds   = piece->bounds,
+                                             .planes   = piece->planes,
+                                             .polygons = piece->face_polygons});
+    }
+  }
 
   // The volumes that change the floor first; the rest dealt round-robin by light, each light's nearest
   // caster first, so the renderer's slots hold a few casters of every beam before many of one.

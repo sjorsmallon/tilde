@@ -48,3 +48,4 @@
 #include "entities/reveal_light_entity_generated.hpp"
 #include "entities/fog_volume_entity_generated.hpp"
 #include "entities/lens_entity_generated.hpp"
+#include "entities/projector_entity_generated.hpp"

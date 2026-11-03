@@ -4,6 +4,7 @@
 #include "entities/generated/entities/jump_pad_entity_generated.hpp"
 #include "entities/generated/entities/lens_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/projector_entity_generated.hpp"
 #include "entities/generated/entities/reveal_light_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
@@ -11,6 +12,7 @@
 #include "../../shared/assets/asset.hpp"
 #include "../../shared/map/editor_grid.hpp"
 #include "../../shared/lighting/lens.hpp"
+#include "../../shared/lighting/lighting.hpp"
 #include "../../shared/map/map.hpp"
 #include "../../shared/shapes.hpp"
 #include "render_assets.hpp"
@@ -206,6 +208,34 @@ void draw_spot_light_reach(draw_lists_t& draws, const entities::Spot_Light_Entit
   }
 
   draws.debug.line(position, cone_end, dim);
+}
+
+void draw_projector_shape(draw_lists_t& draws, const entities::Projector_Entity* projector,
+                          const linalg::vec3& position, color_t color)
+{
+  draw_source_sphere(draws, projector->light, position, color);
+  draw_light_direction_stub(draws, projector->orientation, position, color);
+}
+
+// The spot's cone drawing with four edges: the frame at the range, and an edge from the lens to each corner.
+void draw_projector_reach(draw_lists_t& draws, const entities::Projector_Entity* projector,
+                          const linalg::vec3& position, color_t color)
+{
+  if (projector->range <= 0.f)
+    return;
+  const std::optional<shared::scene_light_t> light = shared::try_convert_light_entity_to_scene_light(
+      *projector, shared::path_pose_t{.position = position, .orientation = projector->orientation});
+  if (!light)
+    return;
+
+  const color_t                dim     = with_alpha(color, LIGHT_VOLUME_ALPHA);
+  const Array<linalg::vec3, 4> corners = shared::compute_projector_frame_corners(*light, projector->range);
+  for (uint32_t edge = 0; edge < 4; ++edge)
+  {
+    draws.debug.line(position, corners[edge], dim);
+    draws.debug.line(corners[edge], corners[(edge + 1) % 4], dim);
+  }
+  draws.debug.line(position, position + linalg::normalize(light->forward) * projector->range, dim);
 }
 
 void draw_reveal_light_reach(draw_lists_t& draws, const entities::Reveal_Light_Entity* light,
@@ -463,6 +493,18 @@ void directional_light_reach(const entities::Entity* e, draw_lists_t& draws,
       draws, static_cast<const entities::Directional_Light_Entity*>(e), position, color);
 }
 
+void projector_diagram(const entities::Entity* e, draw_lists_t& draws, const linalg::vec3& position,
+                       color_t color, const entity_draw_settings_t&)
+{
+  draw_projector_shape(draws, static_cast<const entities::Projector_Entity*>(e), position, color);
+}
+
+void projector_reach(const entities::Entity* e, draw_lists_t& draws, const linalg::vec3& position,
+                     color_t color, const entity_draw_settings_t&)
+{
+  draw_projector_reach(draws, static_cast<const entities::Projector_Entity*>(e), position, color);
+}
+
 // ---- the table ----------------------------------------------------------
 //
 // A row carries only what is constant for the TYPE. Anything read off the
@@ -560,6 +602,12 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type = entity_type::Fog_Volume_Entity, .color = colors::white, .draw_diagram = &box_volume_diagram},
     {.type = entity_type::Lens_Entity, .color = colors::yellow, .draw_diagram = &lens_diagram},
+
+    {.type         = entity_type::Projector_Entity,
+     .color        = colors::yellow,
+     .icon         = "spot_light",
+     .draw_diagram = &projector_diagram,
+     .draw_reach   = &projector_reach},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

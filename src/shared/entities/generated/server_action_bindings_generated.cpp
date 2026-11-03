@@ -101,6 +101,12 @@ void shim_lens_entity_enable(Entity& entity, const action_data_t& data, input_co
   enable(self, self.switch_state, data.as_enable(), context);
 }
 
+void shim_projector_entity_enable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Projector_Entity& self = *entity_as<Projector_Entity>(&entity);
+  enable(self, self.switch_state, data.as_enable(), context);
+}
+
 void shim_sound_emitter_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -182,6 +188,12 @@ void shim_fog_volume_entity_disable(Entity& entity, const action_data_t& data, i
 void shim_lens_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Lens_Entity& self = *entity_as<Lens_Entity>(&entity);
+  disable(self, self.switch_state, data.as_disable(), context);
+}
+
+void shim_projector_entity_disable(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Projector_Entity& self = *entity_as<Projector_Entity>(&entity);
   disable(self, self.switch_state, data.as_disable(), context);
 }
 
@@ -269,6 +281,12 @@ void shim_lens_entity_toggle_enabled(Entity& entity, const action_data_t& data, 
   toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
 }
 
+void shim_projector_entity_toggle_enabled(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Projector_Entity& self = *entity_as<Projector_Entity>(&entity);
+  toggle_enabled(self, self.switch_state, data.as_toggle_enabled(), context);
+}
+
 void shim_sound_emitter_entity_play(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Sound_Emitter_Entity& self = *entity_as<Sound_Emitter_Entity>(&entity);
@@ -290,6 +308,12 @@ void shim_point_light_entity_set_color(Entity& entity, const action_data_t& data
 void shim_spot_light_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Spot_Light_Entity& self = *entity_as<Spot_Light_Entity>(&entity);
+  set_color(self, data.as_set_color(), context);
+}
+
+void shim_projector_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Projector_Entity& self = *entity_as<Projector_Entity>(&entity);
   set_color(self, data.as_set_color(), context);
 }
 
@@ -1062,6 +1086,38 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Add
+    nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
+    nullptr,   // Reverse
+    nullptr,   // Go_To
+    nullptr,   // Fire
+  },
+  {   // Projector_Entity
+    shim_projector_entity_enable,
+    shim_projector_entity_disable,
+    shim_projector_entity_toggle_enabled,
+    nullptr,   // Play
+    nullptr,   // Stop_Playing
+    shim_projector_entity_set_color,
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill

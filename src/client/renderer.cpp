@@ -389,11 +389,14 @@ constexpr uint32_t PASS_ENVIRONMENT_BRDF_BINDING = 14;
 // r_cel_fill dither3d_original: the dot pattern volume and its brightness ramp (dither3d.glsl), the renderer's.
 constexpr uint32_t PASS_DITHER3D_PATTERN_BINDING = 15;
 constexpr uint32_t PASS_DITHER3D_RAMP_BINDING    = 16;
+// The projectors' pictures (projector_plan.md ss2b): one sampler2DArray INDEXED BY SHADOW LAYER, the
+// renderer's like the pool. resources/shaders/direct_light.glsl spells it as a literal.
+constexpr uint32_t PASS_PROJECTOR_PICTURE_BINDING = 17;
 // How many images of the BAKE a pass set binds (the shadow pool is not one).
 constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 10;
 // The images the renderer owns and binds beside them: the shadow pool twice,
-// the BRDF table once, the Dither3D pattern and its ramp.
-constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 5;
+// the BRDF table once, the Dither3D pattern and its ramp, the projector pictures.
+constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 6;
 // The lightmap images, the scene block, the renderer's three images and the
 // capture table.
 constexpr uint32_t PASS_BINDING_COUNT =
@@ -984,6 +987,28 @@ struct shadow_pool_t
 static shadow_pool_t         g_shadow_pool;
 static uint32_t              g_shadow_requested_size        = 0;
 static uint32_t              g_shadow_requested_layer_count = 0;
+
+// The projectors' pictures (projector_plan.md ss2b): one 2D array INDEXED BY SHADOW LAYER, a projector's
+// texture blitted into the layer its shadow map was assigned, so the layer's matrix is the picture's uv and
+// the Light struct, whose four .w's are taken, does not grow. MAX_SHADOW_LAYERS layers at
+// r_projector_picture_size; the sampler clamps to a black border, which is the frame's hard edge. A layer
+// is refilled only when the projector in it changes what it shows: the blit is an upload, and an upload
+// waits for the queue.
+constexpr VkFormat PROJECTOR_PICTURE_FORMAT = VK_FORMAT_R8G8B8A8_SRGB;
+constexpr uint32_t PROJECTOR_PICTURE_HOLDS_NOTHING = 0;
+constexpr uint32_t PROJECTOR_PICTURE_HOLDS_WHITE   = 1;
+struct projector_pictures_t
+{
+  VkImage        image   = VK_NULL_HANDLE;
+  VkDeviceMemory memory  = VK_NULL_HANDLE;
+  VkImageView    view    = VK_NULL_HANDLE;
+  VkSampler      sampler = VK_NULL_HANDLE;
+  uint32_t       size    = 0;
+  // Per layer: HOLDS_NOTHING, HOLDS_WHITE (a projector with no texture), or the texture asset's index + 2.
+  Array<uint32_t, MAX_SHADOW_LAYERS> held;
+};
+static projector_pictures_t g_projector_pictures;
+static uint32_t             g_projector_pictures_requested_size = 0;
 static VkRenderPass          g_shadow_render_pass           = VK_NULL_HANDLE;
 // The shadow pass binds a set of its own at set 3 -- the scene block and
 // nothing else -- so the pool is never a descriptor of the pass that writes it.
@@ -2687,7 +2712,11 @@ static void create_mesh_resources()
   pass_bindings[16].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[16].descriptorCount = 1;
   pass_bindings[16].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-  static_assert(PASS_BINDING_COUNT == 17, "the pass bindings above are written out by index");
+  pass_bindings[17].binding         = PASS_PROJECTOR_PICTURE_BINDING;
+  pass_bindings[17].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[17].descriptorCount = 1;
+  pass_bindings[17].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+  static_assert(PASS_BINDING_COUNT == 18, "the pass bindings above are written out by index");
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2699,9 +2728,9 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Fifteen samplers per set -- irradiance, visibility, the bounce's two, the
+  // Sixteen samplers per set -- irradiance, visibility, the bounce's two, the
   // probe volume's five, the reflection cubes, the shadow pool twice, the
-  // BRDF table and Dither3D's two -- plus the capture table.
+  // BRDF table, Dither3D's two and the projector pictures -- plus the capture table.
   VkDescriptorPoolSize pass_pool_sizes[3] = {
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
        MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT)},
@@ -3803,9 +3832,9 @@ static void destroy_background_resources() { destroy_fullscreen_draw(g_backgroun
 // Public GPU texture upload / destroy
 // ---------------------------------------------------------------------------
 
-static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32_t first_level,
-                                      uint32_t level_count, VkImageLayout old_layout,
-                                      VkImageLayout new_layout)
+static void move_image_range_to_layout(VkCommandBuffer cmd, VkImage image,
+                                       const VkImageSubresourceRange &range, VkImageLayout old_layout,
+                                       VkImageLayout new_layout)
 {
   const auto get_access_flags_for_image_layout = [](VkImageLayout layout) -> VkAccessFlags {
     switch (layout)
@@ -3831,13 +3860,21 @@ static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.image               = image;
-  barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, first_level, level_count, 0, 1};
+  barrier.subresourceRange    = range;
   barrier.oldLayout           = old_layout;
   barrier.newLayout           = new_layout;
   barrier.srcAccessMask       = get_access_flags_for_image_layout(old_layout);
   barrier.dstAccessMask       = get_access_flags_for_image_layout(new_layout);
   vkCmdPipelineBarrier(cmd, get_pipeline_stage_for_image_layout(old_layout), get_pipeline_stage_for_image_layout(new_layout), 0, 0, nullptr, 0, nullptr,
                        1, &barrier);
+}
+
+static void move_mip_levels_to_layout(VkCommandBuffer cmd, VkImage image, uint32_t first_level,
+                                      uint32_t level_count, VkImageLayout old_layout,
+                                      VkImageLayout new_layout)
+{
+  move_image_range_to_layout(cmd, image, {VK_IMAGE_ASPECT_COLOR_BIT, first_level, level_count, 0, 1},
+                             old_layout, new_layout);
 }
 
 gpu_texture_t upload_texture(const assets::texture_asset_t *texture, bool srgb)
@@ -4450,7 +4487,7 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
       PASS_PROBE_L1_BINDING + 1, PASS_PROBE_L1_BINDING + 2, PASS_PROBE_VISIBILITY_BINDING,
       PASS_REFLECTION_CUBES_BINDING};
 
-  // The bake's images, the renderer's five, and the capture table.
+  // The bake's images, the renderer's six, and the capture table.
   constexpr uint32_t WRITE_COUNT = PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT + 1;
   VkDescriptorImageInfo images[WRITE_COUNT]{};
   VkWriteDescriptorSet writes[WRITE_COUNT]{};
@@ -4531,6 +4568,20 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   writes[dither_ramp].descriptorCount = 1;
   writes[dither_ramp].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   writes[dither_ramp].pImageInfo      = &images[dither_ramp];
+
+  // The projector pictures, the renderer's like the pool: one array, every set.
+  if (g_projector_pictures.view == VK_NULL_HANDLE)
+    fatal_error("[renderer] the projector picture array must exist before any pass set is written");
+  const uint32_t pictures = PASS_IMAGE_BINDING_COUNT + 5;
+  images[pictures].sampler     = g_projector_pictures.sampler;
+  images[pictures].imageView   = g_projector_pictures.view;
+  images[pictures].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  writes[pictures]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[pictures].dstSet          = set;
+  writes[pictures].dstBinding      = PASS_PROJECTOR_PICTURE_BINDING;
+  writes[pictures].descriptorCount = 1;
+  writes[pictures].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[pictures].pImageInfo      = &images[pictures];
 
   // The capture table, the bake's, beside its cubes.
   if (entry.reflection_table == VK_NULL_HANDLE)
@@ -6012,6 +6063,155 @@ pipeline_state_t material_pipeline_state(material_handle_t handle)
 // slots and there is no second code path to keep in sync.
 // --- Shadow maps (lighting_def.md gate 9) ---
 
+static void destroy_projector_pictures()
+{
+  projector_pictures_t &pictures = g_projector_pictures;
+  if (pictures.sampler != VK_NULL_HANDLE)
+    vkDestroySampler(g_device, pictures.sampler, nullptr);
+  if (pictures.view != VK_NULL_HANDLE)
+    vkDestroyImageView(g_device, pictures.view, nullptr);
+  if (pictures.image != VK_NULL_HANDLE)
+    vkDestroyImage(g_device, pictures.image, nullptr);
+  if (pictures.memory != VK_NULL_HANDLE)
+    vkFreeMemory(g_device, pictures.memory, nullptr);
+  pictures = {};
+}
+
+// The array, every layer white, and the clamp-to-black sampler.
+static void create_projector_pictures(uint32_t size)
+{
+  projector_pictures_t &pictures = g_projector_pictures;
+  pictures.size                  = size;
+
+  VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  image_info.imageType     = VK_IMAGE_TYPE_2D;
+  image_info.format        = PROJECTOR_PICTURE_FORMAT;
+  image_info.extent        = {size, size, 1};
+  image_info.mipLevels     = 1;
+  image_info.arrayLayers   = MAX_SHADOW_LAYERS;
+  image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &image_info, nullptr, &pictures.image) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the {}x{} projector picture array of {} layers", size, size,
+                MAX_SHADOW_LAYERS);
+
+  VkMemoryRequirements requirements{};
+  vkGetImageMemoryRequirements(g_device, pictures.image, &requirements);
+  VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  allocation.allocationSize  = requirements.size;
+  allocation.memoryTypeIndex = find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (vkAllocateMemory(g_device, &allocation, nullptr, &pictures.memory) != VK_SUCCESS)
+    fatal_error("[renderer] could not allocate the projector picture array ({} bytes)",
+                (uint64_t)requirements.size);
+  vkBindImageMemory(g_device, pictures.image, pictures.memory, 0);
+
+  const VkImageSubresourceRange every_layer{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, MAX_SHADOW_LAYERS};
+  {
+    VkCommandBuffer cmd = pending_upload_commands();
+    move_image_range_to_layout(cmd, pictures.image, every_layer, VK_IMAGE_LAYOUT_UNDEFINED,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkClearColorValue white{{1.0f, 1.0f, 1.0f, 1.0f}};
+    vkCmdClearColorImage(cmd, pictures.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &white, 1, &every_layer);
+    move_image_range_to_layout(cmd, pictures.image, every_layer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
+  for (uint32_t layer = 0; layer < MAX_SHADOW_LAYERS; ++layer)
+    pictures.held[layer] = PROJECTOR_PICTURE_HOLDS_WHITE;
+
+  VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+  view_info.image            = pictures.image;
+  view_info.viewType         = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  view_info.format           = PROJECTOR_PICTURE_FORMAT;
+  view_info.subresourceRange = every_layer;
+  if (vkCreateImageView(g_device, &view_info, nullptr, &pictures.view) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the projector picture array's view");
+
+  VkSamplerCreateInfo sampler_info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+  sampler_info.magFilter    = VK_FILTER_LINEAR;
+  sampler_info.minFilter    = VK_FILTER_LINEAR;
+  sampler_info.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  sampler_info.borderColor  = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+  sampler_info.maxLod       = 0.0f;
+  if (vkCreateSampler(g_device, &sampler_info, nullptr, &pictures.sampler) != VK_SUCCESS)
+    fatal_error("[renderer] could not create the projector picture sampler");
+}
+
+// Rebuilds the array when the cvar moves, and rewrites every pass set to point at the new image.
+static void ensure_projector_pictures(const shadow_settings_t &settings)
+{
+  if (settings.picture_size == g_projector_pictures_requested_size)
+    return;
+  g_projector_pictures_requested_size = settings.picture_size;
+
+  const uint32_t size = std::clamp(settings.picture_size, 64u, 4096u);
+  if (size != settings.picture_size)
+    log_warning("[renderer] projector picture size {} clamped to {}", settings.picture_size, size);
+  if (size == g_projector_pictures.size)
+    return;
+
+  flush_pending_uploads();
+  vkDeviceWaitIdle(g_device);
+  destroy_projector_pictures();
+  create_projector_pictures(size);
+
+  for (gpu_lightmap_t &entry : g_lightmaps)
+    if (entry.set != VK_NULL_HANDLE)
+      write_pass_image_descriptors(entry.set, entry);
+
+  log_terminal("[renderer] projector pictures: {} layers of {}x{}", MAX_SHADOW_LAYERS, size, size);
+}
+
+// Puts what a projector shows into the layer its shadow map was assigned, if it is not there already: the
+// texture blitted to the layer's size, or white for a projector with no texture. Through the upload batch,
+// which is submitted ahead of the frame.
+static void ensure_projector_picture_in_layer(uint32_t layer, assets::texture_asset picture)
+{
+  projector_pictures_t &pictures = g_projector_pictures;
+  if (layer >= MAX_SHADOW_LAYERS)
+    fatal_error("[renderer] projector picture layer {} past the {}-layer array", layer, MAX_SHADOW_LAYERS);
+
+  const assets::asset_handle_t<assets::texture_asset_t> asset = assets::get_texture(picture);
+  const texture_handle_t handle = asset.valid() ? register_texture_asset(asset, /*srgb*/ true) : texture_handle_t{};
+  const assets::texture_asset_t *source = handle.valid() ? assets::get(asset) : nullptr;
+  const uint32_t wanted = source != nullptr ? asset.index + 2 : PROJECTOR_PICTURE_HOLDS_WHITE;
+  if (pictures.held[layer] == wanted)
+    return;
+  pictures.held[layer] = wanted;
+
+  VkCommandBuffer               cmd = pending_upload_commands();
+  const VkImageSubresourceRange layer_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
+  move_image_range_to_layout(cmd, pictures.image, layer_range, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  if (source == nullptr)
+  {
+    const VkClearColorValue white{{1.0f, 1.0f, 1.0f, 1.0f}};
+    vkCmdClearColorImage(cmd, pictures.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &white, 1, &layer_range);
+  }
+  else
+  {
+    const VkImage texture = g_textures[handle.index].texture.image;
+    move_mip_levels_to_layout(cmd, texture, 0, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    VkImageBlit blit{};
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1]  = {source->width, source->height, 1};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
+    blit.dstOffsets[1]  = {(int32_t)pictures.size, (int32_t)pictures.size, 1};
+    vkCmdBlitImage(cmd, texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pictures.image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    move_mip_levels_to_layout(cmd, texture, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
+  move_image_range_to_layout(cmd, pictures.image, layer_range, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 static void destroy_shadow_pool()
 {
   shadow_pool_t &pool = g_shadow_pool;
@@ -6439,10 +6639,13 @@ static void create_shadow_resources()
   g_shadow_requested_layer_count = defaults.layer_count;
   if (!try_create_shadow_pool(defaults.map_size, defaults.layer_count))
     fatal_error("[renderer] could not create the shadow map pool");
+  g_projector_pictures_requested_size = defaults.picture_size;
+  create_projector_pictures(defaults.picture_size);
 }
 
 static void destroy_shadow_resources()
 {
+  destroy_projector_pictures();
   destroy_shadow_pool();
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int cull_none = 0; cull_none < 2; ++cull_none)
@@ -7702,6 +7905,8 @@ struct shadow_job_t
   uint32_t             layer = 0;
   entities::Light_Mode mode  = entities::Light_Mode::Dynamic;
   linalg::mat4f        view_projection;
+  // The layer is cleared and nothing is drawn: a projector with casts_shadows off.
+  bool                 draws_nothing = false;
 };
 
 // Everything render_frame settles about a pass before any render pass opens:
@@ -7802,7 +8007,9 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
   for (int32_t index = scene.baked_light_count; index < scene.light_count; ++index)
   {
     const shared::scene_light_t &light = pass.lights[(uint32_t)index];
-    if (!light.casts_shadows || !shared::light_is_analytic(light.mode))
+    // A projector takes a layer whether or not it casts shadows: the layer's matrix is its picture's uv.
+    if ((!light.casts_shadows && light.kind != shared::light_kind_t::Projector) ||
+        !shared::light_is_analytic(light.mode))
       continue;
 
     // There is one sun. A second shadow-casting directional light draws
@@ -7857,9 +8064,14 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
     {
       if (first_time_for(g_shadow_warned_overflow, light.uid))
       {
-        log_warning("[renderer] light {} needs {} shadow layer(s) past the {}-layer pool and "
-                    "draws unshadowed; raise r_shadow_layer_count or turn casts_shadows off",
-                    light.uid, layers_needed, g_shadow_pool.layer_count);
+        if (light.kind == shared::light_kind_t::Projector)
+          log_warning("[renderer] projector {} needs a shadow layer past the {}-layer pool and lights "
+                      "nothing: its picture rides that layer; raise r_shadow_layer_count",
+                      light.uid, g_shadow_pool.layer_count);
+        else
+          log_warning("[renderer] light {} needs {} shadow layer(s) past the {}-layer pool and "
+                      "draws unshadowed; raise r_shadow_layer_count or turn casts_shadows off",
+                      light.uid, layers_needed, g_shadow_pool.layer_count);
       }
       continue;
     }
@@ -7907,9 +8119,11 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
     }
     else
     {
-      const uint32_t                    layer = next_layer++;
+      const bool                        projector = light.kind == shared::light_kind_t::Projector;
+      const uint32_t                    layer     = next_layer++;
       const shared::shadow_projection_t projection =
-          shared::spot_shadow_projection(light, g_shadow_pool.size);
+          projector ? shared::projector_shadow_projection(light, g_shadow_pool.size)
+                    : shared::spot_shadow_projection(light, g_shadow_pool.size);
       memcpy(scene.shadow_view_projection[layer], &projection.view_projection,
              sizeof(scene.shadow_view_projection[layer]));
       scene.shadow_layers[layer][0]       = projection.texel_size_at_unit_distance;
@@ -7917,7 +8131,10 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
           settings.light_offset_texels * projection.texel_size_at_unit_distance;
       scene.shadow_layers[layer][2]       = projection.near_plane;
       scene.shadow_layers[layer][3]       = projection.far_plane;
-      prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection};
+      prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection,
+                                             /*draws_nothing*/ projector && !light.casts_shadows};
+      if (projector)
+        ensure_projector_picture_in_layer(layer, light.picture);
     }
 
     scene.lights[candidate.index].radiance[3] = (float)first_layer;
@@ -7955,9 +8172,10 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       else
       {
         const shared::scene_light_t &light = pass.lights[(uint32_t)scene.debug_shadow_light];
-        const char *kind = light.kind == shared::light_kind_t::Point         ? "point"
-                           : light.kind == shared::light_kind_t::Spot        ? "spot"
-                                                                             : "directional";
+        const char *kind = light.kind == shared::light_kind_t::Point       ? "point"
+                           : light.kind == shared::light_kind_t::Spot      ? "spot"
+                           : light.kind == shared::light_kind_t::Projector ? "projector"
+                                                                           : "directional";
         log_terminal("[renderer] shadow_visibility shows {} light {} ({}), layer {}", kind,
                      shown, settings.debug_light_uid != shared::null_entity_uid ? "pinned" : "nearest",
                      (int)scene.lights[scene.debug_shadow_light].radiance[3]);
@@ -8024,12 +8242,14 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
 
 // The tag is cast straight across into the scene block.
 static_assert((int)shared::light_kind_t::Point == 0 && (int)shared::light_kind_t::Spot == 1 &&
-                  (int)shared::light_kind_t::Directional == 2,
-              "scene.glsl spells the light type tag as 0 point / 1 spot / 2 directional");
+                  (int)shared::light_kind_t::Directional == 2 && (int)shared::light_kind_t::Projector == 3,
+              "light_arrival.glsl spells the light type tag as 0 point / 1 spot / 2 directional / 3 projector");
 
 // One depth-only render pass into one layer of the pool. The caster set is the
 // job's mode: a Mixed light's map skips static geometry, whose occlusion the
-// bake already holds (decision K); a Dynamic light's map takes everything.
+// bake already holds (decision K); a Dynamic light's map takes everything. A
+// job that draws nothing clears the layer and stops: a projector that casts no
+// shadow still needs a layer whose every depth is 1.
 static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
                                 Span<const mesh_draw_t> draws,
                                 Span<const frame_uniform_allocation_t> skinning,
@@ -8072,7 +8292,7 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
   lap.next("shadow layer: draw loop");
 
   VkPipeline bound_pipeline = VK_NULL_HANDLE;
-  for (uint32_t draw_index = 0; draw_index < draws.size(); ++draw_index)
+  for (uint32_t draw_index = 0; !job.draws_nothing && draw_index < draws.size(); ++draw_index)
   {
     const mesh_draw_t &draw = draws[draw_index];
     if (draw.shadow_caster == shadow_caster_t::none || draw.fill == fill_mode_t::wireframe)
@@ -9491,6 +9711,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
 
   // Before anything is recorded: a pool rebuild waits for the device.
   ensure_shadow_pool(shadows);
+  ensure_projector_pictures(shadows);
   begin_gpu_timing(cmd, frame);
 
   frame_timing::lap_zone_t lap("render_frame: particle compute");

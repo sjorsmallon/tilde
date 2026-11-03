@@ -1,4 +1,5 @@
 #include "entities/generated/entities/path_node_entity_generated.hpp"
+#include "entities/generated/entities/projector_entity_generated.hpp"
 #include "movers.hpp"
 
 #include "entity_system.hpp"
@@ -44,6 +45,14 @@ std::vector<path_refusal_t> validate_map_paths(const map_t& map)
 
   for (const map_entity_t& entry : map.entities)
   {
+    if (const entities::Projector_Entity* projector =
+            entities::entity_as<entities::Projector_Entity>(entry.entity.get());
+        projector != nullptr && projector->light.mode != entities::Light_Mode::Dynamic)
+      refusals.push_back({entry.uid, std::format("{}: its light is {}; a projector is Dynamic, since its picture "
+                                                 "is the mask and the bake would hold only the average",
+                                                 describe_map_entity(map, entry.uid),
+                                                 entities::to_string(projector->light.mode))});
+
     if (const entities::Path_Node_Entity* node =
             entities::entity_as<entities::Path_Node_Entity>(entry.entity.get()))
     {

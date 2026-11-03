@@ -19,6 +19,9 @@
 layout(set = 3, binding = 9) uniform sampler2DArrayShadow shadowMaps;
 // The same pool through a non-compare nearest sampler: the PCSS blocker search reads depths.
 layout(set = 3, binding = 11) uniform sampler2DArray shadowDepths;
+// The projectors' pictures, INDEXED BY SHADOW LAYER (projector_plan.md ss2b): a projector's texture sits in
+// the layer its shadow map does, so that layer's matrix is the picture's uv too. Clamp to border, black.
+layout(set = 3, binding = 17) uniform sampler2DArray projectorPictures;
 
 #define PCSS_TAP_COUNT 16
 const vec2 PCSS_POISSON_DISC[PCSS_TAP_COUNT] = vec2[](
@@ -143,6 +146,23 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
 
     float taps = float((2 * radius + 1) * (2 * radius + 1));
     return lit / taps;
+}
+
+// What a projector's picture says at one point: its colour inside the frame, black outside it (the sampler's
+// border), black behind the lens, and 1 for every other kind of light. A projector past the pool has no
+// layer and so no frame: it lights nothing rather than everything in front of it.
+vec3 projector_mask(Light light, vec3 world_position)
+{
+    if (int(light.spot_params.w) != LIGHT_TYPE_PROJECTOR)
+        return vec3(1.0);
+    int layer = LIGHT_SHADOW_LAYER(light);
+    if (layer < 0)
+        return vec3(0.0);
+    vec4 clip = scene.shadow_view_projection[layer] * vec4(world_position, 1.0);
+    if (clip.w <= 0.0)
+        return vec3(0.0);
+    vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+    return texture(projectorPictures, vec3(uv, float(layer))).rgb;
 }
 
 // Which of the sun's cascades a point falls in, by its VIEW depth, and how far

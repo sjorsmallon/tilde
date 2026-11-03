@@ -534,6 +534,15 @@ constexpr field_info_t Light_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "shadows_are_solid",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Light, shadows_are_solid),
+   .size_in_bytes = (uint32_t)sizeof(Light::shadows_are_solid),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -4445,6 +4454,108 @@ constexpr field_info_t Lens_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Projector_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Projector_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Projector_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Projector_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Projector_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "switch_state",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Projector_Entity, switch_state),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::switch_state),
+   .flags = 0u,
+   .component_id = 1,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "light",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Projector_Entity, light),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::light),
+   .flags = 0u,
+   .component_id = 9,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "rides",
+   .type = FIELD_TYPE_COMPONENT,
+   .offset = (uint32_t)offsetof(Projector_Entity, rides),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::rides),
+   .flags = 0u,
+   .component_id = 15,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "range",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Projector_Entity, range),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::range),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "half_angle_degrees",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Projector_Entity, half_angle_degrees),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::half_angle_degrees),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "aspect",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Projector_Entity, aspect),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::aspect),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "texture",
+   .type = FIELD_TYPE_ASSET,
+   .offset = (uint32_t)offsetof(Projector_Entity, texture),
+   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::texture),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = (int32_t)assets::asset_class_t::texture_asset,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -4455,7 +4566,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Health", {Health_FIELDS, 2}, (uint32_t)sizeof(Health)},
   {"Counter", {Counter_FIELDS, 2}, (uint32_t)sizeof(Counter)},
   {"Render", {Render_FIELDS, 8}, (uint32_t)sizeof(Render)},
-  {"Light", {Light_FIELDS, 6}, (uint32_t)sizeof(Light)},
+  {"Light", {Light_FIELDS, 7}, (uint32_t)sizeof(Light)},
   {"Movement", {Movement_FIELDS, 16}, (uint32_t)sizeof(Movement)},
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 5}, (uint32_t)sizeof(Timer_State)},
@@ -4501,6 +4612,7 @@ Entity* construct_Void_Entity(void* memory) { return new (memory) Void_Entity();
 Entity* construct_Reveal_Light_Entity(void* memory) { return new (memory) Reveal_Light_Entity(); }
 Entity* construct_Fog_Volume_Entity(void* memory) { return new (memory) Fog_Volume_Entity(); }
 Entity* construct_Lens_Entity(void* memory) { return new (memory) Lens_Entity(); }
+Entity* construct_Projector_Entity(void* memory) { return new (memory) Projector_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -4539,6 +4651,7 @@ Entity* as_base_Void_Entity(void* memory) { return static_cast<Entity*>((Void_En
 Entity* as_base_Reveal_Light_Entity(void* memory) { return static_cast<Entity*>((Reveal_Light_Entity*)memory); }
 Entity* as_base_Fog_Volume_Entity(void* memory) { return static_cast<Entity*>((Fog_Volume_Entity*)memory); }
 Entity* as_base_Lens_Entity(void* memory) { return static_cast<Entity*>((Lens_Entity*)memory); }
+Entity* as_base_Projector_Entity(void* memory) { return static_cast<Entity*>((Projector_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -4556,9 +4669,9 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 321u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
   {"particle_emitter_entity", "Particle Emitter", {Particle_Emitter_Entity_FIELDS, 22}, (uint32_t)sizeof(Particle_Emitter_Entity), (uint32_t)alignof(Particle_Emitter_Entity), 0u, false, false, false, construct_Particle_Emitter_Entity, as_base_Particle_Emitter_Entity},
   {"sound_emitter_entity", "Sound Emitter", {Sound_Emitter_Entity_FIELDS, 11}, (uint32_t)sizeof(Sound_Emitter_Entity), (uint32_t)alignof(Sound_Emitter_Entity), 6u, false, true, false, construct_Sound_Emitter_Entity, as_base_Sound_Emitter_Entity},
-  {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 8}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 33282u, false, true, false, construct_Point_Light_Entity, as_base_Point_Light_Entity},
+  {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 8}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 33282u, false, true, true, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 12}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 33282u, false, true, true, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
-  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 512u, false, true, false, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
+  {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 512u, false, true, true, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
   {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, true, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"jump_pad_entity", "Jump Pad", {Jump_Pad_Entity_FIELDS, 8}, (uint32_t)sizeof(Jump_Pad_Entity), (uint32_t)alignof(Jump_Pad_Entity), 259u, false, true, true, construct_Jump_Pad_Entity, as_base_Jump_Pad_Entity},
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
@@ -4579,6 +4692,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"reveal_light_entity", "Reveal Light", {Reveal_Light_Entity_FIELDS, 11}, (uint32_t)sizeof(Reveal_Light_Entity), (uint32_t)alignof(Reveal_Light_Entity), 32770u, false, true, false, construct_Reveal_Light_Entity, as_base_Reveal_Light_Entity},
   {"fog_volume_entity", "Fog Volume", {Fog_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Fog_Volume_Entity), (uint32_t)alignof(Fog_Volume_Entity), 3u, false, true, false, construct_Fog_Volume_Entity, as_base_Fog_Volume_Entity},
   {"lens_entity", "Lens", {Lens_Entity_FIELDS, 8}, (uint32_t)sizeof(Lens_Entity), (uint32_t)alignof(Lens_Entity), 259u, false, true, true, construct_Lens_Entity, as_base_Lens_Entity},
+  {"projector_entity", "Projector", {Projector_Entity_FIELDS, 11}, (uint32_t)sizeof(Projector_Entity), (uint32_t)alignof(Projector_Entity), 33282u, false, true, true, construct_Projector_Entity, as_base_Projector_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][16] = {
@@ -4620,9 +4734,10 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {-1, (int32_t)offsetof(Reveal_Light_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Reveal_Light_Entity, rides)}, // Reveal_Light_Entity
   {(int32_t)offsetof(Fog_Volume_Entity, volume), (int32_t)offsetof(Fog_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Fog_Volume_Entity
   {(int32_t)offsetof(Lens_Entity, volume), (int32_t)offsetof(Lens_Entity, switch_state), -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Lens_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Lens_Entity
+  {-1, (int32_t)offsetof(Projector_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Projector_Entity, light), -1, -1, -1, -1, -1, (int32_t)offsetof(Projector_Entity, rides)}, // Projector_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 25;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 26;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -4649,9 +4764,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Reveal_Light_Entity,
   entity_type::Fog_Volume_Entity,
   entity_type::Lens_Entity,
+  entity_type::Projector_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 31;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 32;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4684,6 +4800,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Reveal_Light_Entity,
   entity_type::Fog_Volume_Entity,
   entity_type::Lens_Entity,
+  entity_type::Projector_Entity,
 };
 
 } // namespace
@@ -5220,6 +5337,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Reveal_Light_Entity: return new Reveal_Light_Entity();
     case entity_type::Fog_Volume_Entity: return new Fog_Volume_Entity();
     case entity_type::Lens_Entity: return new Lens_Entity();
+    case entity_type::Projector_Entity: return new Projector_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -5278,6 +5396,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Reveal_Light_Entity: delete static_cast<Reveal_Light_Entity*>(entity); return;
     case entity_type::Fog_Volume_Entity: delete static_cast<Fog_Volume_Entity*>(entity); return;
     case entity_type::Lens_Entity: delete static_cast<Lens_Entity*>(entity); return;
+    case entity_type::Projector_Entity: delete static_cast<Projector_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -5292,6 +5411,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x4c548cc8u;
+const uint32_t SCHEMA_HASH = 0xd8fac739u;
 
 } // namespace entities
