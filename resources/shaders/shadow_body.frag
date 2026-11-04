@@ -11,9 +11,13 @@
 // pass's blend does with black.
 
 layout(set = 0, binding = 0) uniform sampler2D scene_depth;
+// What the body shows, by the line of sight as the sky is sampled: black when the pass names no fill.
+layout(set = 0, binding = 1) uniform samplerCube shadow_fill;
 
 #include "scene.glsl"
 #include "shadow_chord.glsl"
+#include "beam_fill.glsl"
+#include "beam_ripple.glsl"
 
 layout(location = 0) flat in int in_volume;
 layout(location = 0) out vec4 outColor;
@@ -32,7 +36,7 @@ void main()
     float short_of_surface = SURFACE_BIAS_SHARE * view_depth;
     float surface_t        = view_depth - short_of_surface;
     vec3  surface_point    = origin + surface_t * ray;
-    vec2  lengths          = drawn_shadow_lengths(in_volume, origin, ray, surface_t);
+    vec4  lengths          = drawn_shadow_lengths(in_volume, origin, ray, surface_t);
     float in_shadow        = lengths.x;
     float margin           = shadow_margin_at(in_volume, surface_point);
     float line_measure     = one_surface ? in_shadow : lengths.y;
@@ -40,8 +44,20 @@ void main()
     float rim_pixels       = pixels_to_zero(margin);
     float line             = line_measure > 0.0 ? outline_at(line_pixels) : 0.0;
     float rim              = margin > 0.0 && one_surface ? outline_at(rim_pixels) : 0.0;
-    float wash             = in_shadow > 0.0 ? scene.shadow_volume_settings.y : 0.0;
-    float alpha            = clamp(max(wash, max(line, rim)), 0.0, 1.0);
+    float wash             = in_shadow > 0.0 ? scene.shadow_volume_settings.y * beam_fill_factor() : 0.0;
+    // The landing's rings on the body's skin: where the line of sight enters it and where it leaves or lands.
+    float ripple           = 0.0;
+    if (in_shadow > 0.0 && scene.beam_ripple_settings.x > 0.0)
+    {
+        int light = floatBitsToInt(scene.shadow_volume_lights[in_volume >> 2][in_volume & 3]);
+        ripple    = beam_ripple_crest(origin + ray * lengths.z, light);
+        ripple    = max(ripple, beam_ripple_crest(origin + ray * min(lengths.w, surface_t), light));
+    }
+    float ring             = BEAM_RIPPLE_ALPHA * min(ripple, 1.0);
+    float alpha            = clamp(max(wash + ring, max(line, rim)), 0.0, 1.0);
+    vec3  body             = scene.shadow_volume_fill.x > 0.0 ? texture(shadow_fill, ray).rgb
+                                                              : scene.shadow_volume_color.rgb;
+    vec3  edge             = body * scene.shadow_volume_color.w;
 
-    outColor = vec4(0.0, 0.0, 0.0, alpha);
+    outColor = vec4(mix(body, edge, max(line, rim)), alpha);
 }

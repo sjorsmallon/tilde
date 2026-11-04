@@ -31,12 +31,12 @@
 #define MAX_LENS_WATCHERS 16
 // renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
 #define MAX_SHADOW_VOLUMES 24
-#define MAX_SHADOW_VOLUME_PLANES 41
+#define MAX_SHADOW_VOLUME_PLANES 43
 // renderer.hpp's MAX_SCENE_SHADOW_OCCLUDERS, kept one number by the same assert.
 #define MAX_SHADOW_OCCLUDERS 16
 // shadow_volume.hpp's SHADOW_OCCLUDER_RECEIVES_BIT.
 #define SHADOW_OCCLUDER_RECEIVES (1 << 31)
-// shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its front planes.
+// shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its light-facing planes.
 #define SHADOW_VOLUME_SIDE_SLOTS 29
 // renderer.hpp's MAX_SCENE_BEAMS, kept one number by the same assert.
 #define MAX_BEAMS 8
@@ -182,6 +182,9 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     ivec4 probe_visibility_slots;
     // x = PCSS on (1) or off (0), y = the cap on the search and filter radius in texels
     vec4  shadow_pcss;
+    // x = the first layer number of the projector pool: a layer from there is that pool's, counted from
+    // there (direct_light.glsl's shadow_pool_layer).
+    vec4  shadow_pools;
     // x = how many of `ripples` are live, the newest last; y = the age a ripple is dropped at.
     vec4   ripple_settings;
     Ripple ripples[MAX_RIPPLES];
@@ -254,6 +257,10 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `shadow_volumes` are live, y = r_shadow_volume_alpha, z = 1 when the volumes' bodies are drawn,
     // w = how many of `shadow_occluders` are live.
     vec4       shadow_volume_settings;
+    // xyz = the colour a drawn volume's body is filled with, w = how much of it the line and rim keep.
+    vec4       shadow_volume_color;
+    // x = 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour.
+    vec4       shadow_volume_fill;
     // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).
     // In shadow where inside every side plane and every front plane (reveal.glsl's shadow_margin); an unused
     // slot is (0, 0, 0, 1e9), inside for every point.

@@ -303,14 +303,15 @@ Client :: cvars {
     // shadow-casting lights than layers ranks them by intensity over distance
     // squared to the camera and draws the rest unshadowed, logged once per light.
     r_shadow_map_size:      i32 = 1024      @Client    "Shadow map resolution per layer"
-    r_shadow_layer_count:   i32 = 12        @Client    "Shadow map layers in the pool (at most 16); the sun's cascades take one each, a point light takes six"
+    r_shadow_layer_count:   i32 = 12        @Client    "Shadow map layers in the pool (with the projector pool's at most 16); the sun's cascades take one each, a point light takes six"
     r_shadow_light_offset:  f32 = 1.0       @Client    "Receiver offset toward the light before the compare, in shadow texels"
     r_shadow_bias_slope:    f32 = 2.5       @Client    "Shadow depth bias, slope-scaled factor"
     r_shadow_normal_offset: f32 = 1.5       @Client    "Receiver offset along the normal, in shadow texels"
     r_shadow_pcf_radius:    i32 = 1         @Client    "PCF kernel radius in texels (0 = the hardware 2x2 only)"
     r_shadow_pcss:          bool = true     @Client    "Widen the PCF kernel from the light's source_radius and the blocker distance (PCSS)"
     r_shadow_pcss_max_radius: f32 = 16.0    @Client    "Cap on the PCSS search and filter radius, in shadow texels"
-    r_projector_picture_size: i32 = 512     @Client    "Resolution of each layer of the projector picture array, which is indexed by shadow layer"
+    r_projector_shadow_map_size: i32 = 2048 @Client    "Resolution of a projector's shadow map and of its picture, which share a layer of the projector pool"
+    r_projector_shadow_layer_count: i32 = 2 @Client    "Layers in the projector shadow pool, one per projector (with r_shadow_layer_count at most 16)"
     r_shadow_debug_light:   i32 = 0         @Client    "Entity uid of the light r_debug_channel shadow_visibility shows; 0 picks the shadowed light nearest the camera"
 
     // The lightmap bake, lightmap_gpu_plan.md step 7b. Honoured only where the

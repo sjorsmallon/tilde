@@ -389,14 +389,18 @@ constexpr uint32_t PASS_ENVIRONMENT_BRDF_BINDING = 14;
 // r_cel_fill dither3d_original: the dot pattern volume and its brightness ramp (dither3d.glsl), the renderer's.
 constexpr uint32_t PASS_DITHER3D_PATTERN_BINDING = 15;
 constexpr uint32_t PASS_DITHER3D_RAMP_BINDING    = 16;
-// The projectors' pictures (projector_plan.md ss2b): one sampler2DArray INDEXED BY SHADOW LAYER, the
+// The projectors' pictures (projector_plan.md ss2b): one sampler2DArray indexed by PROJECTOR POOL LAYER, the
 // renderer's like the pool. resources/shaders/direct_light.glsl spells it as a literal.
 constexpr uint32_t PASS_PROJECTOR_PICTURE_BINDING = 17;
-// How many images of the BAKE a pass set binds (the shadow pool is not one).
+// The projectors' own shadow pool, at r_projector_shadow_map_size, through the same two samplers as the main
+// pool's. A layer number at or past scene.shadow_pools.x is one of its layers, counted from there.
+constexpr uint32_t PASS_PROJECTOR_SHADOW_BINDING       = 18;
+constexpr uint32_t PASS_PROJECTOR_SHADOW_DEPTH_BINDING = 19;
+// How many images of the BAKE a pass set binds (the shadow pools are not among them).
 constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 10;
-// The images the renderer owns and binds beside them: the shadow pool twice,
+// The images the renderer owns and binds beside them: each shadow pool twice,
 // the BRDF table once, the Dither3D pattern and its ramp, the projector pictures.
-constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 6;
+constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 8;
 // The lightmap images, the scene block, the renderer's three images and the
 // capture table.
 constexpr uint32_t PASS_BINDING_COUNT =
@@ -734,6 +738,7 @@ struct scene_uniform_t
   // none -- the probes' twin of a vertex's light_slots.
   int32_t     probe_visibility_slots[4]                     = {-1, -1, -1, -1};
   float       shadow_pcss[4]                                = {}; // x on/off, y radius cap in texels
+  float       shadow_pools[4]                               = {}; // x the first layer number of the projector pool; a layer from there is that pool's, counted from there
   // Team wall ripples (ripple.glsl): x = how many of `ripples` are live, y = the
   // age one is dropped at (the shader fades to zero before it); per
   // ripple the impact centre with its age in .w, then the face's plane as
@@ -788,7 +793,7 @@ struct scene_uniform_t
 };
 
 static_assert(sizeof(scene_uniform_t) ==
-                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 80 + 16 +
+                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 96 + 16 +
                       32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + 32 + (64 + 32) * MAX_SCENE_BEAMS +
                       4 * MAX_SCENE_BEAM_PIECES + 16 * MAX_SCENE_BEAM_PLANES +
                       16 + 32 * MAX_SCENE_BEAM_RIPPLES +
@@ -995,11 +1000,16 @@ struct shadow_pool_t
 static shadow_pool_t         g_shadow_pool;
 static uint32_t              g_shadow_requested_size        = 0;
 static uint32_t              g_shadow_requested_layer_count = 0;
+// The projectors' pool, at r_projector_shadow_map_size. The two pools share MAX_SHADOW_LAYERS layer
+// numbers: this one's follow the main pool's, which is what scene.shadow_pools.x tells the shader.
+static shadow_pool_t         g_projector_shadow_pool;
+static uint32_t              g_projector_shadow_requested_size        = 0;
+static uint32_t              g_projector_shadow_requested_layer_count = 0;
 
-// The projectors' pictures (projector_plan.md ss2b): one 2D array INDEXED BY SHADOW LAYER, a projector's
-// texture blitted into the layer its shadow map was assigned, so the layer's matrix is the picture's uv and
-// the Light struct, whose four .w's are taken, does not grow. MAX_SHADOW_LAYERS layers at
-// r_projector_picture_size; the sampler clamps to a black border, which is the frame's hard edge. A layer
+// The projectors' pictures (projector_plan.md ss2b): one 2D array indexed by PROJECTOR POOL LAYER, a
+// projector's texture blitted into the layer its shadow map was assigned, so the layer's matrix is the
+// picture's uv and the Light struct, whose four .w's are taken, does not grow. One layer per layer of the
+// projector pool, at its size; the sampler clamps to a black border, which is the frame's hard edge. A layer
 // is refilled only when the projector in it changes what it shows: the blit is an upload, and an upload
 // waits for the queue.
 constexpr VkFormat PROJECTOR_PICTURE_FORMAT = VK_FORMAT_R8G8B8A8_SRGB;
@@ -1010,13 +1020,13 @@ struct projector_pictures_t
   VkImage        image   = VK_NULL_HANDLE;
   VkDeviceMemory memory  = VK_NULL_HANDLE;
   VkImageView    view    = VK_NULL_HANDLE;
-  VkSampler      sampler = VK_NULL_HANDLE;
-  uint32_t       size    = 0;
+  VkSampler      sampler     = VK_NULL_HANDLE;
+  uint32_t       size        = 0;
+  uint32_t       layer_count = 0;
   // Per layer: HOLDS_NOTHING, HOLDS_WHITE (a projector with no texture), or the texture asset's index + 2.
   Array<uint32_t, MAX_SHADOW_LAYERS> held;
 };
 static projector_pictures_t g_projector_pictures;
-static uint32_t             g_projector_pictures_requested_size = 0;
 static VkRenderPass          g_shadow_render_pass           = VK_NULL_HANDLE;
 // The shadow pass binds a set of its own at set 3 -- the scene block and
 // nothing else -- so the pool is never a descriptor of the pass that writes it.
@@ -2724,7 +2734,15 @@ static void create_mesh_resources()
   pass_bindings[17].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[17].descriptorCount = 1;
   pass_bindings[17].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-  static_assert(PASS_BINDING_COUNT == 18, "the pass bindings above are written out by index");
+  pass_bindings[18].binding         = PASS_PROJECTOR_SHADOW_BINDING;
+  pass_bindings[18].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[18].descriptorCount = 1;
+  pass_bindings[18].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+  pass_bindings[19].binding         = PASS_PROJECTOR_SHADOW_DEPTH_BINDING;
+  pass_bindings[19].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  pass_bindings[19].descriptorCount = 1;
+  pass_bindings[19].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+  static_assert(PASS_BINDING_COUNT == 20, "the pass bindings above are written out by index");
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2736,8 +2754,8 @@ static void create_mesh_resources()
     fatal_error("[renderer] could not create the pass descriptor set layout");
   }
 
-  // Sixteen samplers per set -- irradiance, visibility, the bounce's two, the
-  // probe volume's five, the reflection cubes, the shadow pool twice, the
+  // Eighteen samplers per set -- irradiance, visibility, the bounce's two, the
+  // probe volume's five, the reflection cubes, each shadow pool twice, the
   // BRDF table, Dither3D's two and the projector pictures -- plus the capture table.
   VkDescriptorPoolSize pass_pool_sizes[3] = {
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -4601,6 +4619,30 @@ static void write_pass_image_descriptors(VkDescriptorSet set, const gpu_lightmap
   writes[pictures].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   writes[pictures].pImageInfo      = &images[pictures];
 
+  if (g_projector_shadow_pool.array_view == VK_NULL_HANDLE)
+    fatal_error("[renderer] the projector shadow pool must exist before any pass set is written");
+  const uint32_t projector_shadow = PASS_IMAGE_BINDING_COUNT + 6;
+  images[projector_shadow].sampler     = g_projector_shadow_pool.sampler;
+  images[projector_shadow].imageView   = g_projector_shadow_pool.array_view;
+  images[projector_shadow].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  writes[projector_shadow]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[projector_shadow].dstSet          = set;
+  writes[projector_shadow].dstBinding      = PASS_PROJECTOR_SHADOW_BINDING;
+  writes[projector_shadow].descriptorCount = 1;
+  writes[projector_shadow].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[projector_shadow].pImageInfo      = &images[projector_shadow];
+
+  const uint32_t projector_depth = PASS_IMAGE_BINDING_COUNT + 7;
+  images[projector_depth].sampler     = g_projector_shadow_pool.depth_sampler;
+  images[projector_depth].imageView   = g_projector_shadow_pool.array_view;
+  images[projector_depth].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+  writes[projector_depth]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[projector_depth].dstSet          = set;
+  writes[projector_depth].dstBinding      = PASS_PROJECTOR_SHADOW_DEPTH_BINDING;
+  writes[projector_depth].descriptorCount = 1;
+  writes[projector_depth].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  writes[projector_depth].pImageInfo      = &images[projector_depth];
+
   // The capture table, the bake's, beside its cubes.
   if (entry.reflection_table == VK_NULL_HANDLE)
     fatal_error("[renderer] a pass set is being written for a bake with no capture table");
@@ -6108,18 +6150,19 @@ static void destroy_projector_pictures()
   pictures = {};
 }
 
-// The array, every layer white, and the clamp-to-black sampler.
-static void create_projector_pictures(uint32_t size)
+// The array, every layer white, and the clamp-to-black sampler. One layer per layer of the projector pool.
+static void create_projector_pictures(uint32_t size, uint32_t layer_count)
 {
   projector_pictures_t &pictures = g_projector_pictures;
   pictures.size                  = size;
+  pictures.layer_count           = layer_count;
 
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.imageType     = VK_IMAGE_TYPE_2D;
   image_info.format        = PROJECTOR_PICTURE_FORMAT;
   image_info.extent        = {size, size, 1};
   image_info.mipLevels     = 1;
-  image_info.arrayLayers   = MAX_SHADOW_LAYERS;
+  image_info.arrayLayers   = layer_count;
   image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
   image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
   image_info.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -6127,7 +6170,7 @@ static void create_projector_pictures(uint32_t size)
   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (vkCreateImage(g_device, &image_info, nullptr, &pictures.image) != VK_SUCCESS)
     fatal_error("[renderer] could not create the {}x{} projector picture array of {} layers", size, size,
-                MAX_SHADOW_LAYERS);
+                layer_count);
 
   VkMemoryRequirements requirements{};
   vkGetImageMemoryRequirements(g_device, pictures.image, &requirements);
@@ -6139,7 +6182,7 @@ static void create_projector_pictures(uint32_t size)
                 (uint64_t)requirements.size);
   vkBindImageMemory(g_device, pictures.image, pictures.memory, 0);
 
-  const VkImageSubresourceRange every_layer{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, MAX_SHADOW_LAYERS};
+  const VkImageSubresourceRange every_layer{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layer_count};
   {
     VkCommandBuffer cmd = pending_upload_commands();
     move_image_range_to_layout(cmd, pictures.image, every_layer, VK_IMAGE_LAYOUT_UNDEFINED,
@@ -6149,7 +6192,7 @@ static void create_projector_pictures(uint32_t size)
     move_image_range_to_layout(cmd, pictures.image, every_layer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
   }
-  for (uint32_t layer = 0; layer < MAX_SHADOW_LAYERS; ++layer)
+  for (uint32_t layer = 0; layer < layer_count; ++layer)
     pictures.held[layer] = PROJECTOR_PICTURE_HOLDS_WHITE;
 
   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -6173,39 +6216,14 @@ static void create_projector_pictures(uint32_t size)
     fatal_error("[renderer] could not create the projector picture sampler");
 }
 
-// Rebuilds the array when the cvar moves, and rewrites every pass set to point at the new image.
-static void ensure_projector_pictures(const shadow_settings_t &settings)
-{
-  if (settings.picture_size == g_projector_pictures_requested_size)
-    return;
-  g_projector_pictures_requested_size = settings.picture_size;
-
-  const uint32_t size = std::clamp(settings.picture_size, 64u, 4096u);
-  if (size != settings.picture_size)
-    log_warning("[renderer] projector picture size {} clamped to {}", settings.picture_size, size);
-  if (size == g_projector_pictures.size)
-    return;
-
-  flush_pending_uploads();
-  vkDeviceWaitIdle(g_device);
-  destroy_projector_pictures();
-  create_projector_pictures(size);
-
-  for (gpu_lightmap_t &entry : g_lightmaps)
-    if (entry.set != VK_NULL_HANDLE)
-      write_pass_image_descriptors(entry.set, entry);
-
-  log_terminal("[renderer] projector pictures: {} layers of {}x{}", MAX_SHADOW_LAYERS, size, size);
-}
-
 // Puts what a projector shows into the layer its shadow map was assigned, if it is not there already: the
 // texture blitted to the layer's size, or white for a projector with no texture. Through the upload batch,
 // which is submitted ahead of the frame.
 static void ensure_projector_picture_in_layer(uint32_t layer, assets::texture_asset picture)
 {
   projector_pictures_t &pictures = g_projector_pictures;
-  if (layer >= MAX_SHADOW_LAYERS)
-    fatal_error("[renderer] projector picture layer {} past the {}-layer array", layer, MAX_SHADOW_LAYERS);
+  if (layer >= pictures.layer_count)
+    fatal_error("[renderer] projector picture layer {} past the {}-layer array", layer, pictures.layer_count);
 
   const assets::asset_handle_t<assets::texture_asset_t> asset = assets::get_texture(picture);
   const texture_handle_t handle = asset.valid() ? register_texture_asset(asset, /*srgb*/ true) : texture_handle_t{};
@@ -6243,9 +6261,8 @@ static void ensure_projector_picture_in_layer(uint32_t layer, assets::texture_as
                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
-static void destroy_shadow_pool()
+static void destroy_shadow_pool(shadow_pool_t &pool)
 {
-  shadow_pool_t &pool = g_shadow_pool;
   for (uint32_t layer = 0; layer < MAX_SHADOW_LAYERS; ++layer)
   {
     if (pool.framebuffers[layer] != VK_NULL_HANDLE)
@@ -6268,10 +6285,8 @@ static void destroy_shadow_pool()
 
 // The array image, its layer framebuffers and the compare sampler. Requires the
 // shadow render pass. False leaves a partial pool behind for destroy_shadow_pool.
-static bool try_create_shadow_pool(uint32_t size, uint32_t layer_count)
+static bool try_create_shadow_pool(shadow_pool_t &pool, uint32_t size, uint32_t layer_count)
 {
-  shadow_pool_t &pool = g_shadow_pool;
-
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.imageType     = VK_IMAGE_TYPE_2D;
   image_info.format        = SHADOW_MAP_FORMAT;
@@ -6668,16 +6683,21 @@ static void create_shadow_resources()
   const shadow_settings_t defaults{};
   g_shadow_requested_size        = defaults.map_size;
   g_shadow_requested_layer_count = defaults.layer_count;
-  if (!try_create_shadow_pool(defaults.map_size, defaults.layer_count))
+  if (!try_create_shadow_pool(g_shadow_pool, defaults.map_size, defaults.layer_count))
     fatal_error("[renderer] could not create the shadow map pool");
-  g_projector_pictures_requested_size = defaults.picture_size;
-  create_projector_pictures(defaults.picture_size);
+  g_projector_shadow_requested_size        = defaults.projector_map_size;
+  g_projector_shadow_requested_layer_count = defaults.projector_layer_count;
+  if (!try_create_shadow_pool(g_projector_shadow_pool, defaults.projector_map_size,
+                              defaults.projector_layer_count))
+    fatal_error("[renderer] could not create the projector shadow map pool");
+  create_projector_pictures(defaults.projector_map_size, defaults.projector_layer_count);
 }
 
 static void destroy_shadow_resources()
 {
   destroy_projector_pictures();
-  destroy_shadow_pool();
+  destroy_shadow_pool(g_projector_shadow_pool);
+  destroy_shadow_pool(g_shadow_pool);
   for (int skinned = 0; skinned < 2; ++skinned)
     for (int cull_none = 0; cull_none < 2; ++cull_none)
       for (int fragment = 0; fragment < SHADOW_FRAGMENT_COUNT; ++fragment)
@@ -6693,46 +6713,86 @@ static void destroy_shadow_resources()
     vkDestroyRenderPass(g_device, g_shadow_render_pass, nullptr);
 }
 
-// Rebuilds the pool when the cvars move, and rewrites every pass set to point
-// at the new image. Compared against the REQUEST rather than the pool, so a
-// request the pool could not honour is not retried every frame.
-static void ensure_shadow_pool(const shadow_settings_t &settings)
+// One pool rebuilt to an already clamped request. False when it is that already; the device has been idled
+// when true. A pool the device refuses falls back to the defaults, said once.
+static bool rebuild_shadow_pool(shadow_pool_t &pool, const char *name, uint32_t size, uint32_t layer_count,
+                                uint32_t default_size, uint32_t default_layer_count)
+{
+  if (size == pool.size && layer_count == pool.layer_count)
+    return false;
+
+  flush_pending_uploads();
+  vkDeviceWaitIdle(g_device);
+  destroy_shadow_pool(pool);
+  if (!try_create_shadow_pool(pool, size, layer_count))
+  {
+    log_error("[renderer] could not build a {}-layer {}x{} {} pool; keeping the defaults", layer_count, size,
+              size, name);
+    destroy_shadow_pool(pool);
+    if (!try_create_shadow_pool(pool, default_size, default_layer_count))
+      fatal_error("[renderer] could not rebuild the default {} pool", name);
+  }
+  log_terminal("[renderer] {} pool: {} layers of {}x{}", name, pool.layer_count, pool.size, pool.size);
+  return true;
+}
+
+// Rebuilds the two pools and the picture array when the cvars move, and rewrites every pass set to point
+// at the new images. Compared against the REQUEST rather than the pools, so a request a pool could not
+// honour is not retried every frame. The pools share MAX_SHADOW_LAYERS layer numbers, so the main pool is
+// clamped to what the projector pool leaves; the pictures are always the projector pool's size and count.
+static void ensure_shadow_pools(const shadow_settings_t &settings)
 {
   if (settings.map_size == g_shadow_requested_size &&
-      settings.layer_count == g_shadow_requested_layer_count)
+      settings.layer_count == g_shadow_requested_layer_count &&
+      settings.projector_map_size == g_projector_shadow_requested_size &&
+      settings.projector_layer_count == g_projector_shadow_requested_layer_count)
     return;
-  g_shadow_requested_size        = settings.map_size;
-  g_shadow_requested_layer_count = settings.layer_count;
+  g_shadow_requested_size                  = settings.map_size;
+  g_shadow_requested_layer_count           = settings.layer_count;
+  g_projector_shadow_requested_size        = settings.projector_map_size;
+  g_projector_shadow_requested_layer_count = settings.projector_layer_count;
 
-  const uint32_t size        = std::clamp(settings.map_size, 256u, 8192u);
-  const uint32_t layer_count = std::clamp(settings.layer_count, 1u, MAX_SHADOW_LAYERS);
+  const uint32_t projector_layer_count =
+      std::clamp(settings.projector_layer_count, 1u, MAX_SHADOW_LAYERS - 1);
+  const uint32_t layer_count =
+      std::clamp(settings.layer_count, 1u, MAX_SHADOW_LAYERS - projector_layer_count);
+  const uint32_t size           = std::clamp(settings.map_size, 256u, 8192u);
+  const uint32_t projector_size = std::clamp(settings.projector_map_size, 256u, 8192u);
   if (size != settings.map_size || layer_count != settings.layer_count)
   {
     log_warning("[renderer] shadow pool request {}x{} layers clamped to {}x{}",
                 settings.map_size, settings.layer_count, size, layer_count);
   }
-  if (size == g_shadow_pool.size && layer_count == g_shadow_pool.layer_count)
-    return;
-
-  flush_pending_uploads();
-  vkDeviceWaitIdle(g_device);
-  destroy_shadow_pool();
-  if (!try_create_shadow_pool(size, layer_count))
+  if (projector_size != settings.projector_map_size || projector_layer_count != settings.projector_layer_count)
   {
-    log_error("[renderer] could not build a {}-layer {}x{} shadow pool; keeping the defaults",
-              layer_count, size, size);
-    destroy_shadow_pool();
-    const shadow_settings_t defaults{};
-    if (!try_create_shadow_pool(defaults.map_size, defaults.layer_count))
-      fatal_error("[renderer] could not rebuild the default shadow map pool");
+    log_warning("[renderer] projector shadow pool request {}x{} layers clamped to {}x{}",
+                settings.projector_map_size, settings.projector_layer_count, projector_size,
+                projector_layer_count);
   }
+
+  const shadow_settings_t defaults{};
+  bool rebuilt = rebuild_shadow_pool(g_shadow_pool, "shadow", size, layer_count, defaults.map_size,
+                                     defaults.layer_count);
+  rebuilt |= rebuild_shadow_pool(g_projector_shadow_pool, "projector shadow", projector_size,
+                                 projector_layer_count, defaults.projector_map_size,
+                                 defaults.projector_layer_count);
+  if (g_projector_shadow_pool.size != g_projector_pictures.size ||
+      g_projector_shadow_pool.layer_count != g_projector_pictures.layer_count)
+  {
+    flush_pending_uploads();
+    vkDeviceWaitIdle(g_device);
+    destroy_projector_pictures();
+    create_projector_pictures(g_projector_shadow_pool.size, g_projector_shadow_pool.layer_count);
+    log_terminal("[renderer] projector pictures: {} layers of {}x{}", g_projector_pictures.layer_count,
+                 g_projector_pictures.size, g_projector_pictures.size);
+    rebuilt = true;
+  }
+  if (!rebuilt)
+    return;
 
   for (gpu_lightmap_t &entry : g_lightmaps)
     if (entry.set != VK_NULL_HANDLE)
       write_pass_image_descriptors(entry.set, entry);
-
-  log_terminal("[renderer] shadow pool: {} layers of {}x{}", g_shadow_pool.layer_count,
-               g_shadow_pool.size, g_shadow_pool.size);
 }
 
 static void create_default_resources()
@@ -8021,8 +8081,8 @@ Span<const shared::point_shadow_faces_t> point_shadow_faces() { return g_point_s
 // is what ranked, the head one is what a lightmapped face reads -- and the
 // CASTER SET rides the job as the light's mode (decision K).
 static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_t &settings,
-                                 uint32_t &next_layer, scene_uniform_t &scene,
-                                 prepared_pass_t &prepared)
+                                 uint32_t &next_layer, uint32_t &next_projector_layer,
+                                 scene_uniform_t &scene, prepared_pass_t &prepared)
 {
   struct candidate_t
   {
@@ -8088,17 +8148,20 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
     const shared::scene_light_t &light     = pass.lights[candidate.index];
     const bool     is_sun        = light.kind == shared::light_kind_t::Directional;
     const bool     is_point      = light.kind == shared::light_kind_t::Point;
+    const bool     is_projector  = light.kind == shared::light_kind_t::Projector;
     const uint32_t layers_needed =
         is_sun ? cascade_settings.count : is_point ? shared::POINT_SHADOW_FACE_COUNT : 1u;
 
-    if (next_layer + layers_needed > g_shadow_pool.layer_count)
+    const bool past_the_pool = is_projector ? next_projector_layer >= g_projector_shadow_pool.layer_count
+                                            : next_layer + layers_needed > g_shadow_pool.layer_count;
+    if (past_the_pool)
     {
       if (first_time_for(g_shadow_warned_overflow, light.uid))
       {
-        if (light.kind == shared::light_kind_t::Projector)
-          log_warning("[renderer] projector {} needs a shadow layer past the {}-layer pool and lights "
-                      "nothing: its picture rides that layer; raise r_shadow_layer_count",
-                      light.uid, g_shadow_pool.layer_count);
+        if (is_projector)
+          log_warning("[renderer] projector {} needs a shadow layer past the {}-layer projector pool and "
+                      "lights nothing: its picture rides that layer; raise r_projector_shadow_layer_count",
+                      light.uid, g_projector_shadow_pool.layer_count);
         else
           log_warning("[renderer] light {} needs {} shadow layer(s) past the {}-layer pool and "
                       "draws unshadowed; raise r_shadow_layer_count or turn casts_shadows off",
@@ -8107,7 +8170,8 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       continue;
     }
 
-    const uint32_t first_layer = next_layer;
+    const uint32_t first_layer =
+        is_projector ? g_shadow_pool.layer_count + next_projector_layer : next_layer;
     if (is_sun)
     {
       g_sun_cascades = shared::directional_shadow_cascades(light, shadow_view, cascade_settings,
@@ -8150,11 +8214,11 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
     }
     else
     {
-      const bool                        projector = light.kind == shared::light_kind_t::Projector;
-      const uint32_t                    layer     = next_layer++;
+      const uint32_t pool_layer = is_projector ? next_projector_layer++ : next_layer++;
+      const uint32_t layer      = is_projector ? g_shadow_pool.layer_count + pool_layer : pool_layer;
       const shared::shadow_projection_t projection =
-          projector ? shared::projector_shadow_projection(light, g_shadow_pool.size)
-                    : shared::spot_shadow_projection(light, g_shadow_pool.size);
+          is_projector ? shared::projector_shadow_projection(light, g_projector_shadow_pool.size)
+                       : shared::spot_shadow_projection(light, g_shadow_pool.size);
       memcpy(scene.shadow_view_projection[layer], &projection.view_projection,
              sizeof(scene.shadow_view_projection[layer]));
       scene.shadow_layers[layer][0]       = projection.texel_size_at_unit_distance;
@@ -8163,9 +8227,9 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       scene.shadow_layers[layer][2]       = projection.near_plane;
       scene.shadow_layers[layer][3]       = projection.far_plane;
       prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection,
-                                             /*draws_nothing*/ projector && !light.casts_shadows};
-      if (projector)
-        ensure_projector_picture_in_layer(layer, light.picture);
+                                             /*draws_nothing*/ is_projector && !light.casts_shadows};
+      if (is_projector)
+        ensure_projector_picture_in_layer(pool_layer, light.picture);
     }
 
     scene.lights[candidate.index].radiance[3] = (float)first_layer;
@@ -8269,6 +8333,7 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
   scene.shadow_settings[2] = std::clamp(settings.cascade_blend, 0.0f, 0.5f);
   scene.shadow_pcss[0]     = settings.pcss ? 1.0f : 0.0f;
   scene.shadow_pcss[1]     = std::clamp(settings.pcss_max_radius_texels, 0.0f, 64.0f);
+  scene.shadow_pools[0]    = (float)g_shadow_pool.layer_count;
 }
 
 // The tag is cast straight across into the scene block.
@@ -8299,21 +8364,25 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
   VkClearValue clear{};
   clear.depthStencil = {1.0f, 0};
 
+  const bool           in_projector_pool = job.layer >= g_shadow_pool.layer_count;
+  const shadow_pool_t &pool       = in_projector_pool ? g_projector_shadow_pool : g_shadow_pool;
+  const uint32_t       pool_layer = in_projector_pool ? job.layer - g_shadow_pool.layer_count : job.layer;
+
   VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
   begin.renderPass        = g_shadow_render_pass;
-  begin.framebuffer       = g_shadow_pool.framebuffers[job.layer];
-  begin.renderArea.extent = {g_shadow_pool.size, g_shadow_pool.size};
+  begin.framebuffer       = pool.framebuffers[pool_layer];
+  begin.renderArea.extent = {pool.size, pool.size};
   begin.clearValueCount   = 1;
   begin.pClearValues      = &clear;
   vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
 
   VkViewport viewport{};
-  viewport.width    = (float)g_shadow_pool.size;
-  viewport.height   = (float)g_shadow_pool.size;
+  viewport.width    = (float)pool.size;
+  viewport.height   = (float)pool.size;
   viewport.maxDepth = 1.0f;
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   VkRect2D scissor{};
-  scissor.extent = {g_shadow_pool.size, g_shadow_pool.size};
+  scissor.extent = {pool.size, pool.size};
   vkCmdSetScissor(cmd, 0, 1, &scissor);
   vkCmdSetDepthBias(cmd, 0.0f, 0.0f, settings.bias_slope);
 
@@ -9742,8 +9811,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   const uint32_t  frame = g_current_frame_idx_in_swapchain;
 
   // Before anything is recorded: a pool rebuild waits for the device.
-  ensure_shadow_pool(shadows);
-  ensure_projector_pictures(shadows);
+  ensure_shadow_pools(shadows);
   begin_gpu_timing(cmd, frame);
 
   frame_timing::lap_zone_t lap("render_frame: particle compute");
@@ -9775,7 +9843,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   //    it.
   g_draw_skinning.clear();
   g_prepared_passes.clear();
-  uint32_t next_shadow_layer = 0;
+  uint32_t next_shadow_layer           = 0;
+  uint32_t next_projector_shadow_layer = 0;
   // The freeze latches the camera on its rising edge and the fit keeps using it.
   if (shadows.freeze_cascades && !g_shadow_freeze_active && !passes.empty())
     g_frozen_shadow_view = compute_shadow_view_for_render_view(passes[0].view);
@@ -9891,7 +9960,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     {
       fogged_pass = (uint32_t)g_prepared_passes.size();
     }
-    assign_shadow_layers(pass, shadows, next_shadow_layer, scene, prepared);
+    assign_shadow_layers(pass, shadows, next_shadow_layer, next_projector_shadow_layer, scene, prepared);
     prepared.scene_block_offset = write_scene_block(scene);
     g_prepared_passes.push_back(prepared);
   }

@@ -19,9 +19,13 @@
 layout(set = 3, binding = 9) uniform sampler2DArrayShadow shadowMaps;
 // The same pool through a non-compare nearest sampler: the PCSS blocker search reads depths.
 layout(set = 3, binding = 11) uniform sampler2DArray shadowDepths;
-// The projectors' pictures, INDEXED BY SHADOW LAYER (projector_plan.md ss2b): a projector's texture sits in
-// the layer its shadow map does, so that layer's matrix is the picture's uv too. Clamp to border, black.
+// The projectors' pictures, indexed by PROJECTOR POOL LAYER (projector_plan.md ss2b): a projector's texture
+// sits in the layer its shadow map does, so that layer's matrix is the picture's uv too. Clamp to border, black.
 layout(set = 3, binding = 17) uniform sampler2DArray projectorPictures;
+// The projectors' own pool at r_projector_shadow_map_size, through the same two samplers. A light's layer
+// number at or past scene.shadow_pools.x is one of its layers, counted from there.
+layout(set = 3, binding = 18) uniform sampler2DArrayShadow projectorShadowMaps;
+layout(set = 3, binding = 19) uniform sampler2DArray projectorShadowDepths;
 
 #define PCSS_TAP_COUNT 16
 const vec2 PCSS_POISSON_DISC[PCSS_TAP_COUNT] = vec2[](
@@ -57,6 +61,38 @@ float g_shadow_penumbra_texels = 0.0;
 // a Mixed light carry the same number.
 #define LIGHT_SHADOW_LAYER(light) (int((light).radiance.w))
 
+// The two pools share one layer numbering: the projector pool's layers follow the main pool's. These three
+// are the only reads of either pool, so a layer number means the same thing everywhere above them.
+bool layer_is_in_projector_pool(int layer)
+{
+    return layer >= int(scene.shadow_pools.x);
+}
+
+int shadow_pool_layer(int layer)
+{
+    return layer_is_in_projector_pool(layer) ? layer - int(scene.shadow_pools.x) : layer;
+}
+
+vec2 shadow_texel_uv(int layer)
+{
+    return 1.0 / vec2(layer_is_in_projector_pool(layer) ? textureSize(projectorShadowMaps, 0).xy
+                                                        : textureSize(shadowMaps, 0).xy);
+}
+
+float shadow_compare(int layer, vec2 uv, float depth)
+{
+    return layer_is_in_projector_pool(layer)
+               ? texture(projectorShadowMaps, vec4(uv, float(shadow_pool_layer(layer)), depth))
+               : texture(shadowMaps, vec4(uv, float(layer), depth));
+}
+
+float shadow_depth(int layer, vec2 uv)
+{
+    return layer_is_in_projector_pool(layer)
+               ? texture(projectorShadowDepths, vec3(uv, float(shadow_pool_layer(layer)))).r
+               : texture(shadowDepths, vec3(uv, float(layer))).r;
+}
+
 // V through ONE layer of the pool at one point: 1.0 where the point is outside
 // the map. The receiver is pushed along its normal by a distance measured in
 // the map's own texels at this range, scaled by the SINE of the incidence
@@ -90,7 +126,7 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
         return 1.0;
 
     vec2 uv       = ndc.xy * 0.5 + 0.5;
-    vec2 texel_uv = 1.0 / vec2(textureSize(shadowMaps, 0).xy);
+    vec2 texel_uv = shadow_texel_uv(layer);
     int  radius   = int(scene.shadow_settings.y);
 
     g_shadow_penumbra_texels = float(radius);
@@ -113,7 +149,7 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
         for (int tap = 0; tap < PCSS_TAP_COUNT; ++tap)
         {
             vec2  offset = rotation * PCSS_POISSON_DISC[tap] * search_radius * texel_uv;
-            float depth  = texture(shadowDepths, vec3(uv + offset, float(layer))).r;
+            float depth  = shadow_depth(layer, uv + offset);
             if (depth < ndc.z)
             {
                 blocker_depth_sum += depth;
@@ -134,7 +170,7 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
         for (int tap = 0; tap < PCSS_TAP_COUNT; ++tap)
         {
             vec2 offset = rotation * PCSS_POISSON_DISC[tap] * penumbra * texel_uv;
-            lit += texture(shadowMaps, vec4(uv + offset, float(layer), ndc.z));
+            lit += shadow_compare(layer, uv + offset, ndc.z);
         }
         return lit / float(PCSS_TAP_COUNT);
     }
@@ -142,7 +178,7 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
     float lit = 0.0;
     for (int y = -radius; y <= radius; ++y)
         for (int x = -radius; x <= radius; ++x)
-            lit += texture(shadowMaps, vec4(uv + vec2(x, y) * texel_uv, float(layer), ndc.z));
+            lit += shadow_compare(layer, uv + vec2(x, y) * texel_uv, ndc.z);
 
     float taps = float((2 * radius + 1) * (2 * radius + 1));
     return lit / taps;
@@ -162,7 +198,7 @@ vec3 projector_mask(Light light, vec3 world_position)
     if (clip.w <= 0.0)
         return vec3(0.0);
     vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
-    return texture(projectorPictures, vec3(uv, float(layer))).rgb;
+    return texture(projectorPictures, vec3(uv, float(shadow_pool_layer(layer)))).rgb;
 }
 
 // Which of the sun's cascades a point falls in, by its VIEW depth, and how far

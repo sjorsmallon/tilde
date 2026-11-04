@@ -17,62 +17,14 @@ layout(set = 0, binding = 0) uniform sampler2D scene_depth;
 
 #include "scene.glsl"
 #include "shadow_chord.glsl"
+#include "beam_fill.glsl"
+#include "beam_ripple.glsl"
 
 layout(location = 0) flat in int in_beam;
 layout(location = 0) out vec4 outColor;
 
-// A dot's radius as a share of the spacing, and the 45 degree turn a printed screentone sits at.
-const float BEAM_DOT_RADIUS  = 0.18;
-const float BEAM_DOT_ANGLE   = 0.7853981634;
-const float PI               = 3.14159265;
-
-// One for a flat wash; for dots, the dot's own alpha is raised by its share of the cell so the
-// average tint over the beam is the wash's.
-float beam_fill_factor()
-{
-    if (int(scene.beam.x) == BEAM_FILL_TINT)
-        return 1.0;
-    float spacing     = scene.beam.z;
-    mat2  turn        = mat2(cos(BEAM_DOT_ANGLE), sin(BEAM_DOT_ANGLE), -sin(BEAM_DOT_ANGLE), cos(BEAM_DOT_ANGLE));
-    vec2  cell        = fract(turn * gl_FragCoord.xy / spacing) - 0.5;
-    float from_centre = length(cell);
-    float edge        = fwidth(from_centre);
-    float inside_dot  = 1.0 - smoothstep(BEAM_DOT_RADIUS - edge, BEAM_DOT_RADIUS + edge, from_centre);
-    float coverage    = PI * BEAM_DOT_RADIUS * BEAM_DOT_RADIUS;
-    return inside_dot / coverage;
-}
-
-// A landing's ring on a solid beam (shared/beam_ripples.hpp): world units per second, the ring spacing, the
-// decay's time constant, how far a ring reaches, and the alpha a crest adds to the fill.
-const float BEAM_RIPPLE_SPEED      = 140.0;
-const float BEAM_RIPPLE_WAVELENGTH = 36.0;
-const float BEAM_RIPPLE_LIFETIME   = 2.0;
-const float BEAM_RIPPLE_REACH      = 260.0;
-const float BEAM_RIPPLE_ALPHA      = 0.5;
 // A chord that ends this share short of the surface under the pixel ends on the beam's own skin.
 const float BEAM_RIPPLE_AIR_SHARE  = 0.999;
-
-// The rings of every landing on beam `light` at a point of its skin: spheres growing from where the feet came down.
-float beam_ripple_crest(vec3 world_position, int light)
-{
-    float crest   = 0.0;
-    int   count   = int(scene.beam_ripple_settings.x);
-    float max_age = scene.beam_ripple_settings.y;
-    for (int index = 0; index < count; ++index)
-    {
-        BeamRipple ripple = scene.beam_ripples[index];
-        if (floatBitsToInt(ripple.light.x) != light)
-            continue;
-        float age      = ripple.center_age.w;
-        float reach    = distance(world_position, ripple.center_age.xyz);
-        float front    = BEAM_RIPPLE_SPEED * age;
-        float envelope = exp(-age / BEAM_RIPPLE_LIFETIME) * (1.0 - smoothstep(0.5 * max_age, max_age, age))
-                       * exp(-reach / BEAM_RIPPLE_REACH)
-                       * smoothstep(0.0, BEAM_RIPPLE_WAVELENGTH, front - reach);
-        crest += envelope * max(sin(2.0 * PI * (reach - front) / BEAM_RIPPLE_WAVELENGTH), 0.0);
-    }
-    return crest;
-}
 
 void main()
 {

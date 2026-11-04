@@ -141,10 +141,12 @@ void clip_to_cone(inout float enter, inout float leave, vec3 from_apex, vec3 ray
 // faces). Each of those is one interval of the line, and the answer is the length of their exact set algebra:
 // every segment between two consecutive interval ends is tested at its middle, so a floor seen past a
 // wall is drawn up to the wall and not between the wall and the floor. One walk gives both lengths
-// wanted of it: x is the part in front of the surface at `surface_t`, y the whole line through the air.
+// wanted of it: x is the part in front of the surface at `surface_t`, y the whole line through the air; z and w
+// are where along the ray the drawn body begins and ends, its skin, for a ring to sit on (z is EMPTY_ENTER
+// when nothing is drawn).
 const int MAX_DRAWN_INTERVALS = 2 + 2 * MAX_SHADOW_OCCLUDERS;
 
-vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
+vec4 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
 {
     int   first      = volume * MAX_SHADOW_VOLUME_PLANES;
     ivec2 counts     = shadow_volume_plane_counts(volume);
@@ -161,7 +163,7 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
         clip_to_half_space(side_enter, side_leave, front.xyz, front.w, origin, ray);
     }
     if (side_leave <= side_enter)
-        return vec2(0.0);
+        return vec4(0.0, 0.0, EMPTY_ENTER, 0.0);
 
     // The ends: the shadow chord's, then each landing's pyramid chord and behind chord.
     float ends[2 * MAX_DRAWN_INTERVALS];
@@ -213,9 +215,9 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
         ++landing_count;
     }
     if (landing_count == 0)
-        return vec2(0.0);
+        return vec4(0.0, 0.0, EMPTY_ENTER, 0.0);
 
-    vec2 drawn = vec2(0.0);
+    vec4 drawn = vec4(0.0, 0.0, EMPTY_ENTER, 0.0);
     for (int start = 0; start < end_count; ++start)
     {
         float from = ends[start];
@@ -236,7 +238,11 @@ vec2 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
             behind = behind || (middle > behind_enter[landing] && middle < behind_leave[landing]);
         }
         if (lands && !behind)
-            drawn += vec2(max(min(to, surface_t) - from, 0.0), to - from);
+        {
+            drawn.xy += vec2(max(min(to, surface_t) - from, 0.0), to - from);
+            drawn.z   = min(drawn.z, from);
+            drawn.w   = max(drawn.w, to);
+        }
     }
     return drawn;
 }

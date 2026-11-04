@@ -769,7 +769,8 @@ bool Tick()
     shadows.pcf_radius           = cvars.r_shadow_pcf_radius;
     shadows.pcss                 = cvars.r_shadow_pcss && !look.cel;
     shadows.pcss_max_radius_texels = cvars.r_shadow_pcss_max_radius;
-    shadows.picture_size         = (uint32_t)std::max(cvars.r_projector_picture_size, 0);
+    shadows.projector_map_size   = (uint32_t)std::max(cvars.r_projector_shadow_map_size, 0);
+    shadows.projector_layer_count = (uint32_t)std::max(cvars.r_projector_shadow_layer_count, 0);
     shadows.debug_light_uid      = (shared::entity_uid_t)std::max(cvars.r_shadow_debug_light, 0);
     shadows.cascade_count         = (uint32_t)std::max(cvars.r_shadow_cascade_count, 1);
     shadows.cascade_lambda        = cvars.r_shadow_cascade_lambda;
