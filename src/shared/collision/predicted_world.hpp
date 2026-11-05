@@ -63,7 +63,7 @@ struct predicted_world_t
   // Platform_Entity and Shrinking_Platform_Entity are in here too, as movers whose two poses are equal,
   // and so is a growing Extending_Platform_Entity, an oriented box whose length is a clock, and a
   // spot's solid beam, carved by the shadow volumes below and so appended after them, and a
-  // shadows_are_solid light's volumes themselves (solid_shadows.hpp): dark is solid. A switched-on
+  // solid_shadows light's volumes themselves (solid_shadows.hpp): dark is solid. A switched-on
   // lens's pane is one as well (lens_panes.hpp): glass is glass.
   Span<const mover_t> movers;
 

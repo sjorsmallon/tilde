@@ -113,7 +113,7 @@ int main()
 
   // As a shadow light: a switched-on projector with solid shadows throws volumes cut to its frame, and a crate
   // beside the frame casts nothing into it.
-  projector.light.shadows_are_solid = true;
+  projector.light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
   projector.switch_state.value      = true;
   projector.orientation             = linalg::from_view_angles(0.f, -90.f);
   projector.position                = {0.f, 300.f, 0.f};

@@ -72,6 +72,8 @@ struct shadow_volume_t
   entity_uid_t                                  light      = null_entity_uid;
   // The light's cuts_geometry: only such a volume is read by collision; one thrown for a beam alone cuts the beam.
   bool                                          cuts_geometry = true;
+  // The light's solid_shadows: which of this volume is a mover (solid_shadows.hpp), carried for the piece build.
+  entities::Solid_Shadows                       solid_shadows = entities::Solid_Shadows::None;
   // Some receiver's bounds are within it. The collect puts the volumes that cut geometry AND reach one first,
   // so the renderer's few slots hold what changes the floor before what only darkens a beam.
   bool                                          reaches_receiver = false;
@@ -92,6 +94,15 @@ struct shadow_volume_t
   // the light's shadow map, not from these planes, which only bound the walk.
   bool                                          drawn_by_march = false;
 };
+
+// A volume whose solid begins at the lens rather than at its caster: the whole pyramid of a from-the-lens piece,
+// a player's (its mover is the pyramid's), a projector picture's dark cell (cast from the glass, so its caster
+// is the light). Such a volume draws no body; a plank says who it holds (support_planks.hpp).
+inline bool shadow_volume_reaches_lens(const shadow_volume_t& volume)
+{
+  return volume.drawn_by_march || volume.caster == volume.light ||
+         volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow;
+}
 
 // What a DRAWN volume lands on or is stopped by (shadow_volume_plan.md ss5): a piece the volume touches, as
 // the pyramid it spans from the light (its silhouette sides and the spot's clip, never the range: the rays
@@ -148,7 +159,7 @@ struct shadow_light_t
   bool          keeps_every_volume    = false;
   // The dark itself is what is stood on, so a volume LANDS on whatever it touches and its body is drawn
   // there; otherwise a body is drawn only onto a receiver (a shadow platform or hole).
-  bool          shadows_are_solid     = false;
+  entities::Solid_Shadows solid_shadows = entities::Solid_Shadows::None;
 };
 
 // Where a light's reach ends, as the plane that caps its volumes: a spot's or a projector's is square to its
@@ -157,9 +168,9 @@ struct shadow_light_t
 [[nodiscard]] std::optional<Plane> try_shadow_light_far_cap(const shadow_light_t& light, const linalg::vec3f& center);
 
 // The one fold from the four light types into a shadow light: a switched-on Point, Spot, Projector or
-// Directional light whose `cuts_geometry` or `shadows_are_solid` is set, or a Spot whose `beam` or `solid_beam`
+// Directional light whose `cuts_geometry` or `solid_shadows` is set, or a Spot whose `beam` or `solid_beam`
 // is, at `pose`.
-// Empty is "casts no volume". A `shadows_are_solid` light keeps every volume: each is a mover (solid_shadows.hpp).
+// Empty is "casts no volume". A `solid_shadows` light keeps every volume: each is a mover (solid_shadows.hpp).
 [[nodiscard]] std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entity& entity,
                                                                          const path_pose_t&      pose);
 
@@ -253,7 +264,7 @@ struct shadow_volume_report_t
   uint32_t caster_pieces            = 0;
   // Dark rectangles of projector pictures, cast after the pieces (projector_mask.hpp).
   uint32_t mask_pieces              = 0;
-  // Players, cast into the shadows_are_solid lights alone (player_shadow_casters.hpp).
+  // Players, cast into the solid_shadows lights alone (player_shadow_casters.hpp).
   uint32_t player_pieces            = 0;
   uint32_t cast                     = 0;
   uint32_t refused_inside_caster    = 0;
@@ -275,7 +286,7 @@ struct shadow_volume_report_t
 // switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
 // every mover but a light's own (a solid beam, a solid shadow: light and dark cast no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
 // read at the same pose. After the movers, every player's piece (`player_casters`), into the
-// shadows_are_solid lights alone: a player darkens no shadow platform and casts no drawn body here.
+// solid_shadows lights alone: a player darkens no shadow platform and casts no drawn body here.
 // A volume that touches no receiver's bounds is dropped unless its light draws
 // a beam the volume cuts: nothing else would read it, and the scene block holds few. After every piece, the
 // dark of each projector's picture casts as pieces on its glass, read from `projector_masks` and computed

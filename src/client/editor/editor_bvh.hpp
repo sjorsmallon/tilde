@@ -53,12 +53,20 @@ get_cached_collision_pieces(collision_piece_cache_t &cache, const shared::map_ge
     return slot->second.pieces;
   }
   shared::mesh_geometry_t as_collider = entry.value;
-  as_collider.collides = true;
+  as_collider.collision = shared::mesh_collision_t::Source;
   collision_piece_cache_entry_t &fresh = cache.entries[entry.uid];
   fresh.value = entry.value;
   fresh.pieces = shared::compute_mesh_collision_pieces(as_collider, entry.uid);
   fresh.visited = true;
   return fresh.pieces;
+}
+
+// The pieces the last build computed for `uid`, or nothing for an object no build has visited.
+inline const std::vector<shared::collision_piece_t> *
+try_find_cached_collision_pieces(const collision_piece_cache_t &cache, shared::entity_uid_t uid)
+{
+  const auto slot = cache.entries.find(uid);
+  return slot == cache.entries.end() ? nullptr : &slot->second.pieces;
 }
 
 inline void drop_unvisited_collision_pieces(collision_piece_cache_t &cache)
@@ -109,7 +117,7 @@ build_editor_bvh(const shared::map_t &map, collision_piece_cache_t &pieces_cache
         get_cached_collision_pieces(pieces_cache, entry);
     if (pieces.empty())
     {
-      if (entry.value.collides)
+      if (entry.value.collision != shared::mesh_collision_t::None)
         result.objects_without_collision.push_back(entry.uid);
       add_leaf(entry.uid, shared::get_bounds(entry.value));
     }

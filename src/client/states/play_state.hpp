@@ -89,6 +89,7 @@ private:
   void draw_player_blob_shadow(const client_context_t &ctx, const draw_inputs_t &frame, const vec3f &feet);
   void draw_map_geometry(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_shadow_debug_and_volumes(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_support_planks(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_lights_and_beams(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_rendered_entities(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_afterimages_and_ghosts(client_context_t &ctx, const draw_inputs_t &frame);

@@ -1516,8 +1516,11 @@ void Selection_Tool::draw_selection_fields(editor_context_t& ctx)
       geometry_inspector_edit.uid = geometry->uid;
       geometry_inspector_edit.before = geometry->value;
     }
-    const bool committed =
-        draw_geometry_inspector(geometry->value, ctx.object_collides(geometry->uid));
+    const std::vector<shared::collision_piece_t>* cached_pieces =
+        ctx.collision_pieces ? try_find_cached_collision_pieces(*ctx.collision_pieces, geometry->uid) : nullptr;
+    const bool committed = draw_geometry_inspector(
+        geometry->value, ctx.object_collides(geometry->uid),
+        cached_pieces ? Span<const shared::collision_piece_t>(*cached_pieces) : Span<const shared::collision_piece_t>{});
     if (geometry_inspector_edit.uid != geometry->uid)
       geometry_inspector_edit.pending = false;
     else if (!geometry_inspector_edit.pending &&
@@ -2607,7 +2610,12 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
     if (index == SIZE_MAX)
       continue;
     const live_drag_offset_t* dragged = find_live_drag_offset(live_drag_offsets_sorted, entry.uid);
-    draw_geometry_selection_highlight(entry.value, draws, ctx.time, outlined[index] != 0,
+    const std::vector<shared::collision_piece_t>* pieces =
+        ctx.collision_pieces ? try_find_cached_collision_pieces(*ctx.collision_pieces, entry.uid) : nullptr;
+    draw_geometry_selection_highlight(entry.value,
+                                      pieces ? Span<const shared::collision_piece_t>(*pieces)
+                                             : Span<const shared::collision_piece_t>{},
+                                      draws, ctx.time, outlined[index] != 0,
                                       dragged ? dragged->translation : linalg::vec3{0, 0, 0});
   }
   for (const shared::map_entity_t &entry : ctx.map->entities)

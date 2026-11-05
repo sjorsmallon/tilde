@@ -408,6 +408,43 @@ void Play_State::draw_map_geometry(client_context_t &ctx, const draw_inputs_t &f
   }
 }
 
+void Play_State::draw_support_planks(client_context_t &ctx, const draw_inputs_t &frame)
+{
+  // Our own body at its predicted feet, every other at its interpolated ones; a corpse stands on nothing.
+  std::vector<shared::supported_player_t> supported;
+  if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
+      my_player != nullptr && my_player->health.current_health > 0)
+    supported.push_back({.player       = my_player->entity_id,
+                         .feet         = frame.local_feet,
+                         .ground_mover = ctx.prediction.state.move.movement.ground_mover_uid});
+  for (const auto &[slot, remote_player] : ctx.replication.remote_players)
+  {
+    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot || remote_player.death_tick != 0)
+      continue;
+    const entities::Player_Entity* player_entity = try_find_player_in_slot(ctx, slot);
+    if (player_entity == nullptr)
+      continue;
+    supported.push_back({.player       = player_entity->entity_id,
+                         .feet         = remote_player.drawn_position,
+                         .ground_mover = player_entity->movement.ground_mover_uid});
+  }
+
+  ctx.visuals.drawn_support_planks.clear();
+  shared::compute_support_planks(supported, ctx.visuals.drawn_shadow_volumes, ctx.world.session.bvh,
+                                 ctx.visuals.drawn_support_planks);
+
+  const color_t edge = {(uint8_t)std::clamp(ctx.cvars->r_shadow_volume_red * 255.f, 0.f, 255.f),
+                        (uint8_t)std::clamp(ctx.cvars->r_shadow_volume_green * 255.f, 0.f, 255.f),
+                        (uint8_t)std::clamp(ctx.cvars->r_shadow_volume_blue * 255.f, 0.f, 255.f), 255};
+  const color_t fill = with_alpha(edge, (uint8_t)std::clamp(ctx.cvars->r_shadow_plank_alpha * 255.f, 0.f, 255.f));
+  for (const shared::support_plank_t& plank : ctx.visuals.drawn_support_planks)
+  {
+    scene.debug.filled_polygon(plank.corners, fill, 0.f, {.depth_bias = 0.5f});
+    for (uint32_t corner = 0; corner < 4; ++corner)
+      scene.debug.line(plank.corners[corner], plank.corners[(corner + 1) % 4], edge, 0.5f);
+  }
+}
+
 void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw_inputs_t &frame)
 {
   shared::Entity_System &entity_system = ctx.world.session.entity_system;
@@ -417,6 +454,8 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
   scene.beam_ripples = ctx.visuals.beam_ripples.ripples;
   scene.shadow_volumes   = ctx.visuals.drawn_shadow_volumes;
   scene.shadow_occluders = ctx.visuals.drawn_shadow_occluders;
+  if (ctx.cvars->r_shadow_plank)
+    draw_support_planks(ctx, frame);
   if (ctx.cvars->cl_shadow_volume_debug)
   {
     // The counts and the (caster, light) pairs, printed when they change: the planes move every tick, so they stay out.

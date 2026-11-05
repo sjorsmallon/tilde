@@ -62,9 +62,10 @@ constexpr directory_class_row_t DIRECTORY_CLASS_TABLE[] = {
 };
 
 // Never given an id. .skeleton and .mtl are named from inside another asset,
-// so the sibling path is the identity the format itself uses; .md is
+// so the sibling path is the identity the format itself uses; .collision is a
+// mesh's sibling word (map_geometry_asset.hpp) read by the mesh's path; .md is
 // documentation that happens to sit in a resource directory.
-constexpr const char* IGNORED_EXTENSIONS[] = {".skeleton", ".mtl", ".md"};
+constexpr const char* IGNORED_EXTENSIONS[] = {".skeleton", ".mtl", ".collision", ".md"};
 
 // Not resources in the runtime sense: blender/ is source art; shaders/ is
 // compiled to SPIR-V by the build on a path of its own.
@@ -237,6 +238,19 @@ asset_classification_t classify_asset_paths(Span<const std::string> paths)
     }
 
     const std::string extension = lowercase_extension(path);
+    if (extension == ".collision")
+    {
+      // The sidecar is read by the MESH's path (map_geometry_asset.hpp), so one beside no mesh is never read.
+      const std::string stem     = path.substr(0, path.size() - extension.size());
+      bool              has_mesh = false;
+      for (const class_row_t& row : CLASS_TABLE)
+        if (row.asset_class == asset_class_t::mesh_asset && all_paths.contains(std::string_view(stem + row.extension)))
+          has_mesh = true;
+      if (!has_mesh)
+        classification.errors.push_back("'" + path + "' is a collision sidecar but no mesh named '" + stem +
+                                        "' sits beside it, so nothing reads it; name it after the mesh");
+      continue;
+    }
     if (extension_is_ignored(extension))
       continue;
 

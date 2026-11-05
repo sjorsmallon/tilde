@@ -30,6 +30,7 @@ struct Geometry_Owner_Entity : Entity
   Lens_Filter lens_filter;
   bool solid_only_when_lensed;
   bool casts_dynamic_shadow;
+  bool casts_solid_from_lens;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

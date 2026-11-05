@@ -53,9 +53,11 @@ void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, draw_lists_t &
                              generated_mesh_check_t check = generated_mesh_check_t::Compare_Every_Draw);
 
 // Pulsating selection highlight, in lockstep with the entity one. A mesh traces
-// its stored edges; an asset-sourced mesh its collision box. Nothing is drawn
-// when the outline already traces the shape.
+// its stored edges; an asset-sourced mesh its collision pieces, `pieces` being
+// what the editor's last BVH build computed for it (editor_bvh.hpp). Nothing is
+// drawn when the outline already traces the shape.
 void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
+                                       Span<const shared::collision_piece_t> pieces,
                                        draw_lists_t &draws, float time, bool is_outlined,
                                        const linalg::vec3 &translation);
 
@@ -65,6 +67,9 @@ void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
 //
 // `collides` false adds a line saying so, for the same reason the contour turns
 // red: the log is not where a level is authored.
-bool draw_geometry_inspector(shared::mesh_geometry_t &mesh, bool collides);
+// `pieces` is what the editor's last BVH build computed for the mesh (editor_bvh.hpp): the readout of what
+// it collides as, and for an asset asked to decompose, why it did not.
+bool draw_geometry_inspector(shared::mesh_geometry_t &mesh, bool collides,
+                             Span<const shared::collision_piece_t> pieces);
 
 } // namespace client

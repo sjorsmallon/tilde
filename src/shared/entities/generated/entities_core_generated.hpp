@@ -171,6 +171,18 @@ constexpr uint32_t Light_Mode_COUNT = 3;
 const char* to_string(Light_Mode value);
 template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_view text);
 
+enum class Solid_Shadows : uint8_t
+{
+  None = 0,
+  Shadow_Volumes_Only = 1,
+  Solid_From_Lens_To_Shadow = 2,
+};
+
+constexpr uint32_t Solid_Shadows_COUNT = 3;
+
+const char* to_string(Solid_Shadows value);
+template <> std::optional<Solid_Shadows> try_from_string<Solid_Shadows>(std::string_view text);
+
 enum class Aim_Pose : uint8_t
 {
   Forward = 0,
@@ -305,18 +317,19 @@ enum class enum_type : uint16_t
   Damage_Type = 6,
   Hit_Region = 7,
   Light_Mode = 8,
-  Aim_Pose = 9,
-  Round_Phase = 10,
-  Game_Mode = 11,
-  Round_End_Reason = 12,
-  Match_Request = 13,
-  Easing = 14,
-  Reveal_Cone_Kind = 15,
-  Lens_Filter = 16,
-  Movement_Override = 17,
+  Solid_Shadows = 9,
+  Aim_Pose = 10,
+  Round_Phase = 11,
+  Game_Mode = 12,
+  Round_End_Reason = 13,
+  Match_Request = 14,
+  Easing = 15,
+  Reveal_Cone_Kind = 16,
+  Lens_Filter = 17,
+  Movement_Override = 18,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 18;
+constexpr uint32_t ENUM_TYPE_COUNT = 19;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -455,6 +468,12 @@ template <> struct enum_traits<entities::Light_Mode>
 {
   static constexpr uint32_t count = entities::Light_Mode_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Light_Mode;
+};
+
+template <> struct enum_traits<entities::Solid_Shadows>
+{
+  static constexpr uint32_t count = entities::Solid_Shadows_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Solid_Shadows;
 };
 
 template <> struct enum_traits<entities::Aim_Pose>
@@ -622,7 +641,7 @@ struct Light
   float source_radius = 0.0f;
   bool casts_shadows = true;
   bool cuts_geometry = false;
-  bool shadows_are_solid = false;
+  Solid_Shadows solid_shadows = Solid_Shadows::None;
 };
 
 struct Movement

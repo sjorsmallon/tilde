@@ -241,8 +241,8 @@ int main()
       return fail("rotation: a saved-and-reloaded asset mesh compares unequal to itself");
   }
 
-  // An asset mesh collides as a box that TURNS with it, and can switch that box
-  // off. No asset path, so the box is the 32-unit fallback and no asset is needed.
+  // An asset mesh with no sidecar collides as its bound, a box that TURNS with it, and can switch to its box
+  // or to nothing. No asset path, so the bound is the 32-unit fallback and no asset is needed.
   {
     mesh_geometry_t mesh;
     mesh.source      = asset_mesh_source_t{};
@@ -277,21 +277,25 @@ int main()
 
     map_t colliding;
     colliding.add_geometry(mesh);
-    if (serialize_map_to_string(colliding).find("\"collides\"") != std::string::npos)
-      return fail("mesh collision: a colliding mesh writes a key it does not need");
+    if (serialize_map_to_string(colliding).find("\"collision\"") != std::string::npos)
+      return fail("mesh collision: a mesh colliding as its source writes a key it does not need");
 
-    mesh.collides = false;
+    mesh.collision = mesh_collision_t::Box;
+    if (get_collision_pieces(mesh_geometry_t{mesh}, 1).size() != 1)
+      return fail("mesh collision: a mesh colliding as its box is not one piece");
+
+    mesh.collision = mesh_collision_t::None;
     if (!get_collision_pieces(mesh_geometry_t{mesh}, 1).empty())
       return fail("mesh collision: a mesh with collision off still collides");
-    if (compute_asset_mesh_collision_piece(mesh).planes.empty())
+    if (compute_asset_mesh_directional_bound_piece(mesh).planes.empty())
       return fail("mesh collision: the editor's piece went away with the flag");
 
     map_t silent;
     silent.add_geometry(mesh);
     const map_t reloaded = parse_map_from_string(serialize_map_to_string(silent));
     const mesh_geometry_t &reloaded_mesh = reloaded.geometry[0].value;
-    if (reloaded_mesh.collides)
-      return fail("mesh collision: collides = false did not survive the file");
+    if (reloaded_mesh.collision != mesh_collision_t::None)
+      return fail("mesh collision: collision = none did not survive the file");
     if (!geometry_values_equal(reloaded.geometry[0].value, mesh_geometry_t{mesh}))
       return fail("mesh collision: a reloaded non-colliding mesh compares unequal to itself");
   }

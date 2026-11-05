@@ -27,18 +27,20 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
 {
   if (const entities::Point_Light_Entity* point = entities::entity_as<entities::Point_Light_Entity>(&entity))
   {
-    if ((!point->light.cuts_geometry && !point->light.shadows_are_solid) || !light_is_switched_on(entity))
+    const bool point_is_solid = point->light.solid_shadows != entities::Solid_Shadows::None;
+    if ((!point->light.cuts_geometry && !point_is_solid) || !light_is_switched_on(entity))
       return std::nullopt;
     return shadow_light_t{.uid                = point->entity_id,
                           .apex               = pose.position,
                           .range              = point->range,
                           .cuts_geometry      = point->light.cuts_geometry,
-                          .keeps_every_volume = point->light.shadows_are_solid,
-                          .shadows_are_solid  = point->light.shadows_are_solid};
+                          .keeps_every_volume = point_is_solid,
+                          .solid_shadows      = point->light.solid_shadows};
   }
   if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity))
   {
-    if ((!spot->light.cuts_geometry && !spot->light.shadows_are_solid && !spot->beam && !spot->solid_beam) ||
+    const bool spot_is_solid = spot->light.solid_shadows != entities::Solid_Shadows::None;
+    if ((!spot->light.cuts_geometry && !spot_is_solid && !spot->beam && !spot->solid_beam) ||
         !light_is_switched_on(entity))
       return std::nullopt;
     return shadow_light_t{.uid                   = spot->entity_id,
@@ -47,12 +49,13 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                           .range                 = spot->range,
                           .cosine_of_outer_angle = std::cos(linalg::to_radians(spot->outer_degrees)),
                           .cuts_geometry         = spot->light.cuts_geometry,
-                          .keeps_every_volume    = spot->beam || spot->solid_beam || spot->light.shadows_are_solid,
-                          .shadows_are_solid     = spot->light.shadows_are_solid};
+                          .keeps_every_volume    = spot->beam || spot->solid_beam || spot_is_solid,
+                          .solid_shadows         = spot->light.solid_shadows};
   }
   if (const entities::Projector_Entity* projector = entities::entity_as<entities::Projector_Entity>(&entity))
   {
-    if ((!projector->light.cuts_geometry && !projector->light.shadows_are_solid) || !light_is_switched_on(entity))
+    const bool projector_is_solid = projector->light.solid_shadows != entities::Solid_Shadows::None;
+    if ((!projector->light.cuts_geometry && !projector_is_solid) || !light_is_switched_on(entity))
       return std::nullopt;
     const std::optional<scene_light_t> scene_light = try_convert_light_entity_to_scene_light(entity, pose);
     shadow_light_t light{.uid                            = projector->entity_id,
@@ -64,21 +67,30 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                          .frame_corners_at_unit_distance = compute_projector_frame_corners(*scene_light, 1.f),
                          .picture                        = projector->texture,
                          .cuts_geometry                  = projector->light.cuts_geometry,
-                         .keeps_every_volume             = projector->light.shadows_are_solid,
-                         .shadows_are_solid              = projector->light.shadows_are_solid};
+                         .keeps_every_volume             = projector_is_solid,
+                         .solid_shadows                  = projector->light.solid_shadows};
     return light;
   }
   if (const entities::Directional_Light_Entity* directional =
           entities::entity_as<entities::Directional_Light_Entity>(&entity))
   {
-    if ((!directional->light.cuts_geometry && !directional->light.shadows_are_solid) || !light_is_switched_on(entity))
+    entities::Solid_Shadows directional_solid = directional->light.solid_shadows;
+    if (directional_solid == entities::Solid_Shadows::Solid_From_Lens_To_Shadow)
+    {
+      log_warning("[shadow volumes] directional light {} asks for Solid_From_Lens_To_Shadow and has no lens: "
+                  "its dark is Shadow_Volumes_Only",
+                  directional->entity_id);
+      directional_solid = entities::Solid_Shadows::Shadow_Volumes_Only;
+    }
+    const bool directional_is_solid = directional_solid != entities::Solid_Shadows::None;
+    if ((!directional->light.cuts_geometry && !directional_is_solid) || !light_is_switched_on(entity))
       return std::nullopt;
     return shadow_light_t{.uid                = directional->entity_id,
                           .directional        = true,
                           .direction          = linalg::normalize(linalg::basis_from(pose.orientation).forward),
                           .cuts_geometry      = directional->light.cuts_geometry,
-                          .keeps_every_volume = directional->light.shadows_are_solid,
-                          .shadows_are_solid  = directional->light.shadows_are_solid};
+                          .keeps_every_volume = directional_is_solid,
+                          .solid_shadows      = directional_solid};
   }
   return std::nullopt;
 }
@@ -199,6 +211,7 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
   volume.caster           = caster;
   volume.light            = light.uid;
   volume.cuts_geometry    = light.cuts_geometry;
+  volume.solid_shadows    = light.solid_shadows;
   volume.caster_bounds    = piece_bounds;
   volume.light_apex       = light.apex;
   volume.light_direction  = light.direction;
@@ -700,7 +713,7 @@ std::string describe_shadow_volume_report(const shadow_volume_report_t& report, 
       report.refused_too_many_planes, MAX_SHADOW_VOLUME_SIDES,
       MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES, report.refused_outside_beam, report.culled_reaching_nothing);
   if (report.cutting_lights == 0)
-    text += "\n  no switched-on light has cuts_geometry or shadows_are_solid set, or a beam: nothing casts";
+    text += "\n  no switched-on light has cuts_geometry or solid_shadows set, or a beam: nothing casts";
   if (report.receiver_pieces == 0)
     text += "\n  no switched-on Geometry_Owner_Entity with solid_only_in_shadow or erased_in_shadow owns geometry: nothing receives";
   for (const shadow_volume_t& volume : kept)
@@ -765,14 +778,22 @@ std::vector<shadow_light_t> gather_shadow_lights(const Entity_System& system, Sp
   return lights;
 }
 
-// Erased receives and casts from behind itself; Receives (solid only in shadow) never casts.
+// Erased receives and casts from behind itself; Receives (solid only in shadow) never casts. Casts_From_Lens is a
+// thing in front of what the picture lands on: under a Solid_From_Lens_To_Shadow light its volume is solid from the
+// lens, where a plain Casts piece (the room) is solid behind itself alone (solid_shadows.hpp).
 enum class piece_role_t : uint8_t
 {
   Casts,
+  Casts_From_Lens,
   Receives,
   Erased,
   Nothing
 };
+
+bool piece_role_casts(piece_role_t role)
+{
+  return role == piece_role_t::Casts || role == piece_role_t::Casts_From_Lens;
+}
 
 bool piece_role_receives(piece_role_t role)
 {
@@ -797,6 +818,8 @@ std::vector<piece_role_t> resolve_piece_roles(const Entity_System& system, Span<
       role_of[index] = piece_role_t::Erased;
     else if (owner->solid_only_in_shadow)
       role_of[index] = piece_role_t::Receives;
+    else if (owner->casts_solid_from_lens)
+      role_of[index] = piece_role_t::Casts_From_Lens;
   }
   return role_of;
 }
@@ -809,7 +832,7 @@ struct visited_piece_t
   aabb_bounds_t                         bounds;
   Span<const Plane>                     planes;
   Span<const std::vector<linalg::vec3>> polygons;
-  // A player's piece: cast into the shadows_are_solid lights alone, and no occluder of a drawn body.
+  // A player's piece: cast into the solid_shadows lights alone, and no occluder of a drawn body.
   bool                                  casts_only_into_solid_shadows = false;
 };
 
@@ -841,7 +864,7 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
       continue;
     for (const collision_piece_t& piece : mover.pieces)
       visit(visited_piece_t{.key      = key++,
-                            .role     = piece_role_t::Casts,
+                            .role     = piece_role_t::Casts_From_Lens,
                             .owner    = mover.uid,
                             .bounds   = piece.bounds,
                             .planes   = piece.planes,
@@ -849,7 +872,7 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
   }
   for (const player_shadow_caster_t& caster : player_casters)
     visit(visited_piece_t{.key                           = key++,
-                          .role                          = piece_role_t::Casts,
+                          .role                          = piece_role_t::Casts_From_Lens,
                           .owner                         = caster.uid,
                           .bounds                        = caster.piece.bounds,
                           .planes                        = caster.piece.planes,
@@ -933,6 +956,9 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
       ++report.cast;
       volume.caster_piece   = piece.key;
       volume.drawn_by_march = piece.casts_only_into_solid_shadows;
+      if (volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow &&
+          piece.role != piece_role_t::Casts_From_Lens)
+        volume.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
       bool reaches_a_receiver = false;
       for (const receiver_t& receiver : receivers)
         if (receiver.key != piece.key && shadow_volume_touches_box(volume, receiver.bounds))
@@ -954,14 +980,14 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
   for_each_shadow_piece(system, bvh, owner_of, role_of, movers, player_casters, [&](const visited_piece_t& piece)
   {
     next_key = piece.key + 1;
-    if (piece.role != piece_role_t::Casts && piece.role != piece_role_t::Erased)
+    if (!piece_role_casts(piece.role) && piece.role != piece_role_t::Erased)
       return;
     if (piece.casts_only_into_solid_shadows)
       ++report.player_pieces;
     else
       ++report.caster_pieces;
     for (const shadow_light_t& light : lights)
-      if (light.shadows_are_solid || !piece.casts_only_into_solid_shadows)
+      if (light.solid_shadows != entities::Solid_Shadows::None || !piece.casts_only_into_solid_shadows)
         cast_piece_into(light, piece);
   });
 
@@ -1047,7 +1073,7 @@ uint32_t collect_shadow_occluders(const Entity_System& system, const Bounding_Vo
       if (bits == 0)
         continue;
       if (const std::optional<shadow_occluder_t> occluder = try_cast_shadow_occluder(
-              light, piece.planes, piece.polygons, bits, piece_role_receives(piece.role) || light.shadows_are_solid))
+              light, piece.planes, piece.polygons, bits, piece_role_receives(piece.role) || light.solid_shadows != entities::Solid_Shadows::None))
         out.push_back(*occluder);
       else
         ++skipped;

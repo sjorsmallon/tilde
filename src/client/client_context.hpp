@@ -25,6 +25,7 @@
 #include "../shared/team_wall_ripples.hpp"
 #include "../shared/lighting/lens.hpp"
 #include "../shared/lighting/shadow_volume.hpp"
+#include "../shared/lighting/support_planks.hpp"
 
 #include <memory>
 #include <optional>
@@ -495,6 +496,8 @@ struct visual_effects_t
   // many pieces outran the plane slots (shadow_volume_plan.md ss5).
   std::vector<shared::shadow_occluder_t> drawn_shadow_occluders;
   uint32_t                               drawn_shadow_occluders_skipped = 0;
+  // One per player held by a solid shadow this frame (shared/lighting/support_planks.hpp).
+  std::vector<shared::support_plank_t>   drawn_support_planks;
   // The same cut's counts, and the line cl_shadow_volume_debug last printed for them.
   shared::shadow_volume_report_t       drawn_shadow_volume_report;
   std::string                          shadow_volume_debug_line;

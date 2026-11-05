@@ -152,7 +152,7 @@ int main()
   projector->texture                       = LEFT_HALF_DARK;
   projector->switch_state.value            = true;
   projector->light.cuts_geometry           = false;
-  projector->light.shadows_are_solid       = true;
+  projector->light.solid_shadows       = entities::Solid_Shadows::Shadow_Volumes_Only;
 
   shared::projector_mask_cache_t masks;
   masks.masks.push_back(shared::compute_projector_mask_from_picture(

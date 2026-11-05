@@ -775,6 +775,7 @@ struct look_settings_t
   linalg::vec3f shadow_volume_color = {0.0f, 0.0f, 0.0f}; // r_shadow_volume_red, _green, _blue
   float   shadow_volume_edge_tint = 0.0f;  // r_shadow_volume_edge_tint
   int32_t shadow_volume_march_steps = 24;  // r_shadow_volume_march_steps
+  bool    shadow_plank            = true;  // r_shadow_plank: a from-the-lens or player volume draws no body
 };
 
 struct antialiasing_settings_t

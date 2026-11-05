@@ -277,7 +277,8 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     revealed_by_lens(false),
     lens_filter(Lens_Filter::Red),
     solid_only_when_lensed(false),
-    casts_dynamic_shadow(false)
+    casts_dynamic_shadow(false),
+    casts_solid_from_lens(false)
 {
   type = entity_type::Geometry_Owner_Entity;
 }

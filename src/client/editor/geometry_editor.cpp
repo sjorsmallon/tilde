@@ -148,6 +148,7 @@ void draw_geometry_in_editor(const shared::mesh_geometry_t &mesh, draw_lists_t &
 // ============================================================================
 
 void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
+                                       Span<const shared::collision_piece_t> pieces,
                                        draw_lists_t &draws, float time, bool is_outlined,
                                        const linalg::vec3 &translation)
 {
@@ -169,15 +170,15 @@ void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
   push_wireframe_mesh(draws, shared::resolve_mesh_asset(asset), mesh.position + translation,
                       mesh.orientation, asset.scale, color);
 
-  const color_t box_color =
-      mesh.collides ? ASSET_MESH_COLLISION_BOX_COLOR : ASSET_MESH_NO_COLLISION_BOX_COLOR;
-  for (const std::vector<linalg::vec3>& polygon :
-       shared::compute_asset_mesh_collision_piece(mesh).face_polygons)
-  {
-    for (size_t corner = 0; corner < polygon.size(); ++corner)
-      draws.debug.line(polygon[corner] + translation,
-                       polygon[(corner + 1) % polygon.size()] + translation, box_color,
-                       highlight_bias);
+  const color_t box_color = mesh.collision != shared::mesh_collision_t::None ? ASSET_MESH_COLLISION_BOX_COLOR
+                                                                             : ASSET_MESH_NO_COLLISION_BOX_COLOR;
+  for (const shared::collision_piece_t& piece : pieces)
+    for (const std::vector<linalg::vec3>& polygon : piece.face_polygons)
+    {
+      for (size_t corner = 0; corner < polygon.size(); ++corner)
+        draws.debug.line(polygon[corner] + translation,
+                         polygon[(corner + 1) % polygon.size()] + translation, box_color,
+                         highlight_bias);
   }
 }
 
@@ -205,6 +206,26 @@ bool item_committed(bool)
 
 // The mesh assets of this build as a combo over `path`; a path no asset carries
 // is said so, not cleared.
+bool draw_mesh_collision_combo(shared::mesh_collision_t &collision)
+{
+  bool changed = false;
+  if (ImGui::BeginCombo("collision", shared::to_string(collision)))
+  {
+    for (const shared::mesh_collision_t member :
+         {shared::mesh_collision_t::Source, shared::mesh_collision_t::Box, shared::mesh_collision_t::None})
+    {
+      const bool selected = collision == member;
+      if (ImGui::Selectable(shared::to_string(member), selected) && !selected)
+      {
+        collision = member;
+        changed   = true;
+      }
+    }
+    ImGui::EndCombo();
+  }
+  return changed;
+}
+
 bool draw_mesh_asset_combo(std::string &path)
 {
   bool changed = false;
@@ -273,7 +294,7 @@ bool draw_surface_inspector(shared::geometry_surface_t &surface)
   return changed;
 }
 
-bool draw_mesh_inspector(shared::mesh_geometry_t &mesh)
+bool draw_mesh_inspector(shared::mesh_geometry_t &mesh, Span<const shared::collision_piece_t> pieces)
 {
   bool changed = false;
   ImGui::TextDisabled("mesh");
@@ -290,8 +311,27 @@ bool draw_mesh_inspector(shared::mesh_geometry_t &mesh)
     ImGui::TextDisabled("source: asset");
     changed |= draw_mesh_asset_combo(asset->path);
     changed |= item_committed(ImGui::DragFloat3("scale", &asset->scale.x, 0.01f));
-    changed |= ImGui::Checkbox("collides as its box", &mesh.collides);
-    if (!mesh.collides)
+    changed |= draw_mesh_collision_combo(mesh.collision);
+    if (mesh.collision == shared::mesh_collision_t::Source)
+    {
+      const shared::asset_collision_shape_t shape = shared::read_asset_collision_shape(*asset);
+      ImGui::TextDisabled("the asset collides as its %s (%s): %u piece(s)", shared::to_string(shape),
+                          shared::collision_sidecar_path_for_mesh_asset(asset->path).c_str(), pieces.size());
+      if (shape == shared::asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces)
+      {
+        const assets::mesh_asset_t* asset_data = assets::get(shared::resolve_mesh_asset(*asset));
+        const std::optional<shared::mesh_defect_t> defect =
+            asset_data ? shared::find_mesh_defect(shared::make_mesh_from_asset_triangles(*asset_data, asset->scale))
+                       : std::nullopt;
+        if (defect)
+          ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "its triangles are not a solid, so it collides as its dop_26: %s",
+                             shared::format_mesh_defect(*defect).c_str());
+        else if (pieces.size() == 1 && shared::collision_pieces_coincide(pieces[0], shared::compute_asset_mesh_directional_bound_piece(mesh)))
+          ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
+                             "the decomposer refused it (too many pieces or splits), so it collides as its dop_26");
+      }
+    }
+    else if (mesh.collision == shared::mesh_collision_t::None)
       ImGui::TextDisabled("no collision of its own: block it out with a clip mesh");
   }
   else
@@ -305,7 +345,7 @@ bool draw_mesh_inspector(shared::mesh_geometry_t &mesh)
     if (const std::optional<shared::mesh_defect_t> defect = shared::find_mesh_defect(mesh))
       ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "not a solid: %s",
                          shared::format_mesh_defect(*defect).c_str());
-    changed |= ImGui::Checkbox("collides", &mesh.collides);
+    changed |= draw_mesh_collision_combo(mesh.collision);
   }
 
   changed |= ImGui::Checkbox("casts shadows", &mesh.casts_shadows);
@@ -317,13 +357,14 @@ bool draw_mesh_inspector(shared::mesh_geometry_t &mesh)
 
 } // namespace
 
-bool draw_geometry_inspector(shared::mesh_geometry_t &mesh, bool collides)
+bool draw_geometry_inspector(shared::mesh_geometry_t &mesh, bool collides,
+                             Span<const shared::collision_piece_t> pieces)
 {
   if (!collides)
     ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1),
                        "no collision — players pass through this");
 
-  return draw_mesh_inspector(mesh);
+  return draw_mesh_inspector(mesh, pieces);
 }
 
 } // namespace client

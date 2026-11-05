@@ -1,6 +1,6 @@
 #pragma once
 
-// A player as a caster into the shadows_are_solid lights (projector_plan.md ss1b): ONE piece per living player,
+// A player as a caster into the solid_shadows lights (projector_plan.md ss1b): ONE piece per living player,
 // its hull box, so other players stand on your shadow. The box rather than a bound of the posed hitboxes
 // because the solid shadow's cost is its plane count squared (solid_shadows.hpp): a box throws a crate's
 // shadow, a 26-DOP threw one thirteen times as costly. The piece is for collision alone; what is drawn is

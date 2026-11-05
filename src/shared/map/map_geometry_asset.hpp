@@ -5,12 +5,39 @@
 #include <vector>
 
 // An asset-sourced mesh: an art asset placed with a pose and a scale, borrowing
-// the asset's triangles. It bounds and collides as its oriented box
-// (geometry_def.md §11.6); the bake reads its triangles in world space. Beside
-// map_geometry.cpp, which is past its size.
+// the asset's triangles. It bounds as its oriented box and collides as the word
+// in its `.collision` sidecar says (geometry_def.md §11.6): its directional
+// bound, or its triangles welded into a closed mesh and decomposed into convex
+// pieces, so a letter's shadow has the letter's hole. The bake reads its
+// triangles in world space. Beside map_geometry.cpp, which is past its size.
+//
+//   collision_file ::= ws* word ws*
+//   word           ::= "dop_26" | "decompose_mesh_into_convex_pieces"
+
+#include "../assets/asset_types.hpp"
+
+#include <optional>
+#include <string_view>
 
 namespace shared
 {
+
+// What an asset collides as, in every placement. Absent sidecar is Dop_26.
+enum class asset_collision_shape_t : uint8_t
+{
+  Dop_26,
+  Decompose_Mesh_Into_Convex_Pieces,
+};
+
+const char* to_string(asset_collision_shape_t shape);
+[[nodiscard]] std::optional<asset_collision_shape_t> try_parse_collision_file(std::string_view text);
+
+// `resources/glb/letter_o.glb` -> `resources/glb/letter_o.collision`.
+std::string collision_sidecar_path_for_mesh_asset(std::string_view mesh_path);
+
+// The sidecar's word beside `source`'s mesh; Dop_26 with no sidecar, and with a log line for one that
+// says something else.
+asset_collision_shape_t read_asset_collision_shape(const asset_mesh_source_t& source);
 
 // The mesh when `geometry` is one sourced from an asset, else nothing.
 const mesh_geometry_t *find_asset_sourced_mesh(const mesh_geometry_t &geometry);
@@ -28,10 +55,28 @@ resolve_mesh_asset(const asset_mesh_source_t &source);
 // editor can pick and draw the box of a mesh with its collision switched off.
 oriented_box_t compute_asset_mesh_box(const mesh_geometry_t &mesh);
 
-// What the asset collides as: its directional bound (geometry/directional_bounds.hpp) over the vertices
-// under its scale, turned by the pose; the box above while the asset does not resolve. Answered whether or
-// not `collides` is set, as the box is.
-collision_piece_t compute_asset_mesh_collision_piece(const mesh_geometry_t &mesh);
+// The asset's directional bound (geometry/directional_bounds.hpp) over the vertices under its scale, turned
+// by the pose; the box above while the asset does not resolve. Answered whatever `collision` says, as the box is.
+collision_piece_t compute_asset_mesh_directional_bound_piece(const mesh_geometry_t &mesh);
+
+// The asset's triangles under `scale`, welded by position into one mesh of triangle faces at the origin,
+// wound outward (a mirroring scale flips them). Whether it is a solid is find_mesh_defect's answer: an open
+// skin, a doubled edge or a degenerate triangle each name themselves there.
+mesh_geometry_t make_mesh_from_asset_triangles(const assets::mesh_asset_t& asset, const linalg::vec3& scale);
+
+// The convex pieces of the asset under `scale` at the pose, each with its coplanar triangles merged into
+// one face, in world space. Nothing when the triangles are not a solid or the decomposer refuses; the caller
+// asks find_mesh_defect which, and names the asset.
+[[nodiscard]] std::optional<std::vector<collision_piece_t>>
+try_decompose_asset_mesh_into_collision_pieces(const assets::mesh_asset_t& asset, const linalg::vec3& scale,
+                                               const linalg::vec3& position, const linalg::quatf& orientation);
+
+// Same planes in any order, each within planes_coincide: the inspector's test for "this is the bound".
+bool collision_pieces_coincide(const collision_piece_t& a, const collision_piece_t& b);
+
+// What the placed asset collides as under `collision = Source`: by its sidecar's shape, the directional
+// bound when the decomposition refuses, with a log line naming the asset.
+std::vector<collision_piece_t> compute_asset_mesh_collision_pieces(const mesh_geometry_t &mesh);
 
 // A triangle is its three corners and its OUTWARD unit normal; a degenerate
 // triangle keeps its place in the list (index t is still source triangle t)

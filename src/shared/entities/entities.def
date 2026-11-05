@@ -58,6 +58,10 @@ Damage_Type :: enum { Normal, Orange, Teal }
 Hit_Region :: enum { Head, Torso, Legs }
 
 Light_Mode :: enum { Baked, Mixed, Dynamic }
+// Which of a light's dark is a mover (shared/lighting/solid_shadows.hpp, projector_plan.md ss1c). Shadow_Volumes_Only:
+// the dark air, from the caster to where its shadow lands. Solid_From_Lens_To_Shadow: the whole pyramid from the lens
+// through the caster to where its shadow lands, so a hull whose shadow lies on a caster's shadow is held at any depth.
+Solid_Shadows :: enum { None, Shadow_Volumes_Only, Solid_From_Lens_To_Shadow }
 
 Aim_Pose :: enum { Forward, Upward, Downward, Left, Right }
 
@@ -170,7 +174,7 @@ Light :: component {
     // Its shadow is a volume collision reads (shared/shadow_volume.hpp): every casts_shadow_volume piece throws one.
     cuts_geometry: bool = false     @Networked @Editable
     // Every volume it throws is a mover (shared/lighting/solid_shadows.hpp): dark is solid, and a hull stands on a crate's shadow.
-    shadows_are_solid: bool = false @Networked @Editable
+    solid_shadows: Solid_Shadows = .None @Networked @Editable
 }
 
 // Every float in here is EXACT on the wire: the replay adopts this component with no tolerance.
@@ -602,7 +606,7 @@ Sound_Emitter_Entity :: entity is Switchable, Playable {
     range:        f32 = 1024.0         @Editable
 }
 
-// @predicted because a shadows_are_solid light's volumes are movers (shared/lighting/solid_shadows.hpp).
+// @predicted because a solid_shadows light's volumes are movers (shared/lighting/solid_shadows.hpp).
 Point_Light_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:      Enabled
     light: Light
@@ -618,7 +622,7 @@ Point_Light_Entity :: entity @predicted is Colorable, Switchable {
     range: f32 = 256.0                  @Editable
 }
 
-// @predicted because a solid_beam spot is a mover (shared/solid_beams.hpp) and so are a shadows_are_solid light's volumes: the cut is a function of replicated state.
+// @predicted because a solid_beam spot is a mover (shared/solid_beams.hpp) and so are a solid_shadows light's volumes: the cut is a function of replicated state.
 Spot_Light_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:      Enabled
     light:         Light
@@ -640,7 +644,7 @@ Spot_Light_Entity :: entity @predicted is Colorable, Switchable {
 
 // No range and no position falloff -- a directional light is a direction and a
 // colour. It still has a `position`, inherited from the base, and the editor
-// draws its gizmo there; nothing shading reads it. @predicted because a shadows_are_solid light's volumes are
+// draws its gizmo there; nothing shading reads it. @predicted because a solid_shadows light's volumes are
 // movers (shared/lighting/solid_shadows.hpp).
 Directional_Light_Entity :: entity @predicted {
     light: Light
@@ -708,6 +712,9 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     // what the geometry is NOW: gone when switched off, a keyhole when it wears one. Needs a Mixed or
     // Dynamic light to cast at all.
     casts_dynamic_shadow: bool = false @Networked @Editable
+    // Under a Solid_From_Lens_To_Shadow light its shadow is solid from the lens (projector_plan.md ss1c): it is a thing
+    // in front of what the picture lands on, not the room. Unset, its dark is solid behind it alone, as the floor's is.
+    casts_solid_from_lens: bool = false @Networked @Editable
 }
 
 // middle-mouse button ping.
@@ -864,7 +871,7 @@ Lens_Entity :: entity @predicted is Switchable {
 // The rectangular light a picture needs (projector_plan.md ss2b): a frame of `aspect` by `half_angle_degrees`,
 // rolled by its orientation, with hard edges and no cone, falloff or beam. Its shadow map IS the picture's
 // uv, so it always takes a shadow layer. Dynamic only: the mask changes, so the bake never sees it. @predicted
-// because a shadows_are_solid light's volumes are movers (shared/lighting/solid_shadows.hpp).
+// because a solid_shadows light's volumes are movers (shared/lighting/solid_shadows.hpp).
 Projector_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:       Enabled
     light:              Light = { mode = .Dynamic }

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -48,6 +49,18 @@ struct asset_mesh_source_t
 using mesh_source_t =
     std::variant<inline_mesh_source_t, recipe_mesh_source_t, asset_mesh_source_t>;
 
+// What a placed mesh collides as (geometry_def.md ss11.6): the shape its source gives it (an inline mesh its
+// convex pieces, an asset what its `.collision` sidecar says, map_geometry_asset.hpp), its box, or nothing.
+enum class mesh_collision_t : uint8_t
+{
+  Source,
+  Box,
+  None,
+};
+
+const char* to_string(mesh_collision_t collision);
+[[nodiscard]] std::optional<mesh_collision_t> try_parse_mesh_collision(std::string_view word);
+
 struct mesh_geometry_t
 {
   linalg::vec3 position{0.f, 0.f, 0.f};
@@ -56,7 +69,7 @@ struct mesh_geometry_t
   std::vector<mesh_face_t> faces;
   mesh_source_t source = inline_mesh_source_t{};
   geometry_surface_t surface;
-  bool collides = true;
+  mesh_collision_t collision = mesh_collision_t::Source;
   bool casts_shadows = true;
   entity_uid_t owner_uid = null_entity_uid;
 };

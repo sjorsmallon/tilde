@@ -373,6 +373,8 @@ struct cvar_state_t
   float r_shadow_volume_blue;
   float r_shadow_volume_edge_tint;
   int32_t r_shadow_volume_march_steps;
+  bool r_shadow_plank;
+  float r_shadow_plank_alpha;
   bool r_look_panel;
   network::pascal_string_t<64> sv_skybox;
   network::pascal_string_t<64> sv_shadow_fill;
@@ -629,33 +631,35 @@ enum class cvar_id : uint16_t
   r_shadow_volume_blue = 219,
   r_shadow_volume_edge_tint = 220,
   r_shadow_volume_march_steps = 221,
-  r_look_panel = 222,
-  sv_skybox = 223,
-  sv_shadow_fill = 224,
-  debug_show_collisions = 225,
-  debug_show_hitboxes = 226,
-  debug_show_navmesh = 227,
-  debug_show_box_volumes = 228,
-  debug_hide_geometry = 229,
-  debug_show_wireframe = 230,
-  cl_shot_debug_seconds = 231,
-  cl_grab_distance = 232,
-  cl_shadow_volume_debug = 233,
-  cl_solid_beam_debug = 234,
-  debug_show_entity_counts = 235,
-  net_snapshot_debug = 236,
-  sv_event_debug = 237,
-  cl_event_debug = 238,
-  sv_reliable_debug = 239,
-  sv_io_debug = 240,
-  replay_keyframe_seconds = 241,
-  sv_replay_auto = 242,
-  sv_ghost_record = 243,
+  r_shadow_plank = 222,
+  r_shadow_plank_alpha = 223,
+  r_look_panel = 224,
+  sv_skybox = 225,
+  sv_shadow_fill = 226,
+  debug_show_collisions = 227,
+  debug_show_hitboxes = 228,
+  debug_show_navmesh = 229,
+  debug_show_box_volumes = 230,
+  debug_hide_geometry = 231,
+  debug_show_wireframe = 232,
+  cl_shot_debug_seconds = 233,
+  cl_grab_distance = 234,
+  cl_shadow_volume_debug = 235,
+  cl_solid_beam_debug = 236,
+  debug_show_entity_counts = 237,
+  net_snapshot_debug = 238,
+  sv_event_debug = 239,
+  cl_event_debug = 240,
+  sv_reliable_debug = 241,
+  sv_io_debug = 242,
+  replay_keyframe_seconds = 243,
+  sv_replay_auto = 244,
+  sv_ghost_record = 245,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 244;
+constexpr uint32_t CVAR_COUNT = 246;
 
 enum class command_id : uint16_t
 {

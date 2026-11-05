@@ -1,4 +1,4 @@
-// The pin for solid shadows (projector_plan.md ss1): a shadows_are_solid light's volume is a mover, so a
+// The pin for solid shadows (projector_plan.md ss1): a solid_shadows light's volume is a mover, so a
 // hull dropped onto a crate's shadow stops on the shadow's top face and one dropped beside it reaches the
 // floor. Without the flag the light's volumes are movers of nothing.
 #include "assets/asset_state.hpp"
@@ -11,6 +11,7 @@
 #include "lighting/projector_mask.hpp"
 #include "lighting/shadow_volume.hpp"
 #include "lighting/solid_shadows.hpp"
+#include "lighting/support_planks.hpp"
 #include "map/map_geometry.hpp"
 #include "map/mesh/mesh.hpp"
 #include "movement/hull_sweep.hpp"
@@ -67,17 +68,23 @@ int main()
   const shared::mesh_geometry_t floor = shared::make_box_mesh({0.f, -64.f, 0.f}, {2048.f, 64.f, 2048.f});
   const shared::mesh_geometry_t crate = shared::make_box_mesh({0.f, 32.f, 0.f}, {32.f, 32.f, 32.f});
   const Bounding_Volume_Hierarchy bvh = build_world({floor, crate});
-  const std::vector<shared::entity_uid_t> owner_of = {shared::null_entity_uid, shared::null_entity_uid};
+
+  // The crate is a thing in front of the wall (casts_solid_from_lens); the floor is the room, unowned.
+  shared::Entity_System      system;
+  const shared::entity_uid_t crate_owner_uid = system.spawn(entities::entity_type::Geometry_Owner_Entity);
+  entities::Geometry_Owner_Entity* crate_owner = system.get<entities::Geometry_Owner_Entity>(crate_owner_uid);
+  crate_owner->switch_state.value         = true;
+  crate_owner->casts_solid_from_lens      = true;
+  const std::vector<shared::entity_uid_t> owner_of = {shared::null_entity_uid, crate_owner_uid};
 
   // A lamp a little above crate height, off to -x: the crate's shadow runs toward +x with a nearly flat top.
-  shared::Entity_System      system;
   const shared::entity_uid_t lamp_uid = system.spawn(entities::entity_type::Point_Light_Entity);
   entities::Point_Light_Entity* lamp  = system.get<entities::Point_Light_Entity>(lamp_uid);
   lamp->position                      = {-300.f, 80.f, 0.f};
   lamp->range                         = 0.f;
   lamp->switch_state.value            = true;
   lamp->light.cuts_geometry           = false;
-  lamp->light.shadows_are_solid       = true;
+  lamp->light.solid_shadows       = entities::Solid_Shadows::Shadow_Volumes_Only;
 
   std::vector<shared::shadow_volume_t> volumes;
   std::vector<shared::mover_t>         movers;
@@ -86,7 +93,7 @@ int main()
   shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
   shared::compute_solid_shadows(system, volumes, cache, movers);
 
-  printf("[pin] a shadows_are_solid light's volumes are one mover\n");
+  printf("[pin] a solid_shadows light's volumes are one mover\n");
   {
     check(volumes.size() == 2, "the floor and the crate each throw a volume, kept with no receiver in the map");
     check(movers.size() == 1, "one mover for the light");
@@ -135,6 +142,76 @@ int main()
     check(hit && std::fabs(stop_y - expected_centre_y) < 0.5f,
           "the centre stops half_height plus the skin above the shadow's top face: the feet are on it");
     check(hit && hit->normal.y >= shared::GROUND_NORMAL_MINIMUM_Y, "the top face is ground: the lens is low");
+  }
+
+  printf("[pin] Solid_From_Lens_To_Shadow: the whole pyramid from the lens is the mover, Shadow_Volumes_Only only the dark\n");
+  {
+    // Between the lamp and the crate at x = -150 the air is lit: under Shadow_Volumes_Only the hull falls to the floor.
+    const std::optional<shared::hull_sweep_hit_t> lit = drop_hull(bvh, movers, -150.f, 0.f);
+    check(lit && lit->mover_uid == shared::null_entity_uid && lit->id.index == 0,
+          "under Shadow_Volumes_Only a hull between the lamp and the crate falls to the floor");
+
+    lamp->light.solid_shadows = entities::Solid_Shadows::Solid_From_Lens_To_Shadow;
+    std::vector<shared::shadow_volume_t> lens_volumes;
+    std::vector<shared::mover_t>         lens_movers;
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, lens_volumes);
+    shared::compute_solid_shadows(system, lens_volumes, cache, lens_movers);
+    check(lens_volumes.size() == 2 && lens_volumes[1].light_facing_plane_count > 0,
+          "the volume itself still begins at the crate's lit faces: the drawn body is unchanged");
+    bool floor_behind_only = false;
+    bool crate_from_lens   = false;
+    for (const shared::shadow_volume_t& volume : lens_volumes)
+    {
+      if (volume.caster == crate_owner_uid)
+        crate_from_lens = volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow;
+      else
+        floor_behind_only = volume.solid_shadows == entities::Solid_Shadows::Shadow_Volumes_Only;
+    }
+    check(floor_behind_only && crate_from_lens,
+          "the unowned floor keeps the dark behind it; the marked crate is solid from the lens");
+    const std::optional<shared::hull_sweep_hit_t> held = drop_hull(bvh, lens_movers, -150.f, 0.f);
+    check(held && held->mover_uid == lamp_uid, "under Solid_From_Lens_To_Shadow the same hull is held by the lamp's mover");
+    // The pyramid's top plane runs from the lamp through the crate's far top edge (32, 64), sloping down away
+    // from the lamp; the hull's corner nearest the lamp, at x = -166, is under its highest point and meets it first.
+    const float lens_plane_y = 80.f + (-166.f + 300.f) * (64.f - 80.f) / (32.f + 300.f);
+    const float lens_stop_y  = 200.f - 200.f * (held ? held->t : 0.f);
+    printf("       stopped at y = %.2f (expected %.2f)\n", lens_stop_y,
+           lens_plane_y + shared::player_half_height + hull_sweep_skin);
+    check(held && std::fabs(lens_stop_y - (lens_plane_y + shared::player_half_height + hull_sweep_skin)) < 0.5f,
+          "its feet rest on the pyramid's top plane, in lit air: its shadow lies on the crate's shadow");
+    const std::optional<shared::hull_sweep_hit_t> behind = drop_hull(bvh, lens_movers, 100.f, 0.f);
+    check(behind && behind->mover_uid == lamp_uid, "behind the crate the dark holds as before");
+    const std::optional<shared::hull_sweep_hit_t> beside = drop_hull(bvh, lens_movers, -150.f, 200.f);
+    check(beside && beside->mover_uid == shared::null_entity_uid && beside->id.index == 0,
+          "beside the pyramid the hull falls to the floor");
+    lamp->light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
+    movers.clear();
+    shared::compute_solid_shadows(system, volumes, cache, movers);
+  }
+
+  printf("[pin] a player held by the shadow gets a plank from its feet to where its shadow lands\n");
+  {
+    // Feet on the shadow's top face at x = 100: the lamp's ray through them meets the floor further along +x.
+    const float                      top_y = 80.f + (100.f + 300.f) * (64.f - 80.f) / (32.f + 300.f);
+    const shared::supported_player_t held  = {.player = 900, .feet = {100.f, top_y, 0.f}, .ground_mover = lamp_uid};
+    const shared::supported_player_t free  = {.player = 901, .feet = {100.f, 0.f, 200.f}, .ground_mover = shared::null_entity_uid};
+    const shared::supported_player_t other = {.player = 902, .feet = {100.f, top_y, 0.f}, .ground_mover = 12345};
+    const Array<shared::supported_player_t, 3> players = {held, free, other};
+    std::vector<shared::support_plank_t>       planks;
+    shared::compute_support_planks(players, volumes, bvh, planks);
+    check(planks.size() == 1, "one plank: the player on the floor and the one on an unknown mover get none");
+    check(!planks.empty() && planks[0].player == 900 && planks[0].light == lamp_uid, "it is the held player's, under the lamp");
+    if (!planks.empty())
+    {
+      const float landing_x = -300.f + 400.f * 80.f / (80.f - top_y);
+      printf("       lands at x = %.2f (expected %.2f), y = %.3f\n", planks[0].corners[2].x, landing_x, planks[0].corners[2].y);
+      check(std::fabs(planks[0].corners[2].y) < 0.1f && std::fabs(planks[0].corners[3].y) < 0.1f, "the landing end is on the floor");
+      check(std::fabs(planks[0].corners[2].x - landing_x) < 0.5f, "along the lamp's ray through the feet");
+      check(std::fabs(planks[0].corners[0].z + shared::player_half_width) < 0.01f &&
+                std::fabs(planks[0].corners[1].z - shared::player_half_width) < 0.01f,
+            "a body wide across the ray");
+    }
   }
 
   printf("[pin] a hull beside the shadow falls to the floor\n");
@@ -217,7 +294,7 @@ int main()
 
   printf("[pin] without the flag the light throws no mover\n");
   {
-    lamp->light.shadows_are_solid = false;
+    lamp->light.solid_shadows = entities::Solid_Shadows::None;
     lamp->light.cuts_geometry     = true;
     std::vector<shared::shadow_volume_t> plain_volumes;
     std::vector<shared::mover_t>         plain_movers;
@@ -235,7 +312,7 @@ int main()
   {
     const shared::entity_uid_t sun_uid = system.spawn(entities::entity_type::Directional_Light_Entity);
     entities::Directional_Light_Entity* sun = system.get<entities::Directional_Light_Entity>(sun_uid);
-    sun->light.shadows_are_solid = true;
+    sun->light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
     sun->orientation             = linalg::from_axis_angle({1.f, 0.f, 0.f}, -90.f);
     std::vector<shared::shadow_volume_t> sun_volumes;
     std::vector<shared::mover_t>         sun_movers;

@@ -2,12 +2,16 @@
 #include "geometry/convex_decomposition.hpp"
 #include "geometry/convex_hull.hpp"
 #include "geometry/directional_bounds.hpp"
+#include "mesh/mesh.hpp"
+#include "mesh/mesh_decomposition.hpp"
 
 #include "../../third_party/xatlas.h"
 
 #include "log.hpp"
 #include <algorithm>
 #include <cmath>
+#include <format>
+#include <unordered_map>
 
 namespace shared
 {
@@ -67,7 +71,209 @@ oriented_box_t compute_asset_mesh_box(const mesh_geometry_t &mesh)
           .orientation = mesh.orientation};
 }
 
-collision_piece_t compute_asset_mesh_collision_piece(const mesh_geometry_t &mesh)
+const char* to_string(asset_collision_shape_t shape)
+{
+  switch (shape)
+  {
+    case asset_collision_shape_t::Dop_26: return "dop_26";
+    case asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces: return "decompose_mesh_into_convex_pieces";
+  }
+  fatal_error("to_string: asset_collision_shape_t {} is no member", (int)shape);
+}
+
+std::optional<asset_collision_shape_t> try_parse_collision_file(std::string_view text)
+{
+  const auto is_space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+  while (!text.empty() && is_space(text.front()))
+    text.remove_prefix(1);
+  while (!text.empty() && is_space(text.back()))
+    text.remove_suffix(1);
+  for (const asset_collision_shape_t member :
+       {asset_collision_shape_t::Dop_26, asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces})
+    if (text == to_string(member))
+      return member;
+  return std::nullopt;
+}
+
+std::string collision_sidecar_path_for_mesh_asset(std::string_view mesh_path)
+{
+  const size_t slash         = mesh_path.find_last_of('/');
+  const size_t dot           = mesh_path.find_last_of('.');
+  const bool   has_extension = dot != std::string_view::npos && (slash == std::string_view::npos || dot > slash);
+  return std::string(has_extension ? mesh_path.substr(0, dot) : mesh_path) + ".collision";
+}
+
+asset_collision_shape_t read_asset_collision_shape(const asset_mesh_source_t& source)
+{
+  if (source.path.empty())
+    return asset_collision_shape_t::Dop_26;
+  const std::string sidecar = collision_sidecar_path_for_mesh_asset(source.path);
+  if (!assets::asset_exists(sidecar.c_str()))
+    return asset_collision_shape_t::Dop_26;
+  const Span<const uint8_t> bytes = assets::read_asset_bytes(sidecar.c_str());
+  const std::optional<asset_collision_shape_t> parsed =
+      try_parse_collision_file(std::string_view(reinterpret_cast<const char*>(bytes.data), bytes.count));
+  if (!parsed)
+  {
+    log_error("'{}' says neither dop_26 nor decompose_mesh_into_convex_pieces; {} collides as its dop_26",
+              sidecar, source.path);
+    return asset_collision_shape_t::Dop_26;
+  }
+  return *parsed;
+}
+
+namespace
+{
+
+struct welded_position_key_t
+{
+  int64_t x, y, z;
+  bool    operator==(const welded_position_key_t&) const = default;
+};
+
+struct welded_position_hash_t
+{
+  size_t operator()(const welded_position_key_t& key) const
+  {
+    return std::hash<int64_t>{}(key.x) ^ (std::hash<int64_t>{}(key.y) * 31) ^ (std::hash<int64_t>{}(key.z) * 961);
+  }
+};
+
+// Positions within this of each other are one vertex: an exporter's duplicated corners agree to far
+// finer, and a real edge is never this short.
+constexpr float WELD_CELL = 1e-3f;
+
+} // namespace
+
+mesh_geometry_t make_mesh_from_asset_triangles(const assets::mesh_asset_t& asset, const linalg::vec3& scale)
+{
+  const bool mirrored = scale.x * scale.y * scale.z < 0.f;
+
+  mesh_geometry_t mesh;
+  std::unordered_map<welded_position_key_t, uint32_t, welded_position_hash_t> welded;
+  std::vector<uint32_t> welded_index(asset.vertices.size(), 0);
+  for (size_t index = 0; index < asset.vertices.size(); ++index)
+  {
+    const linalg::vec3 scaled = {asset.vertices[index].position.x * scale.x,
+                                 asset.vertices[index].position.y * scale.y,
+                                 asset.vertices[index].position.z * scale.z};
+    const welded_position_key_t key = {(int64_t)std::llround(scaled.x / WELD_CELL),
+                                       (int64_t)std::llround(scaled.y / WELD_CELL),
+                                       (int64_t)std::llround(scaled.z / WELD_CELL)};
+    const auto found = welded.find(key);
+    if (found != welded.end())
+    {
+      welded_index[index] = found->second;
+      continue;
+    }
+    welded_index[index] = (uint32_t)mesh.vertices.size();
+    welded.emplace(key, welded_index[index]);
+    mesh.vertices.push_back(scaled);
+  }
+
+  for (size_t first = 0; first + 2 < asset.indices.size(); first += 3)
+  {
+    mesh_face_t face;
+    face.vertex_indices = {welded_index[asset.indices[first]], welded_index[asset.indices[first + 1]],
+                           welded_index[asset.indices[first + 2]]};
+    if (mirrored)
+      std::swap(face.vertex_indices[1], face.vertex_indices[2]);
+    if (face.vertex_indices[0] == face.vertex_indices[1] || face.vertex_indices[1] == face.vertex_indices[2] ||
+        face.vertex_indices[0] == face.vertex_indices[2])
+      continue;
+    mesh.faces.push_back(std::move(face));
+  }
+  return mesh;
+}
+
+std::optional<std::vector<collision_piece_t>>
+try_decompose_asset_mesh_into_collision_pieces(const assets::mesh_asset_t& asset, const linalg::vec3& scale,
+                                               const linalg::vec3& position, const linalg::quatf& orientation)
+{
+  mesh_geometry_t closed = make_mesh_from_asset_triangles(asset, scale);
+  if (closed.faces.size() < 4 || find_mesh_defect(closed))
+    return std::nullopt;
+  closed.position    = position;
+  closed.orientation = orientation;
+  const std::optional<std::vector<mesh_geometry_t>> convex = try_decompose_mesh_into_convex_pieces(closed);
+  if (!convex)
+    return std::nullopt;
+
+  // A piece's faces are still triangles, many to a plane; the piece rebuilt from its distinct planes has one
+  // face per plane, which is what the sweep, the silhouette walk and the solid shadow's plane count want.
+  std::vector<collision_piece_t> pieces;
+  pieces.reserve(convex->size());
+  for (const mesh_geometry_t& piece_mesh : *convex)
+  {
+    const collision_piece_t triangulated = collision_piece_from_convex_mesh(piece_mesh);
+    std::vector<Plane>      distinct;
+    for (const Plane& plane : triangulated.planes)
+    {
+      bool seen = false;
+      for (const Plane& kept : distinct)
+        if (planes_coincide(kept, plane))
+        {
+          seen = true;
+          break;
+        }
+      if (!seen)
+        distinct.push_back(plane);
+    }
+    const linalg::vec3 center = (triangulated.bounds.min + triangulated.bounds.max) * 0.5f;
+    const float        radius = linalg::length(triangulated.bounds.max - triangulated.bounds.min) * 0.5f + 1.f;
+    const std::optional<convex_polyhedron_t> body = try_build_convex_from_planes(distinct, center, radius);
+    if (!body)
+      return std::nullopt;
+    pieces.push_back({.bounds        = compute_point_bounds(body->vertices),
+                      .planes        = compute_polyhedron_planes(*body),
+                      .face_polygons = compute_polyhedron_face_polygons(*body)});
+  }
+  return pieces;
+}
+
+bool collision_pieces_coincide(const collision_piece_t& a, const collision_piece_t& b)
+{
+  if (a.planes.size() != b.planes.size())
+    return false;
+  for (const Plane& plane : a.planes)
+  {
+    bool found = false;
+    for (const Plane& other : b.planes)
+      if (planes_coincide(plane, other))
+      {
+        found = true;
+        break;
+      }
+    if (!found)
+      return false;
+  }
+  return true;
+}
+
+std::vector<collision_piece_t> compute_asset_mesh_collision_pieces(const mesh_geometry_t &mesh)
+{
+  const asset_mesh_source_t& source = get_mesh_asset_source(mesh);
+  if (read_asset_collision_shape(source) == asset_collision_shape_t::Dop_26)
+    return {compute_asset_mesh_directional_bound_piece(mesh)};
+  const assets::asset_handle_t<assets::mesh_asset_t> handle = resolve_mesh_asset(source);
+  const assets::mesh_asset_t* asset = handle.valid() ? assets::get(handle) : nullptr;
+  if (asset == nullptr)
+    return {compute_asset_mesh_directional_bound_piece(mesh)};
+  std::optional<std::vector<collision_piece_t>> pieces =
+      try_decompose_asset_mesh_into_collision_pieces(*asset, source.scale, mesh.position, mesh.orientation);
+  if (!pieces)
+  {
+    const std::optional<mesh_defect_t> defect = find_mesh_defect(make_mesh_from_asset_triangles(*asset, source.scale));
+    log_error("'{}' asks to be decomposed into convex pieces but {}; it collides as its dop_26", source.path,
+              defect ? "its triangles are not a solid: " + format_mesh_defect(*defect)
+                     : std::format("the decomposer refused it (past {} pieces or {} splits)", MAX_MESH_CONVEX_PIECES,
+                                   MAX_MESH_DECOMPOSITION_SPLITS));
+    return {compute_asset_mesh_directional_bound_piece(mesh)};
+  }
+  return std::move(*pieces);
+}
+
+collision_piece_t compute_asset_mesh_directional_bound_piece(const mesh_geometry_t &mesh)
 {
   const asset_mesh_source_t &source = get_mesh_asset_source(mesh);
   const assets::asset_handle_t<assets::mesh_asset_t> handle = resolve_mesh_asset(source);
@@ -92,7 +298,7 @@ collision_piece_t compute_asset_mesh_collision_piece(const mesh_geometry_t &mesh
   const std::optional<convex_polyhedron_t> body =
       try_build_convex_from_planes(planes, box.center, linalg::length(box.half_extents) + 1.f);
   if (!body)
-    fatal_error("compute_asset_mesh_collision_piece: the bound of the asset mesh at ({} {} {}) closes nothing",
+    fatal_error("compute_asset_mesh_directional_bound_piece: the bound of the asset mesh at ({} {} {}) closes nothing",
                 mesh.position.x, mesh.position.y, mesh.position.z);
   return {.bounds        = compute_point_bounds(body->vertices),
           .planes        = compute_polyhedron_planes(*body),

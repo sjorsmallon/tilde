@@ -1,5 +1,7 @@
 #include "solid_shadows.hpp"
 
+#include "lighting.hpp"
+
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_system.hpp"
@@ -24,7 +26,9 @@ bool same_plane(const Plane& a, const Plane& b)
 bool built_from_same_planes(const shadow_volume_t& built_from, const shadow_volume_t& volume)
 {
   if (built_from.side_plane_count != volume.side_plane_count ||
-      built_from.light_facing_plane_count != volume.light_facing_plane_count)
+      built_from.light_facing_plane_count != volume.light_facing_plane_count ||
+      built_from.solid_shadows != volume.solid_shadows ||
+      !same_plane({built_from.light_apex, built_from.light_direction}, {volume.light_apex, volume.light_direction}))
     return false;
   if (!same_plane({built_from.caster_bounds.min, built_from.caster_bounds.max},
                   {volume.caster_bounds.min, volume.caster_bounds.max}))
@@ -42,15 +46,25 @@ bool built_from_same_planes(const shadow_volume_t& built_from, const shadow_volu
 
 std::optional<collision_piece_t> try_build_solid_shadow_piece(const shadow_volume_t& volume)
 {
+  const bool from_the_lens =
+      volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow && !volume.light_directional;
   std::vector<Plane> planes;
-  planes.reserve(volume.side_plane_count + volume.light_facing_plane_count + 6);
+  planes.reserve(volume.side_plane_count + volume.light_facing_plane_count + 7);
   for (uint32_t side = 0; side < volume.side_plane_count; ++side)
     planes.push_back(volume.side_planes[side]);
-  for (uint32_t front = 0; front < volume.light_facing_plane_count; ++front)
-    planes.push_back(volume.light_facing_planes[front]);
+  aabb_bounds_t reach_around = volume.caster_bounds;
+  if (from_the_lens)
+  {
+    const linalg::vec3f axis = linalg::normalize(get_aabb_center(volume.caster_bounds) - volume.light_apex);
+    planes.push_back({.point = volume.light_apex + axis * SHADOW_NEAR_PLANE, .normal = axis * -1.f});
+    reach_around = union_aabb(reach_around, {volume.light_apex, volume.light_apex});
+  }
+  else
+    for (uint32_t front = 0; front < volume.light_facing_plane_count; ++front)
+      planes.push_back(volume.light_facing_planes[front]);
 
-  const linalg::vec3f centre = get_aabb_center(volume.caster_bounds);
-  const linalg::vec3f half   = (volume.caster_bounds.max - volume.caster_bounds.min) * 0.5f +
+  const linalg::vec3f centre = get_aabb_center(reach_around);
+  const linalg::vec3f half   = (reach_around.max - reach_around.min) * 0.5f +
                                linalg::vec3f{SOLID_SHADOW_REACH, SOLID_SHADOW_REACH, SOLID_SHADOW_REACH};
   planes.push_back({.point = centre + linalg::vec3f{half.x, 0.f, 0.f}, .normal = {1.f, 0.f, 0.f}});
   planes.push_back({.point = centre - linalg::vec3f{half.x, 0.f, 0.f}, .normal = {-1.f, 0.f, 0.f}});
@@ -102,7 +116,7 @@ void compute_solid_shadows(const Entity_System& system, Span<const shadow_volume
   for (const shadow_volume_t& volume : shadow_volumes)
   {
     const entities::Light* light = entities::get_component<entities::Light>(system.try_find(volume.light));
-    if (light == nullptr || !light->shadows_are_solid)
+    if (light == nullptr || light->solid_shadows == entities::Solid_Shadows::None)
       continue;
     std::optional<collision_piece_t> piece = try_get_solid_shadow_piece_for_volume(cache, volume);
     if (!piece)

@@ -637,6 +637,8 @@ Debugging :: cvars {
     r_shadow_volume_blue:   f32 = 0.0       @Client    "Blue of the colour a drawn shadow volume's body is filled with"
     r_shadow_volume_edge_tint: f32 = 0.0    @Client    "How much of the body's colour its line and rim keep: 0 is black ink, 1 an edge in the body's own colour"
     r_shadow_volume_march_steps: i32 = 24   @Client    "Samples of the light's shadow map along the line of sight through a player's shadow volume, whose body is drawn from the map; a part thinner than one step sparkles"
+    r_shadow_plank:         bool = true     @Client    "Draw a flat strip a body wide from a player held by a solid shadow to where their shadow lands, instead of the dark body of a from-the-lens pyramid or of the player's own volume"
+    r_shadow_plank_alpha:   f32 = 0.6       @Client    "How dark the plank is; its edges are drawn solid"
 
     r_look_panel:           bool = false    @Client    "Show the look panel: a slider per comic look cvar, and an export and load of their values as looks/<name>.look"
 

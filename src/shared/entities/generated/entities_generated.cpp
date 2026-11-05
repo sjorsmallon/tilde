@@ -98,6 +98,12 @@ constexpr const char* Light_Mode_VALUE_NAMES[] = {
   "Dynamic",
 };
 
+constexpr const char* Solid_Shadows_VALUE_NAMES[] = {
+  "None",
+  "Shadow_Volumes_Only",
+  "Solid_From_Lens_To_Shadow",
+};
+
 constexpr const char* Aim_Pose_VALUE_NAMES[] = {
   "Forward",
   "Upward",
@@ -177,6 +183,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
   {"Hit_Region", {Hit_Region_VALUE_NAMES, 3}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
+  {"Solid_Shadows", {Solid_Shadows_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
   {"Round_Phase", {Round_Phase_VALUE_NAMES, 6}},
   {"Game_Mode", {Game_Mode_VALUE_NAMES, 3}},
@@ -534,15 +541,15 @@ constexpr field_info_t Light_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
-  {.name = "shadows_are_solid",
-   .type = FIELD_TYPE_BOOL,
-   .offset = (uint32_t)offsetof(Light, shadows_are_solid),
-   .size_in_bytes = (uint32_t)sizeof(Light::shadows_are_solid),
+  {.name = "solid_shadows",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Light, solid_shadows),
+   .size_in_bytes = (uint32_t)sizeof(Light::solid_shadows),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = &ENUM_INFOS[9]},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -644,7 +651,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[18]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -815,7 +822,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[11]},
+   .enum_info = &ENUM_INFOS[12]},
   {.name = "phase",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, phase),
@@ -824,7 +831,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[10]},
+   .enum_info = &ENUM_INFOS[11]},
   {.name = "phase_start_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Match, phase_start_tick),
@@ -860,7 +867,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[12]},
+   .enum_info = &ENUM_INFOS[13]},
   {.name = "winning_team",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, winning_team),
@@ -896,7 +903,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[13]},
+   .enum_info = &ENUM_INFOS[14]},
 };
 
 constexpr field_info_t Path_Follow_FIELDS[] = {
@@ -3239,7 +3246,7 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[17]},
   {.name = "solid_only_when_lensed",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_lensed),
@@ -3253,6 +3260,15 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Geometry_Owner_Entity, casts_dynamic_shadow),
    .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::casts_dynamic_shadow),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "casts_solid_from_lens",
+   .type = FIELD_TYPE_BOOL,
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, casts_solid_from_lens),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::casts_solid_from_lens),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -3455,7 +3471,7 @@ constexpr field_info_t Path_Node_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[14]},
+   .enum_info = &ENUM_INFOS[15]},
 };
 
 constexpr field_info_t Mover_Entity_FIELDS[] = {
@@ -4256,7 +4272,7 @@ constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[16]},
   {.name = "range",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Reveal_Light_Entity, range),
@@ -4442,7 +4458,7 @@ constexpr field_info_t Lens_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[17]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Lens_Entity, render),
@@ -4677,7 +4693,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 5}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 8192u, false, true, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
   {"logic_counter_entity", "Logic Counter", {Logic_Counter_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Counter_Entity), (uint32_t)alignof(Logic_Counter_Entity), 128u, false, false, false, construct_Logic_Counter_Entity, as_base_Logic_Counter_Entity},
-  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 16}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
+  {"geometry_owner_entity", "Geometry Owner", {Geometry_Owner_Entity_FIELDS, 17}, (uint32_t)sizeof(Geometry_Owner_Entity), (uint32_t)alignof(Geometry_Owner_Entity), 2u, false, true, true, construct_Geometry_Owner_Entity, as_base_Geometry_Owner_Entity},
   {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 8}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 256u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 4096u, false, true, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
   {"path_node_entity", "Path Node", {Path_Node_Entity_FIELDS, 8}, (uint32_t)sizeof(Path_Node_Entity), (uint32_t)alignof(Path_Node_Entity), 0u, false, false, false, construct_Path_Node_Entity, as_base_Path_Node_Entity},
@@ -5042,6 +5058,26 @@ template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_vi
   if (text == "Baked") return Light_Mode::Baked;
   if (text == "Mixed") return Light_Mode::Mixed;
   if (text == "Dynamic") return Light_Mode::Dynamic;
+  return std::nullopt;
+}
+
+const char* to_string(Solid_Shadows value)
+{
+  switch (value)
+  {
+    case Solid_Shadows::None: return "None";
+    case Solid_Shadows::Shadow_Volumes_Only: return "Shadow_Volumes_Only";
+    case Solid_Shadows::Solid_From_Lens_To_Shadow: return "Solid_From_Lens_To_Shadow";
+  }
+  assert(false && "invalid Solid_Shadows");
+  return "";
+}
+
+template <> std::optional<Solid_Shadows> try_from_string<Solid_Shadows>(std::string_view text)
+{
+  if (text == "None") return Solid_Shadows::None;
+  if (text == "Shadow_Volumes_Only") return Solid_Shadows::Shadow_Volumes_Only;
+  if (text == "Solid_From_Lens_To_Shadow") return Solid_Shadows::Solid_From_Lens_To_Shadow;
   return std::nullopt;
 }
 
@@ -5411,6 +5447,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x40382878u;
+const uint32_t SCHEMA_HASH = 0xd7bfeb8au;
 
 } // namespace entities

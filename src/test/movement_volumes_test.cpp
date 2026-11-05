@@ -126,18 +126,18 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   for (entities::Point_Light_Entity& point : system.entities_of_type<entities::Point_Light_Entity>())
   {
     point.switch_state.value     = true;
-    point.light.shadows_are_solid = true;
+    point.light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
   }
   for (entities::Directional_Light_Entity& sun : system.entities_of_type<entities::Directional_Light_Entity>())
   {
     sun.orientation             = linalg::from_axis_angle({1.f, 0.f, 0.f}, -90.f);
-    sun.light.shadows_are_solid = true;
+    sun.light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
   }
   for (entities::Projector_Entity& projector : system.entities_of_type<entities::Projector_Entity>())
   {
     projector.switch_state.value     = true;
     projector.orientation             = linalg::from_view_angles(0.f, -90.f);
-    projector.light.shadows_are_solid = true;
+    projector.light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
   }
   std::vector<BVH_Input> crate_inputs;
   for (const shared::collision_piece_t& piece :

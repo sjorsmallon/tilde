@@ -17,6 +17,8 @@
 namespace client
 {
 
+struct collision_piece_cache_t;
+
 using key_event_t = input::key_event_t;
 
 struct viewport_state_t
@@ -133,6 +135,9 @@ struct editor_context_t
   // `bvh`. A tool showing an object's properties says so; the viewport draws
   // their contour red. See build_editor_bvh.
   Span<const shared::entity_uid_t> objects_without_collision;
+  // The pieces that pass computed, by object (editor_bvh.hpp): what the selection highlight traces for an
+  // asset mesh, so a decomposed one is not decomposed again per frame.
+  const collision_piece_cache_t *collision_pieces = nullptr;
 
   // The same shape, for the bake. It cannot be derived from lightmap_t's
   // geometry_id: that id covers the charts and deliberately not the pixels, so a

@@ -483,6 +483,7 @@ void Tool_Editor_State::switch_tool(editor_tool_t tool)
   context.map_path = get_maps_dir() + map.name;
   context.bvh = &editor_bvh.bvh;
   context.objects_without_collision = editor_bvh.objects_without_collision;
+  context.collision_pieces          = &collision_piece_cache;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
   context.entity_draw_settings = {
@@ -824,6 +825,7 @@ void Tool_Editor_State::update(float dt)
   context.map_path = get_maps_dir() + map.name;
   context.bvh = &editor_bvh.bvh;
   context.objects_without_collision = editor_bvh.objects_without_collision;
+  context.collision_pieces          = &collision_piece_cache;
   context.lightmap_updated_so_atlas_upload_is_needed = &lightmap_updated_flag;
   context.grid = &grid_settings;
   context.placement_prefers_surface = input::current_modifiers().shift;

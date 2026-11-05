@@ -194,7 +194,7 @@ void test_the_mesh_answers_the_seam()
   for (const shared::collision_piece_t &piece : turned_pieces)
     assert(piece.bounds.min.x >= 872.f - 1e-3f && piece.bounds.max.x <= 1000.f + 1e-3f);
 
-  l_shape.collides = false;
+  l_shape.collision = shared::mesh_collision_t::None;
   assert(shared::get_collision_pieces(l_shape, 9).empty());
 }
 
@@ -233,7 +233,7 @@ mesh_geometry_t make_textured_l_shape()
   mesh.position = {0.1f, -2.3f, 1e-3f};
   mesh.orientation = linalg::from_axis_angle({0.3f, 0.5f, 0.8f}, 37.f);
   mesh.surface.color = {0.25f, 0.5f, 0.75f};
-  mesh.collides = false;
+  mesh.collision = shared::mesh_collision_t::None;
   mesh.owner_uid = 17;
   for (uint32_t face_index = 0; face_index < mesh.faces.size(); ++face_index)
   {

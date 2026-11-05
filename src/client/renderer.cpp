@@ -9960,6 +9960,18 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.shadow_volume_color[3]    = std::clamp(look.shadow_volume_edge_tint, 0.0f, 1.0f);
     scene.shadow_volume_fill[0]     = pass.shadow_fill.valid() ? 1.0f : 0.0f;
     scene.shadow_volume_fill[1]     = (float)std::clamp(look.shadow_volume_march_steps, 1, 256);
+    if (look.shadow_plank)
+    {
+      // The plank stands in for these bodies (shared/lighting/support_planks.hpp): an empty box draws nothing.
+      const uint32_t volume_count = std::min(pass.shadow_volumes.count, MAX_SCENE_SHADOW_VOLUMES);
+      for (uint32_t volume_index = 0; volume_index < volume_count; ++volume_index)
+      {
+        const shared::shadow_volume_t& volume = pass.shadow_volumes[volume_index];
+        if (shared::shadow_volume_reaches_lens(volume))
+          for (uint32_t component = 0; component < 8; ++component)
+            scene.shadow_volume_boxes[volume_index][component] = 0.0f;
+      }
+    }
     scene.fog_settings[1]     = FOG_GRID_NEAR;
     scene.fog_settings[2]     = fog_far;
     scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);

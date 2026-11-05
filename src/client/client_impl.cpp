@@ -754,6 +754,7 @@ bool Tick()
                                     cvars.r_shadow_volume_blue};
     look.shadow_volume_edge_tint = cvars.r_shadow_volume_edge_tint;
     look.shadow_volume_march_steps = cvars.r_shadow_volume_march_steps;
+    look.shadow_plank            = cvars.r_shadow_plank;
     look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
     look.misprint_distance = cvars.r_misprint_distance;
     look.fog              = cvars.r_fog;

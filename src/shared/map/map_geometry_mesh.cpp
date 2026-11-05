@@ -107,10 +107,17 @@ void scale_mesh_to_world_box(mesh_geometry_t &mesh, const aabb_t &box)
 std::vector<collision_piece_t> compute_mesh_collision_pieces(const mesh_geometry_t &mesh,
                                                              entity_uid_t uid)
 {
-  if (!mesh.collides)
-    return {};
+  switch (mesh.collision)
+  {
+    case mesh_collision_t::None: return {};
+    case mesh_collision_t::Box:
+      if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
+        return {piece_from_oriented_box(compute_asset_mesh_box(mesh))};
+      return {piece_from_aabb(to_aabb(compute_mesh_world_bounds(mesh)))};
+    case mesh_collision_t::Source: break;
+  }
   if (std::holds_alternative<asset_mesh_source_t>(mesh.source))
-    return {compute_asset_mesh_collision_piece(mesh)};
+    return compute_asset_mesh_collision_pieces(mesh);
 
   uint32_t sculpted_faces = 0;
   for (const mesh_face_t &face : mesh.faces)
@@ -663,7 +670,7 @@ bool mesh_geometries_equal(const mesh_geometry_t &lhs, const mesh_geometry_t &rh
         !face_surfaces_identical(lhs.faces[i].surface, rhs.faces[i].surface))
       return false;
   return mesh_sources_equal(lhs.source, rhs.source) && surfaces_equal(lhs.surface, rhs.surface) &&
-         lhs.collides == rhs.collides && lhs.casts_shadows == rhs.casts_shadows &&
+         lhs.collision == rhs.collision && lhs.casts_shadows == rhs.casts_shadows &&
          lhs.owner_uid == rhs.owner_uid;
 }
 
@@ -766,8 +773,8 @@ void write_mesh_row(const mesh_geometry_t &mesh, Span<const uint16_t> material_r
     out_properties.emplace_back("vertices", format_vertex_list(mesh.vertices));
 
   write_surface(mesh.surface, out_properties);
-  if (!mesh.collides)
-    out_properties.emplace_back("collides", format_bool(mesh.collides));
+  if (mesh.collision != mesh_collision_t::Source)
+    out_properties.emplace_back("collision", to_string(mesh.collision));
   if (!mesh.casts_shadows)
     out_properties.emplace_back("casts_shadows", format_bool(mesh.casts_shadows));
   write_uid_property("owner", mesh.owner_uid, out_properties);
@@ -792,7 +799,13 @@ try_parse_mesh_row(const std::map<std::string, std::string> &properties,
   read_vec3(properties, "position", mesh.position);
   read_rotation(properties, mesh.orientation);
   read_surface(properties, mesh.surface);
-  read_bool(properties, "collides", mesh.collides);
+  if (const std::string *collision = find_property(properties, "collision"))
+  {
+    if (const std::optional<mesh_collision_t> parsed = try_parse_mesh_collision(*collision))
+      mesh.collision = *parsed;
+    else
+      log_error("mesh row: collision '{}' is not source, box or none; the mesh collides as its source", *collision);
+  }
   read_bool(properties, "casts_shadows", mesh.casts_shadows);
   read_uid_property(properties, "owner", mesh.owner_uid);
 

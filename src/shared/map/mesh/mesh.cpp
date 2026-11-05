@@ -318,13 +318,32 @@ aabb_bounds_t compute_mesh_local_bounds(const mesh_geometry_t &mesh)
   return bounds;
 }
 
+const char* to_string(mesh_collision_t collision)
+{
+  switch (collision)
+  {
+    case mesh_collision_t::Source: return "source";
+    case mesh_collision_t::Box: return "box";
+    case mesh_collision_t::None: return "none";
+  }
+  fatal_error("to_string: mesh_collision_t {} is no member", (int)collision);
+}
+
+std::optional<mesh_collision_t> try_parse_mesh_collision(std::string_view word)
+{
+  for (const mesh_collision_t member : {mesh_collision_t::Source, mesh_collision_t::Box, mesh_collision_t::None})
+    if (word == to_string(member))
+      return member;
+  return std::nullopt;
+}
+
 mesh_geometry_t copy_mesh_pose_and_surface(const mesh_geometry_t &mesh)
 {
   mesh_geometry_t copy;
   copy.position = mesh.position;
   copy.orientation = mesh.orientation;
   copy.surface = mesh.surface;
-  copy.collides = mesh.collides;
+  copy.collision = mesh.collision;
   copy.casts_shadows = mesh.casts_shadows;
   copy.owner_uid = mesh.owner_uid;
   return copy;
